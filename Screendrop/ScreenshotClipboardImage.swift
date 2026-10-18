@@ -2,12 +2,12 @@ import AppKit
 import ImageIO
 
 enum ScreenshotClipboardImage {
-    static func item(from url: URL, dataType: NSPasteboard.PasteboardType) async throws -> NSPasteboardItem {
+    static func item(from url: URL, dataType: NSPasteboard.PasteboardType, includeTIFF: Bool) async throws -> NSPasteboardItem {
         try Task.checkCancellation()
         let (data, tiff) = try await Task.detached(priority: .userInitiated) {
             try autoreleasepool {
                 let data = try Data(contentsOf: url)
-                return (data, Self.tiffData(from: data))
+                return (data, includeTIFF ? Self.tiffData(from: data) : nil)
             }
         }.value
         try Task.checkCancellation()
@@ -27,6 +27,8 @@ enum ScreenshotClipboardImage {
               width > 0, height > 0, width <= 25_000_000 / height else { return nil }
         // ponytail: skip TIFF above 25 MP to avoid huge tall-image allocations;
         // use a lazy provider if TIFF-only targets need these captures too.
-        return NSBitmapImageRep(data: data)?.tiffRepresentation ?? NSImage(data: data)?.tiffRepresentation
+        // LZW is lossless and cuts screenshot TIFFs to about 6-18% of their uncompressed size.
+        return NSBitmapImageRep(data: data)?.tiffRepresentation(using: .lzw, factor: 0)
+            ?? NSImage(data: data)?.tiffRepresentation(using: .lzw, factor: 0)
     }
 }

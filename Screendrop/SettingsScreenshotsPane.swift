@@ -13,6 +13,7 @@ struct ScreenshotsSettingsPane: View {
     @AppStorage(ScreendropPreferences.captureDelaySecondsKey) private var captureDelaySeconds = 0
     @AppStorage(ScreendropPreferences.lowResolutionEditorPreviewKey) private var lowResolutionEditorPreview = true
     @AppStorage(ScreendropPreferences.trimFullscreenMenuBarKey) private var trimFullscreenMenuBar = true
+    @AppStorage(ScreendropPreferences.copyTIFFKey) private var copyTIFF = false
 
     private let delayOptions: [Int] = [0, 3, 5, 10]
 
@@ -105,6 +106,14 @@ struct ScreenshotsSettingsPane: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+
+                SettingsControlLabel(
+                    "Also copy as TIFF",
+                    detail: "Adds a TIFF image to copied screenshots for apps that can't paste PNG. Clipboard history apps save it too, which takes more space."
+                ).control { label in
+                    Toggle(isOn: $copyTIFF) { label }
+                }
+                .toggleStyle(.switch)
             }
         }
         .formStyle(.grouped)
