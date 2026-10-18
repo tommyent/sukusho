@@ -57,13 +57,17 @@ nonisolated struct CaptureLibraryItem: Sendable {
         precondition(card != nil && card === cell, "Preview and Library must share the same decode")
         precondition(card!.width == 320 && card!.height == 640)
 
-        let item = try await ScreenshotClipboardImage.item(from: a, dataType: .png)
-        precondition(Set(item.types) == [.fileURL, .png, .tiff], "Normal captures retain TIFF compatibility")
+        let pngOnly = try await ScreenshotClipboardImage.item(from: a, dataType: .png, includeTIFF: false)
+        precondition(Set(pngOnly.types) == [.fileURL, .png], "TIFF is opt-in")
+        let item = try await ScreenshotClipboardImage.item(from: a, dataType: .png, includeTIFF: true)
+        precondition(Set(item.types) == [.fileURL, .png, .tiff], "Opted-in captures carry TIFF")
         precondition(item.string(forType: .fileURL) == a.absoluteString)
         let encoded = try Data(contentsOf: a)
         precondition(item.data(forType: .png) == encoded)
         let tiffSource = CGImageSourceCreateWithData(item.data(forType: .tiff)! as CFData, nil)!
         precondition(pixels(CGImageSourceCreateImageAtIndex(tiffSource, 0, nil)!) == pixels(image))
+        let tiffInfo = (CGImageSourceCopyPropertiesAtIndex(tiffSource, 0, nil) as! [CFString: Any])[kCGImagePropertyTIFFDictionary] as! [CFString: Any]
+        precondition(tiffInfo[kCGImagePropertyTIFFCompression] as? Int == 5, "TIFF is LZW-compressed")
 
         // A real grayscale PNG just above the cap, using 1 byte/pixel for the
         // fixture so the test itself doesn't need a 100 MB RGBA bitmap.
@@ -78,18 +82,18 @@ nonisolated struct CaptureLibraryItem: Sendable {
             CGImageDestinationAddImage(destination, gray.makeImage()!, nil)
             precondition(CGImageDestinationFinalize(destination))
         }
-        let tall = try await ScreenshotClipboardImage.item(from: tallURL, dataType: .png)
+        let tall = try await ScreenshotClipboardImage.item(from: tallURL, dataType: .png, includeTIFF: true)
         precondition(Set(tall.types) == [.fileURL, .png], "Above 25 MP, skip TIFF before decoding pixels")
         let tallBytes = try Data(contentsOf: tallURL)
         precondition(tall.data(forType: .png) == tallBytes)
-        let cancelled = Task { _ = try await ScreenshotClipboardImage.item(from: a, dataType: .png) }
+        let cancelled = Task { _ = try await ScreenshotClipboardImage.item(from: a, dataType: .png, includeTIFF: true) }
         cancelled.cancel()
         do { _ = try await cancelled.value; preconditionFailure("Cancelled copy prepared an item") }
         catch is CancellationError {}
         do {
-            _ = try await ScreenshotClipboardImage.item(from: a.appendingPathExtension("missing"), dataType: .png)
+            _ = try await ScreenshotClipboardImage.item(from: a.appendingPathExtension("missing"), dataType: .png, includeTIFF: true)
             preconditionFailure("Missing file must fail before publishing")
         } catch is CocoaError {}
-        print("PASS: concurrent lossless PNGs and DPI; shared thumbnail; normal PNG+TIFF and >25 MP PNG-only; cancellation and read errors")
+        print("PASS: concurrent lossless PNGs and DPI; shared thumbnail; PNG-only by default, LZW PNG+TIFF opt-in and >25 MP PNG-only; cancellation and read errors")
     }
 }

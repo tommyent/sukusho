@@ -15,6 +15,7 @@ enum ScreendropPreferences {
     static let saveButtonUsesFolderKey = "saveButtonUsesConfiguredFolder"
     static let autoCopyKey = "autoCopyScreenshotsToClipboard"
     static let autoCompressKey = "autoCompressScreenshots"
+    static let copyTIFFKey = "copyScreenshotsAsTIFF"
     static let exportFormatKey = "exportFormat"
     static let compressionQualityKey = "compressionQuality"
     static let exportDirectoryPathKey = "exportDirectoryPath"
@@ -64,6 +65,10 @@ enum ScreendropPreferences {
     
     static var autoCompress: Bool {
         UserDefaults.standard.bool(forKey: autoCompressKey)
+    }
+
+    static var copyTIFF: Bool {
+        UserDefaults.standard.bool(forKey: copyTIFFKey)
     }
 
     static var exportFormat: ScreenshotExportFormat {
@@ -292,7 +297,7 @@ enum ScreenshotFileActions {
     }
 
     private static func copyImageToClipboard(from url: URL, dataType: NSPasteboard.PasteboardType) async throws {
-        let item = try await ScreenshotClipboardImage.item(from: url, dataType: dataType)
+        let item = try await ScreenshotClipboardImage.item(from: url, dataType: dataType, includeTIFF: ScreendropPreferences.copyTIFF)
         let pasteboard = NSPasteboard.general
         // Publication stays on MainActor, without suspension between clear and
         // write, so colour, text and link copies cannot interleave with it.
