@@ -22,15 +22,16 @@ struct CaptureLibraryView: View {
         Binding {
             if comments.isShown { return .comments }
             if likes.isShown { return .likes }
-            if cloud.isShown { return .cloud }
+            if cloud.isShown { return cloud.showsFiles ? .files : .cloud }
             if let tag = model.tagFilter { return .tag(tag) }
             return model.filter.map { .kind($0) }
         } set: { selection in
-            cloud.isShown = selection == .cloud
+            cloud.isShown = selection == .cloud || selection == .files
+            cloud.showsFiles = selection == .files
             comments.setShown(selection == .comments)
             likes.setShown(selection == .likes)
             switch selection {
-            case .cloud, .comments, .likes:
+            case .cloud, .files, .comments, .likes:
                 // The toolbar's capture actions mustn't act on captures out of sight.
                 model.selection = []
             case .tag(let tag):
@@ -74,13 +75,25 @@ struct CaptureLibraryView: View {
                                 Text("Uploads")
                                 Spacer()
                                 if cloud.hasLoaded {
-                                    Text(cloud.uploads.count, format: .number)
+                                    Text(cloud.count(files: false), format: .number)
                                         .foregroundStyle(.secondary)
                                         .font(.caption.monospacedDigit())
                                 }
                             }
                         } icon: { Image(systemName: "cloud") }
                         .tag(CaptureLibrarySidebarSelection.cloud)
+                        Label {
+                            HStack {
+                                Text("Files")
+                                Spacer()
+                                if cloud.hasLoaded {
+                                    Text(cloud.count(files: true), format: .number)
+                                        .foregroundStyle(.secondary)
+                                        .font(.caption.monospacedDigit())
+                                }
+                            }
+                        } icon: { Image(systemName: "doc") }
+                        .tag(CaptureLibrarySidebarSelection.files)
                         Label {
                             HStack {
                                 Text("Comments")
@@ -197,7 +210,7 @@ struct CaptureLibraryView: View {
                 .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
             }
             .modifier(LibraryWindowSurface())
-            .navigationTitle(comments.isShown ? "Comments" : likes.isShown ? "Likes" : cloud.isShown ? (CloudUploader.shared.isConfigured ? "Uploads" : "Cloud") : model.tagFilter ?? activeFilter.title)
+            .navigationTitle(comments.isShown ? "Comments" : likes.isShown ? "Likes" : cloud.isShown ? (!CloudUploader.shared.isConfigured ? "Cloud" : cloud.showsFiles ? "Files" : "Uploads") : model.tagFilter ?? activeFilter.title)
         }
         .navigationSplitViewStyle(.balanced)
         .modifier(LibraryToolbarSeparator())
@@ -419,7 +432,7 @@ struct CaptureLibraryView: View {
                     .help("Stop downloading")
             } else if cloud.isShown {
                 let count = cloud.visibleUploads.count
-                Text("\(count) \(count == 1 ? "upload" : "uploads")")
+                Text("\(count) \(cloud.showsFiles ? (count == 1 ? "file" : "files") : count == 1 ? "upload" : "uploads")")
                 if !cloud.selection.isEmpty { Text("· \(cloud.selection.count) selected") }
                 if !cloud.deletingIDs.isEmpty { Text("· Deleting…") }
             } else {
@@ -477,7 +490,7 @@ struct CaptureLibraryView: View {
         ToolbarItem(placement: .primaryAction) {
             LibrarySearchField(
                 text: $model.searchText,
-                prompt: comments.isShown ? "Search comments" : likes.isShown ? "Search likes" : cloud.isShown ? "Search uploads" : "Search captures"
+                prompt: comments.isShown ? "Search comments" : likes.isShown ? "Search likes" : cloud.isShown ? (cloud.showsFiles ? "Search files" : "Search uploads") : "Search captures"
             )
             // About the width `.searchable` gave it; narrower when the toolbar is tight.
             .frame(minWidth: 120, idealWidth: 320, maxWidth: 320)
@@ -485,6 +498,13 @@ struct CaptureLibraryView: View {
         // The toolbar's glass is the field's resting pill: in a toolbar the
         // field draws no bezel of its own until it's focused.
         .sharedBackgroundVisibility(.visible)
+        if cloud.isShown, cloud.showsFiles, CloudUploader.shared.isConfigured {
+            ToolbarItem(placement: .primaryAction) {
+                Button("Add Files…", systemImage: "plus") { cloud.chooseFiles() }
+                    .disabled(cloud.fileUploads != nil)
+                    .help("Share files of any kind")
+            }
+        }
         ToolbarItem(placement: .primaryAction) {
             Button { inspectorVisible.toggle() } label: {
                 Label(inspectorVisible ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.right")
@@ -628,6 +648,7 @@ private struct LibraryWindowSurface: ViewModifier {
 enum CaptureLibrarySidebarSelection: Hashable {
     case kind(CaptureLibraryFilter)
     case cloud
+    case files
     case comments
     case likes
     case tag(String)

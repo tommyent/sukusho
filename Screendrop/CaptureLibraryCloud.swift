@@ -1,6 +1,7 @@
 import AppKit
 import ImageIO
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The Library's Cloud page: every upload on the Worker, including those
 /// whose local capture has gone to the Trash, with their links and a way to
@@ -12,6 +13,15 @@ final class CloudLibraryModel {
     static let shared = CloudLibraryModel()
     /// The Cloud page shows in place of the captures.
     var isShown = false
+    /// The Files page: files shared from the Library rather than captures.
+    var showsFiles = false {
+        didSet { if showsFiles != oldValue { selection = [] } }
+    }
+    /// Files waiting for Share Options.
+    var pendingFiles: [URL] = []
+    /// The files going up from the Files page, one at a time.
+    private(set) var fileUploads: FileUploads?
+    private var fileUploadTask: Task<Void, Never>?
     var selection: Set<String> = []
     /// Waiting for the Delete from Cloud confirmation.
     var pendingDelete: [CloudUpload] = []
@@ -44,7 +54,21 @@ final class CloudLibraryModel {
         var total: Double { (Double(index) + fraction) / Double(count) }
     }
 
+    struct FileUploads {
+        let total: Int
+        var done = 0
+        var current: UUID?
+        var title: String { total == 1 ? "Uploading file…" : "Uploading \(min(done + 1, total)) of \(total) files…" }
+        var fraction: Double {
+            let part = current.flatMap { CloudUploader.shared.uploadProgress[$0] } ?? 0
+            return (Double(done) + part) / Double(total)
+        }
+    }
+
     private init() {}
+
+    /// The captures' or the files' uploads, as the sidebar counts them.
+    func count(files: Bool) -> Int { uploads.count { $0.isFile == files } }
 
     /// The selection in display order.
     var selectedUploads: [CloudUpload] { visibleUploads.filter { selection.contains($0.id) } }
@@ -55,7 +79,8 @@ final class CloudLibraryModel {
         let library = CaptureLibraryModel.shared
         let query = library.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let local = localItems
-        let matching = query.isEmpty ? uploads : uploads.filter {
+        let shown = uploads.filter { $0.isFile == showsFiles }
+        let matching = query.isEmpty ? shown : shown.filter {
             $0.name.localizedStandardContains(query) || $0.filename.localizedStandardContains(query)
                 || CloudUploadText.title($0, local: local[$0.id]).localizedStandardContains(query)
         }
@@ -243,13 +268,88 @@ final class CloudLibraryModel {
         previewFetch?.fraction = fraction
     }
 
-    /// Shows the Cloud page with one upload selected, as from a comment.
+    /// Shows the Cloud or Files page with one upload selected, as from a comment.
     func showUpload(id: String) {
         CaptureLibraryModel.shared.searchText = ""
         CommentsLibraryModel.shared.setShown(false)
         LikesLibraryModel.shared.setShown(false)
         isShown = true
+        showsFiles = uploads.first { $0.id == id }?.isFile ?? false
         selection = [id]
+    }
+
+    // MARK: - Files
+
+    func chooseFiles() {
+        let panel = NSOpenPanel()
+        panel.title = "Share Files"
+        panel.prompt = "Choose"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.begin { response in
+            guard response == .OK else { return }
+            self.addFiles(panel.urls)
+        }
+    }
+
+    /// Files dropped or chosen; Share Options asks how to share them.
+    func addFiles(_ urls: [URL]) {
+        guard fileUploads == nil else { return }
+        let files = urls.filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
+        if files.count < urls.count {
+            CaptureLibraryModel.shared.errorMessage = "Folders can’t be shared. Choose the files inside them instead."
+        }
+        pendingFiles = files
+    }
+
+    /// Uploads the pending files one after another, then copies their links.
+    func uploadPendingFiles(options: CloudUploadOptions) {
+        let files = pendingFiles
+        pendingFiles = []
+        guard !files.isEmpty, fileUploads == nil else { return }
+        fileUploads = FileUploads(total: files.count)
+        fileUploadTask = Task {
+            defer {
+                fileUploads = nil
+                fileUploadTask = nil
+                refresh()
+            }
+            var links: [String] = []
+            var failures: [String] = []
+            for file in files {
+                let id = UUID()
+                fileUploads?.current = id
+                do {
+                    let result = try await CloudUploader.shared.upload(
+                        itemID: id, fileURL: file,
+                        // One title can't name several files; each keeps its file name.
+                        title: files.count == 1 ? options.trimmedTitleOrNil : nil,
+                        socialEnabled: options.socialEnabled, expiresAt: options.expiry.date(),
+                        allowAnonymousComments: options.allowAnonymousComments, password: options.password,
+                        asFile: true
+                    )
+                    links.append(result.url)
+                } catch is CancellationError {
+                    break
+                } catch {
+                    failures.append("\(file.lastPathComponent): \(error.localizedDescription)")
+                }
+                CloudUploader.shared.clearUploadState(for: id)
+                fileUploads?.done += 1
+            }
+            if !links.isEmpty {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(links.joined(separator: "\n"), forType: .string)
+            }
+            if !failures.isEmpty {
+                CaptureLibraryModel.shared.errorMessage = "Couldn’t share:\n" + failures.joined(separator: "\n")
+            }
+        }
+    }
+
+    func cancelFileUploads() {
+        fileUploadTask?.cancel()
     }
 
     /// Selects the upload's capture in All Captures.
@@ -354,15 +454,24 @@ struct CloudLibraryPage: View {
             } else if uploads.isEmpty {
                 let search = CaptureLibraryModel.shared.searchText
                 ContentUnavailableView {
-                    if search.isEmpty {
-                        Label("No Uploads", systemImage: "cloud")
-                    } else {
+                    if !search.isEmpty {
                         Label("No Results for “\(search)”", systemImage: "magnifyingglass")
+                    } else if cloud.showsFiles {
+                        Label("No Files", systemImage: "doc")
+                    } else {
+                        Label("No Uploads", systemImage: "cloud")
                     }
                 } description: {
-                    Text(search.isEmpty
-                        ? "Captures you share to the cloud appear here."
-                        : "Check the spelling or try a new search.")
+                    Text(!search.isEmpty ? "Check the spelling or try a new search."
+                        : cloud.showsFiles ? "Drop files of any kind here to share a link to them."
+                        : "Captures you share to the cloud appear here.")
+                } actions: {
+                    if search.isEmpty, cloud.showsFiles {
+                        Button("Add Files…") { cloud.chooseFiles() }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
+                            .disabled(cloud.fileUploads != nil)
+                    }
                 }
             } else {
                 // The Library's own collection, so uploads select, open and
@@ -391,6 +500,31 @@ struct CloudLibraryPage: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
                     .background(.bar)
+            }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if cloud.showsFiles, let uploads = cloud.fileUploads {
+                HStack(spacing: 8) {
+                    ProgressView(value: uploads.fraction).frame(width: 120)
+                    Text(uploads.title)
+                    Spacer()
+                    Button("Stop") { cloud.cancelFileUploads() }
+                }
+                .font(.callout)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(.bar)
+            }
+        }
+        // Finder's files, dropped anywhere on the Files page.
+        .dropDestination(for: URL.self) { urls, _ in
+            guard cloud.showsFiles, CloudUploader.shared.isConfigured, cloud.fileUploads == nil else { return false }
+            cloud.addFiles(urls)
+            return true
+        }
+        .sheet(isPresented: Binding(get: { !cloud.pendingFiles.isEmpty }, set: { if !$0 { cloud.pendingFiles = [] } })) {
+            CloudUploadOptionsPopover(showsTitle: cloud.pendingFiles.count == 1) { options in
+                cloud.uploadPendingFiles(options: options)
             }
         }
         .onAppear { cloud.refresh() }
@@ -654,7 +788,8 @@ nonisolated enum CloudUploadText {
     /// the upload, else its Library capture's title, else when it went up,
     /// in the captures' format. Renaming the capture never renames the upload.
     static func title(_ upload: CloudUpload, local: CaptureLibraryItem?) -> String {
-        customTitle(upload, local: local) ?? local?.dateTitle ?? CaptureLibraryItem.dateTitle(upload.createdAt)
+        customTitle(upload, local: local) ?? local?.dateTitle
+            ?? (upload.isFile ? upload.filename : CaptureLibraryItem.dateTitle(upload.createdAt))
     }
 
     /// A name someone gave it. Uploads used to send the file's name as the
@@ -730,6 +865,12 @@ struct CloudUploadThumbnail: View {
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .frame(width: geometry.size.width, height: geometry.size.height)
+                    } else if upload.isFile, upload.thumbnailUrl == nil {
+                        // The type's Finder icon, from the name alone.
+                        Image(nsImage: NSWorkspace.shared.icon(for: UTType(filenameExtension: (upload.filename as NSString).pathExtension) ?? .data))
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(maxWidth: min(geometry.size.width, geometry.size.height) * 0.6)
                     } else {
                         Image(systemName: upload.isVideo ? "video" : "photo")
                             .font(.title2)
@@ -844,18 +985,20 @@ struct CloudUploadInspector: View {
                     }
                     Divider()
                     sharing(upload)
-                    Divider()
-                    VStack(alignment: .leading, spacing: InspectorMetrics.headerSpacing) {
-                        sectionTitle("On This Mac")
-                        if let local {
-                            detailRow("Capture", value: local.title)
-                            Button("Show in Library") { cloud.showInLibrary(local) }
-                                .controlSize(.small)
-                        } else {
-                            Text("The capture is no longer in the Library. Only the cloud copy remains.")
-                                .font(.system(size: 12))
-                                .foregroundStyle(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
+                    if !upload.isFile {
+                        Divider()
+                        VStack(alignment: .leading, spacing: InspectorMetrics.headerSpacing) {
+                            sectionTitle("On This Mac")
+                            if let local {
+                                detailRow("Capture", value: local.title)
+                                Button("Show in Library") { cloud.showInLibrary(local) }
+                                    .controlSize(.small)
+                            } else {
+                                Text("The capture is no longer in the Library. Only the cloud copy remains.")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                     }
                 }
@@ -865,8 +1008,9 @@ struct CloudUploadInspector: View {
             }
         } else {
             LibraryInspectorPlaceholder(
-                symbol: "cloud", title: "Upload details",
-                message: "Select an upload to see its link\nand whether it’s still in the Library."
+                symbol: cloud.showsFiles ? "doc" : "cloud", title: cloud.showsFiles ? "File details" : "Upload details",
+                message: cloud.showsFiles ? "Select a file to see its link\nand sharing settings."
+                    : "Select an upload to see its link\nand whether it’s still in the Library."
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -956,9 +1100,13 @@ struct CloudUploadInspector: View {
                 VStack(alignment: .leading, spacing: InspectorMetrics.headerSpacing) {
                     sectionTitle("Selection")
                     VStack(spacing: InspectorMetrics.rowSpacing) {
-                        detailRow("Screenshots", value: "\(uploads.filter { !$0.isVideo }.count)")
-                        detailRow("Recordings", value: "\(uploads.filter(\.isVideo).count)")
-                        detailRow("Cloud only", value: "\(uploads.filter { local[$0.id] == nil }.count)")
+                        if cloud.showsFiles {
+                            detailRow("Files", value: "\(uploads.count)")
+                        } else {
+                            detailRow("Screenshots", value: "\(uploads.filter { !$0.isVideo }.count)")
+                            detailRow("Recordings", value: "\(uploads.filter(\.isVideo).count)")
+                            detailRow("Cloud only", value: "\(uploads.filter { local[$0.id] == nil }.count)")
+                        }
                         if sizes.count == uploads.count {
                             detailRow("Size", value: ByteCountFormatter.string(fromByteCount: Int64(sizes.reduce(0, +)), countStyle: .file))
                         }
