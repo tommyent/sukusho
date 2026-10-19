@@ -600,7 +600,7 @@ final class CloudUploader: NSObject {
 
     /// POST /api/multipart, one PUT per part read from disk, then complete.
     /// Any failure, cancellation included, aborts the parts on the Worker.
-    nonisolated private static func multipartUpload(
+    nonisolated static func multipartUpload(
         fileURL: URL,
         size: Int,
         metadata: UploadMetadata,
