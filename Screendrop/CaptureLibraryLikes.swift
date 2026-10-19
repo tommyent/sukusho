@@ -137,7 +137,7 @@ final class LikesLibraryModel {
                 self.copyLinks(selected)
             },
             LibraryMenuItem(title: "Show Upload in Cloud", isEnabled: single != nil) {
-                if let single { CloudLibraryModel.shared.showUpload(id: single.uploadId) }
+                if let single { CloudLibraryModel.shared.showUpload(id: single.uploadId, mediaType: single.upload.mediaType) }
             },
         ]
     }

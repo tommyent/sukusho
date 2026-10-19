@@ -269,12 +269,13 @@ final class CloudLibraryModel {
     }
 
     /// Shows the Cloud or Files page with one upload selected, as from a comment.
-    func showUpload(id: String) {
+    func showUpload(id: String, mediaType: String) {
         CaptureLibraryModel.shared.searchText = ""
         CommentsLibraryModel.shared.setShown(false)
         LikesLibraryModel.shared.setShown(false)
         isShown = true
-        showsFiles = uploads.first { $0.id == id }?.isFile ?? false
+        // The feed's own type: the uploads list may not have loaded yet.
+        showsFiles = mediaType == "file"
         selection = [id]
     }
 
