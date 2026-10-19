@@ -321,6 +321,8 @@ struct CloudSettingsPane: View {
     private func copyToken() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(uploadToken, forType: .string)
+        // nspasteboard.org's secret marker: clipboard history apps skip the copy instead of saving the token.
+        NSPasteboard.general.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
         tokenCopied = true
         Task {
             try? await Task.sleep(for: .seconds(2))
