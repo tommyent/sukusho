@@ -66,7 +66,8 @@ final class CloudUploader: NSObject {
         allowAnonymousComments: Bool? = nil,
         password: String? = nil,
         replacingUploadID: String? = nil,
-        chapterData: Data? = nil
+        chapterData: Data? = nil,
+        asFile: Bool = false
     ) async throws -> CloudUploadResult {
         let allowAnonymousComments = allowAnonymousComments ?? CloudUploadPreferences.lastAnonymousComments
         try Task.checkCancellation()
@@ -122,7 +123,6 @@ final class CloudUploader: NSObject {
                 replacementSnapshot = snapshot
                 fileURL = snapshot
             }
-            let fileData = try Data(contentsOf: fileURL, options: .mappedIfSafe)
             let dimensions: (width: Int, height: Int)?
             let duration: Double?
 
@@ -135,11 +135,10 @@ final class CloudUploader: NSObject {
                 duration = nil
             }
 
-            let result = try await Self.streamUpload(
-                data: fileData,
+            let metadata = UploadMetadata(
                 filename: fileName,
                 contentType: mimeType,
-                mediaType: isVideo ? "video" : "image",
+                mediaType: asFile ? "file" : isVideo ? "video" : "image",
                 width: dimensions?.width,
                 height: dimensions?.height,
                 duration: duration,
@@ -147,20 +146,34 @@ final class CloudUploader: NSObject {
                 socialEnabled: socialEnabled,
                 expiresAt: expiresAt,
                 allowAnonymousComments: allowAnonymousComments,
-                password: password,
-                replacingUploadID: replacingUploadID,
-                creds: creds,
-                progress: { [weak self] fraction in
-                    Task { @MainActor [weak self] in
-                        guard self?.activeTasks[itemID]?.id == operationID else { return }
-                        self?.uploadProgress[itemID] = fraction
-                        DockExportProgressCoordinator.shared.update(
-                            dockProgressID,
-                            progress: fraction
-                        )
-                    }
-                }
+                password: password
             )
+            let progress: @Sendable (Double) -> Void = { [weak self] fraction in
+                Task { @MainActor [weak self] in
+                    guard self?.activeTasks[itemID]?.id == operationID else { return }
+                    self?.uploadProgress[itemID] = fraction
+                    DockExportProgressCoordinator.shared.update(
+                        dockProgressID,
+                        progress: fraction
+                    )
+                }
+            }
+            // Past Cloudflare's 100 MB request cap a body goes up in parts. Files
+            // always do, so an older Worker refuses them instead of mislabelling them.
+            let size = try fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            let result: CloudUploadResult
+            if replacingUploadID == nil, asFile || size >= Self.multipartThreshold {
+                do {
+                    result = try await Self.multipartUpload(fileURL: fileURL, size: size, metadata: metadata,
+                                                            creds: creds, progress: progress)
+                } catch CloudUploadError.multipartUnavailable where !asFile {
+                    result = try await Self.streamUpload(data: Data(contentsOf: fileURL, options: .mappedIfSafe),
+                        metadata: metadata, replacingUploadID: nil, creds: creds, progress: progress)
+                }
+            } else {
+                result = try await Self.streamUpload(data: Data(contentsOf: fileURL, options: .mappedIfSafe),
+                    metadata: metadata, replacingUploadID: replacingUploadID, creds: creds, progress: progress)
+            }
 
             return (result, fileURL, transcriptData, frozenChapters, redactions)
         }
@@ -202,7 +215,7 @@ final class CloudUploader: NSObject {
             }
             uploadedURLs[itemID] = result.url
             if result.expiryIgnored { showExpiryIgnoredNotice() }
-            if replacingUploadID == nil, mimeTypeForFile(uploadedFileURL).hasPrefix("video/") {
+            if replacingUploadID == nil, !asFile, mimeTypeForFile(uploadedFileURL).hasPrefix("video/") {
                 scheduleSidecarUpload(uploadID: result.id, fileURL: uploadedFileURL, transcriptData: transcriptData, chapterData: frozenChapters, title: title, mediaKey: result.mediaKey, creds: creds)
             }
             ScreenshotHistoryStore.shared.recordCloudUpload(id: itemID, cloudURL: result.url, redactions: redactions)
@@ -511,17 +524,7 @@ final class CloudUploader: NSObject {
     /// Worker can stream the body directly to R2 without buffering.
     nonisolated private static func streamUpload(
         data: Data,
-        filename: String,
-        contentType: String,
-        mediaType: String,
-        width: Int?,
-        height: Int?,
-        duration: Double?,
-        title: String?,
-        socialEnabled: Bool,
-        expiresAt: Date?,
-        allowAnonymousComments: Bool,
-        password: String?,
+        metadata: UploadMetadata,
         replacingUploadID: String?,
         creds: CloudCredentials,
         progress: (@Sendable (Double) -> Void)?
@@ -538,21 +541,7 @@ final class CloudUploader: NSObject {
         request.httpMethod = "PUT"
         request.timeoutInterval = 300
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
-        request.setValue(filename, forHTTPHeaderField: "X-Filename")
-        request.setValue(mediaType, forHTTPHeaderField: "X-Media-Type")
-
-        if let width { request.setValue(String(width), forHTTPHeaderField: "X-Width") }
-        if let height { request.setValue(String(height), forHTTPHeaderField: "X-Height") }
-        if let duration { request.setValue(String(duration), forHTTPHeaderField: "X-Duration") }
-        if let title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let encoded = title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? title
-            request.setValue(encoded, forHTTPHeaderField: "X-Title")
-        }
-        request.setValue(socialEnabled ? "true" : "false", forHTTPHeaderField: "X-Social-Enabled")
-        if let password, !CloudUploadList.isValidPassword(password) { throw CloudUploadError.invalidPassword }
-        CloudUploadList.applyShareSettings(to: &request, expiresAt: expiresAt, allowAnonymousComments: allowAnonymousComments,
-                                           password: password)
+        try metadata.apply(to: &request)
 
         let progressDelegate = UploadProgressDelegate { sent, expected in
             guard expected > 0 else { return }
@@ -575,6 +564,15 @@ final class CloudUploader: NSObject {
             throw CloudUploadError.serverError(http.statusCode, body)
         }
 
+        progress?(1)
+        return try await uploadResult(responseData, metadata: metadata, creds: creds)
+    }
+
+    /// The upload's JSON answer, the same from PUT /api/upload and a completed multipart upload.
+    nonisolated private static func uploadResult(_ responseData: Data, metadata: UploadMetadata,
+                                                 creds: CloudCredentials) async throws -> CloudUploadResult {
+        let password = metadata.password
+        let expiresAt = metadata.expiresAt
         let json = try JSONSerialization.jsonObject(with: responseData) as? [String: Any]
         guard let id = json?["id"] as? String,
               let shareURL = json?["url"] as? String,
@@ -590,9 +588,116 @@ final class CloudUploader: NSObject {
             throw CloudUploadError.passwordUnsupported
         }
 
-        progress?(1)
         return CloudUploadResult(id: id, url: shareURL, filename: name, size: fileSize, mediaKey: json?["mediaKey"] as? String,
                                  expiryIgnored: CloudUploadList.expiryIgnored(requested: expiresAt, response: json))
+    }
+
+    // MARK: - Multipart Upload
+
+    nonisolated static let multipartThreshold = 90_000_000
+    /// R2 wants equal parts but the last, each at least 5 MiB; 50 MiB stays under the 100 MB request cap.
+    nonisolated static let multipartPartSize = 50 * 1024 * 1024
+
+    /// POST /api/multipart, one PUT per part read from disk, then complete.
+    /// Any failure, cancellation included, aborts the parts on the Worker.
+    nonisolated private static func multipartUpload(
+        fileURL: URL,
+        size: Int,
+        metadata: UploadMetadata,
+        creds: CloudCredentials,
+        progress: (@Sendable (Double) -> Void)?
+    ) async throws -> CloudUploadResult {
+        let workerBase = normalizeWorkerURL(creds.workerURL)
+        let token = creds.uploadToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let createURL = URL(string: workerBase + "/api/multipart") else { throw CloudUploadError.invalidURL }
+
+        var create = URLRequest(url: createURL)
+        create.httpMethod = "POST"
+        create.timeoutInterval = 60
+        create.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        try metadata.apply(to: &create)
+        create.setValue(String(size), forHTTPHeaderField: "X-Size")
+        let (createData, createResponse) = try await URLSession.shared.data(for: create)
+        let createStatus = (createResponse as? HTTPURLResponse)?.statusCode
+        if createStatus == 404 { throw CloudUploadError.multipartUnavailable }
+        guard createStatus == 201 else {
+            throw CloudUploadError.serverError(createStatus ?? 0, String(data: createData, encoding: .utf8) ?? "")
+        }
+        guard let created = try JSONSerialization.jsonObject(with: createData) as? [String: Any],
+              let id = created["id"] as? String, CloudPreviewCache.isSafeID(id),
+              let uploadBase = URL(string: workerBase + "/api/multipart/" + id) else {
+            throw CloudUploadError.invalidResponse
+        }
+
+        do {
+            let handle = try FileHandle(forReadingFrom: fileURL)
+            defer { try? handle.close() }
+            var parts: [[String: Any]] = []
+            var sent = 0
+            repeat {
+                try Task.checkCancellation()
+                let chunk = try handle.read(upToCount: multipartPartSize) ?? Data()
+                let partNumber = parts.count + 1
+                var request = URLRequest(url: uploadBase.appending(path: String(partNumber)))
+                request.httpMethod = "PUT"
+                request.timeoutInterval = 300
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+                let alreadySent = sent
+                let delegate = UploadProgressDelegate { partSent, _ in
+                    guard size > 0 else { return }
+                    progress?(min(1, Double(alreadySent + Int(partSent)) / Double(size)))
+                }
+                let (data, response) = try await sendPart(request, chunk, delegate: delegate)
+                guard (response as? HTTPURLResponse)?.statusCode == 200,
+                      let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let etag = json["etag"] as? String else {
+                    throw CloudUploadError.serverError((response as? HTTPURLResponse)?.statusCode ?? 0,
+                                                       String(data: data, encoding: .utf8) ?? "")
+                }
+                parts.append(["partNumber": partNumber, "etag": etag])
+                sent += chunk.count
+            } while sent < size
+
+            var complete = URLRequest(url: uploadBase.appending(path: "complete"))
+            complete.httpMethod = "POST"
+            complete.timeoutInterval = 120
+            complete.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            complete.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            complete.httpBody = try JSONSerialization.data(withJSONObject: ["parts": parts])
+            let (data, response) = try await URLSession.shared.data(for: complete)
+            guard (response as? HTTPURLResponse)?.statusCode == 201 else {
+                throw CloudUploadError.serverError((response as? HTTPURLResponse)?.statusCode ?? 0,
+                                                   String(data: data, encoding: .utf8) ?? "")
+            }
+            progress?(1)
+            return try await uploadResult(data, metadata: metadata, creds: creds)
+        } catch {
+            // Detached so a cancelled upload still frees its parts.
+            Task.detached(priority: .utility) {
+                var abort = URLRequest(url: uploadBase)
+                abort.httpMethod = "DELETE"
+                abort.timeoutInterval = 30
+                abort.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                _ = try? await URLSession.shared.data(for: abort)
+            }
+            throw error
+        }
+    }
+
+    /// One part, tried up to three times when the network drops, so a long
+    /// upload doesn't start over for one bad moment.
+    nonisolated private static func sendPart(_ request: URLRequest, _ chunk: Data,
+                                             delegate: UploadProgressDelegate) async throws -> (Data, URLResponse) {
+        var attempt = 1
+        while true {
+            do {
+                return try await URLSession.shared.upload(for: request, from: chunk, delegate: delegate)
+            } catch let error as URLError where error.code != .cancelled && attempt < 3 {
+                attempt += 1
+                try await Task.sleep(for: .seconds(2 * attempt))
+            }
+        }
     }
 
     // MARK: - Helpers
@@ -616,7 +721,7 @@ final class CloudUploader: NSObject {
         case "mp4", "m4v": return "video/mp4"
         case "mkv": return "video/x-matroska"
         case "webm": return "video/webm"
-        default: return "application/octet-stream"
+        default: return UTType(filenameExtension: ext)?.preferredMIMEType ?? "application/octet-stream"
         }
     }
 
@@ -691,6 +796,7 @@ enum CloudUploadError: LocalizedError {
     case commentsUnavailable
     case likesUnavailable
     case invalidPassword
+    case multipartUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -714,8 +820,43 @@ enum CloudUploadError: LocalizedError {
             "This Worker doesn’t support passwords yet, so the upload was removed instead of being shared without one. Update the Worker, or share without a password."
         case .invalidPassword:
             "Passwords can be 1 to 128 characters."
+        case .multipartUnavailable:
+            "This Worker can’t take files yet. Update the Worker to share files."
         case .shareSettingsUnavailable:
             "The Worker couldn’t change this upload. Update the Worker if it predates link expiry; otherwise the upload is no longer there."
         }
+    }
+}
+
+/// What an upload sends alongside its bytes: the same headers on PUT /api/upload and POST /api/multipart.
+nonisolated struct UploadMetadata: Sendable {
+    let filename: String
+    let contentType: String
+    let mediaType: String
+    let width: Int?
+    let height: Int?
+    let duration: Double?
+    let title: String?
+    let socialEnabled: Bool
+    let expiresAt: Date?
+    let allowAnonymousComments: Bool
+    let password: String?
+
+    func apply(to request: inout URLRequest) throws {
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        request.setValue(filename, forHTTPHeaderField: "X-Filename")
+        request.setValue(mediaType, forHTTPHeaderField: "X-Media-Type")
+
+        if let width { request.setValue(String(width), forHTTPHeaderField: "X-Width") }
+        if let height { request.setValue(String(height), forHTTPHeaderField: "X-Height") }
+        if let duration { request.setValue(String(duration), forHTTPHeaderField: "X-Duration") }
+        if let title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let encoded = title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? title
+            request.setValue(encoded, forHTTPHeaderField: "X-Title")
+        }
+        request.setValue(socialEnabled ? "true" : "false", forHTTPHeaderField: "X-Social-Enabled")
+        if let password, !CloudUploadList.isValidPassword(password) { throw CloudUploadError.invalidPassword }
+        CloudUploadList.applyShareSettings(to: &request, expiresAt: expiresAt, allowAnonymousComments: allowAnonymousComments,
+                                           password: password)
     }
 }
