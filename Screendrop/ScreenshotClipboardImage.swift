@@ -16,6 +16,10 @@ enum ScreenshotClipboardImage {
         item.setString(url.absoluteString, forType: .fileURL)
         item.setData(data, forType: dataType)
         if let tiff { item.setData(tiff, forType: .tiff) }
+        // nspasteboard.org's source marker, so clipboard history apps credit Sukusho, not the frontmost app.
+        if let bundleID = Bundle.main.bundleIdentifier {
+            item.setString(bundleID, forType: NSPasteboard.PasteboardType("org.nspasteboard.source"))
+        }
         return item
     }
 
