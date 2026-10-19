@@ -629,6 +629,7 @@ final class CloudUploader: NSObject {
             throw CloudUploadError.invalidResponse
         }
 
+        var completionSent = false
         do {
             let handle = try FileHandle(forReadingFrom: fileURL)
             defer { try? handle.close() }
@@ -637,6 +638,8 @@ final class CloudUploader: NSObject {
             repeat {
                 try Task.checkCancellation()
                 let chunk = try handle.read(upToCount: multipartPartSize) ?? Data()
+                // Only a 0-byte file sends an empty part; a file cut short while it went up stops here.
+                if chunk.isEmpty, size > 0 { throw CocoaError(.fileReadCorruptFile, userInfo: [NSURLErrorKey: fileURL]) }
                 let partNumber = parts.count + 1
                 var request = URLRequest(url: uploadBase.appending(path: String(partNumber)))
                 request.httpMethod = "PUT"
@@ -665,6 +668,7 @@ final class CloudUploader: NSObject {
             complete.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             complete.setValue("application/json", forHTTPHeaderField: "Content-Type")
             complete.httpBody = try JSONSerialization.data(withJSONObject: ["parts": parts])
+            completionSent = true
             let (data, response) = try await URLSession.shared.data(for: complete)
             guard (response as? HTTPURLResponse)?.statusCode == 201 else {
                 throw CloudUploadError.serverError((response as? HTTPURLResponse)?.statusCode ?? 0,
@@ -673,13 +677,15 @@ final class CloudUploader: NSObject {
             progress?(1)
             return try await uploadResult(data, metadata: metadata, creds: creds)
         } catch {
-            // Detached so a cancelled upload still frees its parts.
-            Task.detached(priority: .utility) {
+            // Detached so a cancelled upload still frees its parts. Once complete
+            // went out the Worker may have published it, so take that down too.
+            Task.detached(priority: .utility) { [completionSent] in
                 var abort = URLRequest(url: uploadBase)
                 abort.httpMethod = "DELETE"
                 abort.timeoutInterval = 30
                 abort.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                 _ = try? await URLSession.shared.data(for: abort)
+                if completionSent { try? await performDelete(uploadID: id, creds: creds) }
             }
             throw error
         }
