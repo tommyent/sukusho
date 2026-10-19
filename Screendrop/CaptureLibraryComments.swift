@@ -138,7 +138,7 @@ final class CommentsLibraryModel {
             LibraryMenuItem(title: "Open on Share Page", isEnabled: single != nil) { if let single { self.open(single) } },
             LibraryMenuItem(title: "Copy Text", isEnabled: !selected.isEmpty) { self.copyText(selected) },
             LibraryMenuItem(title: "Show Upload in Cloud", isEnabled: single != nil) {
-                if let single { CloudLibraryModel.shared.showUpload(id: single.uploadId) }
+                if let single { CloudLibraryModel.shared.showUpload(id: single.uploadId, mediaType: single.upload.mediaType) }
             },
             LibraryMenuItem(title: selected.count > 1 ? "Delete Comments…" : "Delete Comment…",
                             isEnabled: !selected.isEmpty && !isBusy, startsGroup: true) {

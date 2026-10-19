@@ -29,11 +29,13 @@ nonisolated struct CloudUpload: Identifiable, Hashable, Sendable, Decodable {
     var supportsShareSettings = false
 
     var isVideo: Bool { mediaType == "video" }
+    /// Shared from the Library's Files page rather than captured.
+    var isFile: Bool { mediaType == "file" }
     var name: String {
         guard let title, !title.isEmpty else { return filename }
         return title
     }
-    var kindTitle: String { isVideo ? "Recording" : "Screenshot" }
+    var kindTitle: String { isFile ? "File" : isVideo ? "Recording" : "Screenshot" }
 }
 
 extension CloudUpload {

@@ -82,6 +82,8 @@ enum CloudUploadPreferences {
 /// change here applies to this share only.
 struct CloudUploadOptionsPopover: View {
     let suggestedTitle: String
+    /// Off for several files at once: one title can't name them all.
+    var showsTitle = true
     let onConfirm: (CloudUploadOptions) -> Void
 
     @State private var title: String
@@ -92,8 +94,9 @@ struct CloudUploadOptionsPopover: View {
     @State private var password = ""
     @Environment(\.dismiss) private var dismiss
 
-    init(suggestedTitle: String = "", onConfirm: @escaping (CloudUploadOptions) -> Void) {
+    init(suggestedTitle: String = "", showsTitle: Bool = true, onConfirm: @escaping (CloudUploadOptions) -> Void) {
         self.suggestedTitle = suggestedTitle
+        self.showsTitle = showsTitle
         self.onConfirm = onConfirm
         _title = State(initialValue: suggestedTitle)
     }
@@ -103,14 +106,16 @@ struct CloudUploadOptionsPopover: View {
             Text("Share Options")
                 .font(.headline)
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Title")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                TextField("Title", text: $title, prompt: Text("Untitled"))
-                    .labelsHidden()
-                    .textFieldStyle(.roundedBorder)
-                    .lineLimit(1)
+            if showsTitle {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Title")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    TextField("Title", text: $title, prompt: Text("Untitled"))
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .lineLimit(1)
+                }
             }
 
             HStack {
