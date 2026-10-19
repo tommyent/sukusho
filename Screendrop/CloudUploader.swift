@@ -848,9 +848,18 @@ nonisolated struct UploadMetadata: Sendable {
     let allowAnonymousComments: Bool
     let password: String?
 
+    /// URLSession drops header bytes outside ASCII, so such names (and any `%`)
+    /// go percent-encoded; the Worker decodes once. Plain ASCII names stay as
+    /// they are, which older Workers still read.
+    static func headerFilename(_ name: String) -> String {
+        let plain = CharacterSet(charactersIn: Unicode.Scalar(0x20)...Unicode.Scalar(0x7E)).subtracting(CharacterSet(charactersIn: "%"))
+        guard !name.unicodeScalars.allSatisfy(plain.contains) else { return name }
+        return name.addingPercentEncoding(withAllowedCharacters: plain.subtracting(CharacterSet(charactersIn: " "))) ?? name
+    }
+
     func apply(to request: inout URLRequest) throws {
         request.setValue(contentType, forHTTPHeaderField: "Content-Type")
-        request.setValue(filename, forHTTPHeaderField: "X-Filename")
+        request.setValue(Self.headerFilename(filename), forHTTPHeaderField: "X-Filename")
         request.setValue(mediaType, forHTTPHeaderField: "X-Media-Type")
 
         if let width { request.setValue(String(width), forHTTPHeaderField: "X-Width") }
