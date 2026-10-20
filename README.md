@@ -100,7 +100,7 @@ Capture a display, a window, an area, a scrolling region, or just the text in an
 | `Command + Shift + 3` | Capture an area |
 | `Command + Shift + 4` | Scrolling Capture |
 | `Command + Shift + 5` | Capture Text to the clipboard |
-| `Command + Shift + O` | Screen recording |
+| `Command + Shift + 6` | Screen recording |
 
 `Command + Shift + 3`, `4` and `5` are also macOS's own screenshot shortcuts, so turn those off in macOS's keyboard shortcut settings (under Screenshots) for Sukusho to get them.
 

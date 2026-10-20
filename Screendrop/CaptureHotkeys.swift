@@ -186,7 +186,7 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
     }
 
     /// ⌘⇧ chords picked by the user (2026-10-19): 1 Fullscreen, 2 Window,
-    /// 3 Area, 4 Scrolling, 5 Text and O Recording. ⌘⇧3, ⌘⇧4 and ⌘⇧5 are also
+    /// 3 Area, 4 Scrolling, 5 Text and 6 Recording. ⌘⇧3, ⌘⇧4 and ⌘⇧5 are also
     /// macOS's screenshot shortcuts, which must be off for them to register.
     /// Only actions the user never recorded follow a default, so recorded
     /// shortcuts stay.
@@ -199,7 +199,7 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
         case .area:
             HotkeyShortcut(modifiers: [.command, .shift], keyCode: Int(kVK_ANSI_3))
         case .screenRecording:
-            HotkeyShortcut(modifiers: [.command, .shift], keyCode: Int(kVK_ANSI_O))
+            HotkeyShortcut(modifiers: [.command, .shift], keyCode: Int(kVK_ANSI_6))
         case .textCapture:
             HotkeyShortcut(modifiers: [.command, .shift], keyCode: Int(kVK_ANSI_5))
         case .scrollingCapture:
