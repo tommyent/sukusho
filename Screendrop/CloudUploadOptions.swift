@@ -173,8 +173,9 @@ struct CloudUploadOptionsPopover: View {
                     let options = CloudUploadOptions(title: title, socialEnabled: socialEnabled, expiry: expiry,
                                                      allowAnonymousComments: allowAnonymousComments,
                                                      password: password.isEmpty ? nil : password)
-                    dismiss()
+                    // Confirm first: the Files sheet's dismissal clears the files it would upload.
                     onConfirm(options)
+                    dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(!password.isEmpty && !CloudUploadList.isValidPassword(password))
