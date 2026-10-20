@@ -95,14 +95,14 @@ Capture a display, a window, an area, a scrolling region, or just the text in an
 
 | Default shortcut | Action |
 | --- | --- |
-| `Command + Shift + 3` | Capture full screen |
-| `Command + Shift + 4` | Capture an area |
-| `Command + Shift + 5` | Screen recording |
+| `Command + Shift + 1` | Capture full screen |
 | `Command + Shift + 2` | Capture a window |
-| `Command + Shift + 6` | Capture Text to the clipboard |
-| `Command + Shift + 7` | Scrolling Capture |
+| `Command + Shift + 3` | Capture an area |
+| `Command + Shift + 4` | Scrolling Capture |
+| `Command + Shift + 5` | Capture Text to the clipboard |
+| `Command + Shift + O` | Screen recording |
 
-The first three are macOS's own screenshot shortcuts, so turn those off in macOS's keyboard shortcut settings (under Screenshots) for Sukusho to get them.
+`Command + Shift + 3`, `4` and `5` are also macOS's own screenshot shortcuts, so turn those off in macOS's keyboard shortcut settings (under Screenshots) for Sukusho to get them.
 
 Change any of them in **Settings → General**. If a shortcut can't be registered, Settings says why and keeps the previous one.
 
