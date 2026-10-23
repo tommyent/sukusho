@@ -7,8 +7,11 @@ nonisolated struct RecordingDesktopFilter {
     let excludedApplications: [SCRunningApplication]
     let excludedWindows: [SCWindow]
 
+    /// `overlayWindowIDs` are the app's own windows that Studio redraws
+    /// from data, the camera bubble and the recording pen, so the capture
+    /// always leaves them out.
     init(content: SCShareableContent, includesAppWindows: Bool, cleanDesktop: Bool,
-         cameraPreviewWindowID: CGWindowID? = nil) {
+         overlayWindowIDs: Set<CGWindowID> = []) {
         self.cleanDesktop = cleanDesktop
         excludedApplications = content.applications.filter {
             Self.excludesApplication(
@@ -24,7 +27,7 @@ nonisolated struct RecordingDesktopFilter {
                 layer: $0.windowLayer,
                 cleanDesktop: cleanDesktop,
                 windowID: $0.windowID,
-                cameraPreviewWindowID: cameraPreviewWindowID,
+                overlayWindowIDs: overlayWindowIDs,
                 includesAppWindows: includesAppWindows
             )
         }
@@ -54,10 +57,10 @@ nonisolated struct RecordingDesktopFilter {
     }
 
     static func excludesWindow(bundleIdentifier: String?, layer: Int, cleanDesktop: Bool,
-                               windowID: CGWindowID? = nil, cameraPreviewWindowID: CGWindowID? = nil,
+                               windowID: CGWindowID? = nil, overlayWindowIDs: Set<CGWindowID> = [],
                                includesAppWindows: Bool = true) -> Bool {
-        if let cameraPreviewWindowID, windowID == cameraPreviewWindowID {
-            // An exception would re-include the bubble when the whole app is already excluded.
+        if let windowID, overlayWindowIDs.contains(windowID) {
+            // An exception would re-include the overlay when the whole app is already excluded.
             return includesAppWindows
         }
         return cleanDesktop && bundleIdentifier == "com.apple.finder"
