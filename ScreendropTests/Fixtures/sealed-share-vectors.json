@@ -1,0 +1,35 @@
+{
+  "format" : "Sukusho sealed share v1: AES-256-GCM (CryptoKit seal, WebCrypto decrypt), 12-byte nonce || ciphertext || 16-byte tag, no AAD; plaintext = 4-byte big-endian header length, UTF-8 JSON {contentType, filename}, file bytes; key = 32 bytes base64url without padding, after # in the link.",
+  "vectors" : [
+    {
+      "contentType" : "image/png",
+      "file" : "89504e470d0a1a0a6e6f74207265616c6c7920706978656c73",
+      "filename" : "Screenshot 2026-10-23 at 09.41.png",
+      "key" : "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+      "name" : "PNG screenshot",
+      "nonce" : "000102030405060708090a0b",
+      "plaintext" : "0000004b7b22636f6e74656e7454797065223a22696d6167652f706e67222c2266696c656e616d65223a2253637265656e73686f7420323032362d31302d32332061742030392e34312e706e67227d89504e470d0a1a0a6e6f74207265616c6c7920706978656c73",
+      "sealed" : "000102030405060708090a0b4702d650bec7a174e335f2e5c5bd011de6f4bd1699163e1b5d4895eb7a4b2c906779c299c1a07ffd569e5dbeebf54d5d802a08e22ef691ea0da1072828cec7ddd05db25ae3e808552d7ada0088ad736168c48e6f7c7959069289bebe1d91d5e1b2d8298fdc24a469974b1177ca471faf8591665dcf747e95"
+    },
+    {
+      "contentType" : "application/pdf",
+      "file" : "255044462d312e370a2525454f460a",
+      "filename" : "Rechnung März – 日本.pdf",
+      "key" : "__79_Pv6-fj39vX08_Lx8O_u7ezr6uno5-bl5OPi4eA",
+      "name" : "PDF with a non-ASCII name",
+      "nonce" : "a5a5a5a5a5a5a5a5a5a5a5a5",
+      "plaintext" : "0000004c7b22636f6e74656e7454797065223a226170706c69636174696f6e2f706466222c2266696c656e616d65223a22526563686e756e67204dc3a4727a20e2809320e697a5e69cac2e706466227d255044462d312e370a2525454f460a",
+      "sealed" : "a5a5a5a5a5a5a5a5a5a5a5a561bf43f1c58061d524da9827d537ef8f910109b717bfd161049c305de01d856acba68afdf686f6bf428242c7261e1ac32c8518bfe7e4f2289aca74abfcc947fdacba7348ca31bbf6926ad8adc5805e56cc02e54e640e43d44202cfbd77a0e91f5033f4ffba7defe327523de17dab8d"
+    },
+    {
+      "contentType" : "text/plain",
+      "file" : "",
+      "filename" : "empty.txt",
+      "key" : "QkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkI",
+      "name" : "Empty file",
+      "nonce" : "000000000000000000000000",
+      "plaintext" : "000000337b22636f6e74656e7454797065223a22746578742f706c61696e222c2266696c656e616d65223a22656d7074792e747874227d",
+      "sealed" : "000000000000000000000000f4b2ffca27aee688f73b2e6145dfcc21b4dcdc504c4fd3cfe348829cf76039199d332217ac15552595aee32362e0d98855bfeb4dd7506067ef331ccc2d43b50ccd5d46c5f435ae"
+    }
+  ]
+}
