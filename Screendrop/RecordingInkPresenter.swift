@@ -9,6 +9,7 @@
 //
 
 import AppKit
+import Carbon.HIToolbox
 
 @Observable
 @MainActor
@@ -31,6 +32,7 @@ final class RecordingInkPresenter {
     @ObservationIgnored private var holdTimer: Timer?
     @ObservationIgnored private var fadeTimer: Timer?
     @ObservationIgnored private var onPenChange: ((Bool) -> Void)?
+    @ObservationIgnored private var penHotKeyIDs: [UInt32] = []
 
     private init() {}
 
@@ -79,7 +81,24 @@ final class RecordingInkPresenter {
         isPenOn = isOn
         panel?.ignoresMouseEvents = !isOn
         inkView?.needsDisplay = true
+        setPenKeys(isOn)
         onPenChange?(isOn)
+    }
+
+    /// Esc and ⌘Z belong to the pen only while it is on; the rest of the
+    /// time they reach the app being recorded.
+    private func setPenKeys(_ isOn: Bool) {
+        penHotKeyIDs.forEach(HotkeyManager.shared.unregisterTemporaryHotKey)
+        penHotKeyIDs = []
+        guard isOn else { return }
+        penHotKeyIDs = [
+            HotkeyManager.shared.registerTemporaryHotKey(HotkeyShortcut(modifiers: [], keyCode: Int(kVK_Escape))) {
+                RecordingInkPresenter.shared.setPen(false)
+            },
+            HotkeyManager.shared.registerTemporaryHotKey(HotkeyShortcut(modifiers: [.command], keyCode: Int(kVK_ANSI_Z))) {
+                RecordingInkPresenter.shared.undoLastStroke()
+            }
+        ].compactMap { $0 }
     }
 
     /// Undo takes the last stroke still showing off at once.

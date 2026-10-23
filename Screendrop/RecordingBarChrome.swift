@@ -109,6 +109,7 @@ enum BarTooltipID: String {
     case cleanDesktop
     case close
 
+    case pen
     case pauseResume
     case restart
     case stop

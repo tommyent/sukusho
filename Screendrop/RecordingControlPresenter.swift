@@ -17,6 +17,7 @@ import SwiftUI
 
 struct RecordingSessionControls: View {
     @State private var manager = ScreenRecordingManager.shared
+    @State private var ink = RecordingInkPresenter.shared
     @State private var showsDiscardConfirmation = false
 
     private var isPaused: Bool {
@@ -36,6 +37,19 @@ struct RecordingSessionControls: View {
             MicrophoneMeter()
 
             BarDivider()
+
+            BarActionButton(
+                id: .pen,
+                title: ink.isPenOn ? "Stop drawing (esc)" : "Draw on screen",
+                systemImage: "pencil.tip",
+                tint: ink.isPenOn ? BarMetrics.recordTint : BarMetrics.activeTint,
+                accessibility: ink.isPenOn
+                    ? "Stop drawing. Escape also stops, and Command-Z undoes the last stroke."
+                    : "Draw on screen. Drags draw instead of clicking until you stop drawing."
+            ) {
+                ink.togglePen()
+            }
+            .disabled(manager.state != .recording)
 
             BarActionButton(
                 id: .pauseResume,
