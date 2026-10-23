@@ -628,7 +628,7 @@ final class CloudUploader: NSObject {
         }
         // A Worker from before encrypted links publishes the sealed bytes as a page nobody can open.
         if metadata.encrypted, json?["encrypted"] as? Bool != true {
-            try? await performDelete(uploadID: id, creds: creds)
+            do { try await performDelete(uploadID: id, creds: creds) } catch { throw CloudUploadError.encryptionUnsupportedNotRemoved }
             throw CloudUploadError.encryptionUnsupported
         }
 
@@ -850,6 +850,7 @@ enum CloudUploadError: LocalizedError {
     case encryptionUnavailable
     case encryptedTooLarge
     case encryptionUnsupported
+    case encryptionUnsupportedNotRemoved
 
     var errorDescription: String? {
         switch self {
@@ -881,6 +882,8 @@ enum CloudUploadError: LocalizedError {
             "Encrypted links are for files up to 32 MB for now, because the whole file is decrypted in the viewer’s browser. Share this one without encryption."
         case .encryptionUnsupported:
             "This Worker doesn’t support encrypted links yet, so the upload was removed. Update the Worker, or share without encryption."
+        case .encryptionUnsupportedNotRemoved:
+            "This Worker doesn’t support encrypted links yet, and removing the upload failed, so it may still be published as a page nobody can open. Delete it from the Library’s Cloud page, then update the Worker."
         case .shareSettingsUnavailable:
             "The Worker couldn’t change this upload. Update the Worker if it predates link expiry; otherwise the upload is no longer there."
         }
