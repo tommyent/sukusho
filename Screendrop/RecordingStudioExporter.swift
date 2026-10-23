@@ -1575,8 +1575,6 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
     /// through the screen or camera composited over it as a dark outline.
     /// The shape is filled off to the left of everything visible and the
     /// shadow offset back by the same distance, so only the shadow lands.
-    /// The contexts here are unscaled, so the user-space shift equals the
-    /// base-space shadow offset.
     private static func castShadow(
         of path: CGPath,
         in context: CGContext,
@@ -1588,9 +1586,16 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
         let shape = path.boundingBoxOfPath
         guard !shape.isNull, !visible.isNull else { return }
         let shift = (shape.maxX - visible.minX + 2).rounded(.up)
+        // The fill moves in user space, but shadow offsets are in base space,
+        // which for these bitmap contexts is device space.
+        let back = CGSize(width: shift, height: 0).applying(context.userSpaceToDeviceSpaceTransform)
         context.saveGState()
         context.translateBy(x: -shift, y: 0)
-        context.setShadow(offset: CGSize(width: offset.width + shift, height: offset.height), blur: blur, color: color)
+        context.setShadow(
+            offset: CGSize(width: offset.width + back.width, height: offset.height + back.height),
+            blur: blur,
+            color: color
+        )
         context.addPath(path)
         context.setFillColor(CGColor(gray: 0, alpha: 1))
         context.fillPath()
