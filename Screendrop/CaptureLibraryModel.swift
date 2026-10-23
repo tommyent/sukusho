@@ -237,7 +237,13 @@ final class CaptureLibraryModel {
             updateVisibleItems()
             isLoading = false
             hasLoaded = true
+            CaptureLibraryIndex.shared.sync(result)
         }
+    }
+
+    /// New text arrived; a search may now match more captures.
+    func textIndexDidChange() {
+        if !searchText.isEmpty { updateVisibleItems() }
     }
 
     private func scheduleSearch() {
@@ -250,15 +256,14 @@ final class CaptureLibraryModel {
     }
 
     private func updateVisibleItems() {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let query = CaptureLibraryQuery(searchText)
         let filter = filter ?? .all
+        let text = CaptureLibraryIndex.shared.foldedText
         let visible = items.filter { item in
             let matchesKind = filter == .all || (filter == .recordings ? item.isVideo : !item.isVideo)
             let matchesTag = tagFilter.map(item.tags.contains) ?? true
-            return matchesKind && matchesTag && (query.isEmpty || item.name.localizedStandardContains(query)
-                || item.title.localizedStandardContains(query)
-                || item.fileURL.lastPathComponent.localizedStandardContains(query)
-                || item.tags.contains { $0.localizedStandardContains(query) })
+            return matchesKind && matchesTag && query.matches(
+                fields: [item.name, item.title, item.fileURL.lastPathComponent] + item.tags, foldedText: text[item.id])
         }.sorted { lhs, rhs in
             switch sortOrder {
             case .newest where lhs.createdAt != rhs.createdAt: return lhs.createdAt > rhs.createdAt

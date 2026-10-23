@@ -4,6 +4,7 @@ import SwiftUI
 struct CaptureLibraryInspector: View {
     let model: CaptureLibraryModel
     @State private var byteCount: Int64?
+    @State private var showsAllText = false
     private var items: [CaptureLibraryItem] { model.selectedItems }
 
     var body: some View {
@@ -21,6 +22,7 @@ struct CaptureLibraryInspector: View {
                             header(item)
                             Divider()
                             information(item)
+                            recognizedText(item)
                         } else {
                             multipleSelection
                         }
@@ -35,6 +37,7 @@ struct CaptureLibraryInspector: View {
         }
         .task(id: items.map(\.thumbnailKey)) {
             byteCount = nil
+            showsAllText = false
             let urls = items.flatMap(\.ownedFileURLs)
             let scan = Task.detached(priority: .utility) {
                 urls.reduce(Int64(0)) { total, url in
@@ -102,6 +105,63 @@ struct CaptureLibraryInspector: View {
                 detailRow("Size on disk", value: sizeText)
                 detailRow("Created", value: item.createdAt.formatted(date: .abbreviated, time: .shortened))
                 detailRow("Modified", value: item.modifiedAt.formatted(date: .abbreviated, time: .shortened))
+            }
+        }
+    }
+
+    /// The words the Library read in the capture, as paragraphs; while
+    /// searching, paragraphs with a match come first.
+    @ViewBuilder
+    private func recognizedText(_ item: CaptureLibraryItem) -> some View {
+        let index = CaptureLibraryIndex.shared
+        let all = index.entries[item.id]?.displayParagraphs ?? []
+        if !all.isEmpty {
+            let paragraphs = CaptureLibraryQuery(model.searchText).ordered(all)
+            let preview = 3
+            // About six lines of the inspector's width.
+            let isLong = paragraphs.count > preview
+                || paragraphs.prefix(preview).contains { $0.count > 240 || $0.split(separator: "\n").count > 6 }
+            Divider()
+            VStack(alignment: .leading, spacing: InspectorMetrics.headerSpacing) {
+                HStack {
+                    sectionTitle("Text")
+                    Spacer(minLength: 4)
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(all.joined(separator: "\n\n"), forType: .string)
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help("Copy Text")
+                    .accessibilityLabel("Copy Text")
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(paragraphs.prefix(showsAllText ? paragraphs.count : preview).enumerated()), id: \.offset) { _, paragraph in
+                        Text(paragraph)
+                            // Only code keeps its line breaks.
+                            .font(paragraph.contains("\n") ? .system(size: 11, design: .monospaced) : .system(size: 12))
+                            .lineLimit(showsAllText ? nil : 6)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .textSelection(.enabled)
+                if isLong {
+                    Button(showsAllText ? "Show Less" : "Show All") { showsAllText.toggle() }
+                        .buttonStyle(.link)
+                        .font(.system(size: 12))
+                }
+            }
+        } else if index.pendingIDs.contains(item.id) {
+            Divider()
+            VStack(alignment: .leading, spacing: InspectorMetrics.headerSpacing) {
+                sectionTitle("Text")
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.mini)
+                    Text("Reading text…").foregroundStyle(.secondary)
+                }
+                .font(.system(size: 12))
             }
         }
     }

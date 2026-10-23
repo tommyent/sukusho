@@ -45,6 +45,7 @@ enum ScreendropPreferences {
     static let recordingTeleprompterScriptKey = "recordingTeleprompterScript"
     static let recordingTeleprompterLineCountKey = "recordingTeleprompterLineCount"
     static let revealExportInFinderKey = "revealExportInFinder"
+    static let libraryReadsTextKey = "libraryReadsText"
 
     private static let defaultCompressionQuality = 0.8
 
@@ -201,6 +202,12 @@ enum ScreendropPreferences {
         return UserDefaults.standard.bool(forKey: lowResolutionEditorPreviewKey)
     }
     
+    /// Whether the Library reads the words in captures so search finds them.
+    /// Defaults to on; off stops reading but keeps what was read.
+    static var libraryReadsText: Bool {
+        UserDefaults.standard.object(forKey: libraryReadsTextKey) as? Bool ?? true
+    }
+
     /// Whether a finished Studio export selects the file in Finder. An export
     /// is a deliberate "hand me the file" action, so this defaults to on.
     static var revealExportInFinder: Bool {

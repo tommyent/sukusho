@@ -73,6 +73,8 @@ Add-at-playhead checks in that harness cover corrected surviving narration after
 
 Chapter-marker tests cover current-chapter boundaries and neighbour/end clamping in edited time. The recording harness checks local drag previews, one saved source-anchor move across cuts/speed changes, list updates, paused seeking, one-step Undo/Redo, reopen persistence and invalid/no-op moves. Native marker clicks, drags, tooltips, accessibility adjustment, crown hit priority, label truncation and zoom/scroll remain for the approved live round.
 
+`CaptureLibraryTextTests` checks the Library text index's rules: stale fingerprints and versions, newest-first reading, deletions versus an empty scan, the on-disk store, case- and accent-insensitive search over recognized text, matching paragraphs first, and paragraph grouping (wrapped prose, indented code, columns, stray fragments). Real Vision reading runs in a windowless harness against the actual app sources: `python3 scripts/check-editor-idle-save.py /path/to/DevDerivedData scripts/check-library-text-index.swift` reads a synthetic screenshot and recording (frames plus saved captions), searches them, re-reads an edit, and checks the switch and deletion. Vision fails in the VMPal VM, so run it on a Mac.
+
 `FreeToUseMusicTests` compiles the production API client, picker model and preview
 controller. Saved category/search JSON checks all category pages, ordered artist
 and tag pairs, premium filtering, media URL validation, credit text, search query

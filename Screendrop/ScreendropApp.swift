@@ -168,6 +168,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // The Library's Grid/List choice, saved before List view went (sd-vkd).
         UserDefaults.standard.removeObject(forKey: "captureLibrary.layout")
         ImageTextWarmUp.shared.start()
+        CaptureLibraryIndex.shared.start()
         RecordingRecoveryCoordinator.recoverInterruptedRecordings()
         let launchEvent = NSAppleEventManager.shared().currentAppleEvent
         let launchReason = launchEvent?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue
