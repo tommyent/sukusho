@@ -1040,9 +1040,12 @@ struct CloudUploadInspector: View {
                             if let size = upload.size {
                                 detailRow("Size", value: ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))
                             }
-                            if let views = upload.views { detailRow("Views", value: views.formatted()) }
-                            if let comments = upload.commentCount { detailRow("Comments", value: comments.formatted()) }
-                            if let likes = upload.likeCount { detailRow("Likes", value: likes.formatted()) }
+                            // A received file has no share page, so nobody views, comments or likes it.
+                            if !upload.isReceived {
+                                if let views = upload.views { detailRow("Views", value: views.formatted()) }
+                                if let comments = upload.commentCount { detailRow("Comments", value: comments.formatted()) }
+                                if let likes = upload.likeCount { detailRow("Likes", value: likes.formatted()) }
+                            }
                         }
                     }
                     Divider()
