@@ -328,7 +328,7 @@ nonisolated final class PointerActivityRecorder: NSObject, @unchecked Sendable {
             capture.artwork = capturedArtwork
             capture.ink = RecordingInkStroke.mapped(
                 ink,
-                widthBase: min(mapping.captureRect.width, mapping.captureRect.height),
+                widthScale: { inkWidthScale(at: $0, mapping: mapping) },
                 time: {
                     videoTime(for: $0, sessionStartUptime: sessionStartUptime,
                               duration: duration, pauseIntervals: completedPauses)
@@ -750,6 +750,21 @@ nonisolated final class PointerActivityRecorder: NSObject, @unchecked Sendable {
             x: (screenPoint.x - captureRect.minX) / captureRect.width,
             y: (screenPoint.y - captureRect.minY) / captureRect.height
         )
+    }
+
+    /// Screen points to a fraction of the movie's shorter side. A resized
+    /// window is scaled inside the fixed output surface, and its ink with it.
+    private func inkWidthScale(at uptime: TimeInterval, mapping: RecordingInputMapping) -> Double? {
+        if tracksDynamicGeometry,
+           let geometry = geometry(at: uptime),
+           geometry.screenRect.width > 0,
+           geometry.contentRect.width > 0 {
+            let surfaceSide = Double(min(mapping.pixelWidth, mapping.pixelHeight)) / geometry.scaleFactor
+            guard surfaceSide > 0 else { return nil }
+            return geometry.contentRect.width / geometry.screenRect.width / surfaceSide
+        }
+        let side = min(mapping.captureRect.width, mapping.captureRect.height)
+        return side > 0 ? 1 / side : nil
     }
 
     private func geometry(at uptime: TimeInterval) -> CapturedFrameGeometry? {

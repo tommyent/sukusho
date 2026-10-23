@@ -88,18 +88,20 @@ struct RecordingInkTests {
             RecordingInkCapture(samples: [.init(uptime: 14, point: CGPoint(x: 100, y: 700)),
                                           .init(uptime: 15, point: CGPoint(x: 300, y: 900))], widthInPoints: 6)
         ]
+        // The window shrinks to half its size at 12.5 s: ink drawn after
+        // that is thicker relative to the movie, as its content is.
         let strokes = RecordingInkStroke.mapped(
-            captures, widthBase: 600,
+            captures, widthScale: { $0 < 12.5 ? 1.0 / 600 : 1.0 / 300 },
             time: { $0 >= 10 && $0 <= 20 ? $0 - 10 : nil },
             point: { point, _ in (x: point.x / 800, y: point.y / 600) }
         )
 
         #expect(strokes.count == 2)
         let first = try #require(strokes.first)
-        #expect(first.id == captures[0].id && first.width == 0.01 && first.hideTime == 4)
+        #expect(first.id == captures[0].id && abs(first.width - 0.01) < 1e-12 && first.hideTime == 4)
         #expect(first.points == [RecordingInkPoint(t: 1, x: 0.25, y: 0.25), RecordingInkPoint(t: 2, x: 0.5, y: 0.5)])
         // Still on screen at Stop: it stays to the end.
-        #expect(strokes[1].hideTime == nil && strokes[1].startTime == 3)
+        #expect(strokes[1].hideTime == nil && strokes[1].startTime == 3 && abs(strokes[1].width - 0.02) < 1e-12)
     }
 
     @Test func turningThePenOnDropsOnlyItsOwnBarClick() {

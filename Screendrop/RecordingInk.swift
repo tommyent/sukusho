@@ -64,14 +64,17 @@ nonisolated extension RecordingInkStroke {
     /// Samples the movie can't place (before its first frame) are dropped,
     /// and so is a stroke drawn wholly outside the recorded window, which
     /// would replay as nothing. A hide after Stop keeps the stroke.
+    /// `widthScale` turns screen points at an uptime into a fraction of the
+    /// movie's shorter side; it is taken at the stroke's first sample.
     static func mapped(
         _ captures: [RecordingInkCapture],
-        widthBase: Double,
+        widthScale: (TimeInterval) -> Double?,
         time: (TimeInterval) -> TimeInterval?,
         point: (CGPoint, TimeInterval) -> (x: Double, y: Double)?
     ) -> [RecordingInkStroke] {
-        guard widthBase > 0 else { return [] }
-        return captures.compactMap { capture in
+        captures.compactMap { capture in
+            guard let firstUptime = capture.samples.first?.uptime,
+                  let scale = widthScale(firstUptime), scale > 0 else { return nil }
             let points = capture.samples.compactMap { sample -> RecordingInkPoint? in
                 guard let t = time(sample.uptime), let p = point(sample.point, sample.uptime) else { return nil }
                 return RecordingInkPoint(t: t, x: p.x, y: p.y)
@@ -79,7 +82,7 @@ nonisolated extension RecordingInkStroke {
             guard points.contains(where: { (0...1).contains($0.x) && (0...1).contains($0.y) }) else { return nil }
             return RecordingInkStroke(
                 id: capture.id,
-                width: capture.widthInPoints / widthBase,
+                width: capture.widthInPoints * scale,
                 points: points,
                 hideTime: capture.hideUptime.flatMap(time),
                 fadesOut: capture.fadesOut
