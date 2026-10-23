@@ -303,7 +303,7 @@ private struct LibraryInspectorTitle: View {
 
     var body: some View {
         if model.renameSession?.id == item.id, model.renameSession?.location == .inspector {
-            CaptureNameField(id: item.id, location: .inspector, font: .system(size: 16, weight: .semibold), placeholder: item.dateTitle)
+            CaptureNameField(id: item.id, location: .inspector, font: .system(size: 16, weight: .semibold), placeholder: item.automaticTitle)
         } else {
             // A plain button rather than a tap gesture, so assistive
             // technologies can press it too.

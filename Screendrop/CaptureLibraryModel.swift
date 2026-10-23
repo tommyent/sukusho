@@ -63,6 +63,8 @@ nonisolated struct CaptureLibraryItem: Identifiable, Equatable, Sendable {
     let thumbnailKey: String
     /// The app and window it was taken from, when known.
     var source: CaptureSource? = nil
+    /// Apple Intelligence's title, shown while the user hasn't named it.
+    var modelTitle: String? = nil
 
     var ownedURL: URL { session?.directoryURL ?? fileURL }
     /// Everything the capture keeps on disk: a recording's package, or a
@@ -75,12 +77,14 @@ nonisolated struct CaptureLibraryItem: Identifiable, Equatable, Sendable {
         pixelWidth > 0 && pixelHeight > 0 ? "\(pixelWidth) × \(pixelHeight)" : "Unknown"
     }
     var kindTitle: String { session != nil ? "Recording Project" : isVideo ? "Video" : "Screenshot" }
-    /// The custom name, else when it was taken (sd-8oa).
-    var title: String { customName ?? dateTitle }
+    /// The custom name, else the model's title, else when it was taken (sd-8oa).
+    var title: String { CaptureInsightRules.title(customName: customName, modelTitle: modelTitle, dateTitle: dateTitle) }
+    /// What an unnamed capture is called, and what clearing a name brings back.
+    var automaticTitle: String { modelTitle ?? dateTitle }
     var dateTitle: String { Self.dateTitle(createdAt) }
-    /// Under the title: the date once a custom name has taken its place,
-    /// else the dimensions. A video's pill shows its length.
-    var subtitle: String { customName == nil ? dimensions : dateTitle }
+    /// Under the title: the date once a name or model title has taken its
+    /// place, else the dimensions. A video's pill shows its length.
+    var subtitle: String { customName == nil && modelTitle == nil ? dimensions : dateTitle }
 
     /// "Oct 13, 8:13 AM", with the year when it isn't this year's.
     static func dateTitle(_ date: Date) -> String {
@@ -232,7 +236,7 @@ final class CaptureLibraryModel {
             } onCancel: { scan.cancel() }
             guard !Task.isCancelled else { return }
             let (result, recordingsListed) = scanned
-            items = result
+            items = Self.titled(result)
             savedNames.removeAll()
             screenshotCount = result.lazy.filter { !$0.isVideo }.count
             tagCounts = result.reduce(into: [:]) { counts, item in
@@ -250,6 +254,21 @@ final class CaptureLibraryModel {
     /// New text arrived; a search may now match more captures.
     func textIndexDidChange() {
         if !searchText.isEmpty { updateVisibleItems() }
+    }
+
+    /// A model title arrived, or titles were switched on or off.
+    func insightsDidChange() {
+        items = Self.titled(items)
+        updateVisibleItems()
+    }
+
+    private static func titled(_ items: [CaptureLibraryItem]) -> [CaptureLibraryItem] {
+        let index = CaptureLibraryIndex.shared
+        return items.map { item in
+            var item = item
+            item.modelTitle = index.visibleInsight(item.id)?.title
+            return item
+        }
     }
 
     private func scheduleSearch() {

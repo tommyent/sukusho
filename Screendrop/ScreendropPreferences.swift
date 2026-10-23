@@ -46,6 +46,9 @@ enum ScreendropPreferences {
     static let recordingTeleprompterLineCountKey = "recordingTeleprompterLineCount"
     static let revealExportInFinderKey = "revealExportInFinder"
     static let libraryReadsTextKey = "libraryReadsText"
+    static let libraryUsesIntelligenceKey = "libraryUsesIntelligence"
+    static let libraryInsightsIncludeExistingKey = "libraryInsightsIncludeExisting"
+    private static let libraryInsightsSinceKey = "libraryInsightsSince"
 
     private static let defaultCompressionQuality = 0.8
 
@@ -206,6 +209,28 @@ enum ScreendropPreferences {
     /// Defaults to on; off stops reading but keeps what was read.
     static var libraryReadsText: Bool {
         UserDefaults.standard.object(forKey: libraryReadsTextKey) as? Bool ?? true
+    }
+
+    /// Whether Apple Intelligence titles captures and suggests tags, where
+    /// the model is available. Defaults to on.
+    static var libraryUsesIntelligence: Bool {
+        UserDefaults.standard.object(forKey: libraryUsesIntelligenceKey) as? Bool ?? true
+    }
+
+    /// Whether captures from before `libraryInsightsSince` get titles and
+    /// suggestions too. Off until the user asks, since there can be many.
+    static var libraryInsightsIncludeExisting: Bool {
+        UserDefaults.standard.bool(forKey: libraryInsightsIncludeExistingKey)
+    }
+
+    /// Captures taken from this moment on are titled automatically. Fixed
+    /// the first time it's read, when the model first runs.
+    static var libraryInsightsSince: Date {
+        let stored = UserDefaults.standard.double(forKey: libraryInsightsSinceKey)
+        if stored > 0 { return Date(timeIntervalSinceReferenceDate: stored) }
+        let now = Date()
+        UserDefaults.standard.set(now.timeIntervalSinceReferenceDate, forKey: libraryInsightsSinceKey)
+        return now
     }
 
     /// Whether a finished Studio export selects the file in Finder. An export

@@ -475,7 +475,7 @@ struct LibraryCellContent: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 5) {
                 if isRenaming(item) {
-                    CaptureNameField(id: item.id, location: .card, font: .system(size: 13, weight: .medium), placeholder: item.dateTitle)
+                    CaptureNameField(id: item.id, location: .card, font: .system(size: 13, weight: .medium), placeholder: item.automaticTitle)
                 } else {
                     Text(item.title).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.middle)
                         .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.cellSpace)) } action: { onTitleFrame($0) }
