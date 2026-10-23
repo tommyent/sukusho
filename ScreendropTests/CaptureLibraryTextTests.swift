@@ -41,8 +41,22 @@ struct CaptureLibraryTextTests {
 
     @Test func deletedCapturesLeaveTheIndexButAnEmptyScanKeepsIt() {
         let entryIDs = ["kept", "deleted"]
-        #expect(CaptureTextIndexPlan.removed(entryIDs: entryIDs, liveIDs: ["kept", "new"]) == ["deleted"])
-        #expect(CaptureTextIndexPlan.removed(entryIDs: entryIDs, liveIDs: []).isEmpty)
+        #expect(CaptureTextIndexPlan.removed(entryIDs: entryIDs, liveIDs: ["kept", "new"], isComplete: true) == ["deleted"])
+        #expect(CaptureTextIndexPlan.removed(entryIDs: entryIDs, liveIDs: [], isComplete: true).isEmpty)
+    }
+
+    @Test func aPartialScanKeepsEveryFile() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = CaptureTextIndexStore(directory: directory)
+        for id in ["recording", "screenshot"] {
+            try store.save(CaptureTextEntry(id: id, fingerprint: "\(id):1", paragraphs: ["text"]))
+        }
+        // history.json failed to read, or a row didn't decode: only the recording was scanned.
+        store.remove(ids: CaptureTextIndexPlan.removed(entryIDs: store.loadAll().keys, liveIDs: ["recording"], isComplete: false))
+        #expect(store.loadAll().keys.sorted() == ["recording", "screenshot"])
+        store.remove(ids: CaptureTextIndexPlan.removed(entryIDs: store.loadAll().keys, liveIDs: ["recording"], isComplete: true))
+        #expect(store.loadAll().keys.sorted() == ["recording"])
     }
 
     @Test func storeSavesLoadsRemovesAndRebuilds() throws {

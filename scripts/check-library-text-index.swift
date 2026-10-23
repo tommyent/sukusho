@@ -178,10 +178,16 @@ struct LibraryTextIndexChecks {
         try await waitUntil("deleted capture's entry removed") {
             index.entries[secondID] == nil && !FileManager.default.fileExists(atPath: store.url(for: secondID).path)
         }
-        index.sync([])
+        index.sync([], isComplete: true)
         try await Task.sleep(for: .milliseconds(500))
         try check(index.entries[firstID] != nil && index.entries[recordingID] != nil, "An empty scan wiped the index")
         try check(store.loadAll().keys.sorted() == [firstID, recordingID].sorted(), "An empty scan removed index files")
-        print("CHECK: delete and empty scan")
+        // History or the Recordings folder read in part: nothing missing is removed.
+        index.sync(CaptureLibraryModel.shared.items.filter { $0.id != firstID }, isComplete: false)
+        try await Task.sleep(for: .milliseconds(500))
+        try check(index.entries[firstID] != nil && FileManager.default.fileExists(atPath: store.url(for: firstID).path),
+                  "A partial scan removed an entry")
+        CaptureLibraryModel.shared.refresh()
+        print("CHECK: delete, empty scan and partial scan")
     }
 }

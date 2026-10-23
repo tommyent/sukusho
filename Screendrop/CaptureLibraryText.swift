@@ -48,10 +48,12 @@ nonisolated enum CaptureTextIndexPlan {
         .sorted { $0.createdAt > $1.createdAt }
     }
 
-    /// Entries whose capture is gone. An empty scan more likely means History
-    /// failed to load than that every capture was deleted, so it removes nothing.
-    static func removed(entryIDs: some Sequence<String>, liveIDs: Set<String>) -> [String] {
-        liveIDs.isEmpty ? [] : entryIDs.filter { !liveIDs.contains($0) }
+    /// Entries whose capture is gone. Only a complete scan can say that: one
+    /// where History and the Recordings folder both read in full. An empty
+    /// scan more likely means a failed load than a Library emptied at once,
+    /// so it removes nothing either.
+    static func removed(entryIDs: some Sequence<String>, liveIDs: Set<String>, isComplete: Bool) -> [String] {
+        !isComplete || liveIDs.isEmpty ? [] : entryIDs.filter { !liveIDs.contains($0) }
     }
 }
 

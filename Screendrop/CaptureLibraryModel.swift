@@ -214,6 +214,7 @@ final class CaptureLibraryModel {
         let history = ScreenshotHistoryStore.shared.items.map(CaptureLibraryHistorySnapshot.init)
         let directory = ScreenshotHistoryStore.historyDirectory
         let activeSessionPath = ScreenRecordingManager.shared.activeSessionDirectoryURL?.standardizedFileURL.path
+        let historyLoaded = ScreenshotHistoryStore.shared.isFullyLoaded
         isLoading = true
         refreshTask = Task {
             // Coalesce capture completion, project saves and window activation.
@@ -222,10 +223,11 @@ final class CaptureLibraryModel {
             let scan = Task.detached(priority: .userInitiated) {
                 CaptureLibraryScanner.scan(history: history, historyDirectory: directory, excludingSessionPath: activeSessionPath)
             }
-            let result = await withTaskCancellationHandler {
+            let scanned = await withTaskCancellationHandler {
                 await scan.value
             } onCancel: { scan.cancel() }
             guard !Task.isCancelled else { return }
+            let (result, recordingsListed) = scanned
             items = result
             savedNames.removeAll()
             screenshotCount = result.lazy.filter { !$0.isVideo }.count
@@ -237,7 +239,7 @@ final class CaptureLibraryModel {
             updateVisibleItems()
             isLoading = false
             hasLoaded = true
-            CaptureLibraryIndex.shared.sync(result)
+            CaptureLibraryIndex.shared.sync(result, isComplete: historyLoaded && recordingsListed)
         }
     }
 
@@ -288,11 +290,14 @@ final class CaptureLibraryModel {
 }
 
 nonisolated enum CaptureLibraryScanner {
-    static func scan(history: [CaptureLibraryHistorySnapshot], historyDirectory: URL, excludingSessionPath: String?) -> [CaptureLibraryItem] {
+    /// The captures, and whether every recording package could be listed.
+    static func scan(history: [CaptureLibraryHistorySnapshot], historyDirectory: URL,
+                     excludingSessionPath: String?) -> (items: [CaptureLibraryItem], recordingsListed: Bool) {
         let grouped = Dictionary(grouping: history.filter { $0.sessionPath != nil }) {
             URL(fileURLWithPath: $0.sessionPath!, isDirectory: true).standardizedFileURL.path
         }
-        var sessions = Dictionary(RecordingSessionStore.allSessions().map {
+        let listed = try? RecordingSessionStore.listSessions()
+        var sessions = Dictionary((listed ?? []).map {
             ($0.directoryURL.standardizedFileURL.path, $0)
         }, uniquingKeysWith: { first, _ in first })
         for path in grouped.keys {
@@ -301,7 +306,7 @@ nonisolated enum CaptureLibraryScanner {
         }
         var entries: [CaptureLibraryItem] = []
         for (path, session) in sessions {
-            guard !Task.isCancelled else { return [] }
+            guard !Task.isCancelled else { return ([], false) }
             guard path != excludingSessionPath else { continue }
             let manifest = session.loadCaptureManifest()
             let metadata = session.loadProjectMetadata()
@@ -328,7 +333,7 @@ nonisolated enum CaptureLibraryScanner {
             ))
         }
         for row in history where row.sessionPath == nil {
-            guard !Task.isCancelled else { return [] }
+            guard !Task.isCancelled else { return ([], false) }
             let url = historyDirectory.appendingPathComponent(row.fileName)
             guard FileManager.default.fileExists(atPath: url.path) else { continue }
             let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
@@ -341,7 +346,7 @@ nonisolated enum CaptureLibraryScanner {
                 thumbnailKey: "\(url.path):\(modified.timeIntervalSince1970)"
             ))
         }
-        return entries
+        return (entries, listed != nil)
     }
 
     static func sizeOnDisk(of url: URL) -> Int64 {

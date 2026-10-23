@@ -368,10 +368,18 @@ nonisolated enum RecordingSessionStore {
     }
 
     static func allSessions() -> [RecordingSession] {
-        let urls = (try? FileManager.default.contentsOfDirectory(
-            at: recordingsDirectory,
-            includingPropertiesForKeys: nil
-        )) ?? []
+        (try? listSessions()) ?? []
+    }
+
+    /// Throws when the Recordings folder exists but can't be listed; a
+    /// missing folder just means no recordings yet.
+    static func listSessions() throws -> [RecordingSession] {
+        let urls: [URL]
+        do {
+            urls = try FileManager.default.contentsOfDirectory(at: recordingsDirectory, includingPropertiesForKeys: nil)
+        } catch CocoaError.fileReadNoSuchFile {
+            return []
+        }
         return urls
             .filter { RecordingSession.isSessionDirectory($0) }
             .map { RecordingSession(directoryURL: $0) }

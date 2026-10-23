@@ -25,6 +25,7 @@ final class CaptureLibraryIndex {
     @ObservationIgnored private var isLoaded = false
     @ObservationIgnored private var started = false
     @ObservationIgnored private var latestItems: [CaptureLibraryItem]?
+    @ObservationIgnored private var latestIsComplete = false
     @ObservationIgnored private var queue: [CaptureLibraryItem] = []
     @ObservationIgnored private var inFlight: CaptureLibraryItem?
     /// Fingerprints that couldn't be read this session, so an unreadable
@@ -45,20 +46,22 @@ final class CaptureLibraryIndex {
             foldedText = loaded.mapValues(Self.fold)
             isLoaded = true
             CaptureLibraryModel.shared.textIndexDidChange()
-            if let latestItems { sync(latestItems) } else { CaptureLibraryModel.shared.refresh() }
+            if let latestItems { sync(latestItems, isComplete: latestIsComplete) } else { CaptureLibraryModel.shared.refresh() }
         }
     }
 
     func settingsDidChange() {
-        if let latestItems { sync(latestItems) }
+        if let latestItems { sync(latestItems, isComplete: latestIsComplete) }
     }
 
     /// Forgets captures that are gone and queues every capture whose text is
-    /// missing or stale.
-    func sync(_ items: [CaptureLibraryItem]) {
+    /// missing or stale. `isComplete` is false when History or the Recordings
+    /// folder couldn't be read in full, so missing captures may still exist.
+    func sync(_ items: [CaptureLibraryItem], isComplete: Bool) {
         latestItems = items
+        latestIsComplete = isComplete
         guard isLoaded else { return }
-        let gone = CaptureTextIndexPlan.removed(entryIDs: entries.keys, liveIDs: Set(items.map(\.id)))
+        let gone = CaptureTextIndexPlan.removed(entryIDs: entries.keys, liveIDs: Set(items.map(\.id)), isComplete: isComplete)
         if !gone.isEmpty {
             for id in gone {
                 entries[id] = nil
@@ -108,7 +111,7 @@ final class CaptureLibraryIndex {
                 unreadable.insert(item.thumbnailKey)
             }
             // Re-plans, so a capture edited while it was read is read again.
-            if let latestItems { sync(latestItems) }
+            if let latestItems { sync(latestItems, isComplete: latestIsComplete) }
         }
         queue = []
         updatePending()
