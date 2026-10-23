@@ -222,7 +222,7 @@ extension CaptureLibraryModel {
             return [
                 LibraryMenuItem(title: "Copy Cloud Link", startsGroup: true) { self.copyLink(item) },
                 LibraryMenuItem(title: "Open Shared Capture", isEnabled: URL(string: link) != nil) {
-                    if let url = URL(string: link) { NSWorkspace.shared.open(url) }
+                    CloudShareLinks.open(link)
                 },
                 LibraryMenuItem(title: "Delete from Cloud…", isEnabled: !isBusy) { self.pendingCloudDelete = item },
             ]
@@ -237,8 +237,7 @@ extension CaptureLibraryModel {
 
     func copyLink(_ item: CaptureLibraryItem) {
         guard let link = item.cloudURL else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(link, forType: .string)
+        CloudShareLinks.copy([link])
     }
 
     func upload(_ item: CaptureLibraryItem, options: CloudUploadOptions) {
@@ -254,10 +253,9 @@ extension CaptureLibraryModel {
             let result = try await CloudUploader.shared.upload(itemID: id, fileURL: item.fileURL,
                 title: options.trimmedTitleOrNil, socialEnabled: options.socialEnabled,
                 expiresAt: options.expiry.date(), allowAnonymousComments: options.allowAnonymousComments,
-                password: options.password)
+                password: options.password, encrypt: options.encrypted)
             ScreenshotHistoryStore.shared.setLibraryCloudURL(id: id, cloudURL: result.url)
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(result.url, forType: .string)
+            CloudShareLinks.copy([result.url])
             if item.isVideo { ScreenshotPreviewStack.shared.dismissVideo(for: item.ownedURL) }
             self.refresh()
         }

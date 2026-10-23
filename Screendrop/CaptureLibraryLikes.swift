@@ -105,16 +105,14 @@ final class LikesLibraryModel {
     }
 
     func open(_ like: CloudLike) {
-        if let url = CloudLikeList.shareLink(for: like) { NSWorkspace.shared.open(url) }
+        if let url = CloudLikeList.shareLink(for: like) { CloudShareLinks.open(url.absoluteString) }
     }
 
     /// The share links of the liked uploads, each once.
     func copyLinks(_ likes: [CloudLike]) {
         var seen: Set<String> = []
         let links = likes.map(\.upload.shareUrl).filter { seen.insert($0).inserted }
-        guard !links.isEmpty else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(links.joined(separator: "\n"), forType: .string)
+        CloudShareLinks.copy(links)
     }
 
     /// The collection's keys and clicks: a double click opens the share

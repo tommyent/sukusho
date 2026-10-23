@@ -30,6 +30,8 @@ nonisolated struct CloudUpload: Identifiable, Hashable, Sendable, Decodable {
     /// The file request a client sent this through; nil for the owner's own
     /// uploads and from Workers before file requests.
     var requestId: String? = nil
+    /// Sealed with CryptoKit: the link opens it only with the key this app adds after `#`.
+    var encrypted: Bool? = nil
 
     var isVideo: Bool { mediaType == "video" }
     /// Shared from the Library's Files page rather than captured.
@@ -46,7 +48,7 @@ nonisolated struct CloudUpload: Identifiable, Hashable, Sendable, Decodable {
 extension CloudUpload {
     private nonisolated enum CodingKeys: String, CodingKey {
         case id, url, title, filename, mediaType, size, duration, createdAt, views, thumbnailUrl
-        case mediaKey, expiresAt, allowAnonymousComments, socialEnabled, hasPassword, commentCount, likeCount, requestId
+        case mediaKey, expiresAt, allowAnonymousComments, socialEnabled, hasPassword, commentCount, likeCount, requestId, encrypted
     }
 
     /// Without format characters, which can reorder or hide what a name shows (a U+202E in
@@ -81,7 +83,8 @@ extension CloudUpload {
             commentCount: try c.decodeIfPresent(Int.self, forKey: .commentCount),
             likeCount: try c.decodeIfPresent(Int.self, forKey: .likeCount),
             supportsShareSettings: c.contains(.expiresAt),
-            requestId: try c.decodeIfPresent(String.self, forKey: .requestId)
+            requestId: try c.decodeIfPresent(String.self, forKey: .requestId),
+            encrypted: try c.decodeIfPresent(Bool.self, forKey: .encrypted)
         )
     }
 }

@@ -199,8 +199,7 @@ struct AnnotationEditorWindow: View {
     private var editingActions: some View {
         if let copiedLink {
             Button {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(copiedLink, forType: .string)
+                CloudShareLinks.copy([copiedLink])
             } label: {
                 Label("Link Copied", systemImage: "checkmark.icloud")
                     .labelStyle(.titleAndIcon)
@@ -479,10 +478,10 @@ struct AnnotationEditorWindow: View {
                     socialEnabled: options.socialEnabled,
                     expiresAt: options.expiry.date(),
                     allowAnonymousComments: options.allowAnonymousComments,
-                    password: options.password
+                    password: options.password,
+                    encrypt: options.encrypted
                 )
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(result.url, forType: .string)
+                CloudShareLinks.copy([result.url])
                 ScreenshotHistoryStore.shared.setCloudURL(for: resultURL, cloudURL: result.url)
                 // An edit made during the upload isn't in the link: the link is
                 // still copied, but Upload stays rather than claiming it's current.

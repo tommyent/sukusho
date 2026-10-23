@@ -110,7 +110,7 @@ final class CommentsLibraryModel {
     }
 
     func open(_ comment: CloudComment) {
-        if let url = CloudCommentList.shareLink(for: comment) { NSWorkspace.shared.open(url) }
+        if let url = CloudCommentList.shareLink(for: comment) { CloudShareLinks.open(url.absoluteString) }
     }
 
     func copyText(_ comments: [CloudComment]) {

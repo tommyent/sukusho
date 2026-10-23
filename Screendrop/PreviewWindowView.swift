@@ -209,8 +209,7 @@ struct PreviewWindowView: View {
                                     socialEnabled: CloudUploadPreferences.lastSocialEnabled,
                                     expiresAt: CloudUploadPreferences.defaultExpiry.date()
                                 )
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(result.url, forType: .string)
+                                CloudShareLinks.copy([result.url])
                                 ScreenshotHistoryStore.shared.setCloudURL(for: item.url, cloudURL: result.url)
                                 if item.kind == .video { previewStack.dismiss(id: item.id) }
                             } catch {

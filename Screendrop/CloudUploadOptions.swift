@@ -17,6 +17,8 @@ struct CloudUploadOptions: Sendable {
     var allowAnonymousComments = true
     /// Nil: anyone with the link can open it.
     var password: String? = nil
+    /// Sealed before upload; the key goes in the link (CloudShareSeal).
+    var encrypted = false
 
     /// `nil` title means "let the worker fall back to the filename (or,
     /// for recordings, the auto-generated 'Screen Recording - …' title)".
@@ -70,6 +72,8 @@ struct CloudUploadOptionsPopover: View {
     let suggestedTitle: String
     /// Off for several files at once: one title can't name them all.
     var showsTitle = true
+    /// Why this share can't be encrypted; nil when it can.
+    var encryptionUnavailable: String? = nil
     let onConfirm: (CloudUploadOptions) -> Void
 
     @State private var title: String
@@ -78,11 +82,15 @@ struct CloudUploadOptionsPopover: View {
     @State private var allowAnonymousComments = CloudUploadPreferences.lastAnonymousComments
     /// Never remembered: each protected link gets its own.
     @State private var password = ""
+    /// Off every time, like the password.
+    @State private var encrypted = false
     @Environment(\.dismiss) private var dismiss
 
-    init(suggestedTitle: String = "", showsTitle: Bool = true, onConfirm: @escaping (CloudUploadOptions) -> Void) {
+    init(suggestedTitle: String = "", showsTitle: Bool = true, encryptionUnavailable: String? = nil,
+         onConfirm: @escaping (CloudUploadOptions) -> Void) {
         self.suggestedTitle = suggestedTitle
         self.showsTitle = showsTitle
+        self.encryptionUnavailable = encryptionUnavailable
         self.onConfirm = onConfirm
         _title = State(initialValue: suggestedTitle)
     }
@@ -125,6 +133,26 @@ struct CloudUploadOptionsPopover: View {
             }
             .help("Visitors need it to open the link. Up to 128 characters.")
 
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Encrypt link")
+                    Spacer()
+                    Toggle("Encrypt link", isOn: $encrypted)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                }
+                .disabled(encryptionUnavailable != nil)
+                .foregroundStyle(encryptionUnavailable == nil ? .primary : .secondary)
+                .help("The file is encrypted on this Mac. Only people with the whole link, which holds the key, can open it.")
+                if let encryptionUnavailable {
+                    Text(encryptionUnavailable)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
             HStack {
                 Text("Allow comments & likes")
                 Spacer()
@@ -158,7 +186,8 @@ struct CloudUploadOptionsPopover: View {
                     CloudUploadPreferences.lastAnonymousComments = allowAnonymousComments
                     let options = CloudUploadOptions(title: title, socialEnabled: socialEnabled, expiry: expiry,
                                                      allowAnonymousComments: allowAnonymousComments,
-                                                     password: password.isEmpty ? nil : password)
+                                                     password: password.isEmpty ? nil : password,
+                                                     encrypted: encrypted && encryptionUnavailable == nil)
                     // Confirm first: the Files sheet's dismissal clears the files it would upload.
                     onConfirm(options)
                     dismiss()
@@ -195,6 +224,7 @@ struct CloudShareDefaultsSection: View {
 /// `Button(action: onUpload) { ... }` at a manual upload/share call site.
 struct CloudUploadButton<Label: View>: View {
     let suggestedTitle: String
+    var encryptionUnavailable: String? = nil
     let onUpload: (CloudUploadOptions) -> Void
     @ViewBuilder let label: () -> Label
 
@@ -207,7 +237,8 @@ struct CloudUploadButton<Label: View>: View {
             label()
         }
         .popover(isPresented: $showingOptions, arrowEdge: .bottom) {
-            CloudUploadOptionsPopover(suggestedTitle: suggestedTitle, onConfirm: onUpload)
+            CloudUploadOptionsPopover(suggestedTitle: suggestedTitle, encryptionUnavailable: encryptionUnavailable,
+                                      onConfirm: onUpload)
         }
     }
 }

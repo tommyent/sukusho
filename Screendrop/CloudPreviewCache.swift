@@ -23,14 +23,14 @@ nonisolated struct CloudPreviewCache: Sendable {
         return URLSession(configuration: configuration)
     }()
 
-    /// The share link's origin with /api/media/:id for recordings or
-    /// /api/image/:id for screenshots, the routes the share page plays from.
+    /// The share link's origin with /api/media/:id for recordings and sealed
+    /// shares, or /api/image/:id for screenshots, the routes the share page reads.
     static func mediaURL(for upload: CloudUpload) -> URL? {
         guard isSafeID(upload.id), let link = URL(string: upload.url),
               var components = URLComponents(url: link, resolvingAgainstBaseURL: false),
               components.scheme == "https" || components.scheme == "http",
               components.host?.isEmpty == false else { return nil }
-        components.path = (upload.isVideo ? "/api/media/" : "/api/image/") + upload.id
+        components.path = (upload.isVideo || upload.encrypted == true ? "/api/media/" : "/api/image/") + upload.id
         components.queryItems = upload.mediaKey.map { [URLQueryItem(name: "v", value: $0)] }
         components.fragment = nil
         return components.url
@@ -71,12 +71,14 @@ nonisolated struct CloudPreviewCache: Sendable {
 
     /// The cached file, downloaded first if it isn't here. `progress` gets
     /// the fraction downloaded about ten times a second. Trimming afterwards
-    /// spares `kept`, the uploads being previewed together.
+    /// spares `kept`, the uploads being previewed together. A sealed share is
+    /// opened with `shareKey`, this Mac's copy of its key.
     func file(for upload: CloudUpload, keeping kept: Set<String> = [],
-              owner: (workerBase: String, token: String)? = nil,
+              owner: (workerBase: String, token: String)? = nil, shareKey: String? = nil,
               progress: @escaping @Sendable (Double) -> Void = { _ in }) async throws -> URL {
         guard let source = Self.mediaURL(for: upload) else { throw CloudPreviewError.badLink }
         if let cached = try cachedFile(for: upload) { return cached }
+        if upload.encrypted == true, shareKey == nil { throw CloudPreviewError.missingKey }
         let manager = FileManager.default
         let directory = folder.appending(path: upload.id, directoryHint: .isDirectory)
         let relay = DownloadRelay()
@@ -96,15 +98,16 @@ nonisolated struct CloudPreviewCache: Sendable {
             // An expired upload's media answers 404 until the daily clean-up deletes it.
             throw CloudPreviewError.status(upload.expiresAt.map { $0 <= .now } == true ? 410 : status)
         }
-        let named = (upload.filename as NSString).pathExtension.filter { $0.isLetter || $0.isNumber }
+        let opened = try (upload.encrypted == true ? shareKey : nil).map { try CloudShareSeal.open(Data(contentsOf: download), key: $0) }
+        let named = ((opened?.filename ?? upload.filename) as NSString).pathExtension.filter { $0.isLetter || $0.isNumber }
         // A received file is served as application/octet-stream; its own name says what it is.
-        let ext = (upload.isReceived && !named.isEmpty ? named : nil)
+        let ext = ((upload.isReceived || opened != nil) && !named.isEmpty ? named : nil)
             ?? response.mimeType.flatMap { UTType(mimeType: $0)?.preferredFilenameExtension }
             ?? (named.isEmpty ? (upload.isVideo ? "mp4" : "png") : named)
         try manager.createDirectory(at: directory, withIntermediateDirectories: true)
         let file = directory.appending(path: Self.fileName(for: upload) + "." + ext)
         do {
-            try manager.moveItem(at: download, to: file)
+            if let opened { try opened.bytes.write(to: file) } else { try manager.moveItem(at: download, to: file) }
             if let mediaKey = upload.mediaKey {
                 try mediaKey.write(to: directory.appending(path: ".media-key"), atomically: true, encoding: .utf8)
             }
@@ -148,10 +151,12 @@ nonisolated struct CloudPreviewCache: Sendable {
 nonisolated enum CloudPreviewError: LocalizedError {
     case badLink
     case status(Int)
+    case missingKey
 
     var errorDescription: String? {
         switch self {
         case .badLink: "Its link doesn’t point to a Worker."
+        case .missingKey: "It’s encrypted, and this Mac doesn’t have its key."
         case .status(404): "It’s no longer in the cloud."
         case .status(410): "Its link has expired."
         case .status(let code): "The Worker answered with HTTP \(code)."

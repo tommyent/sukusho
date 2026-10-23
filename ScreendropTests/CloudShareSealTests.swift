@@ -144,4 +144,13 @@ struct CloudShareSealTests {
         // The fragment changes nothing about which upload a link names.
         #expect(CloudUploadList.uploadID(of: CloudShareSeal.link("https://share.example/0123456789abcdef", key: key)) == "0123456789abcdef")
     }
+
+    @Test func workerSaysWhichUploadsAreSealed() throws {
+        let json = Data(#"{"uploads":[{"id":"a1","url":"https://w.example/a1","filename":"a.png","mediaType":"image","createdAt":"2026-10-23T10:00:00Z","encrypted":true},{"id":"b2","url":"https://w.example/b2","filename":"b.png","mediaType":"image","createdAt":"2026-10-23T10:00:00Z"}],"next":null}"#.utf8)
+        let page = try CloudUploadList.decode(json)
+        #expect(page.uploads.map(\.encrypted) == [true, nil])
+        // Quick Look reads a sealed share from /api/media, as its page does.
+        #expect(CloudPreviewCache.mediaURL(for: page.uploads[0])?.path == "/api/media/a1")
+        #expect(CloudPreviewCache.mediaURL(for: page.uploads[1])?.path == "/api/image/b2")
+    }
 }

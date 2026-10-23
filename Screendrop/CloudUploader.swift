@@ -26,6 +26,8 @@ struct CloudUploadResult: Sendable {
     var mediaKey: String? = nil
     /// An expiry was asked for, but the Worker predates expiry.
     var expiryIgnored = false
+    /// An encrypted upload's key, kept in the Keychain once the upload is final.
+    var shareKey: String? = nil
 }
 
 @MainActor
@@ -67,7 +69,8 @@ final class CloudUploader: NSObject {
         password: String? = nil,
         replacingUploadID: String? = nil,
         chapterData: Data? = nil,
-        asFile: Bool = false
+        asFile: Bool = false,
+        encrypt: Bool = false
     ) async throws -> CloudUploadResult {
         let allowAnonymousComments = allowAnonymousComments ?? CloudUploadPreferences.lastAnonymousComments
         try Task.checkCancellation()
@@ -158,6 +161,16 @@ final class CloudUploader: NSObject {
                     )
                 }
             }
+            if encrypt {
+                // Recordings stay plaintext: their poster, storyboard and seeking need the clear file.
+                guard replacingUploadID == nil, asFile || !isVideo else { throw CloudUploadError.encryptionUnavailable }
+                let result = try await Self.sealedUpload(
+                    fileURL: fileURL, contentType: mimeType, mediaType: asFile ? "file" : "image", title: title,
+                    socialEnabled: socialEnabled, expiresAt: expiresAt, allowAnonymousComments: allowAnonymousComments,
+                    password: password, creds: creds, progress: progress
+                )
+                return (result, fileURL, nil, nil, nil)
+            }
             // Past Cloudflare's 100 MB request cap a body goes up in parts. Files
             // always do, so an older Worker refuses them instead of mislabelling them.
             let size = try fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
@@ -213,6 +226,7 @@ final class CloudUploader: NSObject {
                 try Task.checkCancellation()
                 guard activeTasks[itemID]?.id == operationID else { throw CancellationError() }
             }
+            if let shareKey = result.shareKey { CloudShareKeys.live.save(shareKey, uploadID: result.id) }
             uploadedURLs[itemID] = result.url
             if result.expiryIgnored { showExpiryIgnoredNotice() }
             if replacingUploadID == nil, !asFile, mimeTypeForFile(uploadedFileURL).hasPrefix("video/") {
@@ -287,6 +301,7 @@ final class CloudUploader: NSObject {
             throw CloudUploadError.notConfigured
         }
         try await Self.performDelete(uploadID: uploadID, creds: creds)
+        CloudShareKeys.live.remove(uploadID: uploadID)
     }
 
     /// The link is up and works, but an older Worker dropped its expiry.
@@ -569,6 +584,29 @@ final class CloudUploader: NSObject {
         return try await uploadResult(responseData, metadata: metadata, creds: creds)
     }
 
+    /// Seals the file on this Mac (CloudShareSeal) and sends only the ciphertext. The Worker
+    /// gets the name for the owner's list, never the type or dimensions; the key stays in
+    /// the result for the Keychain.
+    nonisolated static func sealedUpload(
+        fileURL: URL, contentType: String, mediaType: String, title: String?, socialEnabled: Bool,
+        expiresAt: Date?, allowAnonymousComments: Bool, password: String?, creds: CloudCredentials,
+        progress: (@Sendable (Double) -> Void)?
+    ) async throws -> CloudUploadResult {
+        let size = try fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        guard size <= CloudShareSeal.maxFileBytes else { throw CloudUploadError.encryptedTooLarge }
+        let sealed = try CloudShareSeal.seal(Data(contentsOf: fileURL, options: .mappedIfSafe),
+                                             filename: fileURL.lastPathComponent, contentType: contentType)
+        let metadata = UploadMetadata(
+            filename: fileURL.lastPathComponent, contentType: "application/octet-stream", mediaType: mediaType,
+            width: nil, height: nil, duration: nil, title: title, socialEnabled: socialEnabled,
+            expiresAt: expiresAt, allowAnonymousComments: allowAnonymousComments, password: password, encrypted: true
+        )
+        var result = try await streamUpload(data: sealed.combined, metadata: metadata, replacingUploadID: nil,
+                                            creds: creds, progress: progress)
+        result.shareKey = sealed.key
+        return result
+    }
+
     /// The upload's JSON answer, the same from PUT /api/upload and a completed multipart upload.
     nonisolated private static func uploadResult(_ responseData: Data, metadata: UploadMetadata,
                                                  creds: CloudCredentials) async throws -> CloudUploadResult {
@@ -587,6 +625,11 @@ final class CloudUploader: NSObject {
         if CloudUploadList.passwordIgnored(requested: password, response: json) {
             try? await performDelete(uploadID: id, creds: creds)
             throw CloudUploadError.passwordUnsupported
+        }
+        // A Worker from before encrypted links publishes the sealed bytes as a page nobody can open.
+        if metadata.encrypted, json?["encrypted"] as? Bool != true {
+            try? await performDelete(uploadID: id, creds: creds)
+            throw CloudUploadError.encryptionUnsupported
         }
 
         return CloudUploadResult(id: id, url: shareURL, filename: name, size: fileSize, mediaKey: json?["mediaKey"] as? String,
@@ -804,6 +847,9 @@ enum CloudUploadError: LocalizedError {
     case likesUnavailable
     case invalidPassword
     case multipartUnavailable
+    case encryptionUnavailable
+    case encryptedTooLarge
+    case encryptionUnsupported
 
     var errorDescription: String? {
         switch self {
@@ -829,6 +875,12 @@ enum CloudUploadError: LocalizedError {
             "Passwords can be 1 to 128 characters."
         case .multipartUnavailable:
             "This Worker can’t take files yet. Update the Worker to share files."
+        case .encryptionUnavailable:
+            CloudShareSeal.unavailableNote
+        case .encryptedTooLarge:
+            "Encrypted links are for files up to 32 MB for now, because the whole file is decrypted in the viewer’s browser. Share this one without encryption."
+        case .encryptionUnsupported:
+            "This Worker doesn’t support encrypted links yet, so the upload was removed. Update the Worker, or share without encryption."
         case .shareSettingsUnavailable:
             "The Worker couldn’t change this upload. Update the Worker if it predates link expiry; otherwise the upload is no longer there."
         }
@@ -848,6 +900,8 @@ nonisolated struct UploadMetadata: Sendable {
     let expiresAt: Date?
     let allowAnonymousComments: Bool
     let password: String?
+    /// The body is a sealed share (CloudShareSeal).
+    var encrypted = false
 
     /// URLSession drops header bytes outside ASCII, so such names (and any `%`)
     /// go percent-encoded; the Worker decodes once. Plain ASCII names stay as
@@ -871,6 +925,7 @@ nonisolated struct UploadMetadata: Sendable {
             request.setValue(encoded, forHTTPHeaderField: "X-Title")
         }
         request.setValue(socialEnabled ? "true" : "false", forHTTPHeaderField: "X-Social-Enabled")
+        if encrypted { request.setValue("1", forHTTPHeaderField: "X-Encrypted") }
         if let password, !CloudUploadList.isValidPassword(password) { throw CloudUploadError.invalidPassword }
         CloudUploadList.applyShareSettings(to: &request, expiresAt: expiresAt, allowAnonymousComments: allowAnonymousComments,
                                            password: password)
