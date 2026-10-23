@@ -603,6 +603,11 @@ struct CloudLibraryPage: View {
 
     private func deleteMessage(local: [String: CaptureLibraryItem]) -> String {
         let targets = cloud.pendingDelete
+        // Received files have no share link to break.
+        if !targets.isEmpty, targets.allSatisfy(\.isReceived) {
+            return targets.count > 1 ? "This permanently removes \(targets.count) received files from your Worker."
+                : "This permanently removes the received file from your Worker."
+        }
         let anyLocal = targets.contains { local[$0.id] != nil }
         if targets.count > 1 {
             return "This permanently removes \(targets.count) cloud copies and breaks their share links."
