@@ -21,9 +21,11 @@ final class CaptureLibraryIndex {
     private(set) var pendingIDs: Set<String> = []
     /// Each entry's text, folded once for search.
     @ObservationIgnored private(set) var foldedText: [String: String] = [:]
-    /// The model can run here; Settings shows its switch only then.
+    /// The model can run here; Settings shows its switch only then. New
+    /// captures wait for it, while stored output still shows.
     private(set) var modelAvailable = false
     /// The Settings switch for titles and suggestions, as of the last plan.
+    /// It stays in force while the model is gone and Settings hides it.
     private(set) var usesIntelligence = false
     /// Captures from before the model first ran that it hasn't seen yet.
     private(set) var olderWithoutInsight = 0
@@ -85,7 +87,7 @@ final class CaptureLibraryIndex {
 
     /// What the model wrote about a capture, while it may show.
     func visibleInsight(_ id: String) -> CaptureInsight? {
-        CaptureInsightRules.visible(entries[id]?.insight, modelAvailable: modelAvailable, enabled: usesIntelligence)
+        CaptureInsightRules.visible(entries[id]?.insight, enabled: usesIntelligence)
     }
 
     func suggestedTags(for item: CaptureLibraryItem, libraryTags: [String]) -> [String] {
@@ -136,17 +138,16 @@ final class CaptureLibraryIndex {
         if !queue.isEmpty || !insightQueue.isEmpty, runner == nil { runner = Task { await drain() } }
     }
 
-    /// Queues captures the model hasn't seen, when it may run: available,
-    /// switched on, and reading text.
+    /// Queues captures the model hasn't seen, when it may run.
     private func planInsights(_ items: [CaptureLibraryItem]) {
         let available = modelAvailability(), enabled = ScreendropPreferences.libraryUsesIntelligence
-        if available != modelAvailable || enabled != usesIntelligence {
-            modelAvailable = available
+        if available != modelAvailable { modelAvailable = available }
+        if enabled != usesIntelligence {
             usesIntelligence = enabled
             CaptureLibraryModel.shared.insightsDidChange()
         }
         var older = 0
-        if available, enabled, ScreendropPreferences.libraryReadsText {
+        if CaptureInsightRules.runs(modelAvailable: available, enabled: enabled, readsText: ScreendropPreferences.libraryReadsText) {
             let plan = CaptureTextIndexPlan.dueForInsight(
                 items.filter { $0.id != describing?.id }.map { .init(id: $0.id, fingerprint: $0.thumbnailKey, createdAt: $0.createdAt) },
                 entries: entries, since: ScreendropPreferences.libraryInsightsSince,

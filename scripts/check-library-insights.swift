@@ -287,18 +287,23 @@ struct LibraryInsightChecks {
         print("CHECK: a busy model isn't stored or asked again this session")
     }
 
-    /// With the model gone (a fake provider), titles and model suggestions
-    /// hide but stay stored, the app name is still offered, and nothing new
-    /// is asked.
+    /// With the model gone (a fake provider, as after removing it to free
+    /// disk space), stored titles and suggestions keep showing, nothing new is
+    /// asked and Settings hides the switch. The switch off hides them, with
+    /// the model or without it, and keeps them.
     static func gateChecks(scratch: URL, store: CaptureTextIndexStore, titled id: String) async throws {
         let index = CaptureLibraryIndex.shared
         let history = ScreenshotHistoryStore.shared
+        let tags = { CaptureLibraryModel.shared.tags }
         let stored = try require(index.entries[id]?.insight)
+        let storedSuggestions = index.suggestedTags(for: try item(id), libraryTags: tags())
         index.modelAvailability = { false }
         index.settingsDidChange()
-        try await waitUntil("titles hidden", timeout: .seconds(5)) { (try? item(id).title) == (try? item(id).dateTitle) }
+        try await Task.sleep(for: .seconds(1))
         try check(!index.modelAvailable, "Settings would still show the switch")
-        try check(index.entries[id]?.insight == stored && store.loadAll()[id]?.insight == stored, "Unavailable erased stored output")
+        try check(try item(id).title == stored.title, "A stored title hid when the model went away")
+        try check(index.suggestedTags(for: try item(id), libraryTags: tags()) == storedSuggestions, "Stored suggestions changed when the model went away")
+        try check(index.entries[id]?.insight == stored && store.loadAll()[id]?.insight == stored, "Unavailable changed stored output")
         var calls = 0
         let real = index.describer
         index.describer = { item, entry, image in calls += 1; return await real(item, entry, image) }
@@ -310,20 +315,27 @@ struct LibraryInsightChecks {
         try await waitUntil("gate fixture read") { index.entries[gateID] != nil }
         try await Task.sleep(for: .seconds(2))
         try check(calls == 0 && index.entries[gateID]?.insight == nil, "Asked the model while it was unavailable")
-        try check(index.suggestedTags(for: try item(gateID), libraryTags: CaptureLibraryModel.shared.tags) == ["Safari"], "App name not offered without the model")
-        try check(index.suggestedTags(for: try item(id), libraryTags: CaptureLibraryModel.shared.tags).allSatisfy { $0 == "Google Chrome" },
-                  "Model suggestions showed while unavailable")
-        print("CHECK: unavailable hides titles and model suggestions, keeps them stored, still offers the app")
-        // The switch off behaves the same; back on, everything returns and the new capture is described.
-        index.modelAvailability = { CaptureIntelligence.isModelAvailable }
+        try check(index.suggestedTags(for: try item(gateID), libraryTags: tags()) == ["Safari"], "App name not offered without the model")
+        print("CHECK: unavailable keeps showing stored titles (\"\(stored.title ?? "nil")\") and suggestions \(storedSuggestions), asks nothing new, still offers the app")
+        // The switch off while Settings hides it (its last value holds): hidden and kept.
         UserDefaults.standard.set(false, forKey: ScreendropPreferences.libraryUsesIntelligenceKey)
+        index.settingsDidChange()
+        try await waitUntil("titles hidden", timeout: .seconds(5)) { (try? item(id).title) == (try? item(id).dateTitle) }
+        let appOnly = CaptureInsightRules.suggestions(appName: try item(id).source?.appName, insight: nil, tags: try item(id).tags,
+                                                      libraryTags: tags(), dismissed: index.entries[id]?.dismissedSuggestions ?? [])
+        try check(index.suggestedTags(for: try item(id), libraryTags: tags()) == appOnly, "Model suggestions showed with the switch off")
+        try check(store.loadAll()[id]?.insight == stored, "Switch off erased stored output")
+        // The model back, the switch still off: still hidden, nothing asked.
+        index.modelAvailability = { CaptureIntelligence.isModelAvailable }
         index.settingsDidChange()
         try await Task.sleep(for: .seconds(1))
         try check(try item(id).title == (try item(id)).dateTitle && calls == 0, "Switch off still titled or asked")
+        print("CHECK: switch off hides stored output and asks nothing, with or without the model")
+        // On again: titles return and the capture missed meanwhile is described.
         UserDefaults.standard.set(true, forKey: ScreendropPreferences.libraryUsesIntelligenceKey)
         index.settingsDidChange()
         try await waitUntil("titles back") { (try? item(id).title) == stored.title && index.entries[gateID]?.insight != nil }
-        print("CHECK: switch off hides, on restores and describes what was missed")
+        print("CHECK: switch on restores titles and describes what was missed")
     }
 
     /// Captures from before the model first ran wait for the user's opt-in.

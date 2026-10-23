@@ -57,18 +57,24 @@ struct CaptureInsightTests {
 
     // MARK: Availability gate
 
-    @Test func modelOutputHidesWhenTheModelIsUnavailableOrSwitchedOffAndIsKept() {
+    @Test func storedOutputOutlivesTheModelButNotTheSwitch() {
         let entry = CaptureTextEntry(id: "a", fingerprint: "a:1", paragraphs: ["Payouts"], insight: insight)
-        // A fake provider: the model went away, or the user turned the switch off.
-        for (available, enabled) in [(false, true), (true, false), (false, false)] {
-            let visible = CaptureInsightRules.visible(entry.insight, modelAvailable: available, enabled: enabled)
-            #expect(visible == nil)
-            #expect(CaptureInsightRules.suggestions(appName: "Safari", insight: visible, tags: [], libraryTags: [], dismissed: []) == ["Safari"])
-        }
+        // A fake provider says the model is gone (removed to free disk space):
+        // nothing new runs, and what was stored still shows while the switch is on.
+        #expect(!CaptureInsightRules.runs(modelAvailable: false, enabled: true, readsText: true))
+        #expect(CaptureInsightRules.visible(entry.insight, enabled: true) == insight)
+        #expect(CaptureInsightRules.suggestions(appName: "Safari", insight: insight, tags: [], libraryTags: [], dismissed: [])
+                == ["Safari", "Settings", "stripe", "payouts", "Bank Account"])
+        // The switch off hides it, model or not, and keeps it.
+        #expect(CaptureInsightRules.visible(entry.insight, enabled: false) == nil)
+        #expect(CaptureInsightRules.suggestions(appName: "Safari", insight: nil, tags: [], libraryTags: [], dismissed: []) == ["Safari"])
         #expect(entry.insight == insight)
-        #expect(CaptureInsightRules.visible(entry.insight, modelAvailable: true, enabled: true) == insight)
-        // A refusal never shows, wherever the model is.
-        #expect(CaptureInsightRules.visible(CaptureInsight(declined: true), modelAvailable: true, enabled: true) == nil)
+        // It runs only with the model there, the switch on and text being read.
+        #expect(CaptureInsightRules.runs(modelAvailable: true, enabled: true, readsText: true))
+        #expect(!CaptureInsightRules.runs(modelAvailable: true, enabled: false, readsText: true))
+        #expect(!CaptureInsightRules.runs(modelAvailable: true, enabled: true, readsText: false))
+        // A refusal never shows.
+        #expect(CaptureInsightRules.visible(CaptureInsight(declined: true), enabled: true) == nil)
     }
 
     // MARK: Storage

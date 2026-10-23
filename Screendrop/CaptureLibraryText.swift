@@ -75,10 +75,17 @@ nonisolated enum CaptureInsightRules {
         customName ?? modelTitle ?? dateTitle
     }
 
-    /// Model output shows only while the model is available and its switch
-    /// is on; turning either off hides it but keeps what was stored.
-    static func visible(_ insight: CaptureInsight?, modelAvailable: Bool, enabled: Bool) -> CaptureInsight? {
-        modelAvailable && enabled && insight?.declined == false ? insight : nil
+    /// Stored model output shows while its switch is on, even once the model
+    /// is gone (removed to free disk space): it's data by then. The switch
+    /// off hides it and keeps it; it stays in force while Settings hides it.
+    static func visible(_ insight: CaptureInsight?, enabled: Bool) -> CaptureInsight? {
+        enabled && insight?.declined == false ? insight : nil
+    }
+
+    /// The model is asked about new captures only while it's here, switched
+    /// on, and the Library reads text.
+    static func runs(modelAvailable: Bool, enabled: Bool, readsText: Bool) -> Bool {
+        modelAvailable && enabled && readsText
     }
 
     /// Tags to offer one capture: the app it came from (no model needed),
