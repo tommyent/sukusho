@@ -29,7 +29,10 @@ nonisolated final class StudioMetalScreenRenderer {
             let pipeline = try? device.makeComputePipelineState(function: function)
         else { return nil }
         var cache: CVMetalTextureCache?
-        guard CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &cache) == kCVReturnSuccess,
+        // Masked exports hand over a new full-size surface every frame, and the
+        // default one-second age kept ~80 of them alive (2+ GB at 3420 wide).
+        let cacheAttributes = [kCVMetalTextureCacheMaximumTextureAgeKey: 0.1] as CFDictionary
+        guard CVMetalTextureCacheCreate(kCFAllocatorDefault, cacheAttributes, device, nil, &cache) == kCVReturnSuccess,
             let cache
         else { return nil }
         let width = Int(canvasSize.width)
