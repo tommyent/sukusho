@@ -105,8 +105,32 @@ struct CaptureLibraryInspector: View {
                 detailRow("Size on disk", value: sizeText)
                 detailRow("Created", value: item.createdAt.formatted(date: .abbreviated, time: .shortened))
                 detailRow("Modified", value: item.modifiedAt.formatted(date: .abbreviated, time: .shortened))
+                if let source = item.source {
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Text("App").fixedSize(horizontal: true, vertical: false)
+                        Spacer(minLength: 0)
+                        if let icon = Self.appIcon(source.bundleIdentifier) {
+                            Image(nsImage: icon).resizable().frame(width: 14, height: 14)
+                                .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 2 }
+                        }
+                        Text(source.appName).foregroundStyle(InspectorControlPalette.label).textSelection(.enabled)
+                    }
+                    .font(.system(size: 12))
+                    if let window = source.windowTitle {
+                        detailRow("Window", value: window)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                            .help(window)
+                    }
+                }
             }
         }
+    }
+
+    private static func appIcon(_ bundleIdentifier: String?) -> NSImage? {
+        guard let bundleIdentifier,
+              let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) else { return nil }
+        return NSWorkspace.shared.icon(forFile: url.path)
     }
 
     /// The words the Library read in the capture, as paragraphs; while

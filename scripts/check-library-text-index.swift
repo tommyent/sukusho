@@ -247,5 +247,66 @@ struct LibraryTextIndexChecks {
                   "A partial scan removed an entry")
         CaptureLibraryModel.shared.refresh()
         print("CHECK: delete, empty scan and partial scan")
+
+        try await sourceChecks(scratch: scratch, recordingID: recordingID)
+    }
+
+    /// The source app and window: History rows written before it decode, and
+    /// `app:` narrows search with words, recognized text, tags and kinds.
+    static func sourceChecks(scratch: URL, recordingID: String) async throws {
+        let history = ScreenshotHistoryStore.shared
+        let model = CaptureLibraryModel.shared
+        let chrome = CaptureSource(bundleIdentifier: "com.google.Chrome", appName: "Google Chrome", windowTitle: "Quarterly payouts – Stripe")
+        let safari = CaptureSource(bundleIdentifier: "com.apple.Safari", appName: "Safari", windowTitle: nil)
+
+        let row = ScreenshotHistoryItem(id: UUID(), createdAt: .now, updatedAt: .now, fileName: "a.png", pixelWidth: 1, pixelHeight: 1, source: chrome)
+        var json = try require(JSONSerialization.jsonObject(with: JSONEncoder().encode(row)) as? [String: Any])
+        try check(json["source"] != nil, "Source not stored on the History row")
+        try check(try JSONDecoder().decode(ScreenshotHistoryItem.self, from: JSONEncoder().encode(row)).source == chrome, "Source didn't round-trip")
+        json["source"] = nil
+        let old = try JSONDecoder().decode(ScreenshotHistoryItem.self, from: JSONSerialization.data(withJSONObject: json))
+        try check(old.source == nil && old.fileName == "a.png", "A row without a source didn't decode")
+        print("CHECK: History rows with and without a source decode")
+
+        try writePNG(["Atacama invoice"], to: scratch.appendingPathComponent("chrome.png"))
+        history.importScreenshot(from: scratch.appendingPathComponent("chrome.png"), source: chrome)
+        let chromeID = try require(history.items.first).id.uuidString
+        try writePNG(["Atacama itinerary"], to: scratch.appendingPathComponent("safari.png"))
+        history.importScreenshot(from: scratch.appendingPathComponent("safari.png"), source: safari)
+        let safariID = try require(history.items.first).id.uuidString
+        try await waitUntil("both read") {
+            CaptureLibraryIndex.shared.entries[chromeID] != nil && CaptureLibraryIndex.shared.entries[safariID] != nil
+        }
+        try check(model.items.first { $0.id == chromeID }?.source == chrome, "Library item lost its source")
+        try await search("app:chrome", expect: [chromeID])
+        try await search("APP:Safari", expect: [safariID])
+        try await search("app:google", expect: [chromeID])
+        try await search("app:chrome atacama", expect: [chromeID])
+        try await search("atacama app:safari", expect: [safariID])
+        try await search("app:safari invoice", expect: [])
+        try await search("atacama", expect: [chromeID, safariID])
+        try await search("stripe", expect: [chromeID])
+        try await search("Google Chrome", expect: [chromeID])
+        try await search("app:firefox", expect: [])
+        try await search("tag:atacama", expect: [])
+
+        history.setTag("client", applied: true, ids: [try require(UUID(uuidString: chromeID))])
+        try await waitUntil("tag lands", timeout: .seconds(5)) { model.tags.contains("client") }
+        model.tagFilter = "client"
+        try await search("app:chrome", expect: [chromeID])
+        try await search("app:safari", expect: [])
+        model.tagFilter = nil
+        model.filter = .recordings
+        try await search("app:chrome", expect: [])
+        model.filter = .all
+        print("CHECK: app: with words, text, tags and kinds")
+
+        // A recording keeps its source in the package's project metadata.
+        let session = RecordingSession(directoryURL: URL(fileURLWithPath: String(recordingID.dropFirst("recording:".count)), isDirectory: true))
+        try session.updateProjectMetadata { $0.source = CaptureSource(bundleIdentifier: "com.apple.Keynote", appName: "Keynote", windowTitle: "Roadmap") }
+        model.refresh()
+        try await search("app:keynote", expect: [recordingID])
+        try await search("roadmap", expect: [recordingID])
+        print("CHECK: recording source from project metadata")
     }
 }

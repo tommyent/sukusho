@@ -29,6 +29,23 @@ struct ScreenRecordingSource {
 
     let kind: Kind
 
+    /// A window recording knows its app outright; a display or area falls
+    /// back to the frontmost app's window on that display.
+    var captureSource: CaptureSource? {
+        switch kind {
+        case .window(let window):
+            guard let app = window.owningApplication else { return nil }
+            let title = window.title?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return CaptureSource(
+                bundleIdentifier: app.bundleIdentifier.isEmpty ? nil : app.bundleIdentifier,
+                appName: app.applicationName,
+                windowTitle: title?.isEmpty == false ? title : nil
+            )
+        case .fullscreen(let display), .area(let display, _):
+            return CaptureSourceProbe(tracksPointer: false).finish(.display(display.displayID))
+        }
+    }
+
     var displayID: CGDirectDisplayID? {
         switch kind {
         case .fullscreen(let display):
@@ -129,6 +146,8 @@ final class ScreenRecordingManager {
         guard Self.ensureScreenCapturePermission() else { return }
 
         let targetDisplayID = source.displayID ?? ActiveDisplayResolver.activeDisplayID(preferPointer: true) ?? CGMainDisplayID()
+        // Named before the recording bar and camera bubble appear.
+        let captureSource = source.captureSource
         state = .starting
         errorMessage = nil
         displayID = targetDisplayID
@@ -165,6 +184,10 @@ final class ScreenRecordingManager {
                 // Own the session as soon as it exists. Any failure after this
                 // point must be able to remove or recover the directory.
                 self.session = session
+                if let captureSource {
+                    // Only the Library reads it; a recording without it is fine.
+                    try? session.updateProjectMetadata { $0.source = captureSource }
+                }
                 // Create (or relocate) the bubble before the filter snapshots its window ID.
                 var cameraStarted = false
                 if let cameraID = options.cameraDeviceID {
