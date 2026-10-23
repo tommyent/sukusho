@@ -99,6 +99,7 @@ struct RecordingExportOptionsPopover: View {
             } else {
                 segmented("Quality", options: VideoCompressionQuality.allCases, selection: $settings.quality)
                 segmented("Codec", options: VideoCompressionCodec.allCases, selection: $settings.codec)
+                InspectorHint("Shared links always use H.264 so every browser can play them.")
                 segmented("Resolution", options: VideoCompressionResolution.allCases, selection: $settings.resolution)
                 segmented(
                     "Frame rate",
