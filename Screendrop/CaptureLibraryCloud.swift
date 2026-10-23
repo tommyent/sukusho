@@ -126,7 +126,11 @@ final class CloudLibraryModel {
                 hasLoaded = true
             }
             do {
+                let worker = CloudUploader.shared.workerBase
+                let listedSince = Date.now
                 uploads = try await CloudUploader.shared.listUploads()
+                // Only a complete list may say an upload is gone, and with it its key.
+                CloudShareLinks.prune(keeping: Set(uploads.map(\.id)), worker: worker, listedSince: listedSince)
                 isHistoryFallback = false
                 loadError = nil
                 FileRequestsModel.shared.notice(uploads)
@@ -173,11 +177,11 @@ final class CloudLibraryModel {
     }
 
     func open(_ upload: CloudUpload) {
-        CloudShareLinks.open(upload.url)
+        CloudShareLinks.open(upload.url, encrypted: upload.encrypted == true)
     }
 
     func copyLinks(_ uploads: [CloudUpload]) {
-        CloudShareLinks.copy(uploads.map(\.url))
+        CloudShareLinks.copy(uploads.map { ($0.url, $0.encrypted == true) })
     }
 
     /// Whether the Worker says this upload is sealed, so a link without its key needs a warning.
@@ -199,7 +203,7 @@ final class CloudLibraryModel {
             FileRequestsModel.shared.download(received)
         case .copy: copyLinks(shared)
         case .trash: pendingDelete = selectedUploads
-        case .share: LibrarySharing.show(CloudShareLinks.links(shared.map(\.url)).compactMap(URL.init(string:)))
+        case .share: LibrarySharing.show(CloudShareLinks.links(shared.map { ($0.url, $0.encrypted == true) }).compactMap(URL.init(string:)))
         case .rename, .export, .reveal: break
         }
     }
@@ -225,7 +229,7 @@ final class CloudLibraryModel {
                 self.copyLinks(selected)
             },
             LibraryMenuItem(title: "Share…", isEnabled: !selected.isEmpty) {
-                LibrarySharing.show(CloudShareLinks.links(selected.map(\.url)).compactMap(URL.init(string:)))
+                LibrarySharing.show(CloudShareLinks.links(selected.map { ($0.url, $0.encrypted == true) }).compactMap(URL.init(string:)))
             },
             LibraryMenuItem(title: "Show in Library", isEnabled: local != nil) { if let local { self.showInLibrary(local) } },
             LibraryMenuItem(title: "Delete from Cloud…", isEnabled: !selected.isEmpty && !isBusy, startsGroup: true) {

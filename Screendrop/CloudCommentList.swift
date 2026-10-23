@@ -28,6 +28,8 @@ nonisolated struct CloudComment: CloudFeedItem, Hashable, Decodable {
         let mediaType: String
         let shareUrl: String
         let expiresAt: Date?
+        /// Sealed: its link needs the key this Mac may hold. Nil from plaintext items and older Workers.
+        var encrypted: Bool? = nil
     }
 
     var uploadName: String {

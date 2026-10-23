@@ -116,9 +116,10 @@ struct CloudShareSealTests {
 
     @Test func keysLiveUnderTheUploadID() throws {
         var items: [String: String] = [:]
-        let keys = CloudShareKeys(read: { items[$0] }, write: { items[$0] = $1 }, delete: { items[$0] = nil })
+        let keys = CloudShareKeys(read: { items[$0] }, write: { account, value, _ in items[account] = value; return true },
+                                  delete: { items[$0] = nil }, list: { [] })
         let key = try CloudShareSeal.seal(Data(), filename: "a", contentType: "").key
-        keys.save(key, uploadID: "0123456789abcdef")
+        #expect(keys.save(key, uploadID: "0123456789abcdef", workerHost: "share.example"))
         #expect(items == ["cloud_share_key_0123456789abcdef": key])
         #expect(keys.key(uploadID: "0123456789abcdef") == key)
         #expect(keys.key(uploadID: "fedcba9876543210") == nil)
@@ -152,5 +153,77 @@ struct CloudShareSealTests {
         // Quick Look reads a sealed share from /api/media, as its page does.
         #expect(CloudPreviewCache.mediaURL(for: page.uploads[0])?.path == "/api/media/a1")
         #expect(CloudPreviewCache.mediaURL(for: page.uploads[1])?.path == "/api/image/b2")
+        // The owner's feeds carry the flag too, so a link copied from them knows it needs a key.
+        let feed = Data(#"{"comments":[{"id":"c1","uploadId":"a1","authorName":"A","text":"hi","createdAt":"2026-10-23T10:00:00Z","upload":{"filename":"a.png","mediaType":"image","shareUrl":"https://w.example/a1","encrypted":true}},{"id":"c2","uploadId":"b2","authorName":"B","text":"hi","createdAt":"2026-10-23T10:00:00Z","upload":{"filename":"b.png","mediaType":"image","shareUrl":"https://w.example/b2"}}],"next":null}"#.utf8)
+        #expect(try CloudCommentList.decode(feed).comments.map(\.upload.encrypted) == [true, nil])
+    }
+
+    private func keychain(refusing: @escaping () -> Bool = { false }) -> (keys: CloudShareKeys, items: () -> [String: (value: String, label: String, created: Date)], set: (String, String, String, Date) -> Void) {
+        final class Store { var items: [String: (value: String, label: String, created: Date)] = [:] }
+        let store = Store()
+        let keys = CloudShareKeys(
+            read: { store.items[$0]?.value },
+            write: { account, value, label in
+                if refusing() { return false }
+                store.items[account] = (value, label, .now)
+                return true
+            },
+            delete: { store.items[$0] = nil },
+            list: { store.items.map { ($0.key, $0.value.label, $0.value.created) } }
+        )
+        return (keys, { store.items }, { store.items[$0] = ($1, $2, $3) })
+    }
+
+    @Test func aKeyTheKeychainRefusesIsReported() throws {
+        var refusing = true
+        let keychain = keychain(refusing: { refusing })
+        let key = try CloudShareSeal.seal(Data(), filename: "a", contentType: "").key
+        #expect(!keychain.keys.save(key, uploadID: "a1", workerHost: "w.example"))
+        #expect(keychain.keys.key(uploadID: "a1") == nil)
+        refusing = false
+        #expect(keychain.keys.save(key, uploadID: "a1", workerHost: "w.example"))
+        #expect(keychain.keys.key(uploadID: "a1") == key)
+        #expect(keychain.items()["cloud_share_key_a1"]?.label == "w.example")
+    }
+
+    @Test func staleKeysGoOnlyAfterAFullListOfTheirOwnWorker() throws {
+        let keychain = keychain()
+        let key = try CloudShareSeal.seal(Data(), filename: "a", contentType: "").key
+        let listedSince = Date.now
+        let earlier = listedSince.addingTimeInterval(-60)
+        keychain.set("cloud_share_key_kept", key, "w.example", earlier)
+        keychain.set("cloud_share_key_gone", key, "w.example", earlier)
+        keychain.set("cloud_share_key_new", key, "w.example", listedSince.addingTimeInterval(1))
+        keychain.set("cloud_share_key_other", key, "other.example", earlier)
+        keychain.set("cloud_share_key_unlabelled", key, "", earlier)
+        keychain.set("cloud_upload_token", "token", "", earlier)
+        #expect(keychain.keys.prune(workerHost: "w.example", keeping: ["kept"], listedSince: listedSince) == ["gone"])
+        #expect(Set(keychain.items().keys) == ["cloud_share_key_kept", "cloud_share_key_new", "cloud_share_key_other",
+                                               "cloud_share_key_unlabelled", "cloud_upload_token"])
+        #expect(CloudShareKeys.host(of: "https://Share.Example:8443/0123456789abcdef#k") == "share.example:8443")
+        #expect(CloudShareKeys.host(of: "https://share.example/0123456789abcdef") == "share.example")
+    }
+
+    @Test func linksSayWhenTheyNeedAKeyThisMacLacks() throws {
+        let keychain = keychain()
+        let key = try CloudShareSeal.seal(Data(), filename: "a", contentType: "").key
+        #expect(keychain.keys.save(key, uploadID: "a1", workerHost: "w.example"))
+        #expect(keychain.keys.link("https://w.example/a1", uploadID: "a1", encrypted: true) == ("https://w.example/a1#" + key, false))
+        #expect(keychain.keys.link("https://w.example/a1", uploadID: "a1", encrypted: false) == ("https://w.example/a1#" + key, false))
+        #expect(keychain.keys.link("https://w.example/b2", uploadID: "b2", encrypted: true) == ("https://w.example/b2", true))
+        #expect(keychain.keys.link("https://w.example/b2", uploadID: "b2", encrypted: false) == ("https://w.example/b2", false))
+    }
+
+    @Test func thisMacRemembersWhatItSealed() throws {
+        let suite = "sukusho.seal-tests.\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let sealed = CloudSealedUploads(defaults: defaults)
+        #expect(!sealed.contains("a1"))
+        sealed.insert("a1")
+        sealed.insert("b2")
+        #expect(CloudSealedUploads(defaults: defaults).contains("a1"))
+        sealed.remove(["a1"])
+        #expect(!sealed.contains("a1") && sealed.contains("b2"))
     }
 }

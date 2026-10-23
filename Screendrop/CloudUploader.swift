@@ -226,7 +226,7 @@ final class CloudUploader: NSObject {
                 try Task.checkCancellation()
                 guard activeTasks[itemID]?.id == operationID else { throw CancellationError() }
             }
-            if let shareKey = result.shareKey { CloudShareKeys.live.save(shareKey, uploadID: result.id) }
+            if let shareKey = result.shareKey { CloudShareLinks.keep(shareKey, uploadID: result.id, url: result.url) }
             uploadedURLs[itemID] = result.url
             if result.expiryIgnored { showExpiryIgnoredNotice() }
             if replacingUploadID == nil, !asFile, mimeTypeForFile(uploadedFileURL).hasPrefix("video/") {
@@ -301,7 +301,7 @@ final class CloudUploader: NSObject {
             throw CloudUploadError.notConfigured
         }
         try await Self.performDelete(uploadID: uploadID, creds: creds)
-        CloudShareKeys.live.remove(uploadID: uploadID)
+        CloudShareLinks.forget(uploadID: uploadID)
     }
 
     /// The link is up and works, but an older Worker dropped its expiry.

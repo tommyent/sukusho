@@ -134,18 +134,30 @@ nonisolated enum CloudShareSeal {
 }
 
 /// Each encrypted upload's key, in the Keychain under its upload ID, beside the
-/// upload token. Deleting the upload deletes its key.
+/// upload token, labelled with its Worker's host. Deleting the upload deletes its key.
 struct CloudShareKeys {
     var read: (String) -> String?
-    var write: (String, String) -> Void
+    /// Account, key, label; false when the Keychain refused it.
+    var write: (String, String, String) -> Bool
     var delete: (String) -> Void
+    /// Every item's account, label and creation date.
+    var list: () -> [(account: String, label: String, created: Date)]
+
+    static let accountPrefix = "cloud_share_key_"
 
     static func account(for uploadID: String) -> String {
-        "cloud_share_key_" + uploadID
+        accountPrefix + uploadID
     }
 
-    func save(_ key: String, uploadID: String) {
-        write(Self.account(for: uploadID), key)
+    /// The label a key carries: its link's host, with any port.
+    nonisolated static func host(of url: String) -> String? {
+        guard let components = URLComponents(string: url), let host = components.host?.lowercased(), !host.isEmpty else { return nil }
+        return components.port.map { "\(host):\($0)" } ?? host
+    }
+
+    /// False when the Keychain refused it, so the link must not be handed out as if it were kept.
+    func save(_ key: String, uploadID: String, workerHost: String) -> Bool {
+        write(Self.account(for: uploadID), key, workerHost)
     }
 
     func key(uploadID: String) -> String? {
@@ -154,5 +166,46 @@ struct CloudShareKeys {
 
     func remove(uploadID: String) {
         delete(Self.account(for: uploadID))
+    }
+
+    /// `url` as it's handed out: with this Mac's key, or without one, flagged when the
+    /// upload's own record says it's sealed.
+    func link(_ url: String, uploadID: String, encrypted: Bool) -> (link: String, missingKey: Bool) {
+        let key = key(uploadID: uploadID)
+        return (CloudShareSeal.link(url, key: key), key == nil && encrypted)
+    }
+
+    /// After a complete list of one Worker's uploads, drops the keys of its uploads that are gone
+    /// (expired, or deleted elsewhere). Keys made since the list was asked for, other Workers' keys
+    /// and unlabelled items stay. Returns the upload IDs whose keys went.
+    func prune(workerHost: String, keeping uploadIDs: Set<String>, listedSince: Date) -> [String] {
+        let gone = list().compactMap { item -> String? in
+            guard item.account.hasPrefix(Self.accountPrefix), item.label == workerHost, item.created < listedSince else { return nil }
+            let id = String(item.account.dropFirst(Self.accountPrefix.count))
+            return uploadIDs.contains(id) ? nil : id
+        }
+        gone.forEach(remove(uploadID:))
+        return gone.sorted()
+    }
+}
+
+/// The uploads this Mac sealed, by ID, kept apart from their keys: a link copied later
+/// still knows it needs one when the key is gone (refused by the Keychain, or removed).
+struct CloudSealedUploads {
+    var defaults = UserDefaults.standard
+    static let defaultsKey = "cloudSealedUploadIDs"
+
+    private var ids: Set<String> { Set(defaults.stringArray(forKey: Self.defaultsKey) ?? []) }
+
+    func contains(_ id: String) -> Bool {
+        ids.contains(id)
+    }
+
+    func insert(_ id: String) {
+        defaults.set(Array(ids.union([id])).sorted(), forKey: Self.defaultsKey)
+    }
+
+    func remove(_ removed: some Sequence<String>) {
+        defaults.set(Array(ids.subtracting(removed)).sorted(), forKey: Self.defaultsKey)
     }
 }
