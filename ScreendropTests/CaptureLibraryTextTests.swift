@@ -195,6 +195,23 @@ struct CaptureLibraryTextTests {
         #expect(CaptureReadableText.paragraphs(from: lines) == [
             "Please return the form and let return receipts go to finance before import duties are due.",
         ])
+        // Brackets and colons in a sentence aren't code either, capitalized or wrapped.
+        let punctuated = [
+            line("Return the form (signed).", y: 0.10),
+            line("Import duties: pay by Friday, and", y: 0.125),
+            line("return the form (signed) or", y: 0.15),
+            line("import duties: pay at the desk.", y: 0.175),
+        ]
+        #expect(CaptureReadableText.paragraphs(from: punctuated) == [
+            "Return the form (signed). Import duties: pay by Friday, and return the form (signed) or import duties: pay at the desk.",
+        ])
+        // A definition is still code, and keeps its indented body.
+        let python = [
+            line("def greet(name):", y: 0.10),
+            line("print(name)", x: 0.14, y: 0.125),
+            line("return name", x: 0.14, y: 0.15),
+        ]
+        #expect(CaptureReadableText.paragraphs(from: python) == ["def greet(name):\nprint(name)\nreturn name"])
     }
 
     @Test func columnsAndStrayFragmentsStayApart() {
