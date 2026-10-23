@@ -642,7 +642,17 @@ struct RecordingExportRegressionChecks {
         model.flushDraft()
         try check(session.existingFinalURL == shared && model.freshDeliverableURL(forLocalExport: true) == shared,
                   "Switching only the codec dropped the share render, or an H.264 export no longer reuses it")
-        print("PASS: an HEVC project uploads, stamps and shares H.264 and exports HEVC locally without reusing the share render; an H.264 export reuses it")
+
+        // A bare movie (no package) renders its agent prompt's movie itself; it too stays H.264.
+        let bareURL = directory.appendingPathComponent("bare-movie.mov")
+        try await movie(at: bareURL)
+        let bare = RecordingStudioModel(url: bareURL)
+        defer { bare.teardown() }
+        await bare.load()
+        try check(bare.isLoaded && bare.exportSettings.codec == .hevc, "A bare movie did not start from the HEVC default")
+        try check(try bare.makeAgentPromptConfiguration()?.exportSettings.codec == .h264,
+                  "A bare movie's agent prompt does not render H.264")
+        print("PASS: an HEVC project uploads, stamps and shares H.264 and exports HEVC locally without reusing the share render; an H.264 export reuses it; a bare movie's agent prompt renders H.264")
     }
 
     /// The remembered export default moves from H.264 to HEVC once; any later choice sticks (sd-3ohr).

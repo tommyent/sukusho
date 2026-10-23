@@ -2777,6 +2777,12 @@ final class RecordingStudioModel {
         export()
     }
 
+    /// The prompt's movie for a bare movie, rendered like a share (H.264).
+    /// Sessions use their shared deliverable instead, so they need none.
+    func makeAgentPromptConfiguration() throws -> RecordingStudioExporter.Configuration? {
+        session == nil ? try makeExportConfiguration(settings: currentDocument().forVideoRendering.exportSettings) : nil
+    }
+
     func exportAgentPrompt() {
         guard isLoaded, !hasRunningWork, !hasUnreadableDraft, !transcriptionState.isTranscribing else { return }
         RecordingAgentPromptExport.chooseDirectory { [weak self] directory in
@@ -2788,7 +2794,7 @@ final class RecordingStudioModel {
             let title = self.projectDisplayName
             let timeline = self.clipTimeline
             let configuration: RecordingStudioExporter.Configuration?
-            do { configuration = session == nil ? try self.makeExportConfiguration() : nil }
+            do { configuration = try self.makeAgentPromptConfiguration() }
             catch { self.exportState = .failed(error.localizedDescription); return }
             let report: @Sendable (Double) -> Void = { [weak self] progress in
                 Task { @MainActor [weak self] in
