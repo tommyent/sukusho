@@ -162,32 +162,97 @@ nonisolated struct CaptureTextIndexStore: Sendable {
     }
 }
 
-/// Library search text, matched the way the name and tags are: ignoring
-/// case and accents, so "cafe" finds "Café".
+/// Library search text. Plain words match the way the name and tags always
+/// have, ignoring case and accents, so "cafe" finds "Café"; operators such as
+/// `app:chrome` narrow by a field. Every part has to match.
 nonisolated struct CaptureLibraryQuery: Equatable {
-    let text: String
-    let folded: String
+    /// The operators the field understands. Anything else with a colon (a
+    /// URL, `foo:bar`) stays a plain word.
+    static let operatorNames: Set<String> = ["app"]
+
+    /// The plain text between operators, each run matched as typed.
+    let phrases: [String]
+    private let foldedPhrases: [String]
+    /// `app:` values, folded.
+    let apps: [String]
 
     init(_ raw: String) {
-        text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        folded = Self.fold(text)
+        let parsed = Self.parse(raw)
+        phrases = parsed.phrases
+        foldedPhrases = parsed.phrases.map(Self.fold)
+        apps = (parsed.operators["app"] ?? []).map(Self.fold)
     }
 
-    var isEmpty: Bool { text.isEmpty }
+    var isEmpty: Bool { phrases.isEmpty && apps.isEmpty }
 
     static func fold(_ text: String) -> String {
         text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
     }
 
-    /// `foldedText` is a capture's recognized text, already folded once.
-    func matches(fields: [String], foldedText: String?) -> Bool {
-        isEmpty || fields.contains { $0.localizedStandardContains(text) } || foldedText?.contains(folded) == true
+    /// Splits typed text into plain phrases and operator values. An operator
+    /// starts a word; its value, after at most one space, runs to the next
+    /// space or is quoted: `app:"visual studio"`. An operator with no value
+    /// yet is ignored.
+    static func parse(_ raw: String) -> (phrases: [String], operators: [String: [String]]) {
+        var phrases: [String] = []
+        var operators: [String: [String]] = [:]
+        var plain = ""
+        func flush() {
+            let phrase = plain.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !phrase.isEmpty { phrases.append(phrase) }
+            plain = ""
+        }
+        var index = raw.startIndex
+        while index < raw.endIndex {
+            let atWordStart = index == raw.startIndex || raw[raw.index(before: index)].isWhitespace
+            let colon = raw[index...].firstIndex { $0 == ":" || $0.isWhitespace }
+            let name = colon.map { raw[index..<$0].lowercased() } ?? ""
+            guard atWordStart, let colon, raw[colon] == ":", operatorNames.contains(name) else {
+                plain.append(raw[index])
+                index = raw.index(after: index)
+                continue
+            }
+            var valueStart = raw.index(after: colon)
+            // One space after the colon is fine: "app: chrome".
+            if valueStart < raw.endIndex, raw[valueStart] == " " {
+                let next = raw.index(after: valueStart)
+                if next < raw.endIndex, !raw[next].isWhitespace { valueStart = next }
+            }
+            let value: Substring
+            if valueStart < raw.endIndex, raw[valueStart] == "\"" {
+                valueStart = raw.index(after: valueStart)
+                let close = raw[valueStart...].firstIndex(of: "\"") ?? raw.endIndex
+                value = raw[valueStart..<close]
+                index = close < raw.endIndex ? raw.index(after: close) : close
+            } else {
+                let end = raw[valueStart...].firstIndex(where: \.isWhitespace) ?? raw.endIndex
+                value = raw[valueStart..<end]
+                index = end
+            }
+            flush()
+            let trimmed = value.trimmingCharacters(in: .whitespaces)
+            if !trimmed.isEmpty { operators[name, default: []].append(trimmed) }
+        }
+        flush()
+        return (phrases, operators)
     }
 
-    /// Paragraphs that contain the query first, each group in its own order.
+    /// `fields` are matched as typed; `foldedText` is a capture's recognized
+    /// text, already folded once.
+    func matches(fields: [String], foldedText: String?, source: CaptureSource? = nil) -> Bool {
+        apps.allSatisfy { source?.matchesApp($0) == true }
+            && zip(phrases, foldedPhrases).allSatisfy { phrase, folded in
+                fields.contains { $0.localizedStandardContains(phrase) } || foldedText?.contains(folded) == true
+            }
+    }
+
+    /// Paragraphs that contain a phrase first, each group in its own order.
     func ordered(_ paragraphs: [String]) -> [String] {
-        guard !isEmpty else { return paragraphs }
-        let hits = paragraphs.map { Self.fold($0).contains(folded) }
+        guard !foldedPhrases.isEmpty else { return paragraphs }
+        let hits = paragraphs.map { paragraph in
+            let folded = Self.fold(paragraph)
+            return foldedPhrases.contains { folded.contains($0) }
+        }
         return zip(paragraphs, hits).filter(\.1).map(\.0) + zip(paragraphs, hits).filter { !$0.1 }.map(\.0)
     }
 }

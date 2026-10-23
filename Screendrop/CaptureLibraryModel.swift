@@ -61,6 +61,8 @@ nonisolated struct CaptureLibraryItem: Identifiable, Equatable, Sendable {
     let cloudURL: String?
     let tags: [String]
     let thumbnailKey: String
+    /// The app and window it was taken from, when known.
+    var source: CaptureSource? = nil
 
     var ownedURL: URL { session?.directoryURL ?? fileURL }
     /// Everything the capture keeps on disk: a recording's package, or a
@@ -111,6 +113,7 @@ nonisolated struct CaptureLibraryHistorySnapshot: Sendable {
     let hasEdits: Bool
     let cloudURL: String?
     let tags: [String]
+    let source: CaptureSource?
 
     @MainActor init(_ item: ScreenshotHistoryItem) {
         id = item.id
@@ -127,6 +130,7 @@ nonisolated struct CaptureLibraryHistorySnapshot: Sendable {
         hasEdits = item.hasEdits
         cloudURL = item.cloudURL
         tags = item.tags
+        source = item.source
     }
 }
 
@@ -264,8 +268,9 @@ final class CaptureLibraryModel {
         let visible = items.filter { item in
             let matchesKind = filter == .all || (filter == .recordings ? item.isVideo : !item.isVideo)
             let matchesTag = tagFilter.map(item.tags.contains) ?? true
+            let fields = [item.name, item.title, item.fileURL.lastPathComponent, item.source?.appName, item.source?.windowTitle]
             return matchesKind && matchesTag && query.matches(
-                fields: [item.name, item.title, item.fileURL.lastPathComponent] + item.tags, foldedText: text[item.id])
+                fields: fields.compactMap { $0 } + item.tags, foldedText: text[item.id], source: item.source)
         }.sorted { lhs, rhs in
             switch sortOrder {
             case .newest where lhs.createdAt != rhs.createdAt: return lhs.createdAt > rhs.createdAt
@@ -334,7 +339,8 @@ nonisolated enum CaptureLibraryScanner {
                 isVideo: true, hasEdits: session.hasSavedProject, hasDraft: session.hasUnsavedDraft,
                 cloudURL: rows.compactMap(\.cloudURL).first,
                 tags: metadata?.tags ?? [],
-                thumbnailKey: "\(fileURL.path):\((content ?? modified).timeIntervalSince1970)"
+                thumbnailKey: "\(fileURL.path):\((content ?? modified).timeIntervalSince1970)",
+                source: metadata?.source
             ))
         }
         for row in history where row.sessionPath == nil {
@@ -348,7 +354,7 @@ nonisolated enum CaptureLibraryScanner {
                 createdAt: row.createdAt, modifiedAt: max(modified, row.modifiedAt), pixelWidth: row.width,
                 pixelHeight: row.height, duration: row.duration, isVideo: row.isVideo,
                 hasEdits: row.hasEdits, hasDraft: false, cloudURL: row.cloudURL, tags: row.tags,
-                thumbnailKey: "\(url.path):\(modified.timeIntervalSince1970)"
+                thumbnailKey: "\(url.path):\(modified.timeIntervalSince1970)", source: row.source
             ))
         }
         return (entries, listed != nil)

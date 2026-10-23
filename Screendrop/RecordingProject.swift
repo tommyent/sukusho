@@ -23,6 +23,9 @@ nonisolated struct RecordingProjectMetadata: Codable, Sendable, Equatable {
     /// Library tags. Optional so project files without them still decode.
     var tags: [String]?
     var chapters: [RecordingChapter]?
+    /// The app and window it was recorded from. Optional so older project
+    /// files still decode. Stays on this Mac.
+    var source: CaptureSource?
 
     init(
         version: Int? = RecordingProjectMetadata.currentVersion,

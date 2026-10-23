@@ -29,6 +29,25 @@ struct ScreenRecordingSource {
 
     let kind: Kind
 
+    /// A window recording knows its app outright; an area is the window
+    /// under it, and a whole display the frontmost app's window there.
+    var captureSource: CaptureSource? {
+        switch kind {
+        case .window(let window):
+            guard let app = window.owningApplication else { return nil }
+            let title = window.title?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return CaptureSource(
+                bundleIdentifier: app.bundleIdentifier.isEmpty ? nil : app.bundleIdentifier,
+                appName: app.applicationName,
+                windowTitle: title?.isEmpty == false ? title : nil
+            )
+        case .fullscreen(let display):
+            return CaptureSourceProbe(tracksPointer: false).finish(.display(display.displayID))
+        case .area(_, let rect):
+            return CaptureSourceProbe(tracksPointer: false).finish(.region(ScreenRecordingManager.quartzRect(fromAppKitRect: rect)))
+        }
+    }
+
     var displayID: CGDirectDisplayID? {
         switch kind {
         case .fullscreen(let display):
@@ -129,6 +148,8 @@ final class ScreenRecordingManager {
         guard Self.ensureScreenCapturePermission() else { return }
 
         let targetDisplayID = source.displayID ?? ActiveDisplayResolver.activeDisplayID(preferPointer: true) ?? CGMainDisplayID()
+        // Named before the recording bar and camera bubble appear.
+        let captureSource = source.captureSource
         state = .starting
         errorMessage = nil
         displayID = targetDisplayID
@@ -165,6 +186,10 @@ final class ScreenRecordingManager {
                 // Own the session as soon as it exists. Any failure after this
                 // point must be able to remove or recover the directory.
                 self.session = session
+                if let captureSource {
+                    // Only the Library reads it; a recording without it is fine.
+                    try? session.updateProjectMetadata { $0.source = captureSource }
+                }
                 // Create (or relocate) the bubble before the filter snapshots its window ID.
                 var cameraStarted = false
                 if let cameraID = options.cameraDeviceID {
@@ -815,7 +840,7 @@ final class ScreenRecordingManager {
     /// with Y growing upward; Quartz's has it at the top-left growing downward.
     /// Flipping about the main display's height converts between them, and
     /// stays correct for displays placed above or beside the main one.
-    private static func quartzRect(fromAppKitRect rect: CGRect) -> CGRect {
+    fileprivate static func quartzRect(fromAppKitRect rect: CGRect) -> CGRect {
         let mainDisplayHeight = CGDisplayBounds(CGMainDisplayID()).height
         return CGRect(
             x: rect.minX,
