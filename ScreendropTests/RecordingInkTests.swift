@@ -102,6 +102,28 @@ struct RecordingInkTests {
         #expect(strokes[1].hideTime == nil && strokes[1].startTime == 3)
     }
 
+    @Test func turningThePenOnDropsOnlyItsOwnBarClick() {
+        struct Press: Equatable { var uptime: TimeInterval; var point: CGPoint; var isDown: Bool }
+        let bar = CGRect(x: 500, y: 800, width: 300, height: 52)
+        let onBar = CGPoint(x: 610, y: 820), onContent = CGPoint(x: 200, y: 300)
+        let resumeClick = [Press(uptime: 2, point: onBar, isDown: true), Press(uptime: 2.1, point: onBar, isDown: false)]
+        let contentClick = [Press(uptime: 9.8, point: onContent, isDown: true),
+                            Press(uptime: 9.85, point: onContent, isDown: false)]
+        // The pen button, held 0.6 s, seen by both the event tap and the AppKit monitors.
+        let penClick = [Press(uptime: 9.9, point: onBar, isDown: true), Press(uptime: 9.91, point: onBar, isDown: true),
+                        Press(uptime: 10.5, point: onBar, isDown: false), Press(uptime: 10.51, point: onBar, isDown: false)]
+        var presses = resumeClick + contentClick + penClick
+
+        RecordingPenButtonClick.remove(from: &presses, bar: bar, duplicateWindow: 0.05,
+                                       uptime: \.uptime, point: \.point, isDown: \.isDown)
+
+        // A real click 0.1 s before the pen button stays, and so does an older bar click.
+        #expect(presses == resumeClick + contentClick)
+        RecordingPenButtonClick.remove(from: &presses, bar: .zero, duplicateWindow: 0.05,
+                                       uptime: \.uptime, point: \.point, isDown: \.isDown)
+        #expect(presses == resumeClick + contentClick)
+    }
+
     @Test func pathRunsFromFirstToLastSampleAndOnePointIsADot() {
         let points = [CGPoint(x: 0, y: 0), CGPoint(x: 10, y: 0), CGPoint(x: 10, y: 10), CGPoint(x: 20, y: 10)]
         let path = RecordingInkPath.path(points)

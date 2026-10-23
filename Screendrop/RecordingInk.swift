@@ -103,6 +103,25 @@ nonisolated extension RecordingInkStroke {
     }
 }
 
+nonisolated enum RecordingPenButtonClick {
+    /// The listen-only tap records the bar click that turns the pen on
+    /// before the button acts. That click, however long it was held, is the
+    /// newest press-down on the bar, its duplicate from the AppKit monitors,
+    /// and what followed it on the bar. Presses anywhere else are real.
+    static func remove<Press>(
+        from presses: inout [Press],
+        bar: CGRect,
+        duplicateWindow: TimeInterval,
+        uptime: (Press) -> TimeInterval,
+        point: (Press) -> CGPoint,
+        isDown: (Press) -> Bool
+    ) {
+        guard let down = presses.last(where: { isDown($0) && bar.contains(point($0)) }) else { return }
+        let start = uptime(down) - duplicateWindow
+        presses.removeAll { uptime($0) >= start && bar.contains(point($0)) }
+    }
+}
+
 /// What is on screen at a source time: each stroke drawn so far, as far as
 /// it had been drawn, and how faded it is.
 nonisolated struct RecordingInkTimeline: Sendable {
