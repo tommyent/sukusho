@@ -889,6 +889,47 @@ struct RecordingExportRegressionChecks {
         print("PASS: music Add/Replace/Remove/settings support Undo/Redo; volume and start-offset drags each use one history step")
     }
 
+    static func backgroundMusicDragAcrossImport(in directory: URL) async throws {
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("music-drag-import.screendroprec"))
+        try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
+        try await movie(at: session.screenURL)
+        let first = directory.appendingPathComponent("drag-a.wav"), second = directory.appendingPathComponent("drag-b.wav")
+        try audioTone(at: first, frequency: 440)
+        try audioTone(at: second, frequency: 660)
+        let model = RecordingStudioModel(url: session.directoryURL)
+        defer { model.teardown() }
+        await model.load()
+        model.setBackgroundMusic(fileURL: first, displayName: "A", credit: nil, startOffset: 0)
+        try await until { !model.hasRunningWork }
+        let a25 = model.backgroundMusicSettings!
+        let gate = Gate()
+        model.musicAnalysisOverride = { _, _ in await gate.wait(); return nil }
+        model.setBackgroundMusic(fileURL: second, displayName: "B", credit: nil, startOffset: 0)
+        try await until { gate.continuation != nil }
+        model.setMusicSliderEditing(true) // Mouse down while B's analysis is held
+        model.musicVolume = 0.4
+        model.musicAnalysisOverride = { _, _ in nil }
+        gate.resume()
+        try await until { !model.hasRunningWork }
+        let b40 = model.backgroundMusicSettings!
+        try check(b40.displayName == "B" && b40.volume == 0.4, "Import did not adopt B at the dragged volume")
+        model.musicVolume = 0.5 // The same drag continues on B, then mouse up
+        model.setMusicSliderEditing(false)
+        let b50 = model.backgroundMusicSettings!
+        for expected in [b40, a25, nil] {
+            model.undo()
+            try await until { !model.hasRunningWork }
+            try check(model.backgroundMusicSettings == expected,
+                      "Undo gave \(model.backgroundMusicSettings.map { "\($0.displayName) \($0.volume)" } ?? "none"), expected \(expected.map { "\($0.displayName) \($0.volume)" } ?? "none")")
+        }
+        for expected in [a25, b40, b50] {
+            model.redo()
+            try await until { !model.hasRunningWork }
+            try check(model.backgroundMusicSettings == expected, "Redo did not return to \(expected.displayName) \(expected.volume)")
+        }
+        print("PASS: a volume drag spanning an import's adoption undoes B 50% → B 40% → A 25% → none and redoes in order")
+    }
+
     static func backgroundMusicRetention(in directory: URL) async throws {
         let session = RecordingSession(directoryURL: directory.appendingPathComponent("music-retention.screendroprec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
@@ -1220,6 +1261,7 @@ struct RecordingExportRegressionChecks {
         try await replacementVideoTiming(in: directory)
         try await backgroundMusicMixing(in: directory)
         try await backgroundMusicHistory(in: directory)
+        try await backgroundMusicDragAcrossImport(in: directory)
         try await backgroundMusicRetention(in: directory)
         try await backgroundMusicStorage(in: directory)
         try await voiceIsolation(in: directory)

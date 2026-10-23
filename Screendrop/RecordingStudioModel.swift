@@ -373,9 +373,11 @@ final class RecordingStudioModel {
             settings.displayName = displayName
             settings.credit = credit
             settings.startOffset = RecordingBackgroundMusic.startOffset(startOffset, duration: resolved.duration)
-            self.registerBackgroundMusicUndo(self.backgroundMusicSettings)
+            // A drag held across adoption folds into the import's step, then continues from the new song.
+            self.registerBackgroundMusicUndo(self.musicSliderBaseline ?? self.backgroundMusicSettings)
             self.backgroundMusic = resolved
             self.backgroundMusicSettings = settings
+            if self.musicSliderBaseline != nil { self.musicSliderBaseline = settings }
             adopted = true
             self.applyReplacementAudioToPlayback()
         }
