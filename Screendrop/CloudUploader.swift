@@ -342,8 +342,9 @@ final class CloudUploader: NSObject {
     // MARK: - List
 
     /// Every upload on the Worker, newest first. Throws `.listUnavailable`
-    /// when the Worker predates GET /api/uploads.
-    func listUploads() async throws -> [CloudUpload] {
+    /// when the Worker predates GET /api/uploads. `received` asks for only
+    /// what clients sent; a Worker before file requests lists everything.
+    func listUploads(received: Bool = false) async throws -> [CloudUpload] {
         let creds = CloudCredentialStore.shared.snapshot()
         guard creds.isConfigured else {
             throw CloudUploadError.notConfigured
@@ -353,7 +354,7 @@ final class CloudUploader: NSObject {
         var uploads: [CloudUpload] = []
         var offset: Int? = 0
         while let current = offset {
-            guard let request = CloudUploadList.request(workerBase: workerBase, token: token, offset: current) else {
+            guard let request = CloudUploadList.request(workerBase: workerBase, token: token, offset: current, received: received) else {
                 throw CloudUploadError.invalidURL
             }
             let (responseData, response) = try await URLSession.shared.data(for: request)

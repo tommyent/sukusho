@@ -27,21 +27,26 @@ nonisolated struct CloudUpload: Identifiable, Hashable, Sendable, Decodable {
     /// The Worker lists `expiresAt` (null included), so it can also change
     /// the expiry and anonymous comments. Older Workers leave it out.
     var supportsShareSettings = false
+    /// The file request a client sent this through; nil for the owner's own
+    /// uploads and from Workers before file requests.
+    var requestId: String? = nil
 
     var isVideo: Bool { mediaType == "video" }
     /// Shared from the Library's Files page rather than captured.
     var isFile: Bool { mediaType == "file" }
+    /// Sent by a client: private, so it has no share link and downloads only with the token.
+    var isReceived: Bool { requestId != nil }
     var name: String {
         guard let title, !title.isEmpty else { return filename }
         return title
     }
-    var kindTitle: String { isFile ? "File" : isVideo ? "Recording" : "Screenshot" }
+    var kindTitle: String { isReceived ? "Received file" : isFile ? "File" : isVideo ? "Recording" : "Screenshot" }
 }
 
 extension CloudUpload {
     private nonisolated enum CodingKeys: String, CodingKey {
         case id, url, title, filename, mediaType, size, duration, createdAt, views, thumbnailUrl
-        case mediaKey, expiresAt, allowAnonymousComments, socialEnabled, hasPassword, commentCount, likeCount
+        case mediaKey, expiresAt, allowAnonymousComments, socialEnabled, hasPassword, commentCount, likeCount, requestId
     }
 
     nonisolated init(from decoder: any Decoder) throws {
@@ -64,8 +69,23 @@ extension CloudUpload {
             hasPassword: try c.decodeIfPresent(Bool.self, forKey: .hasPassword),
             commentCount: try c.decodeIfPresent(Int.self, forKey: .commentCount),
             likeCount: try c.decodeIfPresent(Int.self, forKey: .likeCount),
-            supportsShareSettings: c.contains(.expiresAt)
+            supportsShareSettings: c.contains(.expiresAt),
+            requestId: try c.decodeIfPresent(String.self, forKey: .requestId)
         )
+    }
+}
+
+/// How long a new share link lasts. Expired links stop working, and the
+/// Worker deletes them daily.
+nonisolated enum CloudExpiry: Int, CaseIterable, Identifiable, Sendable {
+    case never = 0, day = 1, week = 7, month = 30
+
+    var id: Int { rawValue }
+    var title: String { self == .never ? "Never" : rawValue == 1 ? "1 day" : "\(rawValue) days" }
+
+    /// When a link made at `now` stops working; nil for never.
+    func date(from now: Date = .now) -> Date? {
+        self == .never ? nil : now.addingTimeInterval(Double(rawValue) * 86_400)
     }
 }
 
@@ -80,13 +100,14 @@ nonisolated enum CloudUploadList {
     static let pageSize = 500
 
     /// `workerBase` is the normalized Worker origin, such as
-    /// "https://screendrop-worker.example.workers.dev".
-    static func request(workerBase: String, token: String, offset: Int) -> URLRequest? {
+    /// "https://screendrop-worker.example.workers.dev". `received` lists only
+    /// the files clients sent through file requests.
+    static func request(workerBase: String, token: String, offset: Int, received: Bool = false) -> URLRequest? {
         var components = URLComponents(string: workerBase + "/api/uploads")
         components?.queryItems = [
             URLQueryItem(name: "limit", value: String(pageSize)),
             URLQueryItem(name: "offset", value: String(offset)),
-        ]
+        ] + (received ? [URLQueryItem(name: "received", value: "1")] : [])
         guard let url = components?.url, url.host != nil else { return nil }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
         request.httpMethod = "GET"
