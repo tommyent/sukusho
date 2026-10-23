@@ -289,11 +289,13 @@ nonisolated struct RecordingSession: Sendable, Equatable {
         try? data.write(to: renderStampURL, options: .atomic)
     }
 
-    /// The movie deliverable only when it provably matches `document`; GIF export opts in explicitly.
+    /// The movie deliverable only when it provably matches `document`.
     /// Export and Share can then skip the render instead of trusting that
-    /// nothing has changed since it was made.
-    func freshFinalURL(matching document: RecordingEditDocument?, forGIFExport: Bool = false) -> URL? {
-        let document = forGIFExport ? document : document?.forVideoRendering
+    /// nothing has changed since it was made. The deliverable is the shared
+    /// movie (`forVideoRendering`); a local export opts in to an exact match,
+    /// so a GIF or HEVC export never gets it.
+    func freshFinalURL(matching document: RecordingEditDocument?, forLocalExport: Bool = false) -> URL? {
+        let document = forLocalExport ? document : document?.forVideoRendering
         // Older renders could include cut caption wording or omit replacement audio.
         guard let existing = existingFinalURL,
               let data = try? Data(contentsOf: renderStampURL),

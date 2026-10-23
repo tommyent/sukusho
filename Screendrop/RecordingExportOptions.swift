@@ -15,21 +15,36 @@ import SwiftUI
 /// factory defaults. Projects that already saved their own settings keep them.
 enum RecordingExportPreferences {
     private static let settingsKey = "recordingExportDefaultSettings"
+    /// Set once remembered settings can no longer hold the old H.264 default.
+    private static let hevcDefaultKey = "recordingExportDefaultsMovedToHEVC"
 
+    /// Local exports default to HEVC: the hardware encoder is the export's
+    /// ceiling and runs HEVC faster. Shares stay H.264 (`forVideoRendering`).
     static var lastSettings: VideoCompressionSettings {
         get {
             guard let data = UserDefaults.standard.data(forKey: settingsKey),
-                  let decoded = try? JSONDecoder().decode(
+                  var decoded = try? JSONDecoder().decode(
                     VideoCompressionSettings.self,
                     from: data
                   ) else {
-                return VideoCompressionSettings()
+                return VideoCompressionSettings(codec: .hevc)
+            }
+            // H.264 was remembered when it was the only default. Move it to
+            // HEVC once; choosing H.264 again afterwards sticks.
+            if !UserDefaults.standard.bool(forKey: hevcDefaultKey) {
+                UserDefaults.standard.set(true, forKey: hevcDefaultKey)
+                if decoded.codec == .h264 {
+                    decoded.codec = .hevc
+                    lastSettings = decoded
+                }
             }
             return decoded
         }
         set {
             guard let data = try? JSONEncoder().encode(newValue) else { return }
             UserDefaults.standard.set(data, forKey: settingsKey)
+            // Chosen with HEVC as the default, so it is never migrated.
+            UserDefaults.standard.set(true, forKey: hevcDefaultKey)
         }
     }
 }

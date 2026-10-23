@@ -592,7 +592,7 @@ struct RecordingExportRegressionChecks {
         model.flushDraft()
         try check(session.freshFinalURL(matching: model.currentDocument()) != nil,
             "Draft flushing invalidated the correct movie render")
-        try check(model.freshDeliverableURL(forGIFExport: true) == nil,
+        try check(model.freshDeliverableURL(forLocalExport: true) == nil,
             "GIF export reused the music-bearing movie render")
         let sharedConfiguration = try model.makeExportConfiguration(settings: model.currentDocument().forVideoRendering.exportSettings)
         let studioShare = try await RecordingStudioExporter().export(sharedConfiguration, progress: { _ in })
@@ -603,6 +603,88 @@ struct RecordingExportRegressionChecks {
         try check(RecordingSession.differsOnlyByExportContainer(remux, session.loadRenderStamp()),
             "Container-only reuse stopped working")
         try check(failures.isEmpty, "Music delivery failures: \(failures.joined(separator: "; "))")
+    }
+
+    static func videoCodec(of url: URL) async throws -> FourCharCode {
+        let track = try await AVURLAsset(url: url).loadTracks(withMediaType: .video).first
+        let format = try await track?.load(.formatDescriptions).first
+        return format.map(CMFormatDescriptionGetMediaSubType) ?? 0
+    }
+
+    /// Local exports may be HEVC, but whatever is shared renders H.264, which every browser plays (sd-3ohr).
+    static func sharedRendersStayH264(in directory: URL) async throws {
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("hevc-project.screendroprec"))
+        try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
+        try await movie(at: session.screenURL)
+        var settings = VideoCompressionSettings(codec: .hevc)
+        settings.removeAudio = true; settings.frameRate = .fps30; settings.motionBlurEnabled = false
+        try session.writeEditDocument(RecordingEditDocument(style: RecordingStudioStyle(), zoomEnabled: false, zoomCues: [],
+            clipTimeline: .init(segments: [.init(sourceStart: 0, sourceEnd: 1)]), exportSettings: settings))
+        let model = RecordingStudioModel(url: session.directoryURL)
+        defer { model.teardown() }
+        await model.load()
+        try check(model.isLoaded && model.exportSettings.codec == .hevc, "Studio lost the project's HEVC choice")
+        try check(model.saveProject(reportingFailure: false), "Could not save the HEVC project") // edit.json as Studio writes it
+        let shared = try await RecordingSessionRenderer.ensureDeliverable(for: session)
+        let sharedCodec = try await videoCodec(of: shared)
+        try check(sharedCodec == kCMVideoCodecType_H264, "An HEVC project's upload render is not H.264")
+        try check(session.loadRenderStamp()?.exportSettings?.codec == .h264, "The upload render was stamped with the project's codec")
+        try check(model.freshDeliverableURL() == shared, "Share stopped reusing the H.264 render")
+        try check(model.freshDeliverableURL(forLocalExport: true) == nil, "An HEVC export would copy the H.264 share render")
+        let shareSettings = model.currentDocument().forVideoRendering.exportSettings
+        try check(try model.makeExportConfiguration(settings: shareSettings).exportSettings.codec == .h264,
+                  "Studio's share render is not H.264")
+        let local = try await RecordingStudioExporter().export(model.makeExportConfiguration(), progress: { _ in })
+        defer { try? FileManager.default.removeItem(at: local) }
+        let localCodec = try await videoCodec(of: local)
+        try check(localCodec == kCMVideoCodecType_HEVC, "The local export is not HEVC")
+        model.exportSettings.codec = .h264
+        model.flushDraft()
+        try check(session.existingFinalURL == shared && model.freshDeliverableURL(forLocalExport: true) == shared,
+                  "Switching only the codec dropped the share render, or an H.264 export no longer reuses it")
+        print("PASS: an HEVC project uploads, stamps and shares H.264 and exports HEVC locally without reusing the share render; an H.264 export reuses it")
+    }
+
+    /// The remembered export default moves from H.264 to HEVC once; any later choice sticks (sd-3ohr).
+    static func hevcDefaultMigration(in directory: URL) async throws {
+        // UserDefaults ignores the isolated home, so this process's own domain is removed afterwards.
+        let domain = ProcessInfo.processInfo.processName
+        UserDefaults.standard.removePersistentDomain(forName: domain)
+        defer { UserDefaults.standard.removePersistentDomain(forName: domain) }
+        func rememberAsOldBuild(_ codec: VideoCompressionCodec) throws {
+            UserDefaults.standard.removePersistentDomain(forName: domain)
+            UserDefaults.standard.set(try JSONEncoder().encode(VideoCompressionSettings(codec: codec)),
+                                      forKey: "recordingExportDefaultSettings")
+        }
+        try check(RecordingExportPreferences.lastSettings.codec == .hevc, "Nothing remembered did not default to HEVC")
+        try rememberAsOldBuild(.h264)
+        try check(RecordingExportPreferences.lastSettings.codec == .hevc && RecordingExportPreferences.lastSettings.codec == .hevc,
+                  "A remembered H.264 default did not move to HEVC")
+        var choice = RecordingExportPreferences.lastSettings
+        choice.codec = .h264
+        RecordingExportPreferences.lastSettings = choice
+        try check(RecordingExportPreferences.lastSettings.codec == .h264, "H.264 chosen after the move did not stick")
+        UserDefaults.standard.removePersistentDomain(forName: domain)
+        RecordingExportPreferences.lastSettings = choice // a new user's first confirmed export
+        try check(RecordingExportPreferences.lastSettings.codec == .h264, "A new user's first H.264 choice moved to HEVC")
+        try rememberAsOldBuild(.hevc)
+        try check(RecordingExportPreferences.lastSettings.codec == .hevc, "A remembered HEVC default changed")
+
+        // Projects that saved a codec keep it; ones that never did follow the remembered default.
+        var codecs: [VideoCompressionCodec] = []
+        for saved in [VideoCompressionCodec.h264, nil] {
+            let session = RecordingSession(directoryURL: directory.appendingPathComponent("saved-\(saved?.rawValue ?? "none").screendroprec"))
+            try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
+            try await movie(at: session.screenURL)
+            try session.writeEditDocument(RecordingEditDocument(style: RecordingStudioStyle(), zoomEnabled: false, zoomCues: [],
+                exportSettings: saved.map { VideoCompressionSettings(codec: $0) }))
+            let model = RecordingStudioModel(url: session.directoryURL)
+            await model.load()
+            codecs.append(model.exportSettings.codec)
+            model.teardown()
+        }
+        try check(codecs == [.h264, .hevc], "Saved/unsaved project codecs were \(codecs)")
+        print("PASS: HEVC default for new users; a remembered H.264 moves to HEVC once; later and first-time H.264 choices stick; saved project codecs stay")
     }
 
     static func backgroundMusicMixing(in directory: URL) async throws {
@@ -1258,6 +1340,8 @@ struct RecordingExportRegressionChecks {
         try await quickLookInstant(in: directory)
         try await unreadableDraft(in: directory)
         try await musicDelivery(in: directory)
+        try await sharedRendersStayH264(in: directory)
+        try await hevcDefaultMigration(in: directory)
         try await replacementVideoTiming(in: directory)
         try await backgroundMusicMixing(in: directory)
         try await backgroundMusicHistory(in: directory)

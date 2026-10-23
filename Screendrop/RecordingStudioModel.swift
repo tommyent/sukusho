@@ -2732,12 +2732,12 @@ final class RecordingStudioModel {
     /// The flattened deliverable when it provably matches the current
     /// in-memory edits - the render is stamped with the document that
     /// produced it. Both Export and Share can then skip the render entirely.
-    func freshDeliverableURL(forGIFExport: Bool = false) -> URL? {
+    func freshDeliverableURL(forLocalExport: Bool = false) -> URL? {
         // Measure the actual renderer during development comparisons, even
         // when this exact document already has a flattened deliverable.
         guard ProcessInfo.processInfo.environment["SCREENDROP_EXPORT_BYPASS_CACHE"] != "1" else { return nil }
         guard let session else { return nil }
-        return session.freshFinalURL(matching: currentDocument(), forGIFExport: forGIFExport)
+        return session.freshFinalURL(matching: currentDocument(), forLocalExport: forLocalExport)
     }
 
     /// `recording_<date>_<time>`, not the session package's internal name.
@@ -2830,7 +2830,8 @@ final class RecordingStudioModel {
         // A fresh deliverable (e.g. right after a share) is byte-identical
         // to what this render would produce - same configuration builds
         // both - so exporting becomes a plain copy into the save folder.
-        if let cached = freshDeliverableURL(forGIFExport: exportSettings.effectiveExportsGIF) {
+        // Only when the settings match exactly: shares are always H.264.
+        if let cached = freshDeliverableURL(forLocalExport: true) {
             let suggestedFileName = exportSuggestedFileName
             let settings = exportSettings
             startExportTask { [weak self] in
