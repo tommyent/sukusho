@@ -26,20 +26,6 @@ struct CloudUploadOptions: Sendable {
     }
 }
 
-/// How long a new share link lasts. Expired links stop working, and the
-/// Worker deletes them daily.
-nonisolated enum CloudExpiry: Int, CaseIterable, Identifiable, Sendable {
-    case never = 0, day = 1, week = 7, month = 30
-
-    var id: Int { rawValue }
-    var title: String { self == .never ? "Never" : rawValue == 1 ? "1 day" : "\(rawValue) days" }
-
-    /// When a link made at `now` stops working; nil for never.
-    func date(from now: Date = .now) -> Date? {
-        self == .never ? nil : now.addingTimeInterval(Double(rawValue) * 86_400)
-    }
-}
-
 /// Remembers the last-chosen "allow comments & likes" toggle across
 /// uploads (including background auto-uploads, which never show the
 /// popover) so the common case doesn't require re-deciding every time.

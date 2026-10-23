@@ -141,10 +141,21 @@ final class RecordingExportNotificationDelegate: NSObject, UNUserNotificationCen
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         // Swiping a banner away is not a request to open anything.
-        guard response.actionIdentifier != UNNotificationDismissActionIdentifier,
-              let path = RecordingExportNotifier.filePath(
-                  in: response.notification.request.content.userInfo
-              ) else {
+        guard response.actionIdentifier != UNNotificationDismissActionIdentifier else {
+            completionHandler()
+            return
+        }
+        // A received file's notification opens the Library on Received.
+        if let ids = response.notification.request.content.userInfo[FileRequestsModel.notificationKey] as? [String] {
+            Task { @MainActor in
+                FileRequestsModel.showReceived(ids)
+                completionHandler()
+            }
+            return
+        }
+        guard let path = RecordingExportNotifier.filePath(
+            in: response.notification.request.content.userInfo
+        ) else {
             completionHandler()
             return
         }

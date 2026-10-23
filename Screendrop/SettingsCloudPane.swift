@@ -245,6 +245,8 @@ struct CloudSettingsPane: View {
             if !showsSetupFirst {
                 CloudShareDefaultsSection()
 
+                ReceivedFilesSettingsSection()
+
                 CloudStorageSettingsSection()
 
                 CloudBrandingSettingsGroup(workerURL: store.workerURL)

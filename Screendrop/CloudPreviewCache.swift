@@ -88,7 +88,7 @@ nonisolated struct CloudPreviewCache: Sendable {
         }
         defer { poll.cancel() }
         let request = CloudUploadList.mediaRequest(source, workerBase: owner?.workerBase,
-                                                   token: upload.hasPassword == true ? owner?.token : nil)
+                                                   token: upload.hasPassword == true || upload.isReceived ? owner?.token : nil)
         let (download, response) = try await Self.session.download(for: request, delegate: relay)
         defer { try? manager.removeItem(at: download) }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -97,7 +97,9 @@ nonisolated struct CloudPreviewCache: Sendable {
             throw CloudPreviewError.status(upload.expiresAt.map { $0 <= .now } == true ? 410 : status)
         }
         let named = (upload.filename as NSString).pathExtension.filter { $0.isLetter || $0.isNumber }
-        let ext = response.mimeType.flatMap { UTType(mimeType: $0)?.preferredFilenameExtension }
+        // A received file is served as application/octet-stream; its own name says what it is.
+        let ext = (upload.isReceived && !named.isEmpty ? named : nil)
+            ?? response.mimeType.flatMap { UTType(mimeType: $0)?.preferredFilenameExtension }
             ?? (named.isEmpty ? (upload.isVideo ? "mp4" : "png") : named)
         try manager.createDirectory(at: directory, withIntermediateDirectories: true)
         let file = directory.appending(path: Self.fileName(for: upload) + "." + ext)
