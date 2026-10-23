@@ -80,14 +80,14 @@ final class CaptureSourceProbe {
     /// Call it on every path, a cancelled capture included, so the monitor
     /// never outlives the capture.
     func finish(_ target: Target) -> CaptureSource? {
-        if let monitor { NSEvent.removeMonitor(monitor) }
-        monitor = nil
+        stopMonitoring()
         let covered: Covered
         switch target {
         case .display(let displayID):
             covered = .display(displayID.map(CGDisplayBounds) ?? .infinite)
         case .window:
-            covered = .point(releasedAt ?? Self.quartzPoint(NSEvent.mouseLocation))
+            // screencapture picks the window under the press.
+            covered = .point(pressedAt ?? releasedAt ?? Self.quartzPoint(NSEvent.mouseLocation))
         case .area:
             if let pressedAt, let releasedAt {
                 covered = .area(CGRect(origin: pressedAt, size: .zero).union(CGRect(origin: releasedAt, size: .zero)))
@@ -104,6 +104,16 @@ final class CaptureSourceProbe {
             appName: app?.localizedName ?? window.ownerName,
             windowTitle: window.title
         )
+    }
+
+    /// A probe dropped without `finish` still stops watching the pointer.
+    isolated deinit {
+        stopMonitoring()
+    }
+
+    private func stopMonitoring() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
     }
 
     /// The window a capture shows, from a front-to-back snapshot: on a
