@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Testing
 
@@ -72,6 +73,33 @@ struct CaptureSourceSearchTests {
         let query = CaptureLibraryQuery("refund app:chrome total")
         #expect(query.ordered(["Header", "Total due", "Refund issued"]) == ["Total due", "Refund issued", "Header"])
         #expect(CaptureLibraryQuery("app:chrome").ordered(["b", "a"]) == ["b", "a"])
+    }
+
+    // MARK: Which window a capture shows
+
+    @Test func anAreaIsTheWindowUnderItNotTheFrontmostApp() {
+        // Front to back: Chrome (frontmost) on the left half, Terminal on the right, Notes behind both.
+        let chromeWindow = CaptureSourceProbe.Window(pid: 1, ownerName: "Google Chrome", title: "Docs", bounds: CGRect(x: 0, y: 25, width: 800, height: 875))
+        let terminal = CaptureSourceProbe.Window(pid: 2, ownerName: "Terminal", title: "zsh", bounds: CGRect(x: 800, y: 25, width: 800, height: 875))
+        let notes = CaptureSourceProbe.Window(pid: 3, ownerName: "Notes", title: nil, bounds: CGRect(x: 100, y: 100, width: 1200, height: 600))
+        let windows = [chromeWindow, terminal, notes]
+        func covering(_ covered: CaptureSourceProbe.Covered, frontmost: pid_t? = 1) -> String? {
+            CaptureSourceProbe.window(covering: covered, in: windows, frontmostPID: frontmost)?.ownerName
+        }
+        // The review's case: an area of Terminal while Chrome is frontmost.
+        #expect(covering(.area(CGRect(x: 900, y: 200, width: 400, height: 300))) == "Terminal")
+        // Its middle decides when it spans both; else the window it overlaps most.
+        #expect(covering(.area(CGRect(x: 600, y: 200, width: 300, height: 300))) == "Google Chrome")
+        // Middle over the menu bar strip, above every window: Terminal's share is larger.
+        #expect(covering(.area(CGRect(x: 600, y: 0, width: 500, height: 30))) == "Terminal")
+        #expect(covering(.area(CGRect(x: 2000, y: 0, width: 100, height: 100))) == nil)
+        // A whole display is the frontmost app's, else the top window on it.
+        #expect(covering(.display(CGRect(x: 0, y: 0, width: 1600, height: 900))) == "Google Chrome")
+        #expect(covering(.display(CGRect(x: 0, y: 0, width: 1600, height: 900)), frontmost: 3) == "Notes")
+        #expect(covering(.display(CGRect(x: 0, y: 0, width: 1600, height: 900)), frontmost: nil) == "Google Chrome")
+        #expect(covering(.display(CGRect(x: 1700, y: 0, width: 1920, height: 1080))) == nil)
+        // A point is the top window under it.
+        #expect(covering(.point(CGPoint(x: 1000, y: 400))) == "Terminal")
     }
 
     // MARK: Stored data

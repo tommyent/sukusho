@@ -29,8 +29,8 @@ struct ScreenRecordingSource {
 
     let kind: Kind
 
-    /// A window recording knows its app outright; a display or area falls
-    /// back to the frontmost app's window on that display.
+    /// A window recording knows its app outright; an area is the window
+    /// under it, and a whole display the frontmost app's window there.
     var captureSource: CaptureSource? {
         switch kind {
         case .window(let window):
@@ -41,8 +41,10 @@ struct ScreenRecordingSource {
                 appName: app.applicationName,
                 windowTitle: title?.isEmpty == false ? title : nil
             )
-        case .fullscreen(let display), .area(let display, _):
+        case .fullscreen(let display):
             return CaptureSourceProbe(tracksPointer: false).finish(.display(display.displayID))
+        case .area(_, let rect):
+            return CaptureSourceProbe(tracksPointer: false).finish(.region(ScreenRecordingManager.quartzRect(fromAppKitRect: rect)))
         }
     }
 
@@ -838,7 +840,7 @@ final class ScreenRecordingManager {
     /// with Y growing upward; Quartz's has it at the top-left growing downward.
     /// Flipping about the main display's height converts between them, and
     /// stays correct for displays placed above or beside the main one.
-    private static func quartzRect(fromAppKitRect rect: CGRect) -> CGRect {
+    fileprivate static func quartzRect(fromAppKitRect rect: CGRect) -> CGRect {
         let mainDisplayHeight = CGDisplayBounds(CGMainDisplayID()).height
         return CGRect(
             x: rect.minX,

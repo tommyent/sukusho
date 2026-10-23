@@ -32,14 +32,24 @@ final class CaptureSourceProbe {
         case window
         /// The window under the middle of the drawn area.
         case area
+        /// A known area, such as an area recording's, in global Quartz coordinates.
+        case region(CGRect)
     }
 
-    private struct Window {
+    /// One on-screen window, as the snapshot saw it.
+    nonisolated struct Window: Equatable {
         let pid: pid_t
         let ownerName: String
         let title: String?
         /// Global display coordinates, top-left origin (Quartz space).
         let bounds: CGRect
+    }
+
+    /// What a capture covered, in global Quartz coordinates.
+    nonisolated enum Covered {
+        case display(CGRect)
+        case point(CGPoint)
+        case area(CGRect)
     }
 
     /// Front to back, as the window server reports them.
@@ -72,25 +82,22 @@ final class CaptureSourceProbe {
     func finish(_ target: Target) -> CaptureSource? {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
-        let window: Window?
+        let covered: Covered
         switch target {
         case .display(let displayID):
-            let screen = displayID.map(CGDisplayBounds) ?? .infinite
-            let onDisplay = windows.filter { $0.bounds.intersects(screen) }
-            window = onDisplay.first { $0.pid == frontmostPID } ?? onDisplay.first
+            covered = .display(displayID.map(CGDisplayBounds) ?? .infinite)
         case .window:
-            window = topmostWindow(at: releasedAt ?? Self.quartzPoint(NSEvent.mouseLocation))
+            covered = .point(releasedAt ?? Self.quartzPoint(NSEvent.mouseLocation))
         case .area:
             if let pressedAt, let releasedAt {
-                let area = CGRect(origin: pressedAt, size: .zero).union(CGRect(origin: releasedAt, size: .zero))
-                window = topmostWindow(at: CGPoint(x: area.midX, y: area.midY))
-                    ?? windows.max { $0.bounds.intersection(area).area < $1.bounds.intersection(area).area }
-                        .flatMap { $0.bounds.intersects(area) ? $0 : nil }
+                covered = .area(CGRect(origin: pressedAt, size: .zero).union(CGRect(origin: releasedAt, size: .zero)))
             } else {
-                window = topmostWindow(at: releasedAt ?? Self.quartzPoint(NSEvent.mouseLocation))
+                covered = .point(releasedAt ?? Self.quartzPoint(NSEvent.mouseLocation))
             }
+        case .region(let rect):
+            covered = .area(rect)
         }
-        guard let window else { return nil }
+        guard let window = Self.window(covering: covered, in: windows, frontmostPID: frontmostPID) else { return nil }
         let app = NSRunningApplication(processIdentifier: window.pid)
         return CaptureSource(
             bundleIdentifier: app?.bundleIdentifier,
@@ -99,8 +106,22 @@ final class CaptureSourceProbe {
         )
     }
 
-    private func topmostWindow(at point: CGPoint) -> Window? {
-        windows.first { $0.bounds.contains(point) }
+    /// The window a capture shows, from a front-to-back snapshot: on a
+    /// display, the frontmost app's top window there, else the top one; at a
+    /// point, the top window under it; for an area, the top window under its
+    /// middle, else the one it overlaps most.
+    nonisolated static func window(covering covered: Covered, in windows: [Window], frontmostPID: pid_t?) -> Window? {
+        switch covered {
+        case .display(let screen):
+            let onDisplay = windows.filter { $0.bounds.intersects(screen) }
+            return onDisplay.first { $0.pid == frontmostPID } ?? onDisplay.first
+        case .point(let point):
+            return windows.first { $0.bounds.contains(point) }
+        case .area(let area):
+            return windows.first { $0.bounds.contains(CGPoint(x: area.midX, y: area.midY)) }
+                ?? windows.max { $0.bounds.intersection(area).area < $1.bounds.intersection(area).area }
+                    .flatMap { $0.bounds.intersects(area) ? $0 : nil }
+        }
     }
 
     /// Ordinary app windows only: layer 0, visible, not this app's own
