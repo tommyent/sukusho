@@ -49,13 +49,24 @@ extension CloudUpload {
         case mediaKey, expiresAt, allowAnonymousComments, socialEnabled, hasPassword, commentCount, likeCount, requestId
     }
 
+    /// Without format characters, which can reorder or hide what a name shows (a U+202E in
+    /// "invoice?fdp.exe" makes it read "invoiceexe.pdf"). The joiners that emoji and some
+    /// scripts need stay. Workers before the name check stripped them may still send some.
+    nonisolated static func shown(_ text: String) -> String {
+        var scalars = String.UnicodeScalarView()
+        scalars.append(contentsOf: text.unicodeScalars.filter {
+            $0.properties.generalCategory != .format || $0.value == 0x200C || $0.value == 0x200D
+        })
+        return String(scalars)
+    }
+
     nonisolated init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.init(
             id: try c.decode(String.self, forKey: .id),
             url: try c.decode(String.self, forKey: .url),
-            title: try c.decodeIfPresent(String.self, forKey: .title),
-            filename: try c.decode(String.self, forKey: .filename),
+            title: try c.decodeIfPresent(String.self, forKey: .title).map(Self.shown),
+            filename: Self.shown(try c.decode(String.self, forKey: .filename)),
             mediaType: try c.decode(String.self, forKey: .mediaType),
             size: try c.decodeIfPresent(Int.self, forKey: .size),
             duration: try c.decodeIfPresent(Double.self, forKey: .duration),

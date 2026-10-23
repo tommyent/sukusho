@@ -158,7 +158,7 @@ nonisolated enum ReceivedFiles {
                             exists: (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path) }) -> URL {
         // The Worker already refuses slashes and control characters; a colon shows as a slash
         // in Finder, and a leading dot would hide the file.
-        let cleaned = String(filename.map { $0 == "/" || $0 == ":" || $0.isNewline ? "-" : $0 })
+        let cleaned = String(CloudUpload.shown(filename).map { $0 == "/" || $0 == ":" || $0.isNewline ? "-" : $0 })
             .trimmingCharacters(in: CharacterSet(charactersIn: ".").union(.whitespaces))
         let name = cleaned.isEmpty ? "Received file" : cleaned
         let base = (name as NSString).deletingPathExtension

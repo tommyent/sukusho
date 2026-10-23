@@ -148,4 +148,20 @@ struct FileRequestTests {
         #expect(ReceivedFiles.destination(for: "...", in: folder, exists: exists).lastPathComponent == "Received file")
         #expect(ReceivedFiles.destination(for: "clip.mov", in: folder, exists: exists).deletingLastPathComponent().path() == "/Downloads/")
     }
+    @Test func formatCharactersLeaveNamesAndJoinersStay() throws {
+        let uploads = try CloudUploadList.decode(Data("""
+        {"uploads":[
+          {"id":"aaaaaaaaaaaaaaaa","url":"https://w.example/a","title":"Brief \\u202Ev2","filename":"invoice\\u202Efdp.exe","mediaType":"file",
+           "createdAt":"2026-10-23T19:00:00Z","thumbnailUrl":null,"requestId":"0123456789abcdef"},
+          {"id":"bbbbbbbbbbbbbbbb","url":"https://w.example/b","title":null,"filename":"family \\ud83d\\udc68\\u200d\\ud83d\\udc69\\u200d\\ud83d\\udc67.png",
+           "mediaType":"file","createdAt":"2026-10-23T19:00:00Z","thumbnailUrl":null,"requestId":"0123456789abcdef"}
+        ],"next":null}
+        """.utf8)).uploads
+        #expect(uploads[0].filename == "invoicefdp.exe")
+        #expect(uploads[0].title == "Brief v2")
+        #expect(uploads[1].filename == "family \u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}.png")
+        #expect(ReceivedFiles.notificationText(for: [uploads[0]]).body == "invoicefdp.exe")
+        let folder = URL(filePath: "/Downloads", directoryHint: .isDirectory)
+        #expect(ReceivedFiles.destination(for: "a\u{202E}b\u{2066}.txt", in: folder, exists: { _ in false }).lastPathComponent == "ab.txt")
+    }
 }
