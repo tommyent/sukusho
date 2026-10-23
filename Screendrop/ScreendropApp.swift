@@ -169,6 +169,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.removeObject(forKey: "captureLibrary.layout")
         ImageTextWarmUp.shared.start()
         CaptureLibraryIndex.shared.start()
+        FileRequestsModel.shared.start()
         RecordingRecoveryCoordinator.recoverInterruptedRecordings()
         let launchEvent = NSAppleEventManager.shared().currentAppleEvent
         let launchReason = launchEvent?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue

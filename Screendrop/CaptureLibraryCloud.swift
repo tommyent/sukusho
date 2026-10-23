@@ -17,6 +17,10 @@ final class CloudLibraryModel {
     var showsFiles = false {
         didSet { if showsFiles != oldValue { selection = [] } }
     }
+    /// The Received page: files clients sent through file requests.
+    var showsReceived = false {
+        didSet { if showsReceived != oldValue { selection = [] } }
+    }
     /// Files waiting for Share Options.
     var pendingFiles: [URL] = []
     /// The files going up from the Files page, one at a time.
@@ -68,7 +72,8 @@ final class CloudLibraryModel {
     private init() {}
 
     /// The captures' or the files' uploads, as the sidebar counts them.
-    func count(files: Bool) -> Int { uploads.count { $0.isFile == files } }
+    func count(files: Bool) -> Int { uploads.count { !$0.isReceived && $0.isFile == files } }
+    var receivedCount: Int { uploads.count(where: \.isReceived) }
 
     /// The selection in display order.
     var selectedUploads: [CloudUpload] { visibleUploads.filter { selection.contains($0.id) } }
@@ -79,7 +84,7 @@ final class CloudLibraryModel {
         let library = CaptureLibraryModel.shared
         let query = library.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let local = localItems
-        let shown = uploads.filter { $0.isFile == showsFiles }
+        let shown = uploads.filter { showsReceived ? $0.isReceived : !$0.isReceived && $0.isFile == showsFiles }
         let matching = query.isEmpty ? shown : shown.filter {
             $0.name.localizedStandardContains(query) || $0.filename.localizedStandardContains(query)
                 || CloudUploadText.title($0, local: local[$0.id]).localizedStandardContains(query)
@@ -124,6 +129,7 @@ final class CloudLibraryModel {
                 uploads = try await CloudUploader.shared.listUploads()
                 isHistoryFallback = false
                 loadError = nil
+                FileRequestsModel.shared.notice(uploads)
             } catch CloudUploadError.listUnavailable {
                 uploads = Self.historyUploads()
                 isHistoryFallback = true
@@ -180,12 +186,17 @@ final class CloudLibraryModel {
     /// editor: a double click (`.edit`) opens the share page, with its
     /// comments, as the Library's link does.
     func perform(_ action: CaptureLibraryAction) {
+        // Received files are private: no link to open, copy or share; a double click downloads.
+        let received = selectedUploads.filter(\.isReceived)
+        let shared = selectedUploads.filter { !$0.isReceived }
         switch action {
         case .preview: quickLook()
-        case .edit: if let upload = selectedUploads.first { open(upload) }
-        case .copy: copyLinks(selectedUploads)
+        case .edit:
+            if let upload = shared.first { open(upload) }
+            FileRequestsModel.shared.download(received)
+        case .copy: copyLinks(shared)
         case .trash: pendingDelete = selectedUploads
-        case .share: LibrarySharing.show(selectedUploads.compactMap { URL(string: $0.url) })
+        case .share: LibrarySharing.show(shared.compactMap { URL(string: $0.url) })
         case .rename, .export, .reveal: break
         }
     }
@@ -195,6 +206,15 @@ final class CloudLibraryModel {
         let selected = selectedUploads
         let single = selected.count == 1 ? selected.first : nil
         let local = single.flatMap { localItems[$0.id] }
+        if showsReceived {
+            return [
+                LibraryMenuItem(title: "Quick Look", isEnabled: !selected.isEmpty) { self.quickLook(toggling: false) },
+                LibraryMenuItem(title: "Download", isEnabled: !selected.isEmpty) { FileRequestsModel.shared.download(selected) },
+                LibraryMenuItem(title: "Delete from Cloud…", isEnabled: !selected.isEmpty && !isBusy, startsGroup: true) {
+                    self.pendingDelete = selected
+                },
+            ]
+        }
         return [
             LibraryMenuItem(title: "Quick Look", isEnabled: !selected.isEmpty) { self.quickLook(toggling: false) },
             LibraryMenuItem(title: "Open Link", isEnabled: single != nil) { if let single { self.open(single) } },
@@ -275,8 +295,21 @@ final class CloudLibraryModel {
         LikesLibraryModel.shared.setShown(false)
         isShown = true
         // The feed's own type: the uploads list may not have loaded yet.
+        showsReceived = false
         showsFiles = mediaType == "file"
         selection = [id]
+    }
+
+    /// Shows the Received page with these files selected, as from a notification.
+    func showReceived(selecting ids: [String]) {
+        CaptureLibraryModel.shared.searchText = ""
+        CommentsLibraryModel.shared.setShown(false)
+        LikesLibraryModel.shared.setShown(false)
+        isShown = true
+        showsFiles = false
+        showsReceived = true
+        selection = Set(ids)
+        refresh()
     }
 
     // MARK: - Files
@@ -457,6 +490,8 @@ struct CloudLibraryPage: View {
                 ContentUnavailableView {
                     if !search.isEmpty {
                         Label("No Results for “\(search)”", systemImage: "magnifyingglass")
+                    } else if cloud.showsReceived {
+                        Label("No Received Files", systemImage: "tray.and.arrow.down")
                     } else if cloud.showsFiles {
                         Label("No Files", systemImage: "doc")
                     } else {
@@ -464,6 +499,7 @@ struct CloudLibraryPage: View {
                     }
                 } description: {
                     Text(!search.isEmpty ? "Check the spelling or try a new search."
+                        : cloud.showsReceived ? "Request files to get a link anyone can use to send you files. What they send appears here, private to you."
                         : cloud.showsFiles ? "Drop files of any kind here to share a link to them."
                         : "Captures you share to the cloud appear here.")
                 } actions: {
@@ -472,6 +508,10 @@ struct CloudLibraryPage: View {
                             .buttonStyle(.borderedProminent)
                             .controlSize(.large)
                             .disabled(cloud.fileUploads != nil)
+                    } else if search.isEmpty, cloud.showsReceived {
+                        Button("Request Files…") { FileRequestsModel.shared.showsSheet = true }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
                     }
                 }
             } else {
@@ -504,6 +544,20 @@ struct CloudLibraryPage: View {
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
+            let open = FileRequestsModel.shared.openRequests.count
+            if cloud.showsReceived, open > 0 {
+                HStack(spacing: 8) {
+                    Label(open == 1 ? "1 open file request" : "\(open) open file requests", systemImage: "link")
+                    Spacer()
+                    Button("Manage…") { FileRequestsModel.shared.showsSheet = true }
+                }
+                .font(.callout)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(.bar)
+            }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
             if cloud.showsFiles, let uploads = cloud.fileUploads {
                 HStack(spacing: 8) {
                     ProgressView(value: uploads.fraction).frame(width: 120)
@@ -527,6 +581,9 @@ struct CloudLibraryPage: View {
             CloudUploadOptionsPopover(showsTitle: cloud.pendingFiles.count == 1) { options in
                 cloud.uploadPendingFiles(options: options)
             }
+        }
+        .sheet(isPresented: Binding(get: { FileRequestsModel.shared.showsSheet }, set: { FileRequestsModel.shared.showsSheet = $0 })) {
+            FileRequestsSheet()
         }
         .onAppear { cloud.refresh() }
         .alert(deleteTitle, isPresented: Binding(
@@ -599,8 +656,10 @@ private struct CloudUploadCard: View {
         .accessibilityLabel(spokenLabel)
         .accessibilityAddTraits(selected ? [.isSelected] : [])
         .accessibilityAction(named: "Quick Look") { act { $0.quickLook(toggling: false) } }
-        .accessibilityAction(named: "Open Link") { CloudLibraryModel.shared.open(upload) }
-        .accessibilityAction(named: "Copy Link") { CloudLibraryModel.shared.copyLinks([upload]) }
+        .accessibilityAction(named: upload.isReceived ? "Download" : "Open Link") {
+            if upload.isReceived { FileRequestsModel.shared.download([upload]) } else { CloudLibraryModel.shared.open(upload) }
+        }
+        .accessibilityAction(named: "Copy Link") { if !upload.isReceived { CloudLibraryModel.shared.copyLinks([upload]) } }
         .accessibilityAction(named: "Delete from Cloud") { CloudLibraryModel.shared.pendingDelete = [upload] }
     }
 
@@ -676,10 +735,12 @@ private struct CloudUploadCard: View {
                     .padding(7)
                 }
             }
-            // Every upload is shared: a click copies its link, as on Library cards.
+            // Every upload but a received file is shared: a click copies its link, as on Library cards.
             .overlay(alignment: .topTrailing) {
-                CardCloudBadge(isShared: true) { act { $0.copyLinks([upload]) } }
-                    .id(upload.id)
+                if !upload.isReceived {
+                    CardCloudBadge(isShared: true) { act { $0.copyLinks([upload]) } }
+                        .id(upload.id)
+                }
             }
             .overlay(alignment: .bottomTrailing) {
                 if upload.isVideo, let duration = upload.duration {
@@ -971,8 +1032,8 @@ struct CloudUploadInspector: View {
                     VStack(alignment: .leading, spacing: InspectorMetrics.headerSpacing) {
                         sectionTitle("Information")
                         VStack(spacing: InspectorMetrics.rowSpacing) {
-                            detailRow("Link", value: upload.url)
-                            detailRow("Uploaded", value: upload.createdAt.formatted(date: .abbreviated, time: .shortened))
+                            if !upload.isReceived { detailRow("Link", value: upload.url) }
+                            detailRow(upload.isReceived ? "Received" : "Uploaded", value: upload.createdAt.formatted(date: .abbreviated, time: .shortened))
                             if upload.isVideo, let duration = upload.duration {
                                 detailRow("Duration", value: CloudUploadText.duration(duration))
                             }
@@ -985,7 +1046,7 @@ struct CloudUploadInspector: View {
                         }
                     }
                     Divider()
-                    sharing(upload)
+                    if upload.isReceived { received(upload) } else { sharing(upload) }
                     if !upload.isFile {
                         Divider()
                         VStack(alignment: .leading, spacing: InspectorMetrics.headerSpacing) {
@@ -1009,12 +1070,29 @@ struct CloudUploadInspector: View {
             }
         } else {
             LibraryInspectorPlaceholder(
-                symbol: cloud.showsFiles ? "doc" : "cloud", title: cloud.showsFiles ? "File details" : "Upload details",
-                message: cloud.showsFiles ? "Select a file to see its link\nand sharing settings."
+                symbol: cloud.showsReceived ? "tray.and.arrow.down" : cloud.showsFiles ? "doc" : "cloud",
+                title: cloud.showsReceived ? "Received file" : cloud.showsFiles ? "File details" : "Upload details",
+                message: cloud.showsReceived ? "Select a file a client sent\nto download it."
+                    : cloud.showsFiles ? "Select a file to see its link\nand sharing settings."
                     : "Select an upload to see its link\nand whether it’s still in the Library."
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    /// A client's file: private to the owner, so it downloads rather than shares.
+    private func received(_ upload: CloudUpload) -> some View {
+        VStack(alignment: .leading, spacing: InspectorMetrics.headerSpacing) {
+            sectionTitle("Received File")
+            Text("Sent through one of your file requests. Only you can download it, and it isn’t scanned for malware.")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(FileRequestsModel.shared.downloadingIDs.contains(upload.id) ? "Downloading…" : "Download") {
+                FileRequestsModel.shared.download([upload])
+            }
+            .disabled(FileRequestsModel.shared.downloadingIDs.contains(upload.id))
+        }
+        .font(.system(size: 12))
     }
 
     /// The link's expiry and anonymous comments, changed on the Worker.
@@ -1101,7 +1179,7 @@ struct CloudUploadInspector: View {
                 VStack(alignment: .leading, spacing: InspectorMetrics.headerSpacing) {
                     sectionTitle("Selection")
                     VStack(spacing: InspectorMetrics.rowSpacing) {
-                        if cloud.showsFiles {
+                        if cloud.showsFiles || cloud.showsReceived {
                             detailRow("Files", value: "\(uploads.count)")
                         } else {
                             detailRow("Screenshots", value: "\(uploads.filter { !$0.isVideo }.count)")
