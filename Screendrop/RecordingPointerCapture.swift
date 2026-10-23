@@ -56,6 +56,7 @@ nonisolated final class PointerActivityRecorder: NSObject, @unchecked Sendable {
     /// Mirrors RecordingKeystrokeRecorder.duplicateEventWindow: the same
     /// physical input can arrive from the event tap and the AppKit monitors.
     private static let duplicatePressWindow: TimeInterval = 0.05
+    private static let penButtonClickWindow: TimeInterval = 0.5
     /// Cursor identities can change briefly over links, resize handles, and
     /// text. Sample near display cadence; artwork encoding still runs only when
     /// the NSCursor identity actually changes.
@@ -172,8 +173,15 @@ nonisolated final class PointerActivityRecorder: NSObject, @unchecked Sendable {
         }
     }
 
+    /// The bar click that turns the pen on is on the bar, not the content:
+    /// without this, every drawing came with an automatic zoom on the bar.
     func setPenOn(_ isOn: Bool) {
-        lock.withLock { penIsOn = isOn }
+        lock.withLock {
+            penIsOn = isOn
+            guard isOn else { return }
+            let now = ProcessInfo.processInfo.systemUptime
+            presses.removeAll { now - $0.uptime < Self.penButtonClickWindow }
+        }
     }
 
     func resume() {
