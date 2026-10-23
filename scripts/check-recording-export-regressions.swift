@@ -647,10 +647,14 @@ struct RecordingExportRegressionChecks {
 
     /// The remembered export default moves from H.264 to HEVC once; any later choice sticks (sd-3ohr).
     static func hevcDefaultMigration(in directory: URL) async throws {
-        // UserDefaults ignores the isolated home, so this process's own domain is removed afterwards.
+        // UserDefaults ignores the isolated home, so this process's own domain is emptied afterwards
+        // and written out now, before the runner deletes its file.
         let domain = ProcessInfo.processInfo.processName
         UserDefaults.standard.removePersistentDomain(forName: domain)
-        defer { UserDefaults.standard.removePersistentDomain(forName: domain) }
+        defer {
+            UserDefaults.standard.removePersistentDomain(forName: domain)
+            CFPreferencesAppSynchronize(domain as CFString)
+        }
         func rememberAsOldBuild(_ codec: VideoCompressionCodec) throws {
             UserDefaults.standard.removePersistentDomain(forName: domain)
             UserDefaults.standard.set(try JSONEncoder().encode(VideoCompressionSettings(codec: codec)),
