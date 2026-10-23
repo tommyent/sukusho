@@ -214,6 +214,7 @@ final class CaptureLibraryModel {
         let history = ScreenshotHistoryStore.shared.items.map(CaptureLibraryHistorySnapshot.init)
         let directory = ScreenshotHistoryStore.historyDirectory
         let activeSessionPath = ScreenRecordingManager.shared.activeSessionDirectoryURL?.standardizedFileURL.path
+        let historyLoaded = ScreenshotHistoryStore.shared.isFullyLoaded
         isLoading = true
         refreshTask = Task {
             // Coalesce capture completion, project saves and window activation.
@@ -222,10 +223,11 @@ final class CaptureLibraryModel {
             let scan = Task.detached(priority: .userInitiated) {
                 CaptureLibraryScanner.scan(history: history, historyDirectory: directory, excludingSessionPath: activeSessionPath)
             }
-            let result = await withTaskCancellationHandler {
+            let scanned = await withTaskCancellationHandler {
                 await scan.value
             } onCancel: { scan.cancel() }
             guard !Task.isCancelled else { return }
+            let (result, recordingsListed) = scanned
             items = result
             savedNames.removeAll()
             screenshotCount = result.lazy.filter { !$0.isVideo }.count
@@ -237,7 +239,13 @@ final class CaptureLibraryModel {
             updateVisibleItems()
             isLoading = false
             hasLoaded = true
+            CaptureLibraryIndex.shared.sync(result, isComplete: historyLoaded && recordingsListed)
         }
+    }
+
+    /// New text arrived; a search may now match more captures.
+    func textIndexDidChange() {
+        if !searchText.isEmpty { updateVisibleItems() }
     }
 
     private func scheduleSearch() {
@@ -250,15 +258,14 @@ final class CaptureLibraryModel {
     }
 
     private func updateVisibleItems() {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let query = CaptureLibraryQuery(searchText)
         let filter = filter ?? .all
+        let text = CaptureLibraryIndex.shared.foldedText
         let visible = items.filter { item in
             let matchesKind = filter == .all || (filter == .recordings ? item.isVideo : !item.isVideo)
             let matchesTag = tagFilter.map(item.tags.contains) ?? true
-            return matchesKind && matchesTag && (query.isEmpty || item.name.localizedStandardContains(query)
-                || item.title.localizedStandardContains(query)
-                || item.fileURL.lastPathComponent.localizedStandardContains(query)
-                || item.tags.contains { $0.localizedStandardContains(query) })
+            return matchesKind && matchesTag && query.matches(
+                fields: [item.name, item.title, item.fileURL.lastPathComponent] + item.tags, foldedText: text[item.id])
         }.sorted { lhs, rhs in
             switch sortOrder {
             case .newest where lhs.createdAt != rhs.createdAt: return lhs.createdAt > rhs.createdAt
@@ -283,11 +290,14 @@ final class CaptureLibraryModel {
 }
 
 nonisolated enum CaptureLibraryScanner {
-    static func scan(history: [CaptureLibraryHistorySnapshot], historyDirectory: URL, excludingSessionPath: String?) -> [CaptureLibraryItem] {
+    /// The captures, and whether every recording package could be listed.
+    static func scan(history: [CaptureLibraryHistorySnapshot], historyDirectory: URL,
+                     excludingSessionPath: String?) -> (items: [CaptureLibraryItem], recordingsListed: Bool) {
         let grouped = Dictionary(grouping: history.filter { $0.sessionPath != nil }) {
             URL(fileURLWithPath: $0.sessionPath!, isDirectory: true).standardizedFileURL.path
         }
-        var sessions = Dictionary(RecordingSessionStore.allSessions().map {
+        let listed = try? RecordingSessionStore.listSessions()
+        var sessions = Dictionary((listed ?? []).map {
             ($0.directoryURL.standardizedFileURL.path, $0)
         }, uniquingKeysWith: { first, _ in first })
         for path in grouped.keys {
@@ -296,7 +306,7 @@ nonisolated enum CaptureLibraryScanner {
         }
         var entries: [CaptureLibraryItem] = []
         for (path, session) in sessions {
-            guard !Task.isCancelled else { return [] }
+            guard !Task.isCancelled else { return ([], false) }
             guard path != excludingSessionPath else { continue }
             let manifest = session.loadCaptureManifest()
             let metadata = session.loadProjectMetadata()
@@ -307,9 +317,14 @@ nonisolated enum CaptureLibraryScanner {
             let createdAt = manifest?.createdAt ?? row?.createdAt
                 ?? (try? session.directoryURL.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
             let fileURL = session.deliverableURL
-            let modified = [session.editDocumentURL, session.draftDocumentURL, session.projectMetadataURL, fileURL]
-                .compactMap { try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }
-                .max() ?? row?.modifiedAt ?? createdAt
+            func modificationDate(_ url: URL) -> Date? {
+                try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+            }
+            // What the recording shows: a rename, a tag or opening Studio (all
+            // in project.json) changes neither its thumbnail nor its text.
+            let content = [session.editDocumentURL, session.draftDocumentURL, fileURL].compactMap(modificationDate).max()
+            let modified = [content, modificationDate(session.projectMetadataURL)].compactMap { $0 }.max()
+                ?? row?.modifiedAt ?? createdAt
             entries.append(CaptureLibraryItem(
                 id: "recording:\(path)", historyIDs: Set(rows.map(\.id)), name: session.displayName,
                 customName: storedName.isEmpty ? nil : storedName,
@@ -319,11 +334,11 @@ nonisolated enum CaptureLibraryScanner {
                 isVideo: true, hasEdits: session.hasSavedProject, hasDraft: session.hasUnsavedDraft,
                 cloudURL: rows.compactMap(\.cloudURL).first,
                 tags: metadata?.tags ?? [],
-                thumbnailKey: "\(fileURL.path):\(modified.timeIntervalSince1970)"
+                thumbnailKey: "\(fileURL.path):\((content ?? modified).timeIntervalSince1970)"
             ))
         }
         for row in history where row.sessionPath == nil {
-            guard !Task.isCancelled else { return [] }
+            guard !Task.isCancelled else { return ([], false) }
             let url = historyDirectory.appendingPathComponent(row.fileName)
             guard FileManager.default.fileExists(atPath: url.path) else { continue }
             let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
@@ -336,7 +351,7 @@ nonisolated enum CaptureLibraryScanner {
                 thumbnailKey: "\(url.path):\(modified.timeIntervalSince1970)"
             ))
         }
-        return entries
+        return (entries, listed != nil)
     }
 
     static func sizeOnDisk(of url: URL) -> Int64 {

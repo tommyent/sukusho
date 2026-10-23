@@ -41,6 +41,22 @@ enum ImageTextRecognizer {
         }
     }
 
+    /// The lines in `image` in reading order, for the Library's text index.
+    /// Synchronous and slow when Vision is cold: call it off the main thread
+    /// and off the cooperative pool. Throws when Vision itself fails.
+    nonisolated static func recognizeLines(in image: CGImage) throws -> [CaptureTextLine] {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+        try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+        return readingOrder(request.results ?? []).compactMap { observation in
+            guard let text = observation.topCandidates(1).first?.string.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !text.isEmpty else { return nil }
+            let box = observation.boundingBox
+            return CaptureTextLine(text: text, box: CGRect(x: box.minX, y: 1 - box.maxY, width: box.width, height: box.height))
+        }
+    }
+
     /// Vision returns observations in no documented order, which scrambles
     /// anything laid out in columns. Groups them into visual lines top to
     /// bottom, then orders each line left to right.
@@ -48,7 +64,7 @@ enum ImageTextRecognizer {
     /// Done as an explicit grouping pass rather than one clever comparator:
     /// a tolerance-based comparator is not a strict weak ordering, and
     /// `sorted(by:)` gives undefined results when handed one.
-    private static func readingOrder(
+    nonisolated private static func readingOrder(
         _ observations: [VNRecognizedTextObservation]
     ) -> [VNRecognizedTextObservation] {
         // Vision's normalized origin is bottom-left, so a larger midY sits

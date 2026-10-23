@@ -62,6 +62,16 @@ nonisolated enum ScreendropStorage {
         return new.path + "/" + path.dropFirst(prefix.count)
     }
 
+    /// A folder's contents. One that doesn't exist yet is empty; any other
+    /// failure throws, so a caller can tell "nothing there" from "couldn't look".
+    static func folderContents(at url: URL) throws -> [URL] {
+        do {
+            return try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil)
+        } catch let error as NSError where error.domain == NSCocoaErrorDomain && error.code == NSFileReadNoSuchFileError {
+            return []
+        }
+    }
+
     private static var supportBaseDirectory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support", isDirectory: true)

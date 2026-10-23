@@ -160,6 +160,9 @@ final class ScreenshotHistoryStore {
     }
 
     @ObservationIgnored private var metadata = ScreenshotHistoryMetadata<ScreenshotHistoryItem>()
+    /// False when history.json, or a row in it, couldn't be read, so `items`
+    /// may be missing captures that still exist.
+    var isFullyLoaded: Bool { !metadata.isReadOnly }
 
     private(set) var items: [ScreenshotHistoryItem] = []
 

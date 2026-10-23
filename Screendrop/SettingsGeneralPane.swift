@@ -14,6 +14,7 @@ struct GeneralSettingsPane: View {
     @AppStorage(ScreendropPreferences.showMenuBarIconKey) private var showMenuBarIcon = true
     @AppStorage(ScreendropPreferences.includeAppWindowsInCapturesKey)
     private var includeAppWindowsInCaptures = false
+    @AppStorage(ScreendropPreferences.libraryReadsTextKey) private var libraryReadsText = true
     @State private var launchAtLoginStatus = LaunchAtLoginController.status
     @State private var launchAtLoginError: String?
 
@@ -115,6 +116,16 @@ struct GeneralSettingsPane: View {
                 .toggleStyle(.switch)
             }
 
+            Section("Library") {
+                SettingsControlLabel(
+                    "Read text in captures",
+                    detail: "Search finds captures by the words in them. Text is read on this Mac and never uploaded."
+                ).control { label in
+                    Toggle(isOn: $libraryReadsText) { label }
+                }
+                .toggleStyle(.switch)
+            }
+
             Section("Capture Visibility") {
                 SettingsControlLabel(
                     "Include Sukusho windows in captures",
@@ -133,6 +144,9 @@ struct GeneralSettingsPane: View {
         }
         .onChange(of: includeAppWindowsInCaptures) { _, _ in
             PreviewWindowCaptureExclusion.shared.refreshRegisteredWindows()
+        }
+        .onChange(of: libraryReadsText) { _, _ in
+            CaptureLibraryIndex.shared.settingsDidChange()
         }
     }
 
