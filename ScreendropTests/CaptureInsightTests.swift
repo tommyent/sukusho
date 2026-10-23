@@ -25,6 +25,23 @@ struct CaptureInsightTests {
         #expect(CaptureInsightRules.cleanTitle("") == nil)
     }
 
+    @Test func lowercasedNamesTakeTheCapturesSpelling() {
+        let lines = ["From: TAP Air Portugal", "Subject: Your flight itinerary to Lisbon", "Payouts – Stripe Dashboard",
+                     "Payout schedule: Automatic", "error: cannot find 'x' in scope"]
+        #expect(CaptureInsightRules.spelling(of: "tap air portugal", in: lines) == "TAP Air Portugal")
+        #expect(CaptureInsightRules.spelling(of: "lisbon", in: lines) == "Lisbon")
+        #expect(CaptureInsightRules.spelling(of: "stripe", in: lines) == "Stripe")
+        // Capitalized only where a line starts, or not at all: the model's case stands.
+        #expect(CaptureInsightRules.spelling(of: "payouts", in: lines) == "payouts")
+        #expect(CaptureInsightRules.spelling(of: "schedule", in: lines) == "schedule")
+        #expect(CaptureInsightRules.spelling(of: "error", in: lines) == "error")
+        // Whole words only: "ai" isn't the start of "Air".
+        #expect(CaptureInsightRules.spelling(of: "ai", in: lines) == "ai")
+        // A spelling the model chose itself is kept.
+        #expect(CaptureInsightRules.spelling(of: "Lisboa", in: lines) == "Lisboa")
+        #expect(CaptureInsightRules.spelling(of: "boston", in: []) == "boston")
+    }
+
     // MARK: Suggestions
 
     @Test func suggestionsSkipTagsTheCaptureHasAndUseTheLibrarysSpelling() {

@@ -31,7 +31,7 @@ nonisolated enum CaptureIntelligence {
         var title: String
         @Guide(description: "The one category that best describes what the capture shows.")
         var category: Category
-        @Guide(description: "Tags someone would file this capture under: the distinctive products, companies, places, people or projects in it, and its topic. One or two words each. Never generic words such as 'next', 'schedule' or 'minimum', and never dates, times or amounts. Lowercase unless a proper name.", .maximumCount(5))
+        @Guide(description: "Tags someone would file this capture under, most specific first: the products, companies, apps or websites, places and projects it is about, and people's names when they are the subject, spelled as written, names in the window title included. Add a general topic word only when nothing specific fits. Never dates, times or amounts, the whole window title, or the app it was taken in. One or two words each, lowercase unless a proper name.", .maximumCount(5))
         var keywords: [String]
     }
 
@@ -44,11 +44,12 @@ nonisolated enum CaptureIntelligence {
                          image: CGImage?) async -> Outcome {
         let prompt = prompt(paragraphs: paragraphs, transcript: transcript, source: source, isVideo: isVideo)
         let seen = SystemLanguageModel.default.capabilities.contains(.vision) ? image : nil
+        let lines = paragraphs + [source?.windowTitle, transcript].compactMap { $0 }
         do {
-            return .insight(insight(from: try await respond(prompt, image: seen)))
+            return .insight(insight(from: try await respond(prompt, image: seen), lines: lines))
         } catch where seen != nil && isContextOverflow(error) {
             // An image can overflow the context window; the text alone may fit.
-            do { return .insight(insight(from: try await respond(prompt, image: nil))) } catch { return outcome(for: error) }
+            do { return .insight(insight(from: try await respond(prompt, image: nil), lines: lines)) } catch { return outcome(for: error) }
         } catch {
             return outcome(for: error)
         }
@@ -76,9 +77,10 @@ nonisolated enum CaptureIntelligence {
         return false
     }
 
-    private static func insight(from answer: Answer) -> CaptureInsight {
+    /// `lines` is the text the model was given, for names it lowercased.
+    private static func insight(from answer: Answer, lines: [String]) -> CaptureInsight {
         var seen = Set<String>()
-        let keywords = answer.keywords.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        let keywords = answer.keywords.map { CaptureInsightRules.spelling(of: $0.trimmingCharacters(in: .whitespacesAndNewlines), in: lines) }
             .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
         let category = String(describing: answer.category)
         return CaptureInsight(title: CaptureInsightRules.cleanTitle(answer.title), keywords: keywords,

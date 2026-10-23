@@ -102,6 +102,22 @@ nonisolated enum CaptureInsightRules {
         }
     }
 
+    /// A keyword the model lowercased, in the capture's own spelling when a
+    /// line writes it with capitals past its start ("lisbon" → "Lisbon");
+    /// a word capitalized only where a line starts keeps the model's case.
+    static func spelling(of keyword: String, in lines: [String]) -> String {
+        guard keyword == keyword.lowercased() else { return keyword }
+        for line in lines {
+            var from = line.startIndex
+            while let range = line.range(of: keyword, options: .caseInsensitive, range: from..<line.endIndex) {
+                let isWord = !(line[..<range.lowerBound].last?.isLetter ?? false) && !(line[range.upperBound...].first?.isLetter ?? false)
+                if isWord, range.lowerBound != line.startIndex, line[range] != keyword { return String(line[range]) }
+                from = range.upperBound
+            }
+        }
+        return keyword
+    }
+
     /// How a dismissed suggestion is remembered.
     static func fold(_ tag: String) -> String {
         tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
