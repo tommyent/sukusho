@@ -152,10 +152,12 @@ struct RecordingEditDocument: Codable, Equatable {
         self.redactions = redactions
     }
 
-    /// Uploads and shared deliverables are movies even when the export picker last chose GIF.
+    /// Uploads and shared deliverables are movies even when the export picker last chose GIF,
+    /// and H.264 even when it chose HEVC: browsers play HEVC only partly, and a share link must play.
     nonisolated var forVideoRendering: Self {
         var document = self
         document.exportSettings?.exportsGIF = false
+        document.exportSettings?.codec = .h264
         return document
     }
 

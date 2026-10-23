@@ -73,6 +73,8 @@ nonisolated enum VideoExportFrameRate: String, CaseIterable, Identifiable, Codab
 nonisolated struct VideoCompressionSettings: Codable, Equatable, Sendable {
     var quality: VideoCompressionQuality = .medium
     var speed: VideoCompressionSpeed = .fast
+    /// H.264 so shared renders without saved settings play everywhere; local
+    /// exports start from HEVC through `RecordingExportPreferences`.
     var codec: VideoCompressionCodec = .h264
     var resolution: VideoCompressionResolution = .original
     var removeAudio = false
