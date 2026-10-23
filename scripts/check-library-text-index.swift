@@ -121,6 +121,20 @@ struct LibraryTextIndexChecks {
         try await search("CAFE MENU", expect: [firstID])
         try await search("nowhere in it", expect: [])
 
+        // Never recorded: no Recordings folder, yet a deleted capture still loses its text.
+        try check(!FileManager.default.fileExists(atPath: RecordingSessionStore.recordingsDirectory.path), "Recordings folder exists already")
+        try writePNG(["Temporary Lofoten note"], to: scratch.appendingPathComponent("temporary.png"))
+        history.importScreenshot(from: scratch.appendingPathComponent("temporary.png"))
+        let temporary = try require(history.items.first)
+        let temporaryID = temporary.id.uuidString
+        try await waitUntil("temporary screenshot read") { index.entries[temporaryID] != nil }
+        try FileManager.default.removeItem(at: temporary.url)
+        history.removeTrashedItems(ids: [temporary.id])
+        try await waitUntil("deleted capture's text removed before any recording") {
+            index.entries[temporaryID] == nil && !FileManager.default.fileExists(atPath: store.url(for: temporaryID).path)
+        }
+        print("CHECK: a Library that never recorded clears a deleted capture's text")
+
         // An edited screenshot is read again.
         try writePNG(["Kilimanjaro shipping update"], to: firstURL)
         try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(60)], ofItemAtPath: firstURL.path)

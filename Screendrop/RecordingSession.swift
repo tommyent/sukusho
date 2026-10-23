@@ -374,13 +374,7 @@ nonisolated enum RecordingSessionStore {
     /// Throws when the Recordings folder exists but can't be listed; a
     /// missing folder just means no recordings yet.
     static func listSessions() throws -> [RecordingSession] {
-        let urls: [URL]
-        do {
-            urls = try FileManager.default.contentsOfDirectory(at: recordingsDirectory, includingPropertiesForKeys: nil)
-        } catch CocoaError.fileReadNoSuchFile {
-            return []
-        }
-        return urls
+        try ScreendropStorage.folderContents(at: recordingsDirectory)
             .filter { RecordingSession.isSessionDirectory($0) }
             .map { RecordingSession(directoryURL: $0) }
     }

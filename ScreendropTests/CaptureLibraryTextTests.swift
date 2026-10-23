@@ -74,6 +74,30 @@ struct CaptureLibraryTextTests {
         #expect(store.loadAll().keys.sorted() == ["recording"])
     }
 
+    @Test func aMissingRecordingsFolderIsACompleteEmptyListing() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let entryIDs = ["kept", "deleted"]
+        // Never recorded: no folder yet, which is a complete listing, so a delete clears its text.
+        let missing = root.appendingPathComponent("Recordings", isDirectory: true)
+        let listed = try ScreendropStorage.folderContents(at: missing)
+        #expect(listed.isEmpty)
+        #expect(CaptureTextIndexPlan.removed(entryIDs: entryIDs, liveIDs: ["kept"], isComplete: true) == ["deleted"])
+        // There but unreadable: the listing throws and every entry stays.
+        let notAFolder = root.appendingPathComponent("Recordings-file")
+        try Data().write(to: notAFolder)
+        let locked = root.appendingPathComponent("Recordings-locked", isDirectory: true)
+        try FileManager.default.createDirectory(at: locked, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: locked.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: locked.path) }
+        for folder in [notAFolder, locked] {
+            #expect(throws: (any Error).self) { try ScreendropStorage.folderContents(at: folder) }
+            let complete = (try? ScreendropStorage.folderContents(at: folder)) != nil
+            #expect(CaptureTextIndexPlan.removed(entryIDs: entryIDs, liveIDs: ["kept"], isComplete: complete).isEmpty)
+        }
+    }
+
     @Test func storeSavesLoadsRemovesAndRebuilds() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
