@@ -241,7 +241,10 @@ enum RecordingSessionRenderer {
             reframe: reframe,
             fitContentAspect: fitContentAspect,
             usesUniformPadding: aspect == .original,
-            redactions: document?.redactions ?? []
+            redactions: document?.redactions ?? [],
+            ink: document?.showsInk ?? true
+                ? RecordingInkTimeline(strokes: capture.ink, hiding: Set(document?.hiddenInkStrokeIDs ?? []))
+                : nil
         )
     }
 

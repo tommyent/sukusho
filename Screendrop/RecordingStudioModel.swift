@@ -2694,7 +2694,8 @@ final class RecordingStudioModel {
             reframe: reframe,
             fitContentAspect: fitContentAspect,
             usesUniformPadding: exportAspect == .original,
-            redactions: redactions
+            redactions: redactions,
+            ink: showsInk && !inkTimeline.isEmpty ? inkTimeline : nil
         )
     }
 
