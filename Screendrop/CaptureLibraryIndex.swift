@@ -165,18 +165,15 @@ final class CaptureLibraryIndex {
         case paused
     }
 
-    /// Screenshots and frames are read at most this long: plenty for Retina
-    /// text, and it bounds the memory a long scrolling capture takes.
-    nonisolated private static let readingSize = 4096
-
-    /// Checks for a pause before each frame and before Vision runs on it.
+    /// Checks for a pause before each frame and before Vision runs on each tile.
     nonisolated private static func read(_ item: CaptureLibraryItem) async -> ReadOutcome {
         await ImageTextWarmUp.shared.waitUntilReady()
         var frames: [[CaptureTextLine]?] = []
         if item.isVideo {
             let generator = AVAssetImageGenerator(asset: AVURLAsset(url: item.fileURL))
             generator.appliesPreferredTrackTransform = true
-            generator.maximumSize = CGSize(width: readingSize, height: readingSize)
+            let size = CaptureTextIndexPlan.readingSize(width: item.pixelWidth, height: item.pixelHeight)
+            generator.maximumSize = CGSize(width: size, height: size)
             let tolerance = CMTime(seconds: 1, preferredTimescale: 600)
             generator.requestedTimeToleranceBefore = tolerance
             generator.requestedTimeToleranceAfter = tolerance
@@ -185,34 +182,50 @@ final class CaptureLibraryIndex {
             for fraction in [0, 0.5, 0.9].prefix(duration > 2 ? 3 : 1) {
                 guard !(await shouldPause()) else { return .paused }
                 let image = try? await generator.image(at: CMTime(seconds: duration * fraction, preferredTimescale: 600)).image
-                guard !(await shouldPause()) else { return .paused }
-                frames.append(await recognize(image))
+                guard let lines = await lines(in: image) else { return .paused }
+                frames.append(lines)
             }
         } else {
             guard !(await shouldPause()) else { return .paused }
-            let image = await decode(item.fileURL)
-            guard !(await shouldPause()) else { return .paused }
-            frames.append(await recognize(image))
+            guard let lines = await lines(in: await decode(item.fileURL)) else { return .paused }
+            frames.append(lines)
         }
         let transcript = item.session?.effectiveEditDocument()?.subtitleCues.map { $0.map(\.text).joined(separator: " ") }
         return CaptureTextEntry(id: item.id, fingerprint: item.thumbnailKey, frames: frames, transcript: transcript)
             .map(ReadOutcome.read) ?? .unreadable
     }
 
-    /// The image upright, its long side at most `readingSize`.
+    /// The image upright, at `CaptureTextIndexPlan.readingSize`.
     nonisolated private static func decode(_ url: URL) async -> CGImage? {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .background).async {
-                let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary)
-                continuation.resume(returning: source.flatMap {
-                    CGImageSourceCreateThumbnailAtIndex($0, 0, [
-                        kCGImageSourceCreateThumbnailFromImageAlways: true,
-                        kCGImageSourceCreateThumbnailWithTransform: true,
-                        kCGImageSourceThumbnailMaxPixelSize: readingSize,
-                    ] as CFDictionary)
-                })
+                guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else {
+                    return continuation.resume(returning: nil)
+                }
+                let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+                let size = CaptureTextIndexPlan.readingSize(width: properties?[kCGImagePropertyPixelWidth] as? Int ?? 0,
+                                                            height: properties?[kCGImagePropertyPixelHeight] as? Int ?? 0)
+                continuation.resume(returning: CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: size,
+                ] as CFDictionary))
             }
         }
+    }
+
+    /// An image's lines, read in tiles when it's long (`CaptureTextTiling`),
+    /// checking for a pause before each. Nil when a pause began; `.some(nil)`
+    /// when the image or Vision failed.
+    nonisolated private static func lines(in image: CGImage?) async -> [CaptureTextLine]?? {
+        guard let image else { return .some(nil) }
+        var pieces: [(tile: CaptureTextTiling.Tile, lines: [CaptureTextLine])] = []
+        for tile in CaptureTextTiling.tiles(width: image.width, height: image.height) {
+            guard !(await shouldPause()) else { return nil }
+            guard let piece = image.cropping(to: tile.rect), let lines = await recognize(piece) else { return .some(nil) }
+            pieces.append((tile, lines))
+        }
+        return CaptureTextTiling.merge(pieces, width: image.width, height: image.height)
     }
 
     /// Reads one image on a background queue: Vision's work is synchronous,

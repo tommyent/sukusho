@@ -48,6 +48,27 @@ struct LibraryTextIndexChecks {
         try check(CGImageDestinationFinalize(destination), "PNG fixture failed")
     }
 
+    /// A 2000 × 30000 scrolling capture of Retina body text (13 pt at 2x) with
+    /// one line near the top, the middle and the bottom.
+    static func writeTallPNG(to url: URL) throws {
+        let width = 2000, height = 30000
+        let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(gray: 1, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        for (text, fromTop) in [("Harbour ferry timetable", 200), ("Glacier hike permit", 15000), ("Aurora forecast tonight", 29700)] {
+            let string = NSAttributedString(string: text, attributes: [
+                NSAttributedString.Key(kCTFontAttributeName as String): CTFontCreateWithName("Helvetica" as CFString, 26, nil),
+                NSAttributedString.Key(kCTForegroundColorAttributeName as String): CGColor(gray: 0, alpha: 1),
+            ])
+            context.textPosition = CGPoint(x: 120, y: CGFloat(height - fromTop))
+            CTLineDraw(CTLineCreateWithAttributedString(string), context)
+        }
+        let destination = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil)!
+        CGImageDestinationAddImage(destination, context.makeImage()!, nil)
+        try check(CGImageDestinationFinalize(destination), "Tall PNG fixture failed")
+    }
+
     /// Eight seconds of 1280×720: one line of text, then another from 3 s.
     static func movie(at url: URL) async throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
@@ -145,6 +166,20 @@ struct LibraryTextIndexChecks {
         try check(!(index.entries[firstID]?.paragraphs.joined().contains("Zanzibar") ?? true), "Old text kept after an edit")
         try await search("zanzibar", expect: [])
         print("CHECK: edit re-read")
+
+        // A tall scrolling capture keeps a readable short side, so all of it is found.
+        try writeTallPNG(to: scratch.appendingPathComponent("tall.png"))
+        history.importScreenshot(from: scratch.appendingPathComponent("tall.png"))
+        let tall = try require(history.items.first)
+        try await waitUntil("tall capture read") { index.entries[tall.id.uuidString] != nil }
+        let tallText = try require(index.entries[tall.id.uuidString]).paragraphs.joined(separator: " ")
+        print("CHECK: tall capture \(tall.pixelWidth)×\(tall.pixelHeight) read: \(tallText)")
+        for word in ["Harbour ferry timetable", "Glacier hike permit", "Aurora forecast tonight"] {
+            try check(tallText.contains(word), "Tall capture lost \(word)")
+        }
+        try FileManager.default.removeItem(at: tall.url)
+        history.removeTrashedItems(ids: [tall.id])
+        try await waitUntil("tall capture removed") { index.entries[tall.id.uuidString] == nil }
 
         // A recording: its frames and its saved captions.
         let session = try RecordingSessionStore.createSession()

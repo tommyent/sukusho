@@ -20,6 +20,53 @@ struct CaptureLibraryTextTests {
         #expect(!old.isCurrent(fingerprint: "/History/a.png:100.0"))
     }
 
+    @Test func tallCapturesKeepAReadableShortSide() {
+        #expect(CaptureTextIndexPlan.readingSize(width: 3420, height: 2214) == 3420)
+        #expect(CaptureTextIndexPlan.readingSize(width: 5120, height: 2880) == 4096)
+        #expect(CaptureTextIndexPlan.readingSize(width: 800, height: 600) == 800)
+        // The review's 2000 × 30000 scrolling capture reads at 1600 × 24000, not 273 × 4096.
+        #expect(CaptureTextIndexPlan.readingSize(width: 2000, height: 30000) == 24000)
+        #expect(CaptureTextIndexPlan.readingSize(width: 30000, height: 2000) == 24000)
+        #expect(CaptureTextIndexPlan.readingSize(width: 1000, height: 30000) == 30000)
+        // Extreme shapes stop at about 40 MP decoded.
+        let extreme = Double(CaptureTextIndexPlan.readingSize(width: 1000, height: 100_000))
+        #expect(extreme < 100_000 && extreme * extreme / 100 <= 40_000_000 * 1.001)
+        #expect(CaptureTextIndexPlan.readingSize(width: 0, height: 0) == 4096)
+    }
+
+    @Test func longImagesAreReadInOverlappingTiles() throws {
+        // An ordinary screenshot is one tile.
+        #expect(CaptureTextTiling.tiles(width: 3420, height: 2214).map(\.rect) == [CGRect(x: 0, y: 0, width: 3420, height: 2214)])
+        // A 1000 × 15000 scrolling capture: tiles at most 1500 long whose bands cover it once.
+        for (width, height) in [(1000, 15000), (15000, 1000), (1000, 2001)] {
+            let tiles = CaptureTextTiling.tiles(width: width, height: height)
+            let long = CGFloat(max(width, height))
+            #expect(tiles.count > 1)
+            #expect(tiles.first?.owned.lowerBound == 0 && tiles.last?.owned.upperBound == long)
+            for (tile, next) in zip(tiles, tiles.dropFirst()) {
+                #expect(tile.owned.upperBound == next.owned.lowerBound)
+            }
+            for tile in tiles {
+                let along = height >= width ? tile.rect.height : tile.rect.width
+                #expect(along <= 1500 && tile.rect.minX >= 0 && tile.rect.minY >= 0)
+                #expect(tile.rect.maxX <= CGFloat(width) && tile.rect.maxY <= CGFloat(height))
+            }
+        }
+        // A line in the overlap is read by both tiles and kept once, with its box in the whole image.
+        let tiles = CaptureTextTiling.tiles(width: 1000, height: 15000)
+        let first = tiles[0], second = tiles[1]
+        let overlapY: CGFloat = first.owned.upperBound - 20  // in the first tile's band, inside the second tile too
+        func lineAt(_ y: CGFloat, in tile: CaptureTextTiling.Tile) -> CaptureTextLine {
+            CaptureTextLine(text: "Glacier hike permit", box: CGRect(x: 0.1, y: (y - 15 - tile.rect.minY) / tile.rect.height,
+                                                                       width: 0.5, height: 30 / tile.rect.height))
+        }
+        let merged = CaptureTextTiling.merge([(first, [lineAt(overlapY, in: first)]), (second, [lineAt(overlapY, in: second)])],
+                                             width: 1000, height: 15000)
+        let line = try #require(merged.first)
+        #expect(merged.count == 1)
+        #expect(abs(line.box.midY * 15000 - overlapY) < 0.001 && abs(line.box.height * 15000 - 30) < 0.001)
+    }
+
     @Test func staleCapturesAreReadNewestFirstAndUnreadableOnesWait() {
         let now = Date()
         let captures: [CaptureTextIndexPlan.Capture] = [

@@ -63,12 +63,70 @@ nonisolated enum CaptureTextIndexPlan {
         .sorted { $0.createdAt > $1.createdAt }
     }
 
+    /// The long side, in pixels, to read a width × height image at: at most
+    /// 4096, but never shrinking the short side below 1600, so Retina body
+    /// text in a tall scrolling capture stays legible when read in tiles
+    /// (at 1000, Vision misread 24 px text), never past 40 MP decoded, and
+    /// never larger than the image. 4096 for an unknown size.
+    static func readingSize(width: Int, height: Int) -> Int {
+        let long = Double(max(width, height)), short = Double(min(width, height))
+        guard short > 0 else { return 4096 }
+        let scale = min(1, max(4096 / long, 1600 / short), (40_000_000 / (long * short)).squareRoot())
+        return Int((long * scale).rounded())
+    }
+
     /// Entries whose capture is gone. Only a complete scan can say that: one
     /// where History and the Recordings folder both read in full. An empty
     /// scan more likely means a failed load than a Library emptied at once,
     /// so it removes nothing either.
     static func removed(entryIDs: some Sequence<String>, liveIDs: Set<String>, isComplete: Bool) -> [String] {
         !isComplete || liveIDs.isEmpty ? [] : entryIDs.filter { !liveIDs.contains($0) }
+    }
+}
+
+/// Vision reads an image at a bounded size of its own, so a long scrolling
+/// capture read in one go comes back empty. One more than twice as long as
+/// it is wide (or the other way round) is read in overlapping tiles about
+/// 1.5 short sides long; each tile keeps only the lines centred in its own
+/// band, so the overlap yields each line once.
+nonisolated enum CaptureTextTiling {
+    struct Tile: Equatable {
+        /// In the image's pixels, top-left origin, as `CGImage.cropping` takes it.
+        var rect: CGRect
+        /// Where along the long side this tile's lines may be centred.
+        var owned: Range<CGFloat>
+    }
+
+    static func tiles(width: Int, height: Int) -> [Tile] {
+        let w = CGFloat(width), h = CGFloat(height)
+        let isTall = h >= w
+        let long = max(w, h), short = min(w, h)
+        guard short > 0, long > short * 2 else { return [Tile(rect: CGRect(x: 0, y: 0, width: w, height: h), owned: 0..<max(long, 1))] }
+        let length = (short * 1.5).rounded(), overlap = (short / 5).rounded()
+        var tiles: [Tile] = []
+        var start: CGFloat = 0
+        while true {
+            let end = min(start + length, long)
+            let owned = (start == 0 ? 0 : start + overlap / 2)..<(end >= long ? long : end - overlap / 2)
+            tiles.append(Tile(rect: isTall ? CGRect(x: 0, y: start, width: w, height: end - start)
+                                           : CGRect(x: start, y: 0, width: end - start, height: h), owned: owned))
+            if end >= long { return tiles }
+            start = end - overlap
+        }
+    }
+
+    /// Each tile's lines, its boxes normalized to the tile, as one image's.
+    static func merge(_ pieces: [(tile: Tile, lines: [CaptureTextLine])], width: Int, height: Int) -> [CaptureTextLine] {
+        let w = CGFloat(width), h = CGFloat(height)
+        return pieces.flatMap { tile, lines in
+            lines.compactMap { line in
+                let r = tile.rect
+                let box = CGRect(x: (r.minX + line.box.minX * r.width) / w, y: (r.minY + line.box.minY * r.height) / h,
+                                 width: line.box.width * r.width / w, height: line.box.height * r.height / h)
+                let centre = h >= w ? box.midY * h : box.midX * w
+                return tile.owned.contains(centre) ? CaptureTextLine(text: line.text, box: box) : nil
+            }
+        }
     }
 }
 
