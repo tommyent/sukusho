@@ -171,6 +171,43 @@ struct RecordingExportRegressionChecks {
         print("PASS: Quick Look shows a fresh render or the master at once; pending redactions and unreadable edits still render first")
     }
 
+    static func unreadableDraft(in directory: URL) async throws {
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("unreadable-draft.screendroprec"))
+        try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
+        try await movie(at: session.screenURL)
+        try session.writeEditDocument(RecordingEditDocument(style: RecordingStudioStyle(), zoomEnabled: false, zoomCues: []))
+        let corrupt = Data("not json".utf8)
+        try corrupt.write(to: session.draftDocumentURL)
+        let model = RecordingStudioModel(url: session.directoryURL)
+        defer { model.teardown() }
+        await model.load()
+        try check(model.isLoaded && model.loadError == nil, "Studio refused to open past an unreadable draft: \(model.loadError ?? "not loaded")")
+        try check(!model.zoomEnabled && model.hasUnreadableDraft, "Studio did not open on the saved edits with the unreadable-draft bar")
+        model.export()
+        try check(!model.exportState.isExporting && !model.hasRunningWork, "Export started past an unreadable draft")
+        try check(StudioProjectRegistry.shared.document(for: session.directoryURL) == nil, "Library exports could use the editor past an unreadable draft")
+        model.zoomEnabled = true // An edit before Discard
+        model.flushDraft()
+        try check(!model.saveProject(reportingFailure: false), "Saving went ahead past an unreadable draft")
+        try check(try Data(contentsOf: session.draftDocumentURL) == corrupt && session.loadEditDocument()?.zoomEnabled == false,
+                  "Studio wrote over the unreadable draft or the save before Discard")
+        model.discardUnreadableDraft()
+        try check(!model.hasUnreadableDraft && model.zoomEnabled && session.loadDraftDocument()?.zoomEnabled == true,
+                  "Discard did not replace the unreadable draft with the edits made since opening")
+        try check(model.saveProject(reportingFailure: false) && StudioProjectRegistry.shared.document(for: session.directoryURL) != nil,
+                  "Studio stayed blocked after Discard")
+
+        let broken = RecordingSession(directoryURL: directory.appendingPathComponent("unreadable-edit.screendroprec"))
+        try FileManager.default.createDirectory(at: broken.directoryURL, withIntermediateDirectories: false)
+        try await movie(at: broken.screenURL)
+        try corrupt.write(to: broken.editDocumentURL)
+        let refused = RecordingStudioModel(url: broken.directoryURL)
+        defer { refused.teardown() }
+        await refused.load()
+        try check(!refused.isLoaded && refused.loadError != nil, "An unreadable edit.json without a draft opened")
+        print("PASS: an unreadable draft opens Studio on edit.json with export, upload and saving blocked until Discard, which keeps later edits; an unreadable edit.json still refuses to open")
+    }
+
     static func chapterAtPlayhead(in directory: URL) async throws {
         let session = RecordingSession(directoryURL: directory.appendingPathComponent("chapter-at-playhead.screendroprec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
@@ -1178,6 +1215,7 @@ struct RecordingExportRegressionChecks {
         try await chapterRenameUndo(in: directory)
         try await unchangedRenderReuse(in: directory)
         try await quickLookInstant(in: directory)
+        try await unreadableDraft(in: directory)
         try await musicDelivery(in: directory)
         try await replacementVideoTiming(in: directory)
         try await backgroundMusicMixing(in: directory)

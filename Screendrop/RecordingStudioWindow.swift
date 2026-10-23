@@ -66,6 +66,16 @@ private struct RecordingStudioContent: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
+                if model.hasUnreadableDraft {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("The latest edits couldn't be read, so Studio opened the last save. Export and upload stay off until you discard them.")
+                        Button("Discard Unreadable Edits", role: .destructive) { model.discardUnreadableDraft() }
+                    }
+                    .font(.callout)
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.orange.opacity(0.12))
+                }
                 if model.needsSharedVideoReplacement {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("This recording is shared; the link still shows the unredacted version")
@@ -279,7 +289,7 @@ private struct RecordingStudioContent: View {
                 Label("Upload", systemImage: "icloud.and.arrow.up")
                     .labelStyle(.titleAndIcon)
             }
-            .disabled(!model.isLoaded || model.hasRunningWork || model.needsSharedVideoReplacement)
+            .disabled(!model.isLoaded || model.hasRunningWork || model.needsSharedVideoReplacement || model.hasUnreadableDraft)
             .help("Upload this recording and copy the share link")
         case .rendering(let progress):
             SharePill(stage: "Rendering", progress: progress) {
@@ -331,7 +341,7 @@ private struct RecordingStudioContent: View {
                 Label("Export", systemImage: "arrow.down.circle")
                     .labelStyle(.titleAndIcon)
             }
-            .disabled(!model.isLoaded || model.shareState.isBusy || model.isIsolatingVoice)
+            .disabled(!model.isLoaded || model.shareState.isBusy || model.isIsolatingVoice || model.hasUnreadableDraft)
         case .exporting(let progress):
             SharePill(stage: "Exporting", progress: progress, cancelLabel: "Cancel Export") {
                 model.cancelExport()
@@ -455,7 +465,7 @@ struct RecordingStudioAgentPromptCommand: View {
     var body: some View {
         if let studio {
             Button("Export Agent Prompt…") { studio.exportAgentPrompt() }
-                .disabled(!studio.isLoaded || studio.hasRunningWork || studio.transcriptionState.isTranscribing)
+                .disabled(!studio.isLoaded || studio.hasRunningWork || studio.hasUnreadableDraft || studio.transcriptionState.isTranscribing)
         }
     }
 }
@@ -3254,7 +3264,7 @@ private struct StudioInspector: View {
                 InspectorActionButton("Export Agent Prompt…", systemImage: "text.document") {
                     model.exportAgentPrompt()
                 }
-                .disabled(!model.isLoaded || model.hasRunningWork || model.transcriptionState.isTranscribing)
+                .disabled(!model.isLoaded || model.hasRunningWork || model.hasUnreadableDraft || model.transcriptionState.isTranscribing)
                 .padding(.horizontal, InspectorMetrics.horizontalPadding)
                 .padding(.vertical, 10)
 
@@ -3911,7 +3921,7 @@ private struct StudioInspector: View {
                 isAudioExportOptionsPresented = true
             }
             .help("Export just the soundtrack of the current cut")
-            .disabled(model.isIsolatingVoice)
+            .disabled(model.isIsolatingVoice || model.hasUnreadableDraft)
             .popover(isPresented: $isAudioExportOptionsPresented, arrowEdge: .bottom) {
                 StudioAudioExportOptions(format: $model.audioExportFormat) {
                     isAudioExportOptionsPresented = false

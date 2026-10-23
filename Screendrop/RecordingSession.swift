@@ -230,8 +230,8 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     }
 
     /// Missing legacy edits are fine; existing unreadable edits must never expose the master.
-    func editDocumentForRendering() throws -> RecordingEditDocument? {
-        let url = FileManager.default.fileExists(atPath: draftDocumentURL.path)
+    func editDocumentForRendering(ignoringDraft: Bool = false) throws -> RecordingEditDocument? {
+        let url = !ignoringDraft && FileManager.default.fileExists(atPath: draftDocumentURL.path)
             ? draftDocumentURL : editDocumentURL
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         return try CaptureManifest.decoder.decode(RecordingEditDocument.self, from: Data(contentsOf: url))

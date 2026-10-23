@@ -519,6 +519,9 @@ final class RecordingStudioModel {
     /// The project as this window opened it, for Revert To › Last Opened.
     private var openedDocument: RecordingEditDocument?
     private var openedOnDraft = false
+    /// Opened on the last save because the draft couldn't be read. Until it's discarded, nothing
+    /// saves over it, and export and upload stay off: the draft may hold redactions this lacks.
+    private(set) var hasUnreadableDraft = false
     private var sessionOpenedAt = Date()
     private var keptOpeningSession = false
     private(set) var sessionSnapshots: [CaptureSessionSnapshot] = []
@@ -708,10 +711,19 @@ final class RecordingStudioModel {
         // without a save - a crash, a force quit, or a Studio window that is
         // still open elsewhere. Reopen on the draft so nothing is lost; the
         // project simply opens dirty.
+        func read(ignoringDraft: Bool) throws -> RecordingEditDocument? {
+            let document = try session?.editDocumentForRendering(ignoringDraft: ignoringDraft)
+            for region in document?.redactions ?? [] { try region.validate(sourceDuration: sourceDuration) }
+            return document
+        }
         let document: RecordingEditDocument?
         do {
-            document = try session?.editDocumentForRendering()
-            for region in document?.redactions ?? [] { try region.validate(sourceDuration: sourceDuration) }
+            do { document = try read(ignoringDraft: false) }
+            catch where FileManager.default.fileExists(atPath: session?.draftDocumentURL.path ?? "") {
+                // An unreadable draft: open on the last save and leave the draft alone until Discard.
+                document = try read(ignoringDraft: true)
+                hasUnreadableDraft = true
+            }
         } catch {
             loadError = "Could not read the recording edits: \(error.localizedDescription)"
             return
@@ -1758,7 +1770,7 @@ final class RecordingStudioModel {
     /// committed `edit.json`, so a crash or a failed save costs nothing.
     @discardableResult
     private func writeDraftNow() -> Bool {
-        guard isLoaded, !isRestoringDocument else { return false }
+        guard isLoaded, !isRestoringDocument, !hasUnreadableDraft else { return false }
         let document = currentDocument()
         guard let session else {
             hasUnsavedChanges = document != lastSavedDocument
@@ -1815,7 +1827,7 @@ final class RecordingStudioModel {
     /// working copy to `edit.json` and clears the draft.
     @discardableResult
     func saveProject(reportingFailure: Bool = true) -> Bool {
-        guard isLoaded, !isRestoringDocument, let session else { return false }
+        guard isLoaded, !isRestoringDocument, !hasUnreadableDraft, let session else { return false }
         projectSaveTask?.cancel()
         autosaveTask?.cancel()
         let document = currentDocument()
@@ -1842,6 +1854,14 @@ final class RecordingStudioModel {
         }
     }
 
+    /// The bar's Discard: drops only the unreadable draft; edits made since opening become the new one.
+    func discardUnreadableDraft() {
+        guard hasUnreadableDraft, !isRestoringDocument, let session else { return }
+        session.removeDraftDocument()
+        hasUnreadableDraft = false
+        flushDraft()
+    }
+
     /// Throws away everything since the last save and returns the editor to
     /// that state. Only offered for projects that have actually been saved.
     func discardChanges() async {
@@ -1850,6 +1870,7 @@ final class RecordingStudioModel {
         replacementAudioTask?.cancel()
         replacementAudioTask = nil
         session.removeDraftDocument()
+        hasUnreadableDraft = false
         guard let document = lastSavedDocument else { return }
         let restoreID = beginDocumentRestore()
         applyDocumentSettings(document)
@@ -2755,7 +2776,7 @@ final class RecordingStudioModel {
     }
 
     func exportAgentPrompt() {
-        guard isLoaded, !hasRunningWork, !transcriptionState.isTranscribing else { return }
+        guard isLoaded, !hasRunningWork, !hasUnreadableDraft, !transcriptionState.isTranscribing else { return }
         RecordingAgentPromptExport.chooseDirectory { [weak self] directory in
             guard let self, self.isLoaded, !self.hasRunningWork, !self.transcriptionState.isTranscribing else { return }
             self.pause()
@@ -2800,7 +2821,7 @@ final class RecordingStudioModel {
     func export() {
         // One render at a time: the share pipeline uses the same exporter,
         // so a second encode would just fight it for the media engine.
-        guard !hasRunningWork, isLoaded else { return }
+        guard !hasRunningWork, isLoaded, !hasUnreadableDraft else { return }
         pause()
         let previewURL = sessionURL
 
@@ -2919,7 +2940,7 @@ final class RecordingStudioModel {
     /// Writes the edited soundtrack on its own, for cleanup in a tool that
     /// has no API - the outbound half of the replace-audio round trip.
     func exportAudio() {
-        guard !hasRunningWork, isLoaded, hasAudio else { return }
+        guard !hasRunningWork, isLoaded, hasAudio, !hasUnreadableDraft else { return }
         pause()
 
         audioExportState = .exporting(progress: 0)
@@ -3146,7 +3167,7 @@ final class RecordingStudioModel {
     /// session's flattened deliverable, upload it, and copy the share
     /// link - without leaving the Studio or touching a save panel.
     func shareToCloud(options: CloudUploadOptions, replacingUploadID: String? = nil) {
-        guard !hasRunningWork, isLoaded,
+        guard !hasRunningWork, isLoaded, !hasUnreadableDraft,
               canShareToCloud else {
             return
         }
