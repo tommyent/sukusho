@@ -66,6 +66,11 @@ struct RecordingEditDocument: Codable, Equatable {
     var isolateVoice = false
     var backgroundMusic: RecordingBackgroundMusic?
     var redactions: [RecordingRedaction] = []
+    /// Nil shows the pen strokes drawn during the take; saved only when off,
+    /// so older renders still match their documents.
+    var showsInk: Bool?
+    /// Strokes deleted in Studio. input.json keeps them.
+    var hiddenInkStrokeIDs: [UUID]?
 
     private enum CodingKeys: String, CodingKey {
         case formatVersion
@@ -95,6 +100,8 @@ struct RecordingEditDocument: Codable, Equatable {
         case isolateVoice
         case backgroundMusic
         case redactions
+        case showsInk
+        case hiddenInkStrokeIDs
     }
 
     init(
@@ -119,7 +126,9 @@ struct RecordingEditDocument: Codable, Equatable {
         audioVolume: Double? = nil,
         isolateVoice: Bool = false,
         backgroundMusic: RecordingBackgroundMusic? = nil,
-        redactions: [RecordingRedaction] = []
+        redactions: [RecordingRedaction] = [],
+        showsInk: Bool? = nil,
+        hiddenInkStrokeIDs: [UUID]? = nil
     ) {
         self.style = StoredRecordingStudioStyle(style)
         self.zoomEnabled = zoomEnabled
@@ -150,6 +159,8 @@ struct RecordingEditDocument: Codable, Equatable {
         self.isolateVoice = isolateVoice
         self.backgroundMusic = backgroundMusic
         self.redactions = redactions
+        self.showsInk = showsInk
+        self.hiddenInkStrokeIDs = hiddenInkStrokeIDs
     }
 
     /// Uploads and shared deliverables are movies even when the export picker last chose GIF,
@@ -255,6 +266,8 @@ struct RecordingEditDocument: Codable, Equatable {
         try backgroundMusic?.validate()
         redactions = try container.decodeIfPresent([RecordingRedaction].self, forKey: .redactions) ?? []
         for region in redactions { try region.validate() }
+        showsInk = try container.decodeIfPresent(Bool.self, forKey: .showsInk)
+        hiddenInkStrokeIDs = try container.decodeIfPresent([UUID].self, forKey: .hiddenInkStrokeIDs)
     }
 }
 

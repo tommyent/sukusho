@@ -118,6 +118,7 @@ nonisolated enum PointerStreamSanitizer {
         sanitized.presses = sanitizedPresses
         sanitized.keystrokes = sanitizedKeystrokes(capture.keystrokes)
         sanitized.artwork = artwork
+        sanitized.ink = RecordingInkStroke.sanitized(capture.ink)
         sanitized.isSanitized = true
         return buildStream(from: sanitized)
     }

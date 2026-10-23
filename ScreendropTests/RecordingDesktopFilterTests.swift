@@ -56,29 +56,32 @@ struct RecordingDesktopFilterTests {
     }
 
     @Test(arguments: [false, true], [false, true])
-    func cameraBubbleStaysExcludedWithoutChangingOtherAppWindows(_ cleanDesktop: Bool, _ includesAppWindows: Bool) {
+    func cameraBubbleAndPenStayExcludedWithoutChangingOtherAppWindows(_ cleanDesktop: Bool, _ includesAppWindows: Bool) {
         let appExcluded = RecordingDesktopFilter.excludesApplication(
             bundleIdentifier: "test.app", ownBundleIdentifier: "test.app",
             includesAppWindows: includesAppWindows, cleanDesktop: cleanDesktop
         )
-        let cameraException = RecordingDesktopFilter.excludesWindow(
-            bundleIdentifier: "test.app", layer: Int(CGWindowLevelForKey(.floatingWindow)),
-            cleanDesktop: cleanDesktop, windowID: 42, cameraPreviewWindowID: 42,
-            includesAppWindows: includesAppWindows
-        )
-        // ScreenCaptureKit exceptions invert the application's inclusion rule.
-        #expect(appExcluded != cameraException)
+        let overlays: Set<CGWindowID> = [42, 45] // Camera bubble and recording pen.
+        for windowID in overlays {
+            let overlayException = RecordingDesktopFilter.excludesWindow(
+                bundleIdentifier: "test.app", layer: Int(CGWindowLevelForKey(.floatingWindow)),
+                cleanDesktop: cleanDesktop, windowID: windowID, overlayWindowIDs: overlays,
+                includesAppWindows: includesAppWindows
+            )
+            // ScreenCaptureKit exceptions invert the application's inclusion rule.
+            #expect(appExcluded != overlayException)
+        }
         for windowID in [CGWindowID(43), CGWindowID(44)] { // Recording bar and ordinary app window.
             #expect(!RecordingDesktopFilter.excludesWindow(
                 bundleIdentifier: "test.app", layer: Int(CGWindowLevelForKey(.floatingWindow)),
-                cleanDesktop: cleanDesktop, windowID: windowID, cameraPreviewWindowID: 42,
+                cleanDesktop: cleanDesktop, windowID: windowID, overlayWindowIDs: overlays,
                 includesAppWindows: includesAppWindows
             ))
         }
         #expect(appExcluded == !includesAppWindows)
         #expect(!RecordingDesktopFilter.excludesWindow(
             bundleIdentifier: "test.app", layer: 0, cleanDesktop: cleanDesktop,
-            windowID: 42, cameraPreviewWindowID: nil, includesAppWindows: includesAppWindows
+            windowID: 42, overlayWindowIDs: [], includesAppWindows: includesAppWindows
         ))
     }
 }

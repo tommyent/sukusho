@@ -206,8 +206,16 @@ final class ScreenRecordingManager {
                     }
                 }
 
+                // The pen panel goes up before the filter snapshots window IDs.
+                if let inkFrame = Self.inkFrame(for: source) {
+                    RecordingInkPresenter.shared.prepare(covering: inkFrame) { [pointerActivityRecorder] isOn in
+                        let bar = RecordingBarPresenter.shared.barFrame.map { Self.quartzRect(fromAppKitRect: $0) }
+                        pointerActivityRecorder.setPenOn(isOn, bar: bar)
+                    }
+                }
                 let content = try await ScreenRecordingCapture.availableContent(
                     onScreenWindowsOnly: !options.cleanDesktop && CameraRecordingManager.shared.previewWindowID == nil
+                        && RecordingInkPresenter.shared.windowID == nil
                 )
                 guard try isStarting(session: session) else { return }
                 let target = try Self.captureTarget(for: source, content: content, options: options)
@@ -306,6 +314,8 @@ final class ScreenRecordingManager {
     func pauseRecording() {
         guard state == .recording else { return }
 
+        // Strokes drawn while paused would all land on one frame.
+        RecordingInkPresenter.shared.setPen(false)
         writer.pause()
         pointerActivityRecorder.pause()
         keystrokeRecorder.pause()
@@ -365,6 +375,7 @@ final class ScreenRecordingManager {
         writer.requestStop()
         isStopping = true
         state = .finishing
+        RecordingInkPresenter.shared.setPen(false)
         timer?.invalidate()
         pointerActivityRecorder.stop()
         keystrokeRecorder.stop()
@@ -398,7 +409,11 @@ final class ScreenRecordingManager {
                 manifest.cameraHeight = cameraResult.pixelHeight
             }
             if let sessionStart = result.sessionStartUptime {
-                var capture = pointerActivityRecorder.finish(sessionStartUptime: sessionStart, duration: result.duration)
+                var capture = pointerActivityRecorder.finish(
+                    sessionStartUptime: sessionStart,
+                    duration: result.duration,
+                    ink: RecordingInkPresenter.shared.strokes
+                )
                 capture.keystrokes = keystrokeRecorder.finish(
                     sessionStartUptime: sessionStart,
                     duration: result.duration
@@ -408,7 +423,7 @@ final class ScreenRecordingManager {
                 } catch {
                     NSLog("[Screendrop] Failed to save recording input timeline: \(error)")
                     metadataWarnings.append(
-                        "The screen footage was saved, but its cursor and click data could not be saved."
+                        "The screen footage was saved, but its cursor, click and drawing data could not be saved."
                     )
                 }
             } else {
@@ -731,6 +746,7 @@ final class ScreenRecordingManager {
         writer.onFailure = nil
         pointerActivityRecorder.stop()
         keystrokeRecorder.stop()
+        RecordingInkPresenter.shared.hide()
         TeleprompterController.shared.endRecordingSession()
         endActivity()
         session = nil
@@ -759,6 +775,8 @@ final class ScreenRecordingManager {
         let displayID: CGDirectDisplayID?
         let tracksDynamicGeometry: Bool
         let includesAppWindows = PreviewWindowCaptureExclusion.includesAppWindowsInCaptures
+        let overlayWindowIDs = Set([CameraRecordingManager.shared.previewWindowID,
+                                    RecordingInkPresenter.shared.windowID].compactMap { $0 })
 
         switch source.kind {
         case .fullscreen(let display):
@@ -767,7 +785,7 @@ final class ScreenRecordingManager {
                 content: content,
                 includesAppWindows: includesAppWindows,
                 cleanDesktop: options.cleanDesktop,
-                cameraPreviewWindowID: CameraRecordingManager.shared.previewWindowID
+                overlayWindowIDs: overlayWindowIDs
             )
             filter = plan.makeFilter(for: freshDisplay)
             sourceSize = CGSize(width: freshDisplay.width, height: freshDisplay.height)
@@ -795,7 +813,7 @@ final class ScreenRecordingManager {
                 content: content,
                 includesAppWindows: includesAppWindows,
                 cleanDesktop: options.cleanDesktop,
-                cameraPreviewWindowID: CameraRecordingManager.shared.previewWindowID
+                overlayWindowIDs: overlayWindowIDs
             )
             filter = plan.makeFilter(for: freshDisplay)
             let mappedSourceRect = Self.sourceRect(
@@ -834,6 +852,22 @@ final class ScreenRecordingManager {
             tracksDynamicGeometry: tracksDynamicGeometry,
             inputMapping: inputMapping
         )
+    }
+
+    /// Where the pen can draw, in AppKit screen space: the recorded display,
+    /// the selected area, or the display holding the recorded window.
+    private static func inkFrame(for source: ScreenRecordingSource) -> CGRect? {
+        switch source.kind {
+        case .fullscreen(let display):
+            return ActiveDisplayResolver.screen(for: display.displayID)?.frame
+        case .area(_, let rect):
+            return rect
+        case .window(let window):
+            var displayID = CGDirectDisplayID()
+            var count: UInt32 = 0
+            CGGetDisplaysWithPoint(CGPoint(x: window.frame.midX, y: window.frame.midY), 1, &displayID, &count)
+            return ActiveDisplayResolver.screen(for: count > 0 ? displayID : nil)?.frame
+        }
     }
 
     /// AppKit's global space has its origin at the main display's bottom-left

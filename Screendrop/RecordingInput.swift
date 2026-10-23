@@ -11,6 +11,8 @@ nonisolated struct PointerCaptureFile: Codable, Sendable, Equatable {
     var presses: [PointerPressEvent] = []
     var keystrokes: [RecordingKeystrokeEvent] = []
     var artwork: [PointerArtwork] = []
+    /// Pen strokes drawn during the take; empty for older recordings.
+    var ink: [RecordingInkStroke] = []
     /// Prevents deterministic cleanup from being applied repeatedly when the
     /// same sidecar passes through Studio, flattening, and export builders.
     var isSanitized = false
@@ -87,6 +89,7 @@ nonisolated extension PointerCaptureFile {
         case presses
         case keystrokes
         case artwork
+        case ink
         case isSanitized
     }
 
@@ -103,6 +106,7 @@ nonisolated extension PointerCaptureFile {
             [PointerArtwork].self,
             forKey: .artwork
         ) ?? []
+        ink = try container.decodeIfPresent([RecordingInkStroke].self, forKey: .ink) ?? []
         isSanitized = try container.decodeIfPresent(Bool.self, forKey: .isSanitized) ?? false
     }
 }

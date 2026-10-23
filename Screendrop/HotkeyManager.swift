@@ -20,6 +20,10 @@ final class HotkeyManager {
     private var eventHandlerRef: EventHandlerRef?
     private var hotKeyRefs: [CaptureHotkeyAction: EventHotKeyRef] = [:]
     private(set) var registrationErrors: [CaptureHotkeyAction: String] = [:]
+    /// Keys that exist only while something is on screen, such as the
+    /// recording pen's Esc and ⌘Z. Their IDs start above the actions'.
+    @ObservationIgnored private var temporaryHotKeys: [UInt32: (ref: EventHotKeyRef, action: () -> Void)] = [:]
+    @ObservationIgnored private var nextTemporaryHotKeyID: UInt32 = 1000
     /// Bumped whenever a shortcut changes, so the menu shows the current ones.
     private(set) var revision = 0
     
@@ -139,7 +143,31 @@ final class HotkeyManager {
         hotKeyRefs.removeAll()
     }
     
+    /// Nil when the key is taken; the caller goes on without it.
+    func registerTemporaryHotKey(_ shortcut: HotkeyShortcut, action: @escaping () -> Void) -> UInt32? {
+        installEventHandlerIfNeeded()
+        let id = nextTemporaryHotKeyID
+        nextTemporaryHotKeyID &+= 1
+        var hotKeyRef: EventHotKeyRef?
+        let status = RegisterEventHotKey(
+            UInt32(shortcut.keyCode), shortcut.modifiers.carbonEventModifiers,
+            EventHotKeyID(signature: Self.hotKeySignature, id: id), GetApplicationEventTarget(), 0, &hotKeyRef
+        )
+        guard status == noErr, let hotKeyRef else { return nil }
+        temporaryHotKeys[id] = (hotKeyRef, action)
+        return id
+    }
+
+    func unregisterTemporaryHotKey(_ id: UInt32) {
+        guard let entry = temporaryHotKeys.removeValue(forKey: id) else { return }
+        UnregisterEventHotKey(entry.ref)
+        // A capture shortcut set to this key while it was taken failed to
+        // register; with the key free again, try once more.
+        if !registrationErrors.isEmpty { reloadHotkeys() }
+    }
+
     func handleHotKey(id: UInt32) {
+        if let action = temporaryHotKeys[id]?.action { return action() }
         CaptureHotkeyAction(hotKeyID: id)?.perform()
     }
 }

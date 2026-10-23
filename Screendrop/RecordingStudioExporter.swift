@@ -71,6 +71,8 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
         let fitContentAspect: CGFloat?
         let usesUniformPadding: Bool
         let redactions: [RecordingRedaction]
+        /// Pen strokes drawn during the take; nil when hidden or none.
+        let ink: RecordingInkTimeline?
 
         init(
             screenURL: URL,
@@ -97,7 +99,8 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             reframe: ReframeTrack? = nil,
             fitContentAspect: CGFloat? = nil,
             usesUniformPadding: Bool = false,
-            redactions: [RecordingRedaction] = []
+            redactions: [RecordingRedaction] = [],
+            ink: RecordingInkTimeline? = nil
         ) {
             self.screenURL = screenURL
             self.cameraURL = cameraURL
@@ -124,6 +127,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             self.fitContentAspect = fitContentAspect
             self.usesUniformPadding = usesUniformPadding
             self.redactions = redactions
+            self.ink = ink
         }
     }
 
@@ -351,6 +355,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             fitContentAspect: configuration.fitContentAspect,
             usesUniformPadding: configuration.usesUniformPadding,
             redactions: configuration.redactions,
+            ink: configuration.ink,
             clipTimeline: clipTimeline
         )
 
@@ -709,6 +714,7 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
     private let backdrop: CGImage?
     private let timing: RecordingExportTiming
     private let redactions: [RecordingRedaction]
+    private let ink: RecordingInkTimeline?
     private let clipTimeline: RecordingClipTimeline
     private let redactionContext = CIContext(options: [.cacheIntermediates: false])
     private var metalRenderer: StudioMetalScreenRenderer?
@@ -746,6 +752,7 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
         fitContentAspect: CGFloat? = nil,
         usesUniformPadding: Bool = false,
         redactions: [RecordingRedaction] = [],
+        ink: RecordingInkTimeline? = nil,
         clipTimeline: RecordingClipTimeline
     ) {
         self.canvasSize = canvasSize
@@ -770,6 +777,7 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
         self.reframe = reframe
         self.timing = timing
         self.redactions = redactions
+        self.ink = ink
         self.clipTimeline = clipTimeline
         self.pointerScale = style.cursorScale
         self.colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
@@ -935,6 +943,10 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
             screenLayerCache.capture(source: screenFrame, rect: sampleRects[0], fromLocked: destination)
         }
         if !shouldCacheScreen { screenLayerCache.invalidate() }
+
+        // Ink goes after the cache capture, so a held screen layer never
+        // keeps a half-drawn stroke, and under the pointer drawing it.
+        drawInk(sourceTime: sourceTime, editorTime: editorTime, in: context)
 
         // Pointer motion is resolved independently from viewport shutter
         // blur. Its interaction magnification and tilt stay anchored at the
@@ -1197,6 +1209,26 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
         if let artworkPlacement {
             context.concatenate(artworkPlacement.transform)
             context.draw(artworkPlacement.image, in: artworkPlacement.rect)
+        }
+        context.restoreGState()
+    }
+
+    /// Strokes on the screen content: through the same viewport and card
+    /// clip as the source pixels, with widths that scale with the zoom.
+    private func drawInk(sourceTime: TimeInterval, editorTime: TimeInterval, in context: CGContext) {
+        guard let frames = ink?.frames(at: sourceTime), !frames.isEmpty else { return }
+        let drawRect = layout.frameRect(for: viewportFrame(at: editorTime))
+        let lineScale = min(drawRect.width, drawRect.height)
+        context.saveGState()
+        context.addPath(roundedPath(for: layout.cardRect, radius: layout.cardCornerRadius))
+        context.clip()
+        for frame in frames {
+            let points = frame.points.map {
+                CGPoint(x: drawRect.minX + $0.x * drawRect.width,
+                        y: canvasSize.height - (drawRect.minY + $0.y * drawRect.height))
+            }
+            RecordingInkPath.stroke(RecordingInkPath.path(points), color: frame.stroke.color,
+                                    opacity: frame.opacity, width: frame.stroke.width * lineScale, in: context)
         }
         context.restoreGState()
     }
