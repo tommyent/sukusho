@@ -74,6 +74,9 @@ nonisolated final class PointerActivityRecorder: NSObject, @unchecked Sendable {
     private var pressedButtons = Set<Int>()
     private var pauseStartedUptime: TimeInterval?
     private var pauseIntervals: [PauseInterval] = []
+    /// While the recording pen is on, pen-down and pen-up aren't clicks, so
+    /// they make no ripples or automatic zooms. Travel still follows the pen.
+    private var penIsOn = false
 
     private var eventTap: CFMachPort?
     private var eventTapRunLoopSource: CFRunLoopSource?
@@ -102,6 +105,7 @@ nonisolated final class PointerActivityRecorder: NSObject, @unchecked Sendable {
             pressedButtons = []
             pauseStartedUptime = nil
             pauseIntervals = []
+            penIsOn = false
         }
 
         captureActiveArtwork()
@@ -166,6 +170,10 @@ nonisolated final class PointerActivityRecorder: NSObject, @unchecked Sendable {
             pauseStartedUptime = ProcessInfo.processInfo.systemUptime
             pressedButtons = []
         }
+    }
+
+    func setPenOn(_ isOn: Bool) {
+        lock.withLock { penIsOn = isOn }
     }
 
     func resume() {
@@ -246,7 +254,11 @@ nonisolated final class PointerActivityRecorder: NSObject, @unchecked Sendable {
     /// Converts raw host-clock samples onto the written movie timeline. Pause
     /// adjustment is calculated per sample so activity before a pause never
     /// moves backwards when later pauses are present.
-    func finish(sessionStartUptime: TimeInterval, duration: TimeInterval) -> PointerCaptureFile {
+    func finish(
+        sessionStartUptime: TimeInterval,
+        duration: TimeInterval,
+        ink: [RecordingInkCapture] = []
+    ) -> PointerCaptureFile {
         lock.withLock {
             guard let mapping else { return PointerCaptureFile() }
             var completedPauses = pauseIntervals
@@ -304,6 +316,15 @@ nonisolated final class PointerActivityRecorder: NSObject, @unchecked Sendable {
                 )
             }
             capture.artwork = capturedArtwork
+            capture.ink = RecordingInkStroke.mapped(
+                ink,
+                widthBase: min(mapping.captureRect.width, mapping.captureRect.height),
+                time: {
+                    videoTime(for: $0, sessionStartUptime: sessionStartUptime,
+                              duration: duration, pauseIntervals: completedPauses)
+                },
+                point: { normalizedPoint(for: $0, at: $1, mapping: mapping) }
+            )
 
             let sanitized = PointerStreamSanitizer.sanitize(
                 capture,
@@ -413,6 +434,7 @@ nonisolated final class PointerActivityRecorder: NSObject, @unchecked Sendable {
             case .leftMouseDown, .rightMouseDown, .otherMouseDown:
                 let button = Self.buttonNumber(for: type, event: event)
                 pressedButtons.insert(button)
+                guard !penIsOn else { break }
                 appendPress(CapturedPressEvent(
                     uptime: uptime,
                     point: point,
@@ -423,6 +445,7 @@ nonisolated final class PointerActivityRecorder: NSObject, @unchecked Sendable {
             case .leftMouseUp, .rightMouseUp, .otherMouseUp:
                 let button = Self.buttonNumber(for: type, event: event)
                 pressedButtons.remove(button)
+                guard !penIsOn else { break }
                 appendPress(CapturedPressEvent(
                     uptime: uptime,
                     point: point,
@@ -524,6 +547,7 @@ nonisolated final class PointerActivityRecorder: NSObject, @unchecked Sendable {
             } else {
                 pressedButtons.remove(button)
             }
+            guard !penIsOn else { return }
             appendPress(CapturedPressEvent(
                 uptime: uptime,
                 point: point,

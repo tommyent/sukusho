@@ -383,7 +383,7 @@ final class ScreenRecordingManager {
                 } catch {
                     NSLog("[Screendrop] Failed to save recording input timeline: \(error)")
                     metadataWarnings.append(
-                        "The screen footage was saved, but its cursor and click data could not be saved."
+                        "The screen footage was saved, but its cursor, click and drawing data could not be saved."
                     )
                 }
             } else {
