@@ -262,6 +262,47 @@ struct CaptureLibraryInspector: View {
             // A new selection starts with an empty field.
             .id(items.map(\.id))
             .disabled(model.isBusy)
+            if items.count == 1, let item = items.first {
+                suggestedTags(item)
+            }
+        }
+    }
+
+    /// Tags offered for one capture: never applied until clicked, and a
+    /// dismissed one stays gone for this capture.
+    @ViewBuilder
+    private func suggestedTags(_ item: CaptureLibraryItem) -> some View {
+        let suggested = CaptureLibraryIndex.shared.suggestedTags(for: item, libraryTags: model.tags)
+        if !suggested.isEmpty {
+            FlowLayout(spacing: 6) {
+                ForEach(suggested, id: \.self) { tag in
+                    HStack(spacing: 4) {
+                        Button {
+                            model.setTag(tag, applied: true)
+                        } label: {
+                            Label(tag, systemImage: "plus")
+                        }
+                        .help("Add tag \(tag)")
+                        .accessibilityLabel("Add suggested tag \(tag)")
+                        Button {
+                            CaptureLibraryIndex.shared.dismissSuggestion(tag, for: item)
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 8, weight: .semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .help("Don't suggest this tag for this capture")
+                        .accessibilityLabel("Dismiss suggested tag \(tag)")
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.primary.opacity(0.055), in: Capsule())
+                }
+            }
+            .disabled(model.isBusy)
         }
     }
 
