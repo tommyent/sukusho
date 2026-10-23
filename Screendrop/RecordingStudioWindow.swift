@@ -712,6 +712,14 @@ private struct StudioCanvasComposition: View {
                     )
                     .frame(width: layout.cardRect.width, height: layout.cardRect.height)
                     .overlay {
+                        StudioInkOverlay(
+                            frames: model.inkFrames(at: model.displayTime),
+                            state: state,
+                            cardSize: layout.cardRect.size,
+                            contentSize: layout.contentFillSize
+                        )
+                    }
+                    .overlay {
                         if let pointer = model.pointerFrame(at: model.displayTime) {
                             StudioCursorOverlay(
                                 pointer: pointer,
@@ -1044,6 +1052,35 @@ private struct VideoCropHandleView: View {
 
 /// Recorded pointer artwork, placed through the same viewport transform the
 /// video card uses (see RecordingPointerTimeline for why it is reconstructed).
+/// Pen strokes drawn during the take, mapped like the cursor so they stay on
+/// the content under zooms, reframes and crops.
+private struct StudioInkOverlay: View {
+    let frames: [RecordingInkTimeline.Frame]
+    let state: ViewportFrame
+    let cardSize: CGSize
+    let contentSize: CGSize
+
+    var body: some View {
+        Canvas { context, _ in
+            let scale = contentSize.width * state.magnification
+            let scaleY = contentSize.height * state.magnification
+            for frame in frames {
+                let points = frame.points.map {
+                    CGPoint(x: cardSize.width / 2 + scale * ($0.x - state.anchor.x),
+                            y: cardSize.height / 2 + scaleY * ($0.y - state.anchor.y))
+                }
+                context.stroke(
+                    Path(RecordingInkPath.path(points)),
+                    with: .color(Color(cgColor: frame.stroke.color.cgColor(opacity: frame.opacity))),
+                    style: StrokeStyle(lineWidth: frame.stroke.width * min(scale, scaleY), lineCap: .round, lineJoin: .round)
+                )
+            }
+        }
+        .frame(width: cardSize.width, height: cardSize.height)
+        .allowsHitTesting(false)
+    }
+}
+
 private struct StudioCursorOverlay: View {
     let pointer: PointerFrame
     let artwork: PointerArtwork?
@@ -1842,6 +1879,9 @@ private struct StudioTimelineEditor: View {
                 StudioTimelineHoverMarker(model: model, scale: scale, scrollX: scrollX)
             }
             .overlay {
+                StudioTimelineInkMarks(model: model, scale: scale, scrollX: scrollX)
+            }
+            .overlay {
                 StudioTimelineChapters(model: model, scale: scale, scrollX: scrollX)
             }
             .onChange(of: proxy.size.width, initial: true) { _, width in
@@ -2306,6 +2346,48 @@ private struct StudioTimelineChapters: View {
         .overlay {
             StudioTimelinePlayhead(model: model, chapters: chapters, scale: scale, scrollX: scrollX)
         }
+    }
+}
+
+/// A short red tick at the bottom of the ruler where each drawing starts.
+private struct StudioTimelineInkMarks: View {
+    let model: RecordingStudioModel
+    let scale: StudioTimelineScale
+    let scrollX: CGFloat
+
+    private static let hitWidth: CGFloat = 10
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .topLeading) {
+                ForEach(model.showsInk ? model.inkStrokes : []) { stroke in
+                    if let time = model.editorTime(forSourceTime: stroke.startTime) {
+                        let x = scale.x(for: time) - scrollX
+                        if x >= 0, x <= proxy.size.width {
+                            Button {
+                                model.jumpToInkStroke(stroke)
+                            } label: {
+                                Capsule()
+                                    .fill(Color(nsColor: .systemRed))
+                                    .frame(width: 3, height: 7)
+                                    .frame(width: Self.hitWidth, height: StudioTimelineMetrics.rulerHeight,
+                                           alignment: .bottom)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .help("Drawing \(model.inkStrokeNumber(stroke.id))")
+                            .accessibilityLabel("Drawing \(model.inkStrokeNumber(stroke.id))")
+                            .accessibilityHint("Activate to jump to it.")
+                            .offset(x: x - Self.hitWidth / 2,
+                                    y: StudioTimelineMetrics.playheadLaneHeight + StudioTimelineMetrics.rowSpacing)
+                        }
+                    }
+                }
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
+        }
+        .clipped()
+        .disabled(!model.isLoaded || model.hasRunningWork)
     }
 }
 
@@ -3015,6 +3097,7 @@ private enum StudioInspectorSection: String, Hashable, CaseIterable {
     case camera
     case audio
     case redactions
+    case drawings
 }
 
 private enum StudioInspectorSectionState {
@@ -3182,6 +3265,19 @@ private struct StudioInspector: View {
                         }
                     ) {
                         keystrokeControls
+                    }
+                }
+
+                if model.hasInk {
+                    InspectorDisclosureSection(
+                        title: "Drawings",
+                        summary: model.showsInk ? "\(model.inkStrokes.count)" : nil,
+                        isExpanded: expansionBinding(for: .drawings),
+                        accessory: {
+                            sectionToggle("Show drawings", isOn: $model.showsInk, section: .drawings)
+                        }
+                    ) {
+                        inkControls
                     }
                 }
 
@@ -3587,6 +3683,44 @@ private struct StudioInspector: View {
         .help("Shortcuts you pressed while recording appear as a caption")
         .disabled(!model.showsKeystrokes)
         .opacity(model.showsKeystrokes ? 1 : 0.48)
+    }
+
+    private var inkControls: some View {
+        VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
+            ForEach(model.inkStrokes) { stroke in
+                let number = model.inkStrokeNumber(stroke.id)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Button {
+                        model.jumpToInkStroke(stroke)
+                    } label: {
+                        HStack {
+                            Text("Drawing \(number)")
+                            Spacer()
+                            if let time = model.editorTime(forSourceTime: stroke.startTime) {
+                                Text(String(format: "%d:%02d", Int(time) / 60, Int(time) % 60))
+                                    .monospacedDigit()
+                            } else {
+                                Text("Cut")
+                            }
+                            if stroke.id == model.selectedInkStrokeID { Image(systemName: "checkmark") }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Jump to drawing \(number)")
+                    Button("Delete drawing", systemImage: "trash", role: .destructive) {
+                        model.deleteInkStroke(stroke.id)
+                    }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Delete drawing \(number)")
+                }
+                .font(.inspectorValue)
+            }
+            InspectorHint("Drawn with the pen while recording. A deleted drawing leaves the preview and exports; Undo brings it back.")
+        }
+        .disabled(!model.showsInk || model.hasRunningWork)
+        .opacity(model.showsInk ? 1 : 0.48)
     }
 
     private func keystrokePlacementRow(

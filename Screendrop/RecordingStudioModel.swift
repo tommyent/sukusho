@@ -102,6 +102,13 @@ final class RecordingStudioModel {
     var showsKeystrokes = true {
         didSet { scheduleProjectSave() }
     }
+    /// Pen strokes drawn during the take, also reconstructed from the sidecar.
+    var showsInk = true {
+        didSet { scheduleProjectSave() }
+    }
+    private(set) var hiddenInkStrokeIDs: Set<UUID> = []
+    private(set) var inkTimeline = RecordingInkTimeline(strokes: [])
+    var selectedInkStrokeID: UUID?
     var keystrokePlacement: RecordingKeystrokePlacement = .bottomCenter {
         didSet { scheduleProjectSave() }
     }
@@ -696,6 +703,7 @@ final class RecordingStudioModel {
                 .filter { $0.phase == .down }
                 .map(\.time)
             keystrokeTimeline = KeystrokeCaptionTimeline(events: pointerCapture.keystrokes)
+            inkTimeline = RecordingInkTimeline(strokes: pointerCapture.ink)
         }
 
         if let session, session.hasCamera {
@@ -873,6 +881,9 @@ final class RecordingStudioModel {
         }
         showsClickEffects = document.showsClickEffects ?? showsClickEffects
         showsKeystrokes = document.showsKeystrokes ?? true
+        showsInk = document.showsInk ?? true
+        hiddenInkStrokeIDs = Set(document.hiddenInkStrokeIDs ?? [])
+        inkTimeline = RecordingInkTimeline(strokes: pointerCapture.ink, hiding: hiddenInkStrokeIDs)
         keystrokePlacement = document.keystrokePlacement ?? .bottomCenter
         showsSubtitles = document.showsSubtitles ?? true
         subtitleCues = document.subtitleCues ?? []
@@ -954,6 +965,7 @@ final class RecordingStudioModel {
         pointerCapture = PointerCaptureFile()
         pointerTimeline = .empty
         keystrokeTimeline = .empty
+        inkTimeline = RecordingInkTimeline(strokes: [])
         viewportTimeline = .identity
         previewReframe = nil
         reframeFocusTimeline = nil
@@ -1764,7 +1776,10 @@ final class RecordingStudioModel {
             audioVolume: Double(audioVolume),
             isolateVoice: voiceIsolationEnabled && isolatedMicrophone != nil,
             backgroundMusic: backgroundMusicSettings,
-            redactions: redactions
+            redactions: redactions,
+            showsInk: showsInk ? nil : false,
+            hiddenInkStrokeIDs: hiddenInkStrokeIDs.isEmpty
+                ? nil : hiddenInkStrokeIDs.sorted { $0.uuidString < $1.uuidString }
         )
     }
 
@@ -2055,6 +2070,49 @@ final class RecordingStudioModel {
 
     var hasKeystrokes: Bool {
         !keystrokeTimeline.isEmpty
+    }
+
+    // MARK: - Drawings
+
+    var hasInk: Bool {
+        !pointerCapture.ink.isEmpty
+    }
+
+    /// The take's strokes still in the project, in drawing order.
+    var inkStrokes: [RecordingInkStroke] {
+        inkTimeline.strokes
+    }
+
+    /// Stable across deletes: the stroke's place among everything drawn.
+    func inkStrokeNumber(_ id: UUID) -> Int {
+        (pointerCapture.ink.firstIndex { $0.id == id } ?? 0) + 1
+    }
+
+    func inkFrames(at time: TimeInterval) -> [RecordingInkTimeline.Frame] {
+        guard showsInk else { return [] }
+        return inkTimeline.frames(at: clipTimeline.sourceTime(at: time))
+    }
+
+    /// Lands where the stroke is fully drawn, or its start if that was cut.
+    func jumpToInkStroke(_ stroke: RecordingInkStroke) {
+        selectedInkStrokeID = stroke.id
+        pause()
+        let end = stroke.points.last.flatMap { editorTime(forSourceTime: $0.t) }
+        if let time = end ?? editorTime(forSourceTime: stroke.startTime) { seek(to: time) }
+    }
+
+    func deleteInkStroke(_ id: UUID) {
+        applyHiddenInk(hiddenInkStrokeIDs.union([id]))
+        if selectedInkStrokeID == id { selectedInkStrokeID = nil }
+    }
+
+    private func applyHiddenInk(_ next: Set<UUID>) {
+        guard next != hiddenInkStrokeIDs else { return }
+        let previous = hiddenInkStrokeIDs
+        hiddenInkStrokeIDs = next
+        inkTimeline = RecordingInkTimeline(strokes: pointerCapture.ink, hiding: next)
+        registerUndo("Delete Drawing") { $0.applyHiddenInk(previous) }
+        scheduleProjectSave()
     }
 
     // MARK: - Transcription
