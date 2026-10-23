@@ -23,6 +23,10 @@ nonisolated struct CaptureTextEntry: Codable, Sendable, Equatable {
     var paragraphs: [String]
     /// A recording's saved captions, joined.
     var transcript: String?
+    /// What Apple Intelligence made of it, once asked.
+    var insight: CaptureInsight?
+    /// Suggested tags the user dismissed, folded.
+    var dismissedSuggestions: [String]?
 
     /// What the inspector shows and Copy Text copies.
     var displayParagraphs: [String] { paragraphs + (transcript.map { [$0] } ?? []) }
@@ -47,6 +51,67 @@ nonisolated extension CaptureTextEntry {
     }
 }
 
+/// What Apple Intelligence wrote about one capture. Kept in its index entry
+/// on this Mac; it never reaches a file name, an upload or a share page.
+nonisolated struct CaptureInsight: Codable, Sendable, Equatable {
+    /// Bump to ask the model about every capture again after the prompt changes.
+    static let currentVersion = 1
+
+    var version = Self.currentVersion
+    var title: String?
+    var keywords: [String] = []
+    var category: String?
+    /// The model refused or its guardrails stopped it: not asked again
+    /// until `currentVersion` changes.
+    var declined = false
+
+    var isCurrent: Bool { version == Self.currentVersion }
+}
+
+/// Model titles and suggested tags: which to show and which to offer.
+nonisolated enum CaptureInsightRules {
+    /// The user's name always wins, then the model's title, then the date.
+    static func title(customName: String?, modelTitle: String?, dateTitle: String) -> String {
+        customName ?? modelTitle ?? dateTitle
+    }
+
+    /// Model output shows only while the model is available and its switch
+    /// is on; turning either off hides it but keeps what was stored.
+    static func visible(_ insight: CaptureInsight?, modelAvailable: Bool, enabled: Bool) -> CaptureInsight? {
+        modelAvailable && enabled && insight?.declined == false ? insight : nil
+    }
+
+    /// Tags to offer one capture: the app it came from (no model needed),
+    /// then the model's category and keywords. None it has or the user
+    /// dismissed, compared ignoring case, each in the Library's spelling.
+    static func suggestions(appName: String?, insight: CaptureInsight?, tags: [String], libraryTags: [String],
+                            dismissed: [String]) -> [String] {
+        let candidates = [appName, insight?.category].compactMap { $0 } + (insight?.keywords.prefix(5) ?? [])
+        var taken = Set((tags + dismissed).map(fold))
+        return candidates.compactMap { candidate in
+            let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, taken.insert(fold(trimmed)).inserted else { return nil }
+            return libraryTags.first { $0.caseInsensitiveCompare(trimmed) == .orderedSame } ?? trimmed
+        }
+    }
+
+    /// How a dismissed suggestion is remembered.
+    static func fold(_ tag: String) -> String {
+        tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    /// A model title as it shows: 2–6 words, no quotes or trailing period,
+    /// starting with a capital unless its first word is cased on purpose
+    /// ("iPhone"). Nil when the model's answer isn't one.
+    static func cleanTitle(_ raw: String) -> String? {
+        let title = raw.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"'“”‘’.:")))
+        var words = title.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard (2...6).contains(words.count), title.count <= 60 else { return nil }
+        if words[0] == words[0].lowercased() { words[0] = words[0].prefix(1).uppercased() + words[0].dropFirst() }
+        return words.joined(separator: " ")
+    }
+}
+
 /// Which captures to read and which entries to forget after a Library scan.
 nonisolated enum CaptureTextIndexPlan {
     struct Capture: Sendable, Equatable {
@@ -61,6 +126,20 @@ nonisolated enum CaptureTextIndexPlan {
             !skipping.contains(capture.fingerprint) && entries[capture.id]?.isCurrent(fingerprint: capture.fingerprint) != true
         }
         .sorted { $0.createdAt > $1.createdAt }
+    }
+
+    /// Captures whose text is read but that the model hasn't seen, newest
+    /// first: those taken since `since`, or all of them once the user asks
+    /// for existing captures. `older` counts the ones still waiting for that.
+    static func dueForInsight(_ captures: [Capture], entries: [String: CaptureTextEntry], since: Date,
+                              includesExisting: Bool, skipping: Set<String> = []) -> (due: [Capture], older: Int) {
+        var due: [Capture] = [], older = 0
+        for capture in captures where !skipping.contains(capture.fingerprint) {
+            guard let entry = entries[capture.id], entry.isCurrent(fingerprint: capture.fingerprint),
+                  entry.insight?.isCurrent != true else { continue }
+            if includesExisting || capture.createdAt >= since { due.append(capture) } else { older += 1 }
+        }
+        return (due.sorted { $0.createdAt > $1.createdAt }, older)
     }
 
     /// The long side, in pixels, to read a width × height image at: at most
