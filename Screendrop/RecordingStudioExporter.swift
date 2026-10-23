@@ -450,6 +450,12 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             Self.logger.info("Export frames=\(renderedFrames) fps=\(timing.framesPerSecond) motionBlur=\(timing.motionBlurEnabled) Metal blur frames=\(compositor.metalFrameCount) reusedScreenFrames=\(compositor.reusedScreenFrameCount) renderSeconds=\(renderSeconds) metalSeconds=\(compositor.metalSeconds) decodeSeconds=\(decodeSeconds) writerWaitSeconds=\(writerWaitSeconds)")
         }
 
+        // The adaptor's pool appears once writing starts and then stays
+        // fixed, but reading it takes the compression session's lock, which
+        // the encoder holds while it works. Read per frame, that stalled
+        // rendering whenever the encoder was busy.
+        var cachedPool: CVPixelBufferPool?
+
         var inFlight: (frame: StudioFrameCompositor.PendingFrame, index: Int)?
         func finishAndAppend(_ begun: StudioFrameCompositor.PendingFrame, at index: Int) async throws {
             let renderStart = CFAbsoluteTimeGetCurrent()
@@ -500,7 +506,8 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             // render.
             guard let sourceBuffer = currentBuffer ?? pending?.buffer else { break }
 
-            guard let pool = adaptor.pixelBufferPool else {
+            if cachedPool == nil { cachedPool = adaptor.pixelBufferPool }
+            guard let pool = cachedPool else {
                 throw ExportError.writerFailed(writer.error)
             }
             var destinationBuffer: CVPixelBuffer?
