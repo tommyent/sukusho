@@ -125,13 +125,37 @@ nonisolated enum CaptureInsightRules {
 
     /// A model title as it shows: 2–6 words, no quotes or trailing period,
     /// starting with a capital unless its first word is cased on purpose
-    /// ("iPhone"). Nil when the model's answer isn't one.
-    static func cleanTitle(_ raw: String) -> String? {
+    /// ("iPhone"). A longer one loses its trailing phrase ("… with a
+    /// whetstone"), else what follows a heading read together with the text
+    /// under it ("Quarterly roadmap review Q4 goals: …"); a lone word gets
+    /// what it belongs to from the window title or the app ("Battery ·
+    /// System Settings"). Nil when none of that fits.
+    static func cleanTitle(_ raw: String, windowTitle: String? = nil, appName: String? = nil) -> String? {
         let title = raw.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"'“”‘’.:")))
         var words = title.split(whereSeparator: \.isWhitespace).map(String.init)
-        guard (2...6).contains(words.count), title.count <= 60 else { return nil }
+        if words.count > 6, let cut = words.indices.last(where: { (2...6).contains($0) && connectors.contains(words[$0].lowercased()) })
+            ?? words.indices.first(where: { (2...6).contains($0) && words[$0].first?.isUppercase == true }) {
+            words = Array(words[..<cut])
+        }
+        if words.count == 1, let context = context(for: words[0], windowTitle: windowTitle, appName: appName) {
+            words += ["·"] + context.split(separator: " ").map(String.init)
+        }
+        guard (2...6).contains(words.filter { $0 != "·" }.count), words.joined(separator: " ").count <= 60 else { return nil }
         if words[0] == words[0].lowercased() { words[0] = words[0].prefix(1).uppercased() + words[0].dropFirst() }
         return words.joined(separator: " ")
+    }
+
+    private static let connectors: Set<String> = ["with", "in", "for", "from", "by", "via"]
+
+    /// The first part of the window title that isn't the word itself
+    /// ("Payouts – Stripe Dashboard" → "Stripe Dashboard"), else the app.
+    private static func context(for word: String, windowTitle: String?, appName: String?) -> String? {
+        let separators = [" – ", " — ", " - ", " | ", " · ", ": "]
+        let parts = separators.reduce([windowTitle ?? ""]) { parts, separator in parts.flatMap { $0.components(separatedBy: separator) } }
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        return (parts + [appName ?? ""]).first { part in
+            !part.isEmpty && part.caseInsensitiveCompare(word) != .orderedSame && (1...4).contains(part.split(separator: " ").count)
+        }
     }
 }
 

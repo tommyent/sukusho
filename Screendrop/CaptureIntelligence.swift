@@ -22,12 +22,13 @@ nonisolated enum CaptureIntelligence {
     private static let instructions = """
         You name screenshots and screen recordings in a person's capture library so they can find them later. \
         You are given the app a capture came from, its window title and the text recognized in it, and sometimes the image. \
+        A title says what a capture is about, the way a person would name the file, not just the heading on screen. \
         Describe only what the details support; never invent names, numbers or products.
         """
 
     @Generable
     struct Answer {
-        @Guide(description: "A specific title of two to six words for what the capture is about, naming its most distinctive subject (a product, company, place, person or project), such as 'Stripe payout schedule', 'Lisbon flight itinerary' or 'Swift build error in Xcode'. Don't just repeat the window title. Sentence case, no quotes or trailing period.")
+        @Guide(description: "What the capture is about in two to six words: its subject and the specific name it belongs to (a product, company, site, project, place or person) from the text, the window title or the app. A heading alone isn't enough when it's one word or generic; add what it belongs to. In the form of 'Wedding venue shortlist', 'Kyoto ryokan reservation' or 'Postgres replication lag alert'. Never just the window title, never one word. Sentence case, no quotes or trailing period.")
         var title: String
         @Guide(description: "The one category that best describes what the capture shows.")
         var category: Category
@@ -46,10 +47,10 @@ nonisolated enum CaptureIntelligence {
         let seen = SystemLanguageModel.default.capabilities.contains(.vision) ? image : nil
         let lines = paragraphs + [source?.windowTitle, transcript].compactMap { $0 }
         do {
-            return .insight(insight(from: try await respond(prompt, image: seen), lines: lines))
+            return .insight(insight(from: try await respond(prompt, image: seen), lines: lines, source: source))
         } catch where seen != nil && isContextOverflow(error) {
             // An image can overflow the context window; the text alone may fit.
-            do { return .insight(insight(from: try await respond(prompt, image: nil), lines: lines)) } catch { return outcome(for: error) }
+            do { return .insight(insight(from: try await respond(prompt, image: nil), lines: lines, source: source)) } catch { return outcome(for: error) }
         } catch {
             return outcome(for: error)
         }
@@ -78,12 +79,12 @@ nonisolated enum CaptureIntelligence {
     }
 
     /// `lines` is the text the model was given, for names it lowercased.
-    private static func insight(from answer: Answer, lines: [String]) -> CaptureInsight {
+    private static func insight(from answer: Answer, lines: [String], source: CaptureSource?) -> CaptureInsight {
         var seen = Set<String>()
         let keywords = answer.keywords.map { CaptureInsightRules.spelling(of: $0.trimmingCharacters(in: .whitespacesAndNewlines), in: lines) }
             .filter { !$0.isEmpty && seen.insert($0.lowercased()).inserted }
         let category = String(describing: answer.category)
-        return CaptureInsight(title: CaptureInsightRules.cleanTitle(answer.title), keywords: keywords,
+        return CaptureInsight(title: CaptureInsightRules.cleanTitle(answer.title, windowTitle: source?.windowTitle, appName: source?.appName), keywords: keywords,
                               category: category == "other" ? nil : category.capitalized)
     }
 

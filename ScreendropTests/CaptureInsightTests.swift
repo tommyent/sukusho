@@ -25,6 +25,32 @@ struct CaptureInsightTests {
         #expect(CaptureInsightRules.cleanTitle("") == nil)
     }
 
+    @Test func overlongTitlesLoseTheirTrailingPhrase() {
+        #expect(CaptureInsightRules.cleanTitle("Sharpening a chef's knife with a whetstone") == "Sharpening a chef's knife")
+        #expect(CaptureInsightRules.cleanTitle("Fix race in upload retry queue by mkuznets · Pull Request #482 · acme/uploader")
+                == "Fix race in upload retry queue")
+        // A heading read together with the text under it: cut where that text starts.
+        #expect(CaptureInsightRules.cleanTitle("Quarterly roadmap review Q4 goals: ship Library search, model titles and tag suggestions")
+                == "Quarterly roadmap review")
+        #expect(CaptureInsightRules.cleanTitle("Product roadmap 2027 Launch timeline and pricing tiers") == "Product roadmap 2027")
+        // No connecting or capitalized word where a 2–6 word title would remain: dropped, the date shows.
+        #expect(CaptureInsightRules.cleanTitle("Notes about the quarterly offsite agenda and travel") == nil)
+        #expect(CaptureInsightRules.cleanTitle("Six words stay exactly as they are") == nil)
+        #expect(CaptureInsightRules.cleanTitle("Six words stay as they are") == "Six words stay as they are")
+    }
+
+    @Test func aLoneWordGetsWhatItBelongsTo() {
+        #expect(CaptureInsightRules.cleanTitle("Payouts", windowTitle: "Payouts – Stripe Dashboard", appName: "Google Chrome")
+                == "Payouts · Stripe Dashboard")
+        // The window title is just the word: the app instead.
+        #expect(CaptureInsightRules.cleanTitle("Battery", windowTitle: "Battery", appName: "System Settings") == "Battery · System Settings")
+        #expect(CaptureInsightRules.cleanTitle("battery", windowTitle: nil, appName: "System Settings") == "Battery · System Settings")
+        // A long window title part is skipped for the app; nothing to add leaves no title.
+        #expect(CaptureInsightRules.cleanTitle("Inbox", windowTitle: "Inbox (1,204 messages, 36 unread) and more", appName: "Mail") == "Inbox · Mail")
+        #expect(CaptureInsightRules.cleanTitle("Inbox", windowTitle: nil, appName: nil) == nil)
+        #expect(CaptureInsightRules.cleanTitle("Mail", windowTitle: "Mail", appName: "Mail") == nil)
+    }
+
     @Test func lowercasedNamesTakeTheCapturesSpelling() {
         let lines = ["From: TAP Air Portugal", "Subject: Your flight itinerary to Lisbon", "Payouts – Stripe Dashboard",
                      "Payout schedule: Automatic", "error: cannot find 'x' in scope"]
