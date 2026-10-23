@@ -163,13 +163,7 @@ final class CaptureLibraryIndex {
             results.append(await recognize { ScreenshotImageLoader.uprightImage(at: url) })
         }
         let transcript = item.session?.effectiveEditDocument()?.subtitleCues.map { $0.map(\.text).joined(separator: " ") }
-        let frames = results.compactMap { $0 }
-        guard !frames.isEmpty || transcript?.isEmpty == false else { return nil }
-        // Frames of one recording repeat most of their text.
-        var seen = Set<String>()
-        let paragraphs = frames.flatMap(CaptureReadableText.paragraphs).filter { seen.insert($0).inserted }
-        return CaptureTextEntry(id: item.id, fingerprint: item.thumbnailKey, paragraphs: paragraphs,
-                                transcript: transcript?.isEmpty == false ? transcript : nil)
+        return CaptureTextEntry(id: item.id, fingerprint: item.thumbnailKey, frames: results, transcript: transcript)
     }
 
     /// Decodes and reads one image on a background queue: Vision's work is

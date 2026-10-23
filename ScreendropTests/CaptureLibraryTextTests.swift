@@ -37,6 +37,21 @@ struct CaptureLibraryTextTests {
         #expect(stale.map(\.id) == ["new", "edited", "old"])
     }
 
+    // MARK: Reading
+
+    @Test func framesThatFailBesideATranscriptStayUnread() throws {
+        let transcript = "Welcome to the walkthrough"
+        // Vision failed on every frame: not stored, so it's read again later.
+        #expect(CaptureTextEntry(id: "r", fingerprint: "r:1", frames: [nil, nil, nil], transcript: transcript) == nil)
+        #expect(CaptureTextEntry(id: "r", fingerprint: "r:1", frames: [], transcript: transcript) == nil)
+        // One frame read is enough; a blank read is a real answer.
+        let partial = try #require(CaptureTextEntry(id: "r", fingerprint: "r:1",
+            frames: [nil, [line("Okavango delta itinerary", y: 0.1)], [line("Okavango delta itinerary", y: 0.1)]], transcript: transcript))
+        #expect(partial.paragraphs == ["Okavango delta itinerary"] && partial.transcript == transcript)
+        let blank = try #require(CaptureTextEntry(id: "s", fingerprint: "s:1", frames: [[]], transcript: ""))
+        #expect(blank.paragraphs.isEmpty && blank.transcript == nil)
+    }
+
     // MARK: Index rules
 
     @Test func deletedCapturesLeaveTheIndexButAnEmptyScanKeepsIt() {

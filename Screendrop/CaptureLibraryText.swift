@@ -32,6 +32,21 @@ nonisolated struct CaptureTextEntry: Codable, Sendable, Equatable {
     }
 }
 
+extension CaptureTextEntry {
+    /// What a read found: each frame's lines regrouped into paragraphs, with
+    /// text a later frame repeats dropped. Nil when no frame could be read,
+    /// even beside a transcript, so the capture stays unread and is tried
+    /// again instead of being stored without the words on screen.
+    init?(id: String, fingerprint: String, frames: [[CaptureTextLine]?], transcript: String?) {
+        let read = frames.compactMap { $0 }
+        guard !read.isEmpty else { return nil }
+        var seen = Set<String>()
+        self.init(id: id, fingerprint: fingerprint,
+                  paragraphs: read.flatMap(CaptureReadableText.paragraphs).filter { seen.insert($0).inserted },
+                  transcript: transcript?.isEmpty == false ? transcript : nil)
+    }
+}
+
 /// Which captures to read and which entries to forget after a Library scan.
 nonisolated enum CaptureTextIndexPlan {
     struct Capture: Sendable, Equatable {
