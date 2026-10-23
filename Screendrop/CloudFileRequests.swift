@@ -43,6 +43,9 @@ nonisolated enum CloudFileRequestAPI {
     static let gibibyte: Int64 = 1024 * 1024 * 1024
     /// The Worker takes files up to 2 GiB.
     static let maxFileBytes = 2 * gibibyte
+    // The sheet asks for less than the Worker allows (1,000 files, 1 TiB in all), so a link that
+    // leaks can't run up much of an R2 bill; scripts with the token can still ask for more.
+    static let fileCountRange = 1...100
     static let fileSizeChoices: [Int64] = [100 * 1024 * 1024, 500 * 1024 * 1024, gibibyte, maxFileBytes]
     static let totalSizeChoices: [Int64] = [gibibyte, 5 * gibibyte, 10 * gibibyte, 25 * gibibyte, 50 * gibibyte]
     /// Every link closes on its own; the Worker allows up to 90 days.

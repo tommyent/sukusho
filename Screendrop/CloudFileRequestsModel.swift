@@ -303,7 +303,7 @@ struct FileRequestsSheet: View {
             HStack {
                 Text("Files")
                 Spacer()
-                Stepper(value: $draft.maxFiles, in: 1...100) { Text(draft.maxFiles, format: .number).monospacedDigit() }
+                Stepper(value: $draft.maxFiles, in: CloudFileRequestAPI.fileCountRange) { Text(draft.maxFiles, format: .number).monospacedDigit() }
             }
             HStack {
                 Text("Each file up to")
