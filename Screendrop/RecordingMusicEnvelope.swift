@@ -33,9 +33,18 @@ nonisolated enum RecordingMusicEnvelope {
         guard !levels.isEmpty else { return [] }
         let sorted = levels.sorted()
         let noise = Double(sorted[Int(Double(sorted.count - 1) * 0.2)])
-        // Exclude the noise floor so a short utterance in a long silence still has a reference level.
-        let aboveNoise = sorted.filter { Double($0) > max(0.0001, noise * 2.5) }
-        let reference = aboveNoise.isEmpty ? sorted : aboveNoise
+        let minimumRun = 0.08 - 0.000_001
+        // Exclude the noise floor so a short utterance in a long silence still has a reference level,
+        // and runs too short to be speech, so one bump during steady speech can't become the reference.
+        // shortcut: a loud noise of 80 ms or more still can, revisit if a real-mic test misses ducking.
+        var aboveNoise: [Float] = []
+        var run: [Float] = []
+        for level in levels + [0] {
+            if Double(level) > max(0.0001, noise * 2.5) { run.append(level); continue }
+            if Double(run.count) * window >= minimumRun { aboveNoise += run }
+            run = []
+        }
+        let reference = aboveNoise.isEmpty ? sorted : aboveNoise.sorted()
         let high = Double(reference[Int(Double(reference.count - 1) * 0.95)])
         guard high > 0.0001 else { return [] }
         let threshold = max(0.0001, min(high * 0.5, max(noise * 2.5, high * 0.15)))
@@ -47,7 +56,7 @@ nonisolated enum RecordingMusicEnvelope {
             if !active, let beginning = start {
                 let end = Double(index) * window
                 // Filter transients before bridging, or repeated key presses become one long run.
-                if end - beginning >= 0.08 - 0.000_001 { result.append(beginning...end) }
+                if end - beginning >= minimumRun { result.append(beginning...end) }
                 start = nil
             }
         }

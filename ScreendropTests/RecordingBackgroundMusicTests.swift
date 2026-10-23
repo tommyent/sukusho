@@ -64,6 +64,27 @@ struct RecordingBackgroundMusicTests {
         #expect(RecordingMusicEnvelope.speechRanges(levels: speech) == [1...2])
     }
 
+    /// Window indices to seconds, computed as `speechRanges` does.
+    private func seconds(_ windows: [ClosedRange<Int>]) -> [ClosedRange<Double>] {
+        windows.map { Double($0.lowerBound) * RecordingMusicEnvelope.window...Double($0.upperBound) * RecordingMusicEnvelope.window }
+    }
+
+    @Test func oneBumpDuringSteadySpeechKeepsTheSpeech() {
+        // Speech in every window sets the noise floor itself; only the bump is above it.
+        var steady = [Float](repeating: 0.04, count: 500)
+        steady[250] = 1
+        #expect(RecordingMusicEnvelope.speechRanges(levels: steady) == seconds([0...500]))
+    }
+
+    @Test func narrationWithPausesAndABump() {
+        var narration = [Float](repeating: 0.002, count: 500)
+        for phrase in [20..<100, 130..<220, 250..<330] {
+            for index in phrase { narration[index] = index % 10 == 5 ? 0.003 : 0.03 + Float(index % 7) * 0.008 }
+        }
+        narration[400] = 1 // In a pause
+        #expect(RecordingMusicEnvelope.speechRanges(levels: narration) == seconds([20...100, 130...220, 250...330]))
+    }
+
     @Test func cancelledWaitLeavesSharedAnalysisRunning() async throws {
         let shared = Task<RecordingMusicAnalysis, Error> {
             try await Task.sleep(for: .seconds(5))
