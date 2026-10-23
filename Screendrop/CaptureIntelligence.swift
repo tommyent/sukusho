@@ -69,12 +69,25 @@ nonisolated enum CaptureIntelligence {
             default: return .insight(CaptureInsight(declined: true))
             }
         default:
-            return .insight(CaptureInsight(declined: true))
+            return legacyOutcome(error) ?? .insight(CaptureInsight(declined: true))
         }
     }
 
+    /// The type the framework threw before macOS 27, deprecated but still
+    /// declared: split the same way, in case it's still thrown.
+    @diagnose(DeprecatedDeclaration, as: ignored)
+    private static func legacyOutcome(_ error: any Error) -> Outcome? {
+        guard let error = error as? LanguageModelSession.GenerationError else { return nil }
+        switch error {
+        case .rateLimited, .concurrentRequests, .assetsUnavailable: return .later
+        default: return .insight(CaptureInsight(declined: true))
+        }
+    }
+
+    @diagnose(DeprecatedDeclaration, as: ignored)
     private static func isContextOverflow(_ error: any Error) -> Bool {
         if case .contextSizeExceeded = error as? LanguageModelError { return true }
+        if case .exceededContextWindowSize = error as? LanguageModelSession.GenerationError { return true }
         return false
     }
 

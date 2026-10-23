@@ -292,6 +292,13 @@ struct LibraryInsightChecks {
         try check(calls == 1 && index.entries[busyID]?.insight == nil && index.insightsPending == 0, "Busy model: asked \(calls) times or stored")
         print("CHECK: a busy model isn't stored or asked again this session")
 
+        // The type thrown before macOS 27 splits the same way.
+        for (name, error, retries) in legacyErrors() {
+            let retried = if case .later = CaptureIntelligence.outcome(for: error) { true } else { false }
+            try check(retried == retries, "Legacy \(name) classified wrongly")
+        }
+        print("CHECK: legacy GenerationError: rate limit and busy retry later, guardrail and refusal decline")
+
         // Back-to-back dismissals both reach the disk: writes run in the order they were made.
         let busy = try item(busyID)
         index.dismissSuggestion("alpha", for: busy)
@@ -300,6 +307,15 @@ struct LibraryInsightChecks {
         try await Task.sleep(for: .milliseconds(500))
         try check(store.loadAll()[busyID]?.dismissedSuggestions == ["alpha", "beta"], "A later write lost a dismissal")
         print("CHECK: back-to-back dismissals both saved")
+    }
+
+    @diagnose(DeprecatedDeclaration, as: ignored)
+    static func legacyErrors() -> [(String, any Error, Bool)] {
+        let context = LanguageModelSession.GenerationError.Context(debugDescription: "harness")
+        return [("rateLimited", LanguageModelSession.GenerationError.rateLimited(context), true),
+                ("concurrentRequests", LanguageModelSession.GenerationError.concurrentRequests(context), true),
+                ("guardrailViolation", LanguageModelSession.GenerationError.guardrailViolation(context), false),
+                ("refusal", LanguageModelSession.GenerationError.refusal(.init(transcriptEntries: []), context), false)]
     }
 
     /// With the model gone (a fake provider, as after removing it to free
