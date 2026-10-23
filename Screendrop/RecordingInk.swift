@@ -61,8 +61,9 @@ nonisolated struct RecordingInkCapture: Sendable {
 }
 
 nonisolated extension RecordingInkStroke {
-    /// Samples the movie can't place (before its first frame, or outside the
-    /// window being recorded) are dropped; a hide after Stop keeps the stroke.
+    /// Samples the movie can't place (before its first frame) are dropped,
+    /// and so is a stroke drawn wholly outside the recorded window, which
+    /// would replay as nothing. A hide after Stop keeps the stroke.
     static func mapped(
         _ captures: [RecordingInkCapture],
         widthBase: Double,
@@ -75,7 +76,7 @@ nonisolated extension RecordingInkStroke {
                 guard let t = time(sample.uptime), let p = point(sample.point, sample.uptime) else { return nil }
                 return RecordingInkPoint(t: t, x: p.x, y: p.y)
             }
-            guard !points.isEmpty else { return nil }
+            guard points.contains(where: { (0...1).contains($0.x) && (0...1).contains($0.y) }) else { return nil }
             return RecordingInkStroke(
                 id: capture.id,
                 width: capture.widthInPoints / widthBase,

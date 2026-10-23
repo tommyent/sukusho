@@ -83,7 +83,10 @@ struct RecordingInkTests {
                 .init(uptime: 12, point: CGPoint(x: 400, y: 300))
             ], widthInPoints: 6, hideUptime: 14),
             RecordingInkCapture(samples: [.init(uptime: 9.5, point: .zero)], widthInPoints: 6),
-            RecordingInkCapture(samples: [.init(uptime: 13, point: CGPoint(x: 80, y: 60))], widthInPoints: 6, hideUptime: 99)
+            RecordingInkCapture(samples: [.init(uptime: 13, point: CGPoint(x: 80, y: 60))], widthInPoints: 6, hideUptime: 99),
+            // Below the recorded window: nothing of it is on the movie.
+            RecordingInkCapture(samples: [.init(uptime: 14, point: CGPoint(x: 100, y: 700)),
+                                          .init(uptime: 15, point: CGPoint(x: 300, y: 900))], widthInPoints: 6)
         ]
         let strokes = RecordingInkStroke.mapped(
             captures, widthBase: 600,
