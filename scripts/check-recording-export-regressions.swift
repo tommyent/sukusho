@@ -4,6 +4,7 @@ import CoreGraphics
 import CoreVideo
 import Foundation
 import Darwin
+import SwiftUI
 
 // Compiles actual app sources, without windows, speech recognition, or real recordings.
 @main
@@ -14,13 +15,14 @@ struct RecordingExportRegressionChecks {
         if try !value() { throw Failure(description: message) }
     }
 
-    static func movie(at url: URL, colorAt: (Double) -> CGColor = { _ in CGColor(gray: 0.4, alpha: 1) }) async throws {
+    static func movie(at url: URL, width: Int = 320, height: Int = 180,
+                      colorAt: (Double) -> CGColor = { _ in CGColor(gray: 0.4, alpha: 1) }) async throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
-            AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 320, AVVideoHeightKey: 180,
+            AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: width, AVVideoHeightKey: height,
         ])
         let attributes = CVPixelBufferCreationAttributes(pixelFormatType: .init(rawValue: kCVPixelFormatType_32ARGB),
-                                                       size: .init(width: 320, height: 180))
+                                                       size: .init(width: width, height: height))
         let receiver = writer.inputPixelBufferReceiver(for: input, pixelBufferAttributes: attributes)
         try writer.start()
         writer.startSession(atSourceTime: .zero)
@@ -28,12 +30,12 @@ struct RecordingExportRegressionChecks {
             var pixels = try CVMutablePixelBuffer(attributes)
             try pixels.accessUnsafeMutableRawPlaneBytes { planes in
                 guard let plane = planes.first,
-                      let context = CGContext(data: plane.bytes.baseAddress, width: 320, height: 180,
+                      let context = CGContext(data: plane.bytes.baseAddress, width: width, height: height,
                         bitsPerComponent: 8, bytesPerRow: plane.properties.bytesPerRow,
                         space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue)
                 else { throw Failure(description: "Cannot create fixture pixels") }
                 context.setFillColor(colorAt(Double(frame) / 10))
-                context.fill(CGRect(x: 0, y: 0, width: 320, height: 180))
+                context.fill(CGRect(x: 0, y: 0, width: width, height: height))
             }
             try await receiver.append(CVReadOnlyPixelBuffer(pixels), with: CMTime(value: Int64(frame), timescale: 10))
         }
@@ -314,6 +316,69 @@ struct RecordingExportRegressionChecks {
         try check(reopened.chapters == moved && reopened.visibleChapters.map(\.start) == [0.25, 1, 4],
                   "Reopening lost the moved marker")
         print("PASS: chapter marker previews leave metadata/history unchanged; one release saves the cut/speed source anchor, updates the list, seeks paused, survives reopen and uses one Undo/Redo; invalid/no-op moves preserve history and render edits")
+    }
+
+    /// Card and camera shadows were cast by filling their shape in black, which then showed through the
+    /// shape's antialiased edge as a dark outline (sd-p5zo). White footage over a light background can
+    /// never leave an edge pixel darker than the shadowed background just outside it.
+    static func shadowEdges(in directory: URL) async throws {
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("shadow-edges.screendroprec"))
+        try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
+        let white: (Double) -> CGColor = { _ in CGColor(gray: 1, alpha: 1) }
+        // 1920x1080 puts Original's card edge at x = 73.56, partly covered as in real exports.
+        try await movie(at: session.screenURL, width: 1920, height: 1080, colorAt: white)
+        try await movie(at: session.cameraURL, colorAt: white)
+        var manifest = CaptureManifest()
+        manifest.duration = 8; manifest.pixelWidth = 1920; manifest.pixelHeight = 1080
+        manifest.cameraWidth = 320; manifest.cameraHeight = 180
+        try session.writeCaptureManifest(manifest)
+        var style = RecordingStudioStyle()
+        style.background = .solid(AnnotationBackgroundColor("check-light", title: "Light", red: 0.85, green: 0.85, blue: 0.85))
+        // Inside the card, so neither shape's edge runs under the other's shadow.
+        style.camera.center = CGPoint(x: 0.5, y: 0.5)
+        var settings = VideoCompressionSettings()
+        settings.quality = .high; settings.removeAudio = true; settings.frameRate = .fps30
+        try session.writeEditDocument(RecordingEditDocument(style: style, zoomEnabled: false, zoomCues: [],
+            clipTimeline: .init(segments: [.init(sourceStart: 0, sourceEnd: 1)]), exportSettings: settings))
+        let configuration = try await RecordingSessionRenderer.makeConfiguration(for: session)
+        let rendered = try await RecordingStudioExporter().export(configuration, progress: { _ in })
+        defer { try? FileManager.default.removeItem(at: rendered) }
+        let frame = try await pixels(in: rendered, at: 0.5)
+        let width = Int(configuration.canvasSize.width.rounded()) & ~1, height = Int(configuration.canvasSize.height.rounded()) & ~1
+        try check(frame.count == width * height * 4, "Unexpected shadow-edge canvas")
+        let layout = RecordingStudioLayout.make(canvasSize: CGSize(width: width, height: height), style: configuration.style,
+            includeBubble: true, usesUniformPadding: configuration.usesUniformPadding,
+            contentAspect: configuration.fitContentAspect, contentMode: configuration.fitContentAspect == nil ? .fill : .fit)
+        func luma(_ x: Int, _ y: Int) -> Int {
+            let i = (y * width + x) * 4
+            return (Int(frame[i]) + Int(frame[i + 1]) + Int(frame[i + 2])) / 3
+        }
+        // How much darker each straight edge's partly covered pixel is than its outside neighbour.
+        func outline(_ rect: CGRect, radius: CGFloat) -> Int {
+            let left = Int(rect.minX), right = Int(rect.maxX), top = Int(rect.minY), bottom = Int(rect.maxY)
+            var worst = Int.min
+            for y in Int(rect.minY + radius) + 2 ..< Int(rect.maxY - radius) - 2 {
+                worst = max(worst, luma(left - 1, y) - luma(left, y), luma(right + 1, y) - luma(right, y))
+            }
+            for x in Int(rect.minX + radius) + 2 ..< Int(rect.maxX - radius) - 2 {
+                worst = max(worst, luma(x, top - 1) - luma(x, top), luma(x, bottom + 1) - luma(x, bottom))
+            }
+            return worst
+        }
+        let card = outline(layout.cardRect, radius: layout.cardCornerRadius)
+        let bubble = outline(layout.bubbleRect, radius: layout.bubbleCornerRadius)
+        try check(layout.bubbleRect.width > 0 && card < 6 && bubble < 6,
+                  "Shadows outline the card (\(card) levels) or camera (\(bubble) levels)")
+        // The shadows must still be there: just below each shape (they fall downwards) is darker than
+        // the shadow-free surface it sits on - the background corner, or the white card away from the camera.
+        // Floors are half of what this fixture measured (28 and 49 levels).
+        let below = 6
+        let cardShadow = luma(4, 4) - luma(Int(layout.cardRect.midX), Int(layout.cardRect.maxY) + below)
+        let cameraShadow = luma(Int(layout.cardRect.minX) + 40, Int(layout.cardRect.midY))
+            - luma(Int(layout.bubbleRect.midX), Int(layout.bubbleRect.maxY) + below)
+        try check(cardShadow >= 14 && cameraShadow >= 24,
+                  "Shadows went missing below the card (\(cardShadow) levels) or camera (\(cameraShadow) levels)")
+        print("PASS: card and camera edges are no darker than the shadow beside them (\(card)/\(bubble) levels); shadows darken \(cardShadow)/\(cameraShadow) levels below them")
     }
 
     static func captionPixels(in directory: URL) async throws {
@@ -1267,6 +1332,7 @@ struct RecordingExportRegressionChecks {
         try await voiceIsolation(in: directory)
         try await cancelRetry(in: directory)
         try await cancelShareRetry(in: directory)
+        try await shadowEdges(in: directory)
         try await captionPixels(in: directory)
     }
 }
