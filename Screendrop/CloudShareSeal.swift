@@ -175,12 +175,18 @@ struct CloudShareKeys {
         return (CloudShareSeal.link(url, key: key), key == nil && encrypted)
     }
 
+    /// How much older than the list a key must be to go. The file keychain stores creation times
+    /// in whole seconds, so a key saved while the list was in flight can look older than its
+    /// start; a key kept by this margin goes at a later refresh if its upload is still gone.
+    static let pruneMargin: TimeInterval = 60
+
     /// After a complete list of one Worker's uploads, drops the keys of its uploads that are gone
-    /// (expired, or deleted elsewhere). Keys made since the list was asked for, other Workers' keys
-    /// and unlabelled items stay. Returns the upload IDs whose keys went.
+    /// (expired, or deleted elsewhere). Keys made within `pruneMargin` of the list's request,
+    /// other Workers' keys and unlabelled items stay. Returns the upload IDs whose keys went.
     func prune(workerHost: String, keeping uploadIDs: Set<String>, listedSince: Date) -> [String] {
+        let cutoff = listedSince.addingTimeInterval(-Self.pruneMargin)
         let gone = list().compactMap { item -> String? in
-            guard item.account.hasPrefix(Self.accountPrefix), item.label == workerHost, item.created < listedSince else { return nil }
+            guard item.account.hasPrefix(Self.accountPrefix), item.label == workerHost, item.created < cutoff else { return nil }
             let id = String(item.account.dropFirst(Self.accountPrefix.count))
             return uploadIDs.contains(id) ? nil : id
         }

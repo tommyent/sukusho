@@ -189,16 +189,21 @@ struct CloudShareSealTests {
     @Test func staleKeysGoOnlyAfterAFullListOfTheirOwnWorker() throws {
         let keychain = keychain()
         let key = try CloudShareSeal.seal(Data(), filename: "a", contentType: "").key
-        let listedSince = Date.now
-        let earlier = listedSince.addingTimeInterval(-60)
+        // A list asked for mid-second; the file keychain stores creation times in whole seconds.
+        let listedSince = Date(timeIntervalSince1970: 1_793_000_000.4)
+        let earlier = listedSince.addingTimeInterval(-120)
         keychain.set("cloud_share_key_kept", key, "w.example", earlier)
         keychain.set("cloud_share_key_gone", key, "w.example", earlier)
         keychain.set("cloud_share_key_new", key, "w.example", listedSince.addingTimeInterval(1))
+        // Saved in the list's own second, while the upload it belongs to wasn't in the list yet.
+        keychain.set("cloud_share_key_sameSecond", key, "w.example", Date(timeIntervalSince1970: 1_793_000_000))
+        keychain.set("cloud_share_key_withinMargin", key, "w.example", listedSince.addingTimeInterval(-59))
         keychain.set("cloud_share_key_other", key, "other.example", earlier)
         keychain.set("cloud_share_key_unlabelled", key, "", earlier)
         keychain.set("cloud_upload_token", "token", "", earlier)
         #expect(keychain.keys.prune(workerHost: "w.example", keeping: ["kept"], listedSince: listedSince) == ["gone"])
-        #expect(Set(keychain.items().keys) == ["cloud_share_key_kept", "cloud_share_key_new", "cloud_share_key_other",
+        #expect(Set(keychain.items().keys) == ["cloud_share_key_kept", "cloud_share_key_new", "cloud_share_key_sameSecond",
+                                               "cloud_share_key_withinMargin", "cloud_share_key_other",
                                                "cloud_share_key_unlabelled", "cloud_upload_token"])
         #expect(CloudShareKeys.host(of: "https://Share.Example:8443/0123456789abcdef#k") == "share.example:8443")
         #expect(CloudShareKeys.host(of: "https://share.example/0123456789abcdef") == "share.example")
