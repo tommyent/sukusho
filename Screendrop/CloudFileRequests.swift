@@ -139,17 +139,34 @@ nonisolated enum ReceivedFiles {
         defer { try? FileManager.default.removeItem(at: download) }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard status == 200 else { throw CloudPreviewError.status(status) }
+        return try save(download, as: upload.filename, in: folder)
+    }
+
+    /// Moves a downloaded file into `folder` under `destination`'s name and marks it as
+    /// downloaded from the internet, so Gatekeeper checks it when it's opened. A file that
+    /// can't be marked doesn't stay: the error says why.
+    static func save(_ downloaded: URL, as filename: String, in folder: URL,
+                     mark: (URL) throws -> Void = quarantine) throws -> URL {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        var saved = destination(for: upload.filename, in: folder)
-        try FileManager.default.moveItem(at: download, to: saved)
-        // A stranger's file: Gatekeeper checks it when it's opened, as with a browser download.
+        let saved = destination(for: filename, in: folder)
+        try FileManager.default.moveItem(at: downloaded, to: saved)
+        do {
+            try mark(saved)
+        } catch {
+            try? FileManager.default.removeItem(at: saved)
+            throw error
+        }
+        return saved
+    }
+
+    static func quarantine(_ file: URL) throws {
+        var file = file
         var values = URLResourceValues()
         values.quarantineProperties = [
             kLSQuarantineTypeKey as String: kLSQuarantineTypeWebDownload as String,
             kLSQuarantineAgentNameKey as String: "Sukusho",
         ]
-        try? saved.setResourceValues(values)
-        return saved
+        try file.setResourceValues(values)
     }
 
     /// A plain file name in `folder` that no file has yet: the name the client

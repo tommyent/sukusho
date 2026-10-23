@@ -1,3 +1,4 @@
+import CoreServices
 import Foundation
 import Testing
 
@@ -163,5 +164,25 @@ struct FileRequestTests {
         #expect(ReceivedFiles.notificationText(for: [uploads[0]]).body == "invoicefdp.exe")
         let folder = URL(filePath: "/Downloads", directoryHint: .isDirectory)
         #expect(ReceivedFiles.destination(for: "a\u{202E}b\u{2066}.txt", in: folder, exists: { _ in false }).lastPathComponent == "ab.txt")
+    }
+
+    @Test func aFileThatCantBeQuarantinedDoesNotStay() throws {
+        struct MarkFailed: Error {}
+        let root = FileManager.default.temporaryDirectory.appending(path: "FileRequestTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let folder = root.appending(path: "Downloads", directoryHint: .isDirectory)
+        let first = root.appending(path: "first.tmp")
+        try Data("one".utf8).write(to: first)
+        #expect(throws: MarkFailed.self) { try ReceivedFiles.save(first, as: "brief.pdf", in: folder) { _ in throw MarkFailed() } }
+        #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path).isEmpty)
+
+        let second = root.appending(path: "second.tmp")
+        try Data("two".utf8).write(to: second)
+        let saved = try ReceivedFiles.save(second, as: "brief.pdf", in: folder)
+        #expect(saved.lastPathComponent == "brief.pdf")
+        let quarantine = try saved.resourceValues(forKeys: [.quarantinePropertiesKey]).quarantineProperties
+        #expect(quarantine?[kLSQuarantineTypeKey as String] as? String == kLSQuarantineTypeWebDownload as String)
+        #expect(quarantine?[kLSQuarantineAgentNameKey as String] as? String == "Sukusho")
     }
 }
