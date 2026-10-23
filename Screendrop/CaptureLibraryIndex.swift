@@ -57,6 +57,8 @@ final class CaptureLibraryIndex {
     /// file isn't retried on every refresh.
     @ObservationIgnored private var unreadable: Set<String> = []
     @ObservationIgnored private var runner: Task<Void, Never>?
+    /// The last write to the store queued; each waits for the one before.
+    @ObservationIgnored private var lastWrite: Task<Void, Never>?
 
     private init() {}
 
@@ -102,8 +104,23 @@ final class CaptureLibraryIndex {
         var entry = entries[item.id] ?? CaptureTextEntry(id: item.id, fingerprint: "", paragraphs: [])
         entry.dismissedSuggestions = (entry.dismissedSuggestions ?? []) + [CaptureInsightRules.fold(tag)]
         entries[item.id] = entry
-        let store = store
-        Task.detached(priority: .utility) { try? store.save(entry) }
+        write { [entry] in try $0.save(entry) }
+    }
+
+    /// Runs a store write after every write queued before it, so the file
+    /// ends as the entry's latest state whatever order detached saves would
+    /// finish in. Entries change in memory first, without an await between
+    /// reading one and setting it, so no change is written over. A failed
+    /// save only costs a re-read or a new model pass at the next launch.
+    @discardableResult
+    private func write(_ work: @escaping @Sendable (CaptureTextIndexStore) throws -> Void) -> Task<Void, Never> {
+        let previous = lastWrite, store = store
+        let task = Task.detached(priority: .utility) {
+            await previous?.value
+            try? work(store)
+        }
+        lastWrite = task
+        return task
     }
 
     /// Forgets captures that are gone and queues every capture whose text is
@@ -119,8 +136,7 @@ final class CaptureLibraryIndex {
                 entries[id] = nil
                 foldedText[id] = nil
             }
-            let store = store
-            Task.detached(priority: .utility) { store.remove(ids: gone) }
+            write { $0.remove(ids: gone) }
         }
         planInsights(items)
         guard ScreendropPreferences.libraryReadsText else {
@@ -193,12 +209,10 @@ final class CaptureLibraryIndex {
                     // An edit keeps the title the user has seen, and their dismissals.
                     entry.insight = entries[item.id]?.insight
                     entry.dismissedSuggestions = entries[item.id]?.dismissedSuggestions
-                    let store = store
-                    // A failed save only costs a re-read at the next launch.
-                    try? await Task.detached(priority: .utility) { try store.save(entry) }.value
                     entries[item.id] = entry
                     foldedText[item.id] = Self.fold(entry)
                     CaptureLibraryModel.shared.textIndexDidChange()
+                    await write { [entry] in try $0.save(entry) }.value
                 }
             }
             // Re-plans, so a capture edited while it was read is read again.
@@ -229,10 +243,9 @@ final class CaptureLibraryIndex {
             // A capture deleted while the model looked keeps no answer.
             guard latestItems?.contains(where: { $0.id == item.id }) == true, var current = entries[item.id] else { return }
             current.insight = insight
-            let store = store
-            try? await Task.detached(priority: .utility) { [current] in try store.save(current) }.value
             entries[item.id] = current
             CaptureLibraryModel.shared.insightsDidChange()
+            await write { [current] in try $0.save(current) }.value
         }
     }
 

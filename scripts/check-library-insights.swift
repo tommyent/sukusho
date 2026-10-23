@@ -158,7 +158,7 @@ struct LibraryInsightChecks {
             let title = try require(insight.title, "\(fixture.name) has no title")
             try check((2...6).contains(title.split(separator: " ").count), "\(fixture.name) title isn't 2–6 words")
             try check(!insight.keywords.isEmpty, "\(fixture.name) has no keywords")
-            try check(store.loadAll()[id]?.insight == insight, "\(fixture.name) insight not saved")
+            try await waitUntil("\(fixture.name) insight saved", timeout: .seconds(5)) { store.loadAll()[id]?.insight == insight }
             try await waitUntil("\(fixture.name) title shows", timeout: .seconds(5)) { (try? item(id).title) == title }
             let shown = try item(id)
             // The file, the name exports and uploads use, and the custom name stay as they were.
@@ -203,8 +203,9 @@ struct LibraryInsightChecks {
         index.dismissSuggestion(dismissed, for: try item(stripeID))
         let after = index.suggestedTags(for: try item(stripeID), libraryTags: model.tags)
         try check(!after.contains(accepted) && !after.contains(dismissed), "Accepted or dismissed tag still offered: \(after)")
-        try await Task.sleep(for: .milliseconds(300))
-        try check(store.loadAll()[stripeID]?.dismissedSuggestions == [CaptureInsightRules.fold(dismissed)], "Dismissal not saved")
+        try await waitUntil("dismissal saved", timeout: .seconds(5)) {
+            store.loadAll()[stripeID]?.dismissedSuggestions == [CaptureInsightRules.fold(dismissed)]
+        }
         let stripeTitle = index.entries[stripeID]?.insight?.title
         let stripeURL = try item(stripeID).fileURL
         try writePNG(fixtures[0].lines + ["Edited: arrow added"], to: stripeURL)
@@ -213,7 +214,10 @@ struct LibraryInsightChecks {
         try await waitUntil("edited screenshot read again") { index.entries[stripeID]?.paragraphs.contains { $0.contains("arrow") } == true }
         try check(index.entries[stripeID]?.insight?.title == stripeTitle, "An edit dropped the model title")
         try check(!index.suggestedTags(for: try item(stripeID), libraryTags: model.tags).contains(dismissed), "A re-read brought a dismissal back")
-        try check(store.loadAll()[stripeID]?.dismissedSuggestions == [CaptureInsightRules.fold(dismissed)], "Re-read lost the dismissal on disk")
+        try await waitUntil("re-read saved with the dismissal", timeout: .seconds(5)) {
+            let saved = store.loadAll()[stripeID]
+            return saved?.paragraphs.contains { $0.contains("arrow") } == true && saved?.dismissedSuggestions == [CaptureInsightRules.fold(dismissed)]
+        }
         print("CHECK: accepted \"\(accepted)\" via setTag, dismissed \"\(dismissed)\", both hold through a re-read")
 
         // A recording: its first frame and its captions.
@@ -287,6 +291,15 @@ struct LibraryInsightChecks {
         }
         try check(calls == 1 && index.entries[busyID]?.insight == nil && index.insightsPending == 0, "Busy model: asked \(calls) times or stored")
         print("CHECK: a busy model isn't stored or asked again this session")
+
+        // Back-to-back dismissals both reach the disk: writes run in the order they were made.
+        let busy = try item(busyID)
+        index.dismissSuggestion("alpha", for: busy)
+        index.dismissSuggestion("beta", for: busy)
+        try await waitUntil("both dismissals saved", timeout: .seconds(5)) { store.loadAll()[busyID]?.dismissedSuggestions == ["alpha", "beta"] }
+        try await Task.sleep(for: .milliseconds(500))
+        try check(store.loadAll()[busyID]?.dismissedSuggestions == ["alpha", "beta"], "A later write lost a dismissal")
+        print("CHECK: back-to-back dismissals both saved")
     }
 
     /// With the model gone (a fake provider, as after removing it to free
