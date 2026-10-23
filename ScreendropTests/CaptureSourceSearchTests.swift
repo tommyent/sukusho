@@ -20,6 +20,17 @@ struct CaptureSourceSearchTests {
         #expect(CaptureLibraryQuery.parse("App:Chrome app:google").operators == ["app": ["Chrome", "google"]])
     }
 
+    @Test func oneSpaceAfterTheColonIsFine() {
+        #expect(CaptureLibraryQuery.parse("app: chrome").operators == ["app": ["chrome"]])
+        #expect(CaptureLibraryQuery.parse("app: chrome").phrases.isEmpty)
+        let quoted = CaptureLibraryQuery.parse(#"bug app: "visual studio""#)
+        #expect(quoted.phrases == ["bug"] && quoted.operators == ["app": ["visual studio"]])
+        #expect(CaptureLibraryQuery("app: chrome").matches(fields: ["Chrome tips"], foldedText: nil, source: nil) == false)
+        // Still half-typed: no value yet, so nothing narrows.
+        #expect(CaptureLibraryQuery("report app: ").isEmpty == false)
+        #expect(CaptureLibraryQuery.parse("report app: ").operators.isEmpty)
+    }
+
     @Test func quotedValuesKeepTheirSpaces() {
         let parsed = CaptureLibraryQuery.parse(#"app:"visual studio" error"#)
         #expect(parsed.operators == ["app": ["visual studio"]])

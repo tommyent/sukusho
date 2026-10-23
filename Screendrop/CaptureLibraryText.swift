@@ -190,8 +190,9 @@ nonisolated struct CaptureLibraryQuery: Equatable {
     }
 
     /// Splits typed text into plain phrases and operator values. An operator
-    /// starts a word; its value runs to the next space, or is quoted:
-    /// `app:"visual studio"`. An operator with no value yet is ignored.
+    /// starts a word; its value, after at most one space, runs to the next
+    /// space or is quoted: `app:"visual studio"`. An operator with no value
+    /// yet is ignored.
     static func parse(_ raw: String) -> (phrases: [String], operators: [String: [String]]) {
         var phrases: [String] = []
         var operators: [String: [String]] = [:]
@@ -212,6 +213,11 @@ nonisolated struct CaptureLibraryQuery: Equatable {
                 continue
             }
             var valueStart = raw.index(after: colon)
+            // One space after the colon is fine: "app: chrome".
+            if valueStart < raw.endIndex, raw[valueStart] == " " {
+                let next = raw.index(after: valueStart)
+                if next < raw.endIndex, !raw[next].isWhitespace { valueStart = next }
+            }
             let value: Substring
             if valueStart < raw.endIndex, raw[valueStart] == "\"" {
                 valueStart = raw.index(after: valueStart)
