@@ -414,8 +414,7 @@ struct PreviewCardView: View {
 
     private func copyUploadedURL() {
         guard let url = cloudUploader.uploadedURLs[item.id] else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(url, forType: .string)
+        CloudShareLinks.copy([url])
     }
 
     private func shakeCard() {

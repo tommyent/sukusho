@@ -116,7 +116,9 @@ final class CloudCredentialStore {
     // MARK: - Keychain
 
     /// `service` defaults to this app's; the Screendrop import also reads and writes others.
-    static func setKeychainItem(key: String, value: String, service: String = keychainService) {
+    /// False when the Keychain refused the item.
+    @discardableResult
+    static func setKeychainItem(key: String, value: String, service: String = keychainService, label: String? = nil) -> Bool {
         let data = Data(value.utf8)
 
         let query: [String: Any] = [
@@ -129,7 +131,26 @@ final class CloudCredentialStore {
 
         var newQuery = query
         newQuery[kSecValueData as String] = data
-        SecItemAdd(newQuery as CFDictionary, nil)
+        if let label { newQuery[kSecAttrLabel as String] = label }
+        return SecItemAdd(newQuery as CFDictionary, nil) == errSecSuccess
+    }
+
+    /// This app's items whose account starts with `prefix`: account, label and creation date.
+    static func keychainItems(prefix: String) -> [(account: String, label: String, created: Date)] {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+            kSecReturnAttributes as String: true,
+        ]
+        var result: AnyObject?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let items = result as? [[String: Any]] else { return [] }
+        return items.compactMap { item in
+            guard let account = item[kSecAttrAccount as String] as? String, account.hasPrefix(prefix),
+                  let created = item[kSecAttrCreationDate as String] as? Date else { return nil }
+            return (account, item[kSecAttrLabel as String] as? String ?? "", created)
+        }
     }
 
     static func getKeychainItem(key: String, service: String = keychainService) -> String? {

@@ -105,16 +105,14 @@ final class LikesLibraryModel {
     }
 
     func open(_ like: CloudLike) {
-        if let url = CloudLikeList.shareLink(for: like) { NSWorkspace.shared.open(url) }
+        if let url = CloudLikeList.shareLink(for: like) { CloudShareLinks.open(url.absoluteString, encrypted: like.upload.encrypted == true) }
     }
 
     /// The share links of the liked uploads, each once.
     func copyLinks(_ likes: [CloudLike]) {
         var seen: Set<String> = []
-        let links = likes.map(\.upload.shareUrl).filter { seen.insert($0).inserted }
-        guard !links.isEmpty else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(links.joined(separator: "\n"), forType: .string)
+        CloudShareLinks.copy(likes.filter { seen.insert($0.upload.shareUrl).inserted }
+            .map { ($0.upload.shareUrl, $0.upload.encrypted == true) })
     }
 
     /// The collection's keys and clicks: a double click opens the share
@@ -312,7 +310,12 @@ struct LikeInspector: View {
                         .aspectRatio(1.45, contentMode: .fit)
                         .clipShape(.rect(cornerRadius: 11))
                     Text(like.uploadName).font(.system(size: 13, weight: .medium)).lineLimit(2).truncationMode(.middle)
-                    Text(like.upload.shareUrl).font(.system(size: 12)).foregroundStyle(InspectorControlPalette.label).textSelection(.enabled)
+                    let link = CloudShareLinks.shown(like.upload.shareUrl, encrypted: like.upload.encrypted == true)
+                    Text(link.link).font(.system(size: 12)).foregroundStyle(InspectorControlPalette.label).textSelection(.enabled)
+                    if link.missingKey {
+                        Label("Key not on this Mac", systemImage: "key.slash").font(.system(size: 12)).foregroundStyle(.orange)
+                            .help("This link is encrypted, and its key is on the Mac that shared it.")
+                    }
                     if let expiresAt = like.upload.expiresAt {
                         Text(CloudUploadText.expiryDate(expiresAt)).font(.system(size: 12)).foregroundStyle(InspectorControlPalette.label)
                     }

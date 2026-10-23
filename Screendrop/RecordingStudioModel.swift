@@ -3336,8 +3336,7 @@ final class RecordingStudioModel {
                     chapterData: sharedChapterData
                 )
 
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(result.url, forType: .string)
+                CloudShareLinks.copy([result.url])
                 if session != nil {
                     ScreenshotHistoryStore.shared.setCloudURL(for: uploadURL, cloudURL: result.url)
                 }

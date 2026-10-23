@@ -110,7 +110,7 @@ final class CommentsLibraryModel {
     }
 
     func open(_ comment: CloudComment) {
-        if let url = CloudCommentList.shareLink(for: comment) { NSWorkspace.shared.open(url) }
+        if let url = CloudCommentList.shareLink(for: comment) { CloudShareLinks.open(url.absoluteString, encrypted: comment.upload.encrypted == true) }
     }
 
     func copyText(_ comments: [CloudComment]) {
@@ -444,7 +444,12 @@ struct CommentInspector: View {
                         .aspectRatio(1.45, contentMode: .fit)
                         .clipShape(.rect(cornerRadius: 11))
                     Text(comment.uploadName).font(.system(size: 13, weight: .medium)).lineLimit(2).truncationMode(.middle)
-                    Text(comment.upload.shareUrl).font(.system(size: 12)).foregroundStyle(.secondary).textSelection(.enabled)
+                    let link = CloudShareLinks.shown(comment.upload.shareUrl, encrypted: comment.upload.encrypted == true)
+                    Text(link.link).font(.system(size: 12)).foregroundStyle(.secondary).textSelection(.enabled)
+                    if link.missingKey {
+                        Label("Key not on this Mac", systemImage: "key.slash").font(.system(size: 12)).foregroundStyle(.orange)
+                            .help("This link is encrypted, and its key is on the Mac that shared it.")
+                    }
                     if let expiresAt = comment.upload.expiresAt {
                         Text(CloudUploadText.expiryDate(expiresAt)).font(.system(size: 12)).foregroundStyle(.secondary)
                     }

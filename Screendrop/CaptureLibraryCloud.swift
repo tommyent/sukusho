@@ -126,7 +126,11 @@ final class CloudLibraryModel {
                 hasLoaded = true
             }
             do {
+                let worker = CloudUploader.shared.workerBase
+                let listedSince = Date.now
                 uploads = try await CloudUploader.shared.listUploads()
+                // Only a complete list may say an upload is gone, and with it its key.
+                CloudShareLinks.prune(keeping: Set(uploads.map(\.id)), worker: worker, listedSince: listedSince)
                 isHistoryFallback = false
                 loadError = nil
                 FileRequestsModel.shared.notice(uploads)
@@ -173,13 +177,16 @@ final class CloudLibraryModel {
     }
 
     func open(_ upload: CloudUpload) {
-        if let url = URL(string: upload.url) { NSWorkspace.shared.open(url) }
+        CloudShareLinks.open(upload.url, encrypted: upload.encrypted == true)
     }
 
     func copyLinks(_ uploads: [CloudUpload]) {
-        guard !uploads.isEmpty else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(uploads.map(\.url).joined(separator: "\n"), forType: .string)
+        CloudShareLinks.copy(uploads.map { ($0.url, $0.encrypted == true) })
+    }
+
+    /// Whether the Worker says this upload is sealed, so a link without its key needs a warning.
+    func isEncrypted(_ id: String) -> Bool {
+        uploads.contains { $0.id == id && $0.encrypted == true }
     }
 
     /// The collection's keys and clicks. Uploads are final, so they have no
@@ -196,7 +203,7 @@ final class CloudLibraryModel {
             FileRequestsModel.shared.download(received)
         case .copy: copyLinks(shared)
         case .trash: pendingDelete = selectedUploads
-        case .share: LibrarySharing.show(shared.compactMap { URL(string: $0.url) })
+        case .share: LibrarySharing.show(CloudShareLinks.links(shared.map { ($0.url, $0.encrypted == true) }).compactMap(URL.init(string:)))
         case .rename, .export, .reveal: break
         }
     }
@@ -222,7 +229,7 @@ final class CloudLibraryModel {
                 self.copyLinks(selected)
             },
             LibraryMenuItem(title: "Share…", isEnabled: !selected.isEmpty) {
-                LibrarySharing.show(selected.compactMap { URL(string: $0.url) })
+                LibrarySharing.show(CloudShareLinks.links(selected.map { ($0.url, $0.encrypted == true) }).compactMap(URL.init(string:)))
             },
             LibraryMenuItem(title: "Show in Library", isEnabled: local != nil) { if let local { self.showInLibrary(local) } },
             LibraryMenuItem(title: "Delete from Cloud…", isEnabled: !selected.isEmpty && !isBusy, startsGroup: true) {
@@ -258,7 +265,9 @@ final class CloudLibraryModel {
             for (index, upload) in targets.enumerated() {
                 updatePreview(fetchID, index: index, fraction: 0)
                 do {
-                    files.append(try await CloudPreviewCache.shared.file(for: upload, keeping: kept, owner: owner) { fraction in
+                    files.append(try await CloudPreviewCache.shared.file(
+                        for: upload, keeping: kept, owner: owner, shareKey: CloudShareKeys.live.key(uploadID: upload.id)
+                    ) { fraction in
                         Task { @MainActor in self.updatePreview(fetchID, index: index, fraction: fraction) }
                     })
                 } catch {
@@ -361,7 +370,7 @@ final class CloudLibraryModel {
                         title: files.count == 1 ? options.trimmedTitleOrNil : nil,
                         socialEnabled: options.socialEnabled, expiresAt: options.expiry.date(),
                         allowAnonymousComments: options.allowAnonymousComments, password: options.password,
-                        asFile: true
+                        asFile: true, encrypt: options.encrypted
                     )
                     links.append(result.url)
                 } catch is CancellationError {
@@ -372,10 +381,7 @@ final class CloudLibraryModel {
                 CloudUploader.shared.clearUploadState(for: id)
                 fileUploads?.done += 1
             }
-            if !links.isEmpty {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(links.joined(separator: "\n"), forType: .string)
-            }
+            CloudShareLinks.copy(links)
             if !failures.isEmpty {
                 CaptureLibraryModel.shared.errorMessage = "Couldn’t share:\n" + failures.joined(separator: "\n")
             }
@@ -578,7 +584,8 @@ struct CloudLibraryPage: View {
             return true
         }
         .sheet(isPresented: Binding(get: { !cloud.pendingFiles.isEmpty }, set: { if !$0 { cloud.pendingFiles = [] } })) {
-            CloudUploadOptionsPopover(showsTitle: cloud.pendingFiles.count == 1) { options in
+            CloudUploadOptionsPopover(showsTitle: cloud.pendingFiles.count == 1,
+                                      encryptionUnavailable: CloudShareSeal.unavailableReason(fileURLs: cloud.pendingFiles)) { options in
                 cloud.uploadPendingFiles(options: options)
             }
         }
@@ -675,6 +682,7 @@ private struct CloudUploadCard: View {
             upload.isVideo ? upload.duration.map(CloudUploadText.duration) : nil,
             CloudUploadText.comments(upload.commentCount), CloudUploadText.likes(upload.likeCount),
             upload.hasPassword == true ? "password protected" : nil,
+            upload.encrypted == true ? "encrypted" : nil,
             CloudUploadText.expiry(upload.expiresAt), local == nil ? "cloud only" : "in Library",
         ]
         return parts.compactMap(\.self).joined(separator: ", ")
@@ -723,8 +731,13 @@ private struct CloudUploadCard: View {
             }
             .overlay(alignment: .topLeading) {
                 // The card marks' pills, so they read on any thumbnail.
-                if upload.hasPassword == true || upload.expiresAt != nil {
+                if upload.hasPassword == true || upload.encrypted == true || upload.expiresAt != nil {
                     HStack(spacing: 4) {
+                        if upload.encrypted == true {
+                            Image(systemName: "lock.shield.fill")
+                                .cardPill()
+                                .help("Encrypted: the link holds the key")
+                        }
                         if upload.hasPassword == true {
                             Image(systemName: "lock.fill")
                                 .cardPill()

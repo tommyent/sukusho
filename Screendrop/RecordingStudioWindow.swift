@@ -285,7 +285,8 @@ private struct RecordingStudioContent: View {
     private var shareStatus: some View {
         switch model.shareState {
         case .idle:
-            CloudUploadButton(suggestedTitle: shareSuggestedTitle, onUpload: { model.shareToCloud(options: $0) }) {
+            CloudUploadButton(suggestedTitle: shareSuggestedTitle, encryptionUnavailable: CloudShareSeal.unavailableNote,
+                              onUpload: { model.shareToCloud(options: $0) }) {
                 Label("Upload", systemImage: "icloud.and.arrow.up")
                     .labelStyle(.titleAndIcon)
             }
@@ -307,8 +308,7 @@ private struct RecordingStudioContent: View {
         case .finished(let url):
             // As in the image editor: Upload comes back with the next edit.
             Button {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(url, forType: .string)
+                CloudShareLinks.copy([url])
             } label: {
                 Label("Link Copied", systemImage: "checkmark.icloud")
                     .labelStyle(.titleAndIcon)
@@ -322,7 +322,8 @@ private struct RecordingStudioContent: View {
                     .foregroundStyle(.orange)
                     .help(message)
 
-                CloudUploadButton(suggestedTitle: shareSuggestedTitle, onUpload: { model.shareToCloud(options: $0) }) {
+                CloudUploadButton(suggestedTitle: shareSuggestedTitle, encryptionUnavailable: CloudShareSeal.unavailableNote,
+                                  onUpload: { model.shareToCloud(options: $0) }) {
                     Text("Retry")
                 }
                 .disabled(model.hasRunningWork || model.needsSharedVideoReplacement)

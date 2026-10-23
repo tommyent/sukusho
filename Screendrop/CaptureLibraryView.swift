@@ -266,7 +266,9 @@ struct CaptureLibraryView: View {
         }
         .sheet(item: $model.pendingCloudUpload) { item in
             // Only a name the user gave; an unnamed upload keeps its file name on the share page.
-            CloudUploadOptionsPopover(suggestedTitle: item.customName ?? "") { options in
+            CloudUploadOptionsPopover(suggestedTitle: item.customName ?? "",
+                                      encryptionUnavailable: CloudShareSeal.unavailableReason(fileURLs: [item.fileURL],
+                                                                                              isRecording: item.isVideo)) { options in
                 model.upload(item, options: options)
             }
         }
