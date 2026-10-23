@@ -153,6 +153,15 @@ struct LibraryTextIndexChecks {
         try check(recording.paragraphs.count == 2, "Repeated frame text not merged")
         try await search("serengeti walk", expect: [recordingID])
         try await search("masai mara", expect: [recordingID])
+        // A tag, a rename or opening Studio rewrites project.json; the text stands.
+        try session.updateProjectMetadata { $0.tags = ["demo"] }
+        CaptureLibraryModel.shared.refresh()
+        try await waitUntil("tag seen", timeout: .seconds(5)) {
+            CaptureLibraryModel.shared.items.first { $0.id == recordingID }?.tags == ["demo"]
+        }
+        try check(!index.pendingIDs.contains(recordingID) && index.entries[recordingID] == recording,
+                  "Touching project.json queued the recording to be read again")
+        print("CHECK: project.json changes keep a recording's text")
 
         // Off stops reading and keeps the index; on again reads what was missed.
         UserDefaults.standard.set(false, forKey: ScreendropPreferences.libraryReadsTextKey)

@@ -317,9 +317,14 @@ nonisolated enum CaptureLibraryScanner {
             let createdAt = manifest?.createdAt ?? row?.createdAt
                 ?? (try? session.directoryURL.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
             let fileURL = session.deliverableURL
-            let modified = [session.editDocumentURL, session.draftDocumentURL, session.projectMetadataURL, fileURL]
-                .compactMap { try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }
-                .max() ?? row?.modifiedAt ?? createdAt
+            func modificationDate(_ url: URL) -> Date? {
+                try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+            }
+            // What the recording shows: a rename, a tag or opening Studio (all
+            // in project.json) changes neither its thumbnail nor its text.
+            let content = [session.editDocumentURL, session.draftDocumentURL, fileURL].compactMap(modificationDate).max()
+            let modified = [content, modificationDate(session.projectMetadataURL)].compactMap { $0 }.max()
+                ?? row?.modifiedAt ?? createdAt
             entries.append(CaptureLibraryItem(
                 id: "recording:\(path)", historyIDs: Set(rows.map(\.id)), name: session.displayName,
                 customName: storedName.isEmpty ? nil : storedName,
@@ -329,7 +334,7 @@ nonisolated enum CaptureLibraryScanner {
                 isVideo: true, hasEdits: session.hasSavedProject, hasDraft: session.hasUnsavedDraft,
                 cloudURL: rows.compactMap(\.cloudURL).first,
                 tags: metadata?.tags ?? [],
-                thumbnailKey: "\(fileURL.path):\(modified.timeIntervalSince1970)"
+                thumbnailKey: "\(fileURL.path):\((content ?? modified).timeIntervalSince1970)"
             ))
         }
         for row in history where row.sessionPath == nil {
