@@ -177,10 +177,14 @@ nonisolated enum CaptureReadableText {
         }
     }
 
-    private static let codeMarks = ["{", "}", "()", "=>", "->", ";", "//", "let ", "var ", "func ", "const ", "return ", "import ", "def "]
+    private static let codeSymbols = ["{", "}", "()", "=>", "->", ";", "//"]
+    private static let codeKeywords = ["let ", "var ", "func ", "const ", "return ", "import ", "def "]
 
+    /// A symbol anywhere, or a keyword where a statement starts with code
+    /// after it: "let total = 2" is code, "return the form by Friday" isn't.
     private static func looksLikeCode(_ line: String) -> Bool {
-        codeMarks.contains { line.contains($0) }
+        codeSymbols.contains { line.contains($0) }
+            || codeKeywords.contains { line.hasPrefix($0) } && line.contains { "=(:[".contains($0) }
     }
 
     /// Prose rejoins into flowing text; code keeps its lines.

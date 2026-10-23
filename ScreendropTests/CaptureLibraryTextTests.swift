@@ -161,6 +161,18 @@ struct CaptureLibraryTextTests {
         #expect(CaptureReadableText.paragraphs(from: longer) == ["let total = items.count\nreturn total * 2"])
     }
 
+    @Test func proseWithCodeWordsStillFlows() {
+        // Keywords mid-sentence, or starting a wrapped line without code after them, are prose.
+        let lines = [
+            line("Please return the form and let", y: 0.10),
+            line("return receipts go to finance before", y: 0.125),
+            line("import duties are due.", y: 0.15),
+        ]
+        #expect(CaptureReadableText.paragraphs(from: lines) == [
+            "Please return the form and let return receipts go to finance before import duties are due.",
+        ])
+    }
+
     @Test func columnsAndStrayFragmentsStayApart() {
         // Reading order interleaves the two columns row by row.
         let lines = [
