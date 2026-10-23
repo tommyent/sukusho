@@ -127,14 +127,16 @@ nonisolated enum CaptureInsightRules {
     /// starting with a capital unless its first word is cased on purpose
     /// ("iPhone"). A longer one loses its trailing phrase ("… with a
     /// whetstone"), else what follows a heading read together with the text
-    /// under it ("Quarterly roadmap review Q4 goals: …"); a lone word gets
+    /// under it, where a capital follows a word with none ("Quarterly
+    /// roadmap review Q4 goals: …"; Title Case and all caps aren't cut, so
+    /// the date stays); a lone word gets
     /// what it belongs to from the window title or the app ("Battery ·
     /// System Settings"). Nil when none of that fits.
     static func cleanTitle(_ raw: String, windowTitle: String? = nil, appName: String? = nil) -> String? {
         let title = raw.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"'“”‘’.:")))
         var words = title.split(whereSeparator: \.isWhitespace).map(String.init)
         if words.count > 6, let cut = words.indices.last(where: { (2...6).contains($0) && connectors.contains(words[$0].lowercased()) })
-            ?? words.indices.first(where: { (2...6).contains($0) && words[$0].first?.isUppercase == true }) {
+            ?? words.indices.first(where: { (2...6).contains($0) && words[$0].first?.isUppercase == true && words[$0 - 1] == words[$0 - 1].lowercased() }) {
             words = Array(words[..<cut])
         }
         if words.count == 1, let context = context(for: words[0], windowTitle: windowTitle, appName: appName) {

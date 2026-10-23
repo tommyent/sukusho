@@ -33,6 +33,12 @@ struct CaptureInsightTests {
         #expect(CaptureInsightRules.cleanTitle("Quarterly roadmap review Q4 goals: ship Library search, model titles and tag suggestions")
                 == "Quarterly roadmap review")
         #expect(CaptureInsightRules.cleanTitle("Product roadmap 2027 Launch timeline and pricing tiers") == "Product roadmap 2027")
+        // Title Case and all caps have no such seam: not cut to two words, so the date shows.
+        #expect(CaptureInsightRules.cleanTitle("Quarterly Product Roadmap Launch Timeline And Pricing") == nil)
+        #expect(CaptureInsightRules.cleanTitle("Fix The Upload Retry Queue Before The Release") == nil)
+        #expect(CaptureInsightRules.cleanTitle("THIS IS A VERY LONG TITLE INDEED HERE") == nil)
+        // A connecting word still cuts them.
+        #expect(CaptureInsightRules.cleanTitle("How To Sharpen A Chef's Knife With A Whetstone") == "How To Sharpen A Chef's Knife")
         // No connecting or capitalized word where a 2–6 word title would remain: dropped, the date shows.
         #expect(CaptureInsightRules.cleanTitle("Notes about the quarterly offsite agenda and travel") == nil)
         #expect(CaptureInsightRules.cleanTitle("Six words stay exactly as they are") == nil)
