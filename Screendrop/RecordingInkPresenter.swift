@@ -31,6 +31,7 @@ final class RecordingInkPresenter {
     @ObservationIgnored private var quartzOrigin: CGPoint = .zero
     @ObservationIgnored private var holdTimer: Timer?
     @ObservationIgnored private var fadeTimer: Timer?
+    @ObservationIgnored private var fadingStrokes: [Int] = []
     @ObservationIgnored private var onPenChange: ((Bool) -> Void)?
     @ObservationIgnored private var penHotKeyIDs: [UInt32] = []
 
@@ -107,7 +108,7 @@ final class RecordingInkPresenter {
               let index = strokes.lastIndex(where: { $0.hideUptime == nil }) else { return }
         strokes[index].hideUptime = ProcessInfo.processInfo.systemUptime
         strokes[index].fadesOut = false
-        inkView?.needsDisplay = true
+        redraw(strokes[index].samples[...])
     }
 
     /// Takes the panel down and forgets the take's strokes; read `strokes`
@@ -122,6 +123,7 @@ final class RecordingInkPresenter {
         panel = nil
         inkView = nil
         strokes = []
+        fadingStrokes = []
         currentStroke = nil
         onPenChange = nil
     }
@@ -137,7 +139,7 @@ final class RecordingInkPresenter {
             widthInPoints: Self.lineWidth
         ))
         currentStroke = strokes.count - 1
-        inkView?.needsDisplay = true
+        redraw(strokes[strokes.count - 1].samples[...])
     }
 
     fileprivate func continueStroke(at uptime: TimeInterval, point: CGPoint) {
@@ -145,7 +147,7 @@ final class RecordingInkPresenter {
         let point = quartz(point)
         if let last = strokes[index].samples.last?.point, hypot(point.x - last.x, point.y - last.y) < 0.5 { return }
         strokes[index].samples.append(.init(uptime: uptime, point: point))
-        inkView?.needsDisplay = true
+        redraw(strokes[index].samples.suffix(3))
     }
 
     fileprivate func endStroke(at uptime: TimeInterval, point: CGPoint?) {
@@ -156,13 +158,14 @@ final class RecordingInkPresenter {
         holdTimer = Timer.scheduledTimer(withTimeInterval: RecordingInkTimeline.holdDuration, repeats: false) { _ in
             Task { @MainActor in RecordingInkPresenter.shared.fadeGroup() }
         }
-        inkView?.needsDisplay = true
+        redraw(strokes[index].samples.suffix(3))
     }
 
     private func fadeGroup() {
         guard currentStroke == nil else { return }
         let now = ProcessInfo.processInfo.systemUptime
-        for index in strokes.indices where strokes[index].hideUptime == nil {
+        fadingStrokes = strokes.indices.filter { strokes[$0].hideUptime == nil }
+        for index in fadingStrokes {
             strokes[index].hideUptime = now
         }
         let end = now + RecordingInkTimeline.fadeDuration
@@ -173,10 +176,23 @@ final class RecordingInkPresenter {
     }
 
     private func fadeTick(endingAt end: TimeInterval) {
-        inkView?.needsDisplay = true
+        // A tick queued before hide() can land after it emptied the strokes.
+        for index in fadingStrokes where strokes.indices.contains(index) { redraw(strokes[index].samples[...]) }
         guard ProcessInfo.processInfo.systemUptime > end else { return }
         fadeTimer?.invalidate()
         fadeTimer = nil
+    }
+
+    /// Repaints only around these samples (a midpoint curve stays inside
+    /// its points), not the whole display on every drag.
+    private func redraw(_ samples: ArraySlice<RecordingInkCapture.Sample>) {
+        guard let inkView, !samples.isEmpty else { return }
+        let xs = samples.map(\.point.x), ys = samples.map(\.point.y)
+        let pad = Self.lineWidth / 2 + 2
+        inkView.setNeedsDisplay(CGRect(
+            x: xs.min()! - quartzOrigin.x - pad, y: ys.min()! - quartzOrigin.y - pad,
+            width: xs.max()! - xs.min()! + pad * 2, height: ys.max()! - ys.min()! + pad * 2
+        ))
     }
 
     /// Flipped view point to Quartz global.
@@ -226,7 +242,7 @@ private final class RecordingInkView: NSView {
             // Nearly clear, not clear: clicks over fully clear pixels may
             // pass through to the app below.
             NSColor(white: 0, alpha: 0.005).setFill()
-            bounds.fill()
+            dirtyRect.fill()
             // The pen-on frame; the panel is never captured, so neither is it.
             context.setStrokeColor(RecordingInkColor.marker.cgColor(opacity: 0.9))
             context.setLineWidth(3)
