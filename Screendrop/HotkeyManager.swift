@@ -161,6 +161,9 @@ final class HotkeyManager {
     func unregisterTemporaryHotKey(_ id: UInt32) {
         guard let entry = temporaryHotKeys.removeValue(forKey: id) else { return }
         UnregisterEventHotKey(entry.ref)
+        // A capture shortcut set to this key while it was taken failed to
+        // register; with the key free again, try once more.
+        if !registrationErrors.isEmpty { reloadHotkeys() }
     }
 
     func handleHotKey(id: UInt32) {
