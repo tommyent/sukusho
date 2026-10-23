@@ -15,9 +15,9 @@ Sukusho started as a fork of [Screendrop](https://github.com/fayazara/Screendrop
 > [!NOTE]
 > There are no releases yet. To use Sukusho, [build it from source](#building-from-source). It is under active development, so expect rough edges.
 
-<a href="https://screendrop-worker.tommyent.workers.dev/cfcda18c"><img src="docs/screenshots/share-page.jpg" alt="A Sukusho share page in a browser: a screenshot of the Sukusho editor marking up a travel website, titled Sukusho editor, with its size, a view count, a like button, Copy Image and Download below it, and a comment box beside it" width="100%"></a>
+<a href="https://screendrop-worker.tommyent.workers.dev/cfcda18c"><img src="docs/screenshots/share-page.jpg" alt="An example Sukusho share page in a browser, with comments allowed: a screenshot of the Sukusho editor marking up a travel website, titled Sukusho editor, with its size, a view count, a like button, Copy Image and Download below it, and a comment box beside it" width="100%"></a>
 
-This is what the person you send a link to sees: the capture, a like button, Copy Image and Download, and a place to comment. The page carries the name and logo you choose in Sukusho's settings. [Open this demo share](https://screendrop-worker.tommyent.workers.dev/cfcda18c).
+This is a typical share page, as the person you send a link to sees it: the capture, a like button, Copy Image and Download, and a place to comment. Comments can be turned off for each share. The page carries the name and logo you choose in Sukusho's settings. [Open the demo share](https://screendrop-worker.tommyent.workers.dev/cfcda18c), which has comments turned off.
 
 ## Screenshots
 
