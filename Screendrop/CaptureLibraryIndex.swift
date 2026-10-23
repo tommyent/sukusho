@@ -1,6 +1,7 @@
 @preconcurrency import AVFoundation
 import CoreGraphics
 import Foundation
+import ImageIO
 import Observation
 
 /// Reads the words in every Library capture so search can find them: the
@@ -87,17 +88,24 @@ final class CaptureLibraryIndex {
 
     private func drain() async {
         defer { runner = nil }
-        while ScreendropPreferences.libraryReadsText, !queue.isEmpty {
-            if shouldPause {
+        while !Task.isCancelled, ScreendropPreferences.libraryReadsText, !queue.isEmpty {
+            if Self.shouldPause() {
                 try? await Task.sleep(for: .seconds(10))
                 continue
             }
             let item = queue.removeFirst()
             inFlight = item
             updatePending()
-            let entry = await Self.read(item)
+            let outcome = await Self.read(item)
             inFlight = nil
-            if let entry {
+            switch outcome {
+            case .paused:
+                // Not read yet, and not unreadable: first in line once it may run.
+                queue.insert(item, at: 0)
+                continue
+            case .unreadable:
+                unreadable.insert(item.thumbnailKey)
+            case .read(let entry):
                 // A capture deleted while it was read keeps no entry.
                 if latestItems?.contains(where: { $0.id == item.id }) == true {
                     let store = store
@@ -107,8 +115,6 @@ final class CaptureLibraryIndex {
                     foldedText[item.id] = Self.fold(entry)
                     CaptureLibraryModel.shared.textIndexDidChange()
                 }
-            } else {
-                unreadable.insert(item.thumbnailKey)
             }
             // Re-plans, so a capture edited while it was read is read again.
             if let latestItems { sync(latestItems, isComplete: latestIsComplete) }
@@ -123,8 +129,9 @@ final class CaptureLibraryIndex {
     }
 
     /// Recording, Low Power Mode and a hot Mac all come before indexing.
-    private var shouldPause: Bool {
-        ScreenRecordingManager.shared.isActive
+    private static func shouldPause() -> Bool {
+        Task.isCancelled
+            || ScreenRecordingManager.shared.isActive
             || ProcessInfo.processInfo.isLowPowerModeEnabled
             || ProcessInfo.processInfo.thermalState.rawValue >= ProcessInfo.ThermalState.serious.rawValue
     }
@@ -149,46 +156,73 @@ final class CaptureLibraryIndex {
 
     // MARK: Reading
 
-    /// Nil when nothing could be read, so the capture is tried again at the
-    /// next launch rather than stored as having no text.
-    nonisolated private static func read(_ item: CaptureLibraryItem) async -> CaptureTextEntry? {
+    private enum ReadOutcome {
+        case read(CaptureTextEntry)
+        /// Nothing could be read: tried again at the next launch rather than
+        /// stored as having no text.
+        case unreadable
+        /// A pause began mid-read; nothing is stored and it stays queued.
+        case paused
+    }
+
+    /// Screenshots and frames are read at most this long: plenty for Retina
+    /// text, and it bounds the memory a long scrolling capture takes.
+    nonisolated private static let readingSize = 4096
+
+    /// Checks for a pause before each frame and before Vision runs on it.
+    nonisolated private static func read(_ item: CaptureLibraryItem) async -> ReadOutcome {
         await ImageTextWarmUp.shared.waitUntilReady()
-        var results: [[CaptureTextLine]?] = []
+        var frames: [[CaptureTextLine]?] = []
         if item.isVideo {
-            for frame in await videoFrames(item) {
-                results.append(await recognize { frame })
+            let generator = AVAssetImageGenerator(asset: AVURLAsset(url: item.fileURL))
+            generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = CGSize(width: readingSize, height: readingSize)
+            let tolerance = CMTime(seconds: 1, preferredTimescale: 600)
+            generator.requestedTimeToleranceBefore = tolerance
+            generator.requestedTimeToleranceAfter = tolerance
+            let duration = item.duration ?? 0
+            // The first frame, the middle and near the end.
+            for fraction in [0, 0.5, 0.9].prefix(duration > 2 ? 3 : 1) {
+                guard !(await shouldPause()) else { return .paused }
+                let image = try? await generator.image(at: CMTime(seconds: duration * fraction, preferredTimescale: 600)).image
+                guard !(await shouldPause()) else { return .paused }
+                frames.append(await recognize(image))
             }
         } else {
-            let url = item.fileURL
-            results.append(await recognize { ScreenshotImageLoader.uprightImage(at: url) })
+            guard !(await shouldPause()) else { return .paused }
+            let image = await decode(item.fileURL)
+            guard !(await shouldPause()) else { return .paused }
+            frames.append(await recognize(image))
         }
         let transcript = item.session?.effectiveEditDocument()?.subtitleCues.map { $0.map(\.text).joined(separator: " ") }
-        return CaptureTextEntry(id: item.id, fingerprint: item.thumbnailKey, frames: results, transcript: transcript)
+        return CaptureTextEntry(id: item.id, fingerprint: item.thumbnailKey, frames: frames, transcript: transcript)
+            .map(ReadOutcome.read) ?? .unreadable
     }
 
-    /// Decodes and reads one image on a background queue: Vision's work is
-    /// synchronous, and 25 s or more while it's cold.
-    nonisolated private static func recognize(_ image: @escaping @Sendable () -> CGImage?) async -> [CaptureTextLine]? {
+    /// The image upright, its long side at most `readingSize`.
+    nonisolated private static func decode(_ url: URL) async -> CGImage? {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .background).async {
-                continuation.resume(returning: image().flatMap { try? ImageTextRecognizer.recognizeLines(in: $0) })
+                let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary)
+                continuation.resume(returning: source.flatMap {
+                    CGImageSourceCreateThumbnailAtIndex($0, 0, [
+                        kCGImageSourceCreateThumbnailFromImageAlways: true,
+                        kCGImageSourceCreateThumbnailWithTransform: true,
+                        kCGImageSourceThumbnailMaxPixelSize: readingSize,
+                    ] as CFDictionary)
+                })
             }
         }
     }
 
-    /// The first frame, the middle and near the end of a recording.
-    nonisolated private static func videoFrames(_ item: CaptureLibraryItem) async -> [CGImage] {
-        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: item.fileURL))
-        generator.appliesPreferredTrackTransform = true
-        let tolerance = CMTime(seconds: 1, preferredTimescale: 600)
-        generator.requestedTimeToleranceBefore = tolerance
-        generator.requestedTimeToleranceAfter = tolerance
-        let duration = item.duration ?? 0
-        var frames: [CGImage] = []
-        for fraction in [0, 0.5, 0.9].prefix(duration > 2 ? 3 : 1) {
-            let time = CMTime(seconds: duration * fraction, preferredTimescale: 600)
-            if let image = try? await generator.image(at: time).image { frames.append(image) }
+    /// Reads one image on a background queue: Vision's work is synchronous,
+    /// and 25 s or more while it's cold.
+    nonisolated private static func recognize(_ image: CGImage?) async -> [CaptureTextLine]? {
+        guard let image else { return nil }
+        return await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .background).async {
+                continuation.resume(returning: try? ImageTextRecognizer.recognizeLines(in: image))
+            }
         }
-        return frames
     }
 }

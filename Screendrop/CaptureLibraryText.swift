@@ -32,7 +32,7 @@ nonisolated struct CaptureTextEntry: Codable, Sendable, Equatable {
     }
 }
 
-extension CaptureTextEntry {
+nonisolated extension CaptureTextEntry {
     /// What a read found: each frame's lines regrouped into paragraphs, with
     /// text a later frame repeats dropped. Nil when no frame could be read,
     /// even beside a transcript, so the capture stays unread and is tried
