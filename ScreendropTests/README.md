@@ -98,5 +98,6 @@ It does not invoke export notifications, Finder, upload transport or live UI.
 It also exports white footage and a white camera over a light background and
 checks that no straight card or camera edge pixel is darker than the shadowed
 background beside it: shadows cast by filling the shape left a dark outline
-there. The harness has no Metal library, so it exercises the Core Graphics
+there. A floor checks that both shadows are still drawn just below each shape.
+The harness has no Metal library, so it exercises the Core Graphics
 compositor; Metal uses the same backdrop and camera-shadow images.

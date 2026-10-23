@@ -369,7 +369,16 @@ struct RecordingExportRegressionChecks {
         let bubble = outline(layout.bubbleRect, radius: layout.bubbleCornerRadius)
         try check(layout.bubbleRect.width > 0 && card < 6 && bubble < 6,
                   "Shadows outline the card (\(card) levels) or camera (\(bubble) levels)")
-        print("PASS: card and camera edges are no darker than the shadow beside them (\(card)/\(bubble) levels)")
+        // The shadows must still be there: just below each shape (they fall downwards) is darker than
+        // the shadow-free surface it sits on - the background corner, or the white card away from the camera.
+        // Floors are half of what this fixture measured (28 and 49 levels).
+        let below = 6
+        let cardShadow = luma(4, 4) - luma(Int(layout.cardRect.midX), Int(layout.cardRect.maxY) + below)
+        let cameraShadow = luma(Int(layout.cardRect.minX) + 40, Int(layout.cardRect.midY))
+            - luma(Int(layout.bubbleRect.midX), Int(layout.bubbleRect.maxY) + below)
+        try check(cardShadow >= 14 && cameraShadow >= 24,
+                  "Shadows went missing below the card (\(cardShadow) levels) or camera (\(cameraShadow) levels)")
+        print("PASS: card and camera edges are no darker than the shadow beside them (\(card)/\(bubble) levels); shadows darken \(cardShadow)/\(cameraShadow) levels below them")
     }
 
     static func captionPixels(in directory: URL) async throws {
