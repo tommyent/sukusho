@@ -23,6 +23,10 @@ nonisolated struct CaptureTextEntry: Codable, Sendable, Equatable {
     var paragraphs: [String]
     /// A recording's saved captions, joined.
     var transcript: String?
+    /// What Apple Intelligence made of it, once asked.
+    var insight: CaptureInsight?
+    /// Suggested tags the user dismissed, folded.
+    var dismissedSuggestions: [String]?
 
     /// What the inspector shows and Copy Text copies.
     var displayParagraphs: [String] { paragraphs + (transcript.map { [$0] } ?? []) }
@@ -47,6 +51,116 @@ nonisolated extension CaptureTextEntry {
     }
 }
 
+/// What Apple Intelligence wrote about one capture. Kept in its index entry
+/// on this Mac; it never reaches a file name, an upload or a share page.
+nonisolated struct CaptureInsight: Codable, Sendable, Equatable {
+    /// Bump to ask the model about every capture again after the prompt changes.
+    static let currentVersion = 1
+
+    var version = Self.currentVersion
+    var title: String?
+    var keywords: [String] = []
+    var category: String?
+    /// The model refused or its guardrails stopped it: not asked again
+    /// until `currentVersion` changes.
+    var declined = false
+
+    var isCurrent: Bool { version == Self.currentVersion }
+}
+
+/// Model titles and suggested tags: which to show and which to offer.
+nonisolated enum CaptureInsightRules {
+    /// The user's name always wins, then the model's title, then the date.
+    static func title(customName: String?, modelTitle: String?, dateTitle: String) -> String {
+        customName ?? modelTitle ?? dateTitle
+    }
+
+    /// Stored model output shows while its switch is on, even once the model
+    /// is gone (removed to free disk space): it's data by then. The switch
+    /// off hides it and keeps it; it stays in force while Settings hides it.
+    static func visible(_ insight: CaptureInsight?, enabled: Bool) -> CaptureInsight? {
+        enabled && insight?.declined == false ? insight : nil
+    }
+
+    /// The model is asked about new captures only while it's here, switched
+    /// on, and the Library reads text.
+    static func runs(modelAvailable: Bool, enabled: Bool, readsText: Bool) -> Bool {
+        modelAvailable && enabled && readsText
+    }
+
+    /// Tags to offer one capture: the app it came from (no model needed),
+    /// then the model's category and keywords. None it has or the user
+    /// dismissed, compared ignoring case, each in the Library's spelling.
+    static func suggestions(appName: String?, insight: CaptureInsight?, tags: [String], libraryTags: [String],
+                            dismissed: [String]) -> [String] {
+        let candidates = [appName, insight?.category].compactMap { $0 } + (insight?.keywords.prefix(5) ?? [])
+        var taken = Set((tags + dismissed).map(fold))
+        return candidates.compactMap { candidate in
+            let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, taken.insert(fold(trimmed)).inserted else { return nil }
+            return libraryTags.first { $0.caseInsensitiveCompare(trimmed) == .orderedSame } ?? trimmed
+        }
+    }
+
+    /// A keyword the model lowercased, in the capture's own spelling when a
+    /// line writes it with capitals past its start ("lisbon" → "Lisbon");
+    /// a word capitalized only where a line starts keeps the model's case.
+    static func spelling(of keyword: String, in lines: [String]) -> String {
+        guard keyword == keyword.lowercased() else { return keyword }
+        for line in lines {
+            var from = line.startIndex
+            while let range = line.range(of: keyword, options: .caseInsensitive, range: from..<line.endIndex) {
+                let isWord = !(line[..<range.lowerBound].last?.isLetter ?? false) && !(line[range.upperBound...].first?.isLetter ?? false)
+                if isWord, range.lowerBound != line.startIndex, line[range] != keyword { return String(line[range]) }
+                from = range.upperBound
+            }
+        }
+        return keyword
+    }
+
+    /// How a dismissed suggestion is remembered.
+    static func fold(_ tag: String) -> String {
+        tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    /// A model title as it shows: 2–6 words, no quotes or trailing period,
+    /// starting with a capital unless its first word is cased on purpose
+    /// ("iPhone"). A longer one loses its trailing phrase ("… with a
+    /// whetstone"), else what follows a heading read together with the text
+    /// under it, where a capital follows a word with none ("Quarterly
+    /// roadmap review Q4 goals: …"; Title Case and all caps aren't cut, so
+    /// the date stays); a lone word gets
+    /// what it belongs to from the window title or the app ("Battery ·
+    /// System Settings"). Nil when none of that fits.
+    static func cleanTitle(_ raw: String, windowTitle: String? = nil, appName: String? = nil) -> String? {
+        let title = raw.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "\"'“”‘’.:")))
+        var words = title.split(whereSeparator: \.isWhitespace).map(String.init)
+        if words.count > 6, let cut = words.indices.last(where: { (2...6).contains($0) && connectors.contains(words[$0].lowercased()) })
+            ?? words.indices.first(where: { (2...6).contains($0) && words[$0].first?.isUppercase == true && words[$0 - 1] == words[$0 - 1].lowercased() }) {
+            words = Array(words[..<cut])
+        }
+        if words.count == 1, let context = context(for: words[0], windowTitle: windowTitle, appName: appName) {
+            words += ["·"] + context.split(separator: " ").map(String.init)
+        }
+        guard (2...6).contains(words.filter { $0 != "·" }.count), words.joined(separator: " ").count <= 60 else { return nil }
+        if words[0] == words[0].lowercased() { words[0] = words[0].prefix(1).uppercased() + words[0].dropFirst() }
+        return words.joined(separator: " ")
+    }
+
+    private static let connectors: Set<String> = ["with", "in", "for", "from", "by", "via"]
+
+    /// The first part of the window title that isn't the word itself
+    /// ("Payouts – Stripe Dashboard" → "Stripe Dashboard"), else the app.
+    private static func context(for word: String, windowTitle: String?, appName: String?) -> String? {
+        let separators = [" – ", " — ", " - ", " | ", " · ", ": "]
+        let parts = separators.reduce([windowTitle ?? ""]) { parts, separator in parts.flatMap { $0.components(separatedBy: separator) } }
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        return (parts + [appName ?? ""]).first { part in
+            !part.isEmpty && part.caseInsensitiveCompare(word) != .orderedSame && (1...4).contains(part.split(separator: " ").count)
+        }
+    }
+}
+
 /// Which captures to read and which entries to forget after a Library scan.
 nonisolated enum CaptureTextIndexPlan {
     struct Capture: Sendable, Equatable {
@@ -61,6 +175,20 @@ nonisolated enum CaptureTextIndexPlan {
             !skipping.contains(capture.fingerprint) && entries[capture.id]?.isCurrent(fingerprint: capture.fingerprint) != true
         }
         .sorted { $0.createdAt > $1.createdAt }
+    }
+
+    /// Captures whose text is read but that the model hasn't seen, newest
+    /// first: those taken since `since`, or all of them once the user asks
+    /// for existing captures. `older` counts the ones still waiting for that.
+    static func dueForInsight(_ captures: [Capture], entries: [String: CaptureTextEntry], since: Date,
+                              includesExisting: Bool, skipping: Set<String> = []) -> (due: [Capture], older: Int) {
+        var due: [Capture] = [], older = 0
+        for capture in captures where !skipping.contains(capture.fingerprint) {
+            guard let entry = entries[capture.id], entry.isCurrent(fingerprint: capture.fingerprint),
+                  entry.insight?.isCurrent != true else { continue }
+            if includesExisting || capture.createdAt >= since { due.append(capture) } else { older += 1 }
+        }
+        return (due.sorted { $0.createdAt > $1.createdAt }, older)
     }
 
     /// The long side, in pixels, to read a width × height image at: at most

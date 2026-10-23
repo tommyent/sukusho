@@ -124,6 +124,9 @@ struct LibraryTextIndexChecks {
         let store = CaptureTextIndexStore(directory: support.appendingPathComponent("Library Index", isDirectory: true))
         let scratch = support.appendingPathComponent("fixtures", isDirectory: true)
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        // Search here must see only the text: a model title kept through the
+        // edit below would still match. check-library-insights.swift covers titles.
+        index.modelAvailability = { false }
         index.start()
 
         // A screenshot is read (Vision is cold here), stored and found by its words.

@@ -9,6 +9,8 @@ import Observation
 /// saved captions. One capture at a time, newest first, at background
 /// priority, pausing while recording, in Low Power Mode or when the Mac runs
 /// hot. Runs from launch, so new captures are read with the Library closed.
+/// Once a capture's text is read, Apple Intelligence, where available,
+/// gives it a title and tag suggestions, under the same rules.
 @MainActor
 @Observable
 final class CaptureLibraryIndex {
@@ -19,6 +21,24 @@ final class CaptureLibraryIndex {
     private(set) var pendingIDs: Set<String> = []
     /// Each entry's text, folded once for search.
     @ObservationIgnored private(set) var foldedText: [String: String] = [:]
+    /// The model can run here; Settings shows its switch only then. New
+    /// captures wait for it, while stored output still shows.
+    private(set) var modelAvailable = false
+    /// The Settings switch for titles and suggestions, as of the last plan.
+    /// It stays in force while the model is gone and Settings hides it.
+    private(set) var usesIntelligence = false
+    /// Captures from before the model first ran that it hasn't seen yet.
+    private(set) var olderWithoutInsight = 0
+    /// Captures waiting for the model, or with it now.
+    private(set) var insightsPending = 0
+    /// Whether the model can run. The windowless check swaps it for a fake.
+    @ObservationIgnored var modelAvailability: () -> Bool = { CaptureIntelligence.isModelAvailable }
+    @ObservationIgnored var describer: (CaptureLibraryItem, CaptureTextEntry, CGImage?) async -> CaptureIntelligence.Outcome = { item, entry, image in
+        let (paragraphs, transcript, source, isVideo) = (entry.paragraphs, entry.transcript, item.source, item.isVideo)
+        return await Task.detached(priority: .background) {
+            await CaptureIntelligence.describe(paragraphs: paragraphs, transcript: transcript, source: source, isVideo: isVideo, image: image)
+        }.value
+    }
 
     @ObservationIgnored private let store = CaptureTextIndexStore(
         directory: ScreendropStorage.applicationSupportDirectory.appendingPathComponent("Library Index", isDirectory: true)
@@ -29,10 +49,16 @@ final class CaptureLibraryIndex {
     @ObservationIgnored private var latestIsComplete = false
     @ObservationIgnored private var queue: [CaptureLibraryItem] = []
     @ObservationIgnored private var inFlight: CaptureLibraryItem?
+    @ObservationIgnored private var insightQueue: [CaptureLibraryItem] = []
+    @ObservationIgnored private var describing: CaptureLibraryItem?
+    /// Fingerprints the model was too busy for this session.
+    @ObservationIgnored private var insightLater: Set<String> = []
     /// Fingerprints that couldn't be read this session, so an unreadable
     /// file isn't retried on every refresh.
     @ObservationIgnored private var unreadable: Set<String> = []
     @ObservationIgnored private var runner: Task<Void, Never>?
+    /// The last write to the store queued; each waits for the one before.
+    @ObservationIgnored private var lastWrite: Task<Void, Never>?
 
     private init() {}
 
@@ -55,6 +81,48 @@ final class CaptureLibraryIndex {
         if let latestItems { sync(latestItems, isComplete: latestIsComplete) }
     }
 
+    /// Opts older captures in to titles and suggestions.
+    func includeExistingCaptures() {
+        UserDefaults.standard.set(true, forKey: ScreendropPreferences.libraryInsightsIncludeExistingKey)
+        settingsDidChange()
+    }
+
+    /// What the model wrote about a capture, while it may show.
+    func visibleInsight(_ id: String) -> CaptureInsight? {
+        CaptureInsightRules.visible(entries[id]?.insight, enabled: usesIntelligence)
+    }
+
+    func suggestedTags(for item: CaptureLibraryItem, libraryTags: [String]) -> [String] {
+        CaptureInsightRules.suggestions(appName: item.source?.appName, insight: visibleInsight(item.id), tags: item.tags,
+                                        libraryTags: libraryTags, dismissed: entries[item.id]?.dismissedSuggestions ?? [])
+    }
+
+    /// Remembers that a suggestion isn't wanted on this capture. One not
+    /// read yet gets an entry that is stale on purpose, so it's still read.
+    func dismissSuggestion(_ tag: String, for item: CaptureLibraryItem) {
+        guard isLoaded else { return }
+        var entry = entries[item.id] ?? CaptureTextEntry(id: item.id, fingerprint: "", paragraphs: [])
+        entry.dismissedSuggestions = (entry.dismissedSuggestions ?? []) + [CaptureInsightRules.fold(tag)]
+        entries[item.id] = entry
+        write { [entry] in try $0.save(entry) }
+    }
+
+    /// Runs a store write after every write queued before it, so the file
+    /// ends as the entry's latest state whatever order detached saves would
+    /// finish in. Entries change in memory first, without an await between
+    /// reading one and setting it, so no change is written over. A failed
+    /// save only costs a re-read or a new model pass at the next launch.
+    @discardableResult
+    private func write(_ work: @escaping @Sendable (CaptureTextIndexStore) throws -> Void) -> Task<Void, Never> {
+        let previous = lastWrite, store = store
+        let task = Task.detached(priority: .utility) {
+            await previous?.value
+            try? work(store)
+        }
+        lastWrite = task
+        return task
+    }
+
     /// Forgets captures that are gone and queues every capture whose text is
     /// missing or stale. `isComplete` is false when History or the Recordings
     /// folder couldn't be read in full, so missing captures may still exist.
@@ -68,9 +136,9 @@ final class CaptureLibraryIndex {
                 entries[id] = nil
                 foldedText[id] = nil
             }
-            let store = store
-            Task.detached(priority: .utility) { store.remove(ids: gone) }
+            write { $0.remove(ids: gone) }
         }
+        planInsights(items)
         guard ScreendropPreferences.libraryReadsText else {
             queue = []
             updatePending()
@@ -83,14 +151,44 @@ final class CaptureLibraryIndex {
         )
         queue = stale.compactMap { byID[$0.id] }
         updatePending()
-        if !queue.isEmpty, runner == nil { runner = Task { await drain() } }
+        if !queue.isEmpty || !insightQueue.isEmpty, runner == nil { runner = Task { await drain() } }
+    }
+
+    /// Queues captures the model hasn't seen, when it may run.
+    private func planInsights(_ items: [CaptureLibraryItem]) {
+        let available = modelAvailability(), enabled = ScreendropPreferences.libraryUsesIntelligence
+        if available != modelAvailable { modelAvailable = available }
+        if enabled != usesIntelligence {
+            usesIntelligence = enabled
+            CaptureLibraryModel.shared.insightsDidChange()
+        }
+        var older = 0
+        if CaptureInsightRules.runs(modelAvailable: available, enabled: enabled, readsText: ScreendropPreferences.libraryReadsText) {
+            let plan = CaptureTextIndexPlan.dueForInsight(
+                items.filter { $0.id != describing?.id }.map { .init(id: $0.id, fingerprint: $0.thumbnailKey, createdAt: $0.createdAt) },
+                entries: entries, since: ScreendropPreferences.libraryInsightsSince,
+                includesExisting: ScreendropPreferences.libraryInsightsIncludeExisting, skipping: insightLater)
+            let byID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            insightQueue = plan.due.compactMap { byID[$0.id] }
+            older = plan.older
+        } else {
+            insightQueue = []
+        }
+        if older != olderWithoutInsight { olderWithoutInsight = older }
+        updatePending()
     }
 
     private func drain() async {
         defer { runner = nil }
-        while !Task.isCancelled, ScreendropPreferences.libraryReadsText, !queue.isEmpty {
+        while !Task.isCancelled, !queue.isEmpty || !insightQueue.isEmpty {
             if Self.shouldPause() {
                 try? await Task.sleep(for: .seconds(10))
+                continue
+            }
+            // Every capture's text is read before the model sees any.
+            guard !queue.isEmpty else {
+                await describeNext()
+                if let latestItems { sync(latestItems, isComplete: latestIsComplete) }
                 continue
             }
             let item = queue.removeFirst()
@@ -105,27 +203,57 @@ final class CaptureLibraryIndex {
                 continue
             case .unreadable:
                 unreadable.insert(item.thumbnailKey)
-            case .read(let entry):
+            case .read(var entry):
                 // A capture deleted while it was read keeps no entry.
                 if latestItems?.contains(where: { $0.id == item.id }) == true {
-                    let store = store
-                    // A failed save only costs a re-read at the next launch.
-                    try? await Task.detached(priority: .utility) { try store.save(entry) }.value
+                    // An edit keeps the title the user has seen, and their dismissals.
+                    entry.insight = entries[item.id]?.insight
+                    entry.dismissedSuggestions = entries[item.id]?.dismissedSuggestions
                     entries[item.id] = entry
                     foldedText[item.id] = Self.fold(entry)
                     CaptureLibraryModel.shared.textIndexDidChange()
+                    await write { [entry] in try $0.save(entry) }.value
                 }
             }
             // Re-plans, so a capture edited while it was read is read again.
             if let latestItems { sync(latestItems, isComplete: latestIsComplete) }
         }
         queue = []
+        insightQueue = []
         updatePending()
+    }
+
+    /// Asks the model about the next capture and stores its answer, or its
+    /// refusal, so it isn't asked again.
+    private func describeNext() async {
+        let item = insightQueue.removeFirst()
+        guard let entry = entries[item.id] else { return }
+        describing = item
+        updatePending()
+        defer {
+            describing = nil
+            updatePending()
+        }
+        let image = await Self.image(for: item)
+        guard !Self.shouldPause() else { return insightQueue.insert(item, at: 0) }
+        switch await describer(item, entry, image) {
+        case .later:
+            insightLater.insert(item.thumbnailKey)
+        case .insight(let insight):
+            // A capture deleted while the model looked keeps no answer.
+            guard latestItems?.contains(where: { $0.id == item.id }) == true, var current = entries[item.id] else { return }
+            current.insight = insight
+            entries[item.id] = current
+            CaptureLibraryModel.shared.insightsDidChange()
+            await write { [current] in try $0.save(current) }.value
+        }
     }
 
     private func updatePending() {
         let ids = Set(queue.map(\.id) + (inFlight.map { [$0.id] } ?? []))
         if ids != pendingIDs { pendingIDs = ids }
+        let insights = insightQueue.count + (describing == nil ? 0 : 1)
+        if insights != insightsPending { insightsPending = insights }
     }
 
     /// Recording, Low Power Mode and a hot Mac all come before indexing.
@@ -195,16 +323,26 @@ final class CaptureLibraryIndex {
             .map(ReadOutcome.read) ?? .unreadable
     }
 
-    /// The image upright, at `CaptureTextIndexPlan.readingSize`.
-    nonisolated private static func decode(_ url: URL) async -> CGImage? {
+    /// What the model looks at: the screenshot, or a recording's first frame.
+    nonisolated private static func image(for item: CaptureLibraryItem) async -> CGImage? {
+        let size = 1280
+        guard item.isVideo else { return await decode(item.fileURL, maxSize: size) }
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: item.fileURL))
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: size, height: size)
+        return try? await generator.image(at: .zero).image
+    }
+
+    /// The image upright, at `CaptureTextIndexPlan.readingSize` or `maxSize`.
+    nonisolated private static func decode(_ url: URL, maxSize: Int = .max) async -> CGImage? {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .background).async {
                 guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else {
                     return continuation.resume(returning: nil)
                 }
                 let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
-                let size = CaptureTextIndexPlan.readingSize(width: properties?[kCGImagePropertyPixelWidth] as? Int ?? 0,
-                                                            height: properties?[kCGImagePropertyPixelHeight] as? Int ?? 0)
+                let size = min(maxSize, CaptureTextIndexPlan.readingSize(width: properties?[kCGImagePropertyPixelWidth] as? Int ?? 0,
+                                                                         height: properties?[kCGImagePropertyPixelHeight] as? Int ?? 0))
                 continuation.resume(returning: CGImageSourceCreateThumbnailAtIndex(source, 0, [
                     kCGImageSourceCreateThumbnailFromImageAlways: true,
                     kCGImageSourceCreateThumbnailWithTransform: true,
