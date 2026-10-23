@@ -1004,14 +1004,13 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
             .intersection(CGRect(origin: .zero, size: canvasSize))
             .integral
         guard let image = renderLayer(covering: rect, draw: { context in
-            context.setShadow(
+            Self.castShadow(
+                of: roundedPath(for: layout.bubbleRect, radius: layout.bubbleCornerRadius),
+                in: context,
                 offset: CGSize(width: 0, height: -offset),
                 blur: blur,
                 color: CGColor(gray: 0, alpha: 0.35)
             )
-            context.addPath(roundedPath(for: layout.bubbleRect, radius: layout.bubbleCornerRadius))
-            context.setFillColor(CGColor(gray: 0, alpha: 1))
-            context.fillPath()
         }) else { return nil }
         return (image, rect)
     }()
@@ -1543,8 +1542,8 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
             }
         }
 
-        // Card shadow: static, so it lives in the backdrop. The filled shape
-        // is fully covered by video pixels every frame.
+        // Card shadow: static, so it lives in the backdrop. Only the shadow:
+        // the card's own shape would show through its antialiased edge.
         if style.shadow > 0.01, style.background != .none {
             let minDimension = min(canvasSize.width, canvasSize.height)
             let blur = minDimension * 0.045 * style.shadow
@@ -1559,18 +1558,42 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
                 ? CGPath(roundedRect: cardRect, cornerWidth: radius, cornerHeight: radius, transform: nil)
                 : CGPath(rect: cardRect, transform: nil)
 
-            context.saveGState()
-            context.setShadow(
+            castShadow(
+                of: path,
+                in: context,
                 offset: CGSize(width: 0, height: -blur * 0.35),
                 blur: blur,
                 color: CGColor(gray: 0, alpha: 0.55 * style.shadow)
             )
-            context.addPath(path)
-            context.setFillColor(CGColor(gray: 0, alpha: 1))
-            context.fillPath()
-            context.restoreGState()
         }
 
         return context.makeImage()
+    }
+
+    /// Casts `path`'s shadow without drawing `path`. Filling the shape to
+    /// get its shadow leaves the shape too, and its antialiased edge shows
+    /// through the screen or camera composited over it as a dark outline.
+    /// The shape is filled off to the left of everything visible and the
+    /// shadow offset back by the same distance, so only the shadow lands.
+    /// The contexts here are unscaled, so the user-space shift equals the
+    /// base-space shadow offset.
+    private static func castShadow(
+        of path: CGPath,
+        in context: CGContext,
+        offset: CGSize,
+        blur: CGFloat,
+        color: CGColor
+    ) {
+        let visible = context.boundingBoxOfClipPath
+        let shape = path.boundingBoxOfPath
+        guard !shape.isNull, !visible.isNull else { return }
+        let shift = (shape.maxX - visible.minX + 2).rounded(.up)
+        context.saveGState()
+        context.translateBy(x: -shift, y: 0)
+        context.setShadow(offset: CGSize(width: offset.width + shift, height: offset.height), blur: blur, color: color)
+        context.addPath(path)
+        context.setFillColor(CGColor(gray: 0, alpha: 1))
+        context.fillPath()
+        context.restoreGState()
     }
 }
