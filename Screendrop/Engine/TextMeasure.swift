@@ -273,6 +273,12 @@ enum TextMeasure {
         return Swift.min(CGFloat(Swift.max(1, props.fontSize) * boxCornerRadius), rect.height / 2)
     }
 
+    /// The box's rounded rectangle, in the shape's local space.
+    static func boxPath(_ props: TextProps) -> CGPath {
+        let radius = boxCornerRadius(props)
+        return CGPath(roundedRect: outerRect(props), cornerWidth: radius, cornerHeight: radius, transform: nil)
+    }
+
     // MARK: - Tail
 
     /// How far past the box a tail's tip has to be before there is a tail, and the narrowest its

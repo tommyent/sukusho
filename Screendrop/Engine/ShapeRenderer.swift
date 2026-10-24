@@ -77,9 +77,7 @@ enum AnnoShapeRenderer {
         guard !props.text.isEmpty else { return [] }
         var elements: [RenderElement] = []
         if props.hasBox {
-            let radius = TextMeasure.boxCornerRadius(props)
-            let box = CGPath(roundedRect: TextMeasure.outerRect(props), cornerWidth: radius,
-                             cornerHeight: radius, transform: nil)
+            let box = TextMeasure.boxPath(props)
             elements.append(RenderElement(
                 // One path with the tail, so a translucent box shows no darker seam where they meet.
                 content: .path(TextMeasure.tailPath(props).map { box.union($0) } ?? box),

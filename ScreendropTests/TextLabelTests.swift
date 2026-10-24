@@ -33,8 +33,10 @@ struct TextLabelTests {
     }
 
     /// Draws `shapes` on black into a `width` x `height` page at `scale` pixels per page unit,
-    /// either as the flipped canvas does or as the y-up export does.
-    static func drawn(_ shapes: [AnnoShape], width: Int, height: Int, scale: Int = 4, flippedCanvas: Bool) -> Bitmap {
+    /// either as the flipped canvas does or as the y-up export does. `editing` is drawn as the
+    /// canvas draws a label being typed into: its tail only.
+    static func drawn(_ shapes: [AnnoShape], width: Int, height: Int, scale: Int = 4, flippedCanvas: Bool,
+                      editing: AnnoShapeID? = nil) -> Bitmap {
         let document = AnnoDocument()
         document.restore(AnnoDocument.Snapshot(shapes: shapes, bindings: []))
         let (w, h) = (width * scale, height * scale)
@@ -52,7 +54,10 @@ struct TextLabelTests {
         } else {
             target.transform = CGAffineTransform(a: s, b: 0, c: 0, d: -s, tx: 0, ty: CGFloat(h))
         }
-        AnnoShapeDrawing.draw(document, in: context, target: target)
+        AnnoShapeDrawing.draw(document, in: context, target: target, skipping: editing.map { [$0] } ?? [])
+        if let editing, let shape = document.shape(editing) {
+            AnnoShapeDrawing.drawEditingTail(shape, in: context, target: target)
+        }
         return Bitmap(data: Data(bytes: context.data!, count: h * w * 4), bytesPerRow: w * 4,
                       width: w, height: h, scale: scale)
     }
@@ -357,6 +362,87 @@ struct TextLabelTests {
         }
         #expect(editor.textTailHandlePoint == nil && editor.handle(at: Vec(200, 400)) != .textTail)
         #expect(Self.tip(editor, id)?.y == 300, "the tip is kept for when the box comes back")
+    }
+
+    // MARK: - sd-cxui: typing, resize, rotation
+
+    /// While a label is typed into, the canvas draws only the tail's part outside the box, in the
+    /// box's colour; the overlay draws the box.
+    @Test(arguments: [1.0, 0.5])
+    func typingKeepsTheTailWithoutCoveringTheBox(alpha: Double) {
+        var props = Self.tailed(nil)
+        props.swatch = props.swatch.withAlpha(alpha)
+        let box = TextMeasure.outerRect(props)
+        props.tail = Vec(box.midX, box.maxY + 150)
+        let shape = AnnoShape(x: 20, y: 10, kind: .text(props))
+        let size = (Int(box.width) + 40, Int(box.maxY) + 180)
+        let typing = Self.drawn([shape], width: size.0, height: size.1, flippedCanvas: true, editing: shape.id)
+        let committed = Self.drawn([shape], width: size.0, height: size.1, flippedCanvas: true)
+        func pixel(_ bitmap: Bitmap, _ x: Double, _ y: Double) -> [UInt8] {
+            Array(bitmap.rgba(Int((20 + x) * 4), Int((10 + y) * 4)).prefix(3))
+        }
+        #expect(pixel(typing, box.midX, box.maxY + 30) == pixel(committed, box.midX, box.maxY + 30), "the tail as committed")
+        #expect(pixel(typing, box.midX, box.maxY - 2) == [0, 0, 0], "where tail and box overlap, only the overlay draws")
+        #expect(pixel(typing, box.midX + 80, box.maxY - 2) == [0, 0, 0], "no box")
+    }
+
+    /// Centred and end-aligned text grows by moving its origin; the tip stays where it points,
+    /// rotated or not.
+    @Test(arguments: [(TextAlign.middle, 0.0), (TextAlign.end, 0.0), (TextAlign.middle, 0.4)])
+    func typingKeepsTheTipInPlace(align: TextAlign, rotation: Double) throws {
+        let (editor, id) = Self.labelEditor(tail: Vec(100, 300), align: align)
+        editor.document.update(id) { $0.rotation = rotation }
+        func pageTip() throws -> Vec {
+            let shape = try #require(editor.document.shape(id))
+            return shape.pageTransform.applyToPoint(try #require(shape.textProps?.tail))
+        }
+        let before = try pageTip()
+        let x = try #require(editor.document.shape(id)).x
+        editor.startEditingText(id)
+        editor.updateEditingText(id, to: "Like this, but longer")
+        #expect(try #require(editor.document.shape(id)).x != x, "the origin moved")
+        let after = try pageTip()
+        #expect(abs(after.x - before.x) < 1e-6 && abs(after.y - before.y) < 1e-6)
+    }
+
+    /// A corner scales the type and the tail with it; a side handle sets the wrap width and
+    /// stretches the tail across.
+    @Test func resizingCarriesTheTail() throws {
+        let (editor, id) = Self.labelEditor(tail: Vec(100, 300))
+        let corner = editor.pageToScreen(try #require(editor.selectionBounds).pagePoint(Vec(1, 1)))
+        #expect(editor.handle(at: corner) == .bottomRight)
+        editor.pointerDown(Self.pointer(corner.x, corner.y))
+        editor.pointerMove(Self.pointer(corner.x + 60, corner.y + 60))
+        editor.pointerUp(Self.pointer(corner.x + 60, corner.y + 60))
+        var props = try #require(editor.document.shape(id)?.textProps)
+        let factor = props.fontSize / 48
+        let scaled = try #require(props.tail)
+        #expect(factor > 1.1)
+        #expect(abs(scaled.x - 100 * factor) < 1e-6 && abs(scaled.y - 300 * factor) < 1e-6)
+
+        let width = Double(TextMeasure.measure(props).width)
+        let tip = try #require(props.tail)
+        let side = editor.pageToScreen(try #require(editor.selectionBounds).pagePoint(Vec(1, 0.5)))
+        #expect(editor.handle(at: side) == .right)
+        editor.pointerDown(Self.pointer(side.x, side.y))
+        editor.pointerMove(Self.pointer(side.x + 70, side.y))
+        editor.pointerUp(Self.pointer(side.x + 70, side.y))
+        props = try #require(editor.document.shape(id)?.textProps)
+        let stretched = try #require(props.tail)
+        #expect(!props.autoSize && props.w > width)
+        #expect(abs(stretched.x - tip.x * props.w / width) < 1e-6 && stretched.y == tip.y)
+    }
+
+    /// The tail turns with its label: half a turn puts the tip, its handle and its click target
+    /// on the other side of the origin.
+    @Test func rotationCarriesTheTail() throws {
+        let (editor, id) = Self.labelEditor(tail: Vec(100, 300))
+        editor.document.update(id) { shape in
+            shape.x = 400; shape.y = 400; shape.rotation = .pi
+        }
+        let handle = try #require(editor.textTailHandlePoint)
+        #expect(abs(handle.x - 300) < 1e-6 && abs(handle.y - 100) < 1e-6)
+        #expect(editor.hitShape(at: Vec(290, 215))?.id == id, "halfway along the turned tail")
     }
 
     /// An overlay synced to one boxed label at `zoom`, with no window.

@@ -131,6 +131,19 @@ enum AnnoShapeDrawing {
         context.restoreGState()
     }
 
+    /// A label being typed into is skipped and its overlay draws the box, so its tail comes from
+    /// here: the part outside the box, so a translucent box isn't covered twice (sd-cxui).
+    static func drawEditingTail(_ shape: AnnoShape, in context: CGContext, target: Target) {
+        guard let props = shape.textProps, let tail = TextMeasure.tailPath(props) else { return }
+        context.saveGState()
+        context.concatenate(shape.pageTransform.cgAffineTransform.concatenating(target.transform))
+        if shape.opacity < 1 { context.setAlpha(shape.opacity) }
+        context.addPath(tail.subtracting(TextMeasure.boxPath(props)))
+        context.setFillColor(props.swatch.nsColor.cgColor)
+        context.fillPath()
+        context.restoreGState()
+    }
+
     // MARK: - Pasted image
 
     /// The picture fills its box. Page space is y-down, so it's flipped upright there, as the
