@@ -169,7 +169,13 @@ struct RecordingAgentPromptTests {
         var other = iBeam
         other.artworkID = "other"
         other.imageData = Data([1, 2, 3])
-        #expect(PointerArtworkCapture.names(for: [iBeam, plus, other]) == ["text": "I-beam (text)", "draw": "plus (Sukusho's drawing cursor)"])
+        // A recording's plus had the same pixels in different PNG bytes.
+        var recoded = plus
+        recoded.artworkID = "recoded"
+        recoded.imageData = try #require(NSBitmapImageRep(data: plus.imageData)?.representation(using: .png, properties: [.interlaced: true]))
+        #expect(recoded.imageData != plus.imageData)
+        #expect(PointerArtworkCapture.names(for: [iBeam, plus, other, recoded])
+            == ["text": "I-beam (text)", "draw": "plus (Sukusho's drawing cursor)", "recoded": "plus (Sukusho's drawing cursor)"])
     }
 
     @MainActor @Test func shortcutsReadByKeyNotByTheCharacterShiftTypes() throws {
