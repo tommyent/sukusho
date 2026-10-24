@@ -172,7 +172,7 @@ extension CaptureLibraryModel {
            let export = items.firstIndex(where: { $0.title == CaptureLibraryAction.export.rawValue }) {
             items.insert(LibraryMenuItem(title: "Export as GIF…", isEnabled: !isBusy) { self.exportGIF(item) }, at: export + 1)
             if item.session != nil {
-                items.insert(LibraryMenuItem(title: "Export Agent Prompt…", isEnabled: !isBusy) { self.exportAgentPrompt(item) }, at: export + 2)
+                items.insert(LibraryMenuItem(title: "Export Agent Prompt", isEnabled: !isBusy) { self.exportAgentPrompt(item) }, at: export + 2)
             }
         }
         if count == 1, let item = selectedItems.first, item.hasEdits || item.hasDraft,
