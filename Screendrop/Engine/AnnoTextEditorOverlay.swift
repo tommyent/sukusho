@@ -24,6 +24,14 @@ final class AnnoTextEditorOverlay: NSTextView {
     /// The shape's own box in view points. Not the view's bounds: those leave room for the caret
     /// past the last glyph, and the box would shrink by that much when typing ends.
     private var boxSize: CGSize = .zero
+    /// The canvas raises a boxed label's glyphs to centre them (`TextMeasure.glyphLift`), in view
+    /// points; the text is drawn, and clicks are mapped, that much higher.
+    private var lift: CGFloat = 0
+
+    override var textContainerOrigin: NSPoint {
+        let origin = super.textContainerOrigin
+        return NSPoint(x: origin.x, y: origin.y - lift)
+    }
 
     /// `NSTextView.init(frame:)` is a convenience initializer that builds the text network and then
     /// routes through this designated one, so a subclass has to implement it - otherwise the
@@ -112,6 +120,7 @@ final class AnnoTextEditorOverlay: NSTextView {
         let pageInset = TextMeasure.boxInsets(props)
         let insetX = pageInset.x * zoom
         let insetY = pageInset.y * zoom
+        lift = TextMeasure.glyphLift(props) * zoom
         textContainerInset = NSSize(width: insetX, height: insetY)
         boxFill = props.hasBox ? props.swatch.nsColor : nil
         boxCornerRadius = TextMeasure.boxCornerRadius(props) * zoom

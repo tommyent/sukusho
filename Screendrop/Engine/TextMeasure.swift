@@ -251,6 +251,14 @@ enum TextMeasure {
         )
     }
 
+    /// How far a boxed label's glyphs are raised so the cap height sits centred in each line. TextKit
+    /// puts a pinned line's extra height above the glyphs, which left the text low in its box (sd-eqj7).
+    static func glyphLift(_ props: TextProps) -> CGFloat {
+        guard props.hasBox else { return 0 }
+        let face = font(props), line = lineHeight(props)
+        return (line + face.descender) - (line + face.capHeight) / 2
+    }
+
     static func boxCornerRadius(_ props: TextProps) -> CGFloat {
         let rect = outerRect(props)
         return Swift.min(CGFloat(Swift.max(1, props.fontSize) * boxCornerRadius), rect.height / 2)
@@ -306,6 +314,7 @@ enum TextMeasure {
         let glyphRange = layoutManager.glyphRange(for: container)
         guard glyphRange.length > 0 else { return result }
         defer { withExtendedLifetime(storage) {} }
+        let lift = glyphLift(props)
 
         layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { _, usedRect, _, lineRange, _ in
             var lineFont: NSFont?
@@ -328,7 +337,7 @@ enum TextMeasure {
                 let fragment = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
                 let location = layoutManager.location(forGlyphAt: glyphIndex)
                 lineFont = font
-                baseline = fragment.origin.y + location.y
+                baseline = fragment.origin.y + location.y - lift
 
                 guard let outline = CTFontCreatePathForGlyph(font as CTFont, glyph, nil) else { continue }
 
@@ -336,7 +345,7 @@ enum TextMeasure {
                 let transform = CGAffineTransform(
                     a: 1, b: 0, c: 0, d: -1,
                     tx: fragment.origin.x + location.x,
-                    ty: fragment.origin.y + location.y
+                    ty: fragment.origin.y + location.y - lift
                 )
                 result.addPath(outline, transform: transform)
             }
