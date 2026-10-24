@@ -113,6 +113,45 @@ struct CaptureSourceSearchTests {
         #expect(covering(.point(CGPoint(x: 1000, y: 400))) == "Terminal")
     }
 
+    @Test func anAreaDrawnPastAWindowsEdgeIsStillThatWindow() {
+        // The 2026-10-24 4:58 capture: Vitals frontmost over a full-screen Rex,
+        // and an area whose right edge ran 2 pt past Vitals onto Rex.
+        let vitals = CaptureSourceProbe.Window(pid: 1, ownerName: "Vitals", title: "Vitals", bounds: CGRect(x: 57, y: 34, width: 1399, height: 1023))
+        let rex = CaptureSourceProbe.Window(pid: 2, ownerName: "Rex Beta", title: "sukusho-lead", bounds: CGRect(x: 0, y: 34, width: 1710, height: 1073))
+        let area = CGRect(x: 16, y: 0, width: 1442, height: 912)
+        #expect(CaptureSourceProbe.window(covering: .area(area), in: [vitals, rex], frontmostPID: 1)?.ownerName == "Vitals")
+        // The drag's end corner, which the pointer track fell back to, is on Rex.
+        #expect(CaptureSourceProbe.window(covering: .point(CGPoint(x: area.maxX, y: area.maxY)), in: [vitals, rex], frontmostPID: 1)?.ownerName == "Rex Beta")
+    }
+
+    @Test func screencaptureRecordsTheAreaOnItsFile() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("capture-rect-\(UUID().uuidString).png")
+        try Data().write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        #expect(CaptureSourceProbe.capturedRect(of: url) == nil)
+
+        func setRect(_ value: Any) throws {
+            let data = try PropertyListSerialization.data(fromPropertyList: value, format: .binary, options: 0)
+            let result = data.withUnsafeBytes {
+                setxattr(url.path, "com.apple.metadata:kMDItemScreenCaptureGlobalRect", $0.baseAddress, data.count, 0, 0)
+            }
+            try #require(result == 0)
+        }
+        // As screencapture writes it: x, y, width, height in global points.
+        try setRect([16, 0, 1442, 912])
+        #expect(CaptureSourceProbe.capturedRect(of: url) == CGRect(x: 16, y: 0, width: 1442, height: 912))
+        try setRect([0.5, 3, 1710, 573.5])
+        #expect(CaptureSourceProbe.capturedRect(of: url) == CGRect(x: 0.5, y: 3, width: 1710, height: 573.5))
+        // Anything else falls back to the pointer track.
+        try setRect([16, 0, 1442])
+        #expect(CaptureSourceProbe.capturedRect(of: url) == nil)
+        try setRect([16, 0, 0, 912])
+        #expect(CaptureSourceProbe.capturedRect(of: url) == nil)
+        try setRect("selection")
+        #expect(CaptureSourceProbe.capturedRect(of: url) == nil)
+        #expect(CaptureSourceProbe.capturedRect(of: url.appendingPathExtension("missing")) == nil)
+    }
+
     // MARK: Stored data
 
     @Test func projectsWithoutASourceStillDecode() throws {

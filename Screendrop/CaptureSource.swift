@@ -134,6 +134,23 @@ final class CaptureSourceProbe {
         }
     }
 
+    /// The area screencapture wrote on its file, in global Quartz points:
+    /// Spotlight's kMDItemScreenCaptureGlobalRect, kept as an extended
+    /// attribute. Exact where the pointer track ends on the drag's corner,
+    /// which a drag just past a window's edge puts on the window behind.
+    nonisolated static func capturedRect(of url: URL) -> CGRect? {
+        let name = "com.apple.metadata:kMDItemScreenCaptureGlobalRect"
+        let size = getxattr(url.path, name, nil, 0, 0, 0)
+        guard size > 0 else { return nil }
+        var data = Data(count: size)
+        guard data.withUnsafeMutableBytes({ getxattr(url.path, name, $0.baseAddress, size, 0, 0) }) == size,
+              let values = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [NSNumber],
+              values.count == 4 else { return nil }
+        let rect = CGRect(x: values[0].doubleValue, y: values[1].doubleValue,
+                          width: values[2].doubleValue, height: values[3].doubleValue)
+        return rect.width > 0 && rect.height > 0 ? rect : nil
+    }
+
     /// Ordinary app windows only: layer 0, visible, not this app's own
     /// panels and not the system's capture overlays.
     private static func onScreenWindows() -> [Window] {
