@@ -84,6 +84,26 @@ struct CaptureLibraryTextTests {
         #expect(stale.map(\.id) == ["new", "edited", "old"])
     }
 
+    @Test func failedReadsWaitAFewMinutesThenAreReadAgain() {
+        let failed = Date()
+        let failures = ["broken:1": failed, "older:1": failed.addingTimeInterval(-600)]
+        let captures: [CaptureTextIndexPlan.Capture] = [
+            .init(id: "broken", fingerprint: "broken:1", createdAt: failed),
+            .init(id: "older", fingerprint: "older:1", createdAt: failed.addingTimeInterval(-700)),
+            .init(id: "new", fingerprint: "new:1", createdAt: failed.addingTimeInterval(30)),
+        ]
+        func stale(after seconds: TimeInterval) -> [String] {
+            let now = failed.addingTimeInterval(seconds)
+            return CaptureTextIndexPlan.stale(captures, entries: [:], skipping: CaptureTextIndexPlan.waiting(failedAt: failures, now: now)).map(\.id)
+        }
+        // A minute on, the failed capture still waits; one that failed long ago is read again.
+        #expect(CaptureTextIndexPlan.waiting(failedAt: failures, now: failed.addingTimeInterval(60)) == ["broken:1"])
+        #expect(stale(after: 60) == ["new", "older"])
+        // Once the delay has passed, every capture is read again, newest first.
+        #expect(CaptureTextIndexPlan.waiting(failedAt: failures, now: failed.addingTimeInterval(CaptureTextIndexPlan.retryDelay)).isEmpty)
+        #expect(stale(after: CaptureTextIndexPlan.retryDelay) == ["new", "broken", "older"])
+    }
+
     // MARK: Reading
 
     @Test func framesThatFailBesideATranscriptStayUnread() throws {

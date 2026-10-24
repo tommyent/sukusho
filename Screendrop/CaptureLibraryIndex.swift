@@ -3,6 +3,7 @@ import CoreGraphics
 import Foundation
 import ImageIO
 import Observation
+import OSLog
 
 /// Reads the words in every Library capture so search can find them: the
 /// text in a screenshot, in a few frames of a recording, and a recording's
@@ -53,9 +54,12 @@ final class CaptureLibraryIndex {
     @ObservationIgnored private var describing: CaptureLibraryItem?
     /// Fingerprints the model was too busy for this session.
     @ObservationIgnored private var insightLater: Set<String> = []
-    /// Fingerprints that couldn't be read this session, so an unreadable
-    /// file isn't retried on every refresh.
-    @ObservationIgnored private var unreadable: Set<String> = []
+    /// When each fingerprint last couldn't be read, so a failed read isn't
+    /// retried on every refresh but is again after a few minutes.
+    @ObservationIgnored private var unreadable: [String: Date] = [:]
+    /// Plans again once failed reads may be retried, should nothing else
+    /// change in the Library before then.
+    @ObservationIgnored private var retry: Task<Void, Never>?
     @ObservationIgnored private var runner: Task<Void, Never>?
     /// The last write to the store queued; each waits for the one before.
     @ObservationIgnored private var lastWrite: Task<Void, Never>?
@@ -147,7 +151,7 @@ final class CaptureLibraryIndex {
         let byID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let stale = CaptureTextIndexPlan.stale(
             items.filter { $0.id != inFlight?.id }.map { .init(id: $0.id, fingerprint: $0.thumbnailKey, createdAt: $0.createdAt) },
-            entries: entries, skipping: unreadable
+            entries: entries, skipping: CaptureTextIndexPlan.waiting(failedAt: unreadable, now: Date())
         )
         queue = stale.compactMap { byID[$0.id] }
         updatePending()
@@ -202,7 +206,12 @@ final class CaptureLibraryIndex {
                 queue.insert(item, at: 0)
                 continue
             case .unreadable:
-                unreadable.insert(item.thumbnailKey)
+                unreadable[item.thumbnailKey] = Date()
+                retry?.cancel()
+                retry = Task {
+                    try? await Task.sleep(for: .seconds(CaptureTextIndexPlan.retryDelay))
+                    if !Task.isCancelled, let latestItems { sync(latestItems, isComplete: latestIsComplete) }
+                }
             case .read(var entry):
                 // A capture deleted while it was read keeps no entry.
                 if latestItems?.contains(where: { $0.id == item.id }) == true {
@@ -286,7 +295,7 @@ final class CaptureLibraryIndex {
 
     private enum ReadOutcome {
         case read(CaptureTextEntry)
-        /// Nothing could be read: tried again at the next launch rather than
+        /// Nothing could be read: tried again in a few minutes rather than
         /// stored as having no text.
         case unreadable
         /// A pause began mid-read; nothing is stored and it stays queued.
@@ -372,8 +381,15 @@ final class CaptureLibraryIndex {
         guard let image else { return nil }
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .background).async {
-                continuation.resume(returning: try? ImageTextRecognizer.recognizeLines(in: image))
+                do {
+                    continuation.resume(returning: try ImageTextRecognizer.recognizeLines(in: image))
+                } catch {
+                    Self.logger.error("Text read failed; retrying in a few minutes: \(String(describing: error), privacy: .public)")
+                    continuation.resume(returning: nil)
+                }
             }
         }
     }
+
+    nonisolated private static let logger = Logger(subsystem: "com.tommyent.Sukusho", category: "LibraryIndex")
 }

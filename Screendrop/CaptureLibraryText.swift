@@ -177,6 +177,16 @@ nonisolated enum CaptureTextIndexPlan {
         .sorted { $0.createdAt > $1.createdAt }
     }
 
+    /// How long a capture whose read failed waits before it's read again.
+    /// Vision can keep failing in one process for a while (2026-10-24), so
+    /// a failure isn't final until the app quits.
+    static let retryDelay: TimeInterval = 300
+
+    /// Fingerprints whose read failed less than `retryDelay` before `now`.
+    static func waiting(failedAt: [String: Date], now: Date) -> Set<String> {
+        Set(failedAt.filter { now.timeIntervalSince($0.value) < retryDelay }.keys)
+    }
+
     /// Captures whose text is read but that the model hasn't seen, newest
     /// first: those taken since `since`, or all of them once the user asks
     /// for existing captures. `older` counts the ones still waiting for that.

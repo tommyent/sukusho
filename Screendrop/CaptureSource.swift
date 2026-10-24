@@ -134,8 +134,26 @@ final class CaptureSourceProbe {
         }
     }
 
-    /// Ordinary app windows only: layer 0, visible, not this app's own
-    /// panels and not the system's capture overlays.
+    /// The area screencapture wrote on its file, in global Quartz points:
+    /// Spotlight's kMDItemScreenCaptureGlobalRect, kept as an extended
+    /// attribute. Exact where the pointer track ends on the drag's corner,
+    /// which a drag just past a window's edge puts on the window behind.
+    nonisolated static func capturedRect(of url: URL) -> CGRect? {
+        let name = "com.apple.metadata:kMDItemScreenCaptureGlobalRect"
+        let size = getxattr(url.path, name, nil, 0, 0, 0)
+        guard size > 0 else { return nil }
+        var data = Data(count: size)
+        guard data.withUnsafeMutableBytes({ getxattr(url.path, name, $0.baseAddress, size, 0, 0) }) == size,
+              let values = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [NSNumber],
+              values.count == 4 else { return nil }
+        let rect = CGRect(x: values[0].doubleValue, y: values[1].doubleValue,
+                          width: values[2].doubleValue, height: values[3].doubleValue)
+        return rect.width > 0 && rect.height > 0 ? rect : nil
+    }
+
+    /// Ordinary app windows only: layer 0, visible, not the system's capture
+    /// overlays. This app's own windows count when captures can see them,
+    /// named for what they show; its panels and overlays sit at other levels.
     private static func onScreenWindows() -> [Window] {
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let list = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else { return [] }
@@ -144,15 +162,32 @@ final class CaptureSourceProbe {
         return list.compactMap { info in
             guard (info[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
                   (info[kCGWindowAlpha as String] as? NSNumber)?.doubleValue ?? 1 > 0,
-                  let pid = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value, pid != ownPID,
+                  let pid = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
                   let boundsDictionary = info[kCGWindowBounds as String] as? NSDictionary,
                   let bounds = CGRect(dictionaryRepresentation: boundsDictionary),
                   bounds.width >= 40, bounds.height >= 40 else { return nil }
             let owner = info[kCGWindowOwnerName as String] as? String ?? ""
             guard !ignoredOwners.contains(owner) else { return nil }
-            let title = (info[kCGWindowName as String] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            var title = (info[kCGWindowName as String] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if pid == ownPID, let number = (info[kCGWindowNumber as String] as? NSNumber)?.intValue,
+               let window = NSApp.window(withWindowNumber: number) {
+                // Hidden from captures (Include app windows off, the default): the capture shows what's behind it.
+                guard window.sharingType != .none else { return nil }
+                title = ownWindowName(identifier: window.identifier?.rawValue, autosaveName: window.frameAutosaveName) ?? title
+            }
             return Window(pid: pid, ownerName: owner, title: title?.isEmpty == false ? title : nil, bounds: bounds)
         }
+    }
+
+    /// A plain name for one of this app's own windows, whose titles change
+    /// with the tab or the capture shown: the SwiftUI scenes by the scene id
+    /// their identifier starts with (the ids in ScreendropApp), Settings by
+    /// its frame autosave name. Nil for any other window, which keeps its title.
+    nonisolated static func ownWindowName(identifier: String?, autosaveName: String) -> String? {
+        if autosaveName == "SettingsWindow" { return "Settings" }
+        guard let identifier else { return nil }
+        let scenes = ["CAPTURE_LIBRARY": "Library", "ANNOTATION_EDITOR": "Editor", "VIDEO_EDITOR": "Studio"]
+        return scenes.first { identifier == $0.key || identifier.hasPrefix($0.key + "-") }?.value
     }
 
     /// AppKit's global space is bottom-left at the primary display; Quartz

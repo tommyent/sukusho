@@ -129,7 +129,7 @@ final class CaptureCoordinator {
         let captured = await ScreenshotManager.shared.captureArea(
             delaySeconds: ScreendropPreferences.captureDelaySeconds
         )
-        let source = probe.finish(.area)
+        let source = probe.finish(captured.flatMap(CaptureSourceProbe.capturedRect).map { .region($0) } ?? .area)
         guard let url = captured else { return nil }
         let displayID = ActiveDisplayResolver.activeDisplayID(preferPointer: true)
         return await finishCapture(url: url, displayID: displayID, source: source)
