@@ -223,15 +223,10 @@ final class RecordingKeystrokeRecorder {
                 return
             }
 
-            guard let raw = event.charactersIgnoringModifiers,
-                  let first = raw.first,
-                  !first.isWhitespace,
-                  !first.isNewline else {
-                return
-            }
+            guard let key = Self.keyLabel(for: event) else { return }
             record(
                 modifiers: Self.modifierSymbols(for: modifiers),
-                key: String(first).uppercased(),
+                key: key,
                 uptime: uptime
             )
 
@@ -290,6 +285,14 @@ final class RecordingKeystrokeRecorder {
         if modifiers.contains(.command) { symbols.append("\u{2318}") }
         if modifiers.contains(.function) { symbols.append("fn") }
         return symbols
+    }
+
+    /// The key itself, from its key code: ⇧⌘3 reads 3, where the characters
+    /// Shift produces would read #. Nil for whitespace.
+    static func keyLabel(for event: NSEvent) -> String? {
+        guard let raw = event.characters(byApplyingModifiers: []) ?? event.charactersIgnoringModifiers,
+              let first = raw.first, !first.isWhitespace, !first.isNewline else { return nil }
+        return String(first).uppercased()
     }
 
     /// Display label for special keys (Return, Tab, arrows, F-keys, …).

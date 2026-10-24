@@ -21,6 +21,7 @@
 		AFD500000000000000000001 /* Screendrop/InFlightRenders.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFD500000000000000000101 /* Screendrop/InFlightRenders.swift */; };
 		AFD600000000000000000001 /* Screendrop/RecordingPointerArtworkCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFD600000000000000000101 /* Screendrop/RecordingPointerArtworkCapture.swift */; };
 		AFD600000000000000000002 /* Screendrop/AnnotationCursor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFD600000000000000000102 /* Screendrop/AnnotationCursor.swift */; };
+		AFD600000000000000000003 /* Screendrop/RecordingKeystrokeCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFD600000000000000000103 /* Screendrop/RecordingKeystrokeCapture.swift */; };
 		AF0500000000000000000005 /* Screendrop/RecordingAgentPromptWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0500000000000000000105 /* Screendrop/RecordingAgentPromptWriter.swift */; };
 		AF0500000000000000000004 /* Screendrop/RecordingAgentPromptPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0500000000000000000104 /* Screendrop/RecordingAgentPromptPlan.swift */; };
 		AF0500000000000000000003 /* Screendrop/RecordingClipTimeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0500000000000000000103 /* Screendrop/RecordingClipTimeline.swift */; };
@@ -121,6 +122,7 @@
 		AFD500000000000000000101 /* Screendrop/InFlightRenders.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/InFlightRenders.swift; sourceTree = SOURCE_ROOT; };
 		AFD600000000000000000101 /* Screendrop/RecordingPointerArtworkCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingPointerArtworkCapture.swift; sourceTree = SOURCE_ROOT; };
 		AFD600000000000000000102 /* Screendrop/AnnotationCursor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AnnotationCursor.swift; sourceTree = SOURCE_ROOT; };
+		AFD600000000000000000103 /* Screendrop/RecordingKeystrokeCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingKeystrokeCapture.swift; sourceTree = SOURCE_ROOT; };
 		AF0500000000000000000105 /* Screendrop/RecordingAgentPromptWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingAgentPromptWriter.swift; sourceTree = SOURCE_ROOT; };
 		AF0500000000000000000104 /* Screendrop/RecordingAgentPromptPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingAgentPromptPlan.swift; sourceTree = SOURCE_ROOT; };
 		AF0500000000000000000103 /* Screendrop/RecordingClipTimeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingClipTimeline.swift; sourceTree = SOURCE_ROOT; };
@@ -275,6 +277,7 @@
 				AFD500000000000000000101 /* Screendrop/InFlightRenders.swift */,
 				AFD600000000000000000101 /* Screendrop/RecordingPointerArtworkCapture.swift */,
 				AFD600000000000000000102 /* Screendrop/AnnotationCursor.swift */,
+				AFD600000000000000000103 /* Screendrop/RecordingKeystrokeCapture.swift */,
 				AF0500000000000000000105 /* Screendrop/RecordingAgentPromptWriter.swift */,
 				AF0500000000000000000104 /* Screendrop/RecordingAgentPromptPlan.swift */,
 				AF0500000000000000000103 /* Screendrop/RecordingClipTimeline.swift */,
@@ -477,6 +480,7 @@
 				AFD500000000000000000001 /* Screendrop/InFlightRenders.swift in Sources */,
 				AFD600000000000000000001 /* Screendrop/RecordingPointerArtworkCapture.swift in Sources */,
 				AFD600000000000000000002 /* Screendrop/AnnotationCursor.swift in Sources */,
+				AFD600000000000000000003 /* Screendrop/RecordingKeystrokeCapture.swift in Sources */,
 				AF0500000000000000000005 /* Screendrop/RecordingAgentPromptWriter.swift in Sources */,
 				AF0500000000000000000004 /* Screendrop/RecordingAgentPromptPlan.swift in Sources */,
 				AF0500000000000000000003 /* Screendrop/RecordingClipTimeline.swift in Sources */,

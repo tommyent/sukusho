@@ -172,6 +172,20 @@ struct RecordingAgentPromptTests {
         #expect(PointerArtworkCapture.names(for: [iBeam, plus, other]) == ["text": "I-beam (text)", "draw": "plus (Sukusho's drawing cursor)"])
     }
 
+    @MainActor @Test func shortcutsReadByKeyNotByTheCharacterShiftTypes() throws {
+        func threeKey(_ characters: String, _ flags: NSEvent.ModifierFlags) throws -> NSEvent {
+            try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: 0,
+                context: nil, characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: 20))
+        }
+        let shifted = try RecordingKeystrokeRecorder.keyLabel(for: threeKey("#", [.shift, .command]))
+        #expect(shifted == RecordingKeystrokeRecorder.keyLabel(for: try threeKey("3", [.command])))
+        #expect(shifted != "#")
+        // Recordings made before kept the character Shift typed.
+        #expect(RecordingAgentPromptPlan.shortcutLabel(.init(time: 0, modifiers: ["⇧", "⌘"], key: "#")) == "⇧⌘3")
+        #expect(RecordingAgentPromptPlan.shortcutLabel(.init(time: 0, modifiers: ["⌘"], key: "#")) == "⌘#")
+        #expect(RecordingAgentPromptPlan.shortcutLabel(.init(time: 0, modifiers: ["⇧", "⌘"], key: "C")) == "⇧⌘C")
+    }
+
     @Test func scrollsCoalesceSanitizeAndDecode() throws {
         let raw = [0.0, 0.03, 0.09, 0.12].map { PointerScrollEvent(time: $0, x: 0.5, y: 0.5, dx: 1, dy: -4) }
         let coalesced = PointerScrollEvent.coalesced(raw)

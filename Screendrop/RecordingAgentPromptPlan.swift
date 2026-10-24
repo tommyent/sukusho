@@ -110,7 +110,7 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
         }
         for key in capture?.keystrokes ?? [] {
             guard let time = actionTime(key.time) else { continue }
-            evidence.append((time, "Shortcut \(Self.timestamp(time)): \(Self.escape(key.modifiers.joined() + key.key)).", nil))
+            evidence.append((time, "Shortcut \(Self.timestamp(time)): \(Self.escape(Self.shortcutLabel(key))).", nil))
         }
         // Where the pointer rested or scrolled shows hover and scroll bugs that clicks miss.
         func editorSpan(_ start: Double, _ end: Double) -> (start: Double, end: Double)? {
@@ -264,6 +264,16 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
         }
         guard low > 0 else { return nil }
         return CGPoint(x: travel[low - 1].x, y: travel[low - 1].y)
+    }
+
+    /// Modifiers then the key. Recordings made before keys were named by key
+    /// code kept the character Shift typed; on the number row that maps back.
+    // shortcut: assumes a US-style number row for those older recordings; other layouts keep their recorded character.
+    static func shortcutLabel(_ key: RecordingKeystrokeEvent) -> String {
+        let shifted: [String: String] = ["!": "1", "@": "2", "#": "3", "$": "4", "%": "5",
+                                         "^": "6", "&": "7", "*": "8", "(": "9", ")": "0"]
+        let name = key.modifiers.contains("\u{21E7}") ? shifted[key.key] ?? key.key : key.key
+        return key.modifiers.joined() + name
     }
 
     static func position(_ x: Double, _ y: Double) -> String {
