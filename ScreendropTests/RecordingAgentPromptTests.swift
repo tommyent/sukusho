@@ -1,3 +1,4 @@
+import AppKit
 import AVFoundation
 import CoreGraphics
 import CoreVideo
@@ -138,6 +139,37 @@ struct RecordingAgentPromptTests {
         let long = RecordingAgentPromptPlan(title: "Fixture", timeline: .full(sourceDuration: 3_000), cues: [], words: [],
             capture: PointerCaptureFile(travel: (0..<1_000).map { .init(time: Double($0) * 3, x: Double($0 % 2) * 0.5, y: 0.5) }))
         #expect(long.moments.count == 24)
+    }
+
+    @Test func clicksNameTheirCursorAndThePromptLinksTheRecordingsFiles() {
+        let shape = PointerArtwork(artworkID: "custom", imageData: Data([1]), anchorPoint: .init(x: 15, y: 15),
+                                   referenceSize: .init(width: 64, height: 40))
+        let capture = PointerCaptureFile(presses: [
+            .init(time: 1, x: 0.1, y: 0.1, button: 0, phase: .down, artworkID: "grab"),
+            .init(time: 3, x: 0.2, y: 0.2, button: 0, phase: .down, artworkID: "custom"),
+            .init(time: 5, x: 0.3, y: 0.3, button: 0, phase: .down),
+        ], artwork: [shape])
+        let files = RecordingAgentPromptPlan.SourceFiles(screen: URL(fileURLWithPath: "/tmp/A b.screendroprec/screen.mov"),
+                                                         input: URL(fileURLWithPath: "/tmp/A b.screendroprec/input.json"))
+        let markdown = RecordingAgentPromptPlan(title: "Fixture", timeline: .full(sourceDuration: 6), cues: [], words: [],
+            capture: capture, cursorNames: ["grab": "open hand (can grab)"], files: files).markdown(frameTimes: [])
+        #expect(markdown.contains("Click 00:01.000: left; source position x=0.100, y=0.100; cursor: open hand (can grab)."))
+        #expect(markdown.contains("Click 00:03.000: left; source position x=0.200, y=0.200; cursor: custom, 64 × 40 pt, hot spot 15, 15."))
+        #expect(markdown.contains("Click 00:05.000: left; source position x=0.300, y=0.300."))
+        #expect(markdown.contains("- Screen recording: `/tmp/A b.screendroprec/screen.mov`: the unedited screen"))
+        #expect(markdown.contains("- Input log: `/tmp/A b.screendroprec/input.json`: JSON on the screen recording's clock"))
+        let bare = RecordingAgentPromptPlan(title: "Fixture", timeline: .full(sourceDuration: 1), cues: [], words: [], capture: nil)
+        #expect(!bare.markdown(frameTimes: []).contains("## Source files"))
+    }
+
+    @MainActor @Test func recordedCursorsAreNamedWhenTheyAreAppKitsOwnOrTheEditorsPlus() throws {
+        _ = NSApplication.shared // AppKit draws its cursors only once there's an app
+        let iBeam = try #require(PointerArtworkCapture.capture(.iBeam, id: "text"))
+        let plus = try #require(PointerArtworkCapture.capture(.annotationPlus, id: "draw"))
+        var other = iBeam
+        other.artworkID = "other"
+        other.imageData = Data([1, 2, 3])
+        #expect(PointerArtworkCapture.names(for: [iBeam, plus, other]) == ["text": "I-beam (text)", "draw": "plus (Sukusho's drawing cursor)"])
     }
 
     @Test func scrollsCoalesceSanitizeAndDecode() throws {

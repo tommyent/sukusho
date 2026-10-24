@@ -26,12 +26,22 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
     let timeline: RecordingClipTimeline
     /// The input log's travel, by time, on the screen master's timeline.
     let pointer: [PointerTravelSample]
+    /// The recording's own files, for an agent to read beyond the prompt.
+    let files: SourceFiles?
 
+    struct SourceFiles: Sendable {
+        var screen: URL
+        var input: URL?
+    }
+
+    /// `cursorNames` names recorded cursor images by artwork ID.
     init(title: String, timeline: RecordingClipTimeline, cues: [RecordingSubtitleCue],
-         words: [RecordingTranscriptWord], capture: PointerCaptureFile?) {
+         words: [RecordingTranscriptWord], capture: PointerCaptureFile?,
+         cursorNames: [String: String] = [:], files: SourceFiles? = nil) {
         self.title = title
         duration = timeline.duration
         hasInput = capture != nil
+        self.files = files
 
         func mapped(_ start: Double, _ end: Double, text: String) -> Text? {
             guard start.isFinite, end.isFinite, end > start else { return nil }
@@ -81,12 +91,21 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
                   timeline.segments.contains(where: { source >= $0.sourceStart && source < $0.sourceEnd }) else { return nil }
             return timeline.editorTime(forSourceTime: source)
         }
+        let artwork = Dictionary((capture?.artwork ?? []).map { ($0.artworkID, $0) }, uniquingKeysWith: { first, _ in first })
+        // The cursor shows what the app under it offered: a grab, a draw, a text caret.
+        func cursor(_ id: String?) -> String {
+            guard let id else { return "" }
+            if let name = cursorNames[id] { return "; cursor: \(name)" }
+            guard let image = artwork[id] else { return "" }
+            return String(format: "; cursor: custom, %.0f × %.0f pt, hot spot %.0f, %.0f", locale: Locale(identifier: "en_US_POSIX"),
+                          image.referenceSize.width, image.referenceSize.height, image.anchorPoint.x, image.anchorPoint.y)
+        }
         for click in capture?.presses ?? [] where click.phase == .down {
             guard click.x.isFinite, click.y.isFinite,
                   (0...1).contains(click.x), (0...1).contains(click.y),
                   let time = actionTime(click.time) else { continue }
             let button = click.button == 0 ? "left" : click.button == 1 ? "right" : "button \(click.button)"
-            evidence.append((time, "Click \(Self.timestamp(time)): \(button); source position \(Self.position(click.x, click.y)).",
+            evidence.append((time, "Click \(Self.timestamp(time)): \(button); source position \(Self.position(click.x, click.y))\(Self.escape(cursor(click.artworkID))).",
                              CGPoint(x: click.x, y: click.y)))
         }
         for key in capture?.keystrokes ?? [] {
@@ -151,6 +170,15 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
             text += "Each still shows the edited recording. Each strip shows \(Self.stripFrames) frames of the unedited screen recording, from \(Self.stripLead) s before the moment to \(Self.stripSpan - Self.stripLead) s after it, around where it happened; a red ring marks the pointer, which the screen recording doesn't show.\n\n"
         }
         if !hasInput { text += "No input log is available for this recording.\n\n" }
+        if let files {
+            func code(_ url: URL) -> String { "`" + url.path.replacingOccurrences(of: "`", with: "'") + "`" }
+            text += "## Source files\n\n"
+            text += "- Screen recording: \(code(files.screen)): the unedited screen at full resolution, with no zoom, crop or style, and no pointer. It runs on the recording's own clock; cuts and speed changes in the edited recording shift the times above.\n"
+            if let input = files.input {
+                text += "- Input log: \(code(input)): JSON on the screen recording's clock, with pointer moves and drags (travel), clicks (presses), shortcuts (keystrokes), scrolls (scrolls) and cursor images (artwork, base-64 PNG). Positions are normalized 0–1 from the top left.\n"
+            }
+            text += "\n"
+        }
         for (index, moment) in moments.enumerated() {
             text += "## Moment \(index + 1) — \(Self.timestamp(moment.time))\n\n"
             text += moment.evidence.joined(separator: "\n\n") + "\n\n"

@@ -32,8 +32,11 @@ enum RecordingAgentPromptExport {
     /// What Agent Prompt writes for a session, from its input log and capture manifest.
     static func plan(for session: RecordingSession, timeline: RecordingClipTimeline,
                      transcript: RecordingTranscript) -> RecordingAgentPromptPlan {
-        RecordingAgentPromptPlan(title: session.displayName, timeline: timeline, cues: transcript.cues, words: transcript.words,
-                                 capture: session.loadPointerCapture())
+        let capture = session.loadPointerCapture()
+        let input = FileManager.default.fileExists(atPath: session.pointerCaptureURL.path) ? session.pointerCaptureURL : nil
+        return RecordingAgentPromptPlan(title: session.displayName, timeline: timeline, cues: transcript.cues, words: transcript.words,
+                                        capture: capture, cursorNames: PointerArtworkCapture.names(for: capture?.artwork ?? []),
+                                        files: .init(screen: session.screenURL, input: input))
     }
 
     static func write(session: RecordingSession, document: RecordingEditDocument?, to directory: URL,

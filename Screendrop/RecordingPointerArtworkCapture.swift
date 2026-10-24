@@ -15,6 +15,31 @@ enum PointerArtworkCapture {
         capture(NSCursor.arrow, id: "pointer-default")
     }
 
+    /// Plain names for recorded cursor images that are AppKit's own cursors,
+    /// or the editor's plus, by artwork ID: the recorder captures them the
+    /// same way, so the image data matches exactly.
+    // shortcut: matches only on the macOS version that drew the recording's cursors; name them at record time if exports move between Macs.
+    static func names(for artwork: [PointerArtwork]) -> [String: String] {
+        var names: [String: String] = [:]
+        for item in artwork {
+            names[item.artworkID] = knownCursors.first {
+                $0.artwork.imageData == item.imageData
+                    && $0.artwork.anchorPoint == item.anchorPoint && $0.artwork.referenceSize == item.referenceSize
+            }?.name
+        }
+        return names
+    }
+
+    private static let knownCursors: [(artwork: PointerArtwork, name: String)] = { () -> [(NSCursor, String)] in [
+        (.arrow, "arrow"), (.iBeam, "I-beam (text)"), (.iBeamCursorForVerticalLayout, "vertical I-beam"),
+        (.crosshair, "crosshair"), (.annotationPlus, "plus (Sukusho's drawing cursor)"),
+        (.pointingHand, "pointing hand (link or button)"), (.openHand, "open hand (can grab)"),
+        (.closedHand, "closed hand (grabbing)"), (.resizeLeftRight, "left-right resize"), (.resizeUpDown, "up-down resize"),
+        (.resizeLeft, "resize left"), (.resizeRight, "resize right"), (.resizeUp, "resize up"), (.resizeDown, "resize down"),
+        (.operationNotAllowed, "not allowed"), (.dragCopy, "copy"), (.dragLink, "make alias"),
+        (.contextualMenu, "context menu"), (.disappearingItem, "remove (poof)"), (.zoomIn, "zoom in"), (.zoomOut, "zoom out"),
+    ] }().compactMap { cursor, name in capture(cursor, id: name).map { (artwork: $0, name: name) } }
+
     static func capture(_ cursor: NSCursor, id: String) -> PointerArtwork? {
         let image = cursor.image
         guard let tiffData = image.tiffRepresentation,
