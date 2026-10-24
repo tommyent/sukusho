@@ -25,12 +25,13 @@ struct PastedImageTests {
     }
 
     /// Draws one pasted picture at page (20, 30), 40x20, into a 100x100 page, either as the
-    /// flipped canvas does or as the y-up export does, and returns the bitmap.
-    static func drawn(flippedCanvas: Bool) -> (Data, Int) {
+    /// flipped canvas does or as the y-up export does, and returns the bitmap. `before` and
+    /// `after` come before and after the picture in the document.
+    static func drawn(flippedCanvas: Bool, before: [AnnoShape] = [], after: [AnnoShape] = []) -> (Data, Int) {
         let asset = AnnoImageAsset(data: bandedPNG())!
         let document = AnnoDocument()
         document.restore(AnnoDocument.Snapshot(
-            shapes: [AnnoShape(x: 20, y: 30, kind: .image(ImageProps(assetID: "a", w: 40, h: 20)))],
+            shapes: before + [AnnoShape(x: 20, y: 30, kind: .image(ImageProps(assetID: "a", w: 40, h: 20)))] + after,
             bindings: []))
         let bytesPerRow = 400
         let context = CGContext(data: nil, width: 100, height: 100, bitsPerComponent: 8, bytesPerRow: bytesPerRow,
@@ -316,5 +317,35 @@ struct PastedImageTests {
             #expect(Vec.dist(arrow.pageTransform.applyToPoint(info.start.point), start) < 0.001, "\(info.start)")
             #expect(Vec.dist(arrow.pageTransform.applyToPoint(info.end.point), end) < 0.001, "\(info.end)")
         }
+    }
+
+    @Test(arguments: [true, false])
+    func annotationsMadeBeforeAPictureShowOverIt(flippedCanvas: Bool) {
+        var props = GeoProps()
+        props.w = 10; props.h = 10; props.fill = .solid; props.swatch = .green
+        let square = AnnoShape(x: 35, y: 32, kind: .geo(props))
+        let over = Self.rgb(Self.drawn(flippedCanvas: flippedCanvas, before: [square]), x: 40, y: 37)
+        #expect(over[1] > 150 && over[0] < 120, "the green square shows over the picture's red top: \(over)")
+    }
+
+    @Test(arguments: [true, false])
+    func theSpotlightDimsPicturesToo(flippedCanvas: Bool) {
+        let hole = AnnoShape(x: 70, y: 70, kind: .highlight(HighlightProps(w: 10, h: 10)))
+        let bitmap = Self.drawn(flippedCanvas: flippedCanvas, before: [hole])
+        let red = Self.rgb(bitmap, x: 40, y: 33)
+        #expect(red[0] < 160, "the picture is dimmed outside the highlight: \(red)")
+        #expect(Self.rgb(bitmap, x: 75, y: 75) == [255, 255, 255], "the highlight itself stays clear")
+    }
+
+    @Test func anAnnotationOverAPictureIsHitFirstWhicheverCameFirst() {
+        let editor = Self.editor()
+        var props = GeoProps()
+        props.fill = .solid
+        let square = AnnoShape(x: 150, y: 150, kind: .geo(props))
+        let picture = AnnoShape(x: 100, y: 100, kind: .image(ImageProps(assetID: "p", w: 400, h: 300)))
+        editor.replaceDocument(shapes: [square, picture])
+        editor.tool = .select
+        #expect(editor.hitShape(at: Vec(200, 200))?.id == square.id, "the square draws over the picture")
+        #expect(editor.hitShape(at: Vec(400, 300))?.id == picture.id)
     }
 }

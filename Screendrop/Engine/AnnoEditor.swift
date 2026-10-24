@@ -335,9 +335,12 @@ final class AnnoEditor {
     /// thin strokes stay clickable.
     func hitShape(at pagePoint: Vec) -> AnnoShape? {
         let margin = Swift.max(4, pageDistance(forScreen: 8))
-        for shape in document.shapes.reversed() {
-            // A drawing tool draws on a pasted picture rather than grabbing it (sd-zt9e).
-            if shape.imageProps != nil, tool.drawsOverPictures { continue }
+        // Pasted pictures draw under every annotation, so they're tested last, and a drawing tool
+        // draws on them rather than grabbing them (sd-zt9e).
+        let shapes = document.shapes.reversed()
+        let candidates = shapes.filter { $0.imageProps == nil }
+            + (tool.drawsOverPictures ? [] : shapes.filter { $0.imageProps != nil })
+        for shape in candidates {
             let localPoint = document.pointInShapeSpace(shape, pagePoint)
             let geometry = document.geometry(shape)
             // Region geometry stays filled for marquee selection; only its edge is a grab target.
