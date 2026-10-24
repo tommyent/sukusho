@@ -36,7 +36,8 @@ enum RecordingAgentPromptExport {
         let input = FileManager.default.fileExists(atPath: session.pointerCaptureURL.path) ? session.pointerCaptureURL : nil
         return RecordingAgentPromptPlan(title: session.displayName, timeline: timeline, cues: transcript.cues, words: transcript.words,
                                         capture: capture, cursorNames: PointerArtworkCapture.names(for: capture?.artwork ?? []),
-                                        files: .init(screen: session.screenURL, input: input))
+                                        files: .init(screen: session.screenURL, input: input),
+                                        excludesAppWindows: session.loadCaptureManifest()?.includesAppWindows == false)
     }
 
     static func write(session: RecordingSession, document: RecordingEditDocument?, to directory: URL,

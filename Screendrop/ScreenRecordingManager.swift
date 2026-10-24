@@ -283,6 +283,7 @@ final class ScreenRecordingManager {
                 manifest.pressEffectsEnabled = true
                 manifest.includesSystemAudio = options.capturesSystemAudio
                 manifest.includesMicrophone = options.microphoneDeviceID != nil
+                manifest.includesAppWindows = ScreendropPreferences.includeAppWindowsInCaptures
                 if !cameraStarted {
                     manifest.cameraLeadIn = nil
                 }

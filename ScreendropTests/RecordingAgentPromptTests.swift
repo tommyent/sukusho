@@ -186,6 +186,15 @@ struct RecordingAgentPromptTests {
         #expect(RecordingAgentPromptPlan.shortcutLabel(.init(time: 0, modifiers: ["⇧", "⌘"], key: "C")) == "⇧⌘C")
     }
 
+    @Test func thePromptWarnsOnlyWhenSukushosWindowsWereLeftOut() {
+        func markdown(excluding: Bool) -> String {
+            RecordingAgentPromptPlan(title: "Fixture", timeline: .full(sourceDuration: 1), cues: [], words: [], capture: nil,
+                                     excludesAppWindows: excluding).markdown(frameTimes: [])
+        }
+        #expect(markdown(excluding: true).contains("Sukusho's own windows (Library, editor, Studio, preview cards, recording controls) were left out of this recording"))
+        #expect(!markdown(excluding: false).contains("left out"))
+    }
+
     @Test func scrollsCoalesceSanitizeAndDecode() throws {
         let raw = [0.0, 0.03, 0.09, 0.12].map { PointerScrollEvent(time: $0, x: 0.5, y: 0.5, dx: 1, dy: -4) }
         let coalesced = PointerScrollEvent.coalesced(raw)

@@ -34,14 +34,18 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
         var input: URL?
     }
 
+    /// True when the recording left out Sukusho's own windows.
+    let excludesAppWindows: Bool
+
     /// `cursorNames` names recorded cursor images by artwork ID.
     init(title: String, timeline: RecordingClipTimeline, cues: [RecordingSubtitleCue],
          words: [RecordingTranscriptWord], capture: PointerCaptureFile?,
-         cursorNames: [String: String] = [:], files: SourceFiles? = nil) {
+         cursorNames: [String: String] = [:], files: SourceFiles? = nil, excludesAppWindows: Bool = false) {
         self.title = title
         duration = timeline.duration
         hasInput = capture != nil
         self.files = files
+        self.excludesAppWindows = excludesAppWindows
 
         func mapped(_ start: Double, _ end: Double, text: String) -> Text? {
             guard start.isFinite, end.isFinite, end > start else { return nil }
@@ -170,6 +174,9 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
             text += "Each still shows the edited recording. Each strip shows \(Self.stripFrames) frames of the unedited screen recording, from \(Self.stripLead) s before the moment to \(Self.stripSpan - Self.stripLead) s after it, around where it happened; a red ring marks the pointer, which the screen recording doesn't show.\n\n"
         }
         if !hasInput { text += "No input log is available for this recording.\n\n" }
+        if excludesAppWindows {
+            text += "Sukusho's own windows (Library, editor, Studio, preview cards, recording controls) were left out of this recording, so the frames show what was behind them.\n\n"
+        }
         if let files {
             func code(_ url: URL) -> String { "`" + url.path.replacingOccurrences(of: "`", with: "'") + "`" }
             text += "## Source files\n\n"
