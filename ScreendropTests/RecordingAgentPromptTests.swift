@@ -98,15 +98,16 @@ struct RecordingAgentPromptTests {
     @Test func restsAndScrollRunsBecomeMomentsInTimeOrder() {
         let travel: [PointerTravelSample] = [
             .init(time: 0, x: 0.1, y: 0.1), .init(time: 0.5, x: 0.1, y: 0.1), // heartbeat while still
+            .init(time: 1.98, x: 0.11, y: 0.1), // moving off starts with a small step
             .init(time: 2, x: 0.5, y: 0.5), .init(time: 2.02, x: 0.501, y: 0.5), .init(time: 3.5, x: 0.501, y: 0.5),
-            .init(time: 4, x: 0.9, y: 0.9), .init(time: 4.3, x: 0.2, y: 0.2), // too short a stop at 0.9
+            .init(time: 4, x: 0.51, y: 0.5), .init(time: 4.02, x: 0.9, y: 0.9), .init(time: 4.3, x: 0.2, y: 0.2), // too short a stop at 0.9
         ]
         let scrolls = [5.0, 5.1, 5.2].map { PointerScrollEvent(time: $0, x: 0.3, y: 0.4, dx: 0, dy: -10) }
             + [PointerScrollEvent(time: 8, x: 0.6, y: 0.6, dx: 0, dy: 25, count: 2)]
         let plan = RecordingAgentPromptPlan(title: "Fixture", timeline: .full(sourceDuration: 10), cues: [], words: [],
                                            capture: PointerCaptureFile(travel: travel, scrolls: scrolls))
         let markdown = plan.markdown(frameTimes: [])
-        #expect(markdown.contains("Pointer rested 00:00.000–00:02.000 at source position x=0.100, y=0.100."))
+        #expect(markdown.contains("Pointer rested 00:00.000–00:01.980 at source position x=0.100, y=0.100."))
         #expect(markdown.contains("Pointer rested 00:02.000–00:04.000 at source position x=0.500, y=0.500."))
         #expect(markdown.contains("Pointer rested 00:04.300–00:10.000 at source position x=0.200, y=0.200."))
         #expect(!markdown.contains("x=0.900"))
@@ -115,9 +116,18 @@ struct RecordingAgentPromptTests {
         #expect(plan.moments.map(\.time) == [0, 2, 4.3, 5, 8])
     }
 
+    @Test func aStopThatEndsInAJumpIsAGapInTheLogNotARest() {
+        // A real recording's log went 0.83 s without a sample, then the pointer was 0.17 away.
+        let travel: [PointerTravelSample] = [
+            .init(time: 0, x: 0.735, y: 0.668), .init(time: 0.833, x: 0.729, y: 0.499), .init(time: 2, x: 0.735, y: 0.499),
+        ]
+        #expect(RecordingAgentPromptPlan.rests(in: travel, until: 2).map(\.start) == [0.833])
+    }
+
     @Test func restsAndScrollsFollowCutsAndSpeed() {
         let capture = PointerCaptureFile(travel: [
-            .init(time: 2.5, x: 0.2, y: 0.2), .init(time: 5, x: 0.4, y: 0.4), .init(time: 7, x: 0.8, y: 0.8),
+            .init(time: 2.5, x: 0.2, y: 0.2), .init(time: 4.98, x: 0.21, y: 0.2), .init(time: 5, x: 0.4, y: 0.4),
+            .init(time: 7, x: 0.41, y: 0.4), .init(time: 7.02, x: 0.8, y: 0.8),
         ], scrolls: [.init(time: 3, x: 0.1, y: 0.1, dx: 5, dy: 0), .init(time: 6, x: 0.1, y: 0.1, dx: -40, dy: 2)])
         let markdown = RecordingAgentPromptPlan(title: "Fixture", timeline: cut, cues: [], words: [], capture: capture)
             .markdown(frameTimes: [])
@@ -128,8 +138,8 @@ struct RecordingAgentPromptTests {
     }
 
     @Test func manyRestsAndScrollsAreCappedToTheLongest() {
-        let travel = (0..<60).map { PointerTravelSample(time: Double($0), x: Double($0 % 2) * 0.5, y: 0.5) }
-            + [PointerTravelSample(time: 60, x: 0.9, y: 0.9), PointerTravelSample(time: 70, x: 0.1, y: 0.1)]
+        let travel = (0..<60).map { PointerTravelSample(time: Double($0), x: Double($0 % 2) * 0.02, y: 0.5) }
+            + [PointerTravelSample(time: 60, x: 0.9, y: 0.9), PointerTravelSample(time: 70, x: 0.91, y: 0.9)]
         let markdown = RecordingAgentPromptPlan(title: "Fixture", timeline: .full(sourceDuration: 71), cues: [], words: [],
                                                capture: PointerCaptureFile(travel: travel)).markdown(frameTimes: [])
         #expect(markdown.components(separatedBy: "Pointer rested").count - 1 == 7) // 71 s: up to 7
@@ -137,7 +147,7 @@ struct RecordingAgentPromptTests {
         #expect(markdown.contains("Pointer rested 00:00.000–00:01.000"))
         #expect(!markdown.contains("Pointer rested 00:06.000"))
         let long = RecordingAgentPromptPlan(title: "Fixture", timeline: .full(sourceDuration: 3_000), cues: [], words: [],
-            capture: PointerCaptureFile(travel: (0..<1_000).map { .init(time: Double($0) * 3, x: Double($0 % 2) * 0.5, y: 0.5) }))
+            capture: PointerCaptureFile(travel: (0..<1_000).map { .init(time: Double($0) * 3, x: Double($0 % 2) * 0.02, y: 0.5) }))
         #expect(long.moments.count == 24)
     }
 
@@ -231,7 +241,8 @@ struct RecordingAgentPromptTests {
         let movie = directory.appendingPathComponent("fixture.mov")
         try await makeMovie(at: movie) // red until 1 s, then blue
         let plan = RecordingAgentPromptPlan(title: "Strip", timeline: .full(sourceDuration: 3), cues: [], words: [],
-            capture: PointerCaptureFile(travel: [.init(time: 0, x: 0.25, y: 0.5), .init(time: 0.9, x: 0.75, y: 0.5)],
+            capture: PointerCaptureFile(travel: [.init(time: 0, x: 0.25, y: 0.5), .init(time: 0.88, x: 0.26, y: 0.5),
+                                                 .init(time: 0.9, x: 0.75, y: 0.5)],
                                         presses: [.init(time: 0.9, x: 0.75, y: 0.5, button: 0, phase: .down)]))
         #expect(plan.moments.map(\.time) == [0, 0.9])
         #expect(plan.moments.map(\.focus) == [CGPoint(x: 0.25, y: 0.5), CGPoint(x: 0.75, y: 0.5)])

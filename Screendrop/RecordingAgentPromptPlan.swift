@@ -231,14 +231,18 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
     /// Spans of at least `minimum` seconds where the pointer stayed within
     /// `radius` of where it stopped, on the source timeline. Travel has a
     /// sample per move and a slow heartbeat while still, so a rest ends at the
-    /// first sample that moved away, or at `end`.
+    /// first sample that moved away, or at `end`. Moving off starts with a
+    /// small step (under 0.024 in two real recordings); a stop that ends more
+    /// than `jump` away is a gap in the log, not a rest.
     static func rests(in travel: [PointerTravelSample], until end: TimeInterval, minimum: TimeInterval = 0.7,
-                      radius: Double = 0.003) -> [(start: Double, end: Double, x: Double, y: Double)] {
+                      radius: Double = 0.003, jump: Double = 0.05) -> [(start: Double, end: Double, x: Double, y: Double)] {
         let samples = travel.filter { $0.time.isFinite && $0.x.isFinite && $0.y.isFinite }.sorted { $0.time < $1.time }
         guard var anchor = samples.first else { return [] }
         var result: [(start: Double, end: Double, x: Double, y: Double)] = []
-        for sample in samples.dropFirst() where hypot(sample.x - anchor.x, sample.y - anchor.y) > radius {
-            if sample.time - anchor.time >= minimum { result.append((anchor.time, sample.time, anchor.x, anchor.y)) }
+        for sample in samples.dropFirst() {
+            let step = hypot(sample.x - anchor.x, sample.y - anchor.y)
+            guard step > radius else { continue }
+            if sample.time - anchor.time >= minimum, step <= jump { result.append((anchor.time, sample.time, anchor.x, anchor.y)) }
             anchor = sample
         }
         if end - anchor.time >= minimum { result.append((anchor.time, end, anchor.x, anchor.y)) }
