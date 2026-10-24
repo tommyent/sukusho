@@ -51,9 +51,9 @@ enum RecordingAgentPromptExport {
         return folder
     }
 
-    static func reveal(_ directory: URL) {
+    /// For an agent outside Rex; Rex's Insert Sukusho Prompt reads latest.json. Finder stays put.
+    static func copyPath(_ directory: URL) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(directory.path, forType: .string)
-        NSWorkspace.shared.activateFileViewerSelecting([directory])
     }
 }

@@ -159,6 +159,8 @@ final class CaptureLibraryModel {
     /// The first scan has finished; later refreshes show only the status bar's spinner.
     private(set) var hasLoaded = false
     var operationTitle: String?
+    /// The status bar's done mark for an Agent Prompt export, which no longer opens Finder.
+    var savedAgentPrompt: URL?
     var errorMessage: String?
     /// The capture whose name is being edited in place, and where.
     var renameSession: CaptureRenameSession?

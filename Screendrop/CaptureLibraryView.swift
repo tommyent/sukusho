@@ -429,6 +429,15 @@ struct CaptureLibraryView: View {
             if let title = model.operationTitle {
                 ProgressView().controlSize(.mini)
                 Text(title)
+            } else if let folder = model.savedAgentPrompt {
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting([folder])
+                } label: {
+                    Label("Agent Prompt Saved", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                }
+                .buttonStyle(.plain)
+                .help("Reveal \(folder.lastPathComponent) in Finder")
             } else if comments.isShown {
                 let count = comments.visibleComments.count
                 Text("\(count) \(count == 1 ? "comment" : "comments")")

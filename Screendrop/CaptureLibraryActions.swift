@@ -336,7 +336,13 @@ extension CaptureLibraryModel {
             let document = try StudioProjectRegistry.shared.document(for: session.directoryURL) ?? session.editDocumentForRendering()
             let folder = try await RecordingAgentPromptExport.write(session: session, document: document,
                                                                     to: RecordingAgentPromptWriter.centralDirectory())
-            RecordingAgentPromptExport.reveal(folder)
+            RecordingAgentPromptExport.copyPath(folder)
+            self.savedAgentPrompt = folder
+            // Outside the operation, so the Library isn't busy while the mark shows.
+            Task {
+                try? await Task.sleep(for: .seconds(8))
+                if self.savedAgentPrompt == folder { self.savedAgentPrompt = nil }
+            }
         }
     }
 
