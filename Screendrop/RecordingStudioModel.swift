@@ -2884,6 +2884,7 @@ final class RecordingStudioModel {
                     let movie = try await RecordingStudioExporter().export(configuration) { report($0 * 0.8) }
                     defer { try? FileManager.default.removeItem(at: movie) }
                     folder = try await RecordingAgentPromptWriter.write(movie: movie, plan: plan, to: directory) { report(0.8 + $0 * 0.2) }
+                    try Task.checkCancellation()
                     // A bare movie's title is its file name.
                     try RecordingAgentPromptWriter.recordLatest(folder, title: title, recording: title)
                 } else { return }

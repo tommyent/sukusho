@@ -47,6 +47,8 @@ enum RecordingAgentPromptExport {
         // Named after the package, which a rename doesn't change, so each recording keeps one folder.
         let folder = try await RecordingAgentPromptWriter.write(movie: snapshot, plan: plan, to: directory, name: session.packageName,
                                                                 master: session.screenURL) { progress(0.8 + $0 * 0.2) }
+        // A cancelled export (Studio closed) doesn't become the one Rex sends.
+        try Task.checkCancellation()
         try RecordingAgentPromptWriter.recordLatest(folder, title: plan.title, recording: session.packageName)
         return folder
     }
@@ -107,12 +109,13 @@ final class AgentPromptIndex {
         RecordingAgentPromptWriter.directoryURL().appendingPathComponent(RecordingAgentPromptWriter.folderName(session.packageName), isDirectory: true)
     }
 
-    /// Nil when the recording has no prompt.
-    func state(for session: RecordingSession) -> State? {
+    /// Nil when the capture has no prompt. Reads no files: cells call it, and
+    /// the scanner has already read when the recording was last edited.
+    func state(for item: CaptureLibraryItem) -> State? {
+        guard let session = item.session else { return nil }
         let folder = folder(for: session)
         guard let written = written[folder.lastPathComponent] else { return nil }
-        let edited = [session.editDocumentURL, session.draftDocumentURL].compactMap(Self.modified).max()
-        if let edited, edited > written { return .stale }
+        if let edited = item.editedAt, edited > written { return .stale }
         return latestPath == folder.path ? .current : .available
     }
 
@@ -126,7 +129,12 @@ final class AgentPromptIndex {
 
     /// The recording went to the Trash; its prompt follows it there.
     func trash(for session: RecordingSession) {
-        try? FileManager.default.trashItem(at: folder(for: session), resultingItemURL: nil)
+        let folder = folder(for: session)
+        try? FileManager.default.trashItem(at: folder, resultingItemURL: nil)
+        // Without latest.json, Rex says there's no prompt yet rather than typing a path that's gone.
+        if latestPath == folder.path {
+            try? FileManager.default.removeItem(at: folder.deletingLastPathComponent().appendingPathComponent("latest.json"))
+        }
         reload()
     }
 

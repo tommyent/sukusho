@@ -335,14 +335,12 @@ extension CaptureLibraryModel {
         run("Exporting agent prompt…") {
             StudioProjectRegistry.shared.flushDrafts()
             let document = try StudioProjectRegistry.shared.document(for: session.directoryURL) ?? session.editDocumentForRendering()
-            let id = item.id
-            self.agentPromptExport = (id, 0)
+            let export = AgentPromptExportProgress(id: item.id)
+            self.agentPromptExport = export
             defer { self.agentPromptExport = nil }
             let folder = try await RecordingAgentPromptExport.write(session: session, document: document,
                                                                     to: RecordingAgentPromptWriter.centralDirectory()) { progress in
-                Task { @MainActor in
-                    if self.agentPromptExport?.id == id { self.agentPromptExport = (id, progress) }
-                }
+                Task { @MainActor in export.progress = progress }
             }
             RecordingAgentPromptExport.finished(folder)
             self.savedAgentPrompt = folder
@@ -357,7 +355,7 @@ extension CaptureLibraryModel {
     /// The circle on a recording's card: a stale prompt exports again, another
     /// recording's becomes the one ⌃⌥⌘P sends, and the current one shows in Finder.
     func useAgentPrompt(_ item: CaptureLibraryItem) {
-        guard !isBusy, let session = item.session, let state = AgentPromptIndex.shared.state(for: session) else { return }
+        guard !isBusy, let session = item.session, let state = AgentPromptIndex.shared.state(for: item) else { return }
         switch state {
         case .stale: exportAgentPrompt(item)
         case .available:
