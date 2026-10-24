@@ -35,10 +35,17 @@ nonisolated struct PointerScrollEvent: Codable, Sendable, Equatable {
     var count = 1
 
     /// Sums each event into the first of its group, starting a new group
-    /// `window` seconds after the last one started.
+    /// `window` seconds after the last one started. Events outside the frame
+    /// go first, as the sanitizer would drop them, so none starts or joins a group.
     static func coalesced(_ events: [PointerScrollEvent], window: TimeInterval = 0.1) -> [PointerScrollEvent] {
         var result: [PointerScrollEvent] = []
-        for event in events.sorted(by: { $0.time < $1.time }) {
+        let inside = events.compactMap { event -> PointerScrollEvent? in
+            guard let point = PointerStreamSanitizer.clampedUnitPoint(x: event.x, y: event.y) else { return nil }
+            var kept = event
+            (kept.x, kept.y) = point
+            return kept
+        }
+        for event in inside.sorted(by: { $0.time < $1.time }) {
             if let last = result.last, event.time - last.time < window {
                 result[result.count - 1].dx += event.dx
                 result[result.count - 1].dy += event.dy

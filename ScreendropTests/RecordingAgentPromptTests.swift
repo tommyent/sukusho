@@ -224,6 +224,21 @@ struct RecordingAgentPromptTests {
         #expect(try JSONDecoder().decode(PointerCaptureFile.self, from: Data(#"{"travel":[]}"#.utf8)).scrolls.isEmpty)
     }
 
+    @Test func scrollsOutsideTheFrameNeitherSwallowNorJoinOnesInside() {
+        // An area recording: scrolling outside it starts a group, and later joins one inside.
+        let raw = [
+            PointerScrollEvent(time: 0, x: 1.5, y: 0.5, dx: 0, dy: -100),
+            PointerScrollEvent(time: 0.03, x: 0.5, y: 0.5, dx: 0, dy: -4),
+            PointerScrollEvent(time: 0.05, x: 0.5, y: 0.5, dx: 0, dy: -4),
+            PointerScrollEvent(time: 0.25, x: 1.0005, y: 0.5, dx: 0, dy: -4),
+            PointerScrollEvent(time: 0.3, x: 0.5, y: -0.2, dx: 0, dy: -100),
+        ]
+        #expect(PointerScrollEvent.coalesced(raw) == [
+            PointerScrollEvent(time: 0.03, x: 0.5, y: 0.5, dx: 0, dy: -8, count: 2),
+            PointerScrollEvent(time: 0.25, x: 1, y: 0.5, dx: 0, dy: -4),
+        ])
+    }
+
     @Test func extractedSchemasStillDecodeLegacyInputAndCueOnlyTranscripts() throws {
         let capture = try JSONDecoder().decode(PointerCaptureFile.self, from: Data(#"{"travel":[{"time":0,"x":0.5,"y":0.25}],"presses":[]}"#.utf8))
         #expect(capture.keystrokes.isEmpty && capture.artwork.isEmpty && !capture.isSanitized)

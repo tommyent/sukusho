@@ -285,7 +285,7 @@ nonisolated enum PointerStreamSanitizer {
     /// A tiny tolerance absorbs floating-point conversion at the capture
     /// boundary. Real out-of-frame input is discarded instead of being
     /// pinned to an edge and rendered as a misleading press.
-    private static func clampedUnitPoint(x: Double, y: Double) -> (x: Double, y: Double)? {
+    static func clampedUnitPoint(x: Double, y: Double) -> (x: Double, y: Double)? {
         guard x.isFinite, y.isFinite,
               x >= -0.001, x <= 1.001,
               y >= -0.001, y <= 1.001 else {
