@@ -339,6 +339,8 @@ final class AnnoCanvasNSView: NSView {
         context.setStrokeColor(accent.cgColor)
         context.setLineWidth(lineWidth)
         context.strokePath()
+
+        if let tail = editor.textTailHandlePoint { drawRoundHandle(at: tail, in: context) }
     }
 
     private func drawRoundHandle(at point: Vec, in context: CGContext) {

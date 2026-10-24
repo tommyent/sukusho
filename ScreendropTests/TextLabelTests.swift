@@ -266,6 +266,99 @@ struct TextLabelTests {
         #expect(abs(bounds.maxY - 1000) < 0.01 && bounds.minX < 150)
     }
 
+    // MARK: - sd-cxui: handle, drag, undo, hit-testing
+
+    static func pointer(_ x: Double, _ y: Double) -> PointerInfo { EditorInteractionTests.pointer(x, y) }
+
+    /// An editor at 1:1 with one selected boxed label at page (100, 100).
+    static func labelEditor(tail: Vec? = nil, align: TextAlign = .start) -> (AnnoEditor, AnnoShapeID) {
+        let editor = AnnoEditor()
+        editor.viewport = AnnoViewport(imageFrame: CGRect(x: 0, y: 0, width: 800, height: 600),
+                                       imageSize: CGSize(width: 800, height: 600))
+        var props = tailed(tail)
+        props.align = align
+        let shape = AnnoShape(x: 100, y: 100, kind: .text(props))
+        editor.replaceDocument(shapes: [shape])
+        editor.tool = .select
+        editor.selectedIds = [shape.id]
+        return (editor, shape.id)
+    }
+
+    static func tip(_ editor: AnnoEditor, _ id: AnnoShapeID) -> Vec? { editor.document.shape(id)?.textProps?.tail }
+
+    @Test func pullHandleDrawsOutATailInOneUndoStep() throws {
+        let (editor, id) = Self.labelEditor()
+        let box = TextMeasure.outerRect(Self.boxed("Like this"))
+        let pull = try #require(editor.textTailHandlePoint)
+        #expect(abs(pull.x - (100 + box.midX)) < 1e-9 && abs(pull.y - (100 + box.maxY + 20)) < 1e-9)
+        #expect(editor.handle(at: pull) == .textTail)
+        #expect(editor.handle(at: Vec(pull.x, 100 + box.maxY)) == .bottom, "the bottom resize handle still works")
+
+        // A press without a drag makes no tail.
+        editor.pointerDown(Self.pointer(pull.x, pull.y))
+        editor.pointerUp(Self.pointer(pull.x, pull.y))
+        #expect(Self.tip(editor, id) == nil)
+
+        editor.pointerDown(Self.pointer(pull.x, pull.y))
+        editor.pointerMove(Self.pointer(300, 300))
+        editor.pointerMove(Self.pointer(400, 380))
+        editor.pointerUp(Self.pointer(400, 380))
+        let tip = try #require(Self.tip(editor, id))
+        #expect(tip.x == 300 && tip.y == 280, "the tip is the pointer, in the label's space")
+        let handle = try #require(editor.textTailHandlePoint)
+        #expect(abs(handle.x - 400) < 1e-9 && abs(handle.y - 380) < 1e-9, "the handle moves to the tip")
+        editor.undo()
+        #expect(Self.tip(editor, id) == nil, "one undo step takes the whole drag back")
+        editor.redo()
+        #expect(Self.tip(editor, id)?.x == 300)
+    }
+
+    @Test func droppingTheTipOnTheBoxRemovesTheTail() throws {
+        let (editor, id) = Self.labelEditor(tail: Vec(100, 300))
+        let tip = try #require(editor.textTailHandlePoint)
+        #expect(abs(tip.x - 200) < 1e-9 && abs(tip.y - 400) < 1e-9)
+        editor.pointerDown(Self.pointer(tip.x, tip.y))
+        editor.pointerMove(Self.pointer(130, 130))
+        #expect(TextMeasure.tailPath(try #require(editor.document.shape(id)?.textProps)) == nil,
+                "no tail is drawn while the tip is on the box")
+        editor.pointerUp(Self.pointer(130, 130))
+        #expect(Self.tip(editor, id) == nil)
+        editor.undo()
+        #expect(Self.tip(editor, id)?.y == 300, "undo brings it back")
+    }
+
+    @Test func theTailGrabsItsLabelButTheFrameIsTheBox() throws {
+        let (editor, id) = Self.labelEditor(tail: Vec(100, 300))
+        let box = TextMeasure.outerRect(Self.boxed("Like this"))
+        // Halfway down the tail, far below the box and its click margin; then beside it.
+        #expect(editor.hitShape(at: Vec(210, 285))?.id == id)
+        #expect(editor.hitShape(at: Vec(260, 285)) == nil)
+        let frame = try #require(editor.selectionBounds).box
+        #expect(abs(frame.y - box.minY) < 1e-9 && abs(frame.h - box.height) < 1e-9 && abs(frame.w - box.width) < 1e-9)
+
+        // A press on the tail moves the label, tail and all.
+        editor.selectedIds = []
+        editor.pointerDown(Self.pointer(210, 285))
+        editor.pointerMove(Self.pointer(230, 295))
+        editor.pointerUp(Self.pointer(230, 295))
+        let shape = try #require(editor.document.shape(id))
+        #expect(shape.x == 120 && shape.y == 110 && Self.tip(editor, id)?.y == 300)
+    }
+
+    @Test func noTailHandleWithoutABoxOrWhileTyping() {
+        let (editor, id) = Self.labelEditor(tail: Vec(100, 300))
+        editor.startEditingText(id)
+        #expect(editor.textTailHandlePoint == nil)
+        editor.stopEditingText()
+        editor.applyStyleToSelection { shape in
+            guard case var .text(props) = shape.kind else { return }
+            props.boxStyle = .plain
+            shape.kind = .text(props)
+        }
+        #expect(editor.textTailHandlePoint == nil && editor.handle(at: Vec(200, 400)) != .textTail)
+        #expect(Self.tip(editor, id)?.y == 300, "the tip is kept for when the box comes back")
+    }
+
     /// An overlay synced to one boxed label at `zoom`, with no window.
     static func overlay(_ props: TextProps, zoom: Double) -> (AnnoTextEditorOverlay, AnnoEditor) {
         let editor = AnnoEditor()

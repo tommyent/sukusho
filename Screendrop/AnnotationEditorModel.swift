@@ -214,7 +214,7 @@ final class AnnotationEditorModel {
 
     var isTransformingExistingAnnotation: Bool {
         switch engine.interaction {
-        case .translating, .resizing, .rotating, .draggingArrowHandle, .draggingMagnifier: true
+        case .translating, .resizing, .rotating, .draggingArrowHandle, .draggingTextTail, .draggingMagnifier: true
         default: false
         }
     }
