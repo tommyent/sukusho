@@ -93,7 +93,9 @@ enum RecordingSessionRenderer {
     ) async throws -> RecordingStudioExporter.Configuration {
         let manifest = session.loadCaptureManifest()
         let pointerSynthesized = manifest?.pointerSynthesized == true
-        let exportSettings = editDocument?.exportSettings ?? VideoCompressionSettings()
+        // No saved choice: the one Studio would open the recording with, as a share.
+        // shortcut: a render stamped with no document keeps its size after the remembered choice changes; stamp the settings if that matters.
+        let exportSettings = editDocument?.exportSettings ?? RecordingExportPreferences.lastSettings.forVideoRendering
         let audioVolume = RecordingAudioGain.normalized(editDocument?.audioVolume ?? 1)
         let audioReplacementURL = !exportSettings.removeAudio && audioVolume > 0
             ? editDocument?.replacementAudioFileName.map {

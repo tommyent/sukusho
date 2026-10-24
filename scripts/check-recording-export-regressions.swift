@@ -783,6 +783,37 @@ struct RecordingExportRegressionChecks {
         print("PASS: an HEVC project uploads, stamps and shares H.264 and exports HEVC locally without reusing the share render; an H.264 export reuses it; a bare movie's agent prompt renders H.264")
     }
 
+    /// A recording without saved edits renders for Copy and uploads with the export choice Studio opens it with,
+    /// as a share: H.264, never GIF (sd-5oxt).
+    static func unsavedRenderFollowsRememberedExport(in directory: URL) async throws {
+        let domain = ProcessInfo.processInfo.processName // emptied as in hevcDefaultMigration
+        UserDefaults.standard.removePersistentDomain(forName: domain)
+        defer {
+            UserDefaults.standard.removePersistentDomain(forName: domain)
+            CFPreferencesAppSynchronize(domain as CFString)
+        }
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("remembered.screendroprec"))
+        try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
+        try await movie(at: session.screenURL)
+        let plain = try await RecordingSessionRenderer.makeConfiguration(for: session).exportSettings
+        try check(plain.resolution == .original && plain.codec == .h264 && !plain.effectiveExportsGIF,
+                  "With nothing remembered, an unsaved recording no longer renders full size H.264")
+
+        var remembered = VideoCompressionSettings(quality: .low, codec: .hevc, resolution: .p720)
+        remembered.container = .mp4; remembered.exportsGIF = true; remembered.frameRate = .fps30
+        RecordingExportPreferences.lastSettings = remembered
+        let settings = try await RecordingSessionRenderer.makeConfiguration(for: session).exportSettings
+        try check(settings.resolution == .p720 && settings.quality == .low && settings.effectiveContainer == .mp4
+                  && settings.effectiveFrameRate == .fps30, "An unsaved recording ignored the remembered export choice")
+        try check(settings.codec == .h264 && !settings.effectiveExportsGIF, "An unsaved recording's Copy/upload render is not an H.264 movie")
+        let model = RecordingStudioModel(url: session.directoryURL)
+        defer { model.teardown() }
+        await model.load()
+        try check(model.isLoaded && model.currentDocument().forVideoRendering.exportSettings == settings,
+                  "Studio's share render and the unsaved recording's render disagree")
+        print("PASS: an unsaved recording renders Copy/uploads with the remembered export choice as H.264 movie (full size H.264 with nothing remembered)")
+    }
+
     /// The remembered export default moves from H.264 to HEVC once; any later choice sticks (sd-3ohr).
     static func hevcDefaultMigration(in directory: URL) async throws {
         // UserDefaults ignores the isolated home, so this process's own domain is emptied afterwards
@@ -1485,6 +1516,7 @@ struct RecordingExportRegressionChecks {
         try await unreadableDraft(in: directory)
         try await musicDelivery(in: directory)
         try await sharedRendersStayH264(in: directory)
+        try await unsavedRenderFollowsRememberedExport(in: directory)
         try await hevcDefaultMigration(in: directory)
         try await replacementVideoTiming(in: directory)
         try await backgroundMusicMixing(in: directory)
