@@ -67,8 +67,11 @@ nonisolated struct RecordingSession: Sendable, Equatable {
 
     /// The name shown wherever the project is listed.
     var displayName: String {
-        customName ?? directoryURL.deletingPathExtension().lastPathComponent
+        customName ?? packageName
     }
+
+    /// The package's own name, which a rename in the Library doesn't change.
+    var packageName: String { directoryURL.deletingPathExtension().lastPathComponent }
 
     /// The name given in the Library or Studio's title bar, if any.
     var customName: String? {

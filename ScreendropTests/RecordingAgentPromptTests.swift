@@ -306,7 +306,7 @@ struct RecordingAgentPromptTests {
         #expect(try pixel(image, x: 3 * 96 + 24 + 9, y: 64 + 32)[0] < 60)
     }
 
-    @Test func generatedFolderContainsMatchingStillsAndPreservesPriorExport() async throws {
+    @Test func generatedFolderContainsMatchingStillsAndReplacesPriorExport() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -325,11 +325,15 @@ struct RecordingAgentPromptTests {
         let red = try sample(firstData), blue = try sample(lastData)
         #expect(red[0] > 200 && red[2] < 50)
         #expect(blue[2] > 200 && blue[0] < 50)
+        let stale = first.appendingPathComponent("stale.txt")
+        try "old".write(to: stale, atomically: true, encoding: .utf8)
         let again = try await RecordingAgentPromptWriter.write(movie: movie, plan: plan, to: directory)
-        #expect(again.lastPathComponent == "Fixture-path_agent-prompt_2")
-        let third = try await RecordingAgentPromptWriter.write(movie: movie, plan: plan, to: directory)
-        #expect(third.lastPathComponent == "Fixture-path_agent-prompt_3")
+        #expect(again.path == first.path)
+        #expect(!FileManager.default.fileExists(atPath: stale.path))
         #expect(try String(contentsOf: first.appendingPathComponent("prompt.md"), encoding: .utf8) == markdown)
+        let named = try await RecordingAgentPromptWriter.write(movie: movie, plan: plan, to: directory, name: "Screendrop_1")
+        #expect(named.lastPathComponent == "Screendrop_1_agent-prompt")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).filter { $0.contains("_agent-prompt") }.count == 2)
         let invalid = RecordingAgentPromptPlan(title: "Fixture", timeline: .full(sourceDuration: 99), cues: [], words: [], capture: nil)
         do { _ = try await RecordingAgentPromptWriter.write(movie: movie, plan: invalid, to: directory); Issue.record("Mismatched movie accepted") }
         catch RecordingAgentPromptWriter.ExportError.invalidMovie { }

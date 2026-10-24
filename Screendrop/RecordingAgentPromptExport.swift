@@ -44,16 +44,93 @@ enum RecordingAgentPromptExport {
         let snapshot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension(movie.pathExtension)
         try FileManager.default.copyItem(at: movie, to: snapshot)
         defer { try? FileManager.default.removeItem(at: snapshot) }
-        let folder = try await RecordingAgentPromptWriter.write(movie: snapshot, plan: plan, to: directory,
+        // Named after the package, which a rename doesn't change, so each recording keeps one folder.
+        let folder = try await RecordingAgentPromptWriter.write(movie: snapshot, plan: plan, to: directory, name: session.packageName,
                                                                 master: session.screenURL) { progress(0.8 + $0 * 0.2) }
-        try RecordingAgentPromptWriter.recordLatest(folder, title: plan.title,
-                                                    recording: session.directoryURL.deletingPathExtension().lastPathComponent)
+        try RecordingAgentPromptWriter.recordLatest(folder, title: plan.title, recording: session.packageName)
         return folder
     }
 
-    /// For an agent outside Rex; Rex's Insert Sukusho Prompt reads latest.json. Finder stays put.
+    /// After a successful export: the path for an agent outside Rex (Rex's
+    /// Insert Sukusho Prompt reads latest.json), the Glass chime, and the
+    /// Library's card marks. Finder stays put.
+    static func finished(_ folder: URL) {
+        copyPath(folder)
+        if ScreendropPreferences.playSounds { NSSound(named: "Glass")?.play() }
+        AccessibilityNotification.Announcement("Agent Prompt saved").post()
+        AgentPromptIndex.shared.reload()
+    }
+
     static func copyPath(_ directory: URL) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(directory.path, forType: .string)
+    }
+}
+
+/// Which recordings have an Agent Prompt in `~/Agent Prompts`, and which one
+/// latest.json names, for the circle on Library cards.
+@Observable
+final class AgentPromptIndex {
+    static let shared = AgentPromptIndex()
+
+    enum State: Equatable {
+        /// latest.json names it, so Rex's ⌃⌥⌘P sends it.
+        case current
+        /// Another recording's prompt is current.
+        case available
+        /// The recording was edited after this prompt was written.
+        case stale
+    }
+
+    /// When each folder's prompt.md was written, by folder name.
+    private(set) var written: [String: Date] = [:]
+    private(set) var latestPath: String?
+
+    func reload() {
+        let directory = RecordingAgentPromptWriter.directoryURL()
+        var written: [String: Date] = [:]
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        where name.hasSuffix(RecordingAgentPromptWriter.folderSuffix) {
+            let prompt = directory.appendingPathComponent(name, isDirectory: true).appendingPathComponent("prompt.md")
+            if let date = Self.modified(prompt) { written[name] = date }
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let latest = (try? Data(contentsOf: directory.appendingPathComponent("latest.json")))
+            .flatMap { try? decoder.decode(RecordingAgentPromptWriter.Latest.self, from: $0) }?.path
+        // Only real changes, so cards don't redraw on every Library refresh.
+        if written != self.written { self.written = written }
+        if latest != latestPath { latestPath = latest }
+    }
+
+    func folder(for session: RecordingSession) -> URL {
+        RecordingAgentPromptWriter.directoryURL().appendingPathComponent(RecordingAgentPromptWriter.folderName(session.packageName), isDirectory: true)
+    }
+
+    /// Nil when the recording has no prompt.
+    func state(for session: RecordingSession) -> State? {
+        let folder = folder(for: session)
+        guard let written = written[folder.lastPathComponent] else { return nil }
+        let edited = [session.editDocumentURL, session.draftDocumentURL].compactMap(Self.modified).max()
+        if let edited, edited > written { return .stale }
+        return latestPath == folder.path ? .current : .available
+    }
+
+    /// Makes this recording's prompt the one ⌃⌥⌘P sends, with no new export.
+    func makeCurrent(_ session: RecordingSession) throws {
+        let folder = folder(for: session)
+        try RecordingAgentPromptWriter.recordLatest(folder, title: session.displayName, recording: session.packageName)
+        RecordingAgentPromptExport.copyPath(folder)
+        reload()
+    }
+
+    /// The recording went to the Trash; its prompt follows it there.
+    func trash(for session: RecordingSession) {
+        try? FileManager.default.trashItem(at: folder(for: session), resultingItemURL: nil)
+        reload()
+    }
+
+    private nonisolated static func modified(_ url: URL) -> Date? {
+        try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
     }
 }

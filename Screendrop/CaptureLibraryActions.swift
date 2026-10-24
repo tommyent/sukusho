@@ -140,6 +140,7 @@ extension CaptureLibraryModel {
                     removedEntries.insert(item.id)
                     if let session = item.session {
                         ScreenshotPreviewStack.shared.dismissRecordingSession(session.directoryURL)
+                        AgentPromptIndex.shared.trash(for: session)
                     } else {
                         let cards = ScreenshotPreviewStack.shared.items.filter { $0.url.standardizedFileURL == item.fileURL.standardizedFileURL }
                         for card in cards { ScreenshotPreviewStack.shared.dismiss(id: card.id) }
@@ -343,13 +344,25 @@ extension CaptureLibraryModel {
                     if self.agentPromptExport?.id == id { self.agentPromptExport = (id, progress) }
                 }
             }
-            RecordingAgentPromptExport.copyPath(folder)
+            RecordingAgentPromptExport.finished(folder)
             self.savedAgentPrompt = folder
             // Outside the operation, so the Library isn't busy while the mark shows.
             Task {
                 try? await Task.sleep(for: .seconds(8))
                 if self.savedAgentPrompt == folder { self.savedAgentPrompt = nil }
             }
+        }
+    }
+
+    /// The circle on a recording's card: a stale prompt exports again, another
+    /// recording's becomes the one ⌃⌥⌘P sends, and the current one shows in Finder.
+    func useAgentPrompt(_ item: CaptureLibraryItem) {
+        guard !isBusy, let session = item.session, let state = AgentPromptIndex.shared.state(for: session) else { return }
+        switch state {
+        case .stale: exportAgentPrompt(item)
+        case .available:
+            do { try AgentPromptIndex.shared.makeCurrent(session) } catch { errorMessage = error.localizedDescription }
+        case .current: NSWorkspace.shared.activateFileViewerSelecting([AgentPromptIndex.shared.folder(for: session)])
         }
     }
 

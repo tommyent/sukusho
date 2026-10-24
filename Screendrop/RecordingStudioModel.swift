@@ -198,6 +198,8 @@ final class RecordingStudioModel {
     var exportState: RecordingStudioExportState = .idle
     /// The running export is Export Agent Prompt's, so its button shows the progress.
     private(set) var isExportingAgentPrompt = false
+    /// Export Agent Prompt's button says it's done for a moment after a success.
+    private(set) var showsAgentPromptSaved = false
     var audioExportState: RecordingStudioExportState = .idle
     var shareState: RecordingStudioShareState = .idle
     private(set) var isDeletingSharedLink = false
@@ -2885,8 +2887,9 @@ final class RecordingStudioModel {
                     // A bare movie's title is its file name.
                     try RecordingAgentPromptWriter.recordLatest(folder, title: title, recording: title)
                 } else { return }
-                RecordingAgentPromptExport.copyPath(folder)
+                RecordingAgentPromptExport.finished(folder)
                 self?.exportState = .finished(folder)
+                self?.showAgentPromptSaved()
             } catch is CancellationError {
                 self?.exportState = .idle
             } catch RecordingStudioExporter.ExportError.cancelled {
@@ -2976,6 +2979,14 @@ final class RecordingStudioModel {
                 DockExportProgressCoordinator.shared.finish(dockProgressID)
                 self?.exportState = .failed(error.localizedDescription)
             }
+        }
+    }
+
+    private func showAgentPromptSaved() {
+        showsAgentPromptSaved = true
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            self?.showsAgentPromptSaved = false
         }
     }
 
