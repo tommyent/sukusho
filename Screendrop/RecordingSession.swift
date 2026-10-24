@@ -336,6 +336,9 @@ nonisolated struct CaptureManifest: Codable, Sendable, Equatable {
     /// whose pixels may already contain the configured mouse indicators.
     var pressEffectsBaked: Bool?
     var pressEffectsEnabled: Bool?
+    /// Whether Sukusho's own windows were visible to the capture when it
+    /// started. Nil for sessions recorded before this was kept.
+    var includesAppWindows: Bool?
 
     static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()

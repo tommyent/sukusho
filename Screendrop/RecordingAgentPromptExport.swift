@@ -29,6 +29,17 @@ enum RecordingAgentPromptExport {
         }
     }
 
+    /// What Agent Prompt writes for a session, from its input log and capture manifest.
+    static func plan(for session: RecordingSession, timeline: RecordingClipTimeline,
+                     transcript: RecordingTranscript) -> RecordingAgentPromptPlan {
+        let capture = session.loadPointerCapture()
+        let input = FileManager.default.fileExists(atPath: session.pointerCaptureURL.path) ? session.pointerCaptureURL : nil
+        return RecordingAgentPromptPlan(title: session.displayName, timeline: timeline, cues: transcript.cues, words: transcript.words,
+                                        capture: capture, cursorNames: PointerArtworkCapture.names(for: capture?.artwork ?? []),
+                                        files: .init(screen: session.screenURL, input: input),
+                                        excludesAppWindows: session.loadCaptureManifest()?.includesAppWindows == false)
+    }
+
     static func write(session: RecordingSession, document: RecordingEditDocument?, to directory: URL,
                       progress: @escaping @Sendable (Double) -> Void = { _ in }) async throws -> URL {
         let duration = try await AVURLAsset(url: session.screenURL).load(.duration).seconds
@@ -38,19 +49,18 @@ enum RecordingAgentPromptExport {
         } else {
             timeline = .legacyTrim(start: document?.trimStart, end: document?.trimEnd, sourceDuration: duration)
         }
-        let title = session.displayName
-        let capture = session.loadPointerCapture()
         let transcript = try await transcript(cues: document?.subtitleCues ?? [], words: document?.subtitleWords ?? [],
                                               screenURL: session.screenURL, canTranscribe: session.loadCaptureManifest()?.includesMicrophone == true)
         try Task.checkCancellation()
-        let plan = RecordingAgentPromptPlan(title: title, timeline: timeline, cues: transcript.cues, words: transcript.words, capture: capture)
+        let plan = plan(for: session, timeline: timeline, transcript: transcript)
         let movie = try await RecordingSessionRenderer.ensureDeliverable(for: session, editDocument: document) { progress($0 * 0.8) }
         try Task.checkCancellation()
         // Studio can invalidate its cached movie while still extraction is suspended.
         let snapshot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension(movie.pathExtension)
         try FileManager.default.copyItem(at: movie, to: snapshot)
         defer { try? FileManager.default.removeItem(at: snapshot) }
-        return try await RecordingAgentPromptWriter.write(movie: snapshot, plan: plan, to: directory) { progress(0.8 + $0 * 0.2) }
+        return try await RecordingAgentPromptWriter.write(movie: snapshot, plan: plan, to: directory,
+                                                          master: session.screenURL) { progress(0.8 + $0 * 0.2) }
     }
 
     static func reveal(_ directory: URL) {

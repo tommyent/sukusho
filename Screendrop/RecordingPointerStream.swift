@@ -119,6 +119,16 @@ nonisolated enum PointerStreamSanitizer {
         sanitized.keystrokes = sanitizedKeystrokes(capture.keystrokes)
         sanitized.artwork = artwork
         sanitized.ink = RecordingInkStroke.sanitized(capture.ink)
+        sanitized.scrolls = capture.scrolls.compactMap { scroll -> PointerScrollEvent? in
+            guard scroll.time.isFinite, scroll.dx.isFinite, scroll.dy.isFinite,
+                  let point = clampedUnitPoint(x: scroll.x, y: scroll.y) else { return nil }
+            var kept = scroll
+            kept.time = max(0, scroll.time)
+            kept.x = point.x
+            kept.y = point.y
+            kept.count = max(1, scroll.count)
+            return kept
+        }.sorted { $0.time < $1.time }
         sanitized.isSanitized = true
         return buildStream(from: sanitized)
     }
@@ -275,7 +285,7 @@ nonisolated enum PointerStreamSanitizer {
     /// A tiny tolerance absorbs floating-point conversion at the capture
     /// boundary. Real out-of-frame input is discarded instead of being
     /// pinned to an edge and rendered as a misleading press.
-    private static func clampedUnitPoint(x: Double, y: Double) -> (x: Double, y: Double)? {
+    static func clampedUnitPoint(x: Double, y: Double) -> (x: Double, y: Double)? {
         guard x.isFinite, y.isFinite,
               x >= -0.001, x <= 1.001,
               y >= -0.001, y <= 1.001 else {

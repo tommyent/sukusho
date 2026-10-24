@@ -41,6 +41,13 @@ nonisolated final class PointerActivityRecorder: NSObject, @unchecked Sendable {
         let artworkID: String?
     }
 
+    private struct CapturedScroll {
+        let uptime: TimeInterval
+        let point: CGPoint
+        let dx: Double
+        let dy: Double
+    }
+
     private struct CapturedFrameGeometry {
         let uptime: TimeInterval
         let screenRect: CGRect
@@ -66,6 +73,8 @@ nonisolated final class PointerActivityRecorder: NSObject, @unchecked Sendable {
     private var tracksDynamicGeometry = false
     private var samples: [CapturedPointerSample] = []
     private var presses: [CapturedPressEvent] = []
+    /// Only the event tap sees scrolling; without Input Monitoring none is recorded.
+    private var scrolls: [CapturedScroll] = []
     private var frameGeometries: [CapturedFrameGeometry] = []
     private var capturedArtwork: [PointerArtwork] = []
     private var activeArtworkID: String?
@@ -97,6 +106,7 @@ nonisolated final class PointerActivityRecorder: NSObject, @unchecked Sendable {
             self.tracksDynamicGeometry = tracksDynamicGeometry
             samples = []
             presses = []
+            scrolls = []
             frameGeometries = []
             capturedArtwork = []
             activeArtworkID = nil
@@ -325,6 +335,18 @@ nonisolated final class PointerActivityRecorder: NSObject, @unchecked Sendable {
                     artworkID: press.artworkID
                 )
             }
+            capture.scrolls = PointerScrollEvent.coalesced(scrolls.compactMap { scroll in
+                guard let time = videoTime(
+                    for: scroll.uptime,
+                    sessionStartUptime: sessionStartUptime,
+                    duration: duration,
+                    pauseIntervals: completedPauses
+                ),
+                let point = normalizedPoint(for: scroll.point, at: scroll.uptime, mapping: mapping) else {
+                    return nil
+                }
+                return PointerScrollEvent(time: time, x: point.x, y: point.y, dx: scroll.dx, dy: scroll.dy)
+            })
             capture.artwork = capturedArtwork
             capture.ink = RecordingInkStroke.mapped(
                 ink,
@@ -345,6 +367,7 @@ nonisolated final class PointerActivityRecorder: NSObject, @unchecked Sendable {
 
             samples = []
             presses = []
+            scrolls = []
             frameGeometries = []
             capturedArtwork = []
             hasFrameAlignedSample = false
@@ -363,7 +386,8 @@ nonisolated final class PointerActivityRecorder: NSObject, @unchecked Sendable {
             .mouseMoved,
             .leftMouseDragged, .rightMouseDragged, .otherMouseDragged,
             .leftMouseDown, .rightMouseDown, .otherMouseDown,
-            .leftMouseUp, .rightMouseUp, .otherMouseUp
+            .leftMouseUp, .rightMouseUp, .otherMouseUp,
+            .scrollWheel
         ]
         let mask = eventTypes.reduce(CGEventMask(0)) { partial, type in
             partial | (CGEventMask(1) << type.rawValue)
@@ -463,6 +487,11 @@ nonisolated final class PointerActivityRecorder: NSObject, @unchecked Sendable {
                     phase: .up,
                     artworkID: artworkID
                 ))
+            case .scrollWheel:
+                let dx = event.getDoubleValueField(.scrollWheelEventPointDeltaAxis2)
+                let dy = event.getDoubleValueField(.scrollWheelEventPointDeltaAxis1)
+                guard dx != 0 || dy != 0 else { break }
+                scrolls.append(CapturedScroll(uptime: uptime, point: point, dx: dx, dy: dy))
             default:
                 break
             }
