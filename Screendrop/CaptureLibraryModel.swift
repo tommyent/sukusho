@@ -240,6 +240,7 @@ final class CaptureLibraryModel {
             } onCancel: { scan.cancel() }
             guard !Task.isCancelled else { return }
             let (result, recordingsListed) = scanned
+            AgentPromptIndex.shared.reload()
             items = Self.titled(result)
             savedNames.removeAll()
             screenshotCount = result.lazy.filter { !$0.isVideo }.count

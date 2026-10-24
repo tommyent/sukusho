@@ -344,7 +344,8 @@ private struct RecordingStudioContent: View {
             }
             .disabled(!model.isLoaded || model.shareState.isBusy || model.isIsolatingVoice || model.hasUnreadableDraft)
         case .exporting(let progress):
-            SharePill(stage: "Exporting", progress: progress, cancelLabel: "Cancel Export") {
+            SharePill(stage: "Exporting", progress: progress, cancelLabel: "Cancel Export",
+                      tint: model.isExportingAgentPrompt ? CardMark.green : .accentColor) {
                 model.cancelExport()
             }
         case .finished(let url):
@@ -390,18 +391,33 @@ struct StudioProgressRing: View {
     let progress: Double
 
     var size: CGFloat = 14
+    /// Agent Prompt's rings are green; the others keep the accent colour.
+    var tint: Color = .accentColor
+    var lineWidth: CGFloat = 2
 
     var body: some View {
         ZStack {
             Circle()
-                .stroke(Color.primary.opacity(0.15), lineWidth: 2)
+                .stroke(Color.primary.opacity(0.15), lineWidth: lineWidth)
             Circle()
                 .trim(from: 0, to: max(0.03, min(1, progress)))
-                .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .stroke(tint, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
                 .rotationEffect(.degrees(-90))
         }
         .frame(width: size, height: size)
         .animation(.easeOut(duration: 0.15), value: progress)
+    }
+}
+
+/// A green tick that bounces once as it appears; with Reduce Motion it just appears.
+private struct BouncingCheck: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var bounces = 0
+
+    var body: some View {
+        Image(systemName: "checkmark.circle.fill")
+            .symbolEffect(.bounce, value: bounces)
+            .onAppear { if !reduceMotion { bounces += 1 } }
     }
 }
 
@@ -413,11 +429,12 @@ private struct SharePill: View {
     let stage: String
     let progress: Double
     var cancelLabel = "Cancel Upload"
+    var tint: Color = .accentColor
     let onCancel: () -> Void
 
     var body: some View {
         HStack(spacing: 6) {
-            StudioProgressRing(progress: progress)
+            StudioProgressRing(progress: progress, tint: tint)
 
             Text("\(stage) \(Int((progress * 100).rounded()))%")
                 .font(.system(size: 12, weight: .medium).monospacedDigit())
@@ -3362,7 +3379,7 @@ private struct StudioInspector: View {
                 Group {
                     if model.isExportingAgentPrompt, case .exporting(let progress) = model.exportState {
                         HStack(spacing: 6) {
-                            StudioProgressRing(progress: progress, size: 12)
+                            StudioProgressRing(progress: progress, size: 12, tint: CardMark.green)
                             Text("Exporting Agent Prompt \(Int((progress * 100).rounded()))%")
                                 .font(.inspectorValue.monospacedDigit())
                                 .contentTransition(.numericText())
@@ -3371,6 +3388,18 @@ private struct StudioInspector: View {
                         .frame(maxWidth: .infinity)
                         .inspectorField()
                         .foregroundStyle(Color.primary.opacity(0.85))
+                    } else if model.showsAgentPromptSaved {
+                        HStack(spacing: 6) {
+                            BouncingCheck()
+                                .font(.system(size: 12, weight: .semibold))
+                            Text("Agent Prompt Saved")
+                                .font(.inspectorValue)
+                        }
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity)
+                        .inspectorField()
+                        .foregroundStyle(CardMark.green)
+                        .transition(.opacity)
                     } else {
                         InspectorActionButton("Export Agent Prompt", systemImage: "text.document") {
                             model.exportAgentPrompt()
@@ -3378,6 +3407,7 @@ private struct StudioInspector: View {
                         .disabled(!model.isLoaded || model.hasRunningWork || model.hasUnreadableDraft || model.transcriptionState.isTranscribing)
                     }
                 }
+                .animation(.easeOut(duration: 0.15), value: model.showsAgentPromptSaved)
                 .padding(.horizontal, InspectorMetrics.horizontalPadding)
                 .padding(.vertical, 10)
 

@@ -21,9 +21,10 @@ nonisolated enum RecordingAgentPromptWriter {
     }
 
     /// `master` is the unedited screen recording; with it, each moment also
-    /// gets a strip of frames around it.
+    /// gets a strip of frames around it. The folder is named after `name`
+    /// (the plan's title by default), and a later export of the same name replaces it.
     @concurrent
-    static func write(movie: URL, plan: RecordingAgentPromptPlan, to directory: URL, master: URL? = nil,
+    static func write(movie: URL, plan: RecordingAgentPromptPlan, to directory: URL, name: String? = nil, master: URL? = nil,
                       progress: @escaping @Sendable (Double) -> Void = { _ in }) async throws -> URL {
         try Task.checkCancellation()
         let asset = AVURLAsset(url: movie)
@@ -77,24 +78,32 @@ nonisolated enum RecordingAgentPromptWriter {
         try plan.markdown(frameTimes: frameTimes, strips: stripSpans)
             .write(to: staging.appendingPathComponent("prompt.md"), atomically: true, encoding: .utf8)
         try Task.checkCancellation()
-        let safe = plan.title.components(separatedBy: CharacterSet(charactersIn: "/:\\").union(.controlCharacters))
-            .joined(separator: "-").trimmingCharacters(in: .whitespacesAndNewlines)
-        let stem = String((safe.isEmpty || safe == "." || safe == ".." ? "Recording" : safe).prefix(100)) + "_agent-prompt"
-        for number in 1...10_000 {
-            let name = number == 1 ? stem : "\(stem)_\(number)"
-            let destination = directory.appendingPathComponent(name, isDirectory: true)
-            if FileManager.default.fileExists(atPath: destination.path) { continue }
-            do {
-                try FileManager.default.moveItem(at: staging, to: destination)
-                return destination
-            } catch CocoaError.fileWriteFileExists { continue }
+        let destination = directory.appendingPathComponent(folderName(name ?? plan.title), isDirectory: true)
+        do {
+            try FileManager.default.moveItem(at: staging, to: destination)
+        } catch CocoaError.fileWriteFileExists {
+            // One folder per recording: the new export takes the old one's place in one step.
+            _ = try FileManager.default.replaceItemAt(destination, withItemAt: staging)
         }
-        throw CocoaError(.fileWriteFileExists)
+        return destination
+    }
+
+    static let folderSuffix = "_agent-prompt"
+
+    static func folderName(_ name: String) -> String {
+        let safe = name.components(separatedBy: CharacterSet(charactersIn: "/:\\").union(.controlCharacters))
+            .joined(separator: "-").trimmingCharacters(in: .whitespacesAndNewlines)
+        return String((safe.isEmpty || safe == "." || safe == ".." ? "Recording" : safe).prefix(100)) + folderSuffix
+    }
+
+    /// `~/Agent Prompts`, without creating it.
+    static func directoryURL(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
+        home.appendingPathComponent("Agent Prompts", isDirectory: true)
     }
 
     /// `~/Agent Prompts`, where every export goes; owner-only, since prompts hold screen content.
     static func centralDirectory(home: URL = FileManager.default.homeDirectoryForCurrentUser) throws -> URL {
-        let directory = home.appendingPathComponent("Agent Prompts", isDirectory: true)
+        let directory = directoryURL(home: home)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])
         // An existing folder may have been made with other permissions.

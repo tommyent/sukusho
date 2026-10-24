@@ -449,7 +449,8 @@ struct LibraryCellContent: View {
                 .accessibilityLabel("\(item.title), \(item.kindTitle), \(item.subtitle)"
                     + (item.isVideo ? ", \(item.durationText)" : "")
                     + (item.cloudURL != nil ? ", shared" : "")
-                    + (item.tags.isEmpty ? "" : ", tags: \(item.tags.joined(separator: ", "))"))
+                    + (item.tags.isEmpty ? "" : ", tags: \(item.tags.joined(separator: ", "))")
+                    + agentPromptDescription(item))
                 .accessibilityAddTraits(selected ? [.isSelected] : [])
                 .accessibilityActions {
                     Button("Open") { act(.edit, on: item) }
@@ -459,6 +460,9 @@ struct LibraryCellContent: View {
                         Button("Copy Cloud Link") { CaptureLibraryModel.shared.copyLink(item) }
                     } else if CloudUploader.shared.isConfigured {
                         Button("Share to Cloud") { CaptureLibraryModel.shared.pendingCloudUpload = item }
+                    }
+                    if let state = item.session.flatMap({ AgentPromptIndex.shared.state(for: $0) }) {
+                        Button(state.accessibilityAction) { CaptureLibraryModel.shared.useAgentPrompt(item) }
                     }
                 }
             } else { Color.clear }
@@ -475,12 +479,30 @@ struct LibraryCellContent: View {
         model.perform(action)
     }
 
+    private func agentPromptDescription(_ item: CaptureLibraryItem) -> String {
+        if let export = CaptureLibraryModel.shared.agentPromptExport, export.id == item.id {
+            return ", exporting agent prompt, \(Int((export.progress * 100).rounded())) percent"
+        }
+        return item.session.flatMap { AgentPromptIndex.shared.state(for: $0) }.map { ", " + $0.accessibilityDescription } ?? ""
+    }
+
     private func isRenaming(_ item: CaptureLibraryItem) -> Bool {
         let session = CaptureLibraryModel.shared.renameSession
         return session?.id == item.id && session?.location == .card
     }
 
     private func labels(_ item: CaptureLibraryItem) -> some View {
+        HStack(spacing: 6) {
+            titleAndSubtitle(item)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if item.session != nil {
+                // A reused cell must not animate the last capture's circle into this one.
+                AgentPromptCardMark(item: item).id(item.id)
+            }
+        }
+    }
+
+    private func titleAndSubtitle(_ item: CaptureLibraryItem) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 5) {
                 if isRenaming(item) {
@@ -536,19 +558,90 @@ struct LibraryCellContent: View {
                         .padding(7)
                 }
             }
-            .overlay {
-                if let export = CaptureLibraryModel.shared.agentPromptExport, export.id == item.id {
-                    VStack(spacing: 4) {
-                        StudioProgressRing(progress: export.progress, size: 24)
-                        Text("\(Int((export.progress * 100).rounded()))%")
-                            .font(.caption.monospacedDigit())
-                            .contentTransition(.numericText())
-                    }
-                    .padding(10)
-                    .background(.regularMaterial, in: .rect(cornerRadius: DS.Radius.m, style: .continuous))
-                    .help("Exporting agent prompt")
+    }
+}
+
+/// A recording's Agent Prompt circle, at the right of its card's title, where
+/// the white ground makes it stand out: a green ring and percent while
+/// exporting, a green tick for the prompt Rex's ⌃⌥⌘P sends, an outline tick
+/// for one it doesn't (a click makes it the one), amber once the recording
+/// was edited since (a click exports again).
+private struct AgentPromptCardMark: View {
+    let item: CaptureLibraryItem
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let model = CaptureLibraryModel.shared
+        let progress = model.agentPromptExport.flatMap { $0.id == item.id ? $0.progress : nil }
+        let state = item.session.flatMap { AgentPromptIndex.shared.state(for: $0) }
+        Group {
+            if let progress {
+                HStack(spacing: 4) {
+                    Text("\(Int((progress * 100).rounded()))%")
+                        .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                        .contentTransition(.numericText())
+                    StudioProgressRing(progress: progress, size: 17, tint: CardMark.green, lineWidth: 2.5)
                 }
+                .foregroundStyle(CardMark.green)
+                .help("Exporting agent prompt")
+            } else if let state {
+                Button { model.useAgentPrompt(item) } label: {
+                    Image(systemName: state.symbol)
+                        .font(.system(size: 19, weight: .medium))
+                        .foregroundStyle(state.tint)
+                        .symbolEffect(.bounce, value: reduceMotion ? nil : state)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .disabled(model.isBusy)
+                .help(state.help)
+                // The tick springs in when an export finishes; Reduce Motion fades it.
+                .transition(reduceMotion ? .opacity : .scale(scale: 0.3).combined(with: .opacity))
             }
+        }
+        .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(duration: 0.45, bounce: 0.55), value: progress == nil)
+    }
+}
+
+extension AgentPromptIndex.State {
+    var symbol: String {
+        switch self {
+        case .current: "checkmark.circle.fill"
+        case .available: "checkmark.circle"
+        case .stale: "arrow.clockwise.circle.fill"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .current: CardMark.green
+        case .available: .secondary
+        case .stale: .orange
+        }
+    }
+
+    var help: String {
+        switch self {
+        case .current: "Agent Prompt ready: ⌃⌥⌘P in Rex sends it. Click to show it in Finder."
+        case .available: "Agent Prompt saved. Click to make it the one ⌃⌥⌘P in Rex sends."
+        case .stale: "Edited since its Agent Prompt. Click to export it again."
+        }
+    }
+
+    var accessibilityAction: String {
+        switch self {
+        case .current: "Show Agent Prompt in Finder"
+        case .available: "Use Agent Prompt"
+        case .stale: "Export Agent Prompt Again"
+        }
+    }
+
+    var accessibilityDescription: String {
+        switch self {
+        case .current: "agent prompt ready"
+        case .available: "agent prompt saved"
+        case .stale: "agent prompt out of date"
+        }
     }
 }
 
