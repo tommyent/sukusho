@@ -147,6 +147,87 @@ struct RecordingExportRegressionChecks {
         print("PASS: an unedited recording keeps its Stop-time render through flush and close (control: baseline never matches it); drafts and saves with edits still drop it")
     }
 
+    /// A second request for the same edits while the first renders waits for it instead of encoding beside it (sd-5oxt).
+    static func sameEditRendersOnce(in directory: URL) async throws {
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("joined.screendroprec"))
+        try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
+        try await movie(at: session.screenURL)
+        var settings = VideoCompressionSettings()
+        settings.frameRate = .fps30; settings.motionBlurEnabled = false
+        let document = RecordingEditDocument(style: RecordingStudioStyle(), zoomEnabled: false, zoomCues: [],
+            clipTimeline: .init(segments: [.init(sourceStart: 0, sourceEnd: 2)]), exportSettings: settings)
+        // Studio's package URL, then the after-capture Copy's, which it finds from the movie (trailing slash).
+        guard let copySession = RecordingDeliverable.session(for: session.screenURL) else {
+            throw Failure(description: "The Copy path found no package for its movie")
+        }
+        // Every encode writes its own temporary movie there until it is installed.
+        let exports = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(ScreendropStorage.directoryName).appendingPathComponent("StudioExports").path
+        func movies() -> Set<String> { Set((try? FileManager.default.contentsOfDirectory(atPath: exports)) ?? []) }
+        let earlier = movies()
+        final class Finished { var count = 0 }
+        let finished = Finished()
+        let calls = [session, copySession].map { session in
+            Task { () throws -> URL in
+                defer { finished.count += 1 }
+                return try await RecordingSessionRenderer.ensureDeliverable(for: session, editDocument: document)
+            }
+        }
+        var encodes = Set<String>()
+        while finished.count < calls.count {
+            encodes.formUnion(movies().subtracting(earlier))
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        let first = try await calls[0].value, second = try await calls[1].value
+        try check(encodes.count == 1 && first.path == second.path,
+                  "Two requests for the same edits made \(encodes.count) encodes")
+        try check(session.freshFinalURL(matching: document) == first, "The shared render was not installed for its edits")
+        print("PASS: two same-edit requests during one render share a single encode")
+    }
+
+    /// Agent Prompt on a never-saved, unedited recording uses the render made at Stop, which then survives closing Studio (sd-5oxt).
+    static func agentPromptReusesStopRender(in directory: URL) async throws {
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("prompt-reuse.screendroprec"))
+        try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
+        try await movie(at: session.screenURL)
+        var manifest = CaptureManifest()
+        manifest.duration = 8; manifest.pixelWidth = 320; manifest.pixelHeight = 180; manifest.pointerSynthesized = true
+        try session.writeCaptureManifest(manifest)
+        try FileManager.default.copyItem(at: session.screenURL, to: session.finalURL) // The after-capture Copy's render
+        session.writeRenderStamp(nil)
+        func installed() -> Int? { try? FileManager.default.attributesOfItem(atPath: session.finalURL.path)[.systemFileNumber] as? Int }
+        let stopRender = installed()
+
+        let model = RecordingStudioModel(url: session.directoryURL)
+        await model.load()
+        try check(model.isLoaded, "Unedited fixture did not load")
+        // The Library's Export Agent Prompt, as CaptureLibraryActions runs it while Studio is open.
+        StudioProjectRegistry.shared.flushDrafts()
+        let document = try StudioProjectRegistry.shared.document(for: session.directoryURL) ?? session.editDocumentForRendering()
+        try check(document == nil && model.deliverableDocument == nil, "Agent Prompt asked for Studio's baseline edits on an unedited recording")
+        let output = directory.appendingPathComponent("prompt-output", isDirectory: true)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: false)
+        let folder = try await RecordingAgentPromptExport.write(session: session, document: document, to: output)
+        try check(FileManager.default.fileExists(atPath: folder.appendingPathComponent("prompt.md").path), "Agent Prompt wrote no prompt")
+        try check(installed() == stopRender && session.loadRenderStamp() == nil, "Agent Prompt rendered the unedited recording again")
+        model.teardown() // Closing Studio
+        try check(session.freshFinalURL(matching: nil) == session.finalURL && installed() == stopRender,
+                  "Closing Studio dropped the render Agent Prompt used")
+
+        let edited = RecordingStudioModel(url: session.directoryURL)
+        defer { edited.teardown() }
+        await edited.load()
+        edited.zoomEnabled.toggle()
+        edited.flushDraft()
+        try check(edited.deliverableDocument == edited.currentDocument()
+                  && StudioProjectRegistry.shared.document(for: session.directoryURL) == edited.currentDocument(),
+                  "Agent Prompt lost unsaved edits")
+        let slashed = session.screenURL.deletingLastPathComponent() // as the Copy finds the package
+        try check(StudioProjectRegistry.shared.document(for: slashed) == edited.currentDocument(),
+                  "The open editor's edits were missed for a package URL with a trailing slash")
+        print("PASS: Agent Prompt on an unedited recording reuses the Stop-time render, which survives closing Studio; edits still reach it")
+    }
+
     static func quickLookInstant(in directory: URL) async throws {
         let session = RecordingSession(directoryURL: directory.appendingPathComponent("quicklook.screendroprec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
@@ -718,6 +799,37 @@ struct RecordingExportRegressionChecks {
         try check(try bare.makeAgentPromptConfiguration()?.exportSettings.codec == .h264,
                   "A bare movie's agent prompt does not render H.264")
         print("PASS: an HEVC project uploads, stamps and shares H.264 and exports HEVC locally without reusing the share render; an H.264 export reuses it; a bare movie's agent prompt renders H.264")
+    }
+
+    /// A recording without saved edits renders for Copy and uploads with the export choice Studio opens it with,
+    /// as a share: H.264, never GIF (sd-5oxt).
+    static func unsavedRenderFollowsRememberedExport(in directory: URL) async throws {
+        let domain = ProcessInfo.processInfo.processName // emptied as in hevcDefaultMigration
+        UserDefaults.standard.removePersistentDomain(forName: domain)
+        defer {
+            UserDefaults.standard.removePersistentDomain(forName: domain)
+            CFPreferencesAppSynchronize(domain as CFString)
+        }
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("remembered.screendroprec"))
+        try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
+        try await movie(at: session.screenURL)
+        let plain = try await RecordingSessionRenderer.makeConfiguration(for: session).exportSettings
+        try check(plain.resolution == .original && plain.codec == .h264 && !plain.effectiveExportsGIF,
+                  "With nothing remembered, an unsaved recording no longer renders full size H.264")
+
+        var remembered = VideoCompressionSettings(quality: .low, codec: .hevc, resolution: .p720)
+        remembered.container = .mp4; remembered.exportsGIF = true; remembered.frameRate = .fps30
+        RecordingExportPreferences.lastSettings = remembered
+        let settings = try await RecordingSessionRenderer.makeConfiguration(for: session).exportSettings
+        try check(settings.resolution == .p720 && settings.quality == .low && settings.effectiveContainer == .mp4
+                  && settings.effectiveFrameRate == .fps30, "An unsaved recording ignored the remembered export choice")
+        try check(settings.codec == .h264 && !settings.effectiveExportsGIF, "An unsaved recording's Copy/upload render is not an H.264 movie")
+        let model = RecordingStudioModel(url: session.directoryURL)
+        defer { model.teardown() }
+        await model.load()
+        try check(model.isLoaded && model.currentDocument().forVideoRendering.exportSettings == settings,
+                  "Studio's share render and the unsaved recording's render disagree")
+        print("PASS: an unsaved recording renders Copy/uploads with the remembered export choice as H.264 movie (full size H.264 with nothing remembered)")
     }
 
     /// The remembered export default moves from H.264 to HEVC once; any later choice sticks (sd-3ohr).
@@ -1416,10 +1528,13 @@ struct RecordingExportRegressionChecks {
         try await chapterAtPlayhead(in: directory)
         try await chapterRenameUndo(in: directory)
         try await unchangedRenderReuse(in: directory)
+        try await sameEditRendersOnce(in: directory)
+        try await agentPromptReusesStopRender(in: directory)
         try await quickLookInstant(in: directory)
         try await unreadableDraft(in: directory)
         try await musicDelivery(in: directory)
         try await sharedRendersStayH264(in: directory)
+        try await unsavedRenderFollowsRememberedExport(in: directory)
         try await hevcDefaultMigration(in: directory)
         try await replacementVideoTiming(in: directory)
         try await backgroundMusicMixing(in: directory)

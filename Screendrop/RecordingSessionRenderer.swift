@@ -27,6 +27,14 @@ enum RecordingSessionRenderer {
         }
     }
 
+    private struct RenderKey: Equatable {
+        /// A path: the after-capture Copy finds the package from its movie, with a trailing slash.
+        let package: String
+        let document: RecordingEditDocument?
+    }
+
+    private static let renders = InFlightRenders<RenderKey, URL>()
+
     /// Creates a flattened deliverable when explicitly requested for a session
     /// whose raw screen master would not match what the user sees: a camera
     /// source, a cursor-hidden capture, or any saved Studio project. Only a
@@ -55,18 +63,20 @@ enum RecordingSessionRenderer {
         }
         if let existing = session.freshFinalURL(matching: editDocument) { return existing }
 
-        let configuration = try await makeConfiguration(for: session, editDocument: editDocument)
-        let temporaryURL = try await RecordingStudioExporter().export(configuration) { progress in
-            onProgress?(progress)
-        }
-        do {
-            return try session.installFinalVideo(
-                movingFrom: temporaryURL,
-                renderedFrom: editDocument
-            )
-        } catch {
-            try? FileManager.default.removeItem(at: temporaryURL)
-            throw error
+        // A second encode of the same edits would only fight this one for the media engine.
+        let key = RenderKey(package: session.directoryURL.standardizedFileURL.path, document: editDocument)
+        return try await renders.value(for: key, onProgress: onProgress) { progress in
+            let configuration = try await makeConfiguration(for: session, editDocument: editDocument)
+            let temporaryURL = try await RecordingStudioExporter().export(configuration, progress: progress)
+            do {
+                return try session.installFinalVideo(
+                    movingFrom: temporaryURL,
+                    renderedFrom: editDocument
+                )
+            } catch {
+                try? FileManager.default.removeItem(at: temporaryURL)
+                throw error
+            }
         }
     }
 
@@ -84,7 +94,9 @@ enum RecordingSessionRenderer {
     ) async throws -> RecordingStudioExporter.Configuration {
         let manifest = session.loadCaptureManifest()
         let pointerSynthesized = manifest?.pointerSynthesized == true
-        let exportSettings = editDocument?.exportSettings ?? VideoCompressionSettings()
+        // No saved choice: the one Studio would open the recording with, as a share.
+        // shortcut: a render stamped with no document keeps its size after the remembered choice changes; stamp the settings if that matters.
+        let exportSettings = editDocument?.exportSettings ?? RecordingExportPreferences.lastSettings.forVideoRendering
         let audioVolume = RecordingAudioGain.normalized(editDocument?.audioVolume ?? 1)
         let audioReplacementURL = !exportSettings.removeAudio && audioVolume > 0
             ? editDocument?.replacementAudioFileName.map {

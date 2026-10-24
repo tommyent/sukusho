@@ -99,6 +99,15 @@ nonisolated struct VideoCompressionSettings: Codable, Equatable, Sendable {
     var effectiveGIFFrameRate: GIFFrameRate { gifFrameRate ?? .default }
     var effectiveGIFWidth: GIFWidth { gifWidth ?? .default }
 
+    /// A shared or copied movie: never a GIF, and H.264 so it plays everywhere
+    /// (see `RecordingEditDocument.forVideoRendering`).
+    var forVideoRendering: Self {
+        var settings = self
+        settings.exportsGIF = false
+        settings.codec = .h264
+        return settings
+    }
+
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.quality == rhs.quality && lhs.speed == rhs.speed && lhs.codec == rhs.codec
             && lhs.resolution == rhs.resolution && lhs.removeAudio == rhs.removeAudio

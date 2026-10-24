@@ -1752,6 +1752,13 @@ final class RecordingStudioModel {
         saveProject(reportingFailure: false)
     }
 
+    /// The edits a flattened render outside the editor should use. A
+    /// recording never saved or edited has none, like the render made at
+    /// Stop, so Agent Prompt reuses that render and closing Studio keeps it.
+    var deliverableDocument: RecordingEditDocument? {
+        hasUnsavedChanges || session?.hasSavedProject == true ? currentDocument() : nil
+    }
+
     /// Every edit in the editor, as a storable document.
     func currentDocument() -> RecordingEditDocument {
         RecordingEditDocument(
@@ -2849,6 +2856,7 @@ final class RecordingStudioModel {
             self.pause()
             self.flushDraft()
             let document = self.currentDocument()
+            let deliverableDocument = self.deliverableDocument
             let session = self.session
             let title = self.projectDisplayName
             let timeline = self.clipTimeline
@@ -2864,7 +2872,7 @@ final class RecordingStudioModel {
                 do {
                     let folder: URL
                     if let session {
-                        folder = try await RecordingAgentPromptExport.write(session: session, document: document, to: directory, progress: report)
+                        folder = try await RecordingAgentPromptExport.write(session: session, document: deliverableDocument, to: directory, progress: report)
                     } else if let configuration {
                         let plan = RecordingAgentPromptPlan(title: title, timeline: timeline,
                                                            cues: document.subtitleCues ?? [], words: document.subtitleWords ?? [], capture: nil)

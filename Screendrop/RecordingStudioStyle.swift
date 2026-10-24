@@ -167,8 +167,7 @@ struct RecordingEditDocument: Codable, Equatable {
     /// and H.264 even when it chose HEVC: browsers play HEVC only partly, and a share link must play.
     nonisolated var forVideoRendering: Self {
         var document = self
-        document.exportSettings?.exportsGIF = false
-        document.exportSettings?.codec = .h264
+        document.exportSettings = exportSettings?.forVideoRendering
         return document
     }
 
