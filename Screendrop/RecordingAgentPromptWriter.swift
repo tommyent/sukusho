@@ -64,9 +64,9 @@ nonisolated enum RecordingAgentPromptWriter {
         try Task.checkCancellation()
         let safe = plan.title.components(separatedBy: CharacterSet(charactersIn: "/:\\").union(.controlCharacters))
             .joined(separator: "-").trimmingCharacters(in: .whitespacesAndNewlines)
-        let stem = String((safe.isEmpty || safe == "." || safe == ".." ? "Recording" : safe).prefix(100)) + " Agent Prompt"
-        for suffix in 0..<10_000 {
-            let name = suffix == 0 ? stem : "\(stem) \(suffix)"
+        let stem = String((safe.isEmpty || safe == "." || safe == ".." ? "Recording" : safe).prefix(100)) + "_agent-prompt"
+        for number in 1...10_000 {
+            let name = number == 1 ? stem : "\(stem)_\(number)"
             let destination = directory.appendingPathComponent(name, isDirectory: true)
             if FileManager.default.fileExists(atPath: destination.path) { continue }
             do {
