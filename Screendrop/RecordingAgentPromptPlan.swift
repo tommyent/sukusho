@@ -77,13 +77,37 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
                   (0...1).contains(click.x), (0...1).contains(click.y),
                   let time = actionTime(click.time) else { continue }
             let button = click.button == 0 ? "left" : click.button == 1 ? "right" : "button \(click.button)"
-            let position = String(format: "x=%.3f, y=%.3f", locale: Locale(identifier: "en_US_POSIX"), click.x, click.y)
-            evidence.append((time, "Click \(Self.timestamp(time)): \(button); source position \(position)."))
+            evidence.append((time, "Click \(Self.timestamp(time)): \(button); source position \(Self.position(click.x, click.y))."))
         }
         for key in capture?.keystrokes ?? [] {
             guard let time = actionTime(key.time) else { continue }
             evidence.append((time, "Shortcut \(Self.timestamp(time)): \(Self.escape(key.modifiers.joined() + key.key))."))
         }
+        // Where the pointer rested or scrolled shows hover and scroll bugs that clicks miss.
+        func editorSpan(_ start: Double, _ end: Double) -> (start: Double, end: Double)? {
+            let slices = timeline.slices(overlapping: start, sourceEnd: end)
+            guard let first = slices.first, let last = slices.last, abs(first.sourceStart - start) < 0.000_001 else { return nil }
+            return (first.editorStart, last.editorEnd)
+        }
+        var motion: [(time: Double, text: String, score: Double)] = []
+        for rest in Self.rests(in: capture?.travel ?? [], until: timeline.segments.map(\.sourceEnd).max() ?? 0) {
+            guard let span = editorSpan(rest.start, rest.end) else { continue }
+            motion.append((span.start, "Pointer rested \(Self.timestamp(span.start))–\(Self.timestamp(span.end)) at source position \(Self.position(rest.x, rest.y)).",
+                           span.end - span.start))
+        }
+        for run in Self.scrollRuns(capture?.scrolls ?? []) {
+            guard let span = editorSpan(run.start, max(run.end, run.start + 0.001)) else { continue }
+            let vertical = abs(run.dy) >= abs(run.dx)
+            let direction = vertical ? (run.dy > 0 ? "up" : "down") : (run.dx > 0 ? "left" : "right")
+            let distance = Int(abs(vertical ? run.dy : run.dx).rounded())
+            let end = run.end > run.start ? span.end : span.start
+            motion.append((span.start, "Scroll \(Self.timestamp(span.start))–\(Self.timestamp(end)): \(direction) \(distance) pt over \(run.count) events at source position \(Self.position(run.x, run.y)).",
+                           end - span.start + 1))
+        }
+        // A long recording keeps its longest rests and scrolls, not one per pause.
+        let motionLimit = min(24, max(6, Int(timeline.duration / 10)))
+        evidence += motion.sorted { $0.score == $1.score ? $0.time < $1.time : $0.score > $1.score }
+            .prefix(motionLimit).map { (time: $0.time, text: $0.text) }
         let sorted = evidence.enumerated().sorted {
             $0.element.time == $1.element.time ? $0.offset < $1.offset : $0.element.time < $1.element.time
         }.map(\.element)
@@ -102,6 +126,7 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
         var text = "# \(Self.escape(title.split(whereSeparator: \.isWhitespace).joined(separator: " ")))\n\n"
         text += "Use this recorded walkthrough and its evidence as task context.\n\n"
         text += "Times refer to the edited recording (\(Self.timestamp(duration))). Click coordinates are normalized to the captured source, with a top-left origin; crop and zoom can move them in the stills. Plain typing and control names were not recorded.\n\n"
+        text += "Pointer rests of 0.7 s or more and scrolls come from the input log; a long recording lists only the longest ones.\n\n"
         if !hasInput { text += "No input log is available for this recording.\n\n" }
         for (index, moment) in moments.enumerated() {
             text += "## Moment \(index + 1) — \(Self.timestamp(moment.time))\n\n"
@@ -126,6 +151,44 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
     }
 
     static func stillName(_ index: Int) -> String { String(format: "%04d.jpg", index + 1) }
+
+    /// Spans of at least `minimum` seconds where the pointer stayed within
+    /// `radius` of where it stopped, on the source timeline. Travel has a
+    /// sample per move and a slow heartbeat while still, so a rest ends at the
+    /// first sample that moved away, or at `end`.
+    static func rests(in travel: [PointerTravelSample], until end: TimeInterval, minimum: TimeInterval = 0.7,
+                      radius: Double = 0.003) -> [(start: Double, end: Double, x: Double, y: Double)] {
+        let samples = travel.filter { $0.time.isFinite && $0.x.isFinite && $0.y.isFinite }.sorted { $0.time < $1.time }
+        guard var anchor = samples.first else { return [] }
+        var result: [(start: Double, end: Double, x: Double, y: Double)] = []
+        for sample in samples.dropFirst() where hypot(sample.x - anchor.x, sample.y - anchor.y) > radius {
+            if sample.time - anchor.time >= minimum { result.append((anchor.time, sample.time, anchor.x, anchor.y)) }
+            anchor = sample
+        }
+        if end - anchor.time >= minimum { result.append((anchor.time, end, anchor.x, anchor.y)) }
+        return result
+    }
+
+    /// Scrolling with no pause longer than `gap`, summed, at its first position.
+    static func scrollRuns(_ scrolls: [PointerScrollEvent], gap: TimeInterval = 0.35)
+        -> [(start: Double, end: Double, count: Int, dx: Double, dy: Double, x: Double, y: Double)] {
+        var runs: [(start: Double, end: Double, count: Int, dx: Double, dy: Double, x: Double, y: Double)] = []
+        for scroll in scrolls.filter({ $0.time.isFinite }).sorted(by: { $0.time < $1.time }) {
+            if let last = runs.last, scroll.time - last.end <= gap {
+                runs[runs.count - 1].end = scroll.time
+                runs[runs.count - 1].count += scroll.count
+                runs[runs.count - 1].dx += scroll.dx
+                runs[runs.count - 1].dy += scroll.dy
+            } else {
+                runs.append((scroll.time, scroll.time, scroll.count, scroll.dx, scroll.dy, scroll.x, scroll.y))
+            }
+        }
+        return runs
+    }
+
+    static func position(_ x: Double, _ y: Double) -> String {
+        String(format: "x=%.3f, y=%.3f", locale: Locale(identifier: "en_US_POSIX"), x, y)
+    }
 
     static func timestamp(_ time: TimeInterval) -> String {
         let ms = Int((max(0, time.isFinite ? time : 0) * 1000).rounded())

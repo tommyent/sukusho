@@ -94,6 +94,65 @@ struct RecordingAgentPromptTests {
         #expect(plan.moments[0].evidence == ["No timed narration or actions available."])
     }
 
+    @Test func restsAndScrollRunsBecomeMomentsInTimeOrder() {
+        let travel: [PointerTravelSample] = [
+            .init(time: 0, x: 0.1, y: 0.1), .init(time: 0.5, x: 0.1, y: 0.1), // heartbeat while still
+            .init(time: 2, x: 0.5, y: 0.5), .init(time: 2.02, x: 0.501, y: 0.5), .init(time: 3.5, x: 0.501, y: 0.5),
+            .init(time: 4, x: 0.9, y: 0.9), .init(time: 4.3, x: 0.2, y: 0.2), // too short a stop at 0.9
+        ]
+        let scrolls = [5.0, 5.1, 5.2].map { PointerScrollEvent(time: $0, x: 0.3, y: 0.4, dx: 0, dy: -10) }
+            + [PointerScrollEvent(time: 8, x: 0.6, y: 0.6, dx: 0, dy: 25, count: 2)]
+        let plan = RecordingAgentPromptPlan(title: "Fixture", timeline: .full(sourceDuration: 10), cues: [], words: [],
+                                           capture: PointerCaptureFile(travel: travel, scrolls: scrolls))
+        let markdown = plan.markdown(frameTimes: [])
+        #expect(markdown.contains("Pointer rested 00:00.000–00:02.000 at source position x=0.100, y=0.100."))
+        #expect(markdown.contains("Pointer rested 00:02.000–00:04.000 at source position x=0.500, y=0.500."))
+        #expect(markdown.contains("Pointer rested 00:04.300–00:10.000 at source position x=0.200, y=0.200."))
+        #expect(!markdown.contains("x=0.900"))
+        #expect(markdown.contains("Scroll 00:05.000–00:05.200: down 30 pt over 3 events at source position x=0.300, y=0.400."))
+        #expect(markdown.contains("Scroll 00:08.000–00:08.000: up 25 pt over 2 events at source position x=0.600, y=0.600."))
+        #expect(plan.moments.map(\.time) == [0, 2, 4.3, 5, 8])
+    }
+
+    @Test func restsAndScrollsFollowCutsAndSpeed() {
+        let capture = PointerCaptureFile(travel: [
+            .init(time: 2.5, x: 0.2, y: 0.2), .init(time: 5, x: 0.4, y: 0.4), .init(time: 7, x: 0.8, y: 0.8),
+        ], scrolls: [.init(time: 3, x: 0.1, y: 0.1, dx: 5, dy: 0), .init(time: 6, x: 0.1, y: 0.1, dx: -40, dy: 2)])
+        let markdown = RecordingAgentPromptPlan(title: "Fixture", timeline: cut, cues: [], words: [], capture: capture)
+            .markdown(frameTimes: [])
+        #expect(!markdown.contains("x=0.200")) // its rest starts inside the cut
+        #expect(markdown.contains("Pointer rested 00:02.500–00:03.500 at source position x=0.400, y=0.400."))
+        #expect(markdown.contains("Scroll 00:03.000–00:03.000: right 40 pt over 1 events"))
+        #expect(!markdown.contains(": left"))
+    }
+
+    @Test func manyRestsAndScrollsAreCappedToTheLongest() {
+        let travel = (0..<60).map { PointerTravelSample(time: Double($0), x: Double($0 % 2) * 0.5, y: 0.5) }
+            + [PointerTravelSample(time: 60, x: 0.9, y: 0.9), PointerTravelSample(time: 70, x: 0.1, y: 0.1)]
+        let markdown = RecordingAgentPromptPlan(title: "Fixture", timeline: .full(sourceDuration: 71), cues: [], words: [],
+                                               capture: PointerCaptureFile(travel: travel)).markdown(frameTimes: [])
+        #expect(markdown.components(separatedBy: "Pointer rested").count - 1 == 7) // 71 s: up to 7
+        #expect(markdown.contains("Pointer rested 01:00.000–01:10.000"))
+        #expect(markdown.contains("Pointer rested 00:00.000–00:01.000"))
+        #expect(!markdown.contains("Pointer rested 00:06.000"))
+        let long = RecordingAgentPromptPlan(title: "Fixture", timeline: .full(sourceDuration: 3_000), cues: [], words: [],
+            capture: PointerCaptureFile(travel: (0..<1_000).map { .init(time: Double($0) * 3, x: Double($0 % 2) * 0.5, y: 0.5) }))
+        #expect(long.moments.count == 24)
+    }
+
+    @Test func scrollsCoalesceSanitizeAndDecode() throws {
+        let raw = [0.0, 0.03, 0.09, 0.12].map { PointerScrollEvent(time: $0, x: 0.5, y: 0.5, dx: 1, dy: -4) }
+        let coalesced = PointerScrollEvent.coalesced(raw)
+        #expect(coalesced.count == 2 && coalesced[0].count == 3 && coalesced[0].dy == -12 && coalesced[1].time == 0.12)
+        let capture = PointerCaptureFile(scrolls: coalesced + [PointerScrollEvent(time: .nan, x: 0.5, y: 0.5, dx: 0, dy: 1)])
+        let sanitized = PointerStreamSanitizer.sanitize(
+            capture, options: PointerSanitizeOptions(recordingSizeInPoints: CGSize(width: 800, height: 600))
+        ).sanitizedCapture
+        #expect(sanitized.scrolls == coalesced)
+        #expect(try JSONDecoder().decode(PointerCaptureFile.self, from: JSONEncoder().encode(sanitized)).scrolls == coalesced)
+        #expect(try JSONDecoder().decode(PointerCaptureFile.self, from: Data(#"{"travel":[]}"#.utf8)).scrolls.isEmpty)
+    }
+
     @Test func extractedSchemasStillDecodeLegacyInputAndCueOnlyTranscripts() throws {
         let capture = try JSONDecoder().decode(PointerCaptureFile.self, from: Data(#"{"travel":[{"time":0,"x":0.5,"y":0.25}],"presses":[]}"#.utf8))
         #expect(capture.keystrokes.isEmpty && capture.artwork.isEmpty && !capture.isSanitized)

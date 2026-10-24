@@ -13,9 +13,42 @@ nonisolated struct PointerCaptureFile: Codable, Sendable, Equatable {
     var artwork: [PointerArtwork] = []
     /// Pen strokes drawn during the take; empty for older recordings.
     var ink: [RecordingInkStroke] = []
+    /// Scrolling under the pointer; empty for older recordings.
+    var scrolls: [PointerScrollEvent] = []
     /// Prevents deterministic cleanup from being applied repeatedly when the
     /// same sidecar passes through Studio, flattening, and export builders.
     var isSanitized = false
+}
+
+/// Scroll-wheel or trackpad scrolling at one pointer position, summed over at
+/// most 0.1 s so a long scroll stays small on disk.
+nonisolated struct PointerScrollEvent: Codable, Sendable, Equatable {
+    /// Seconds on the screen movie timeline.
+    var time: TimeInterval
+    var x: Double
+    var y: Double
+    /// Points scrolled. Positive `dy` moves the view toward the top of the
+    /// content (scrolling up); positive `dx` toward its left.
+    var dx: Double
+    var dy: Double
+    /// How many scroll events were summed into this one.
+    var count = 1
+
+    /// Sums each event into the first of its group, starting a new group
+    /// `window` seconds after the last one started.
+    static func coalesced(_ events: [PointerScrollEvent], window: TimeInterval = 0.1) -> [PointerScrollEvent] {
+        var result: [PointerScrollEvent] = []
+        for event in events.sorted(by: { $0.time < $1.time }) {
+            if let last = result.last, event.time - last.time < window {
+                result[result.count - 1].dx += event.dx
+                result[result.count - 1].dy += event.dy
+                result[result.count - 1].count += event.count
+            } else {
+                result.append(event)
+            }
+        }
+        return result
+    }
 }
 
 /// A completed keyboard chord captured during recording: a special key press
@@ -90,6 +123,7 @@ nonisolated extension PointerCaptureFile {
         case keystrokes
         case artwork
         case ink
+        case scrolls
         case isSanitized
     }
 
@@ -107,6 +141,7 @@ nonisolated extension PointerCaptureFile {
             forKey: .artwork
         ) ?? []
         ink = try container.decodeIfPresent([RecordingInkStroke].self, forKey: .ink) ?? []
+        scrolls = try container.decodeIfPresent([PointerScrollEvent].self, forKey: .scrolls) ?? []
         isSanitized = try container.decodeIfPresent(Bool.self, forKey: .isSanitized) ?? false
     }
 }
