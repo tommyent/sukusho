@@ -170,6 +170,46 @@ struct RecordingExportRegressionChecks {
         print("PASS: two same-edit requests during one render share a single encode")
     }
 
+    /// Agent Prompt on a never-saved, unedited recording uses the render made at Stop, which then survives closing Studio (sd-5oxt).
+    static func agentPromptReusesStopRender(in directory: URL) async throws {
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("prompt-reuse.screendroprec"))
+        try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
+        try await movie(at: session.screenURL)
+        var manifest = CaptureManifest()
+        manifest.duration = 8; manifest.pixelWidth = 320; manifest.pixelHeight = 180; manifest.pointerSynthesized = true
+        try session.writeCaptureManifest(manifest)
+        try FileManager.default.copyItem(at: session.screenURL, to: session.finalURL) // The after-capture Copy's render
+        session.writeRenderStamp(nil)
+        func installed() -> Int? { try? FileManager.default.attributesOfItem(atPath: session.finalURL.path)[.systemFileNumber] as? Int }
+        let stopRender = installed()
+
+        let model = RecordingStudioModel(url: session.directoryURL)
+        await model.load()
+        try check(model.isLoaded, "Unedited fixture did not load")
+        // The Library's Export Agent Prompt, as CaptureLibraryActions runs it while Studio is open.
+        StudioProjectRegistry.shared.flushDrafts()
+        let document = try StudioProjectRegistry.shared.document(for: session.directoryURL) ?? session.editDocumentForRendering()
+        try check(document == nil && model.deliverableDocument == nil, "Agent Prompt asked for Studio's baseline edits on an unedited recording")
+        let output = directory.appendingPathComponent("prompt-output", isDirectory: true)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: false)
+        let folder = try await RecordingAgentPromptExport.write(session: session, document: document, to: output)
+        try check(FileManager.default.fileExists(atPath: folder.appendingPathComponent("prompt.md").path), "Agent Prompt wrote no prompt")
+        try check(installed() == stopRender && session.loadRenderStamp() == nil, "Agent Prompt rendered the unedited recording again")
+        model.teardown() // Closing Studio
+        try check(session.freshFinalURL(matching: nil) == session.finalURL && installed() == stopRender,
+                  "Closing Studio dropped the render Agent Prompt used")
+
+        let edited = RecordingStudioModel(url: session.directoryURL)
+        defer { edited.teardown() }
+        await edited.load()
+        edited.zoomEnabled.toggle()
+        edited.flushDraft()
+        try check(edited.deliverableDocument == edited.currentDocument()
+                  && StudioProjectRegistry.shared.document(for: session.directoryURL) == edited.currentDocument(),
+                  "Agent Prompt lost unsaved edits")
+        print("PASS: Agent Prompt on an unedited recording reuses the Stop-time render, which survives closing Studio; edits still reach it")
+    }
+
     static func quickLookInstant(in directory: URL) async throws {
         let session = RecordingSession(directoryURL: directory.appendingPathComponent("quicklook.screendroprec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
@@ -1440,6 +1480,7 @@ struct RecordingExportRegressionChecks {
         try await chapterRenameUndo(in: directory)
         try await unchangedRenderReuse(in: directory)
         try await sameEditRendersOnce(in: directory)
+        try await agentPromptReusesStopRender(in: directory)
         try await quickLookInstant(in: directory)
         try await unreadableDraft(in: directory)
         try await musicDelivery(in: directory)
