@@ -79,6 +79,8 @@ Chapter-marker tests cover current-chapter boundaries and neighbour/end clamping
 
 `CaptureLibraryTextTests` checks the Library text index's rules: stale fingerprints and versions, newest-first reading, deletions versus an empty scan, the on-disk store, case- and accent-insensitive search over recognized text, matching paragraphs first, and paragraph grouping (wrapped prose, indented code, columns, stray fragments). Real Vision reading runs in a windowless harness against the actual app sources: `python3 scripts/check-editor-idle-save.py /path/to/DevDerivedData scripts/check-library-text-index.swift` reads a synthetic screenshot and recording (frames plus saved captions), searches them, re-reads an edit, and checks the switch and deletion. It also decodes History rows with and without a source app, and runs `app:` against the real Library model with words, recognized text, tags, kinds and a recording's project metadata. Vision fails in the VMPal VM, so run it on a Mac.
 
+The Library grid's updates run in the same harness: `python3 scripts/check-editor-idle-save.py /path/to/DevDerivedData scripts/check-library-grid-update.swift` hosts the real `CaptureLibraryCollection`, windowless, with probe cards. A title change must redraw its card in place and rebuild none (a rebuild blanks every thumbnail); an insert must still reload.
+
 `CaptureSourceSearchTests` checks the search operator parser (`app:`, quoted values, words around operators, unknown operators and other colons kept as words, half-typed operators), `app:` matching on the app name or the bundle ID's last part, AND with words and other operators, and decoding project metadata with and without a source.
 
 `FreeToUseMusicTests` compiles the production API client, picker model and preview
