@@ -161,6 +161,8 @@ final class CaptureLibraryModel {
     var operationTitle: String?
     /// The status bar's done mark for an Agent Prompt export, which no longer opens Finder.
     var savedAgentPrompt: URL?
+    /// The capture an Agent Prompt export is working on and how far it is, for its card's ring.
+    var agentPromptExport: (id: String, progress: Double)?
     var errorMessage: String?
     /// The capture whose name is being edited in place, and where.
     var renameSession: CaptureRenameSession?

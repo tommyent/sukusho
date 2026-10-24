@@ -385,7 +385,8 @@ private struct RecordingStudioContent: View {
 
 /// The determinate ring shared by every Studio progress affordance, so the
 /// toolbar pills and the inspector's export button read as one control.
-private struct StudioProgressRing: View {
+/// The Library's cards use it too.
+struct StudioProgressRing: View {
     let progress: Double
 
     var size: CGFloat = 14
@@ -3358,10 +3359,25 @@ private struct StudioInspector: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
-                InspectorActionButton("Export Agent Prompt", systemImage: "text.document") {
-                    model.exportAgentPrompt()
+                Group {
+                    if model.isExportingAgentPrompt, case .exporting(let progress) = model.exportState {
+                        HStack(spacing: 6) {
+                            StudioProgressRing(progress: progress, size: 12)
+                            Text("Exporting Agent Prompt \(Int((progress * 100).rounded()))%")
+                                .font(.inspectorValue.monospacedDigit())
+                                .contentTransition(.numericText())
+                        }
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity)
+                        .inspectorField()
+                        .foregroundStyle(Color.primary.opacity(0.85))
+                    } else {
+                        InspectorActionButton("Export Agent Prompt", systemImage: "text.document") {
+                            model.exportAgentPrompt()
+                        }
+                        .disabled(!model.isLoaded || model.hasRunningWork || model.hasUnreadableDraft || model.transcriptionState.isTranscribing)
+                    }
                 }
-                .disabled(!model.isLoaded || model.hasRunningWork || model.hasUnreadableDraft || model.transcriptionState.isTranscribing)
                 .padding(.horizontal, InspectorMetrics.horizontalPadding)
                 .padding(.vertical, 10)
 
