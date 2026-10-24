@@ -95,11 +95,20 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
         coordinator.updating = true
         defer { coordinator.updating = false }
         if old.revision != revision || old.layout != layout || coordinator.initialLoad {
+            // The same entries in the same order, such as after a new title or tag, only need
+            // their cards redrawn: a reload rebuilds every card and blanks its thumbnail (sd-mtnc).
+            let inPlace = !coordinator.initialLoad && old.layout == layout && old.items.map(\.id) == items.map(\.id)
             coordinator.initialLoad = false
             coordinator.indices = Dictionary(items.enumerated().map { ($0.element.id, $0.offset) }, uniquingKeysWith: { first, _ in first })
-            (collection.collectionViewLayout as? LibraryCollectionLayout)?.displayLayout = layout
-            collection.reloadData()
-            collection.collectionViewLayout?.invalidateLayout()
+            if inPlace {
+                for path in collection.indexPathsForVisibleItems() {
+                    if let item = collection.item(at: path) { coordinator.configure(item, at: path) }
+                }
+            } else {
+                (collection.collectionViewLayout as? LibraryCollectionLayout)?.displayLayout = layout
+                collection.reloadData()
+                collection.collectionViewLayout?.invalidateLayout()
+            }
         }
         if let flow = collection.collectionViewLayout as? LibraryCollectionLayout, flow.cardWidth != cardWidth {
             flow.cardWidth = cardWidth
@@ -133,7 +142,7 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
             return cell
         }
 
-        private func configure(_ item: NSCollectionViewItem, at indexPath: IndexPath) {
+        func configure(_ item: NSCollectionViewItem, at indexPath: IndexPath) {
             guard let cell = item as? LibraryCollectionItem, parent.items.indices.contains(indexPath.item) else { return }
             let entry = parent.items[indexPath.item]
             let draw = parent.cell
