@@ -160,7 +160,8 @@ nonisolated enum RecordingAgentPromptWriter {
 
         /// A 4-column grid of the moment's strip times, each cropped to 720 × 450 pt
         /// of a 2x screen around the moment's focus and drawn at half size, with the
-        /// pointer ringed and the edited time in a corner. Nil if no frame came back.
+        /// pointer ringed, the pen's strokes drawn in and the edited time in a corner.
+        /// Nil if no frame came back.
         func strip(for moment: RecordingAgentPromptPlan.Moment, plan: RecordingAgentPromptPlan) async
             -> (image: CGImage, span: ClosedRange<Double>)? {
             let times = plan.stripTimes(for: moment)
@@ -178,6 +179,7 @@ nonisolated enum RecordingAgentPromptWriter {
                                           bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
             context.setFillColor(CGColor(gray: 0.5, alpha: 1))
             context.fill(CGRect(x: 0, y: 0, width: context.width, height: context.height))
+            let ink = RecordingInkTimeline(strokes: plan.ink)
             var drewFrame = false
             for (index, time) in times.enumerated() {
                 // Rows run top to bottom; Core Graphics counts from the bottom.
@@ -189,6 +191,16 @@ nonisolated enum RecordingAgentPromptWriter {
                    let cropped = frame.cropping(to: crop) {
                     context.draw(cropped, in: cellRect)
                     drewFrame = true
+                }
+                // As far as each stroke had been drawn, and as faded, as Studio shows it.
+                for frame in ink.frames(at: source) {
+                    let points = frame.points.map { CGPoint(x: cellRect.minX + ($0.x * size.width - crop.minX) * scale,
+                                                            y: cellRect.maxY - ($0.y * size.height - crop.minY) * scale) }
+                    context.saveGState()
+                    context.clip(to: cellRect)
+                    RecordingInkPath.stroke(RecordingInkPath.path(points), color: frame.stroke.color, opacity: frame.opacity,
+                                            width: frame.stroke.width * min(size.width, size.height) * scale, in: context)
+                    context.restoreGState()
                 }
                 if let pointer = RecordingAgentPromptPlan.pointerPosition(in: plan.pointer, at: source) {
                     let x = pointer.x * size.width - crop.minX, y = pointer.y * size.height - crop.minY

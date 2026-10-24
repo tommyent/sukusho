@@ -306,6 +306,41 @@ struct RecordingAgentPromptTests {
         #expect(try pixel(image, x: 3 * 96 + 24 + 9, y: 64 + 32)[0] < 60)
     }
 
+    @Test func penStrokesBecomeMomentsAndFollowCuts() {
+        let stroke = RecordingInkStroke(width: 0.01, points: [.init(t: 1, x: 0.2, y: 0.3), .init(t: 1.5, x: 0.4, y: 0.5)], hideTime: 6)
+        let dot = RecordingInkStroke(width: 0.01, points: [.init(t: 1.8, x: 0.6, y: 0.6), .init(t: 1.81, x: 0.6, y: 0.6)],
+                                     hideTime: 5, fadesOut: false)
+        let removed = RecordingInkStroke(width: 0.01, points: [.init(t: 3, x: 0.9, y: 0.9)]) // drawn inside the cut
+        let plan = RecordingAgentPromptPlan(title: "Ink", timeline: cut, cues: [], words: [],
+                                            capture: PointerCaptureFile(ink: [stroke, dot, removed]))
+        let markdown = plan.markdown(frameTimes: [])
+        #expect(markdown.contains("Drew on screen 00:01.000–00:01.500: a pen stroke over source x=0.200–0.400, y=0.300–0.500; it fades out at 00:03.000."))
+        #expect(markdown.contains("Drew on screen 00:01.800–00:01.810: a dot at source position x=0.600, y=0.600; undone at 00:02.500."))
+        #expect(!markdown.contains("x=0.900"))
+        #expect(plan.moments.first?.focus == CGPoint(x: 0.30000000000000004, y: 0.4))
+        #expect(plan.ink.count == 3) // the strips draw every stroke on the master's clock
+    }
+
+    @Test func stripsDrawThePenStrokesTheScreenRecordingLeavesOut() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let movie = directory.appendingPathComponent("fixture.mov")
+        try await makeMovie(at: movie) // red until 1 s, then blue
+        let line = RecordingInkStroke(width: 0.1, points: [.init(t: 0.5, x: 0.1, y: 0.8), .init(t: 0.6, x: 0.9, y: 0.8)])
+        let plan = RecordingAgentPromptPlan(title: "Ink strip", timeline: .full(sourceDuration: 3), cues: [], words: [],
+                                            capture: PointerCaptureFile(ink: [line]))
+        let folder = try await RecordingAgentPromptWriter.write(movie: movie, plan: plan, to: directory, master: movie)
+        let markdown = try String(contentsOf: folder.appendingPathComponent("prompt.md"), encoding: .utf8)
+        #expect(markdown.contains("the pen's strokes are drawn in"))
+        let data = try Data(contentsOf: folder.appendingPathComponent("strips/0001.jpg"))
+        let image = try #require(CGImageSourceCreateWithData(data as CFData, nil).flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) })
+        // The last frame is blue; the stroke runs across it at y 0.8, and nothing is drawn above it.
+        let onStroke = try pixel(image, x: 3 * 96 + 48, y: 64 + 51), above = try pixel(image, x: 3 * 96 + 48, y: 64 + 20)
+        #expect(onStroke[0] > 200 && onStroke[2] < 120)
+        #expect(above[2] > 200 && above[0] < 60)
+    }
+
     @Test func generatedFolderContainsMatchingStillsAndReplacesPriorExport() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)

@@ -15,9 +15,12 @@ enum RecordingAgentPromptExport {
     }
 
     /// What Agent Prompt writes for a session, from its input log and capture manifest.
-    static func plan(for session: RecordingSession, timeline: RecordingClipTimeline,
+    static func plan(for session: RecordingSession, document: RecordingEditDocument? = nil, timeline: RecordingClipTimeline,
                      transcript: RecordingTranscript) -> RecordingAgentPromptPlan {
-        let capture = session.loadPointerCapture()
+        var capture = session.loadPointerCapture()
+        // Pen strokes the edit hides stay out of the prompt, as they do in its stills.
+        let hidden = Set(document?.hiddenInkStrokeIDs ?? [])
+        capture?.ink.removeAll { document?.showsInk == false || hidden.contains($0.id) }
         let input = FileManager.default.fileExists(atPath: session.pointerCaptureURL.path) ? session.pointerCaptureURL : nil
         return RecordingAgentPromptPlan(title: session.displayName, timeline: timeline, cues: transcript.cues, words: transcript.words,
                                         capture: capture, cursorNames: PointerArtworkCapture.names(for: capture?.artwork ?? []),
@@ -37,7 +40,7 @@ enum RecordingAgentPromptExport {
         let transcript = try await transcript(cues: document?.subtitleCues ?? [], words: document?.subtitleWords ?? [],
                                               screenURL: session.screenURL, canTranscribe: session.loadCaptureManifest()?.includesMicrophone == true)
         try Task.checkCancellation()
-        let plan = plan(for: session, timeline: timeline, transcript: transcript)
+        let plan = plan(for: session, document: document, timeline: timeline, transcript: transcript)
         let movie = try await RecordingSessionRenderer.ensureDeliverable(for: session, editDocument: document) { progress($0 * 0.8) }
         try Task.checkCancellation()
         // Studio can invalidate its cached movie while still extraction is suspended.

@@ -26,6 +26,9 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
     let timeline: RecordingClipTimeline
     /// The input log's travel, by time, on the screen master's timeline.
     let pointer: [PointerTravelSample]
+    /// Pen strokes drawn during the take, on the screen master's timeline;
+    /// the screen recording leaves the pen out, so strips draw them in.
+    let ink: [RecordingInkStroke]
     /// The recording's own files, for an agent to read beyond the prompt.
     let files: SourceFiles?
 
@@ -122,6 +125,19 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
             guard let first = slices.first, let last = slices.last, abs(first.sourceStart - start) < 0.000_001 else { return nil }
             return (first.editorStart, last.editorEnd)
         }
+        let ink = RecordingInkStroke.sanitized(capture?.ink ?? [])
+        for stroke in ink {
+            guard let last = stroke.points.last,
+                  let span = editorSpan(stroke.startTime, max(last.t, stroke.startTime + 0.001)) else { continue }
+            let xs = stroke.points.map { min(max($0.x, 0), 1) }, ys = stroke.points.map { min(max($0.y, 0), 1) }
+            guard let minX = xs.min(), let maxX = xs.max(), let minY = ys.min(), let maxY = ys.max() else { continue }
+            let center = CGPoint(x: (minX + maxX) / 2, y: (minY + maxY) / 2)
+            let shape = maxX - minX < 0.005 && maxY - minY < 0.005
+                ? "a dot at source position \(Self.position(center.x, center.y))"
+                : String(format: "a pen stroke over source x=%.3f–%.3f, y=%.3f–%.3f", locale: Locale(identifier: "en_US_POSIX"), minX, maxX, minY, maxY)
+            let hidden = stroke.hideTime.flatMap(actionTime).map { (stroke.fadesOut ? "; it fades out at " : "; undone at ") + Self.timestamp($0) } ?? ""
+            evidence.append((span.start, "Drew on screen \(Self.timestamp(span.start))–\(Self.timestamp(span.end)): \(shape)\(hidden).", center))
+        }
         var motion: [(time: Double, text: String, position: CGPoint?, score: Double)] = []
         for rest in Self.rests(in: capture?.travel ?? [], until: timeline.segments.map(\.sourceEnd).max() ?? 0) {
             guard let span = editorSpan(rest.start, rest.end) else { continue }
@@ -158,6 +174,7 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
         self.timeline = timeline
         let pointer = (capture?.travel ?? []).filter { $0.time.isFinite && $0.x.isFinite && $0.y.isFinite }.sorted { $0.time < $1.time }
         self.pointer = pointer
+        self.ink = ink
         // A moment with no position of its own looks where the pointer was.
         moments = (grouped.isEmpty ? [Moment(time: 0, evidence: ["No timed narration or actions available."])] : grouped).map {
             var moment = $0
@@ -173,7 +190,8 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
         text += "Times refer to the edited recording (\(Self.timestamp(duration))). Click coordinates are normalized to the captured source, with a top-left origin; crop and zoom can move them in the stills. Plain typing and control names were not recorded.\n\n"
         text += "Pointer rests of 0.7 s or more and scrolls come from the input log; a long recording lists only the longest ones.\n\n"
         if strips.contains(where: { $0 != nil }) {
-            text += "Each still shows the edited recording. Each strip shows \(Self.stripFrames) frames of the unedited screen recording, from \(Self.stripLead) s before the moment to \(Self.stripSpan - Self.stripLead) s after it, around where it happened; a red ring marks the pointer, which the screen recording doesn't show.\n\n"
+            text += "Each still shows the edited recording. Each strip shows \(Self.stripFrames) frames of the unedited screen recording, from \(Self.stripLead) s before the moment to \(Self.stripSpan - Self.stripLead) s after it, around where it happened; a red ring marks the pointer"
+                + (ink.isEmpty ? ", which the screen recording doesn't show.\n\n" : " and the pen's strokes are drawn in, since the screen recording shows neither.\n\n")
         }
         if !hasInput { text += "No input log is available for this recording.\n\n" }
         if excludesAppWindows {
@@ -184,7 +202,7 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
             text += "## Source files\n\n"
             text += "- Screen recording: \(code(files.screen)): the unedited screen at full resolution, with no zoom, crop or style, and no pointer. It runs on the recording's own clock; cuts and speed changes in the edited recording shift the times above.\n"
             if let input = files.input {
-                text += "- Input log: \(code(input)): JSON on the screen recording's clock, with pointer moves and drags (travel), clicks (presses), shortcuts (keystrokes), scrolls (scrolls) and cursor images (artwork, base-64 PNG). Positions are normalized 0–1 from the top left.\n"
+                text += "- Input log: \(code(input)): JSON on the screen recording's clock, with pointer moves and drags (travel), clicks (presses), shortcuts (keystrokes), scrolls (scrolls), pen strokes drawn on screen (ink) and cursor images (artwork, base-64 PNG). Positions are normalized 0–1 from the top left.\n"
             }
             text += "\n"
         }
