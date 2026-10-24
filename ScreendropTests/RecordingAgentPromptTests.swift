@@ -239,6 +239,14 @@ struct RecordingAgentPromptTests {
         ])
     }
 
+    @Test func aCorruptScrollAmountOrCountIsClampedNotATrap() {
+        // input.json is read as written; these would trap in Int() and in the count sum.
+        let scrolls = [0.0, 0.1].map { PointerScrollEvent(time: $0, x: 0.5, y: 0.5, dx: 0, dy: 1e300, count: .max) }
+        let markdown = RecordingAgentPromptPlan(title: "Fixture", timeline: .full(sourceDuration: 2), cues: [], words: [],
+                                               capture: PointerCaptureFile(scrolls: scrolls)).markdown(frameTimes: [])
+        #expect(markdown.contains("Scroll 00:00.000–00:00.100: up 1000000000 pt over 20000 events"))
+    }
+
     @Test func extractedSchemasStillDecodeLegacyInputAndCueOnlyTranscripts() throws {
         let capture = try JSONDecoder().decode(PointerCaptureFile.self, from: Data(#"{"travel":[{"time":0,"x":0.5,"y":0.25}],"presses":[]}"#.utf8))
         #expect(capture.keystrokes.isEmpty && capture.artwork.isEmpty && !capture.isSanitized)

@@ -132,7 +132,9 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
             guard let span = editorSpan(run.start, max(run.end, run.start + 0.001)) else { continue }
             let vertical = abs(run.dy) >= abs(run.dx)
             let direction = vertical ? (run.dy > 0 ? "up" : "down") : (run.dx > 0 ? "left" : "right")
-            let distance = Int(abs(vertical ? run.dy : run.dx).rounded())
+            // input.json is read as written; Int() traps on a corrupt amount that doesn't fit.
+            let amount = abs(vertical ? run.dy : run.dx)
+            let distance = Int((amount < 1e9 ? amount : 1e9).rounded())
             let end = run.end > run.start ? span.end : span.start
             motion.append((span.start, "Scroll \(Self.timestamp(span.start))–\(Self.timestamp(end)): \(direction) \(distance) pt over \(run.count) events at source position \(Self.position(run.x, run.y)).",
                            CGPoint(x: run.x, y: run.y), end - span.start + 1))
@@ -254,13 +256,15 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
         -> [(start: Double, end: Double, count: Int, dx: Double, dy: Double, x: Double, y: Double)] {
         var runs: [(start: Double, end: Double, count: Int, dx: Double, dy: Double, x: Double, y: Double)] = []
         for scroll in scrolls.filter({ $0.time.isFinite }).sorted(by: { $0.time < $1.time }) {
+            // A corrupt count would overflow the sum; a real one is a few dozen events.
+            let count = min(max(scroll.count, 1), 10_000)
             if let last = runs.last, scroll.time - last.end <= gap {
                 runs[runs.count - 1].end = scroll.time
-                runs[runs.count - 1].count += scroll.count
+                runs[runs.count - 1].count += count
                 runs[runs.count - 1].dx += scroll.dx
                 runs[runs.count - 1].dy += scroll.dy
             } else {
-                runs.append((scroll.time, scroll.time, scroll.count, scroll.dx, scroll.dy, scroll.x, scroll.y))
+                runs.append((scroll.time, scroll.time, count, scroll.dx, scroll.dy, scroll.x, scroll.y))
             }
         }
         return runs
