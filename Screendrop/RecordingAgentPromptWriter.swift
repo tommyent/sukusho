@@ -95,7 +95,9 @@ nonisolated enum RecordingAgentPromptWriter {
     /// `~/Agent Prompts`, where every export goes; owner-only, since prompts hold screen content.
     static func centralDirectory(home: URL = FileManager.default.homeDirectoryForCurrentUser) throws -> URL {
         let directory = home.appendingPathComponent("Agent Prompts", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
+                                                attributes: [.posixPermissions: 0o700])
+        // An existing folder may have been made with other permissions.
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
         return directory
     }
