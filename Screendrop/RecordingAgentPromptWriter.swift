@@ -60,7 +60,8 @@ nonisolated enum RecordingAgentPromptWriter {
             guard actual.isFinite, actual >= 0, actual < duration,
                   abs(actual - requested) <= frameDuration + 0.001 else { throw ExportError.unavailableFrame(moment.time) }
             try Task.checkCancellation()
-            try writeJPEG(frame.image, to: stills.appendingPathComponent(RecordingAgentPromptPlan.stillName(index)), quality: 0.85)
+            // With a strip beside it, the still needn't be near-lossless; this kept an 89 s, 26-moment export at 12 MB.
+            try writeJPEG(frame.image, to: stills.appendingPathComponent(RecordingAgentPromptPlan.stillName(index)), quality: 0.7)
             frameTimes.append(actual)
             if let masterFrames, let strip = await masterFrames.strip(for: moment, plan: plan) {
                 try Task.checkCancellation()
