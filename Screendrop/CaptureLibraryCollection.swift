@@ -461,7 +461,7 @@ struct LibraryCellContent: View {
                     } else if CloudUploader.shared.isConfigured {
                         Button("Share to Cloud") { CaptureLibraryModel.shared.pendingCloudUpload = item }
                     }
-                    if let state = item.session.flatMap({ AgentPromptIndex.shared.state(for: $0) }) {
+                    if let state = AgentPromptIndex.shared.state(for: item) {
                         Button(state.accessibilityAction) { CaptureLibraryModel.shared.useAgentPrompt(item) }
                     }
                 }
@@ -483,7 +483,7 @@ struct LibraryCellContent: View {
         if let export = CaptureLibraryModel.shared.agentPromptExport, export.id == item.id {
             return ", exporting agent prompt, \(Int((export.progress * 100).rounded())) percent"
         }
-        return item.session.flatMap { AgentPromptIndex.shared.state(for: $0) }.map { ", " + $0.accessibilityDescription } ?? ""
+        return AgentPromptIndex.shared.state(for: item).map { ", " + $0.accessibilityDescription } ?? ""
     }
 
     private func isRenaming(_ item: CaptureLibraryItem) -> Bool {
@@ -573,7 +573,7 @@ private struct AgentPromptCardMark: View {
     var body: some View {
         let model = CaptureLibraryModel.shared
         let progress = model.agentPromptExport.flatMap { $0.id == item.id ? $0.progress : nil }
-        let state = item.session.flatMap { AgentPromptIndex.shared.state(for: $0) }
+        let state = AgentPromptIndex.shared.state(for: item)
         Group {
             if let progress {
                 HStack(spacing: 4) {
@@ -600,6 +600,8 @@ private struct AgentPromptCardMark: View {
             }
         }
         .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(duration: 0.45, bounce: 0.55), value: progress == nil)
+        // Also when an export finishes in Studio, or a click makes it current.
+        .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(duration: 0.45, bounce: 0.55), value: state)
     }
 }
 

@@ -38,6 +38,16 @@ nonisolated enum CaptureLibraryLayout {
     case grid, list
 }
 
+/// A running Library export of an Agent Prompt. Its progress is its own
+/// observable, so a tick redraws only the card and status bar that show it.
+@Observable
+final class AgentPromptExportProgress {
+    let id: String
+    var progress = 0.0
+
+    init(id: String) { self.id = id }
+}
+
 /// Immutable, inexpensive row data. Resolving packages and reading file metadata
 /// happens in the scanner, never in a cell's body or a selection update.
 nonisolated struct CaptureLibraryItem: Identifiable, Equatable, Sendable {
@@ -65,6 +75,8 @@ nonisolated struct CaptureLibraryItem: Identifiable, Equatable, Sendable {
     var source: CaptureSource? = nil
     /// Apple Intelligence's title, shown while the user hasn't named it.
     var modelTitle: String? = nil
+    /// A recording's last saved or draft edit, for its Agent Prompt circle.
+    var editedAt: Date? = nil
 
     var ownedURL: URL { session?.directoryURL ?? fileURL }
     /// Everything the capture keeps on disk: a recording's package, or a
@@ -161,8 +173,8 @@ final class CaptureLibraryModel {
     var operationTitle: String?
     /// The status bar's done mark for an Agent Prompt export, which no longer opens Finder.
     var savedAgentPrompt: URL?
-    /// The capture an Agent Prompt export is working on and how far it is, for its card's ring.
-    var agentPromptExport: (id: String, progress: Double)?
+    /// The capture an Agent Prompt export is working on, for its card's ring.
+    var agentPromptExport: AgentPromptExportProgress?
     var errorMessage: String?
     /// The capture whose name is being edited in place, and where.
     var renameSession: CaptureRenameSession?
@@ -351,7 +363,8 @@ nonisolated enum CaptureLibraryScanner {
             }
             // What the recording shows: a rename, a tag or opening Studio (all
             // in project.json) changes neither its thumbnail nor its text.
-            let content = [session.editDocumentURL, session.draftDocumentURL, fileURL].compactMap(modificationDate).max()
+            let edited = [session.editDocumentURL, session.draftDocumentURL].compactMap(modificationDate).max()
+            let content = [edited, modificationDate(fileURL)].compactMap { $0 }.max()
             let modified = [content, modificationDate(session.projectMetadataURL)].compactMap { $0 }.max()
                 ?? row?.modifiedAt ?? createdAt
             entries.append(CaptureLibraryItem(
@@ -364,7 +377,7 @@ nonisolated enum CaptureLibraryScanner {
                 cloudURL: rows.compactMap(\.cloudURL).first,
                 tags: metadata?.tags ?? [],
                 thumbnailKey: "\(fileURL.path):\((content ?? modified).timeIntervalSince1970)",
-                source: metadata?.source
+                source: metadata?.source, editedAt: edited
             ))
         }
         for row in history where row.sessionPath == nil {

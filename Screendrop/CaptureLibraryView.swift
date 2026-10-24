@@ -262,7 +262,7 @@ struct CaptureLibraryView: View {
             Button("Move to Trash", role: .destructive) { model.movePendingItemsToTrash() }
             Button("Cancel", role: .cancel) { model.pendingTrash = [] }
         } message: {
-            if model.pendingTrash.contains(where: { $0.session.flatMap { AgentPromptIndex.shared.state(for: $0) } != nil }) {
+            if model.pendingTrash.contains(where: { AgentPromptIndex.shared.state(for: $0) != nil }) {
                 Text("The local files, their edits and their Agent Prompts will move to Trash. Other exported copies and cloud links will remain available.")
             } else {
                 Text("The local files and their edits will move to Trash. Exported copies and cloud links will remain available.")
