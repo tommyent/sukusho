@@ -156,17 +156,32 @@ struct RecordingExportRegressionChecks {
         settings.frameRate = .fps30; settings.motionBlurEnabled = false
         let document = RecordingEditDocument(style: RecordingStudioStyle(), zoomEnabled: false, zoomCues: [],
             clipTimeline: .init(segments: [.init(sourceStart: 0, sourceEnd: 2)]), exportSettings: settings)
-        // Read in the same main-actor job as the install, so a second render can't replace the file first.
-        let calls = (0..<2).map { _ in
-            Task { () throws -> (URL, Int) in
-                let url = try await RecordingSessionRenderer.ensureDeliverable(for: session, editDocument: document)
-                return (url, try FileManager.default.attributesOfItem(atPath: url.path)[.systemFileNumber] as? Int ?? -1)
+        // Studio's package URL, then the after-capture Copy's, which it finds from the movie (trailing slash).
+        guard let copySession = RecordingDeliverable.session(for: session.screenURL) else {
+            throw Failure(description: "The Copy path found no package for its movie")
+        }
+        // Every encode writes its own temporary movie there until it is installed.
+        let exports = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent(ScreendropStorage.directoryName).appendingPathComponent("StudioExports").path
+        func movies() -> Set<String> { Set((try? FileManager.default.contentsOfDirectory(atPath: exports)) ?? []) }
+        let earlier = movies()
+        final class Finished { var count = 0 }
+        let finished = Finished()
+        let calls = [session, copySession].map { session in
+            Task { () throws -> URL in
+                defer { finished.count += 1 }
+                return try await RecordingSessionRenderer.ensureDeliverable(for: session, editDocument: document)
             }
         }
+        var encodes = Set<String>()
+        while finished.count < calls.count {
+            encodes.formUnion(movies().subtracting(earlier))
+            try await Task.sleep(for: .milliseconds(1))
+        }
         let first = try await calls[0].value, second = try await calls[1].value
-        try check(first.0 == second.0 && first.1 == second.1,
-                  "Two requests for the same edits rendered twice (installed files \(first.1) and \(second.1))")
-        try check(session.freshFinalURL(matching: document) == first.0, "The shared render was not installed for its edits")
+        try check(encodes.count == 1 && first.path == second.path,
+                  "Two requests for the same edits made \(encodes.count) encodes")
+        try check(session.freshFinalURL(matching: document) == first, "The shared render was not installed for its edits")
         print("PASS: two same-edit requests during one render share a single encode")
     }
 

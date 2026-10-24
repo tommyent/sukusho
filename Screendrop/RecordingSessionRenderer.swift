@@ -28,7 +28,8 @@ enum RecordingSessionRenderer {
     }
 
     private struct RenderKey: Equatable {
-        let package: URL
+        /// A path: the after-capture Copy finds the package from its movie, with a trailing slash.
+        let package: String
         let document: RecordingEditDocument?
     }
 
@@ -63,7 +64,7 @@ enum RecordingSessionRenderer {
         if let existing = session.freshFinalURL(matching: editDocument) { return existing }
 
         // A second encode of the same edits would only fight this one for the media engine.
-        let key = RenderKey(package: session.directoryURL.standardizedFileURL, document: editDocument)
+        let key = RenderKey(package: session.directoryURL.standardizedFileURL.path, document: editDocument)
         return try await renders.value(for: key, onProgress: onProgress) { progress in
             let configuration = try await makeConfiguration(for: session, editDocument: editDocument)
             let temporaryURL = try await RecordingStudioExporter().export(configuration, progress: progress)
