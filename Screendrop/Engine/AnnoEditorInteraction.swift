@@ -423,9 +423,11 @@ extension AnnoEditor {
         return Vec.add(anchor, Vec.fromAngle(angle, delta.len))
     }
 
+    /// Pasted pictures are drawn on, so an arrow ends where it's released on one (sd-zt9e).
     static func canBind(_ arrow: AnnoShape, to target: AnnoShape) -> Bool {
         arrow.isArrow && arrow.arrowProps?.isHighlighter != true
             && arrow.id != target.id && !target.isArrow && !target.isHighlight && !target.isRedaction
+            && target.imageProps == nil
     }
 
     /// Bind an arrow terminal to whatever shape is under the pointer, or clear the binding.

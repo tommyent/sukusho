@@ -304,4 +304,17 @@ struct PastedImageTests {
             }
         }
     }
+
+    @Test func arrowsEndWhereReleasedOnAPictureInsteadOfSnappingToIt() throws {
+        // Into the picture off its centre, and out of it: neither end may move to the picture's edge.
+        for (start, end) in [(Vec(50, 50), Vec(400, 300)), (Vec(150, 150), Vec(700, 550))] {
+            let (editor, _) = Self.editorWithPicture(tool: .arrow)
+            Self.drag(editor, from: start, to: end)
+            let arrow = try #require(editor.shapes.last)
+            let info = try #require(editor.document.arrowInfo(arrow.id))
+            #expect(editor.document.bindings.isEmpty)
+            #expect(Vec.dist(arrow.pageTransform.applyToPoint(info.start.point), start) < 0.001, "\(info.start)")
+            #expect(Vec.dist(arrow.pageTransform.applyToPoint(info.end.point), end) < 0.001, "\(info.end)")
+        }
+    }
 }
