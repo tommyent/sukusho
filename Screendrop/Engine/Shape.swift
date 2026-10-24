@@ -145,6 +145,10 @@ struct TextProps: Codable, Equatable, Hashable {
     /// Optional so text saved before boxes existed still decodes: synthesized decoding requires
     /// every non-optional key. Missing means plain.
     var boxStyle: TextBoxStyle?
+    /// A speech-bubble tail's tip (sd-cxui), in the shape's local space, so it moves, rotates and
+    /// scales with the label and stays put as typing grows the box. Drawn only on a box; kept while
+    /// the box is off. Missing means no tail.
+    var tail: Vec?
 
     var hasBox: Bool { boxStyle == .box }
 }

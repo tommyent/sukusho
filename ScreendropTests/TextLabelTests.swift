@@ -1,7 +1,7 @@
 import AppKit
 import Testing
 
-/// Boxed text labels: text centred in its box (sd-eqj7).
+/// Boxed text labels: text centred in its box (sd-eqj7) and a speech-bubble tail (sd-cxui).
 @MainActor
 struct TextLabelTests {
     static func boxed(_ text: String, fontSize: Double = 48) -> TextProps {
@@ -150,6 +150,120 @@ struct TextLabelTests {
         let above = overlay.characterIndexForInsertion(at: NSPoint(x: inset.x + 5, y: boundary - 2))
         #expect(below >= 3, "2 pt below the raised boundary is line 2: \(below)")
         #expect(above < 3, "2 pt above it is line 1: \(above)")
+    }
+
+    // MARK: - sd-cxui: model, geometry, drawing
+
+    static func tailed(_ tip: Vec?, text: String = "Like this") -> TextProps {
+        var props = boxed(text)
+        props.tail = tip
+        return props
+    }
+
+    /// The points a path is built from, in order.
+    static func points(_ path: CGPath) -> [CGPoint] {
+        var points: [CGPoint] = []
+        path.applyWithBlock { element in
+            let count = switch element.pointee.type {
+            case .moveToPoint, .addLineToPoint: 1
+            case .addQuadCurveToPoint: 2
+            case .addCurveToPoint: 3
+            default: 0
+            }
+            points += (0..<count).map { element.pointee.points[$0] }
+        }
+        return points
+    }
+
+    @Test func tailDecodesAndRoundTrips() throws {
+        let old = try JSONEncoder().encode(Self.boxed("An old label"))
+        #expect(!String(decoding: old, as: UTF8.self).contains("tail"))
+        #expect(try JSONDecoder().decode(TextProps.self, from: old).tail == nil)
+        let props = Self.tailed(Vec(400, 200))
+        #expect(try JSONDecoder().decode(TextProps.self, from: JSONEncoder().encode(props)) == props)
+    }
+
+    @Test func noTailWithoutABoxATipOrRoom() {
+        let box = TextMeasure.outerRect(Self.boxed("Like this"))
+        let reach = 48 * TextMeasure.tailMinLength
+        #expect(TextMeasure.tailPath(Self.tailed(nil)) == nil)
+        var plain = Self.tailed(Vec(box.midX, box.maxY + 100))
+        plain.boxStyle = .plain
+        #expect(TextMeasure.tailPath(plain) == nil, "box off: no tail drawn, the tip kept")
+        #expect(TextMeasure.tailPath(Self.tailed(Vec(box.midX, box.midY))) == nil, "tip inside the box")
+        #expect(TextMeasure.tailPath(Self.tailed(Vec(box.midX, box.maxY + reach - 1))) == nil, "too short")
+        #expect(TextMeasure.tailPath(Self.tailed(Vec(box.midX, box.maxY + reach + 1))) != nil)
+    }
+
+    /// The base sits on the side the ray from the box's centre to the tip crosses, tucked half a
+    /// corner radius inside the box, and the tip is exactly the stored point.
+    @Test func tailHangsFromTheSideFacingItsTip() throws {
+        let props = Self.boxed("Like this")
+        let box = TextMeasure.outerRect(props)
+        let tuck = TextMeasure.boxCornerRadius(props) / 2
+        let cases: [(tip: Vec, side: String)] = [
+            (Vec(box.midX + 60, box.maxY + 200), "bottom"),
+            (Vec(box.midX - 60, box.minY - 200), "top"),
+            (Vec(box.maxX + 200, box.midY + 10), "right"),
+            (Vec(box.minX - 200, box.midY - 10), "left"),
+            // Far past the right end but further down: the bottom, as in Shottr's sample.
+            (Vec(box.maxX + 88, box.maxY + 112), "bottom"),
+        ]
+        for (tip, side) in cases {
+            let path = try #require(TextMeasure.tailPath(Self.tailed(tip)))
+            let bounds = path.boundingBoxOfPath
+            #expect(Self.points(path).contains(tip.cgPoint), "\(side): the tip is the stored point")
+            switch side {
+            case "bottom": #expect(abs(bounds.minY - (box.maxY - tuck)) < 1e-9)
+            case "top": #expect(abs(bounds.maxY - (box.minY + tuck)) < 1e-9)
+            case "right": #expect(abs(bounds.minX - (box.maxX - tuck)) < 1e-9)
+            default: #expect(abs(bounds.maxX - (box.minX + tuck)) < 1e-9)
+            }
+        }
+    }
+
+    @Test func baseWidensWithLengthUpToTheStraightRun() throws {
+        let props = Self.boxed("Like this")
+        let box = TextMeasure.outerRect(props)
+        let span = box.width - TextMeasure.boxCornerRadius(props) * 2
+        func base(_ length: Double) throws -> Double {
+            try #require(TextMeasure.tailPath(Self.tailed(Vec(box.midX, box.maxY + length)))).boundingBoxOfPath.width
+        }
+        #expect(abs(try base(20) - 48 * TextMeasure.tailMinLength) < 1e-9, "the narrowest base")
+        #expect(abs(try base(100) - 100 * TextMeasure.tailBasePerLength) < 1e-9)
+        #expect(abs(try base(5000) - span) < 1e-9, "no wider than the straight run")
+    }
+
+    /// The tail draws in the box's colour, on the canvas and in the export, with no darker seam
+    /// where it meets the box, even on a translucent box.
+    @Test(arguments: [(true, 1.0), (false, 1.0), (true, 0.5), (false, 0.5)])
+    func tailDrawsAsOneShapeWithItsBox(flippedCanvas: Bool, alpha: Double) {
+        var props = Self.tailed(nil)
+        props.swatch = props.swatch.withAlpha(alpha)
+        let box = TextMeasure.outerRect(props)
+        props.tail = Vec(box.midX, box.maxY + 150)
+        let origin = Vec(20, 10)
+        let bitmap = Self.drawn([AnnoShape(x: origin.x, y: origin.y, kind: .text(props))],
+                                width: Int(box.width) + 40, height: Int(box.maxY) + 180, flippedCanvas: flippedCanvas)
+        func pixel(_ x: Double, _ y: Double) -> [Int] {
+            bitmap.rgba(Int((origin.x + x) * 4), Int((origin.y + y) * 4)).prefix(3).map(Int.init)
+        }
+        let boxColour = pixel(box.midX + 80, box.maxY - 2)
+        #expect(boxColour[0] > 100 && boxColour[1] < 80, "the box is red: \(boxColour)")
+        for (name, colour) in [("the tail", pixel(box.midX, box.maxY + 30)),
+                               ("where the tail meets the box", pixel(box.midX, box.maxY - 2))] {
+            #expect(zip(colour, boxColour).allSatisfy { abs($0 - $1) <= 2 }, "\(name): \(colour) vs \(boxColour)")
+        }
+        #expect(pixel(box.midX + 60, box.maxY + 30) == [0, 0, 0], "nothing beside the tail")
+    }
+
+    /// A tip dragged past the screenshot's edge grows the canvas with it.
+    @Test func tailCountsTowardTheDrawnBounds() throws {
+        let document = AnnoDocument()
+        document.restore(AnnoDocument.Snapshot(
+            shapes: [AnnoShape(x: 100, y: 100, kind: .text(Self.tailed(Vec(50, 900))))], bindings: []))
+        let bounds = try #require(document.renderedPageBounds())
+        #expect(abs(bounds.maxY - 1000) < 0.01 && bounds.minX < 150)
     }
 
     /// An overlay synced to one boxed label at `zoom`, with no window.
