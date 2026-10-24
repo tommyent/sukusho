@@ -124,6 +124,21 @@ struct CaptureSourceSearchTests {
         #expect(CaptureSourceProbe.window(covering: .point(CGPoint(x: area.maxX, y: area.maxY)), in: [vitals, rex], frontmostPID: 1)?.ownerName == "Rex Beta")
     }
 
+    @Test func thisAppsWindowsAreNamedForWhatTheyShow() {
+        func name(_ identifier: String?, autosave: String = "") -> String? {
+            CaptureSourceProbe.ownWindowName(identifier: identifier, autosaveName: autosave)
+        }
+        #expect(name("CAPTURE_LIBRARY") == "Library")
+        #expect(name("CAPTURE_LIBRARY-AppWindow-1") == "Library")
+        #expect(name("ANNOTATION_EDITOR-AppWindow-3") == "Editor")
+        #expect(name("VIDEO_EDITOR-AppWindow-1") == "Studio")
+        #expect(name(nil, autosave: "SettingsWindow") == "Settings")
+        // Any other window keeps its title.
+        #expect(name("CAPTURE_LIBRARY_OLD") == nil)
+        #expect(name("com_apple_SwiftUI_Settings_window") == nil)
+        #expect(name(nil) == nil)
+    }
+
     @Test func screencaptureRecordsTheAreaOnItsFile() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("capture-rect-\(UUID().uuidString).png")
         try Data().write(to: url)
