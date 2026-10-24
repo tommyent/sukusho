@@ -147,6 +147,29 @@ struct RecordingExportRegressionChecks {
         print("PASS: an unedited recording keeps its Stop-time render through flush and close (control: baseline never matches it); drafts and saves with edits still drop it")
     }
 
+    /// A second request for the same edits while the first renders waits for it instead of encoding beside it (sd-5oxt).
+    static func sameEditRendersOnce(in directory: URL) async throws {
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("joined.screendroprec"))
+        try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
+        try await movie(at: session.screenURL)
+        var settings = VideoCompressionSettings()
+        settings.frameRate = .fps30; settings.motionBlurEnabled = false
+        let document = RecordingEditDocument(style: RecordingStudioStyle(), zoomEnabled: false, zoomCues: [],
+            clipTimeline: .init(segments: [.init(sourceStart: 0, sourceEnd: 2)]), exportSettings: settings)
+        // Read in the same main-actor job as the install, so a second render can't replace the file first.
+        let calls = (0..<2).map { _ in
+            Task { () throws -> (URL, Int) in
+                let url = try await RecordingSessionRenderer.ensureDeliverable(for: session, editDocument: document)
+                return (url, try FileManager.default.attributesOfItem(atPath: url.path)[.systemFileNumber] as? Int ?? -1)
+            }
+        }
+        let first = try await calls[0].value, second = try await calls[1].value
+        try check(first.0 == second.0 && first.1 == second.1,
+                  "Two requests for the same edits rendered twice (installed files \(first.1) and \(second.1))")
+        try check(session.freshFinalURL(matching: document) == first.0, "The shared render was not installed for its edits")
+        print("PASS: two same-edit requests during one render share a single encode")
+    }
+
     static func quickLookInstant(in directory: URL) async throws {
         let session = RecordingSession(directoryURL: directory.appendingPathComponent("quicklook.screendroprec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
@@ -1416,6 +1439,7 @@ struct RecordingExportRegressionChecks {
         try await chapterAtPlayhead(in: directory)
         try await chapterRenameUndo(in: directory)
         try await unchangedRenderReuse(in: directory)
+        try await sameEditRendersOnce(in: directory)
         try await quickLookInstant(in: directory)
         try await unreadableDraft(in: directory)
         try await musicDelivery(in: directory)

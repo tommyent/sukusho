@@ -27,6 +27,13 @@ enum RecordingSessionRenderer {
         }
     }
 
+    private struct RenderKey: Equatable {
+        let package: URL
+        let document: RecordingEditDocument?
+    }
+
+    private static let renders = InFlightRenders<RenderKey, URL>()
+
     /// Creates a flattened deliverable when explicitly requested for a session
     /// whose raw screen master would not match what the user sees: a camera
     /// source, a cursor-hidden capture, or any saved Studio project. Only a
@@ -55,18 +62,20 @@ enum RecordingSessionRenderer {
         }
         if let existing = session.freshFinalURL(matching: editDocument) { return existing }
 
-        let configuration = try await makeConfiguration(for: session, editDocument: editDocument)
-        let temporaryURL = try await RecordingStudioExporter().export(configuration) { progress in
-            onProgress?(progress)
-        }
-        do {
-            return try session.installFinalVideo(
-                movingFrom: temporaryURL,
-                renderedFrom: editDocument
-            )
-        } catch {
-            try? FileManager.default.removeItem(at: temporaryURL)
-            throw error
+        // A second encode of the same edits would only fight this one for the media engine.
+        let key = RenderKey(package: session.directoryURL.standardizedFileURL, document: editDocument)
+        return try await renders.value(for: key, onProgress: onProgress) { progress in
+            let configuration = try await makeConfiguration(for: session, editDocument: editDocument)
+            let temporaryURL = try await RecordingStudioExporter().export(configuration, progress: progress)
+            do {
+                return try session.installFinalVideo(
+                    movingFrom: temporaryURL,
+                    renderedFrom: editDocument
+                )
+            } catch {
+                try? FileManager.default.removeItem(at: temporaryURL)
+                throw error
+            }
         }
     }
 
