@@ -429,6 +429,9 @@ struct CaptureLibraryView: View {
             if let title = model.operationTitle {
                 ProgressView().controlSize(.mini)
                 Text(title)
+                if let export = model.agentPromptExport {
+                    Text("\(Int((export.progress * 100).rounded()))%").monospacedDigit()
+                }
             } else if let folder = model.savedAgentPrompt {
                 Button {
                     NSWorkspace.shared.activateFileViewerSelecting([folder])

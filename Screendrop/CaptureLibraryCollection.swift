@@ -536,6 +536,19 @@ struct LibraryCellContent: View {
                         .padding(7)
                 }
             }
+            .overlay {
+                if let export = CaptureLibraryModel.shared.agentPromptExport, export.id == item.id {
+                    VStack(spacing: 4) {
+                        StudioProgressRing(progress: export.progress, size: 24)
+                        Text("\(Int((export.progress * 100).rounded()))%")
+                            .font(.caption.monospacedDigit())
+                            .contentTransition(.numericText())
+                    }
+                    .padding(10)
+                    .background(.regularMaterial, in: .rect(cornerRadius: DS.Radius.m, style: .continuous))
+                    .help("Exporting agent prompt")
+                }
+            }
     }
 }
 

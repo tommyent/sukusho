@@ -334,8 +334,15 @@ extension CaptureLibraryModel {
         run("Exporting agent prompt…") {
             StudioProjectRegistry.shared.flushDrafts()
             let document = try StudioProjectRegistry.shared.document(for: session.directoryURL) ?? session.editDocumentForRendering()
+            let id = item.id
+            self.agentPromptExport = (id, 0)
+            defer { self.agentPromptExport = nil }
             let folder = try await RecordingAgentPromptExport.write(session: session, document: document,
-                                                                    to: RecordingAgentPromptWriter.centralDirectory())
+                                                                    to: RecordingAgentPromptWriter.centralDirectory()) { progress in
+                Task { @MainActor in
+                    if self.agentPromptExport?.id == id { self.agentPromptExport = (id, progress) }
+                }
+            }
             RecordingAgentPromptExport.copyPath(folder)
             self.savedAgentPrompt = folder
             // Outside the operation, so the Library isn't busy while the mark shows.

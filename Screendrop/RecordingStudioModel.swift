@@ -196,6 +196,8 @@ final class RecordingStudioModel {
         }
     }
     var exportState: RecordingStudioExportState = .idle
+    /// The running export is Export Agent Prompt's, so its button shows the progress.
+    private(set) var isExportingAgentPrompt = false
     var audioExportState: RecordingStudioExportState = .idle
     var shareState: RecordingStudioShareState = .idle
     private(set) var isDeletingSharedLink = false
@@ -2867,6 +2869,8 @@ final class RecordingStudioModel {
             }
         }
         startExportTask { [weak self] in
+            self?.isExportingAgentPrompt = true
+            defer { self?.isExportingAgentPrompt = false }
             do {
                 let directory = try RecordingAgentPromptWriter.centralDirectory()
                 let folder: URL
