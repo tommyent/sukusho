@@ -12,15 +12,14 @@ Screendrop is a native macOS screenshot and screen recording tool. Its Library w
 Use `xcodebuild` from the command line. The project requires the Xcode 27 beta toolchain (installed as `Xcode-beta.app`):
 
 ```bash
-DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcodebuild build \
-  -project Screendrop.xcodeproj \
-  -scheme Screendrop \
-  -configuration Debug \
-  -destination "platform=macOS" \
-  2>&1 | grep -E "(BUILD SUCCEEDED|BUILD FAILED|error:)" | head -20
+set -o pipefail; DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcodebuild build \
+  -project Screendrop.xcodeproj -scheme Screendrop -configuration Debug -destination "platform=macOS" \
+  2>&1 | tee <scratchpad>/build.log | xcbeautify -q
 ```
 
-There are two shared schemes (`Screendrop` and `Screendrop Dev`) - both build the same target with Debug config. Use `Screendrop` unless told otherwise.
+`xcbeautify -q` prints only warnings, errors and the result, `pipefail` keeps xcodebuild's exit code, and the full log stays in `build.log`.
+
+There are two shared schemes for the same target: `Screendrop` runs the Debug configuration, and `Screendrop Dev` runs `Debug Dev` (bundle ID `com.tommyent.Sukusho.dev`). Both run tests in Debug. Use `Screendrop` unless told otherwise.
 
 `ScreendropTests` is wired into both shared schemes. It compiles the selected production logic directly, with no app host, windows, permissions or live services.
 
@@ -46,11 +45,11 @@ When adding new types, assume `@MainActor` isolation by default. If a type must 
 
 All source is in `Screendrop/` (flat, except the annotation engine in `Screendrop/Engine/`). Key flow:
 
-1. **App entry** - `ScreendropApp.swift`: `@main` App struct. Creates a `MenuBarExtra`, a Settings window, and an annotation editor `WindowGroup`.
-2. **Hotkeys** - `HotkeyManager.swift`: Registers global Carbon hotkeys (Option+1/2/3) at launch via `AppDelegate`.
+1. **App entry** - `ScreendropApp.swift`: `@main` App struct. Creates a `MenuBarExtra`, the Library `Window`, and `WindowGroup`s for the annotation editor and the recording editor. Settings is an AppKit window (`SettingsWindowController`) opened from the app's Settings command.
+2. **Hotkeys** - `HotkeyManager.swift`: Registers global Carbon hotkeys at launch via `AppDelegate`. The defaults (⌘⇧1 to ⌘⇧6, one per capture action) are in `CaptureHotkeys.swift`; shortcuts the user recorded replace them.
 3. **Capture** - `CaptureCoordinator.swift` → `ScreenshotManager.swift`: Fullscreen, window and area use the `/usr/sbin/screencapture` CLI; Scrolling Capture uses `ScreenCaptureKit`.
 4. **Preview** - `PreviewPanelPresenter.swift` + `PreviewWindowView.swift`: Borderless floating `NSPanel` showing a screenshot stack. Uses `ScreenshotPreviewStack` (an `@Observable` model).
-5. **Annotation** - `AnnotationEditorWindow.swift` + `AnnotationEditorModel.swift` + `AnnotationCanvas.swift`: Full annotation editor with tools (rectangle, ellipse, arrow, freehand, text, numbered circles, pixelate, blur). All coordinates are normalized (0..1) relative to the image.
+5. **Annotation** - `AnnotationEditorWindow.swift` + `AnnotationEditorModel.swift` + `AnnotationCanvas.swift`: Full annotation editor; its tools are the cases of `AnnotationTool` (`AnnotationTool.swift`). All coordinates are normalized (0..1) relative to the image.
 6. **Rendering** - `AnnotationRenderer.swift`: Composites annotations onto the source image at full pixel resolution using Core Graphics.
 7. **Preferences** - `ScreendropPreferences.swift` + `SettingsView.swift`: `UserDefaults`-backed settings (auto-save, auto-copy, auto-compress, export directory).
 8. **Library** - `CaptureLibraryView.swift` + `CaptureLibraryModel.swift`: Single native sidebar/detail/inspector scene. `CaptureLibraryCollection.swift` reuses AppKit cells for grid/list layouts; `CaptureLibraryThumbnails.swift` bounds decoded image memory and concurrency. The model merges History metadata with recording packages by standardized package path. Existing capture storage and editable sidecars remain authoritative. `CaptureLibraryActions.swift` handles batch operations and prevents trashing captures while their editors are open.
