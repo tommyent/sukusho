@@ -92,6 +92,31 @@ nonisolated enum RecordingAgentPromptWriter {
         throw CocoaError(.fileWriteFileExists)
     }
 
+    /// `~/Agent Prompts`, where every export goes; owner-only, since prompts hold screen content.
+    static func centralDirectory(home: URL = FileManager.default.homeDirectoryForCurrentUser) throws -> URL {
+        let directory = home.appendingPathComponent("Agent Prompts", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        return directory
+    }
+
+    /// The newest export, which Rex's Insert Sukusho Prompt action types into the focused pane.
+    struct Latest: Codable, Equatable {
+        var path: String
+        var title: String
+        var recording: String
+        var time: Date
+    }
+
+    /// Writes `latest.json` beside `folder`, replacing it in one step so a reader never sees half a file.
+    static func recordLatest(_ folder: URL, title: String, recording: String, time: Date = Date()) throws {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        try encoder.encode(Latest(path: folder.path, title: title, recording: recording, time: time))
+            .write(to: folder.deletingLastPathComponent().appendingPathComponent("latest.json"), options: .atomic)
+    }
+
     private static func writeJPEG(_ image: CGImage, to url: URL, quality: Double) throws {
         guard let output = CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil) else {
             throw ExportError.jpegFailed

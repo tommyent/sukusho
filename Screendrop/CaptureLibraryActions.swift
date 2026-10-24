@@ -331,13 +331,12 @@ extension CaptureLibraryModel {
 
     private func exportAgentPrompt(_ item: CaptureLibraryItem) {
         guard !isBusy, let session = item.session else { return }
-        RecordingAgentPromptExport.chooseDirectory { directory in
-            self.run("Exporting agent prompt…") {
-                StudioProjectRegistry.shared.flushDrafts()
-                let document = try StudioProjectRegistry.shared.document(for: session.directoryURL) ?? session.editDocumentForRendering()
-                let folder = try await RecordingAgentPromptExport.write(session: session, document: document, to: directory)
-                RecordingAgentPromptExport.reveal(folder)
-            }
+        run("Exporting agent prompt…") {
+            StudioProjectRegistry.shared.flushDrafts()
+            let document = try StudioProjectRegistry.shared.document(for: session.directoryURL) ?? session.editDocumentForRendering()
+            let folder = try await RecordingAgentPromptExport.write(session: session, document: document,
+                                                                    to: RecordingAgentPromptWriter.centralDirectory())
+            RecordingAgentPromptExport.reveal(folder)
         }
     }
 

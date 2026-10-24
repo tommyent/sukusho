@@ -247,6 +247,28 @@ struct RecordingAgentPromptTests {
         #expect(markdown.contains("Scroll 00:00.000–00:00.100: up 1000000000 pt over 20000 events"))
     }
 
+    @Test func promptsGoToAnOwnerOnlyAgentPromptsFolderThatNotesTheNewest() throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let central = try RecordingAgentPromptWriter.centralDirectory(home: home)
+        func mode() throws -> Int { try #require(FileManager.default.attributesOfItem(atPath: central.path)[.posixPermissions] as? Int) }
+        #expect(central.path == home.path + "/Agent Prompts")
+        #expect(try mode() == 0o700)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: central.path)
+        #expect(try RecordingAgentPromptWriter.centralDirectory(home: home).path == central.path)
+        #expect(try mode() == 0o700) // an existing folder is tightened
+
+        let first = central.appendingPathComponent("Demo_agent-prompt"), second = central.appendingPathComponent("Demo_agent-prompt_2")
+        try RecordingAgentPromptWriter.recordLatest(first, title: "Demo", recording: "Screendrop_1", time: Date(timeIntervalSince1970: 0))
+        try RecordingAgentPromptWriter.recordLatest(second, title: "Demo / 2", recording: "Screendrop_1", time: Date(timeIntervalSince1970: 60))
+        let data = try Data(contentsOf: central.appendingPathComponent("latest.json"))
+        // The Rex action reads these keys by name.
+        let fields = try #require(try JSONSerialization.jsonObject(with: data) as? [String: String])
+        #expect(fields == ["path": second.path, "title": "Demo / 2", "recording": "Screendrop_1", "time": "1970-01-01T00:01:00Z"])
+        #expect(try FileManager.default.contentsOfDirectory(atPath: central.path) == ["latest.json"]) // no temporary file left
+    }
+
     @Test func extractedSchemasStillDecodeLegacyInputAndCueOnlyTranscripts() throws {
         let capture = try JSONDecoder().decode(PointerCaptureFile.self, from: Data(#"{"travel":[{"time":0,"x":0.5,"y":0.25}],"presses":[]}"#.utf8))
         #expect(capture.keystrokes.isEmpty && capture.artwork.isEmpty && !capture.isSanitized)
