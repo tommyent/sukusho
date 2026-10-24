@@ -31,7 +31,7 @@ private struct AnnotationClipboard: Codable {
         case let .arrow(p):
             return positive(p.strokeWidth) && safe(p.start) && safe(p.end) && safe(p.bend)
         case let .text(p):
-            return positive(p.w, p.fontSize)
+            return positive(p.w, p.fontSize) && (p.tail.map { safe($0) } ?? true)
         case let .redaction(p):
             return positive(p.w, p.h) && (0...1).contains(p.density)
         case let .highlight(p):
