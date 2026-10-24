@@ -13,7 +13,8 @@ struct AnnotationClipboardTests {
         var images: [String: Data]
     }
 
-    private static func expectRejected(_ shapes: [AnnoShape], bindings: [ArrowBinding] = []) throws {
+    private static func expectRejected(_ shapes: [AnnoShape], bindings: [ArrowBinding] = [],
+                                       encoder: JSONEncoder = JSONEncoder()) throws {
         let board = board()
         defer { board.releaseGlobally() }
         let bytes = PastedImageTests.bandedPNG()
@@ -36,7 +37,7 @@ struct AnnotationClipboardTests {
         editor.onChange = { notifications += 1 }
         let picture = AnnoShape(x: 30, y: 40, kind: .image(ImageProps(assetID: "incoming", w: 20, h: 20)))
         let payload = Payload(shapes: [picture] + shapes, bindings: bindings, images: ["incoming": bytes])
-        board.setData(try JSONEncoder().encode(payload), forType: AnnoEditor.annotationPasteboardType)
+        board.setData(try encoder.encode(payload), forType: AnnoEditor.annotationPasteboardType)
         #expect(!editor.pasteAnnotations(from: board))
         #expect(editor.shapes == before.shapes && editor.document.bindings == before.bindings)
         #expect(editor.historyRevision == revision && editor.canUndo && editor.canRedo)
@@ -92,6 +93,19 @@ struct AnnotationClipboardTests {
             AnnoShape(x: 0, y: 0, kind: .image(ImageProps(assetID: "incoming", w: 20, h: 1e308))),
         ]
         for shape in shapes { try expectRejected([shape]) }
+    }
+
+    /// A label's tail tip reaches the canvas bounds' integer conversion, so a huge one would trap
+    /// there. JSON has no NaN: written as a string, the decoder already refuses it.
+    @Test static func unsafeTextTailIsRejectedWithoutMutation() throws {
+        for tip in [Vec(1e30, 0), Vec(0, -1e30), Vec(0, 0, 1e308)] {
+            try expectRejected([AnnoShape(x: 0, y: 0, kind: .text(TextProps(text: "Tail", boxStyle: .box, tail: tip)))])
+        }
+        let nonFinite = JSONEncoder()
+        nonFinite.nonConformingFloatEncodingStrategy = .convertToString(positiveInfinity: "Infinity",
+                                                                        negativeInfinity: "-Infinity", nan: "NaN")
+        try expectRejected([AnnoShape(x: 0, y: 0, kind: .text(TextProps(text: "Tail", boxStyle: .box, tail: Vec(.nan, 0))))],
+                           encoder: nonFinite)
     }
 
     @Test static func roundTripKeepsGeometryAndStylesWithNewIDsAndSteppingOffset() throws {

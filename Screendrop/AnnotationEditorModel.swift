@@ -214,7 +214,7 @@ final class AnnotationEditorModel {
 
     var isTransformingExistingAnnotation: Bool {
         switch engine.interaction {
-        case .translating, .resizing, .rotating, .draggingArrowHandle, .draggingMagnifier: true
+        case .translating, .resizing, .rotating, .draggingArrowHandle, .draggingTextTail, .draggingMagnifier: true
         default: false
         }
     }
@@ -1367,6 +1367,7 @@ extension AnnotationEditorModel {
         case var .text(p):
             p.fontSize *= uniform
             p.w *= sx
+            p.tail = p.tail.map { Vec($0.x * sx, $0.y * sy) }
             shape.kind = .text(p)
         }
     }

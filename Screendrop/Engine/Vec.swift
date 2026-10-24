@@ -2,7 +2,7 @@ import CoreGraphics
 import Foundation
 
 /// A 2d vector with a third `z` channel, used by the freehand engine to carry pressure.
-struct Vec: Equatable, Codable {
+struct Vec: Equatable, Hashable, Codable {
     var x: Double
     var y: Double
     var z: Double

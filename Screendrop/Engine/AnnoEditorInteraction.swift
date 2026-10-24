@@ -53,6 +53,10 @@ extension AnnoEditor {
                 guard let shape = selectedShapes.first else { return }
                 markUndo()
                 setInteraction(.draggingArrowHandle(id: shape.id, handle: handle))
+            case .textTail:
+                guard let shape = selectedShapes.first else { return }
+                markUndo()
+                setInteraction(.draggingTextTail(id: shape.id))
             case .rotate:
                 markUndo()
                 let center = bounds.pageCenter
@@ -224,6 +228,8 @@ extension AnnoEditor {
             rotate(center: center, startAngle: startAngle, initial: initial, pointer: pointer)
         case let .draggingArrowHandle(id, handle):
             dragArrowHandle(id: id, handle: handle, pointer: pointer)
+        case let .draggingTextTail(id):
+            dragTextTail(id: id, pointer: pointer)
         case let .draggingMagnifier(id, handle, origin, initial):
             dragMagnifier(id: id, handle: handle, origin: origin, initial: initial, pointer: pointer)
         }
@@ -274,6 +280,14 @@ extension AnnoEditor {
             } else {
                 selectedIds = [id]
                 if document.shape(id)?.tool != .highlighter { tool = .select }
+            }
+
+        case let .draggingTextTail(id):
+            // Dropped back on the box: no tail.
+            document.update(id) { shape in
+                guard case var .text(props) = shape.kind, props.tail != nil, TextMeasure.tailPath(props) == nil else { return }
+                props.tail = nil
+                shape.kind = .text(props)
             }
 
         case let .brushing(origin):
@@ -668,6 +682,7 @@ extension AnnoEditor {
                     let width = props.autoSize ? Double(TextMeasure.measure(props).width) : props.w
                     props.w = Swift.max(TextMeasure.minWidth, abs(width * sx))
                     props.autoSize = false
+                    props.tail = props.tail.map { Vec($0.x * abs(sx), $0.y) }
                 } else {
                     // Corners scale the type itself, uniformly - text can't stretch on one axis.
                     let uniform = (abs(sx) + abs(sy)) / 2
@@ -675,6 +690,7 @@ extension AnnoEditor {
                     if !props.autoSize {
                         props.w = Swift.max(TextMeasure.minWidth, props.w * uniform)
                     }
+                    props.tail = props.tail.map { Vec($0.x * uniform, $0.y * uniform) }
                 }
                 shape.kind = .text(props)
             }
@@ -697,6 +713,19 @@ extension AnnoEditor {
                 shape.y = rotated.y
                 shape.rotation += delta
             }
+        }
+    }
+
+    // MARK: - Text tail
+
+    /// The tip follows the pointer, unsnapped, so it points at whatever is under it (sd-cxui).
+    private func dragTextTail(id: AnnoShapeID, pointer: PointerInfo) {
+        guard let shape = document.shape(id) else { return }
+        let tip = document.pointInShapeSpace(shape, pointer.pagePoint)
+        document.update(id) { shape in
+            guard case var .text(props) = shape.kind else { return }
+            props.tail = tip
+            shape.kind = .text(props)
         }
     }
 
@@ -836,6 +865,8 @@ extension AnnoEditor {
         case .end: delta = Vec(widthDelta, 0)
         case .start: delta = nil
         }
+        // The shape moves left by the delta; the tip moves right by it, so it stays where it points.
+        if let delta, let tip = next.tail { next.tail = Vec.add(tip, delta) }
 
         document.update(id) { shape in
             if let delta {

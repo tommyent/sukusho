@@ -15,6 +15,8 @@ enum AnnoSelectionHandle: Equatable {
     case rotate(corner: Int)
     /// An arrow's own handles.
     case arrowStart, arrowMiddle, arrowEnd
+    /// A boxed label's speech-bubble tail: its tip, or the pull handle that draws one (sd-cxui).
+    case textTail
     case magnifierRing, magnifierLoupe, magnifierRingResize, magnifierLoupeResize
 
     var isCorner: Bool {
@@ -83,6 +85,7 @@ enum AnnoInteraction {
     case resizing(handle: AnnoSelectionHandle, bounds: AnnoSelectionBounds, initial: AnnoDocument.Snapshot)
     case rotating(center: Vec, startAngle: Double, initial: AnnoDocument.Snapshot)
     case draggingArrowHandle(id: AnnoShapeID, handle: AnnoSelectionHandle)
+    case draggingTextTail(id: AnnoShapeID)
     case draggingMagnifier(id: AnnoShapeID, handle: AnnoSelectionHandle, origin: Vec, initial: MagnifierProps)
 }
 
@@ -351,6 +354,8 @@ final class AnnoEditor {
                     // what's drawn grabs it too. Bounds, snapping and binding keep the outline.
                     || (shape.isHandDrawn
                         && Self.drawnStroke(document.renderElements(shape.id), contains: localPoint, margin: margin))
+                    // So does a label's tail, which is drawn past its box (sd-cxui).
+                    || shape.textProps.flatMap(TextMeasure.tailPath)?.contains(localPoint.cgPoint) == true
             if hit {
                 return shape
             }
@@ -453,6 +458,8 @@ final class AnnoEditor {
             return nil
         }
 
+        if let tail = textTailHandlePoint, Vec.dist(tail, screenPoint) <= hitRadius { return .textTail }
+
         let handles: [(AnnoSelectionHandle, Vec)] = [
             (.topLeft, Vec(0, 0)), (.top, Vec(0.5, 0)), (.topRight, Vec(1, 0)),
             (.right, Vec(1, 0.5)), (.bottomRight, Vec(1, 1)), (.bottom, Vec(0.5, 1)),
@@ -473,6 +480,26 @@ final class AnnoEditor {
             if Vec.dist(rotatePoint, screenPoint) <= hitRadius { return .rotate(corner: i) }
         }
         return nil
+    }
+
+    /// How far below a boxed label's bottom edge the tail's pull handle sits, in screen points:
+    /// clear of the invisible bottom resize handle's 9 pt reach.
+    static let tailPullHandleOffset = 20.0
+
+    /// Where a lone selected boxed label shows its tail handle (sd-cxui), in screen points: at
+    /// the tip, or with no tail yet, the pull handle below the middle of the box. Nil while the
+    /// label is being typed into.
+    var textTailHandlePoint: Vec? {
+        guard selectedIds.count == 1, let shape = selectedShapes.first, shape.id != editingTextId,
+              let props = shape.textProps, props.hasBox, !props.text.isEmpty else { return nil }
+        let transform = shape.pageTransform
+        if let tip = props.tail, TextMeasure.tailPath(props) != nil {
+            return pageToScreen(transform.applyToPoint(tip))
+        }
+        let box = TextMeasure.outerRect(props)
+        let bottom = pageToScreen(transform.applyToPoint(Vec(box.midX, box.maxY)))
+        let below = pageToScreen(transform.applyToPoint(Vec(box.midX, box.maxY + 1)))
+        return Vec.add(bottom, Vec.mul(Vec.sub(below, bottom).uni, Self.tailPullHandleOffset))
     }
 
     // MARK: - Style

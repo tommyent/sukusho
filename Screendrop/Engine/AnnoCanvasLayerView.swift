@@ -190,6 +190,9 @@ final class AnnoCanvasNSView: NSView {
         // up while the caret is live.
         let skipped: Set<AnnoShapeID> = editor.editingTextId.map { [$0] } ?? []
         AnnoShapeDrawing.draw(editor.document, in: context, target: target, skipping: skipped)
+        if let id = editor.editingTextId, let shape = editor.document.shape(id) {
+            AnnoShapeDrawing.drawEditingTail(shape, in: context, target: target)
+        }
 
         drawOverlays(editor: editor, in: context)
     }
@@ -339,6 +342,8 @@ final class AnnoCanvasNSView: NSView {
         context.setStrokeColor(accent.cgColor)
         context.setLineWidth(lineWidth)
         context.strokePath()
+
+        if let tail = editor.textTailHandlePoint { drawRoundHandle(at: tail, in: context) }
     }
 
     private func drawRoundHandle(at point: Vec, in context: CGContext) {

@@ -193,9 +193,18 @@ enum TextMeasure {
     private static var sizeCache: [TextProps: CGSize] = [:]
     private static var pathCache: [TextProps: CGPath] = [:]
 
+    /// The props the layout depends on, as the caches' key. A tail doesn't move the text, so
+    /// dragging one mustn't lay it out again on every move.
+    private static func layoutKey(_ props: TextProps) -> TextProps {
+        var key = props
+        key.tail = nil
+        return key
+    }
+
     /// The box the text occupies: as wide as the text when growing, otherwise the fixed width with
     /// the text wrapped into it.
     static func measure(_ props: TextProps) -> CGSize {
+        let props = layoutKey(props)
         lock.lock()
         defer { lock.unlock() }
         if let cached = sizeCache[props] { return cached }
@@ -251,9 +260,71 @@ enum TextMeasure {
         )
     }
 
+    /// How far a boxed label's glyphs are raised so the cap height sits centred in each line. TextKit
+    /// puts a pinned line's extra height above the glyphs, which left the text low in its box (sd-eqj7).
+    static func glyphLift(_ props: TextProps) -> CGFloat {
+        guard props.hasBox else { return 0 }
+        let face = font(props), line = lineHeight(props)
+        return (line + face.descender) - (line + face.capHeight) / 2
+    }
+
     static func boxCornerRadius(_ props: TextProps) -> CGFloat {
         let rect = outerRect(props)
         return Swift.min(CGFloat(Swift.max(1, props.fontSize) * boxCornerRadius), rect.height / 2)
+    }
+
+    /// The box's rounded rectangle, in the shape's local space.
+    static func boxPath(_ props: TextProps) -> CGPath {
+        let radius = boxCornerRadius(props)
+        return CGPath(roundedRect: outerRect(props), cornerWidth: radius, cornerHeight: radius, transform: nil)
+    }
+
+    // MARK: - Tail
+
+    /// How far past the box a tail's tip has to be before there is a tail, and the narrowest its
+    /// base gets, as multiples of the font size.
+    static let tailMinLength = 0.3
+    /// The base widens with the tail's length, as Shottr's does (about 0.32 there), up to its
+    /// side's straight run between the rounded corners.
+    static let tailBasePerLength = 0.35
+    /// How far the base leans from its side's middle toward the tip, as a share of the room the
+    /// straight run leaves; Shottr's base stays near the middle.
+    static let tailLean = 0.25
+
+    /// The speech-bubble tail (sd-cxui) in the shape's local space: a triangle from the side of
+    /// the box the tip lies beyond out to the tip. Nil without a box or a tip, and while the tip is
+    /// inside the box or within `tailMinLength` of it, which is how dragging it back in removes it.
+    static func tailPath(_ props: TextProps) -> CGPath? {
+        guard props.hasBox, let tip = props.tail?.cgPoint else { return nil }
+        let size = CGFloat(Swift.max(1, props.fontSize))
+        let box = outerRect(props)
+        let reach = size * tailMinLength
+        guard !box.insetBy(dx: -reach, dy: -reach).contains(tip) else { return nil }
+        let radius = boxCornerRadius(props)
+        let dx = tip.x - box.midX, dy = tip.y - box.midY
+        // The side the ray from the centre to the tip crosses, so a wide label's tail mostly
+        // hangs from its bottom or top.
+        let horizontal = abs(dx) / (box.width / 2) > abs(dy) / (box.height / 2)
+        let mid = horizontal ? CGPoint(x: dx > 0 ? box.maxX : box.minX, y: box.midY)
+                             : CGPoint(x: box.midX, y: dy > 0 ? box.maxY : box.minY)
+        let span = Swift.max(0, (horizontal ? box.height : box.width) - radius * 2)
+        let base = Swift.min(span, Swift.max(reach, hypot(tip.x - mid.x, tip.y - mid.y) * tailBasePerLength))
+        let slack = (span - base) / 2
+        let shift = Swift.max(-slack, Swift.min(slack, horizontal ? tip.y - mid.y : tip.x - mid.x)) * tailLean
+        // The base corners sit half a corner radius inside the box, which covers them.
+        let inward = ((horizontal ? dx : dy) > 0 ? -radius : radius) / 2
+        let path = CGMutablePath()
+        if horizontal {
+            path.move(to: CGPoint(x: mid.x + inward, y: mid.y + shift - base / 2))
+            path.addLine(to: tip)
+            path.addLine(to: CGPoint(x: mid.x + inward, y: mid.y + shift + base / 2))
+        } else {
+            path.move(to: CGPoint(x: mid.x + shift - base / 2, y: mid.y + inward))
+            path.addLine(to: tip)
+            path.addLine(to: CGPoint(x: mid.x + shift + base / 2, y: mid.y + inward))
+        }
+        path.closeSubpath()
+        return path
     }
 
     /// Text on a box is white unless white's contrast with the box falls below this; then black.
@@ -288,6 +359,7 @@ enum TextMeasure {
     /// Outlines rather than drawn text because they are the same on both render paths, cache
     /// cleanly, and survive the canvas's rotation transform without re-laying anything out.
     static func glyphPath(_ props: TextProps) -> CGPath {
+        let props = layoutKey(props)
         lock.lock()
         defer { lock.unlock() }
         if let cached = pathCache[props] { return cached }
@@ -306,6 +378,7 @@ enum TextMeasure {
         let glyphRange = layoutManager.glyphRange(for: container)
         guard glyphRange.length > 0 else { return result }
         defer { withExtendedLifetime(storage) {} }
+        let lift = glyphLift(props)
 
         layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { _, usedRect, _, lineRange, _ in
             var lineFont: NSFont?
@@ -328,7 +401,7 @@ enum TextMeasure {
                 let fragment = layoutManager.lineFragmentRect(forGlyphAt: glyphIndex, effectiveRange: nil)
                 let location = layoutManager.location(forGlyphAt: glyphIndex)
                 lineFont = font
-                baseline = fragment.origin.y + location.y
+                baseline = fragment.origin.y + location.y - lift
 
                 guard let outline = CTFontCreatePathForGlyph(font as CTFont, glyph, nil) else { continue }
 
@@ -336,7 +409,7 @@ enum TextMeasure {
                 let transform = CGAffineTransform(
                     a: 1, b: 0, c: 0, d: -1,
                     tx: fragment.origin.x + location.x,
-                    ty: fragment.origin.y + location.y
+                    ty: fragment.origin.y + location.y - lift
                 )
                 result.addPath(outline, transform: transform)
             }
