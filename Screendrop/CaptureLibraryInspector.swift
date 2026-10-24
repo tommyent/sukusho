@@ -33,6 +33,8 @@ struct CaptureLibraryInspector: View {
             .padding(.vertical, InspectorMetrics.sectionVerticalPadding)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                // A scroll bar that takes width narrows the content until it fits, which hides the bar again: a layout loop (sd-jppy).
+                .scrollIndicators(.never)
             }
         }
         .task(id: items.map(\.thumbnailKey)) {
