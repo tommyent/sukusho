@@ -222,6 +222,9 @@ struct RecordingExportRegressionChecks {
         try check(edited.deliverableDocument == edited.currentDocument()
                   && StudioProjectRegistry.shared.document(for: session.directoryURL) == edited.currentDocument(),
                   "Agent Prompt lost unsaved edits")
+        let slashed = session.screenURL.deletingLastPathComponent() // as the Copy finds the package
+        try check(StudioProjectRegistry.shared.document(for: slashed) == edited.currentDocument(),
+                  "The open editor's edits were missed for a package URL with a trailing slash")
         print("PASS: Agent Prompt on an unedited recording reuses the Stop-time render, which survives closing Studio; edits still reach it")
     }
 

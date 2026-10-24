@@ -174,8 +174,9 @@ final class StudioProjectRegistry {
     func document(for url: URL) -> RecordingEditDocument? {
         // An editor past an unreadable draft can't vouch for the edits; callers then read the files and fail.
         // An unedited, never-saved one has none, so callers read the files and find none either.
-        models.values.compactMap(\.model).first {
-            $0.isLoaded && !$0.hasUnreadableDraft && $0.sessionURL.standardizedFileURL == url.standardizedFileURL
+        let path = url.standardizedFileURL.path
+        return models.values.compactMap(\.model).first {
+            $0.isLoaded && !$0.hasUnreadableDraft && $0.sessionURL.standardizedFileURL.path == path
         }?.deliverableDocument
     }
 
