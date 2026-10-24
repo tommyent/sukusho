@@ -336,6 +336,8 @@ final class AnnoEditor {
     func hitShape(at pagePoint: Vec) -> AnnoShape? {
         let margin = Swift.max(4, pageDistance(forScreen: 8))
         for shape in document.shapes.reversed() {
+            // A drawing tool draws on a pasted picture rather than grabbing it (sd-zt9e).
+            if shape.imageProps != nil, tool.drawsOverPictures { continue }
             let localPoint = document.pointInShapeSpace(shape, pagePoint)
             let geometry = document.geometry(shape)
             // Region geometry stays filled for marquee selection; only its edge is a grab target.

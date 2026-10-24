@@ -266,4 +266,42 @@ struct PastedImageTests {
         let old = try JSONDecoder().decode(AnnotationDocument.self, from: JSONSerialization.data(withJSONObject: json))
         #expect(old.images.isEmpty)
     }
+
+    // MARK: Annotating over pictures (sd-zt9e)
+
+    /// A 400x300 picture at (100, 100) on the 800x600 page, nothing selected.
+    static func editorWithPicture(tool: AnnotationTool) -> (AnnoEditor, AnnoShape) {
+        let editor = Self.editor()
+        let picture = AnnoShape(x: 100, y: 100, kind: .image(ImageProps(assetID: "p", w: 400, h: 300)))
+        editor.replaceDocument(shapes: [picture])
+        editor.tool = tool
+        return (editor, picture)
+    }
+
+    /// Command while moving turns snapping off, so the shapes land exactly where the pointer goes.
+    static func drag(_ editor: AnnoEditor, from: Vec, to: Vec) {
+        editor.pointerDown(PointerInfo(screenPoint: from, pagePoint: from))
+        let middle = Vec.med(from, to)
+        editor.pointerMove(PointerInfo(screenPoint: middle, pagePoint: middle, command: true))
+        editor.pointerMove(PointerInfo(screenPoint: to, pagePoint: to, command: true))
+        editor.pointerUp(PointerInfo(screenPoint: to, pagePoint: to, command: true))
+    }
+
+    @Test func drawingToolsDrawOnAPictureWhileSelectAndPixelToolsGrabIt() {
+        // Blur, pixelate and the magnifier read the screenshot's own pixels, so they keep grabbing.
+        let grabbing: Set<AnnotationTool> = [.select, .blur, .pixelate, .magnifier]
+        for tool in AnnotationTool.allCases {
+            let (editor, picture) = Self.editorWithPicture(tool: tool)
+            let grabs = grabbing.contains(tool)
+            // The canvas's hover outline and cursor ("+" or the pointer) come from hitShape too.
+            #expect((editor.hitShape(at: Vec(200, 200))?.id == picture.id) == grabs, "\(tool) hit test")
+            Self.drag(editor, from: Vec(200, 200), to: Vec(300, 260))
+            let after = editor.document.shape(picture.id)
+            if grabs {
+                #expect(editor.shapes.count == 1 && after?.x == 200 && after?.y == 160, "\(tool) moves the picture")
+            } else {
+                #expect(editor.shapes.count == 2 && after == picture, "\(tool) draws and leaves the picture")
+            }
+        }
+    }
 }
