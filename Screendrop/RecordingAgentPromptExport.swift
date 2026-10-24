@@ -3,21 +3,6 @@ import AVFoundation
 
 @MainActor
 enum RecordingAgentPromptExport {
-    static func chooseDirectory(_ completion: @escaping @MainActor (URL) -> Void) {
-        let panel = NSOpenPanel()
-        panel.title = "Export Agent Prompt"
-        panel.message = "Choose where to save the prompt folder and recording stills."
-        panel.prompt = "Export"
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.canCreateDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.begin { response in
-            guard response == .OK, let directory = panel.url else { return }
-            completion(directory)
-        }
-    }
-
     /// Uses the same on-device narration service as Studio's Transcribe Narration action.
     static func transcript(cues: [RecordingSubtitleCue], words: [RecordingTranscriptWord],
                            screenURL: URL, canTranscribe: Bool) async throws -> RecordingTranscript {
@@ -59,8 +44,11 @@ enum RecordingAgentPromptExport {
         let snapshot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension(movie.pathExtension)
         try FileManager.default.copyItem(at: movie, to: snapshot)
         defer { try? FileManager.default.removeItem(at: snapshot) }
-        return try await RecordingAgentPromptWriter.write(movie: snapshot, plan: plan, to: directory,
-                                                          master: session.screenURL) { progress(0.8 + $0 * 0.2) }
+        let folder = try await RecordingAgentPromptWriter.write(movie: snapshot, plan: plan, to: directory,
+                                                                master: session.screenURL) { progress(0.8 + $0 * 0.2) }
+        try RecordingAgentPromptWriter.recordLatest(folder, title: plan.title,
+                                                    recording: session.directoryURL.deletingPathExtension().lastPathComponent)
+        return folder
     }
 
     static func reveal(_ directory: URL) {

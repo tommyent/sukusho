@@ -465,7 +465,7 @@ struct RecordingStudioAgentPromptCommand: View {
 
     var body: some View {
         if let studio {
-            Button("Export Agent Prompt…") { studio.exportAgentPrompt() }
+            Button("Export Agent Prompt") { studio.exportAgentPrompt() }
                 .disabled(!studio.isLoaded || studio.hasRunningWork || studio.hasUnreadableDraft || studio.transcriptionState.isTranscribing)
         }
     }
@@ -3358,7 +3358,7 @@ private struct StudioInspector: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
-                InspectorActionButton("Export Agent Prompt…", systemImage: "text.document") {
+                InspectorActionButton("Export Agent Prompt", systemImage: "text.document") {
                     model.exportAgentPrompt()
                 }
                 .disabled(!model.isLoaded || model.hasRunningWork || model.hasUnreadableDraft || model.transcriptionState.isTranscribing)

@@ -172,7 +172,7 @@ extension CaptureLibraryModel {
            let export = items.firstIndex(where: { $0.title == CaptureLibraryAction.export.rawValue }) {
             items.insert(LibraryMenuItem(title: "Export as GIF…", isEnabled: !isBusy) { self.exportGIF(item) }, at: export + 1)
             if item.session != nil {
-                items.insert(LibraryMenuItem(title: "Export Agent Prompt…", isEnabled: !isBusy) { self.exportAgentPrompt(item) }, at: export + 2)
+                items.insert(LibraryMenuItem(title: "Export Agent Prompt", isEnabled: !isBusy) { self.exportAgentPrompt(item) }, at: export + 2)
             }
         }
         if count == 1, let item = selectedItems.first, item.hasEdits || item.hasDraft,
@@ -331,13 +331,12 @@ extension CaptureLibraryModel {
 
     private func exportAgentPrompt(_ item: CaptureLibraryItem) {
         guard !isBusy, let session = item.session else { return }
-        RecordingAgentPromptExport.chooseDirectory { directory in
-            self.run("Exporting agent prompt…") {
-                StudioProjectRegistry.shared.flushDrafts()
-                let document = try StudioProjectRegistry.shared.document(for: session.directoryURL) ?? session.editDocumentForRendering()
-                let folder = try await RecordingAgentPromptExport.write(session: session, document: document, to: directory)
-                RecordingAgentPromptExport.reveal(folder)
-            }
+        run("Exporting agent prompt…") {
+            StudioProjectRegistry.shared.flushDrafts()
+            let document = try StudioProjectRegistry.shared.document(for: session.directoryURL) ?? session.editDocumentForRendering()
+            let folder = try await RecordingAgentPromptExport.write(session: session, document: document,
+                                                                    to: RecordingAgentPromptWriter.centralDirectory())
+            RecordingAgentPromptExport.reveal(folder)
         }
     }
 

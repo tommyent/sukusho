@@ -70,7 +70,7 @@ One window for screenshots, recordings and recording projects, with **Uploads**,
 
 - Cards with an adjustable size, search (**Command + F**), and filters for screenshots or recordings. Tags have their own colours and icons.
 - An inspector with dimensions, dates, duration, disk use and tags (**Option + Command + I** shows or hides it).
-- Right-click a capture for **Quick Look**, **Edit**, **Rename**, **Revert to Original…** (on an edited capture), **Copy**, **Export…**, the system **Share…** sheet, **Reveal in Finder** and **Move to Trash**. Recordings add **Export as GIF…** and **Export Agent Prompt…**. The same menu holds the cloud actions: **Share to Cloud…** before upload; **Copy Cloud Link**, **Open Shared Capture** and **Delete from Cloud…** after.
+- Right-click a capture for **Quick Look**, **Edit**, **Rename**, **Revert to Original…** (on an edited capture), **Copy**, **Export…**, the system **Share…** sheet, **Reveal in Finder** and **Move to Trash**. Recordings add **Export as GIF…** and **Export Agent Prompt**. The same menu holds the cloud actions: **Share to Cloud…** before upload; **Copy Cloud Link**, **Open Shared Capture** and **Delete from Cloud…** after.
 - Each card has a cloud badge: click it to share the capture, or to copy its link once shared. Shared captures show a green cloud with a tick.
 - Right-click between the cards to change the sort order or **Refresh** (**Command + R**).
 - **Space** opens Quick Look and **Return** renames. Select several captures to copy, export, share, reveal or trash them together.
@@ -85,7 +85,7 @@ Opening Sukusho shows the Library; when it starts at login, it stays in the menu
 - **Audio:** **Isolate voice** cleans the microphone track with Apple's voice isolation. Add background music from your own file or from the [Free To Use](https://freetouse.com/music) library, looped to fit, starting where you choose, lowered while you speak, and faded out at the end.
 - **Redactions:** blur or pixelate a region for part of the recording. They apply to every preview, export and share, and the original footage stays untouched.
 - **Words:** transcribe your narration on-device, edit the captions, or cut the video by deleting words from its transcript. Chapters can be suggested from pauses and are named from what you said; the share page lists them so viewers can jump.
-- **Output:** export the finished video as MOV, MP4 or GIF, export its audio, or click **Upload** to send it to your Worker and copy the link. **Export Agent Prompt…** writes a folder with `prompt.md` and stills of what was said, clicked and pressed, to hand a walkthrough to a coding agent.
+- **Output:** export the finished video as MOV, MP4 or GIF, export its audio, or click **Upload** to send it to your Worker and copy the link. **Export Agent Prompt** writes a folder in `~/Agent Prompts` with `prompt.md` and stills of what was said, clicked and pressed, to hand a walkthrough to a coding agent; `~/Agent Prompts/latest.json` names the newest one.
 - Studio has no Save button: a project saves after a two-second pause, when you switch away, close or quit, and with **File → Save** (**Command + S**). **File → Revert To** goes back to the original recording, to how the window opened, or to one of the last five sessions. Double-click the title to rename the recording.
 
 ### Image editor

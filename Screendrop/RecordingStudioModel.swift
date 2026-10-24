@@ -2851,44 +2851,44 @@ final class RecordingStudioModel {
 
     func exportAgentPrompt() {
         guard isLoaded, !hasRunningWork, !hasUnreadableDraft, !transcriptionState.isTranscribing else { return }
-        RecordingAgentPromptExport.chooseDirectory { [weak self] directory in
-            guard let self, self.isLoaded, !self.hasRunningWork, !self.transcriptionState.isTranscribing else { return }
-            self.pause()
-            self.flushDraft()
-            let document = self.currentDocument()
-            let deliverableDocument = self.deliverableDocument
-            let session = self.session
-            let title = self.projectDisplayName
-            let timeline = self.clipTimeline
-            let configuration: RecordingStudioExporter.Configuration?
-            do { configuration = try self.makeAgentPromptConfiguration() }
-            catch { self.exportState = .failed(error.localizedDescription); return }
-            let report: @Sendable (Double) -> Void = { [weak self] progress in
-                Task { @MainActor [weak self] in
-                    if self?.exportState.isExporting == true { self?.exportState = .exporting(progress: progress) }
-                }
+        pause()
+        flushDraft()
+        let document = currentDocument()
+        let deliverableDocument = self.deliverableDocument
+        let session = self.session
+        let title = projectDisplayName
+        let timeline = clipTimeline
+        let configuration: RecordingStudioExporter.Configuration?
+        do { configuration = try makeAgentPromptConfiguration() }
+        catch { exportState = .failed(error.localizedDescription); return }
+        let report: @Sendable (Double) -> Void = { [weak self] progress in
+            Task { @MainActor [weak self] in
+                if self?.exportState.isExporting == true { self?.exportState = .exporting(progress: progress) }
             }
-            self.startExportTask { [weak self] in
-                do {
-                    let folder: URL
-                    if let session {
-                        folder = try await RecordingAgentPromptExport.write(session: session, document: deliverableDocument, to: directory, progress: report)
-                    } else if let configuration {
-                        let plan = RecordingAgentPromptPlan(title: title, timeline: timeline,
-                                                           cues: document.subtitleCues ?? [], words: document.subtitleWords ?? [], capture: nil)
-                        let movie = try await RecordingStudioExporter().export(configuration) { report($0 * 0.8) }
-                        defer { try? FileManager.default.removeItem(at: movie) }
-                        folder = try await RecordingAgentPromptWriter.write(movie: movie, plan: plan, to: directory) { report(0.8 + $0 * 0.2) }
-                    } else { return }
-                    RecordingAgentPromptExport.reveal(folder)
-                    self?.exportState = .finished(folder)
-                } catch is CancellationError {
-                    self?.exportState = .idle
-                } catch RecordingStudioExporter.ExportError.cancelled {
-                    self?.exportState = .idle
-                } catch {
-                    self?.exportState = .failed(error.localizedDescription)
-                }
+        }
+        startExportTask { [weak self] in
+            do {
+                let directory = try RecordingAgentPromptWriter.centralDirectory()
+                let folder: URL
+                if let session {
+                    folder = try await RecordingAgentPromptExport.write(session: session, document: deliverableDocument, to: directory, progress: report)
+                } else if let configuration {
+                    let plan = RecordingAgentPromptPlan(title: title, timeline: timeline,
+                                                       cues: document.subtitleCues ?? [], words: document.subtitleWords ?? [], capture: nil)
+                    let movie = try await RecordingStudioExporter().export(configuration) { report($0 * 0.8) }
+                    defer { try? FileManager.default.removeItem(at: movie) }
+                    folder = try await RecordingAgentPromptWriter.write(movie: movie, plan: plan, to: directory) { report(0.8 + $0 * 0.2) }
+                    // A bare movie's title is its file name.
+                    try RecordingAgentPromptWriter.recordLatest(folder, title: title, recording: title)
+                } else { return }
+                RecordingAgentPromptExport.reveal(folder)
+                self?.exportState = .finished(folder)
+            } catch is CancellationError {
+                self?.exportState = .idle
+            } catch RecordingStudioExporter.ExportError.cancelled {
+                self?.exportState = .idle
+            } catch {
+                self?.exportState = .failed(error.localizedDescription)
             }
         }
     }
