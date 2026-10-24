@@ -67,9 +67,14 @@ enum AnnoShapeDrawing {
             drawRedaction(shape, document: document, in: context, target: target)
         }
 
+        // Pasted pictures lie on the screenshot, under the spotlight and every annotation (sd-zt9e).
+        for shape in shapes where shape.imageProps != nil {
+            drawShape(shape, document: document, in: context, target: target)
+        }
+
         drawSpotlight(shapes.filter { $0.isHighlight }, in: context, target: target)
 
-        for shape in shapes where !shape.isRedaction && !shape.isHighlight {
+        for shape in shapes where !shape.isRedaction && !shape.isHighlight && shape.imageProps == nil {
             drawShape(shape, document: document, in: context, target: target, magnifierSource: magnifierSource)
         }
     }

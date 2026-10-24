@@ -144,4 +144,10 @@ enum AnnotationTool: String, CaseIterable, Identifiable, Codable {
     var createsAnnotation: Bool {
         self != .select
     }
+
+    /// Whether a press on a pasted picture draws on it instead of grabbing it (sd-zt9e). Blur,
+    /// pixelate and the magnifier read the screenshot's own pixels, so they grab it as Select does.
+    var drawsOverPictures: Bool {
+        createsAnnotation && ![.blur, .pixelate, .magnifier].contains(self)
+    }
 }

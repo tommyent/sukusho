@@ -25,12 +25,13 @@ struct PastedImageTests {
     }
 
     /// Draws one pasted picture at page (20, 30), 40x20, into a 100x100 page, either as the
-    /// flipped canvas does or as the y-up export does, and returns the bitmap.
-    static func drawn(flippedCanvas: Bool) -> (Data, Int) {
+    /// flipped canvas does or as the y-up export does, and returns the bitmap. `before` and
+    /// `after` come before and after the picture in the document.
+    static func drawn(flippedCanvas: Bool, before: [AnnoShape] = [], after: [AnnoShape] = []) -> (Data, Int) {
         let asset = AnnoImageAsset(data: bandedPNG())!
         let document = AnnoDocument()
         document.restore(AnnoDocument.Snapshot(
-            shapes: [AnnoShape(x: 20, y: 30, kind: .image(ImageProps(assetID: "a", w: 40, h: 20)))],
+            shapes: before + [AnnoShape(x: 20, y: 30, kind: .image(ImageProps(assetID: "a", w: 40, h: 20)))] + after,
             bindings: []))
         let bytesPerRow = 400
         let context = CGContext(data: nil, width: 100, height: 100, bitsPerComponent: 8, bytesPerRow: bytesPerRow,
@@ -265,5 +266,86 @@ struct PastedImageTests {
         json.removeValue(forKey: "images")
         let old = try JSONDecoder().decode(AnnotationDocument.self, from: JSONSerialization.data(withJSONObject: json))
         #expect(old.images.isEmpty)
+    }
+
+    // MARK: Annotating over pictures (sd-zt9e)
+
+    /// A 400x300 picture at (100, 100) on the 800x600 page, nothing selected.
+    static func editorWithPicture(tool: AnnotationTool) -> (AnnoEditor, AnnoShape) {
+        let editor = Self.editor()
+        let picture = AnnoShape(x: 100, y: 100, kind: .image(ImageProps(assetID: "p", w: 400, h: 300)))
+        editor.replaceDocument(shapes: [picture])
+        editor.tool = tool
+        return (editor, picture)
+    }
+
+    /// Command while moving turns snapping off, so the shapes land exactly where the pointer goes.
+    static func drag(_ editor: AnnoEditor, from: Vec, to: Vec) {
+        editor.pointerDown(PointerInfo(screenPoint: from, pagePoint: from))
+        let middle = Vec.med(from, to)
+        editor.pointerMove(PointerInfo(screenPoint: middle, pagePoint: middle, command: true))
+        editor.pointerMove(PointerInfo(screenPoint: to, pagePoint: to, command: true))
+        editor.pointerUp(PointerInfo(screenPoint: to, pagePoint: to, command: true))
+    }
+
+    @Test func drawingToolsDrawOnAPictureWhileSelectAndPixelToolsGrabIt() {
+        // Blur, pixelate and the magnifier read the screenshot's own pixels, so they keep grabbing.
+        let grabbing: Set<AnnotationTool> = [.select, .blur, .pixelate, .magnifier]
+        for tool in AnnotationTool.allCases {
+            let (editor, picture) = Self.editorWithPicture(tool: tool)
+            let grabs = grabbing.contains(tool)
+            // The canvas's hover outline and cursor ("+" or the pointer) come from hitShape too.
+            #expect((editor.hitShape(at: Vec(200, 200))?.id == picture.id) == grabs, "\(tool) hit test")
+            Self.drag(editor, from: Vec(200, 200), to: Vec(300, 260))
+            let after = editor.document.shape(picture.id)
+            if grabs {
+                #expect(editor.shapes.count == 1 && after?.x == 200 && after?.y == 160, "\(tool) moves the picture")
+            } else {
+                #expect(editor.shapes.count == 2 && after == picture, "\(tool) draws and leaves the picture")
+            }
+        }
+    }
+
+    @Test func arrowsEndWhereReleasedOnAPictureInsteadOfSnappingToIt() throws {
+        // Into the picture off its centre, and out of it: neither end may move to the picture's edge.
+        for (start, end) in [(Vec(50, 50), Vec(400, 300)), (Vec(150, 150), Vec(700, 550))] {
+            let (editor, _) = Self.editorWithPicture(tool: .arrow)
+            Self.drag(editor, from: start, to: end)
+            let arrow = try #require(editor.shapes.last)
+            let info = try #require(editor.document.arrowInfo(arrow.id))
+            #expect(editor.document.bindings.isEmpty)
+            #expect(Vec.dist(arrow.pageTransform.applyToPoint(info.start.point), start) < 0.001, "\(info.start)")
+            #expect(Vec.dist(arrow.pageTransform.applyToPoint(info.end.point), end) < 0.001, "\(info.end)")
+        }
+    }
+
+    @Test(arguments: [true, false])
+    func annotationsMadeBeforeAPictureShowOverIt(flippedCanvas: Bool) {
+        var props = GeoProps()
+        props.w = 10; props.h = 10; props.fill = .solid; props.swatch = .green
+        let square = AnnoShape(x: 35, y: 32, kind: .geo(props))
+        let over = Self.rgb(Self.drawn(flippedCanvas: flippedCanvas, before: [square]), x: 40, y: 37)
+        #expect(over[1] > 150 && over[0] < 120, "the green square shows over the picture's red top: \(over)")
+    }
+
+    @Test(arguments: [true, false])
+    func theSpotlightDimsPicturesToo(flippedCanvas: Bool) {
+        let hole = AnnoShape(x: 70, y: 70, kind: .highlight(HighlightProps(w: 10, h: 10)))
+        let bitmap = Self.drawn(flippedCanvas: flippedCanvas, before: [hole])
+        let red = Self.rgb(bitmap, x: 40, y: 33)
+        #expect(red[0] < 160, "the picture is dimmed outside the highlight: \(red)")
+        #expect(Self.rgb(bitmap, x: 75, y: 75) == [255, 255, 255], "the highlight itself stays clear")
+    }
+
+    @Test func anAnnotationOverAPictureIsHitFirstWhicheverCameFirst() {
+        let editor = Self.editor()
+        var props = GeoProps()
+        props.fill = .solid
+        let square = AnnoShape(x: 150, y: 150, kind: .geo(props))
+        let picture = AnnoShape(x: 100, y: 100, kind: .image(ImageProps(assetID: "p", w: 400, h: 300)))
+        editor.replaceDocument(shapes: [square, picture])
+        editor.tool = .select
+        #expect(editor.hitShape(at: Vec(200, 200))?.id == square.id, "the square draws over the picture")
+        #expect(editor.hitShape(at: Vec(400, 300))?.id == picture.id)
     }
 }
