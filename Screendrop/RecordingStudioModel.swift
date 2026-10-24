@@ -2881,7 +2881,7 @@ final class RecordingStudioModel {
                     // A bare movie's title is its file name.
                     try RecordingAgentPromptWriter.recordLatest(folder, title: title, recording: title)
                 } else { return }
-                RecordingAgentPromptExport.reveal(folder)
+                RecordingAgentPromptExport.copyPath(folder)
                 self?.exportState = .finished(folder)
             } catch is CancellationError {
                 self?.exportState = .idle
