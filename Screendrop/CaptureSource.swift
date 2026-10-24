@@ -152,8 +152,8 @@ final class CaptureSourceProbe {
     }
 
     /// Ordinary app windows only: layer 0, visible, not the system's capture
-    /// overlays. This app's own windows count, named for what they show; its
-    /// panels and overlays sit at other levels.
+    /// overlays. This app's own windows count when captures can see them,
+    /// named for what they show; its panels and overlays sit at other levels.
     private static func onScreenWindows() -> [Window] {
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         guard let list = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else { return [] }
@@ -171,6 +171,8 @@ final class CaptureSourceProbe {
             var title = (info[kCGWindowName as String] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             if pid == ownPID, let number = (info[kCGWindowNumber as String] as? NSNumber)?.intValue,
                let window = NSApp.window(withWindowNumber: number) {
+                // Hidden from captures (Include app windows off, the default): the capture shows what's behind it.
+                guard window.sharingType != .none else { return nil }
                 title = ownWindowName(identifier: window.identifier?.rawValue, autosaveName: window.frameAutosaveName) ?? title
             }
             return Window(pid: pid, ownerName: owner, title: title?.isEmpty == false ? title : nil, bounds: bounds)
