@@ -163,6 +163,32 @@ struct RecordingAgentPromptTests {
         #expect(cue.text == "Legacy cue")
     }
 
+    @Test func stripsShowTheMasterAroundEachMomentWithThePointerRinged() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let movie = directory.appendingPathComponent("fixture.mov")
+        try await makeMovie(at: movie) // red until 1 s, then blue
+        let plan = RecordingAgentPromptPlan(title: "Strip", timeline: .full(sourceDuration: 3), cues: [], words: [],
+            capture: PointerCaptureFile(travel: [.init(time: 0, x: 0.25, y: 0.5), .init(time: 0.9, x: 0.75, y: 0.5)],
+                                        presses: [.init(time: 0.9, x: 0.75, y: 0.5, button: 0, phase: .down)]))
+        #expect(plan.moments.map(\.time) == [0, 0.9])
+        #expect(plan.moments.map(\.focus) == [CGPoint(x: 0.25, y: 0.5), CGPoint(x: 0.75, y: 0.5)])
+        let folder = try await RecordingAgentPromptWriter.write(movie: movie, plan: plan, to: directory, master: movie)
+        let markdown = try String(contentsOf: folder.appendingPathComponent("prompt.md"), encoding: .utf8)
+        #expect(markdown.contains("![Frames 00:00.650–00:01.650 of the unedited screen recording](strips/0002.jpg)"))
+        #expect(markdown.contains("a red ring marks the pointer"))
+        let data = try Data(contentsOf: folder.appendingPathComponent("strips/0002.jpg"))
+        let image = try #require(CGImageSourceCreateWithData(data as CFData, nil).flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) })
+        #expect(image.width == 4 * 96 && image.height == 2 * 64) // a small master is used whole, never enlarged
+        let first = try pixel(image, x: 48, y: 32), last = try pixel(image, x: 3 * 96 + 48, y: 64 + 32)
+        #expect(first[0] > 200 && first[2] < 60)
+        #expect(last[2] > 200 && last[0] < 60)
+        // The master has no pointer; the ring around x 0.75 in the last frame stands out from the blue.
+        #expect(try pixel(image, x: 3 * 96 + 72 + 9, y: 64 + 32)[0] > 150)
+        #expect(try pixel(image, x: 3 * 96 + 24 + 9, y: 64 + 32)[0] < 60)
+    }
+
     @Test func generatedFolderContainsMatchingStillsAndPreservesPriorExport() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
@@ -174,6 +200,7 @@ struct RecordingAgentPromptTests {
         let first = try await RecordingAgentPromptWriter.write(movie: movie, plan: plan, to: directory)
         let markdown = try String(contentsOf: first.appendingPathComponent("prompt.md"), encoding: .utf8)
         #expect(markdown.contains("stills/0001.jpg") && markdown.contains("stills/0002.jpg"))
+        #expect(!markdown.contains("strips/") && !FileManager.default.fileExists(atPath: first.appendingPathComponent("strips").path))
         #expect(first.lastPathComponent == "Fixture-path_agent-prompt")
         let firstData = try Data(contentsOf: first.appendingPathComponent("stills/0001.jpg"))
         let lastData = try Data(contentsOf: first.appendingPathComponent("stills/0002.jpg"))
@@ -224,6 +251,18 @@ struct RecordingAgentPromptTests {
                 bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
             context.draw(image, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        }
+        return pixel
+    }
+
+    private func pixel(_ image: CGImage, x: Int, y: Int) throws -> [UInt8] {
+        let one = try #require(image.cropping(to: CGRect(x: x, y: y, width: 1, height: 1)))
+        var pixel = [UInt8](repeating: 0, count: 4)
+        try pixel.withUnsafeMutableBytes { bytes in
+            let context = try #require(CGContext(data: bytes.baseAddress, width: 1, height: 1,
+                bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.draw(one, in: CGRect(x: 0, y: 0, width: 1, height: 1))
         }
         return pixel
     }
