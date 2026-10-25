@@ -145,7 +145,7 @@ struct CloudUploadOptionsPopover: View {
                 .disabled(encryptionUnavailable != nil)
                 .foregroundStyle(encryptionUnavailable == nil ? .primary : .secondary)
                 .help("The file is encrypted on this Mac before it's uploaded; the key travels only in the link.")
-                Text(encryptionUnavailable ?? "Only people with the full link can open the file. Not even our server can.")
+                Text(encryptionUnavailable ?? "Only people with the full link can open the file. Not even the server can.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
