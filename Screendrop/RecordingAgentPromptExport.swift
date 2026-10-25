@@ -55,35 +55,49 @@ enum RecordingAgentPromptExport {
         } else {
             timeline = .legacyTrim(start: document?.trimStart, end: document?.trimEnd, sourceDuration: duration)
         }
-        let narration = try await transcript(cues: document?.subtitleCues ?? [], words: document?.subtitleWords ?? [],
-                                             screenURL: session.screenURL, canTranscribe: session.loadCaptureManifest()?.includesMicrophone == true)
+        let cues = document?.subtitleCues ?? [], words = document?.subtitleWords ?? []
+        let canTranscribe = session.loadCaptureManifest()?.includesMicrophone == true
+        // Stills for clicks, rests and pen strokes don't depend on what was said,
+        // so they render while speech is transcribed, the export's longest step.
+        let early = Self.plan(for: session, document: document, timeline: timeline, transcript: RecordingTranscript(words: [], cues: []))
+        let screen = session.screenURL
+        async let prerendered = cues.isEmpty && words.isEmpty && canTranscribe
+            ? RecordingAgentPromptWriter.prerender(plan: early, master: screen) : [:]
+        let narration = try await transcript(cues: cues, words: words, screenURL: screen, canTranscribe: canTranscribe)
         try Task.checkCancellation()
         let plan = plan(for: session, document: document, timeline: timeline, transcript: narration.transcript,
                         transcriptionFailure: narration.failure)
         // Stills come from the screen recording itself, not a styled render: an agent wants the
         // whole screen at its real size, and the export takes seconds instead of a transcode.
-        // Named after the package, which a rename doesn't change, so each recording keeps one folder.
-        let folder = try await RecordingAgentPromptWriter.write(movie: nil, plan: plan, to: directory, name: session.packageName,
-                                                                master: session.screenURL, progress: progress)
+        // Named after the card, then the package's ID, which keeps one folder per recording through renames.
+        let id = AgentPromptIndex.recordingID(session)
+        let folder = try await RecordingAgentPromptWriter.write(movie: nil, plan: plan, to: directory, name: String(plan.title.prefix(80)) + "_" + id,
+                                                                master: screen, prerendered: await prerendered, progress: progress)
         // A cancelled export (Studio closed) doesn't become the one Rex sends.
         try Task.checkCancellation()
+        // One folder per recording: one under an earlier name (renamed since, or named after its package) goes.
+        for other in (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        where other != folder.lastPathComponent && RecordingAgentPromptWriter.recordingID(ofFolder: other) == id {
+            try? FileManager.default.trashItem(at: directory.appendingPathComponent(other, isDirectory: true), resultingItemURL: nil)
+        }
         try RecordingAgentPromptWriter.recordLatest(folder, title: plan.title, recording: session.packageName)
         return folder
     }
 
-    /// After a successful export: the path for an agent outside Rex (Rex's
+    /// After a successful export: the Read line for an agent outside Rex (Rex's
     /// Insert Sukusho Prompt reads latest.json), the Glass chime, and the
     /// Library's card marks. Finder stays put.
     static func finished(_ folder: URL) {
-        copyPath(folder)
+        copyReadLine(folder)
         if ScreendropPreferences.playSounds { NSSound(named: "Glass")?.play() }
         AccessibilityNotification.Announcement("Agent Prompt saved").post()
         AgentPromptIndex.shared.reload()
     }
 
-    static func copyPath(_ directory: URL) {
+    /// The line people paste to an agent, as Rex types it.
+    static func copyReadLine(_ directory: URL) {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(directory.path, forType: .string)
+        NSPasteboard.general.setString("Read \"\(directory.appendingPathComponent("prompt.md").path)\" and follow it.", forType: .string)
     }
 }
 
@@ -102,52 +116,70 @@ final class AgentPromptIndex {
         case stale
     }
 
-    /// When each folder's prompt.md was written, by folder name.
-    private(set) var written: [String: Date] = [:]
+    struct Folder: Equatable {
+        let name: String
+        /// When its prompt.md was written.
+        let written: Date
+    }
+
+    /// Each recording's prompt folder, by recording ID.
+    private(set) var folders: [String: Folder] = [:]
     private(set) var latestPath: String?
+
+    /// The short random ID that ends a recording's package name ("20F562"); its
+    /// prompt's folder ends with it too. shortcut: two recordings share a folder if
+    /// their 6 hex digits match (1 in 16.7 million a pair), give folders the full
+    /// package name if that ever happens.
+    static func recordingID(_ session: RecordingSession) -> String {
+        let name = session.packageName
+        return name.lastIndex(of: "_").map { String(name[name.index(after: $0)...]) } ?? name
+    }
 
     func reload() {
         let directory = RecordingAgentPromptWriter.directoryURL()
-        var written: [String: Date] = [:]
-        for name in (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
-        where name.hasSuffix(RecordingAgentPromptWriter.folderSuffix) {
-            let prompt = directory.appendingPathComponent(name, isDirectory: true).appendingPathComponent("prompt.md")
-            if let date = Self.modified(prompt) { written[name] = date }
+        var folders: [String: Folder] = [:]
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? [] {
+            guard let id = RecordingAgentPromptWriter.recordingID(ofFolder: name),
+                  let date = Self.modified(directory.appendingPathComponent(name, isDirectory: true).appendingPathComponent("prompt.md")),
+                  date > folders[id]?.written ?? .distantPast else { continue }
+            folders[id] = Folder(name: name, written: date)
         }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let latest = (try? Data(contentsOf: directory.appendingPathComponent("latest.json")))
             .flatMap { try? decoder.decode(RecordingAgentPromptWriter.Latest.self, from: $0) }?.path
         // Only real changes, so cards don't redraw on every Library refresh.
-        if written != self.written { self.written = written }
+        if folders != self.folders { self.folders = folders }
         if latest != latestPath { latestPath = latest }
     }
 
-    func folder(for session: RecordingSession) -> URL {
-        RecordingAgentPromptWriter.directoryURL().appendingPathComponent(RecordingAgentPromptWriter.folderName(session.packageName), isDirectory: true)
+    /// The recording's prompt folder, nil when it has none.
+    func folder(for session: RecordingSession) -> URL? {
+        folders[Self.recordingID(session)].map {
+            RecordingAgentPromptWriter.directoryURL().appendingPathComponent($0.name, isDirectory: true)
+        }
     }
 
     /// Nil when the capture has no prompt. Reads no files: cells call it, and
     /// the scanner has already read when the recording was last edited.
     func state(for item: CaptureLibraryItem) -> State? {
-        guard let session = item.session else { return nil }
-        let folder = folder(for: session)
-        guard let written = written[folder.lastPathComponent] else { return nil }
+        guard let session = item.session, let folder = folder(for: session),
+              let written = folders[Self.recordingID(session)]?.written else { return nil }
         if let edited = item.editedAt, edited > written { return .stale }
         return latestPath == folder.path ? .current : .available
     }
 
     /// Makes this recording's prompt the one ⌃⌥⌘P sends, with no new export.
     func makeCurrent(_ session: RecordingSession) throws {
-        let folder = folder(for: session)
+        guard let folder = folder(for: session) else { return }
         try RecordingAgentPromptWriter.recordLatest(folder, title: RecordingAgentPromptExport.title(for: session), recording: session.packageName)
-        RecordingAgentPromptExport.copyPath(folder)
+        RecordingAgentPromptExport.copyReadLine(folder)
         reload()
     }
 
     /// The recording went to the Trash; its prompt follows it there.
     func trash(for session: RecordingSession) {
-        let folder = folder(for: session)
+        guard let folder = folder(for: session) else { return }
         try? FileManager.default.trashItem(at: folder, resultingItemURL: nil)
         // Without latest.json, Rex says there's no prompt yet rather than typing a path that's gone.
         if latestPath == folder.path {

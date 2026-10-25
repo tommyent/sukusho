@@ -20,13 +20,48 @@ nonisolated enum RecordingAgentPromptWriter {
         }
     }
 
+    /// A moment's still and strip, as the JPEGs the folder gets.
+    struct Rendered: Sendable {
+        let still: Data
+        let strip: (data: Data, span: ClosedRange<Double>)?
+
+        init(still: CGImage, strip: (image: CGImage, span: ClosedRange<Double>)?) throws {
+            // With a strip beside it, the still needn't be near-lossless; this kept an 89 s, 26-moment export at 12 MB.
+            self.still = try jpegData(still, quality: 0.7)
+            // About 0.3 MB a strip with UI text still readable.
+            self.strip = try strip.map { (try jpegData($0.image, quality: 0.5), $0.span) }
+        }
+    }
+
+    /// Moments with the same time and focus look the same in one recording's stills and strips.
+    static func renderKey(_ moment: RecordingAgentPromptPlan.Moment) -> String {
+        "\(moment.time)|" + (moment.focus.map { "\($0.x),\($0.y)" } ?? "")
+    }
+
+    /// The master's stills and strips for `plan`'s moments, ahead of `write`, so the moments
+    /// the input log gives render while speech is still being transcribed. Stops when cancelled.
+    @concurrent
+    static func prerender(plan: RecordingAgentPromptPlan, master: URL) async -> [String: Rendered] {
+        guard let frames = await MasterFrames(url: master) else { return [:] }
+        defer {
+            frames.generator.cancelAllCGImageGeneration()
+            frames.stillGenerator.cancelAllCGImageGeneration()
+        }
+        var rendered: [String: Rendered] = [:]
+        for moment in plan.moments where !Task.isCancelled {
+            rendered[renderKey(moment)] = try? await frames.rendered(moment, plan: plan)
+        }
+        return rendered
+    }
+
     /// `master` is the unedited screen recording; with it, each moment also
     /// gets a strip of frames around it. Stills come from the edited `movie`,
-    /// or, with none, from the master, marked like the strips. The folder is
-    /// named after `name` (the plan's title by default), and a later export of
-    /// the same name replaces it.
+    /// or, with none, from the master, marked like the strips, or from
+    /// `prerendered` when it has the moment. The folder is named after `name`
+    /// (the plan's title by default), and a later export of the same name replaces it.
     @concurrent
     static func write(movie: URL?, plan: RecordingAgentPromptPlan, to directory: URL, name: String? = nil, master: URL? = nil,
+                      prerendered: [String: Rendered] = [:],
                       progress: @escaping @Sendable (Double) -> Void = { _ in }) async throws -> URL {
         try Task.checkCancellation()
         var edited: (generator: AVAssetImageGenerator, duration: Double, frameDuration: Double)?
@@ -65,28 +100,28 @@ nonisolated enum RecordingAgentPromptWriter {
         var stripSpans: [ClosedRange<Double>?] = []
         for (index, moment) in plan.moments.enumerated() {
             try Task.checkCancellation()
-            let image: CGImage
+            let rendered: Rendered
             if let edited {
                 let requested = min(moment.time, max(0, edited.duration - edited.frameDuration))
                 let frame = try await edited.generator.image(at: CMTime(seconds: requested, preferredTimescale: 60_000))
                 let actual = frame.actualTime.seconds
                 guard actual.isFinite, actual >= 0, actual < edited.duration,
                       abs(actual - requested) <= edited.frameDuration + 0.001 else { throw ExportError.unavailableFrame(moment.time) }
-                image = frame.image
+                let strip = await masterFrames?.strip(for: moment, plan: plan)
+                rendered = try Rendered(still: frame.image, strip: strip)
                 frameTimes.append(actual)
             } else {
-                guard let still = await masterFrames?.still(for: moment, plan: plan) else { throw ExportError.unavailableFrame(moment.time) }
-                image = still
+                var master = prerendered[renderKey(moment)]
+                if master == nil { master = try await masterFrames?.rendered(moment, plan: plan) }
+                guard let master else { throw ExportError.unavailableFrame(moment.time) }
+                rendered = master
                 frameTimes.append(moment.time)
             }
             try Task.checkCancellation()
-            // With a strip beside it, the still needn't be near-lossless; this kept an 89 s, 26-moment export at 12 MB.
-            try writeJPEG(image, to: stills.appendingPathComponent(RecordingAgentPromptPlan.stillName(index)), quality: 0.7)
-            if let masterFrames, let strip = await masterFrames.strip(for: moment, plan: plan) {
-                try Task.checkCancellation()
+            try rendered.still.write(to: stills.appendingPathComponent(RecordingAgentPromptPlan.stillName(index)))
+            if let strip = rendered.strip {
                 try FileManager.default.createDirectory(at: strips, withIntermediateDirectories: true)
-                // About 0.3 MB a strip with UI text still readable.
-                try writeJPEG(strip.image, to: strips.appendingPathComponent(RecordingAgentPromptPlan.stillName(index)), quality: 0.5)
+                try strip.data.write(to: strips.appendingPathComponent(RecordingAgentPromptPlan.stillName(index)))
                 stripSpans.append(strip.span)
             } else {
                 stripSpans.append(nil)
@@ -112,6 +147,14 @@ nonisolated enum RecordingAgentPromptWriter {
         let safe = name.components(separatedBy: CharacterSet(charactersIn: "/:\\").union(.controlCharacters))
             .joined(separator: "-").trimmingCharacters(in: .whitespacesAndNewlines)
         return String((safe.isEmpty || safe == "." || safe == ".." ? "Recording" : safe).prefix(100)) + folderSuffix
+    }
+
+    /// The recording ID a folder is named with: what follows its last "_". Folders
+    /// named after the whole package ("Screendrop_…_20F562") end in the same ID.
+    static func recordingID(ofFolder name: String) -> String? {
+        guard name.hasSuffix(folderSuffix) else { return nil }
+        let stem = name.dropLast(folderSuffix.count)
+        return stem.lastIndex(of: "_").map { String(stem[stem.index(after: $0)...]) }
     }
 
     /// `~/Agent Prompts`, without creating it.
@@ -146,12 +189,14 @@ nonisolated enum RecordingAgentPromptWriter {
             .write(to: folder.deletingLastPathComponent().appendingPathComponent("latest.json"), options: .atomic)
     }
 
-    private static func writeJPEG(_ image: CGImage, to url: URL, quality: Double) throws {
-        guard let output = CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil) else {
+    private static func jpegData(_ image: CGImage, quality: Double) throws -> Data {
+        let data = NSMutableData()
+        guard let output = CGImageDestinationCreateWithData(data as CFMutableData, UTType.jpeg.identifier as CFString, 1, nil) else {
             throw ExportError.jpegFailed
         }
         CGImageDestinationAddImage(output, image, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
         guard CGImageDestinationFinalize(output) else { throw ExportError.jpegFailed }
+        return data as Data
     }
 
     /// Frames of the unedited screen recording: no zoom, crop or style, and no
@@ -225,6 +270,12 @@ nonisolated enum RecordingAgentPromptWriter {
             }
             guard drewFrame, let image = context.makeImage() else { return nil }
             return (image, first...last)
+        }
+
+        /// A moment's still and strip; nil if no still came back.
+        func rendered(_ moment: RecordingAgentPromptPlan.Moment, plan: RecordingAgentPromptPlan) async throws -> Rendered? {
+            guard let still = await still(for: moment, plan: plan) else { return nil }
+            return try Rendered(still: still, strip: await strip(for: moment, plan: plan))
         }
 
         /// The whole frame at a moment, at most 1920 px on its long side, marked like a strip.

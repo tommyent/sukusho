@@ -622,6 +622,11 @@ final class RecordingStudioModel {
         return session?.customName
     }
 
+    /// Apple Intelligence's title for the recording, as its Library card shows it.
+    var modelTitle: String? {
+        session.flatMap { CaptureLibraryIndex.shared.visibleInsight("recording:" + $0.directoryURL.standardizedFileURL.path)?.title }
+    }
+
     /// An unnamed project's name, as the Library and the image editor show
     /// it: when it was recorded. Until load reads the manifest, that comes
     /// from the `Screendrop_<timestamp>_<id>` folder name; a bare movie

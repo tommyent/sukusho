@@ -172,8 +172,13 @@ extension CaptureLibraryModel {
         if count == 1, let item = selectedItems.first, item.isVideo,
            let export = items.firstIndex(where: { $0.title == CaptureLibraryAction.export.rawValue }) {
             items.insert(LibraryMenuItem(title: "Export as GIF…", isEnabled: !isBusy) { self.exportGIF(item) }, at: export + 1)
-            if item.session != nil {
+            if let session = item.session {
                 items.insert(LibraryMenuItem(title: "Export Agent Prompt", isEnabled: !isBusy) { self.exportAgentPrompt(item) }, at: export + 2)
+                if let folder = AgentPromptIndex.shared.folder(for: session) {
+                    items.insert(LibraryMenuItem(title: "Show Agent Prompt in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([folder])
+                    }, at: export + 3)
+                }
             }
         }
         if count == 1, let item = selectedItems.first, item.hasEdits || item.hasDraft,
@@ -371,14 +376,15 @@ extension CaptureLibraryModel {
     }
 
     /// The circle on a recording's card: a stale prompt exports again, another
-    /// recording's becomes the one ⌃⌥⌘P sends, and the current one shows in Finder.
+    /// recording's becomes the one ⌃⌥⌘P sends, and the current one's Read line is copied.
     func useAgentPrompt(_ item: CaptureLibraryItem) {
         guard !isBusy, let session = item.session, let state = AgentPromptIndex.shared.state(for: item) else { return }
         switch state {
         case .stale: exportAgentPrompt(item)
         case .available:
             do { try AgentPromptIndex.shared.makeCurrent(session) } catch { errorMessage = error.localizedDescription }
-        case .current: NSWorkspace.shared.activateFileViewerSelecting([AgentPromptIndex.shared.folder(for: session)])
+        case .current:
+            if let folder = AgentPromptIndex.shared.folder(for: session) { RecordingAgentPromptExport.copyReadLine(folder) }
         }
     }
 

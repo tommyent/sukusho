@@ -247,6 +247,17 @@ struct RecordingAgentPromptTests {
         #expect(markdown.contains("Scroll 00:00.000–00:00.100: up 1000000000 pt over 20000 events"))
     }
 
+    @Test func promptFoldersAreFoundByTheirRecordingIDUnderAnyName() {
+        // Named after the package before 2026-10-25, after the card's name since.
+        #expect(RecordingAgentPromptWriter.recordingID(ofFolder: "Screendrop_2026-10-25-11-29-34_20F562_agent-prompt") == "20F562")
+        #expect(RecordingAgentPromptWriter.recordingID(ofFolder: RecordingAgentPromptWriter.folderName("Notes: a_b / c_20F562")) == "20F562")
+        #expect(RecordingAgentPromptWriter.recordingID(ofFolder: RecordingAgentPromptWriter.folderName(String(repeating: "x", count: 80) + "_20F562")) == "20F562")
+        // A bare movie's folder, a staging folder and latest.json name no recording.
+        #expect(RecordingAgentPromptWriter.recordingID(ofFolder: "Demo_agent-prompt") == nil)
+        #expect(RecordingAgentPromptWriter.recordingID(ofFolder: ".agent-prompt-0A1B") == nil)
+        #expect(RecordingAgentPromptWriter.recordingID(ofFolder: "latest.json") == nil)
+    }
+
     @Test func promptsGoToAnOwnerOnlyAgentPromptsFolderThatNotesTheNewest() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: false)
@@ -365,6 +376,36 @@ struct RecordingAgentPromptTests {
         let ground = try pixel(image, x: 20, y: 32), ring = try pixel(image, x: 72 + 9, y: 32)
         #expect(ground[2] > 200 && ground[0] < 60) // source 2 s: blue, not the red the cut removed
         #expect(ring[0] > 150)
+    }
+
+    @Test func stillsRenderedDuringTranscriptionMatchOnesRenderedAfter() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let movie = directory.appendingPathComponent("fixture.mov")
+        try await makeMovie(at: movie)
+        let timeline = RecordingClipTimeline(segments: [.init(sourceStart: 0, sourceEnd: 3)])
+        let capture = PointerCaptureFile(travel: [.init(time: 0, x: 0.75, y: 0.5)],
+                                         presses: [.init(time: 2, x: 0.75, y: 0.5, button: 0, phase: .down)])
+        // The early plan has no narration; the final one adds a narration moment the early renders lack.
+        let early = RecordingAgentPromptPlan(title: "Early", timeline: timeline, cues: [], words: [], capture: capture)
+        let final = RecordingAgentPromptPlan(title: "Final", timeline: timeline, cues: [.init(start: 1, end: 1.3, text: "Narration")],
+                                             words: [], capture: capture)
+        #expect(final.moments.count > early.moments.count)
+        let prerendered = await RecordingAgentPromptWriter.prerender(plan: early, master: movie)
+        #expect(prerendered.count == early.moments.count)
+        let reused = try await RecordingAgentPromptWriter.write(movie: nil, plan: final, to: directory, name: "Reused", master: movie,
+                                                                prerendered: prerendered)
+        let fresh = try await RecordingAgentPromptWriter.write(movie: nil, plan: final, to: directory, name: "Fresh", master: movie)
+        for folder in ["stills", "strips"] {
+            let names = try FileManager.default.contentsOfDirectory(atPath: fresh.appendingPathComponent(folder).path).sorted()
+            #expect(names.count == final.moments.count)
+            #expect(try FileManager.default.contentsOfDirectory(atPath: reused.appendingPathComponent(folder).path).sorted() == names)
+            for name in names {
+                #expect(try Data(contentsOf: reused.appendingPathComponent("\(folder)/\(name)"))
+                        == Data(contentsOf: fresh.appendingPathComponent("\(folder)/\(name)")))
+            }
+        }
     }
 
     @Test func aMomentPastTheLastVideoFrameStillGetsAStill() async throws {
