@@ -209,7 +209,8 @@ struct AnnotationEditorWindow: View {
             .help("Copy the share link again")
         } else if CloudUploader.shared.isConfigured {
             CloudUploadButton(
-                suggestedTitle: model.sourceURL?.deletingPathExtension().lastPathComponent ?? "",
+                // Only a name the user gave, as the Library suggests; an unnamed upload keeps its file name on the share page.
+                suggestedTitle: historyItem?.displayName ?? "",
                 onUpload: uploadAnnotation
             ) {
                 if isUploading {
