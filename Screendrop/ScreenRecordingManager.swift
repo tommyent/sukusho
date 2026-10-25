@@ -71,6 +71,7 @@ private enum ScreenRecordingFinishAction: Equatable {
 nonisolated struct ScreenRecordingCaptureOptions: Sendable {
     var capturesSystemAudio = false
     var cleanDesktop = true
+    var bugReport = false
     var microphoneDeviceID: String?
     var cameraDeviceID: String?
 
@@ -78,7 +79,9 @@ nonisolated struct ScreenRecordingCaptureOptions: Sendable {
     static func fromPreferences() -> ScreenRecordingCaptureOptions {
         var options = ScreenRecordingCaptureOptions()
         options.capturesSystemAudio = ScreendropPreferences.recordingSystemAudio
-        options.cleanDesktop = ScreendropPreferences.recordingCleanDesktop
+        options.bugReport = ScreendropPreferences.recordingBugReport
+        // A bug report keeps the menu bar and notification banners: they can be part of the bug.
+        options.cleanDesktop = ScreendropPreferences.recordingCleanDesktop && !options.bugReport
         let micID = ScreendropPreferences.recordingMicrophoneDeviceID
         options.microphoneDeviceID = micID.isEmpty ? nil : micID
         let cameraID = ScreendropPreferences.recordingCameraDeviceID
@@ -284,6 +287,7 @@ final class ScreenRecordingManager {
                 manifest.includesSystemAudio = options.capturesSystemAudio
                 manifest.includesMicrophone = options.microphoneDeviceID != nil
                 manifest.includesAppWindows = ScreendropPreferences.includeAppWindowsInCaptures
+                manifest.isBugReport = options.bugReport ? true : nil
                 if !cameraStarted {
                     manifest.cameraLeadIn = nil
                 }

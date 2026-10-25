@@ -22,10 +22,13 @@ enum RecordingAgentPromptExport {
         let hidden = Set(document?.hiddenInkStrokeIDs ?? [])
         capture?.ink.removeAll { document?.showsInk == false || hidden.contains($0.id) }
         let input = FileManager.default.fileExists(atPath: session.pointerCaptureURL.path) ? session.pointerCaptureURL : nil
+        let manifest = session.loadCaptureManifest()
         return RecordingAgentPromptPlan(title: session.displayName, timeline: timeline, cues: transcript.cues, words: transcript.words,
                                         capture: capture, cursorNames: PointerArtworkCapture.names(for: capture?.artwork ?? []),
                                         files: .init(screen: session.screenURL, input: input),
-                                        excludesAppWindows: session.loadCaptureManifest()?.includesAppWindows == false)
+                                        excludesAppWindows: manifest?.includesAppWindows == false,
+                                        source: session.loadProjectMetadata()?.source,
+                                        screen: manifest.flatMap { $0.pixelWidth > 0 ? .init(width: $0.pixelWidth, height: $0.pixelHeight, scale: $0.pixelScale) : nil })
     }
 
     static func write(session: RecordingSession, document: RecordingEditDocument?, to directory: URL,
@@ -41,15 +44,11 @@ enum RecordingAgentPromptExport {
                                               screenURL: session.screenURL, canTranscribe: session.loadCaptureManifest()?.includesMicrophone == true)
         try Task.checkCancellation()
         let plan = plan(for: session, document: document, timeline: timeline, transcript: transcript)
-        let movie = try await RecordingSessionRenderer.ensureDeliverable(for: session, editDocument: document) { progress($0 * 0.8) }
-        try Task.checkCancellation()
-        // Studio can invalidate its cached movie while still extraction is suspended.
-        let snapshot = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension(movie.pathExtension)
-        try FileManager.default.copyItem(at: movie, to: snapshot)
-        defer { try? FileManager.default.removeItem(at: snapshot) }
+        // Stills come from the screen recording itself, not a styled render: an agent wants the
+        // whole screen at its real size, and the export takes seconds instead of a transcode.
         // Named after the package, which a rename doesn't change, so each recording keeps one folder.
-        let folder = try await RecordingAgentPromptWriter.write(movie: snapshot, plan: plan, to: directory, name: session.packageName,
-                                                                master: session.screenURL) { progress(0.8 + $0 * 0.2) }
+        let folder = try await RecordingAgentPromptWriter.write(movie: nil, plan: plan, to: directory, name: session.packageName,
+                                                                master: session.screenURL, progress: progress)
         // A cancelled export (Studio closed) doesn't become the one Rex sends.
         try Task.checkCancellation()
         try RecordingAgentPromptWriter.recordLatest(folder, title: plan.title, recording: session.packageName)

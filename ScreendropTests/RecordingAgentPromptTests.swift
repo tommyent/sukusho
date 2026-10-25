@@ -341,6 +341,41 @@ struct RecordingAgentPromptTests {
         #expect(above[2] > 200 && above[0] < 60)
     }
 
+    @Test func stillsFromTheScreenRecordingFollowCutsAndRingThePointer() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let movie = directory.appendingPathComponent("fixture.mov")
+        try await makeMovie(at: movie) // red until 1 s, then blue
+        // The cut drops 0.5–1.5 s, so the click at source 2 s is at 1 s in the edit.
+        let timeline = RecordingClipTimeline(segments: [.init(sourceStart: 0, sourceEnd: 0.5), .init(sourceStart: 1.5, sourceEnd: 3)])
+        let plan = RecordingAgentPromptPlan(title: "Raw", timeline: timeline, cues: [], words: [],
+            capture: PointerCaptureFile(travel: [.init(time: 0, x: 0.75, y: 0.5)],
+                                        presses: [.init(time: 2, x: 0.75, y: 0.5, button: 0, phase: .down)]))
+        let index = try #require(plan.moments.firstIndex { $0.time == 1 })
+        let folder = try await RecordingAgentPromptWriter.write(movie: nil, plan: plan, to: directory, master: movie)
+        let markdown = try String(contentsOf: folder.appendingPathComponent("prompt.md"), encoding: .utf8)
+        #expect(markdown.contains("Each still shows the whole screen at its moment, from the unedited screen recording"))
+        #expect(markdown.contains("they match the stills."))
+        #expect(markdown.contains("![Frame at 00:01.000](stills/\(RecordingAgentPromptPlan.stillName(index)))"))
+        let data = try Data(contentsOf: folder.appendingPathComponent("stills/\(RecordingAgentPromptPlan.stillName(index))"))
+        let image = try #require(CGImageSourceCreateWithData(data as CFData, nil).flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) })
+        #expect(image.width == 96 && image.height == 64) // the whole frame, never enlarged
+        let ground = try pixel(image, x: 20, y: 32), ring = try pixel(image, x: 72 + 9, y: 32)
+        #expect(ground[2] > 200 && ground[0] < 60) // source 2 s: blue, not the red the cut removed
+        #expect(ring[0] > 150)
+    }
+
+    @Test func theHeaderNamesTheAppWindowAndPixelScale() {
+        let plan = RecordingAgentPromptPlan(title: "Header", timeline: .full(sourceDuration: 3), cues: [], words: [], capture: nil,
+            source: CaptureSource(bundleIdentifier: "com.apple.TextEdit", appName: "TextEdit", windowTitle: "Notes"),
+            screen: .init(width: 3420, height: 2214, scale: 2))
+        #expect(plan.markdown(frameTimes: []).contains(
+            "At the start, TextEdit (com.apple.TextEdit) was in front, window \"Notes\". The recording is 3420 × 2214 px at 2x, so one point is 2 pixels."))
+        let bare = RecordingAgentPromptPlan(title: "Bare", timeline: .full(sourceDuration: 3), cues: [], words: [], capture: nil)
+        #expect(!bare.markdown(frameTimes: []).contains("At the start"))
+    }
+
     @Test func generatedFolderContainsMatchingStillsAndReplacesPriorExport() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)

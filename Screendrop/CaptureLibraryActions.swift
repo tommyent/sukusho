@@ -332,23 +332,37 @@ extension CaptureLibraryModel {
 
     private func exportAgentPrompt(_ item: CaptureLibraryItem) {
         guard !isBusy, let session = item.session else { return }
-        run("Exporting agent prompt…") {
-            StudioProjectRegistry.shared.flushDrafts()
-            let document = try StudioProjectRegistry.shared.document(for: session.directoryURL) ?? session.editDocumentForRendering()
-            let export = AgentPromptExportProgress(id: item.id)
-            self.agentPromptExport = export
-            defer { self.agentPromptExport = nil }
-            let folder = try await RecordingAgentPromptExport.write(session: session, document: document,
-                                                                    to: RecordingAgentPromptWriter.centralDirectory()) { progress in
-                Task { @MainActor in export.progress = progress }
-            }
-            RecordingAgentPromptExport.finished(folder)
-            self.savedAgentPrompt = folder
-            // Outside the operation, so the Library isn't busy while the mark shows.
-            Task {
-                try? await Task.sleep(for: .seconds(8))
-                if self.savedAgentPrompt == folder { self.savedAgentPrompt = nil }
-            }
+        run("Exporting agent prompt…") { try await self.writeAgentPrompt(session, id: item.id) }
+    }
+
+    /// A Bug report take, as soon as it stops; the Library may not be open.
+    /// False when it failed, with the reason in `errorMessage`.
+    func exportBugReport(_ session: RecordingSession) async -> Bool {
+        do {
+            try await writeAgentPrompt(session, id: "recording:" + session.directoryURL.standardizedFileURL.path)
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    private func writeAgentPrompt(_ session: RecordingSession, id: String) async throws {
+        StudioProjectRegistry.shared.flushDrafts()
+        let document = try StudioProjectRegistry.shared.document(for: session.directoryURL) ?? session.editDocumentForRendering()
+        let export = AgentPromptExportProgress(id: id)
+        agentPromptExport = export
+        defer { if agentPromptExport === export { agentPromptExport = nil } }
+        let folder = try await RecordingAgentPromptExport.write(session: session, document: document,
+                                                                to: RecordingAgentPromptWriter.centralDirectory()) { progress in
+            Task { @MainActor in export.progress = progress }
+        }
+        RecordingAgentPromptExport.finished(folder)
+        savedAgentPrompt = folder
+        // Outside the operation, so the Library isn't busy while the mark shows.
+        Task {
+            try? await Task.sleep(for: .seconds(8))
+            if self.savedAgentPrompt == folder { self.savedAgentPrompt = nil }
         }
     }
 

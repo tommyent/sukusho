@@ -40,6 +40,7 @@ enum ScreendropPreferences {
     static let recordingMicrophoneDeviceIDKey = "recordingMicrophoneDeviceID"
     static let recordingSystemAudioKey = "recordingSystemAudio"
     static let recordingCleanDesktopKey = "recordingCleanDesktop"
+    static let recordingBugReportKey = "recordingBugReport"
     static let recordingStartDelaySecondsKey = "recordingStartDelaySeconds"
     static let recordingTeleprompterEnabledKey = "recordingTeleprompterEnabled"
     static let recordingTeleprompterScriptKey = "recordingTeleprompterScript"
@@ -125,6 +126,12 @@ enum ScreendropPreferences {
     /// Hides desktop distractions in recorded pixels only. Defaults to on.
     static var recordingCleanDesktop: Bool {
         UserDefaults.standard.object(forKey: recordingCleanDesktopKey) as? Bool ?? true
+    }
+
+    /// Records the take as a bug report for a coding agent: Stop writes its
+    /// Agent Prompt instead of opening Studio. Defaults to off.
+    static var recordingBugReport: Bool {
+        UserDefaults.standard.bool(forKey: recordingBugReportKey)
     }
 
     /// Countdown delay (in seconds) before a recording starts. 0 means off.

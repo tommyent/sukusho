@@ -225,7 +225,7 @@ struct RecordingExportRegressionChecks {
         let slashed = session.screenURL.deletingLastPathComponent() // as the Copy finds the package
         try check(StudioProjectRegistry.shared.document(for: slashed) == edited.currentDocument(),
                   "The open editor's edits were missed for a package URL with a trailing slash")
-        print("PASS: Agent Prompt on an unedited recording reuses the Stop-time render, which survives closing Studio; edits still reach it")
+        print("PASS: Agent Prompt renders nothing and leaves the Stop-time render alone, which survives closing Studio; edits still reach it")
     }
 
     static func quickLookInstant(in directory: URL) async throws {
