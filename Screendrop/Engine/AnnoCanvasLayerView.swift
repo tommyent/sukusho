@@ -187,7 +187,7 @@ final class AnnoCanvasNSView: NSView {
         )
 
         // The shape being typed into is drawn by its text overlay instead, so the two don't double
-        // up while the caret is live.
+        // up while the caret is live; a tailed label's box and tail still come from here.
         let skipped: Set<AnnoShapeID> = editor.editingTextId.map { [$0] } ?? []
         AnnoShapeDrawing.draw(editor.document, in: context, target: target, skipping: skipped)
         if let id = editor.editingTextId, let shape = editor.document.shape(id) {

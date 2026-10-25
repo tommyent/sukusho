@@ -1,5 +1,6 @@
 import AppKit
 import ImageIO
+import QuickLookThumbnailing
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -43,6 +44,9 @@ final class CloudLibraryModel {
     private(set) var savingIDs: Set<String> = []
     /// Quick Look's download, while it runs.
     private(set) var previewFetch: PreviewFetch?
+    /// Goes up when Quick Look or a download leaves full files on this Mac, so cards
+    /// without a Worker thumbnail draw one from them.
+    var previewRevision = 0
     private var previewTask: Task<Void, Never>?
     /// Esc stops the download while it runs.
     private var escapeMonitor: Any?
@@ -276,6 +280,7 @@ final class CloudLibraryModel {
                 }
             }
             if Task.isCancelled { return }
+            if !files.isEmpty { previewRevision += 1 }
             QuickLookPreviewPresenter.show(urls: files)
             if !failures.isEmpty {
                 CaptureLibraryModel.shared.errorMessage = "Couldn’t download for Quick Look:\n" + failures.joined(separator: "\n")
@@ -537,6 +542,11 @@ struct CloudLibraryPage: View {
                 )
             }
         }
+        // Full height, so the bars below sit at the top even over an empty page.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .topTrailing) {
+            if CloudUploader.shared.isConfigured, cloud.hasLoaded { CloudPageActions(cloud: cloud) }
+        }
         .safeAreaInset(edge: .top, spacing: 0) {
             if cloud.isHistoryFallback {
                 Label("Showing uploads whose capture is still in the Library. Update the Worker to see every upload.",
@@ -547,20 +557,6 @@ struct CloudLibraryPage: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
                     .background(.bar)
-            }
-        }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            let open = FileRequestsModel.shared.openRequests.count
-            if cloud.showsReceived, open > 0 {
-                HStack(spacing: 8) {
-                    Label(open == 1 ? "1 open file request" : "\(open) open file requests", systemImage: "link")
-                    Spacer()
-                    Button("Manage…") { FileRequestsModel.shared.showsSheet = true }
-                }
-                .font(.callout)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background(.bar)
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
@@ -637,6 +633,35 @@ struct CloudLibraryPage: View {
 
 /// A Library card for an upload: the same chrome, the capture's own
 /// thumbnail when it's still in the Library, else the Worker's.
+/// Files' and Received's actions float over the grid's top corner as glass, as the rest of the
+/// Library keeps its toolbar to the search field: Add Files on Files; Manage (the open links) and
+/// a new link on Received.
+private struct CloudPageActions: View {
+    let cloud: CloudLibraryModel
+    @State private var requests = FileRequestsModel.shared
+
+    var body: some View {
+        GlassEffectContainer(spacing: GlassMetrics.containerSpacing) {
+            HStack(spacing: GlassMetrics.gap) {
+                if cloud.showsReceived {
+                    let open = requests.openRequests.count
+                    if open > 0 {
+                        GlassCapsuleButton(title: "Manage \(open)", height: 36) { requests.showsOpenLinks.toggle() }
+                            .help("Open links people can use to send you files")
+                            .accessibilityLabel("Manage open links, \(open) open")
+                            .popover(isPresented: $requests.showsOpenLinks, arrowEdge: .bottom) { FileRequestsOpenLinks() }
+                    }
+                    GlassCircleButton(title: "Request Files…", systemImage: "link.badge.plus", size: 36) { requests.showsSheet = true }
+                } else if cloud.showsFiles {
+                    GlassCircleButton(title: "Add Files…", systemImage: "plus", size: 36) { cloud.chooseFiles() }
+                        .disabled(cloud.fileUploads != nil)
+                }
+            }
+        }
+        .padding(16)
+    }
+}
+
 private struct CloudUploadCard: View {
     let upload: CloudUpload
     let local: CaptureLibraryItem?
@@ -959,16 +984,28 @@ struct CloudUploadThumbnail: View {
                 }
             }
             .clipped()
-            .task(id: upload.thumbnailUrl) {
+            .task(id: thumbnailKey) {
                 image = nil
-                guard let link = upload.thumbnailUrl, let url = URL(string: link) else { return }
-                // Locked uploads' posters and images need the owner's token.
-                let result = await CloudThumbnails.image(at: url, owner: upload.hasPassword == true ? CloudUploader.shared.ownerAccess : nil)
+                let result: CGImage?
+                if let link = upload.thumbnailUrl {
+                    guard let url = URL(string: link) else { return }
+                    // Locked uploads' posters and images need the owner's token.
+                    result = await CloudThumbnails.image(at: url, owner: upload.hasPassword == true ? CloudUploader.shared.ownerAccess : nil)
+                } else {
+                    // No Worker thumbnail (files, received files): only a copy Quick Look or a
+                    // download already left here, never a fetch of its own.
+                    guard let file = try? CloudPreviewCache.shared.cachedFile(for: upload, touching: false) else { return }
+                    result = await CloudThumbnails.image(ofFile: file)
+                }
                 guard !Task.isCancelled else { return }
                 image = result
             }
             .accessibilityHidden(true)
         }
+    }
+
+    private var thumbnailKey: String {
+        upload.thumbnailUrl ?? "\(upload.id)#\(CloudLibraryModel.shared.previewRevision)"
     }
 }
 
@@ -997,6 +1034,17 @@ private enum CloudThumbnails {
             ] as CFDictionary)
         }.value
         if let image { cache.setObject(image, forKey: url as NSURL) }
+        return image
+    }
+
+    /// Quick Look's thumbnail of a file on this Mac. It renders out of process, so a received
+    /// file isn't decoded inside the app. Nil where Quick Look has only an icon (a DMG).
+    static func image(ofFile file: URL) async -> CGImage? {
+        if let image = cache.object(forKey: file as NSURL) { return image }
+        let request = QLThumbnailGenerator.Request(fileAt: file, size: CGSize(width: 320, height: 320),
+                                                   scale: 2, representationTypes: .thumbnail)
+        guard let image = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request).cgImage else { return nil }
+        cache.setObject(image, forKey: file as NSURL)
         return image
     }
 }

@@ -131,14 +131,16 @@ enum AnnoShapeDrawing {
         context.restoreGState()
     }
 
-    /// A label being typed into is skipped and its overlay draws the box, so its tail comes from
-    /// here: the part outside the box, so a translucent box isn't covered twice (sd-cxui).
+    /// A label being typed into is skipped and its overlay draws the text. A label with a tail is
+    /// drawn here whole, box and tail as one path: drawn by two layers, the box by the overlay and
+    /// the tail here, their antialiased edges left a lighter seam at the join (sd-uwv5). A label
+    /// without a tail keeps its box in the overlay.
     static func drawEditingTail(_ shape: AnnoShape, in context: CGContext, target: Target) {
         guard let props = shape.textProps, let tail = TextMeasure.tailPath(props) else { return }
         context.saveGState()
         context.concatenate(shape.pageTransform.cgAffineTransform.concatenating(target.transform))
         if shape.opacity < 1 { context.setAlpha(shape.opacity) }
-        context.addPath(tail.subtracting(TextMeasure.boxPath(props)))
+        context.addPath(TextMeasure.boxPath(props).union(tail))
         context.setFillColor(props.swatch.nsColor.cgColor)
         context.fillPath()
         context.restoreGState()

@@ -34,7 +34,7 @@ struct TextLabelTests {
 
     /// Draws `shapes` on black into a `width` x `height` page at `scale` pixels per page unit,
     /// either as the flipped canvas does or as the y-up export does. `editing` is drawn as the
-    /// canvas draws a label being typed into: its tail only.
+    /// canvas draws a label being typed into: a tailed label's box and tail, without its text.
     static func drawn(_ shapes: [AnnoShape], width: Int, height: Int, scale: Int = 4, flippedCanvas: Bool,
                       editing: AnnoShapeID? = nil) -> Bitmap {
         let document = AnnoDocument()
@@ -366,10 +366,10 @@ struct TextLabelTests {
 
     // MARK: - sd-cxui: typing, resize, rotation
 
-    /// While a label is typed into, the canvas draws only the tail's part outside the box, in the
-    /// box's colour; the overlay draws the box.
+    /// While a label with a tail is typed into, the canvas draws its box and tail as one shape, in
+    /// the box's colour, so their join shows no seam (sd-uwv5); the overlay draws only the text.
     @Test(arguments: [1.0, 0.5])
-    func typingKeepsTheTailWithoutCoveringTheBox(alpha: Double) {
+    func typingDrawsTheBubbleWholeWithNoSeam(alpha: Double) {
         var props = Self.tailed(nil)
         props.swatch = props.swatch.withAlpha(alpha)
         let box = TextMeasure.outerRect(props)
@@ -382,8 +382,8 @@ struct TextLabelTests {
             Array(bitmap.rgba(Int((20 + x) * 4), Int((10 + y) * 4)).prefix(3))
         }
         #expect(pixel(typing, box.midX, box.maxY + 30) == pixel(committed, box.midX, box.maxY + 30), "the tail as committed")
-        #expect(pixel(typing, box.midX, box.maxY - 2) == [0, 0, 0], "where tail and box overlap, only the overlay draws")
-        #expect(pixel(typing, box.midX + 80, box.maxY - 2) == [0, 0, 0], "no box")
+        #expect(pixel(typing, box.midX + 80, box.maxY - 2) == pixel(committed, box.midX + 80, box.maxY - 2), "the box as committed")
+        #expect(pixel(typing, box.midX, box.maxY) == pixel(typing, box.midX, box.maxY - 2), "no seam where the tail meets the box")
     }
 
     /// Centred and end-aligned text grows by moving its origin; the tip stays where it points,

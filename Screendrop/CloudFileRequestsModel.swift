@@ -22,9 +22,10 @@ final class FileRequestsModel {
     private(set) var isCreating = false
     private(set) var closingIDs: Set<String> = []
     private(set) var downloadingIDs: Set<String> = []
-    /// Shown in the Request Files sheet.
+    /// Shown in the Request Files sheet and the open links' popover.
     var errorMessage: String?
     var showsSheet = false
+    var showsOpenLinks = false
     private var pollTask: Task<Void, Never>?
 
     private init() {}
@@ -126,12 +127,16 @@ final class FileRequestsModel {
             var failures: [String] = []
             for upload in targets {
                 do {
-                    saved.append(try await ReceivedFiles.download(upload, workerBase: owner.workerBase, token: owner.token, into: folder))
+                    let file = try await ReceivedFiles.download(upload, workerBase: owner.workerBase, token: owner.token, into: folder)
+                    saved.append(file)
+                    // The card's thumbnail and Quick Look use this copy.
+                    try? CloudPreviewCache.shared.adopt(file, for: upload)
                 } catch {
                     failures.append("\(upload.filename): \(error.localizedDescription)")
                 }
                 downloadingIDs.remove(upload.id)
             }
+            if !saved.isEmpty { CloudLibraryModel.shared.previewRevision += 1 }
             if reveal, !saved.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(saved) }
             if !failures.isEmpty {
                 CaptureLibraryModel.shared.errorMessage = "Couldn’t download:\n" + failures.joined(separator: "\n")
@@ -206,75 +211,66 @@ nonisolated enum FileRequestError: LocalizedError {
     }
 }
 
-/// Request Files: a new link (message, password, expiry, caps), shown once
-/// and copied, and the open links with Close.
+/// Request Files: a new link (message, expiry, password, limits), then that
+/// link, shown once and already copied. Open links are under the toolbar's Manage.
 struct FileRequestsSheet: View {
     @State private var model = FileRequestsModel.shared
     @State private var draft = CloudFileRequestDraft()
     @State private var created: CloudFileRequest?
-    @State private var pendingClose: CloudFileRequest?
+    @State private var showsLimits = false
+    /// Each copy bounces the Copied mark.
+    @State private var copies = 0
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Request Files").font(.headline)
             if let created, let link = created.url {
-                Text("Send this link to the person who has the files. It works until \(Self.date(created.expiresAt)), and it’s shown only now. It’s on the clipboard.")
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack {
+                Text("Link Ready").font(.headline)
+                Text("Send this link to the person who has the files.")
+                HStack(spacing: 8) {
                     Text(link)
                         .font(.system(.callout, design: .monospaced))
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .textSelection(.enabled)
                     Spacer(minLength: 0)
-                    Button("Copy") {
+                    // Creating the link copied it, so this starts as Copied and copies again.
+                    Button {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(link, forType: .string)
+                        copies += 1
+                    } label: {
+                        Label("Copied", systemImage: "checkmark")
+                            .symbolEffect(.bounce, value: copies)
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 3)
+                            .background(.green.opacity(0.15), in: Capsule())
                     }
+                    .buttonStyle(.borderless)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.green)
+                    .help("Copy the link again")
+                    .accessibilityLabel("Copied. Copy again")
                 }
+                .padding(.leading, 10)
+                .padding(.trailing, 6)
+                .padding(.vertical, 6)
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                Text("It works until \(Self.date(created.expiresAt)). This is the only time the link is shown.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 HStack {
                     Spacer()
-                    Button("New Request") {
-                        self.created = nil
-                        draft = CloudFileRequestDraft()
-                    }
                     Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
                 }
             } else {
+                Text("Request Files").font(.headline)
                 form
-            }
-            if !model.openRequests.isEmpty {
-                Divider()
-                Text("Open Requests").font(.subheadline.weight(.semibold))
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(model.openRequests) { request in
-                            HStack(alignment: .firstTextBaseline) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(request.message.isEmpty ? "No message" : request.message).lineLimit(2)
-                                    Text(Self.summary(request)).font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer(minLength: 8)
-                                Button("Close…") { pendingClose = request }
-                                    .disabled(model.closingIDs.contains(request.id))
-                            }
-                        }
-                    }
-                }
-                .frame(maxHeight: 180)
             }
         }
         .padding(16)
         .frame(width: 400)
-        .task { await model.refreshRequests() }
-        .alert("Close this link?", isPresented: Binding(get: { pendingClose != nil }, set: { if !$0 { pendingClose = nil } }),
-               presenting: pendingClose) { request in
-            Button("Close Link", role: .destructive) { model.close(request) }
-            Button("Cancel", role: .cancel) {}
-        } message: { _ in
-            Text("Nobody can send files with it anymore. Files already received stay in Received.")
-        }
     }
 
     private var form: some View {
@@ -282,15 +278,6 @@ struct FileRequestsSheet: View {
             TextField("Message", text: $draft.message, prompt: Text("What to send (optional)"), axis: .vertical)
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(3...6)
-            HStack {
-                Text("Password")
-                Spacer()
-                SecureField("Password", text: $draft.password, prompt: Text("Optional"))
-                    .labelsHidden()
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 160)
-            }
-            .help("The client needs it to send files. Up to 128 characters.")
             HStack {
                 Text("Link expires")
                 Spacer()
@@ -300,6 +287,52 @@ struct FileRequestsSheet: View {
                 .labelsHidden()
                 .fixedSize()
             }
+            HStack {
+                Text("Password")
+                Spacer()
+                SecureField("Password", text: $draft.password, prompt: Text("Optional"))
+                    .labelsHidden()
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 160)
+            }
+            .help("The client needs it to send files. Up to 128 characters.")
+            // The sizes are rarely changed, so they fold into one line.
+            DisclosureGroup(isExpanded: $showsLimits) {
+                limits.padding(.top, 6)
+            } label: {
+                HStack {
+                    Text("Limits")
+                    Spacer()
+                    Text("\(draft.maxFiles) files · \(Self.bytes(draft.maxFileBytes)) each · \(Self.bytes(draft.maxTotalBytes)) in all")
+                        .foregroundStyle(.secondary)
+                }
+                .contentShape(.rect)
+                .onTapGesture { withAnimation { showsLimits.toggle() } }
+            }
+            Text("The page asks the sender to pass a bot check. What they send is private to you and isn’t scanned for malware.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let error = model.errorMessage {
+                Text(error).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Create Link") {
+                    Task {
+                        created = await model.create(draft)
+                        if created?.url != nil { AccessibilityNotification.Announcement("Link copied").post() }
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!draft.isValid || model.isCreating)
+            }
+        }
+    }
+
+    private var limits: some View {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Files")
                 Spacer()
@@ -323,22 +356,6 @@ struct FileRequestsSheet: View {
                 .labelsHidden()
                 .fixedSize()
             }
-            Text("The page asks the sender to pass a bot check. What they send is private to you and isn’t scanned for malware.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            if let error = model.errorMessage {
-                Text(error).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
-            }
-            HStack {
-                Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Create Link") {
-                    Task { created = await model.create(draft) }
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(!draft.isValid || model.isCreating)
-            }
         }
     }
 
@@ -350,9 +367,61 @@ struct FileRequestsSheet: View {
         date.formatted(date: .abbreviated, time: .shortened)
     }
 
-    private static func summary(_ request: CloudFileRequest) -> String {
+    static func summary(_ request: CloudFileRequest) -> String {
         "\(request.filesReceived) of \(request.maxFiles) files · \(bytes(request.bytesReceived)) of \(bytes(request.maxTotalBytes)) · until \(date(request.expiresAt))"
             + (request.hasPassword ? " · password" : "")
+    }
+}
+
+/// The open links, newest first, each closed with its X after a confirmation.
+struct FileRequestsOpenLinks: View {
+    @State private var model = FileRequestsModel.shared
+    @State private var pendingClose: CloudFileRequest?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Open Links").font(.headline).padding([.horizontal, .top], 8)
+            if model.openRequests.isEmpty {
+                Text("No open links.").foregroundStyle(.secondary).padding(8)
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(model.openRequests) { request in
+                        HStack(alignment: .center, spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(request.message.isEmpty ? "No message" : request.message)
+                                    .lineLimit(1)
+                                    .foregroundStyle(request.message.isEmpty ? .secondary : .primary)
+                                Text(FileRequestsSheet.summary(request)).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 0)
+                            Button("Close Link…", systemImage: "xmark.circle.fill") { pendingClose = request }
+                                .labelStyle(.iconOnly)
+                                .buttonStyle(.borderless)
+                                .foregroundStyle(.secondary)
+                                .help("Close this link")
+                                .disabled(model.closingIDs.contains(request.id))
+                        }
+                        .padding(8)
+                    }
+                }
+            }
+            .frame(maxHeight: 320)
+            .fixedSize(horizontal: false, vertical: true)
+            if let error = model.errorMessage {
+                Text(error).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true).padding(8)
+            }
+        }
+        .padding(8)
+        .frame(width: 340)
+        .task { await model.refreshRequests() }
+        .alert("Close this link?", isPresented: Binding(get: { pendingClose != nil }, set: { if !$0 { pendingClose = nil } }),
+               presenting: pendingClose) { request in
+            Button("Close Link", role: .destructive) { model.close(request) }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("Nobody can send files with it anymore. Files already received stay in Received.")
+        }
     }
 }
 

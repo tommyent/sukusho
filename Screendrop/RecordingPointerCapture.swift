@@ -615,14 +615,10 @@ nonisolated final class PointerActivityRecorder: NSObject, @unchecked Sendable {
     /// `duplicatePressWindow` marks a duplicate rather than a human
     /// double-click - those repeat far slower and interleave a release.
     private func appendPress(_ press: CapturedPressEvent) {
-        if let last = presses.last,
-           last.button == press.button,
-           last.phase == press.phase,
-           abs(last.uptime - press.uptime) < Self.duplicatePressWindow,
-           hypot(last.point.x - press.point.x, last.point.y - press.point.y) < 1 {
-            return
+        let isCopy = RecordingPressCopies.isCopy(press, of: presses, window: Self.duplicatePressWindow, uptime: \.uptime) {
+            $0.button == $1.button && $0.phase == $1.phase && hypot($0.point.x - $1.point.x, $0.point.y - $1.point.y) < 1
         }
-        presses.append(press)
+        if !isCopy { presses.append(press) }
     }
 
     // MARK: - Pointer artwork

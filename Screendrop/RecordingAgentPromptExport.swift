@@ -22,6 +22,13 @@ enum RecordingAgentPromptExport {
         }
     }
 
+    /// The name the Library card shows (the user's, a model's, else the date), never the package name.
+    static func title(for session: RecordingSession) -> String {
+        guard let created = session.loadCaptureManifest()?.createdAt else { return session.displayName }
+        let modelTitle = CaptureLibraryIndex.shared.visibleInsight("recording:" + session.directoryURL.standardizedFileURL.path)?.title
+        return CaptureInsightRules.title(customName: session.customName, modelTitle: modelTitle, dateTitle: CaptureLibraryItem.dateTitle(created))
+    }
+
     /// What Agent Prompt writes for a session, from its input log and capture manifest.
     static func plan(for session: RecordingSession, document: RecordingEditDocument? = nil, timeline: RecordingClipTimeline,
                      transcript: RecordingTranscript, transcriptionFailure: String? = nil) -> RecordingAgentPromptPlan {
@@ -31,7 +38,7 @@ enum RecordingAgentPromptExport {
         capture?.ink.removeAll { document?.showsInk == false || hidden.contains($0.id) }
         let input = FileManager.default.fileExists(atPath: session.pointerCaptureURL.path) ? session.pointerCaptureURL : nil
         let manifest = session.loadCaptureManifest()
-        return RecordingAgentPromptPlan(title: session.displayName, timeline: timeline, cues: transcript.cues, words: transcript.words,
+        return RecordingAgentPromptPlan(title: title(for: session), timeline: timeline, cues: transcript.cues, words: transcript.words,
                                         capture: capture, cursorNames: PointerArtworkCapture.names(for: capture?.artwork ?? []),
                                         files: .init(screen: session.screenURL, input: input),
                                         excludesAppWindows: manifest?.includesAppWindows == false,
@@ -133,7 +140,7 @@ final class AgentPromptIndex {
     /// Makes this recording's prompt the one ⌃⌥⌘P sends, with no new export.
     func makeCurrent(_ session: RecordingSession) throws {
         let folder = folder(for: session)
-        try RecordingAgentPromptWriter.recordLatest(folder, title: session.displayName, recording: session.packageName)
+        try RecordingAgentPromptWriter.recordLatest(folder, title: RecordingAgentPromptExport.title(for: session), recording: session.packageName)
         RecordingAgentPromptExport.copyPath(folder)
         reload()
     }

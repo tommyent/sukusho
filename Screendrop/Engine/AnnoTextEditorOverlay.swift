@@ -122,7 +122,8 @@ final class AnnoTextEditorOverlay: NSTextView {
         let insetY = pageInset.y * zoom
         lift = TextMeasure.glyphLift(props) * zoom
         textContainerInset = NSSize(width: insetX, height: insetY)
-        boxFill = props.hasBox ? props.swatch.nsColor : nil
+        // A tailed label's box is the canvas's, drawn with its tail as one shape (sd-uwv5).
+        boxFill = props.hasBox && TextMeasure.tailPath(props) == nil ? props.swatch.nsColor : nil
         boxCornerRadius = TextMeasure.boxCornerRadius(props) * zoom
 
         // Everything the shape draws, in view space. The frame origin is the shape's top-left

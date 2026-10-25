@@ -125,6 +125,22 @@ nonisolated enum RecordingPenButtonClick {
     }
 }
 
+nonisolated enum RecordingPressCopies {
+    /// One physical click reaches the capture from both the event tap and the AppKit monitors, and
+    /// a monitor's copy can arrive after the tap has already delivered the release (sd-k0g0). So a
+    /// press is a copy when any press within `window` of it, not only the last, matches it. A
+    /// person's double-click repeats far slower than the window.
+    static func isCopy<Press>(_ press: Press, of presses: [Press], window: TimeInterval,
+                              uptime: (Press) -> TimeInterval, matches: (Press, Press) -> Bool) -> Bool {
+        for earlier in presses.reversed() {
+            // Presses arrive in time order, give or take a copy's delay.
+            if uptime(press) - uptime(earlier) >= window { return false }
+            if abs(uptime(press) - uptime(earlier)) < window, matches(earlier, press) { return true }
+        }
+        return false
+    }
+}
+
 /// What is on screen at a source time: each stroke drawn so far, as far as
 /// it had been drawn, and how faded it is.
 nonisolated struct RecordingInkTimeline: Sendable {

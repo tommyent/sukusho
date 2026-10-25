@@ -95,3 +95,27 @@ struct GlassCapsuleButton: View {
         .glassEffect(.screendrop(isInked: isProminent, tint: tint, isEnabled: isEnabled), in: .capsule)
     }
 }
+
+/// A glass circle holding one symbol, for an action that floats over content.
+struct GlassCircleButton: View {
+    let title: String
+    let systemImage: String
+    var size: CGFloat = GlassMetrics.buttonSize
+    let action: () -> Void
+
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: size * 0.42, weight: .semibold))
+                .foregroundStyle(glassForeground(isInked: false, tint: nil, isEnabled: isEnabled))
+                .frame(width: size, height: size)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.screendrop(isInked: false, tint: nil, isEnabled: isEnabled), in: .circle)
+        .help(title)
+        .accessibilityLabel(title)
+    }
+}
