@@ -318,6 +318,7 @@ struct RecordingAgentPromptTests {
         #expect(markdown.contains("Drew on screen 00:01.800–00:01.810: a dot at source position x=0.600, y=0.600; undone at 00:02.500."))
         #expect(!markdown.contains("x=0.900"))
         #expect(plan.moments.first?.focus == CGPoint(x: 0.30000000000000004, y: 0.4))
+        #expect(plan.moments.first?.time == 1.5, "at the stroke's end, so its still shows the whole stroke")
         #expect(plan.ink.count == 3) // the strips draw every stroke on the master's clock
     }
 

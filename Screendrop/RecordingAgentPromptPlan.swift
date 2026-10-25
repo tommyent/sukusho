@@ -152,7 +152,9 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
                 ? "a dot at source position \(Self.position(center.x, center.y))"
                 : String(format: "a pen stroke over source x=%.3f–%.3f, y=%.3f–%.3f", locale: Locale(identifier: "en_US_POSIX"), minX, maxX, minY, maxY)
             let hidden = stroke.hideTime.flatMap(actionTime).map { (stroke.fadesOut ? "; it fades out at " : "; undone at ") + Self.timestamp($0) } ?? ""
-            evidence.append((span.start, "Drew on screen \(Self.timestamp(span.start))–\(Self.timestamp(span.end)): \(shape)\(hidden).", center))
+            // The moment sits where the stroke ends, so its still shows the finished stroke; at its first
+            // point the still showed nothing of it yet.
+            evidence.append((span.end, "Drew on screen \(Self.timestamp(span.start))–\(Self.timestamp(span.end)): \(shape)\(hidden).", center))
         }
         var motion: [(time: Double, text: String, position: CGPoint?, score: Double)] = []
         for rest in Self.rests(in: capture?.travel ?? [], until: timeline.segments.map(\.sourceEnd).max() ?? 0) {
