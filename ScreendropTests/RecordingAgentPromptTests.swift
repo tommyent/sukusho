@@ -378,6 +378,36 @@ struct RecordingAgentPromptTests {
         #expect(ring[0] > 150)
     }
 
+    @Test func stillsRenderedDuringTranscriptionMatchOnesRenderedAfter() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let movie = directory.appendingPathComponent("fixture.mov")
+        try await makeMovie(at: movie)
+        let timeline = RecordingClipTimeline(segments: [.init(sourceStart: 0, sourceEnd: 3)])
+        let capture = PointerCaptureFile(travel: [.init(time: 0, x: 0.75, y: 0.5)],
+                                         presses: [.init(time: 2, x: 0.75, y: 0.5, button: 0, phase: .down)])
+        // The early plan has no narration; the final one adds a narration moment the early renders lack.
+        let early = RecordingAgentPromptPlan(title: "Early", timeline: timeline, cues: [], words: [], capture: capture)
+        let final = RecordingAgentPromptPlan(title: "Final", timeline: timeline, cues: [.init(start: 1, end: 1.3, text: "Narration")],
+                                             words: [], capture: capture)
+        #expect(final.moments.count > early.moments.count)
+        let prerendered = await RecordingAgentPromptWriter.prerender(plan: early, master: movie)
+        #expect(prerendered.count == early.moments.count)
+        let reused = try await RecordingAgentPromptWriter.write(movie: nil, plan: final, to: directory, name: "Reused", master: movie,
+                                                                prerendered: prerendered)
+        let fresh = try await RecordingAgentPromptWriter.write(movie: nil, plan: final, to: directory, name: "Fresh", master: movie)
+        for folder in ["stills", "strips"] {
+            let names = try FileManager.default.contentsOfDirectory(atPath: fresh.appendingPathComponent(folder).path).sorted()
+            #expect(names.count == final.moments.count)
+            #expect(try FileManager.default.contentsOfDirectory(atPath: reused.appendingPathComponent(folder).path).sorted() == names)
+            for name in names {
+                #expect(try Data(contentsOf: reused.appendingPathComponent("\(folder)/\(name)"))
+                        == Data(contentsOf: fresh.appendingPathComponent("\(folder)/\(name)")))
+            }
+        }
+    }
+
     @Test func aMomentPastTheLastVideoFrameStillGetsAStill() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)

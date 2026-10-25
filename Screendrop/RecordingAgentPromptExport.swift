@@ -55,8 +55,15 @@ enum RecordingAgentPromptExport {
         } else {
             timeline = .legacyTrim(start: document?.trimStart, end: document?.trimEnd, sourceDuration: duration)
         }
-        let narration = try await transcript(cues: document?.subtitleCues ?? [], words: document?.subtitleWords ?? [],
-                                             screenURL: session.screenURL, canTranscribe: session.loadCaptureManifest()?.includesMicrophone == true)
+        let cues = document?.subtitleCues ?? [], words = document?.subtitleWords ?? []
+        let canTranscribe = session.loadCaptureManifest()?.includesMicrophone == true
+        // Stills for clicks, rests and pen strokes don't depend on what was said,
+        // so they render while speech is transcribed, the export's longest step.
+        let early = Self.plan(for: session, document: document, timeline: timeline, transcript: RecordingTranscript(words: [], cues: []))
+        let screen = session.screenURL
+        async let prerendered = cues.isEmpty && words.isEmpty && canTranscribe
+            ? RecordingAgentPromptWriter.prerender(plan: early, master: screen) : [:]
+        let narration = try await transcript(cues: cues, words: words, screenURL: screen, canTranscribe: canTranscribe)
         try Task.checkCancellation()
         let plan = plan(for: session, document: document, timeline: timeline, transcript: narration.transcript,
                         transcriptionFailure: narration.failure)
@@ -65,7 +72,7 @@ enum RecordingAgentPromptExport {
         // Named after the card, then the package's ID, which keeps one folder per recording through renames.
         let id = AgentPromptIndex.recordingID(session)
         let folder = try await RecordingAgentPromptWriter.write(movie: nil, plan: plan, to: directory, name: String(plan.title.prefix(80)) + "_" + id,
-                                                                master: session.screenURL, progress: progress)
+                                                                master: screen, prerendered: await prerendered, progress: progress)
         // A cancelled export (Studio closed) doesn't become the one Rex sends.
         try Task.checkCancellation()
         // One folder per recording: one under an earlier name (renamed since, or named after its package) goes.
