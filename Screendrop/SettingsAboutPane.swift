@@ -49,7 +49,7 @@ struct SettingsAboutPane: View {
                 Text("Sukusho is a lightweight open-source app for capturing screenshots and screen recordings on macOS.")
                     .foregroundStyle(.secondary)
 
-                Link("Source Code", destination: URL(string: "https://github.com/tommyent/Screendrop")!)
+                Link("Source Code", destination: URL(string: "https://github.com/tommyent/sukusho")!)
             }
 
             Section("Credits") {
