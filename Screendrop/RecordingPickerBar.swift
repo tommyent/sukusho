@@ -28,6 +28,8 @@ struct RecordingPickerControls: View {
     @AppStorage(ScreendropPreferences.recordingSystemAudioKey) private var systemAudio = false
     @AppStorage(ScreendropPreferences.recordingCleanDesktopKey) private var cleanDesktop = true
     @AppStorage(ScreendropPreferences.recordingBugReportKey) private var bugReport = false
+    @AppStorage(ScreendropPreferences.includeAppWindowsInCapturesKey) private var includeAppWindows = false
+    @AppStorage(ScreendropPreferences.recordingBugReportAddedAppWindowsKey) private var bugReportAddedAppWindows = false
     @AppStorage(ScreendropPreferences.recordingStartDelaySecondsKey) private var startDelaySeconds = 0
     @AppStorage(ScreendropPreferences.recordingTeleprompterEnabledKey) private var teleprompterEnabled = false
 
@@ -121,8 +123,19 @@ struct RecordingPickerControls: View {
             .toggleStyle(.button)
             .buttonStyle(BarButtonStyle())
             .accessibilityLabel("Bug report")
-            .accessibilityHint("Stop writes an Agent Prompt for a coding agent instead of opening Studio, and the recording keeps the menu bar and notification banners.")
+            .accessibilityHint("Stop writes an Agent Prompt for a coding agent instead of opening Studio, and the recording keeps the menu bar, notification banners and Sukusho's own windows.")
             .disabled(CaptureCountdownPresenter.shared.isRunning)
+            // A bug in Sukusho needs its windows: Bug report turns them on, with the usual banner and its
+            // switch, and turns them back off with itself unless they were on before.
+            .onChange(of: bugReport) { _, on in
+                if on, !includeAppWindows {
+                    includeAppWindows = true
+                    bugReportAddedAppWindows = true
+                } else if !on, bugReportAddedAppWindows {
+                    includeAppWindows = false
+                    bugReportAddedAppWindows = false
+                }
+            }
 
             BarActionButton(
                 id: .close,
