@@ -211,41 +211,61 @@ nonisolated enum FileRequestError: LocalizedError {
     }
 }
 
-/// Request Files: a new link (message, password, expiry, caps), shown once
-/// and copied, and the open links with Close.
+/// Request Files: a new link (message, expiry, password, limits), then that
+/// link, shown once and already copied. Open links are under the toolbar's Manage.
 struct FileRequestsSheet: View {
     @State private var model = FileRequestsModel.shared
     @State private var draft = CloudFileRequestDraft()
     @State private var created: CloudFileRequest?
+    @State private var showsLimits = false
+    /// Each copy bounces the Copied mark.
+    @State private var copies = 0
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Request Files").font(.headline)
             if let created, let link = created.url {
-                Text("Send this link to the person who has the files. It works until \(Self.date(created.expiresAt)), and it’s shown only now. It’s on the clipboard.")
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack {
+                Text("Link Ready").font(.headline)
+                Text("Send this link to the person who has the files.")
+                HStack(spacing: 8) {
                     Text(link)
                         .font(.system(.callout, design: .monospaced))
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .textSelection(.enabled)
                     Spacer(minLength: 0)
-                    Button("Copy") {
+                    // Creating the link copied it, so this starts as Copied and copies again.
+                    Button {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(link, forType: .string)
+                        copies += 1
+                    } label: {
+                        Label("Copied", systemImage: "checkmark")
+                            .symbolEffect(.bounce, value: copies)
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 3)
+                            .background(.green.opacity(0.15), in: Capsule())
                     }
+                    .buttonStyle(.borderless)
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.green)
+                    .help("Copy the link again")
+                    .accessibilityLabel("Copied. Copy again")
                 }
+                .padding(.leading, 10)
+                .padding(.trailing, 6)
+                .padding(.vertical, 6)
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                Text("It works until \(Self.date(created.expiresAt)). This is the only time the link is shown.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 HStack {
                     Spacer()
-                    Button("New Request") {
-                        self.created = nil
-                        draft = CloudFileRequestDraft()
-                    }
                     Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
                 }
             } else {
+                Text("Request Files").font(.headline)
                 form
             }
         }
@@ -259,15 +279,6 @@ struct FileRequestsSheet: View {
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(3...6)
             HStack {
-                Text("Password")
-                Spacer()
-                SecureField("Password", text: $draft.password, prompt: Text("Optional"))
-                    .labelsHidden()
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 160)
-            }
-            .help("The client needs it to send files. Up to 128 characters.")
-            HStack {
                 Text("Link expires")
                 Spacer()
                 Picker("Link expires", selection: $draft.expiry) {
@@ -276,6 +287,52 @@ struct FileRequestsSheet: View {
                 .labelsHidden()
                 .fixedSize()
             }
+            HStack {
+                Text("Password")
+                Spacer()
+                SecureField("Password", text: $draft.password, prompt: Text("Optional"))
+                    .labelsHidden()
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 160)
+            }
+            .help("The client needs it to send files. Up to 128 characters.")
+            // The sizes are rarely changed, so they fold into one line.
+            DisclosureGroup(isExpanded: $showsLimits) {
+                limits.padding(.top, 6)
+            } label: {
+                HStack {
+                    Text("Limits")
+                    Spacer()
+                    Text("\(draft.maxFiles) files · \(Self.bytes(draft.maxFileBytes)) each · \(Self.bytes(draft.maxTotalBytes)) in all")
+                        .foregroundStyle(.secondary)
+                }
+                .contentShape(.rect)
+                .onTapGesture { withAnimation { showsLimits.toggle() } }
+            }
+            Text("The page asks the sender to pass a bot check. What they send is private to you and isn’t scanned for malware.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let error = model.errorMessage {
+                Text(error).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Create Link") {
+                    Task {
+                        created = await model.create(draft)
+                        if created?.url != nil { AccessibilityNotification.Announcement("Link copied").post() }
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!draft.isValid || model.isCreating)
+            }
+        }
+    }
+
+    private var limits: some View {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Files")
                 Spacer()
@@ -298,22 +355,6 @@ struct FileRequestsSheet: View {
                 }
                 .labelsHidden()
                 .fixedSize()
-            }
-            Text("The page asks the sender to pass a bot check. What they send is private to you and isn’t scanned for malware.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            if let error = model.errorMessage {
-                Text(error).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
-            }
-            HStack {
-                Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Create Link") {
-                    Task { created = await model.create(draft) }
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(!draft.isValid || model.isCreating)
             }
         }
     }
