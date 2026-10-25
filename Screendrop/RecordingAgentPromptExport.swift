@@ -71,19 +71,20 @@ enum RecordingAgentPromptExport {
         return folder
     }
 
-    /// After a successful export: the path for an agent outside Rex (Rex's
+    /// After a successful export: the Read line for an agent outside Rex (Rex's
     /// Insert Sukusho Prompt reads latest.json), the Glass chime, and the
     /// Library's card marks. Finder stays put.
     static func finished(_ folder: URL) {
-        copyPath(folder)
+        copyReadLine(folder)
         if ScreendropPreferences.playSounds { NSSound(named: "Glass")?.play() }
         AccessibilityNotification.Announcement("Agent Prompt saved").post()
         AgentPromptIndex.shared.reload()
     }
 
-    static func copyPath(_ directory: URL) {
+    /// The line people paste to an agent, as Rex types it.
+    static func copyReadLine(_ directory: URL) {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(directory.path, forType: .string)
+        NSPasteboard.general.setString("Read \"\(directory.appendingPathComponent("prompt.md").path)\" and follow it.", forType: .string)
     }
 }
 
@@ -141,7 +142,7 @@ final class AgentPromptIndex {
     func makeCurrent(_ session: RecordingSession) throws {
         let folder = folder(for: session)
         try RecordingAgentPromptWriter.recordLatest(folder, title: RecordingAgentPromptExport.title(for: session), recording: session.packageName)
-        RecordingAgentPromptExport.copyPath(folder)
+        RecordingAgentPromptExport.copyReadLine(folder)
         reload()
     }
 

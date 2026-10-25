@@ -569,6 +569,9 @@ struct LibraryCellContent: View {
 private struct AgentPromptCardMark: View {
     let item: CaptureLibraryItem
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Clicks that copied the Read line; each one shows "Copied" for a moment.
+    @State private var copies = 0
+    @State private var showsCopied = false
 
     var body: some View {
         let model = CaptureLibraryModel.shared
@@ -585,14 +588,35 @@ private struct AgentPromptCardMark: View {
                 .foregroundStyle(CardMark.green)
                 .help("Exporting agent prompt")
             } else if let state {
-                Button { model.useAgentPrompt(item) } label: {
-                    Image(systemName: state.symbol)
-                        .font(.system(size: 19, weight: .medium))
-                        .foregroundStyle(state.tint)
-                        .symbolEffect(.bounce, value: reduceMotion ? nil : state)
-                        .contentShape(Circle())
+                Button {
+                    model.useAgentPrompt(item)
+                    if state == .current {
+                        copies += 1
+                        AccessibilityNotification.Announcement("Copied").post()
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        if showsCopied {
+                            Text("Copied")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(CardMark.green)
+                                .transition(.opacity)
+                        }
+                        Image(systemName: state.symbol)
+                            .font(.system(size: 19, weight: .medium))
+                            .foregroundStyle(state.tint)
+                            .symbolEffect(.bounce, value: reduceMotion ? nil : state)
+                            .symbolEffect(.bounce, value: reduceMotion ? 0 : copies)
+                            .contentShape(Circle())
+                    }
                 }
                 .buttonStyle(.plain)
+                .task(id: copies) {
+                    guard copies > 0 else { return }
+                    withAnimation(.easeOut(duration: 0.15)) { showsCopied = true }
+                    try? await Task.sleep(for: .seconds(1.5))
+                    withAnimation(.easeOut(duration: 0.3)) { showsCopied = false }
+                }
                 .disabled(model.isBusy)
                 .help(state.help)
                 // The tick springs in when an export finishes; Reduce Motion fades it.
@@ -624,7 +648,7 @@ extension AgentPromptIndex.State {
 
     var help: String {
         switch self {
-        case .current: "Agent Prompt ready: ⌃⌥⌘P in Rex sends it. Click to show it in Finder."
+        case .current: "Agent Prompt ready: ⌃⌥⌘P in Rex sends it. Click to copy a line that asks any agent to read it."
         case .available: "Agent Prompt saved. Click to make it the one ⌃⌥⌘P in Rex sends."
         case .stale: "Edited since its Agent Prompt. Click to export it again."
         }
@@ -632,7 +656,7 @@ extension AgentPromptIndex.State {
 
     var accessibilityAction: String {
         switch self {
-        case .current: "Show Agent Prompt in Finder"
+        case .current: "Copy Agent Prompt"
         case .available: "Use Agent Prompt"
         case .stale: "Export Agent Prompt Again"
         }
