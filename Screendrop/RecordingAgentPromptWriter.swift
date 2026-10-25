@@ -114,6 +114,14 @@ nonisolated enum RecordingAgentPromptWriter {
         return String((safe.isEmpty || safe == "." || safe == ".." ? "Recording" : safe).prefix(100)) + folderSuffix
     }
 
+    /// The recording ID a folder is named with: what follows its last "_". Folders
+    /// named after the whole package ("Screendrop_…_20F562") end in the same ID.
+    static func recordingID(ofFolder name: String) -> String? {
+        guard name.hasSuffix(folderSuffix) else { return nil }
+        let stem = name.dropLast(folderSuffix.count)
+        return stem.lastIndex(of: "_").map { String(stem[stem.index(after: $0)...]) }
+    }
+
     /// `~/Agent Prompts`, without creating it.
     static func directoryURL(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
         home.appendingPathComponent("Agent Prompts", isDirectory: true)

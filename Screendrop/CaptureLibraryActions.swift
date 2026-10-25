@@ -174,9 +174,9 @@ extension CaptureLibraryModel {
             items.insert(LibraryMenuItem(title: "Export as GIF…", isEnabled: !isBusy) { self.exportGIF(item) }, at: export + 1)
             if let session = item.session {
                 items.insert(LibraryMenuItem(title: "Export Agent Prompt", isEnabled: !isBusy) { self.exportAgentPrompt(item) }, at: export + 2)
-                if AgentPromptIndex.shared.state(for: item) != nil {
+                if let folder = AgentPromptIndex.shared.folder(for: session) {
                     items.insert(LibraryMenuItem(title: "Show Agent Prompt in Finder") {
-                        NSWorkspace.shared.activateFileViewerSelecting([AgentPromptIndex.shared.folder(for: session)])
+                        NSWorkspace.shared.activateFileViewerSelecting([folder])
                     }, at: export + 3)
                 }
             }
@@ -383,7 +383,8 @@ extension CaptureLibraryModel {
         case .stale: exportAgentPrompt(item)
         case .available:
             do { try AgentPromptIndex.shared.makeCurrent(session) } catch { errorMessage = error.localizedDescription }
-        case .current: RecordingAgentPromptExport.copyReadLine(AgentPromptIndex.shared.folder(for: session))
+        case .current:
+            if let folder = AgentPromptIndex.shared.folder(for: session) { RecordingAgentPromptExport.copyReadLine(folder) }
         }
     }
 

@@ -247,6 +247,17 @@ struct RecordingAgentPromptTests {
         #expect(markdown.contains("Scroll 00:00.000–00:00.100: up 1000000000 pt over 20000 events"))
     }
 
+    @Test func promptFoldersAreFoundByTheirRecordingIDUnderAnyName() {
+        // Named after the package before 2026-10-25, after the card's name since.
+        #expect(RecordingAgentPromptWriter.recordingID(ofFolder: "Screendrop_2026-10-25-11-29-34_20F562_agent-prompt") == "20F562")
+        #expect(RecordingAgentPromptWriter.recordingID(ofFolder: RecordingAgentPromptWriter.folderName("Notes: a_b / c_20F562")) == "20F562")
+        #expect(RecordingAgentPromptWriter.recordingID(ofFolder: RecordingAgentPromptWriter.folderName(String(repeating: "x", count: 80) + "_20F562")) == "20F562")
+        // A bare movie's folder, a staging folder and latest.json name no recording.
+        #expect(RecordingAgentPromptWriter.recordingID(ofFolder: "Demo_agent-prompt") == nil)
+        #expect(RecordingAgentPromptWriter.recordingID(ofFolder: ".agent-prompt-0A1B") == nil)
+        #expect(RecordingAgentPromptWriter.recordingID(ofFolder: "latest.json") == nil)
+    }
+
     @Test func promptsGoToAnOwnerOnlyAgentPromptsFolderThatNotesTheNewest() throws {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: false)
