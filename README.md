@@ -54,8 +54,8 @@ Click a picture to see it full size.
       <br><b>Export Agent Prompt</b> turns a recording into a walkthrough for a coding agent. The green check marks the newest prompt; below it, one of the prompt's frame strips, with the pointer ringed and the pen stroke drawn in.
     </td>
     <td width="50%" valign="top">
-      <a href="docs/screenshots/share-options.jpg"><img src="docs/screenshots/thumbs/share-options.jpg" alt="Sukusho Share Options over the image editor: the title Home page, a link that expires in 7 days, a password, Encrypt link turned on, and comments and likes allowed, with Cancel and Upload buttons" width="100%"></a>
-      <br><b>Share Options</b> set a title, an expiry and a password for the link, and can encrypt it so the Worker stores only a file it can't read.
+      <a href="docs/screenshots/share-options.jpg"><img src="docs/screenshots/thumbs/share-options.jpg" alt="Sukusho Share Options over the image editor: the title Home page, a link that expires in 7 days, a password, End-to-end encryption turned on with its note that only people with the full link can open the file, and comments and likes allowed, with Cancel and Upload buttons" width="100%"></a>
+      <br><b>Share Options</b> set a title, an expiry and a password for the link, and can encrypt the file end to end, so the Worker stores only a file it can't read.
     </td>
   </tr>
 </table>
@@ -68,8 +68,8 @@ Sharing is optional and self-hosted. Uploads go to a Cloudflare Worker you deplo
 
 - **Share pages:** screenshots get a clean viewer with Copy Image and Download. Recordings get a video player with captions, a searchable transcript, chapters and previews as you scrub. Pages count views and show a preview card when the link is pasted into a chat app.
 - **Upload from anywhere:** after a capture, from its preview card, from the Library, or from Studio, which uploads the finished cut. The link is copied when the upload finishes.
-- **Share Options:** a title, a link expiry, an optional password, **Encrypt link**, whether comments and likes are allowed, and whether people can comment without signing in. Expiry, password and anonymous comments can be changed after upload, in the inspector on the Library's Uploads page.
-- **Encrypted links:** with **Encrypt link** on, an image or a file of up to 32 MB is sealed on your Mac with CryptoKit before it's uploaded. The key goes only in the part of the link after `#`, which browsers don't send, so the Worker stores a file it can't read, and the recipient's browser decrypts it. The key is kept in this Mac's Keychain, so the full link can be copied again only from this Mac. Recordings aren't encrypted, because their share page needs the video for its poster, previews and seeking.
+- **Share Options:** a title, a link expiry, an optional password, **End-to-end encryption**, whether comments and likes are allowed, and whether people can comment without signing in. Expiry, password and anonymous comments can be changed after upload, in the inspector on the Library's Uploads page.
+- **End-to-end encryption:** with it on, an image or a file of up to 32 MB is sealed on your Mac with CryptoKit before it's uploaded. The key goes only in the part of the link after `#`, which browsers don't send, so the Worker stores a file it can't read, and the recipient's browser decrypts it. The key is kept in this Mac's Keychain, so the full link can be copied again only from this Mac. Recordings aren't encrypted, because their share page needs the video for its poster, previews and seeking.
 - **File requests:** on the Library's **Received** page, **Request Files…** makes a link someone can use to send you files, with an optional message and password, an expiry of 1, 7 or 30 days, and limits on how many files and how large. The link is shown once and copied. Senders pass a bot check; what they send is private to you and isn't scanned for malware. While a request is open and Sukusho is running, it checks every five minutes and notifies you of new files. Received files download to Downloads or a folder you choose in **Settings → Cloud**, automatically if you turn that on, and are marked as downloaded from the internet so macOS checks them when they're opened.
 - **Comments and likes** come back to the Library, newest first, each with the upload it belongs to. The sidebar counts the new ones.
 - **Files:** the Library's Files page shares files of any kind. Drop them on the page or click **Add Files…**, choose the same Share Options, and the links are copied.
@@ -77,7 +77,7 @@ Sharing is optional and self-hosted. Uploads go to a Cloudflare Worker you deplo
 - If you add redactions to a recording that's already shared, Studio says the link still shows the old version and offers to replace the shared video, keeping the same link.
 
 > [!NOTE]
-> Encrypted links and file requests need a newer Worker than the one published now. Until your Worker is updated, Sukusho says so: Request Files asks you to update it, and an encrypted upload is removed instead of being shared.
+> End-to-end encryption and file requests need a newer Worker than the one published now. Until your Worker is updated, Sukusho says so: Request Files asks you to update it, and an encrypted upload is removed instead of being shared.
 
 ### Library
 
@@ -166,7 +166,7 @@ Shortcuts, Siri and Spotlight can take a full-screen, window or area screenshot,
 
 - Captures, projects, edits and transcripts stay on your Mac. Transcription, text recognition and Apple Intelligence run on-device. The text read from captures, the app and window they came from, and the model's titles stay on this Mac and are never uploaded.
 - Agent Prompts hold stills and frames of your screen, so `~/Agent Prompts` is a folder only your user account can open. Nothing in it is uploaded.
-- The upload token, your Unsplash Access Key and the keys of encrypted links are kept in the Keychain. Captures are uploaded only when you, or an after-capture action you turned on, ask for it.
+- The upload token, your Unsplash Access Key and the keys of end-to-end encrypted uploads are kept in the Keychain. Captures are uploaded only when you, or an after-capture action you turned on, ask for it.
 - There is no Sukusho account, no central Sukusho server and no automatic app updates. Sukusho goes online for your Worker, a check on GitHub for a newer Worker version in **Settings → Cloud**, Unsplash search and wallpaper downloads, Free To Use music search and downloads, and the setup video in **Settings → Cloud**, which starts loading from the upstream project's server whenever the pane shows its setup steps. Apple's on-device speech models may need a one-time download for transcription or the teleprompter.
 
 macOS asks for **Screen & System Audio Recording** for captures and recordings, and, when you first use them, **Camera**, **Microphone**, **Input Monitoring** (for keystroke captions), **Accessibility** (for auto-scroll) and **Notifications** (for finished exports and received files). Sukusho's own windows are left out of captures unless you turn on **Settings → General → Include Sukusho windows in captures**.
@@ -226,7 +226,7 @@ Sukusho's share pages, comments, likes and passwords come from this fork's Worke
 
 Optional `AUTHOR_NAME` and `AUTHOR_AVATAR` secrets set the name and picture shown beside each share. The Worker's README covers updating an existing deployment and its API.
 
-Encrypted links and file requests need a Worker update that hasn't been published yet.
+End-to-end encryption and file requests need a Worker update that hasn't been published yet.
 
 ## Credits and licence
 

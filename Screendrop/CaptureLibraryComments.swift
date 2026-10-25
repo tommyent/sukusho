@@ -448,7 +448,7 @@ struct CommentInspector: View {
                     Text(link.link).font(.system(size: 12)).foregroundStyle(.secondary).textSelection(.enabled)
                     if link.missingKey {
                         Label("Key not on this Mac", systemImage: "key.slash").font(.system(size: 12)).foregroundStyle(.orange)
-                            .help("This link is encrypted, and its key is on the Mac that shared it.")
+                            .help("This upload is end-to-end encrypted, and its key is on the Mac that shared it.")
                     }
                     if let expiresAt = comment.upload.expiresAt {
                         Text(CloudUploadText.expiryDate(expiresAt)).font(.system(size: 12)).foregroundStyle(.secondary)

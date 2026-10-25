@@ -135,22 +135,20 @@ struct CloudUploadOptionsPopover: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text("Encrypt link")
+                    Text("End-to-end encryption")
                     Spacer()
-                    Toggle("Encrypt link", isOn: $encrypted)
+                    Toggle("End-to-end encryption", isOn: $encrypted)
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .controlSize(.mini)
                 }
                 .disabled(encryptionUnavailable != nil)
                 .foregroundStyle(encryptionUnavailable == nil ? .primary : .secondary)
-                .help("The file is encrypted on this Mac. Only people with the whole link, which holds the key, can open it.")
-                if let encryptionUnavailable {
-                    Text(encryptionUnavailable)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                .help("The file is encrypted on this Mac before it's uploaded; the key travels only in the link.")
+                Text(encryptionUnavailable ?? "Only people with the full link can open the file. Not even our server can.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             HStack {

@@ -879,11 +879,11 @@ enum CloudUploadError: LocalizedError {
         case .encryptionUnavailable:
             CloudShareSeal.unavailableNote
         case .encryptedTooLarge:
-            "Encrypted links are for files up to 32 MB for now, because the whole file is decrypted in the viewer’s browser. Share this one without encryption."
+            "End-to-end encryption is for files up to 32 MB for now, because the whole file is decrypted in the viewer’s browser. Share this one without it."
         case .encryptionUnsupported:
-            "This Worker doesn’t support encrypted links yet, so the upload was removed. Update the Worker, or share without encryption."
+            "This Worker doesn’t support end-to-end encryption yet, so the upload was removed. Update the Worker, or share without encryption."
         case .encryptionUnsupportedNotRemoved:
-            "This Worker doesn’t support encrypted links yet, and removing the upload failed, so it may still be published as a page nobody can open. Delete it from the Library’s Cloud page, then update the Worker."
+            "This Worker doesn’t support end-to-end encryption yet, and removing the upload failed, so it may still be published as a page nobody can open. Delete it from the Library’s Cloud page, then update the Worker."
         case .shareSettingsUnavailable:
             "The Worker couldn’t change this upload. Update the Worker if it predates link expiry; otherwise the upload is no longer there."
         }
