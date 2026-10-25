@@ -27,6 +27,7 @@ struct RecordingPickerControls: View {
     @AppStorage(ScreendropPreferences.recordingMicrophoneDeviceIDKey) private var microphoneID = ""
     @AppStorage(ScreendropPreferences.recordingSystemAudioKey) private var systemAudio = false
     @AppStorage(ScreendropPreferences.recordingCleanDesktopKey) private var cleanDesktop = true
+    @AppStorage(ScreendropPreferences.recordingBugReportKey) private var bugReport = false
     @AppStorage(ScreendropPreferences.recordingStartDelaySecondsKey) private var startDelaySeconds = 0
     @AppStorage(ScreendropPreferences.recordingTeleprompterEnabledKey) private var teleprompterEnabled = false
 
@@ -93,18 +94,34 @@ struct RecordingPickerControls: View {
 
             timerMenu
 
+            // A bug report shows the whole desktop, so Clean desktop reads off while it's on.
+            let cleans = cleanDesktop && !bugReport
             Toggle(isOn: $cleanDesktop) {
                 BarActionLabel(
                     id: .cleanDesktop,
-                    title: cleanDesktop ? "Clean desktop on" : "Clean desktop off",
-                    systemImage: cleanDesktop ? "sparkles" : "desktopcomputer",
-                    tint: cleanDesktop ? BarMetrics.activeTint : BarMetrics.inactiveTint
+                    title: cleans ? "Clean desktop on" : "Clean desktop off",
+                    systemImage: cleans ? "sparkles" : "desktopcomputer",
+                    tint: cleans ? BarMetrics.activeTint : BarMetrics.inactiveTint
                 )
             }
             .toggleStyle(.button)
             .buttonStyle(BarButtonStyle())
             .accessibilityLabel("Clean desktop")
             .accessibilityHint("Leaves desktop icons, the menu bar, Dock and notification banners out of screen and area recordings. Your desktop stays unchanged.")
+            .disabled(CaptureCountdownPresenter.shared.isRunning || bugReport)
+
+            Toggle(isOn: $bugReport) {
+                BarActionLabel(
+                    id: .bugReport,
+                    title: bugReport ? "Bug report on" : "Bug report off",
+                    systemImage: bugReport ? "ladybug.fill" : "ladybug",
+                    tint: bugReport ? BarMetrics.activeTint : BarMetrics.inactiveTint
+                )
+            }
+            .toggleStyle(.button)
+            .buttonStyle(BarButtonStyle())
+            .accessibilityLabel("Bug report")
+            .accessibilityHint("Stop writes an Agent Prompt for a coding agent instead of opening Studio, and the recording keeps the menu bar and notification banners.")
             .disabled(CaptureCountdownPresenter.shared.isRunning)
 
             BarActionButton(

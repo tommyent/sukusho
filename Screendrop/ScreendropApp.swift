@@ -115,7 +115,7 @@ struct ScreendropApp: App {
             }
         }
 
-        ScreenRecordingManager.shared.onFinishRecording = { session, displayID in
+        ScreenRecordingManager.shared.onFinishRecording = { [openWindow] session, displayID in
             Task { @MainActor in
                 // A recording session is already an editable project: the
                 // screen, camera, audio, and event tracks do not need to be
@@ -124,6 +124,12 @@ struct ScreendropApp: App {
                 // a full-resolution transcode.
                 let historyURL = await ScreenshotHistoryStore.shared.importRecordingSession(session)
                 RecordingProjectStore.shared.reload()
+                // A bug report goes straight to its Agent Prompt: no preview card, after-capture actions or Studio.
+                if session.loadCaptureManifest()?.isBugReport == true {
+                    // The Library shows why it failed.
+                    if await !CaptureLibraryModel.shared.exportBugReport(session) { openWindow(id: "CAPTURE_LIBRARY") }
+                    return
+                }
                 ScreenshotPreviewStack.shared.addVideo(url: historyURL)
                 if AfterCaptureActions.isEnabled(.showOverlay, for: .recording) {
                     PreviewPanelPresenter.shared.show(displayID: displayID)

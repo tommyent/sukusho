@@ -342,6 +342,8 @@ nonisolated struct CaptureManifest: Codable, Sendable, Equatable {
     /// Whether Sukusho's own windows were visible to the capture when it
     /// started. Nil for sessions recorded before this was kept.
     var includesAppWindows: Bool?
+    /// Recorded with Bug report on: Stop writes its Agent Prompt instead of opening Studio.
+    var isBugReport: Bool?
 
     static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()

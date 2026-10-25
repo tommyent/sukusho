@@ -39,16 +39,29 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
 
     /// True when the recording left out Sukusho's own windows.
     let excludesAppWindows: Bool
+    /// The app and window the recording started on, when known.
+    let source: CaptureSource?
+    /// The recorded area in pixels, and pixels per point.
+    let screen: Screen?
+
+    struct Screen: Sendable {
+        var width: Int
+        var height: Int
+        var scale: Double
+    }
 
     /// `cursorNames` names recorded cursor images by artwork ID.
     init(title: String, timeline: RecordingClipTimeline, cues: [RecordingSubtitleCue],
          words: [RecordingTranscriptWord], capture: PointerCaptureFile?,
-         cursorNames: [String: String] = [:], files: SourceFiles? = nil, excludesAppWindows: Bool = false) {
+         cursorNames: [String: String] = [:], files: SourceFiles? = nil, excludesAppWindows: Bool = false,
+         source: CaptureSource? = nil, screen: Screen? = nil) {
         self.title = title
         duration = timeline.duration
         hasInput = capture != nil
         self.files = files
         self.excludesAppWindows = excludesAppWindows
+        self.source = source
+        self.screen = screen
 
         func mapped(_ start: Double, _ end: Double, text: String) -> Text? {
             guard start.isFinite, end.isFinite, end > start else { return nil }
@@ -184,14 +197,23 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
     }
 
     /// `strips` holds each moment's strip span, nil where none was written.
-    func markdown(frameTimes: [TimeInterval], strips: [ClosedRange<TimeInterval>?] = []) -> String {
+    /// `sourceStills`: the stills came from the screen recording, not the edited movie.
+    func markdown(frameTimes: [TimeInterval], strips: [ClosedRange<TimeInterval>?] = [], sourceStills: Bool = false) -> String {
         var text = "# \(Self.escape(title.split(whereSeparator: \.isWhitespace).joined(separator: " ")))\n\n"
         text += "Use this recorded walkthrough and its evidence as task context.\n\n"
-        text += "Times refer to the edited recording (\(Self.timestamp(duration))). Click coordinates are normalized to the captured source, with a top-left origin; crop and zoom can move them in the stills. Plain typing and control names were not recorded.\n\n"
+        if let recorded = recordedLine { text += recorded + "\n\n" }
+        text += "Times refer to the edited recording (\(Self.timestamp(duration))). Click coordinates are normalized to the captured source, with a top-left origin; "
+            + (sourceStills ? "they match the stills." : "crop and zoom can move them in the stills.") + " Plain typing and control names were not recorded.\n\n"
         text += "Pointer rests of 0.7 s or more and scrolls come from the input log; a long recording lists only the longest ones.\n\n"
-        if strips.contains(where: { $0 != nil }) {
-            text += "Each still shows the edited recording. Each strip shows \(Self.stripFrames) frames of the unedited screen recording, from \(Self.stripLead) s before the moment to \(Self.stripSpan - Self.stripLead) s after it, around where it happened; a red ring marks the pointer"
-                + (ink.isEmpty ? ", which the screen recording doesn't show.\n\n" : " and the pen's strokes are drawn in, since the screen recording shows neither.\n\n")
+        let marks = ink.isEmpty ? "a red ring marks the pointer, which the screen recording doesn't show"
+            : "a red ring marks the pointer and the pen's strokes are drawn in, since the screen recording shows neither"
+        let hasStrips = strips.contains(where: { $0 != nil })
+        let stripSpan = "\(Self.stripFrames) frames of the unedited screen recording, from \(Self.stripLead) s before the moment to \(Self.stripSpan - Self.stripLead) s after it, around where it happened"
+        if sourceStills {
+            text += "Each still shows the whole screen at its moment, from the unedited screen recording: cuts and speed changes apply, Studio's zoom, crop, background, camera and redactions don't; \(marks)."
+                + (hasStrips ? " Each strip shows \(stripSpan).\n\n" : "\n\n")
+        } else if hasStrips {
+            text += "Each still shows the edited recording. Each strip shows \(stripSpan); \(marks).\n\n"
         }
         if !hasInput { text += "No input log is available for this recording.\n\n" }
         if excludesAppWindows {
@@ -229,6 +251,20 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
             }.joined(separator: "\n") + "\n"
         }
         return text
+    }
+
+    /// Where the recording was made, for an agent to know the app and the pixel scale.
+    private var recordedLine: String? {
+        var parts: [String] = []
+        if let source {
+            parts.append("in \(Self.escape(source.appName))" + (source.bundleIdentifier.map { " (\(Self.escape($0)))" } ?? ""))
+            if let window = source.windowTitle, !window.isEmpty { parts.append("window \"\(Self.escape(window))\"") }
+        }
+        if let screen {
+            parts.append(String(format: "%d × %d px at %gx, so one point is %g pixels", locale: Locale(identifier: "en_US_POSIX"),
+                                screen.width, screen.height, screen.scale, screen.scale))
+        }
+        return parts.isEmpty ? nil : "Recorded " + parts.joined(separator: ", ") + "."
     }
 
     static func stillName(_ index: Int) -> String { String(format: "%04d.jpg", index + 1) }
