@@ -56,7 +56,10 @@ nonisolated enum RecordingAgentPromptWriter {
         // With an edited movie, a master that can't be read only costs the strips.
         var masterFrames: MasterFrames?
         if let master { masterFrames = await MasterFrames(url: master) }
-        defer { masterFrames?.generator.cancelAllCGImageGeneration() }
+        defer {
+            masterFrames?.generator.cancelAllCGImageGeneration()
+            masterFrames?.stillGenerator.cancelAllCGImageGeneration()
+        }
         guard edited != nil || masterFrames != nil else { throw ExportError.invalidMovie }
         var frameTimes: [Double] = []
         var stripSpans: [ClosedRange<Double>?] = []
@@ -155,6 +158,8 @@ nonisolated enum RecordingAgentPromptWriter {
     /// pointer, which the input log has instead.
     struct MasterFrames {
         let generator: AVAssetImageGenerator
+        /// For whole-frame stills: decodes at most 1920 px, not a full 6K frame.
+        let stillGenerator: AVAssetImageGenerator
         let size: CGSize
 
         init?(url: URL) async {
@@ -165,12 +170,17 @@ nonisolated enum RecordingAgentPromptWriter {
             let size = natural.applying(transform)
             guard size.width != 0, size.height != 0 else { return nil }
             self.size = CGSize(width: abs(size.width), height: abs(size.height))
-            generator = AVAssetImageGenerator(asset: asset)
-            generator.appliesPreferredTrackTransform = true
-            generator.maximumSize = .zero
-            // Exactly the frame on screen at each time; any tolerance lets a keyframe from earlier stand in.
-            generator.requestedTimeToleranceBefore = .zero
-            generator.requestedTimeToleranceAfter = .zero
+            func exact(_ maximum: CGSize) -> AVAssetImageGenerator {
+                let generator = AVAssetImageGenerator(asset: asset)
+                generator.appliesPreferredTrackTransform = true
+                generator.maximumSize = maximum
+                // Exactly the frame on screen at each time; any tolerance lets a keyframe from earlier stand in.
+                generator.requestedTimeToleranceBefore = .zero
+                generator.requestedTimeToleranceAfter = .zero
+                return generator
+            }
+            generator = exact(.zero)
+            stillGenerator = exact(CGSize(width: 1920, height: 1920))
         }
 
         /// A 4-column grid of the moment's strip times, each cropped to 720 × 450 pt
@@ -220,7 +230,7 @@ nonisolated enum RecordingAgentPromptWriter {
         /// The whole frame at a moment, at most 1920 px on its long side, marked like a strip.
         func still(for moment: RecordingAgentPromptPlan.Moment, plan: RecordingAgentPromptPlan) async -> CGImage? {
             let source = plan.timeline.sourceTime(at: moment.time)
-            guard let frame = try? await generator.image(at: CMTime(seconds: source, preferredTimescale: 60_000)).image else { return nil }
+            guard let frame = try? await stillGenerator.image(at: CMTime(seconds: source, preferredTimescale: 60_000)).image else { return nil }
             let scale = min(1, 1920 / max(size.width, size.height))
             let rect = CGRect(x: 0, y: 0, width: (size.width * scale).rounded(), height: (size.height * scale).rounded())
             guard let context = CGContext(data: nil, width: Int(rect.width), height: Int(rect.height),
