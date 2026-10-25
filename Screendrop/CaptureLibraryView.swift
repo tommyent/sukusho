@@ -111,12 +111,8 @@ struct CaptureLibraryView: View {
                             HStack {
                                 Text("Comments")
                                 Spacer()
-                                // New since the page was last opened, as Mail counts unread mail.
-                                if comments.unreadCount > 0 {
-                                    Text(comments.unreadCount > 99 ? "99+" : comments.unreadCount.formatted())
-                                        .foregroundStyle(.secondary)
-                                        .font(.caption.monospacedDigit().weight(.semibold))
-                                        .accessibilityLabel("\(comments.unreadCount) new")
+                                if comments.hasLoaded, !comments.isUnavailable {
+                                    FeedCount(total: comments.comments.count, unread: comments.unreadCount)
                                 }
                             }
                         } icon: { Image(systemName: "bubble.left.and.bubble.right") }
@@ -125,12 +121,8 @@ struct CaptureLibraryView: View {
                             HStack {
                                 Text("Likes")
                                 Spacer()
-                                // New since the page was last opened, as Comments counts them.
-                                if likes.unreadCount > 0 {
-                                    Text(likes.unreadCount > 99 ? "99+" : likes.unreadCount.formatted())
-                                        .foregroundStyle(.secondary)
-                                        .font(.caption.monospacedDigit().weight(.semibold))
-                                        .accessibilityLabel("\(likes.unreadCount) new")
+                                if likes.hasLoaded, !likes.isUnavailable {
+                                    FeedCount(total: likes.likes.count, unread: likes.unreadCount)
                                 }
                             }
                         } icon: { Image(systemName: "heart") }
@@ -550,6 +542,25 @@ struct CaptureLibraryView: View {
             .help(inspectorVisible ? "Hide Inspector" : "Show Inspector")
         }
         .sharedBackgroundVisibility(.hidden)
+    }
+}
+
+/// A Comments or Likes row's count: the total, as other rows count, with a dot while some are
+/// new since the page was last open.
+private struct FeedCount: View {
+    let total: Int
+    let unread: Int
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if unread > 0 { Circle().fill(.tint).frame(width: 6, height: 6) }
+            Text(total, format: .number)
+        }
+        .foregroundStyle(.secondary)
+        .font(.caption.monospacedDigit())
+        .help(unread > 0 ? "\(unread) new" : "")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(unread > 0 ? "\(total), \(unread) new" : "\(total)")
     }
 }
 

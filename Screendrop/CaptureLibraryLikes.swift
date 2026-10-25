@@ -23,6 +23,7 @@ final class LikesLibraryModel {
     private(set) var freshIDs: Set<String> = []
     private var watermark: FeedWatermark?
     private var watermarkWorker: String?
+    private var readTask: Task<Void, Never>?
 
     private init() {}
 
@@ -46,7 +47,17 @@ final class LikesLibraryModel {
     func setShown(_ shown: Bool) {
         guard shown != isShown else { return }
         isShown = shown
-        if shown { markRead() } else { freshIDs = [] }
+        readTask?.cancel()
+        readTask = nil
+        guard shown else { freshIDs = []; return }
+        noteFresh()
+        // Read only once the page stays open, so arrowing past it in the sidebar leaves the dot.
+        readTask = Task {
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            readTask = nil
+            markRead()
+        }
     }
 
     func refresh() {
@@ -75,18 +86,24 @@ final class LikesLibraryModel {
                 loadError = error.localizedDescription
             }
             selection.formIntersection(likes.map(\.id))
-            if isShown { markRead() }
+            if isShown {
+                noteFresh()
+                if readTask == nil { markRead() }
+            }
         }
     }
 
-    /// Everything loaded counts as read; what was unread keeps its dot
-    /// while the page stays open.
-    private func markRead() {
+    /// What's unread keeps its dot while the page stays open.
+    private func noteFresh() {
         if let watermark {
             freshIDs.formUnion(likes.filter { watermark.isUnread($0) }.map(\.id))
         } else {
             freshIDs.formUnion(likes.map(\.id))
         }
+    }
+
+    /// Everything loaded counts as read.
+    private func markRead() {
         watermark = FeedWatermark.reading(likes, after: watermark)
         guard let watermarkWorker, let watermark, let data = try? JSONEncoder().encode(watermark) else { return }
         UserDefaults.standard.set(data, forKey: Self.watermarkKey + watermarkWorker)
