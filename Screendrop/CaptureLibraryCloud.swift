@@ -544,6 +544,9 @@ struct CloudLibraryPage: View {
         }
         // Full height, so the bars below sit at the top even over an empty page.
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .topTrailing) {
+            if CloudUploader.shared.isConfigured, cloud.hasLoaded { CloudPageActions(cloud: cloud) }
+        }
         .safeAreaInset(edge: .top, spacing: 0) {
             if cloud.isHistoryFallback {
                 Label("Showing uploads whose capture is still in the Library. Update the Worker to see every upload.",
@@ -630,6 +633,35 @@ struct CloudLibraryPage: View {
 
 /// A Library card for an upload: the same chrome, the capture's own
 /// thumbnail when it's still in the Library, else the Worker's.
+/// Files' and Received's actions float over the grid's top corner as glass, as the rest of the
+/// Library keeps its toolbar to the search field: Add Files on Files; Manage (the open links) and
+/// a new link on Received.
+private struct CloudPageActions: View {
+    let cloud: CloudLibraryModel
+    @State private var requests = FileRequestsModel.shared
+
+    var body: some View {
+        GlassEffectContainer(spacing: GlassMetrics.containerSpacing) {
+            HStack(spacing: GlassMetrics.gap) {
+                if cloud.showsReceived {
+                    let open = requests.openRequests.count
+                    if open > 0 {
+                        GlassCapsuleButton(title: "Manage \(open)", height: 36) { requests.showsOpenLinks.toggle() }
+                            .help("Open links people can use to send you files")
+                            .accessibilityLabel("Manage open links, \(open) open")
+                            .popover(isPresented: $requests.showsOpenLinks, arrowEdge: .bottom) { FileRequestsOpenLinks() }
+                    }
+                    GlassCircleButton(title: "Request Files…", systemImage: "link.badge.plus", size: 36) { requests.showsSheet = true }
+                } else if cloud.showsFiles {
+                    GlassCircleButton(title: "Add Files…", systemImage: "plus", size: 36) { cloud.chooseFiles() }
+                        .disabled(cloud.fileUploads != nil)
+                }
+            }
+        }
+        .padding(16)
+    }
+}
+
 private struct CloudUploadCard: View {
     let upload: CloudUpload
     let local: CaptureLibraryItem?

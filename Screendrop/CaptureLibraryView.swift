@@ -521,22 +521,6 @@ struct CaptureLibraryView: View {
         // The toolbar's glass is the field's resting pill: in a toolbar the
         // field draws no bezel of its own until it's focused.
         .sharedBackgroundVisibility(.visible)
-        if cloud.isShown, cloud.showsFiles, CloudUploader.shared.isConfigured {
-            ToolbarItem(placement: .primaryAction) {
-                Button("Add Files…", systemImage: "plus") { cloud.chooseFiles() }
-                    .disabled(cloud.fileUploads != nil)
-                    .help("Share files of any kind")
-            }
-        }
-        if cloud.isShown, cloud.showsReceived, CloudUploader.shared.isConfigured {
-            // Its own pill: a new link, and the open links to manage.
-            ToolbarSpacer(.fixed, placement: .primaryAction)
-            ToolbarItemGroup(placement: .primaryAction) {
-                Button("Request Files…", systemImage: "link.badge.plus") { FileRequestsModel.shared.showsSheet = true }
-                    .help("Make a link someone can use to send you files")
-                FileRequestsManageButton()
-            }
-        }
         ToolbarItem(placement: .primaryAction) {
             Button { inspectorVisible.toggle() } label: {
                 Label(inspectorVisible ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.right")

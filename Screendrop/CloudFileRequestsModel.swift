@@ -373,31 +373,6 @@ struct FileRequestsSheet: View {
     }
 }
 
-/// The Received toolbar's "Manage": how many links are open, and a popover to close them.
-/// Hidden while none is open.
-struct FileRequestsManageButton: View {
-    @State private var model = FileRequestsModel.shared
-
-    var body: some View {
-        let open = model.openRequests.count
-        if open > 0 {
-            Button {
-                model.showsOpenLinks.toggle()
-            } label: {
-                HStack(spacing: 4) {
-                    Text("Manage")
-                    Text(open, format: .number).foregroundStyle(.secondary).monospacedDigit()
-                }
-            }
-            .help("Open links people can use to send you files")
-            .accessibilityLabel("Manage open links, \(open) open")
-            .popover(isPresented: $model.showsOpenLinks, arrowEdge: .bottom) {
-                FileRequestsOpenLinks()
-            }
-        }
-    }
-}
-
 /// The open links, newest first, each closed with its X after a confirmation.
 struct FileRequestsOpenLinks: View {
     @State private var model = FileRequestsModel.shared
