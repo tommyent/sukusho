@@ -66,7 +66,7 @@ final class FileRequestsModel {
         schedulePoll()
     }
 
-    /// Creates a link and copies it; the answer is the only time the Worker shows it.
+    /// Creates a link, copies it and keeps it in the Keychain; the answer is the only time the Worker shows it.
     func create(_ draft: CloudFileRequestDraft) async -> CloudFileRequest? {
         guard let owner = CloudUploader.shared.ownerAccess,
               let request = CloudFileRequestAPI.createRequest(workerBase: owner.workerBase, token: owner.token, draft: draft) else { return nil }
@@ -278,7 +278,9 @@ struct FileRequestsSheet: View {
                 .padding(.trailing, 6)
                 .padding(.vertical, 6)
                 .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                Text("It works until \(Self.date(created.expiresAt)). This is the only time the link is shown.")
+                Text("It works until \(Self.date(created.expiresAt)). "
+                     + (model.savedLinks[created.id] == nil ? "This is the only time the link is shown."
+                        : "Manage can copy it again on this Mac."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
