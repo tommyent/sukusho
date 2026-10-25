@@ -77,7 +77,7 @@ enum CloudShareLinks {
             if alert.runModal() == .alertFirstButtonReturn { continue }
             unsavedKeys[uploadID] = key
             let shown = NSAlert()
-            shown.messageText = "Encrypted link"
+            shown.messageText = "The full link to the encrypted file"
             shown.informativeText = "It won’t be shown again. Until Sukusho quits, links it copies still carry the key."
             let field = NSTextField(wrappingLabelWithString: CloudShareSeal.link(url, key: key))
             field.isSelectable = true
@@ -107,7 +107,7 @@ enum CloudShareLinks {
         DispatchQueue.main.async {
             let alert = NSAlert()
             alert.messageText = count == 1 ? "This Mac doesn’t have this link’s key" : "This Mac doesn’t have these links’ keys"
-            alert.informativeText = "Encrypted links keep their key on the Mac that shared them. Without it, the link opens a page that can’t show the file. Copy the link on that Mac instead."
+            alert.informativeText = "End-to-end encrypted uploads keep their key on the Mac that shared them. Without it, the link opens a page that can’t show the file. Copy the link on that Mac instead."
             alert.runModal()
         }
     }

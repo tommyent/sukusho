@@ -111,7 +111,7 @@ struct CloudShareSealTests {
         #expect(CloudShareSeal.unavailableReason(fileURLs: [small]) == nil)
         #expect(CloudShareSeal.unavailableReason(fileURLs: [small, large]) == CloudShareSeal.unavailableNote)
         #expect(CloudShareSeal.unavailableReason(fileURLs: [small], isRecording: true) == CloudShareSeal.unavailableNote)
-        #expect(CloudShareSeal.unavailableNote == "Encrypted links are for images and files up to 32 MB for now.")
+        #expect(CloudShareSeal.unavailableNote == "End-to-end encryption is for images and files up to 32 MB for now.")
     }
 
     @Test func keysLiveUnderTheUploadID() throws {

@@ -24,7 +24,7 @@ nonisolated enum CloudShareSeal {
     static let maxFileBytes = 32 * 1024 * 1024
     static let maxHeaderBytes = 4096
     /// Shown where the option can't be used: Studio, recordings, and files over the cap.
-    static let unavailableNote = "Encrypted links are for images and files up to 32 MB for now."
+    static let unavailableNote = "End-to-end encryption is for images and files up to 32 MB for now."
 
     struct Sealed: Sendable {
         let combined: Data

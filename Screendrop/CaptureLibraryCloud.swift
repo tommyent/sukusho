@@ -736,7 +736,7 @@ private struct CloudUploadCard: View {
                         if upload.encrypted == true {
                             Image(systemName: "lock.shield.fill")
                                 .cardPill()
-                                .help("Encrypted: the link holds the key")
+                                .help("End-to-end encrypted: only the full link opens it")
                         }
                         if upload.hasPassword == true {
                             Image(systemName: "lock.fill")
