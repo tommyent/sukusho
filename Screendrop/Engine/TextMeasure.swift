@@ -236,9 +236,9 @@ enum TextMeasure {
     /// The box's padding around the text and its corner radius, as multiples of the font size, so
     /// a box keeps its proportions at any size. Vertical padding is the smaller because the line
     /// box already leaves room above and below the glyphs.
-    static let boxPaddingX = 0.3
-    static let boxPaddingY = 0.1
-    static let boxCornerRadius = 0.25
+    static let boxPaddingX = 0.65
+    static let boxPaddingY = 0.5
+    static let boxCornerRadius = 0.35
 
     /// How far the box reaches past the text box on each side, in page units. Zero without a box.
     static func boxInsets(_ props: TextProps) -> (x: Double, y: Double) {
