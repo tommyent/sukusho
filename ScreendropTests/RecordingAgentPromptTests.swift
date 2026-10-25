@@ -371,9 +371,9 @@ struct RecordingAgentPromptTests {
             source: CaptureSource(bundleIdentifier: "com.apple.TextEdit", appName: "TextEdit", windowTitle: "Notes"),
             screen: .init(width: 3420, height: 2214, scale: 2))
         #expect(plan.markdown(frameTimes: []).contains(
-            "Recorded in TextEdit (com.apple.TextEdit), window \"Notes\", 3420 × 2214 px at 2x, so one point is 2 pixels."))
+            "At the start, TextEdit (com.apple.TextEdit) was in front, window \"Notes\". The recording is 3420 × 2214 px at 2x, so one point is 2 pixels."))
         let bare = RecordingAgentPromptPlan(title: "Bare", timeline: .full(sourceDuration: 3), cues: [], words: [], capture: nil)
-        #expect(!bare.markdown(frameTimes: []).contains("Recorded "))
+        #expect(!bare.markdown(frameTimes: []).contains("At the start"))
     }
 
     @Test func generatedFolderContainsMatchingStillsAndReplacesPriorExport() async throws {

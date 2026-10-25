@@ -254,17 +254,19 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
     }
 
     /// Where the recording was made, for an agent to know the app and the pixel scale.
+    /// For a screen or area it's the app in front at the start, so it says so.
     private var recordedLine: String? {
-        var parts: [String] = []
+        var sentences: [String] = []
         if let source {
-            parts.append("in \(Self.escape(source.appName))" + (source.bundleIdentifier.map { " (\(Self.escape($0)))" } ?? ""))
-            if let window = source.windowTitle, !window.isEmpty { parts.append("window \"\(Self.escape(window))\"") }
+            let window = source.windowTitle.flatMap { $0.isEmpty ? nil : ", window \"\(Self.escape($0))\"" } ?? ""
+            sentences.append("At the start, \(Self.escape(source.appName))"
+                + (source.bundleIdentifier.map { " (\(Self.escape($0)))" } ?? "") + " was in front\(window).")
         }
         if let screen {
-            parts.append(String(format: "%d × %d px at %gx, so one point is %g pixels", locale: Locale(identifier: "en_US_POSIX"),
-                                screen.width, screen.height, screen.scale, screen.scale))
+            sentences.append(String(format: "The recording is %d × %d px at %gx, so one point is %g pixels.", locale: Locale(identifier: "en_US_POSIX"),
+                                    screen.width, screen.height, screen.scale, screen.scale))
         }
-        return parts.isEmpty ? nil : "Recorded " + parts.joined(separator: ", ") + "."
+        return sentences.isEmpty ? nil : sentences.joined(separator: " ")
     }
 
     static func stillName(_ index: Int) -> String { String(format: "%04d.jpg", index + 1) }
