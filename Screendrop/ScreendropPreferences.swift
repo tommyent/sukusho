@@ -41,6 +41,8 @@ enum ScreendropPreferences {
     static let recordingSystemAudioKey = "recordingSystemAudio"
     static let recordingCleanDesktopKey = "recordingCleanDesktop"
     static let recordingBugReportKey = "recordingBugReport"
+    /// Bug report turned on Include Sukusho windows, so turning Bug report off turns it back off.
+    static let recordingBugReportAddedAppWindowsKey = "recordingBugReportAddedAppWindows"
     static let recordingStartDelaySecondsKey = "recordingStartDelaySeconds"
     static let recordingTeleprompterEnabledKey = "recordingTeleprompterEnabled"
     static let recordingTeleprompterScriptKey = "recordingTeleprompterScript"
