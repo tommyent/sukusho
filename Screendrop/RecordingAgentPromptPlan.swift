@@ -43,6 +43,8 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
     let source: CaptureSource?
     /// The recorded area in pixels, and pixels per point.
     let screen: Screen?
+    /// Why the narration couldn't be transcribed, when it couldn't.
+    let transcriptionFailure: String?
 
     struct Screen: Sendable {
         var width: Int
@@ -54,7 +56,7 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
     init(title: String, timeline: RecordingClipTimeline, cues: [RecordingSubtitleCue],
          words: [RecordingTranscriptWord], capture: PointerCaptureFile?,
          cursorNames: [String: String] = [:], files: SourceFiles? = nil, excludesAppWindows: Bool = false,
-         source: CaptureSource? = nil, screen: Screen? = nil) {
+         source: CaptureSource? = nil, transcriptionFailure: String? = nil, screen: Screen? = nil) {
         self.title = title
         duration = timeline.duration
         hasInput = capture != nil
@@ -62,6 +64,7 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
         self.excludesAppWindows = excludesAppWindows
         self.source = source
         self.screen = screen
+        self.transcriptionFailure = transcriptionFailure
 
         func mapped(_ start: Double, _ end: Double, text: String) -> Text? {
             guard start.isFinite, end.isFinite, end > start else { return nil }
@@ -241,7 +244,9 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
             }
         }
         text += "## Transcript\n\n"
-        text += transcript.isEmpty ? "No narration available.\n" : transcript.map {
+        text += transcript.isEmpty
+            ? transcriptionFailure.map { "The narration couldn't be transcribed: \(Self.escape($0))\n" } ?? "No narration available.\n"
+            : transcript.map {
             "- \(Self.timestamp($0.start))–\(Self.timestamp($0.end)): \(Self.escape($0.text))"
         }.joined(separator: "\n") + "\n"
         if !words.isEmpty {

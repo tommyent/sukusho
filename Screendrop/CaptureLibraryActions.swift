@@ -338,6 +338,10 @@ extension CaptureLibraryModel {
     /// A Bug report take, as soon as it stops; the Library may not be open.
     /// False when it failed, with the reason in `errorMessage`.
     func exportBugReport(_ session: RecordingSession) async -> Bool {
+        // One Library operation at a time, as from its menus: Trash or another export waits, and the status bar shows it.
+        while isBusy { try? await Task.sleep(for: .milliseconds(250)) }
+        operationTitle = "Exporting agent prompt…"
+        defer { operationTitle = nil }
         do {
             try await writeAgentPrompt(session, id: "recording:" + session.directoryURL.standardizedFileURL.path)
             return true

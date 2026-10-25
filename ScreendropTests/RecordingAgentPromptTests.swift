@@ -366,6 +366,29 @@ struct RecordingAgentPromptTests {
         #expect(ring[0] > 150)
     }
 
+    @Test func aMomentPastTheLastVideoFrameStillGetsAStill() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let movie = directory.appendingPathComponent("fixture.mov")
+        try await makeMovie(at: movie) // 3 s of video
+        // Audio can run past the last video frame; a click there must not lose the whole prompt.
+        // (AVFoundation hands back the last frame, checked with the clamp Argon suggested taken out.)
+        let plan = RecordingAgentPromptPlan(title: "End", timeline: .full(sourceDuration: 3.4), cues: [], words: [],
+            capture: PointerCaptureFile(presses: [.init(time: 3.3, x: 0.5, y: 0.5, button: 0, phase: .down)]))
+        let folder = try await RecordingAgentPromptWriter.write(movie: nil, plan: plan, to: directory, master: movie)
+        let stills = try FileManager.default.contentsOfDirectory(atPath: folder.appendingPathComponent("stills").path)
+        #expect(stills.count == plan.moments.count)
+    }
+
+    @Test func aFailedTranscriptionIsNamedNotSilent() {
+        let plan = RecordingAgentPromptPlan(title: "Mic", timeline: .full(sourceDuration: 3), cues: [], words: [], capture: nil,
+                                            transcriptionFailure: "On-device transcription isn't available for your language yet.")
+        #expect(plan.markdown(frameTimes: []).contains("The narration couldn't be transcribed: On-device transcription isn't available for your language yet."))
+        let quiet = RecordingAgentPromptPlan(title: "Quiet", timeline: .full(sourceDuration: 3), cues: [], words: [], capture: nil)
+        #expect(quiet.markdown(frameTimes: []).contains("No narration available."))
+    }
+
     @Test func theHeaderNamesTheAppWindowAndPixelScale() {
         let plan = RecordingAgentPromptPlan(title: "Header", timeline: .full(sourceDuration: 3), cues: [], words: [], capture: nil,
             source: CaptureSource(bundleIdentifier: "com.apple.TextEdit", appName: "TextEdit", windowTitle: "Notes"),

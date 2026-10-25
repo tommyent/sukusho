@@ -4,19 +4,27 @@ import AVFoundation
 @MainActor
 enum RecordingAgentPromptExport {
     /// Uses the same on-device narration service as Studio's Transcribe Narration action.
+    /// A transcription that fails (an unsupported language, no speech model, an
+    /// unreadable track) leaves the prompt without narration and says why, rather
+    /// than losing the whole prompt.
     static func transcript(cues: [RecordingSubtitleCue], words: [RecordingTranscriptWord],
-                           screenURL: URL, canTranscribe: Bool) async throws -> RecordingTranscript {
-        guard cues.isEmpty, words.isEmpty, canTranscribe else { return RecordingTranscript(words: words, cues: cues) }
+                           screenURL: URL, canTranscribe: Bool) async throws -> (transcript: RecordingTranscript, failure: String?) {
+        let none = RecordingTranscript(words: [], cues: [])
+        guard cues.isEmpty, words.isEmpty, canTranscribe else { return (RecordingTranscript(words: words, cues: cues), nil) }
         do {
-            return try await RecordingTranscriptionService.transcribe(screenMovieURL: screenURL)
+            return (try await RecordingTranscriptionService.transcribe(screenMovieURL: screenURL), nil)
         } catch RecordingTranscriptionService.TranscriptionError.noSpeechDetected {
-            return RecordingTranscript(words: [], cues: [])
+            return (none, nil)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            return (none, error.localizedDescription)
         }
     }
 
     /// What Agent Prompt writes for a session, from its input log and capture manifest.
     static func plan(for session: RecordingSession, document: RecordingEditDocument? = nil, timeline: RecordingClipTimeline,
-                     transcript: RecordingTranscript) -> RecordingAgentPromptPlan {
+                     transcript: RecordingTranscript, transcriptionFailure: String? = nil) -> RecordingAgentPromptPlan {
         var capture = session.loadPointerCapture()
         // Pen strokes the edit hides stay out of the prompt, as they do in its stills.
         let hidden = Set(document?.hiddenInkStrokeIDs ?? [])
@@ -27,7 +35,7 @@ enum RecordingAgentPromptExport {
                                         capture: capture, cursorNames: PointerArtworkCapture.names(for: capture?.artwork ?? []),
                                         files: .init(screen: session.screenURL, input: input),
                                         excludesAppWindows: manifest?.includesAppWindows == false,
-                                        source: session.loadProjectMetadata()?.source,
+                                        source: session.loadProjectMetadata()?.source, transcriptionFailure: transcriptionFailure,
                                         screen: manifest.flatMap { $0.pixelWidth > 0 ? .init(width: $0.pixelWidth, height: $0.pixelHeight, scale: $0.pixelScale) : nil })
     }
 
@@ -40,10 +48,11 @@ enum RecordingAgentPromptExport {
         } else {
             timeline = .legacyTrim(start: document?.trimStart, end: document?.trimEnd, sourceDuration: duration)
         }
-        let transcript = try await transcript(cues: document?.subtitleCues ?? [], words: document?.subtitleWords ?? [],
-                                              screenURL: session.screenURL, canTranscribe: session.loadCaptureManifest()?.includesMicrophone == true)
+        let narration = try await transcript(cues: document?.subtitleCues ?? [], words: document?.subtitleWords ?? [],
+                                             screenURL: session.screenURL, canTranscribe: session.loadCaptureManifest()?.includesMicrophone == true)
         try Task.checkCancellation()
-        let plan = plan(for: session, document: document, timeline: timeline, transcript: transcript)
+        let plan = plan(for: session, document: document, timeline: timeline, transcript: narration.transcript,
+                        transcriptionFailure: narration.failure)
         // Stills come from the screen recording itself, not a styled render: an agent wants the
         // whole screen at its real size, and the export takes seconds instead of a transcode.
         // Named after the package, which a rename doesn't change, so each recording keeps one folder.
