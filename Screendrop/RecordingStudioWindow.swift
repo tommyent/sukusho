@@ -115,7 +115,7 @@ private struct RecordingStudioContent: View {
                     title: windowTitle,
                     status: windowSubtitle,
                     customName: model.customName,
-                    defaultName: model.defaultName,
+                    defaultName: model.modelTitle ?? model.defaultName,
                     // A bare movie has no project to keep a name in.
                     onRename: model.isProject ? { model.rename(to: $0) } : nil
                 )
@@ -181,11 +181,10 @@ private struct RecordingStudioContent: View {
         }
     }
 
-    /// The name the recording's Library card shows: yours, else Apple Intelligence's, else the date.
+    /// The name the recording's Library card shows; a bare movie's is its file name.
     /// The package name ("Screendrop_…") was suggested before.
     private var shareSuggestedTitle: String {
-        let name = model.projectDisplayName // observed, so a rename updates it
-        return model.session.map(RecordingAgentPromptExport.title(for:)) ?? name
+        model.session == nil ? model.projectDisplayName : windowTitle
     }
 
     @ViewBuilder
@@ -244,7 +243,8 @@ private struct RecordingStudioContent: View {
         // A rename in the Library reloads the project store; reading it here
         // re-reads the name then.
         _ = RecordingProjectStore.shared.projects
-        return model.customName ?? model.defaultName
+        // As on its Library card: yours, else Apple Intelligence's, else the date.
+        return model.customName ?? model.modelTitle ?? model.defaultName
     }
 
     /// The save status, then the length of the edited cut and the source

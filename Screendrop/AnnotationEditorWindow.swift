@@ -48,7 +48,7 @@ struct AnnotationEditorWindow: View {
                         title: windowTitle,
                         status: model.saveStatus,
                         customName: historyItem?.displayName,
-                        defaultName: historyItem.map { CaptureLibraryItem.dateTitle($0.createdAt) } ?? windowTitle,
+                        defaultName: historyItem.map(automaticTitle) ?? windowTitle,
                         onRename: historyItem.map { item in { AnnotationEditorTitle.rename(item, to: $0) } }
                     )
                         .id(historyID)
@@ -210,8 +210,7 @@ struct AnnotationEditorWindow: View {
         } else if CloudUploader.shared.isConfigured {
             CloudUploadButton(
                 // The name its Library card shows, as the Library suggests; never the file name.
-                suggestedTitle: historyID.flatMap { id in CaptureLibraryModel.shared.items.first { $0.historyIDs.contains(id) }?.title }
-                    ?? historyItem.map { $0.displayName ?? CaptureLibraryItem.dateTitle($0.createdAt) } ?? "",
+                suggestedTitle: historyItem == nil ? "" : windowTitle,
                 onUpload: uploadAnnotation
             ) {
                 if isUploading {
@@ -380,13 +379,19 @@ struct AnnotationEditorWindow: View {
     }
 
     /// The capture's Library title, following a rename made there: its name,
-    /// else when it was taken. A file outside History shows its file name.
+    /// else Apple Intelligence's, else when it was taken. A file outside
+    /// History shows its file name.
     private var windowTitle: String {
         guard let url else { return "" }
         guard let item = historyItem else {
             return url.deletingPathExtension().lastPathComponent
         }
-        return item.displayName ?? CaptureLibraryItem.dateTitle(item.createdAt)
+        return item.displayName ?? automaticTitle(item)
+    }
+
+    /// What clearing the name goes back to, as on its Library card.
+    private func automaticTitle(_ item: ScreenshotHistoryItem) -> String {
+        CaptureLibraryIndex.shared.visibleInsight(item.id.uuidString)?.title ?? CaptureLibraryItem.dateTitle(item.createdAt)
     }
 
     private var historyItem: ScreenshotHistoryItem? {
