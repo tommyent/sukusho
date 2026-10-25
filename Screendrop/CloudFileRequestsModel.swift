@@ -22,9 +22,10 @@ final class FileRequestsModel {
     private(set) var isCreating = false
     private(set) var closingIDs: Set<String> = []
     private(set) var downloadingIDs: Set<String> = []
-    /// Shown in the Request Files sheet.
+    /// Shown in the Request Files sheet and the open links' popover.
     var errorMessage: String?
     var showsSheet = false
+    var showsOpenLinks = false
     private var pollTask: Task<Void, Never>?
 
     private init() {}
@@ -216,7 +217,6 @@ struct FileRequestsSheet: View {
     @State private var model = FileRequestsModel.shared
     @State private var draft = CloudFileRequestDraft()
     @State private var created: CloudFileRequest?
-    @State private var pendingClose: CloudFileRequest?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -248,37 +248,9 @@ struct FileRequestsSheet: View {
             } else {
                 form
             }
-            if !model.openRequests.isEmpty {
-                Divider()
-                Text("Open Requests").font(.subheadline.weight(.semibold))
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(model.openRequests) { request in
-                            HStack(alignment: .firstTextBaseline) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(request.message.isEmpty ? "No message" : request.message).lineLimit(2)
-                                    Text(Self.summary(request)).font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer(minLength: 8)
-                                Button("Close…") { pendingClose = request }
-                                    .disabled(model.closingIDs.contains(request.id))
-                            }
-                        }
-                    }
-                }
-                .frame(maxHeight: 180)
-            }
         }
         .padding(16)
         .frame(width: 400)
-        .task { await model.refreshRequests() }
-        .alert("Close this link?", isPresented: Binding(get: { pendingClose != nil }, set: { if !$0 { pendingClose = nil } }),
-               presenting: pendingClose) { request in
-            Button("Close Link", role: .destructive) { model.close(request) }
-            Button("Cancel", role: .cancel) {}
-        } message: { _ in
-            Text("Nobody can send files with it anymore. Files already received stay in Received.")
-        }
     }
 
     private var form: some View {
@@ -354,9 +326,86 @@ struct FileRequestsSheet: View {
         date.formatted(date: .abbreviated, time: .shortened)
     }
 
-    private static func summary(_ request: CloudFileRequest) -> String {
+    static func summary(_ request: CloudFileRequest) -> String {
         "\(request.filesReceived) of \(request.maxFiles) files · \(bytes(request.bytesReceived)) of \(bytes(request.maxTotalBytes)) · until \(date(request.expiresAt))"
             + (request.hasPassword ? " · password" : "")
+    }
+}
+
+/// The Received toolbar's "Manage": how many links are open, and a popover to close them.
+/// Hidden while none is open.
+struct FileRequestsManageButton: View {
+    @State private var model = FileRequestsModel.shared
+
+    var body: some View {
+        let open = model.openRequests.count
+        if open > 0 {
+            Button {
+                model.showsOpenLinks.toggle()
+            } label: {
+                HStack(spacing: 4) {
+                    Text("Manage")
+                    Text(open, format: .number).foregroundStyle(.secondary).monospacedDigit()
+                }
+            }
+            .help("Open links people can use to send you files")
+            .accessibilityLabel("Manage open links, \(open) open")
+            .popover(isPresented: $model.showsOpenLinks, arrowEdge: .bottom) {
+                FileRequestsOpenLinks()
+            }
+        }
+    }
+}
+
+/// The open links, newest first, each closed with its X after a confirmation.
+struct FileRequestsOpenLinks: View {
+    @State private var model = FileRequestsModel.shared
+    @State private var pendingClose: CloudFileRequest?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Open Links").font(.headline).padding([.horizontal, .top], 8)
+            if model.openRequests.isEmpty {
+                Text("No open links.").foregroundStyle(.secondary).padding(8)
+            }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(model.openRequests) { request in
+                        HStack(alignment: .center, spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(request.message.isEmpty ? "No message" : request.message)
+                                    .lineLimit(1)
+                                    .foregroundStyle(request.message.isEmpty ? .secondary : .primary)
+                                Text(FileRequestsSheet.summary(request)).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 0)
+                            Button("Close Link…", systemImage: "xmark.circle.fill") { pendingClose = request }
+                                .labelStyle(.iconOnly)
+                                .buttonStyle(.borderless)
+                                .foregroundStyle(.secondary)
+                                .help("Close this link")
+                                .disabled(model.closingIDs.contains(request.id))
+                        }
+                        .padding(8)
+                    }
+                }
+            }
+            .frame(maxHeight: 320)
+            .fixedSize(horizontal: false, vertical: true)
+            if let error = model.errorMessage {
+                Text(error).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true).padding(8)
+            }
+        }
+        .padding(8)
+        .frame(width: 340)
+        .task { await model.refreshRequests() }
+        .alert("Close this link?", isPresented: Binding(get: { pendingClose != nil }, set: { if !$0 { pendingClose = nil } }),
+               presenting: pendingClose) { request in
+            Button("Close Link", role: .destructive) { model.close(request) }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("Nobody can send files with it anymore. Files already received stay in Received.")
+        }
     }
 }
 

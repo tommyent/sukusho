@@ -542,6 +542,8 @@ struct CloudLibraryPage: View {
                 )
             }
         }
+        // Full height, so the bars below sit at the top even over an empty page.
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .safeAreaInset(edge: .top, spacing: 0) {
             if cloud.isHistoryFallback {
                 Label("Showing uploads whose capture is still in the Library. Update the Worker to see every upload.",
@@ -552,20 +554,6 @@ struct CloudLibraryPage: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
                     .background(.bar)
-            }
-        }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            let open = FileRequestsModel.shared.openRequests.count
-            if cloud.showsReceived, open > 0 {
-                HStack(spacing: 8) {
-                    Label(open == 1 ? "1 open file request" : "\(open) open file requests", systemImage: "link")
-                    Spacer()
-                    Button("Manage…") { FileRequestsModel.shared.showsSheet = true }
-                }
-                .font(.callout)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background(.bar)
             }
         }
         .safeAreaInset(edge: .top, spacing: 0) {

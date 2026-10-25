@@ -529,9 +529,12 @@ struct CaptureLibraryView: View {
             }
         }
         if cloud.isShown, cloud.showsReceived, CloudUploader.shared.isConfigured {
-            ToolbarItem(placement: .primaryAction) {
+            // Its own pill: a new link, and the open links to manage.
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+            ToolbarItemGroup(placement: .primaryAction) {
                 Button("Request Files…", systemImage: "link.badge.plus") { FileRequestsModel.shared.showsSheet = true }
                     .help("Make a link someone can use to send you files")
+                FileRequestsManageButton()
             }
         }
         ToolbarItem(placement: .primaryAction) {
