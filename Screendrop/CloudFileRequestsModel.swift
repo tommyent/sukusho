@@ -3,7 +3,7 @@ import SwiftUI
 import UserNotifications
 
 /// File requests and what clients send through them: the open links, a new
-/// link (shown once), a look for new received files every few minutes while
+/// link (copied, and kept in the Keychain for Manage), a look for new received files every few minutes while
 /// a link is open, their notification, and downloads.
 @MainActor
 @Observable
@@ -19,6 +19,10 @@ final class FileRequestsModel {
     private static let knownKeyPrefix = "cloudReceivedKnown."
 
     private(set) var openRequests: [CloudFileRequest] = []
+    /// Links made on this Mac, by request ID. The Worker keeps only a hash of each, so
+    /// Manage copies them from the Keychain; links made elsewhere or earlier can't be copied.
+    private(set) var savedLinks: [String: String] = [:]
+    private static let linkAccountPrefix = "file_request_link_"
     private(set) var isCreating = false
     private(set) var closingIDs: Set<String> = []
     private(set) var downloadingIDs: Set<String> = []
@@ -42,8 +46,20 @@ final class FileRequestsModel {
     func refreshRequests() async {
         guard let owner = CloudUploader.shared.ownerAccess,
               let request = CloudFileRequestAPI.listRequest(workerBase: owner.workerBase, token: owner.token) else { return }
+        let cutoff = Date().addingTimeInterval(-CloudShareKeys.pruneMargin)
         do {
             openRequests = try CloudFileRequestAPI.decodeList(try await Self.send(request))
+            // A closed or expired link's copy goes too. As with share keys, one made while the list
+            // was on its way, or for another Worker, stays.
+            let open = Set(openRequests.map(\.id))
+            for item in CloudCredentialStore.keychainItems(prefix: Self.linkAccountPrefix)
+            where item.created < cutoff && item.label == CloudShareKeys.host(of: owner.workerBase)
+                && !open.contains(String(item.account.dropFirst(Self.linkAccountPrefix.count))) {
+                CloudCredentialStore.deleteKeychainItem(key: item.account)
+            }
+            savedLinks = Dictionary(uniqueKeysWithValues: openRequests.compactMap { request in
+                CloudCredentialStore.getKeychainItem(key: Self.linkAccountPrefix + request.id).map { (request.id, $0) }
+            })
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -62,6 +78,10 @@ final class FileRequestsModel {
             if let link = created.url {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(link, forType: .string)
+                if CloudCredentialStore.setKeychainItem(key: Self.linkAccountPrefix + created.id, value: link,
+                                                        label: CloudShareKeys.host(of: owner.workerBase)) {
+                    savedLinks[created.id] = link
+                }
             }
             errorMessage = nil
             schedulePoll()
@@ -82,6 +102,8 @@ final class FileRequestsModel {
             do {
                 _ = try await Self.send(request)
                 openRequests.removeAll { $0.id == fileRequest.id }
+                CloudCredentialStore.deleteKeychainItem(key: Self.linkAccountPrefix + fileRequest.id)
+                savedLinks[fileRequest.id] = nil
                 schedulePoll()
             } catch {
                 errorMessage = error.localizedDescription
@@ -212,7 +234,7 @@ nonisolated enum FileRequestError: LocalizedError {
 }
 
 /// Request Files: a new link (message, expiry, password, limits), then that
-/// link, shown once and already copied. Open links are under the toolbar's Manage.
+/// link, already copied. Open links are under Manage, which copies the ones made on this Mac again.
 struct FileRequestsSheet: View {
     @State private var model = FileRequestsModel.shared
     @State private var draft = CloudFileRequestDraft()
@@ -395,6 +417,9 @@ struct FileRequestsOpenLinks: View {
                                 Text(FileRequestsSheet.summary(request)).font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer(minLength: 0)
+                            if let link = model.savedLinks[request.id] {
+                                FileRequestCopyLinkButton(link: link)
+                            }
                             Button("Close Link…", systemImage: "xmark.circle.fill") { pendingClose = request }
                                 .labelStyle(.iconOnly)
                                 .buttonStyle(.borderless)
@@ -421,6 +446,30 @@ struct FileRequestsOpenLinks: View {
             Button("Cancel", role: .cancel) {}
         } message: { _ in
             Text("Nobody can send files with it anymore. Files already received stay in Received.")
+        }
+    }
+}
+
+/// Copies an open link made on this Mac again; a tick shows it worked.
+private struct FileRequestCopyLinkButton: View {
+    let link: String
+    @State private var copied = false
+
+    var body: some View {
+        Button(copied ? "Copied" : "Copy Link", systemImage: copied ? "checkmark" : "doc.on.doc") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(link, forType: .string)
+            copied = true
+        }
+        .labelStyle(.iconOnly)
+        .buttonStyle(.borderless)
+        .foregroundStyle(copied ? Color.green : .secondary)
+        .contentTransition(.symbolEffect(.replace))
+        .help(copied ? "Link copied" : "Copy this link")
+        .task(id: copied) {
+            guard copied else { return }
+            try? await Task.sleep(for: .seconds(1.5))
+            copied = false
         }
     }
 }
