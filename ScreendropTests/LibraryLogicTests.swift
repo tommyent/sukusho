@@ -37,6 +37,26 @@ struct LibraryLogicTests {
         #expect(!FileManager.default.fileExists(atPath: movie.path))
     }
 
+    @Test func aDownloadedReceivedFileBecomesTheCachedCopyOnce() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let downloaded = folder.appendingPathComponent("Report.pdf")
+        try Data("synthetic received file".utf8).write(to: downloaded)
+        let upload = CloudUpload(id: "recv1234", url: "https://example.invalid/recv1234", title: nil, filename: "Report.pdf",
+            mediaType: "file", size: nil, duration: nil, createdAt: .distantPast, views: nil, thumbnailUrl: nil, requestId: "req1")
+        let cache = CloudPreviewCache(folder: folder.appendingPathComponent("cache"), limit: 1024)
+        #expect(try cache.cachedFile(for: upload, touching: false) == nil)
+        try cache.adopt(downloaded, for: upload)
+        let cached = try #require(try cache.cachedFile(for: upload, touching: false))
+        #expect(cached.pathExtension == "pdf")
+        #expect(try Data(contentsOf: cached) == Data("synthetic received file".utf8))
+        // A second download doesn't replace the copy Quick Look may be showing.
+        try Data("second download".utf8).write(to: downloaded)
+        try cache.adopt(downloaded, for: upload)
+        #expect(try Data(contentsOf: cached) == Data("synthetic received file".utf8))
+    }
+
     @Test func replacementOnlyTargetsTheConfiguredWorker() {
         let base = "https://share.example.invalid"
         #expect(CloudUploadList.replacementID(of: base + "/abcd1234", workerBase: base) == "abcd1234")

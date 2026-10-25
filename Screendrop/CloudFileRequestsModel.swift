@@ -126,12 +126,16 @@ final class FileRequestsModel {
             var failures: [String] = []
             for upload in targets {
                 do {
-                    saved.append(try await ReceivedFiles.download(upload, workerBase: owner.workerBase, token: owner.token, into: folder))
+                    let file = try await ReceivedFiles.download(upload, workerBase: owner.workerBase, token: owner.token, into: folder)
+                    saved.append(file)
+                    // The card's thumbnail and Quick Look use this copy.
+                    try? CloudPreviewCache.shared.adopt(file, for: upload)
                 } catch {
                     failures.append("\(upload.filename): \(error.localizedDescription)")
                 }
                 downloadingIDs.remove(upload.id)
             }
+            if !saved.isEmpty { CloudLibraryModel.shared.previewRevision += 1 }
             if reveal, !saved.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(saved) }
             if !failures.isEmpty {
                 CaptureLibraryModel.shared.errorMessage = "Couldn’t download:\n" + failures.joined(separator: "\n")

@@ -50,7 +50,8 @@ nonisolated struct CloudPreviewCache: Sendable {
         return safe.isEmpty ? upload.id : safe
     }
 
-    func cachedFile(for upload: CloudUpload) throws -> URL? {
+    /// `touching` marks it recently viewed, as Quick Look does; a card's thumbnail doesn't.
+    func cachedFile(for upload: CloudUpload, touching: Bool = true) throws -> URL? {
         guard Self.isSafeID(upload.id) else { throw CloudPreviewError.badLink }
         let manager = FileManager.default
         let directory = folder.appending(path: upload.id, directoryHint: .isDirectory)
@@ -63,7 +64,7 @@ nonisolated struct CloudPreviewCache: Sendable {
             at: directory, includingPropertiesForKeys: nil, options: .skipsHiddenFiles
         ).first {
             // Recently viewed, so trimming takes it last.
-            try? manager.setAttributes([.modificationDate: Date.now], ofItemAtPath: cached.path)
+            if touching { try? manager.setAttributes([.modificationDate: Date.now], ofItemAtPath: cached.path) }
             return cached
         }
         return nil
@@ -118,6 +119,26 @@ nonisolated struct CloudPreviewCache: Sendable {
         progress(1)
         trim(keeping: kept.union([upload.id]))
         return file
+    }
+
+    /// Keeps a copy of a file downloaded elsewhere (a received file saved to Downloads), so Quick
+    /// Look and the card's thumbnail use it. On APFS the copy is a clone.
+    func adopt(_ file: URL, for upload: CloudUpload) throws {
+        guard try cachedFile(for: upload, touching: false) == nil else { return }
+        let manager = FileManager.default
+        let directory = folder.appending(path: upload.id, directoryHint: .isDirectory)
+        let ext = file.pathExtension
+        try manager.createDirectory(at: directory, withIntermediateDirectories: true)
+        do {
+            try manager.copyItem(at: file, to: directory.appending(path: Self.fileName(for: upload) + (ext.isEmpty ? "" : "." + ext)))
+            if let mediaKey = upload.mediaKey {
+                try mediaKey.write(to: directory.appending(path: ".media-key"), atomically: true, encoding: .utf8)
+            }
+        } catch {
+            try? manager.removeItem(at: directory)
+            throw error
+        }
+        trim(keeping: [upload.id])
     }
 
     /// Drops the least recently viewed uploads until the folder fits the
