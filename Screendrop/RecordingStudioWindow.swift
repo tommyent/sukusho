@@ -181,8 +181,11 @@ private struct RecordingStudioContent: View {
         }
     }
 
+    /// The name the recording's Library card shows: yours, else Apple Intelligence's, else the date.
+    /// The package name ("Screendrop_…") was suggested before.
     private var shareSuggestedTitle: String {
-        model.projectDisplayName
+        let name = model.projectDisplayName // observed, so a rename updates it
+        return model.session.map(RecordingAgentPromptExport.title(for:)) ?? name
     }
 
     @ViewBuilder

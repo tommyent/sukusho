@@ -209,8 +209,9 @@ struct AnnotationEditorWindow: View {
             .help("Copy the share link again")
         } else if CloudUploader.shared.isConfigured {
             CloudUploadButton(
-                // Only a name the user gave, as the Library suggests; an unnamed upload keeps its file name on the share page.
-                suggestedTitle: historyItem?.displayName ?? "",
+                // The name its Library card shows, as the Library suggests; never the file name.
+                suggestedTitle: historyID.flatMap { id in CaptureLibraryModel.shared.items.first { $0.historyIDs.contains(id) }?.title }
+                    ?? historyItem.map { $0.displayName ?? CaptureLibraryItem.dateTitle($0.createdAt) } ?? "",
                 onUpload: uploadAnnotation
             ) {
                 if isUploading {
