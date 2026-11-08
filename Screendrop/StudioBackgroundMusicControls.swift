@@ -4,6 +4,7 @@ import SwiftUI
 struct StudioBackgroundMusicControls: View {
     @Bindable var model: RecordingStudioModel
     var findMusic: (() -> Void)? = nil
+    @State private var creditCopied = ActionFeedback()
 
     var body: some View {
         VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
@@ -30,12 +31,14 @@ struct StudioBackgroundMusicControls: View {
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
-                        Button("Copy credit") {
+                        Button(creditCopied.message ?? "Copy credit") {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(credit, forType: .string)
+                            creditCopied.show()
                         }
                         .buttonStyle(.link)
                         .font(.inspectorLabel)
+                        .actionFeedback(creditCopied, label: "Copy credit")
                     }
                 }
             } else {

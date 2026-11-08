@@ -569,6 +569,9 @@ struct AnnotationEditorWindow: View {
                 }
                 // No result means nothing was drawn: the original is the image.
                 try await ScreenshotFileActions.copyImageToClipboard(from: resultURL ?? sourceURL)
+                // The window usually closes, so a toast says the image went to the clipboard.
+                CaptureTextFeedbackPresenter.shared.showDone("Copied", detail: "The marked-up screenshot is on the clipboard.",
+                                                             displayID: ActiveDisplayResolver.activeDisplayID())
                 guard !model.hasUnsavedChanges else {
                     isFinishing = false
                     return

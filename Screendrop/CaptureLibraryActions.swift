@@ -37,6 +37,7 @@ extension CaptureLibraryModel {
                     }
                     try VideoFileActions.copyFilesToClipboard(from: urls)
                 }
+                self.actionFeedback.show(selected.count == 1 ? "Copied" : "\(selected.count) Captures Copied")
             }
         case .export:
             export(selected)
@@ -256,6 +257,7 @@ extension CaptureLibraryModel {
     func copyLink(_ item: CaptureLibraryItem) {
         guard let link = item.cloudURL else { return }
         CloudShareLinks.copy([link])
+        actionFeedback.show(ActionFeedback.linksCopied(1))
     }
 
     func upload(_ item: CaptureLibraryItem, options: CloudUploadOptions) {
@@ -274,6 +276,7 @@ extension CaptureLibraryModel {
                 password: options.password, encrypt: options.encrypted)
             ScreenshotHistoryStore.shared.setLibraryCloudURL(id: id, cloudURL: result.url)
             CloudShareLinks.copy([result.url])
+            self.actionFeedback.show(ActionFeedback.linksCopied(1))
             if item.isVideo { ScreenshotPreviewStack.shared.dismissVideo(for: item.ownedURL) }
             self.refresh()
         }

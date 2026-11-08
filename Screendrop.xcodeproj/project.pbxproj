@@ -93,6 +93,7 @@
 		AA6100000000000000000096 /* Screendrop/CloudFileRequests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA61000000000000000000FA /* Screendrop/CloudFileRequests.swift */; };
 		AA6100000000000000000097 /* Screendrop/CloudShareSeal.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA61000000000000000000FB /* Screendrop/CloudShareSeal.swift */; };
 		AA6100000000000000000098 /* Screendrop/CloudGalleries.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA61000000000000000000FC /* Screendrop/CloudGalleries.swift */; };
+		AA6100000000000000000099 /* Screendrop/ActionFeedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA61000000000000000000FD /* Screendrop/ActionFeedback.swift */; };
 		AD5500000000000000000001 /* Screendrop/ScreendropStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5500000000000000000011 /* Screendrop/ScreendropStorage.swift */; };
 		AD5500000000000000000002 /* Screendrop/LegacyIdentityImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5500000000000000000012 /* Screendrop/LegacyIdentityImport.swift */; };
 		AF5D00000000000000000001 /* Screendrop/CaptureLibraryText.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF5D00000000000000000002 /* Screendrop/CaptureLibraryText.swift */; };
@@ -199,6 +200,7 @@
 		AA61000000000000000000FA /* Screendrop/CloudFileRequests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/CloudFileRequests.swift; sourceTree = SOURCE_ROOT; };
 		AA61000000000000000000FB /* Screendrop/CloudShareSeal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/CloudShareSeal.swift; sourceTree = SOURCE_ROOT; };
 		AA61000000000000000000FC /* Screendrop/CloudGalleries.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/CloudGalleries.swift; sourceTree = SOURCE_ROOT; };
+		AA61000000000000000000FD /* Screendrop/ActionFeedback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ActionFeedback.swift; sourceTree = SOURCE_ROOT; };
 		AD5500000000000000000011 /* Screendrop/ScreendropStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ScreendropStorage.swift; sourceTree = SOURCE_ROOT; };
 		AD5500000000000000000012 /* Screendrop/LegacyIdentityImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/LegacyIdentityImport.swift; sourceTree = SOURCE_ROOT; };
 		AF5D00000000000000000002 /* Screendrop/CaptureLibraryText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/CaptureLibraryText.swift; sourceTree = SOURCE_ROOT; };
@@ -367,6 +369,7 @@
 				AA61000000000000000000FA /* Screendrop/CloudFileRequests.swift */,
 				AA61000000000000000000FB /* Screendrop/CloudShareSeal.swift */,
 				AA61000000000000000000FC /* Screendrop/CloudGalleries.swift */,
+				AA61000000000000000000FD /* Screendrop/ActionFeedback.swift */,
 				AD5500000000000000000011 /* Screendrop/ScreendropStorage.swift */,
 				AD5500000000000000000012 /* Screendrop/LegacyIdentityImport.swift */,
 				AF5D00000000000000000002 /* Screendrop/CaptureLibraryText.swift */,
@@ -576,6 +579,7 @@
 				AA6100000000000000000096 /* Screendrop/CloudFileRequests.swift in Sources */,
 				AA6100000000000000000097 /* Screendrop/CloudShareSeal.swift in Sources */,
 				AA6100000000000000000098 /* Screendrop/CloudGalleries.swift in Sources */,
+				AA6100000000000000000099 /* Screendrop/ActionFeedback.swift in Sources */,
 				AD5500000000000000000001 /* Screendrop/ScreendropStorage.swift in Sources */,
 				AD5500000000000000000002 /* Screendrop/LegacyIdentityImport.swift in Sources */,
 				AF5D00000000000000000001 /* Screendrop/CaptureLibraryText.swift in Sources */,

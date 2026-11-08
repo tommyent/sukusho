@@ -22,7 +22,7 @@ struct CloudSettingsPane: View {
     @State private var workerStatus: ConnectionStatus = .unchecked
     @State private var isLoading = true
     @State private var tokenRevealed = false
-    @State private var tokenCopied = false
+    @State private var tokenCopied = ActionFeedback()
     @State private var setupGuideExpanded = true
     /// The guide leads until a Worker is set up: decided when the pane
     /// opens and on a successful Verify, never while typing, so the
@@ -170,8 +170,9 @@ struct CloudSettingsPane: View {
                     Button {
                         copyToken()
                     } label: {
-                        Label(tokenCopied ? "Copied" : "Copy Token", systemImage: tokenCopied ? "checkmark" : "doc.on.doc")
+                        Label(tokenCopied.message ?? "Copy Token", systemImage: tokenCopied.isShowing ? "checkmark" : "doc.on.doc")
                     }
+                    .actionFeedback(tokenCopied, label: "Copy Token")
                     .controlSize(.small)
                     .disabled(uploadToken.isEmpty)
 
@@ -325,11 +326,7 @@ struct CloudSettingsPane: View {
         NSPasteboard.general.setString(uploadToken, forType: .string)
         // nspasteboard.org's secret marker: clipboard history apps skip the copy instead of saving the token.
         NSPasteboard.general.setData(Data(), forType: NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"))
-        tokenCopied = true
-        Task {
-            try? await Task.sleep(for: .seconds(2))
-            tokenCopied = false
-        }
+        tokenCopied.show()
     }
 
     private func regenerateToken() {

@@ -1,3 +1,4 @@
+import Accessibility
 import AppKit
 import Observation
 
@@ -110,6 +111,8 @@ final class PixelProbe {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(hex, forType: .string)
         copiedHex = hex
+        // The badge shows it; VoiceOver hears it.
+        AccessibilityNotification.Announcement("Copied \(hex)").post()
         clearCopied?.cancel()
         clearCopied = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1.5))

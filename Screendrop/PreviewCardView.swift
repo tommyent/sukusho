@@ -41,6 +41,7 @@ struct PreviewCardView: View {
     @State private var shakeOffset: CGFloat = 0
     @State private var showUploadFailed = false
     @State private var showCheckmark = false
+    @State private var linkCopied = ActionFeedback()
 
     var body: some View {
         Image(nsImage: item.previewImage)
@@ -232,7 +233,8 @@ struct PreviewCardView: View {
     @ViewBuilder
     private func centerPill(for action: OverlayCardAction) -> some View {
         if action == .upload, cloudUploader.uploadedURLs[item.id] != nil {
-            actionPill("Copy Link", action: copyUploadedURL)
+            actionPill(linkCopied.message ?? "Copy Link", action: copyUploadedURL)
+                .actionFeedback(linkCopied, label: "Copy Link")
         } else {
             actionPill(action.label(for: item.kind), action: handler(for: action))
                 .disabled(isBlocked(action))
@@ -357,7 +359,7 @@ struct PreviewCardView: View {
                 action: { cloudUploader.cancelUpload(for: item.id) }
             )
         } else if cloudUploader.uploadedURLs[item.id] != nil {
-            cornerButton(systemImage: "link", help: "Copy share link", action: copyUploadedURL)
+            cornerButton(systemImage: "link", help: "Copy share link", feedback: linkCopied, action: copyUploadedURL)
         } else {
             cornerButton(systemImage: "cloud", help: "Upload to cloud", action: onUpload)
         }
@@ -381,19 +383,20 @@ struct PreviewCardView: View {
         isPresented && !isDismissing ? 0 : previewCardSlideOffset * slideDirection
     }
 
-    private func cornerButton(systemImage: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
+    private func cornerButton(systemImage: String, help: String, feedback: ActionFeedback? = nil,
+                              action: @escaping () -> Void) -> some View {
+        let done = feedback?.isShowing == true
+        return Button(action: action) {
+            Image(systemName: done ? "checkmark" : systemImage)
                 .font(.system(size: 10, weight: .bold))
-                .foregroundStyle(.black)
+                .foregroundStyle(done ? Color.green : .black)
                 .frame(width: 20, height: 20)
                 .background(.white, in: .circle)
                 .shadow(color: .black.opacity(0.22), radius: 2.5, x: 0, y: 1)
         }
         .buttonStyle(.plain)
-        .help(help)
         // A bare glyph has no name of its own for VoiceOver.
-        .accessibilityLabel(help)
+        .actionFeedback(feedback, label: help)
     }
 
     private func actionPill(_ title: String, action: @escaping () -> Void) -> some View {
@@ -415,6 +418,7 @@ struct PreviewCardView: View {
     private func copyUploadedURL() {
         guard let url = cloudUploader.uploadedURLs[item.id] else { return }
         CloudShareLinks.copy([url])
+        linkCopied.show(ActionFeedback.linksCopied(1))
     }
 
     private func shakeCard() {
