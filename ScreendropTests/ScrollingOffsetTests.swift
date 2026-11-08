@@ -364,6 +364,71 @@ private final class OffsetFixtureBundle: NSObject {}
         #expect(await stitcher.place(frame(40, hovered: true), candidate: 40, bands: [40, 40, 40, 40, 40]) == .appended(40))
     }
 
+    /// 64 x 400 of a page that repeats every 100 rows, MDN's code examples in small: each repeat's first 10 rows
+    /// are its own (a label with the repeat's number), the other 90 are the same in every repeat.
+    private func examplesFrame(top: Int) -> [UInt8] {
+        let width = 64, height = 400
+        var pixels = [UInt8](repeating: 255, count: width * height * 4)
+        for y in 0..<height {
+            let row = top + y
+            for x in 0..<width {
+                let value = UInt8(truncatingIfNeeded: row % 100 < 10 ? (row / 100) * 53 + row * 7 + x * 3 : (row % 100) * 13 + x * 7)
+                pixels.replaceSubrange(((y * width + x) * 4)..<((y * width + x) * 4 + 3), with: [value, value, value])
+            }
+        }
+        return pixels
+    }
+
+    @Test("On repeating content, a candidate a whole repeat off yields to where the rows that occur once line up")
+    func uniqueRowsBeatARepeatAlias() async throws {
+        let last = examplesFrame(top: 0), new = examplesFrame(top: 40)
+        func verified(_ candidate: Int) -> Int? {
+            ScrollingCaptureOffsetVerifier.verifiedOffset(candidate: candidate, from: last, to: new, width: 64, height: 400,
+                                                          ignoredTrailingColumns: 0)?.offset
+        }
+        // A repeat back (-60, the frame would trim) and a repeat on (140): 90 rows of each repeat match there too.
+        #expect(verified(-60) == 40)
+        #expect(verified(140) == 40)
+        #expect(verified(40) == 40)
+        // The stitcher appends the true step, so the labels show once each.
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: last, width: 64, height: 400,
+                                                                  ignoredTrailingColumns: 0))
+        #expect(await stitcher.place(new, candidate: 140) == .appended(40))
+        // With no row of its own in either frame, the page gives nothing to tell them apart: the candidate stands.
+        let plain = { (top: Int) in self.logFrame(top: top).enumerated().map { $0.offset % (64 * 4) < 8 * 4 ? 0 : $0.element } }
+        #expect(ScrollingCaptureOffsetVerifier.verifiedOffset(candidate: 20, from: plain(0), to: plain(40), width: 64,
+            height: 400, ignoredTrailingColumns: 0)?.offset == 20)
+    }
+
+    /// `height` rows of a page drawn in runs of 5 rows, 4 alike and 1 its own, so 2 rows off 2 of each 5 still match
+    /// whole: log lines whose glyphs have long vertical strokes.
+    private func strokesFrame(top: Int, height: Int = 400) -> [UInt8] {
+        let width = 64
+        var pixels = [UInt8](repeating: 255, count: width * height * 4)
+        for y in 0..<height {
+            let row = top + y, run = row / 5
+            for x in 0..<width {
+                let value = UInt8(truncatingIfNeeded: row % 5 < 4 ? run * 37 + x * (run % 7 + 1) : row * 11 + x * 5 + 101)
+                pixels.replaceSubrange(((y * width + x) * 4)..<((y * width + x) * 4 + 3), with: [value, value, value])
+            }
+        }
+        return pixels
+    }
+
+    @Test("An offset at the edge of the window tried is only taken as a peak: the window grows past it")
+    func edgeOfWindowGrowsToThePeak() async throws {
+        let last = strokesFrame(top: 0), new = strokesFrame(top: 66)
+        // 68 passes, 2 rows off: 2 rows of each 5 match whole. The last step, 70, tried 68...72.
+        #expect(ScrollingCaptureOffsetVerifier.verifiedOffset(candidate: 70, from: last, to: new, width: 64, height: 400,
+            ignoredTrailingColumns: 0)?.offset == 66)
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: strokesFrame(top: 0), width: 64, height: 400,
+                                                                  ignoredTrailingColumns: 0))
+        #expect(await stitcher.place(strokesFrame(top: 70), candidate: 70) == .appended(70))
+        // Vision far off (as on the Air, -1,214); the last step's window finds 66 past its edge.
+        #expect(await stitcher.place(strokesFrame(top: 136), candidate: -1214) == .appended(66))
+        #expect(await stitcher.makeImage() == strokesFrame(top: 0, height: 536))
+    }
+
     @Test("The bands of two frames with no overlap reach no consensus")
     func estimatorBandsDisagree() throws {
         let last = try frame(3), far = try frame(25)

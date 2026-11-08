@@ -32,6 +32,10 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
     /// tried beside it at most 394; with the margin and peak rules of `segmentPeak`, 251 more X
     /// frames placed and no wrong one, none either with the true offset taken out of the window.
     static let consensusMatchedSegments = consensusMatchedRows * strips
+    /// An offset matched repeated content only when fewer than 1 in this many of the rows it matched occur once in
+    /// the new frame. Over the corpus the aliases had 0 of 14 and 1 of 173; correct offsets with another offset
+    /// lining up rows a repeat away had at least 79 of 113 (0.70).
+    static let repeatedFraction = 8
     /// The candidate can be this far off; every offset within it is tried.
     static let search = 2
     /// The bottom quarter of the band is held back rather than appended, so a
@@ -64,7 +68,9 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
                        ignoredTrailingColumns: ignoredTrailingColumns)
     }
 
-    /// As above, over every offset within `search` of any of the candidates. When none passes over
+    /// As above, over every offset within `search` of any of the candidates, and past them where the best lies at
+    /// the edge of those; when every row the best matched repeats in the new frame and rows that occur once in
+    /// each frame line up a repeat away, over that offset instead. When none passes over
     /// the whole width, a non-zero one may pass with pinned side columns left out: with a sidebar
     /// pinned on each side, few rows match whole at the offset the content between them moved.
     /// `votes` are Vision's band shifts: when two shifts far apart both pass (a footer pushing a dense
@@ -94,6 +100,8 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
             func saw(_ k: Int) -> Int {
                 votes.filter { Double(abs($0 - k)) <= ScrollingCaptureOffsetEstimator.consensusSpread }.count
             }
+            /// The rows of the new frame each offset that passed matched whole, by their hash over the columns it passed over.
+            var matchedRows: [Int: Set<Int>] = [:]
             /// Offsets that pass over `range`'s columns, the most distinct matching rows first.
             func passing(_ offsets: Set<Int>, over range: Range<Int>) -> [(offset: Int, rows: Int)] {
                 let columns = (0..<strips).map {
@@ -122,7 +130,9 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
                     let agrees = Double(agreed) / Double(compared) >= agreement
                         || matched.count >= consensusMatchedRows && saw(k) >= ScrollingCaptureOffsetEstimator.consensusBands
                             && offsets.contains(k - 1) && offsets.contains(k + 1)
-                    return agrees ? matched.count : nil
+                    guard agrees else { return nil }
+                    matchedRows[k] = matched
+                    return matched.count
                 }
                 return offsets.compactMap { k in score(k).map { (k, $0) } }.sorted { $0.1 > $1.1 }
             }
@@ -175,9 +185,24 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
                 let left = run(Array(0..<usable)), right = run(Array((0..<usable).reversed()))
                 return left + right < usable ? (left, right) : (0, 0)
             }
-            let offsets = Set(candidates.flatMap { ($0 - search)...($0 + search) })
+            /// The rows of a frame that occur once in it, over `range`'s columns and not blank there: hash to row.
+            func rowsOnce(_ bytes: UnsafeRawBufferPointer, over range: Range<Int>) -> [Int: Int] {
+                var row: [Int: Int] = [:], repeated = Set<Int>()
+                for y in 0..<height {
+                    let start = bytes.baseAddress! + (y * width + range.lowerBound) * 4
+                    guard memcmp(start, start + 4, (range.count - 1) * 4) != 0 else { continue }
+                    var hasher = Hasher()
+                    hasher.combine(bytes: UnsafeRawBufferPointer(start: start, count: range.count * 4))
+                    let hash = hasher.finalize()
+                    if repeated.contains(hash) { continue }
+                    if row.removeValue(forKey: hash) != nil { repeated.insert(hash) } else { row[hash] = y }
+                }
+                return row
+            }
+            var offsets = Set(candidates.flatMap { ($0 - search)...($0 + search) })
             var passed = passing(offsets, over: 0..<usable)
             var sides: (left: Int, right: Int)?
+            var range = 0..<usable
             if passed.isEmpty {
                 // Only while the stitcher's cut lies in the band: an inner scroller that moves above it
                 // while the page stands still would have rows that didn't move appended as if they had.
@@ -185,9 +210,42 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
                 let still = stillSides()
                 if still.left + still.right > 0 {
                     sides = still
-                    passed = passing(offsets.filter { $0 != 0 }, over: still.left..<(usable - still.right))
+                    range = still.left..<(usable - still.right)
+                    passed = passing(offsets.filter { $0 != 0 }, over: range)
                 }
                 if passed.isEmpty, let k = segmentPeak(offsets) { passed = [(offset: k, rows: 0)] }
+            }
+            // The best at the window's edge isn't shown to be a peak: the window may stop short of the offset the view
+            // moved (log lines on the Air: 68 matched 2 px off the true 66, at the edge of the last step's window, and
+            // a 32 px line came out 34). It grows past the edge by `search` at a time, at most 4 times, until the best
+            // has both neighbours.
+            for _ in 0..<4 {
+                guard let best = passed.first, best.rows > 0,
+                      !offsets.contains(best.offset - 1) || !offsets.contains(best.offset + 1) else { break }
+                offsets.formUnion((best.offset - search)...(best.offset + search))
+                passed = passing(sides == nil ? offsets : offsets.filter { $0 != 0 }, over: range)
+            }
+            // Repeating content lines up a whole repeat off too, on rows the frame shows more than once (MDN's code
+            // examples: -138 or 1,059 passed where the view moved 366, and Vision proposed them). When nearly every row
+            // the best matched occurs more than once in the new frame, rows that occur once in each frame say where the
+            // view moved: if at least `minimumMatchedRows` of them line up a repeat away, the frame is placed there,
+            // or refused if that doesn't pass. Not at 0: a still part (a sidebar beside blank lines) makes rows that
+            // occur once and line up there whatever the page did.
+            if let best = passed.first, best.rows > 0, let matched = matchedRows[best.offset] {
+                let onceNow = rowsOnce(now, over: range)
+                if matched.filter({ onceNow[$0] != nil }).count * repeatedFraction < matched.count {
+                    let onceOld = rowsOnce(old, over: range)
+                    var lineUp: [Int: Int] = [:]
+                    for (hash, y) in onceNow where committed.contains(y) {
+                        if let oldY = onceOld[hash], committed.contains(oldY), oldY != y { lineUp[oldY - y, default: 0] += 1 }
+                    }
+                    if let (k, n) = lineUp.max(by: { $0.value < $1.value }), n >= minimumMatchedRows,
+                       abs(k - best.offset) > 2 * search {
+                        offsets = Set((k - search)...(k + search))
+                        passed = passing(sides == nil ? offsets : offsets.filter { $0 != 0 }, over: range)
+                        guard let there = passed.first, lineUp[there.offset, default: 0] > 0 else { return nil }
+                    }
+                }
             }
             if let best = passed.first, let rival = passed.first(where: { abs($0.offset - best.offset) > 2 * search }) {
                 if saw(rival.offset) * 2 > votes.count, saw(rival.offset) > saw(best.offset) {
