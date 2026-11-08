@@ -41,6 +41,82 @@ private final class OffsetFixtureBundle: NSObject {}
         #expect(await stitcher.makeImage() == top.pixels)
     }
 
+    @Test("A frame that differs only in the ignored trailing columns repeats the view")
+    func sameViewIgnoresTrailingColumns() throws {
+        let view = try frame(3)
+        var scrollBar = view.pixels
+        for y in 0..<view.height { scrollBar[(y * view.width + view.width - 2) * 4] ^= 0xFF }
+        func same(_ other: [UInt8], ignoring trailing: Int) -> Bool {
+            ScrollingCaptureOffsetVerifier.sameView(view.pixels, other, width: view.width, height: view.height,
+                                                    ignoredTrailingColumns: trailing)
+        }
+        #expect(same(scrollBar, ignoring: 8))
+        #expect(!same(scrollBar, ignoring: 0))
+        #expect(!same(try frame(4).pixels, ignoring: 8))
+    }
+
+    /// `height` rows from `top` of a page whose rows repeat every 20 rows, apart from the first 8
+    /// columns, which number each repeat: log lines alike but for a counter.
+    private func logFrame(top: Int, height: Int = 400) -> [UInt8] {
+        let width = 64
+        var pixels = [UInt8](repeating: 255, count: width * height * 4)
+        for y in 0..<height {
+            let row = top + y
+            for x in 0..<width {
+                let value = UInt8(truncatingIfNeeded: x < 8 ? (row / 20) * 37 + x * 11 : (row % 20) * 13 + x * 7)
+                pixels.replaceSubrange(((y * width + x) * 4)..<((y * width + x) * 4 + 3), with: [value, value, value])
+            }
+        }
+        return pixels
+    }
+
+    @Test("On repeating rows, a candidate a whole repeat off falls back to the last step")
+    func lastStepRescuesRepeatAlias() async throws {
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: logFrame(top: 0), width: 64, height: 400,
+                                                                  ignoredTrailingColumns: 0))
+        #expect(await stitcher.place(logFrame(top: 40), candidate: 40) == .appended(40))
+        // Three repeats off: most strips agree there, but no row matches whole, so the verifier refuses it.
+        #expect(await stitcher.place(logFrame(top: 80), candidate: -20) == .appended(40))
+        #expect(await stitcher.makeImage() == logFrame(top: 0, height: 480))
+        // Before any step there's nothing to fall back on: the same candidate is refused.
+        let fresh = try #require(ScrollingCaptureFrameStitcher(firstFrame: logFrame(top: 0), width: 64, height: 400,
+                                                               ignoredTrailingColumns: 0))
+        #expect(await fresh.place(logFrame(top: 40), candidate: -20) == .skipped)
+    }
+
+    /// 80 x 400: columns 0-23 and 56-79 pinned (a sidebar each side, the same in every frame),
+    /// 24-55 the page from row `top`. Each has blank rows, as text lines do.
+    private func pinnedFrame(top: Int, change: Bool = false) -> [UInt8] {
+        let width = 80, height = 400
+        var pixels = [UInt8](repeating: 255, count: width * height * 4)
+        for y in 0..<height {
+            let row = top + y
+            for x in 0..<width {
+                let pinned = x < 24 || x >= 56
+                guard pinned ? y % 10 < 5 : row % 8 < 6 else { continue }
+                var value = UInt8(truncatingIfNeeded: pinned ? y * 7 + x * 13 : row * 29 + x * 3)
+                if change, !pinned, y < 40 { value ^= 0x55 }
+                pixels.replaceSubrange(((y * width + x) * 4)..<((y * width + x) * 4 + 3), with: [value, value, value])
+            }
+        }
+        return pixels
+    }
+
+    @Test("Pinned side columns can't pass a moved page as unmoved when another offset fits more rows")
+    func pinnedColumnsDontHideMotion() async throws {
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: pinnedFrame(top: 0), width: 80, height: 400,
+                                                                  ignoredTrailingColumns: 0))
+        // Vision's whole-frame fallback says 0 (the pinned columns); the bands that saw the page say 40.
+        #expect(ScrollingCaptureOffsetVerifier.verifiedOffset(candidate: 0, from: pinnedFrame(top: 0),
+            to: pinnedFrame(top: 40), width: 80, height: 400, ignoredTrailingColumns: 0)?.offset == 0)
+        #expect(await stitcher.place(pinnedFrame(top: 40), candidate: 0, alternatives: [40]) == .appended(40))
+        // At rest, a change in part of the frame still places at 0: the last step (40) never
+        // overrides it, and a shift two bands agree on only does when it's confirmed exactly.
+        #expect(await stitcher.place(pinnedFrame(top: 40, change: true), candidate: 0) == .redrawn)
+        #expect(await stitcher.place(pinnedFrame(top: 40, change: true), candidate: 0, alternatives: [24]) == .redrawn)
+        #expect(ScrollingCaptureOffsetEstimator.pairs([-0.2, 40, 39.5, 120, 40.8]) == [40])
+    }
+
     @Test("The bands of two frames with no overlap reach no consensus")
     func estimatorBandsDisagree() throws {
         let last = try frame(3), far = try frame(25)

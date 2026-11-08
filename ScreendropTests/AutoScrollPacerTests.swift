@@ -69,6 +69,12 @@ import Testing
         #expect(q.update(height: 1000, lastFrameTime: 11.1, now: 11.6) == .endOfPage)
     }
 
+    @Test("A pause with no new frame for the response time has lost track; one with frames coming hasn't")
+    func lostTrack() {
+        #expect(!AutoScrollPacer.hasLostTrack(lastFrameTime: 10, now: 10.5))
+        #expect(AutoScrollPacer.hasLostTrack(lastFrameTime: 10, now: 10 + AutoScrollPacer.responseTime))
+    }
+
     @Test("Stitching again after re-covering kept rows resets the allowance")
     func recoversAfterUnstitched() {
         var p = pacer()

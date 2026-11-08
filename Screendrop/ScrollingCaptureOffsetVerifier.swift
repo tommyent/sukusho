@@ -42,7 +42,14 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
     /// that lines up equally well at two offsets doesn't say which it is.
     static func verifiedOffset(candidate: Int, from last: [UInt8], to new: [UInt8], width: Int, height: Int,
                                ignoredTrailingColumns: Int) -> Verified? {
-        guard last.count == width * height * 4, new.count == last.count else { return nil }
+        verifiedOffset(candidates: [candidate], from: last, to: new, width: width, height: height,
+                       ignoredTrailingColumns: ignoredTrailingColumns)
+    }
+
+    /// As above, over every offset within `search` of any of the candidates.
+    static func verifiedOffset(candidates: [Int], from last: [UInt8], to new: [UInt8], width: Int, height: Int,
+                               ignoredTrailingColumns: Int) -> Verified? {
+        guard !candidates.isEmpty, last.count == width * height * 4, new.count == last.count else { return nil }
         let usable = hashedWidth(width: width, ignoredTrailingColumns: ignoredTrailingColumns)
         let columns = (0..<strips).map { ($0 * usable / strips)..<(($0 + 1) * usable / strips) }.filter { !$0.isEmpty }
         return last.withUnsafeBytes { old in new.withUnsafeBytes { now in
@@ -76,8 +83,8 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
                 guard compared > 0, matched.count >= minimumMatchedRows else { return nil }
                 return Double(agreed) / Double(compared) >= agreement ? matched.count : nil
             }
-            let passed = ((candidate - search)...(candidate + search)).compactMap { k in score(k).map { (k, $0) } }
-                .sorted { $0.1 > $1.1 }
+            let offsets = Set(candidates.flatMap { ($0 - search)...($0 + search) })
+            let passed = offsets.compactMap { k in score(k).map { (k, $0) } }.sorted { $0.1 > $1.1 }
             guard let best = passed.first, passed.dropFirst().first?.1 != best.1 else { return nil }
             let still = columns.filter { x in
                 band.allSatisfy { same($0, $0, x) } && band.contains { !blank($0, x) }
@@ -92,6 +99,16 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
     /// footer only shrinks the band.
     static func canConfirm(_ offset: Int, height: Int) -> Bool {
         abs(offset) + minimumMatchedRows <= cut(in: 0..<height)
+    }
+
+    /// Whether two frames are byte for byte the same over the compared columns. SCK sends a frame
+    /// whenever anything on the display changes, so most frames at rest repeat the one before.
+    static func sameView(_ a: [UInt8], _ b: [UInt8], width: Int, height: Int, ignoredTrailingColumns: Int) -> Bool {
+        guard a.count == width * height * 4, b.count == a.count else { return false }
+        let rowBytes = width * 4, compared = hashedWidth(width: width, ignoredTrailingColumns: ignoredTrailingColumns) * 4
+        return a.withUnsafeBytes { a in b.withUnsafeBytes { b in
+            (0..<height).allSatisfy { memcmp(a.baseAddress! + $0 * rowBytes, b.baseAddress! + $0 * rowBytes, compared) == 0 }
+        } }
     }
 
     // MARK: - From R7

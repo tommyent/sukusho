@@ -52,6 +52,13 @@ nonisolated struct AutoScrollPacer: Equatable {
     /// view moves back up, so re-covered rows are appended again instead.
     static let maximumStepsWithoutProgress = 2
 
+    /// Paused on a frame that doesn't fit, with no new frame since it for `responseTime`: the
+    /// view is at rest where nothing fits, and no further step can bring one back, so
+    /// auto-scroll hands the session back (lost track).
+    static func hasLostTrack(lastFrameTime: TimeInterval, now: TimeInterval) -> Bool {
+        now - lastFrameTime >= responseTime
+    }
+
     /// One step's distance, in captured pixels.
     let stepPixels: Int
     private var postedAt: TimeInterval

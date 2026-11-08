@@ -85,7 +85,8 @@ struct ScrollingCaptureBar: View {
     }
 
     /// The height limit stops auto-scroll for good; pausing always works. It
-    /// can start while a frame doesn't fit: it waits for one to be placed.
+    /// can start while a frame doesn't fit: it waits for one to be placed, and
+    /// hands back if none comes.
     private var canToggleAutoScroll: Bool {
         presenter.isAutoScrolling || presenter.canAutoScroll && !presenter.hasReachedLimit
     }
