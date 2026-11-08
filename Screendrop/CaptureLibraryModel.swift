@@ -173,6 +173,8 @@ final class CaptureLibraryModel {
     var operationTitle: String?
     /// The status bar's done mark for an Agent Prompt export, which no longer opens Finder.
     var savedAgentPrompt: URL?
+    /// The status bar's done mark for a gallery whose link was just copied.
+    var copiedLink: String?
     /// The capture an Agent Prompt export is working on, for its card's ring.
     var agentPromptExport: AgentPromptExportProgress?
     var errorMessage: String?
@@ -185,6 +187,8 @@ final class CaptureLibraryModel {
     var pendingTrash: [CaptureLibraryItem] = []
     /// A capture waiting on the Share to Cloud options sheet.
     var pendingCloudUpload: CaptureLibraryItem?
+    /// Images waiting on the Share to Cloud options sheet, to share as one gallery.
+    var pendingGallery: [CaptureLibraryItem] = []
     /// A shared capture waiting on the Delete from Cloud confirmation.
     var pendingCloudDelete: CaptureLibraryItem?
     /// An edited capture waiting on the Revert to Original confirmation.

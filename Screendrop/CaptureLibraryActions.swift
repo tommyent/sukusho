@@ -223,7 +223,19 @@ extension CaptureLibraryModel {
     }
 
     private func cloudMenuItems() -> [LibraryMenuItem] {
-        guard selectedItems.count == 1, let item = selectedItems.first else { return [] }
+        let selected = selectedItems
+        if selected.count > 1 {
+            guard CloudUploader.shared.isConfigured,
+                  CloudGalleryAPI.canShare(count: selected.count, includesRecording: selected.contains(where: \.isVideo)) else { return [] }
+            let supported = CloudLibraryModel.shared.supportsGalleries
+            return [
+                LibraryMenuItem(title: "Share to Cloud…", isEnabled: !isBusy && supported, startsGroup: true,
+                                subtitle: supported ? nil : "Update your Worker to share galleries") {
+                    self.pendingGallery = selected
+                },
+            ]
+        }
+        guard selected.count == 1, let item = selected.first else { return [] }
         if let link = item.cloudURL {
             return [
                 LibraryMenuItem(title: "Copy Cloud Link", startsGroup: true) { self.copyLink(item) },
@@ -267,12 +279,55 @@ extension CaptureLibraryModel {
         }
     }
 
+    /// Several images behind one link. Each image goes up fresh, even one shared before;
+    /// a card without a link gets its image's page, which links back to the gallery.
+    func shareGallery(_ items: [CaptureLibraryItem], options: CloudUploadOptions) {
+        guard !isBusy, let owner = CloudUploader.shared.ownerAccess else { return }
+        let creds = CloudCredentialStore.shared.snapshot()
+        let total = items.count
+        run("Uploading 1 of \(total)…") {
+            StudioProjectRegistry.shared.flushDrafts()
+            let dock = DockExportProgressCoordinator.shared.start()
+            defer { DockExportProgressCoordinator.shared.finish(dock) }
+            let share = CloudGalleryShare(workerBase: owner.workerBase, token: owner.token, large: (CloudUploader.multipartThreshold, { file, size, metadata in
+                let result = try await CloudUploader.multipartUpload(fileURL: file, size: size, metadata: metadata, creds: creds, progress: nil)
+                return CloudGalleryShare.Item(id: result.id, url: result.url, mediaKey: result.mediaKey)
+            }))
+            let shared = try await share.share(
+                items.map { CloudGalleryShare.Image(fileURL: $0.fileURL, title: $0.title) },
+                settings: .init(title: options.trimmedTitleOrNil, expiresAt: options.expiry.date(), password: options.password,
+                                socialEnabled: options.socialEnabled, allowAnonymousComments: options.allowAnonymousComments)
+            ) { index in
+                self.operationTitle = "Uploading \(index + 1) of \(total)…"
+                DockExportProgressCoordinator.shared.update(dock, progress: Double(index) / Double(total))
+            }
+            for (item, uploaded) in zip(items, shared.items) where item.cloudURL == nil {
+                if let id = item.historyIDs.first { ScreenshotHistoryStore.shared.setLibraryCloudURL(id: id, cloudURL: uploaded.url) }
+            }
+            CloudShareLinks.copy([shared.gallery.url])
+            self.showLinkCopied(shared.gallery.url)
+            CloudLibraryModel.shared.refresh()
+            self.refresh()
+        }
+    }
+
+    /// The status bar's "Link Copied", as the editors show after sharing.
+    private func showLinkCopied(_ link: String) {
+        copiedLink = link
+        Task {
+            try? await Task.sleep(for: .seconds(8))
+            if self.copiedLink == link { self.copiedLink = nil }
+        }
+    }
+
     func deleteCloudCopy(_ item: CaptureLibraryItem) {
         guard let link = item.cloudURL, let uploadID = URL(string: link)?.lastPathComponent, !isBusy else { return }
         run("Deleting cloud copy…") {
+            let inGallery = CloudLibraryModel.shared.isInGallery(link: link)
             try await CloudUploader.shared.deleteFromCloud(uploadID: uploadID)
             for id in item.historyIDs { ScreenshotHistoryStore.shared.setLibraryCloudURL(id: id, cloudURL: nil) }
-            CloudLibraryModel.shared.refreshUsage()
+            // Its gallery shrank, or went with it: the Uploads page lists it again.
+            if inGallery { CloudLibraryModel.shared.refresh() } else { CloudLibraryModel.shared.refreshUsage() }
             self.refresh()
         }
     }

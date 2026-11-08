@@ -31,6 +31,8 @@ struct LibraryMenuItem {
     var startsGroup = false
     /// Shows a check mark, for the chosen option in a group.
     var isChecked = false
+    /// A second line under the title, such as why the item is off.
+    var subtitle: String? = nil
     let perform: () -> Void
 }
 
@@ -232,6 +234,7 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
                 item.tag = index
                 item.isEnabled = !parent.isBusy && entry.isEnabled
                 item.state = entry.isChecked ? .on : .off
+                item.subtitle = entry.subtitle
                 menu.addItem(item)
             }
             return menu

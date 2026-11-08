@@ -268,6 +268,14 @@ struct CaptureLibraryView: View {
                 model.upload(item, options: options)
             }
         }
+        .sheet(isPresented: Binding(get: { !model.pendingGallery.isEmpty }, set: { if !$0 { model.pendingGallery = [] } })) {
+            let items = model.pendingGallery
+            // The title names the gallery; its images keep their cards' names.
+            CloudUploadOptionsPopover(suggestedTitle: "\(items.count) screenshots",
+                                      encryptionUnavailable: "Galleries can’t be end-to-end encrypted yet.") { options in
+                model.shareGallery(items, options: options)
+            }
+        }
         .alert("Revert “\(model.pendingRevert?.title ?? "")” to the original?", isPresented: Binding(
             get: { model.pendingRevert != nil }, set: { if !$0 { model.pendingRevert = nil } }
         )) {
@@ -284,8 +292,10 @@ struct CaptureLibraryView: View {
                 model.pendingCloudDelete = nil
             }
             Button("Cancel", role: .cancel) { model.pendingCloudDelete = nil }
-        } message: { _ in
-            Text("This permanently removes the cloud copy and breaks its share link. Your local capture stays in the Library.")
+        } message: { item in
+            Text("This permanently removes the cloud copy and breaks its share link. Your local capture stays in the Library."
+                 // Galleries hold images only.
+                 + ((item.isVideo ? nil : cloud.galleryNote(forLink: item.cloudURL)).map { " " + $0 } ?? ""))
         }
         .alert("The Library action could not be completed", isPresented: Binding(
             get: { model.errorMessage != nil },
@@ -437,6 +447,15 @@ struct CaptureLibraryView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Reveal \(folder.lastPathComponent) in Finder")
+            } else if let link = model.copiedLink {
+                Button {
+                    CloudShareLinks.copy([link])
+                } label: {
+                    Label("Link Copied", systemImage: "checkmark.icloud")
+                        .foregroundStyle(.green)
+                }
+                .buttonStyle(.plain)
+                .help("Copy the gallery link again")
             } else if comments.isShown {
                 let count = comments.visibleComments.count
                 Text("\(count) \(count == 1 ? "comment" : "comments")")

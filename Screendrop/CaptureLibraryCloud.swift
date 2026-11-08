@@ -40,6 +40,8 @@ final class CloudLibraryModel {
     /// when the Worker predates GET /api/usage.
     private(set) var usage: CloudUsage?
     private(set) var deletingIDs: Set<String> = []
+    /// GET /api/version's answer at the last refresh, and the Worker that gave it.
+    private var workerVersion: (worker: String, version: String?)?
     /// Uploads whose share settings are being changed.
     private(set) var savingIDs: Set<String> = []
     /// Quick Look's download, while it runs.
@@ -76,7 +78,7 @@ final class CloudLibraryModel {
     private init() {}
 
     /// The captures' or the files' uploads, as the sidebar counts them.
-    func count(files: Bool) -> Int { uploads.count { !$0.isReceived && $0.isFile == files } }
+    func count(files: Bool) -> Int { uploads.count { CloudUploadList.isListed($0, files: files, received: false) } }
     var receivedCount: Int { uploads.count(where: \.isReceived) }
 
     /// The selection in display order.
@@ -88,7 +90,7 @@ final class CloudLibraryModel {
         let library = CaptureLibraryModel.shared
         let query = library.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let local = localItems
-        let shown = uploads.filter { showsReceived ? $0.isReceived : !$0.isReceived && $0.isFile == showsFiles }
+        let shown = uploads.filter { CloudUploadList.isListed($0, files: showsFiles, received: showsReceived) }
         let matching = query.isEmpty ? shown : shown.filter {
             $0.name.localizedStandardContains(query) || $0.filename.localizedStandardContains(query)
                 || CloudUploadText.title($0, local: local[$0.id]).localizedStandardContains(query)
@@ -107,6 +109,25 @@ final class CloudLibraryModel {
             }
         case .newest, .modified: return matching.sorted { $0.createdAt > $1.createdAt }
         }
+    }
+
+    /// The configured Worker shares galleries, as it said at the last refresh.
+    var supportsGalleries: Bool {
+        guard let workerVersion, workerVersion.worker == CloudUploader.shared.ownerAccess?.workerBase else { return false }
+        return CloudGalleryAPI.supportsGalleries(version: workerVersion.version)
+    }
+
+    /// Delete from Cloud… on a Library card: what happens to the image's gallery, if it has one.
+    func galleryNote(forLink link: String?) -> String? {
+        // A Worker that said it predates galleries has none; one that hasn't said yet may.
+        let possible = workerVersion.map { $0.worker != CloudUploader.shared.ownerAccess?.workerBase || supportsGalleries } ?? true
+        return CloudGalleryAPI.deleteNote(uploadID: CloudUploadList.uploadID(of: link), uploads: uploads, galleriesPossible: possible)
+    }
+
+    /// Whether the upload behind this link is in a gallery, as the listing says.
+    func isInGallery(link: String?) -> Bool {
+        let id = CloudUploadList.uploadID(of: link)
+        return uploads.contains { $0.id == id && $0.galleryId != nil }
     }
 
     /// Library captures by the upload ID in their cloud link.
@@ -132,9 +153,17 @@ final class CloudLibraryModel {
             do {
                 let worker = CloudUploader.shared.workerBase
                 let listedSince = Date.now
-                uploads = try await CloudUploader.shared.listUploads()
+                // First, so a Worker before galleries never gets asked for them.
+                if let owner = CloudUploader.shared.ownerAccess {
+                    workerVersion = (owner.workerBase, await CloudGalleryAPI.workerVersion(workerBase: owner.workerBase))
+                }
+                var listed = try await CloudUploader.shared.listUploads()
                 // Only a complete list may say an upload is gone, and with it its key.
-                CloudShareLinks.prune(keeping: Set(uploads.map(\.id)), worker: worker, listedSince: listedSince)
+                CloudShareLinks.prune(keeping: Set(listed.map(\.id)), worker: worker, listedSince: listedSince)
+                if supportsGalleries, let owner = CloudUploader.shared.ownerAccess {
+                    listed += try await CloudGalleryAPI.list(workerBase: owner.workerBase, token: owner.token).map(\.upload)
+                }
+                uploads = listed
                 isHistoryFallback = false
                 loadError = nil
                 FileRequestsModel.shared.notice(uploads)
@@ -226,6 +255,13 @@ final class CloudLibraryModel {
                 },
             ]
         }
+        if !selected.isEmpty, selected.allSatisfy(\.isGallery) {
+            return [
+                LibraryMenuItem(title: "Open Link", isEnabled: single != nil) { if let single { self.open(single) } },
+                LibraryMenuItem(title: selected.count > 1 ? "Copy Links" : "Copy Link") { self.copyLinks(selected) },
+                LibraryMenuItem(title: "Delete from Cloud…", isEnabled: !isBusy, startsGroup: true) { self.pendingDelete = selected },
+            ]
+        }
         return [
             LibraryMenuItem(title: "Quick Look", isEnabled: !selected.isEmpty) { self.quickLook(toggling: false) },
             LibraryMenuItem(title: "Open Link", isEnabled: single != nil) { if let single { self.open(single) } },
@@ -248,7 +284,8 @@ final class CloudLibraryModel {
     func quickLook(toggling: Bool = true) {
         if toggling, previewTask != nil { cancelPreview(); return }
         if toggling, QuickLookPreviewPresenter.isShown { QuickLookPreviewPresenter.dismiss(); return }
-        let targets = selectedUploads
+        // A gallery has no file of its own; Open Link shows it.
+        let targets = selectedUploads.filter { !$0.isGallery }
         guard !targets.isEmpty else { return }
         cancelPreview()
         let fetch = PreviewFetch(uploadIDs: targets.map(\.id))
@@ -311,7 +348,8 @@ final class CloudLibraryModel {
         // The feed's own type: the uploads list may not have loaded yet.
         showsReceived = false
         showsFiles = mediaType == "file"
-        selection = [id]
+        // A gallery's image shows inside its gallery.
+        selection = [uploads.first { $0.id == id }?.galleryId ?? id]
     }
 
     /// Shows the Received page with these files selected, as from a notification.
@@ -447,14 +485,21 @@ final class CloudLibraryModel {
             var failures: [String] = []
             for upload in targets {
                 do {
-                    try await CloudUploader.shared.deleteFromCloud(uploadID: upload.id)
+                    // A gallery goes with its images, and the Library cards lose those links.
+                    let removed = Set([upload.id] + (upload.galleryItemIDs ?? []))
+                    if upload.isGallery {
+                        guard let owner = CloudUploader.shared.ownerAccess else { throw CloudUploadError.notConfigured }
+                        try await CloudGalleryAPI.delete(galleryID: upload.id, workerBase: owner.workerBase, token: owner.token)
+                    } else {
+                        try await CloudUploader.shared.deleteFromCloud(uploadID: upload.id)
+                    }
                     let history = ScreenshotHistoryStore.shared
-                    for item in history.items where CloudUploadList.uploadID(of: item.cloudURL) == upload.id {
+                    for item in history.items where CloudUploadList.uploadID(of: item.cloudURL).map(removed.contains) == true {
                         history.setLibraryCloudURL(id: item.id, cloudURL: nil)
                     }
-                    uploads.removeAll { $0.id == upload.id }
+                    uploads.removeAll { removed.contains($0.id) }
                     selection.remove(upload.id)
-                    CloudPreviewCache.shared.remove(upload.id)
+                    for id in removed { CloudPreviewCache.shared.remove(id) }
                 } catch {
                     failures.append("\(CloudUploadText.title(upload, local: self.localItems[upload.id])): \(error.localizedDescription)")
                 }
@@ -612,6 +657,11 @@ struct CloudLibraryPage: View {
                 : "This permanently removes the received file from your Worker."
         }
         let anyLocal = targets.contains { local[$0.id] != nil }
+        if targets.contains(where: \.isGallery) {
+            let images = targets.reduce(0) { $0 + ($1.galleryItemIDs?.count ?? 0) }
+            return (targets.count > 1 ? "This permanently removes \(targets.count) uploads, " : "This permanently removes the gallery, ")
+                + "with the \(images == 1 ? "image" : "\(images) images") in \(targets.count > 1 ? "their galleries" : "it") and their comments and likes, and breaks their share links. Captures still in your Library stay there."
+        }
         if targets.count > 1 {
             return "This permanently removes \(targets.count) cloud copies and breaks their share links."
                 + (anyLocal ? " Captures still in your Library stay there." : "")
@@ -894,7 +944,12 @@ nonisolated enum CloudUploadText {
     /// in the captures' format. Renaming the capture never renames the upload.
     static func title(_ upload: CloudUpload, local: CaptureLibraryItem?) -> String {
         customTitle(upload, local: local) ?? local?.dateTitle
-            ?? (upload.isFile ? upload.filename : CaptureLibraryItem.dateTitle(upload.createdAt))
+            ?? (upload.isFile ? upload.filename : upload.galleryItemIDs.map(images) ?? CaptureLibraryItem.dateTitle(upload.createdAt))
+    }
+
+    /// "3 images", a gallery's title when it has none.
+    static func images(_ ids: [String]) -> String {
+        ids.count == 1 ? "1 image" : "\(ids.count.formatted()) images"
     }
 
     /// A name someone gave it. Uploads used to send the file's name as the
@@ -908,6 +963,11 @@ nonisolated enum CloudUploadText {
     /// The date when a custom title has taken its place, the capture's if
     /// it's in the Library; else the size. A video's pill shows its length.
     static func subtitle(_ upload: CloudUpload, local: CaptureLibraryItem?) -> String? {
+        // A gallery's count and date; an untitled one has its count as its title.
+        if let ids = upload.galleryItemIDs {
+            let date = CaptureLibraryItem.dateTitle(upload.createdAt)
+            return customTitle(upload, local: local) == nil ? date : images(ids) + " · " + date
+        }
         guard customTitle(upload, local: local) == nil else {
             return local?.dateTitle ?? CaptureLibraryItem.dateTitle(upload.createdAt)
         }
@@ -1064,7 +1124,7 @@ struct CloudUploadInspector: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: InspectorMetrics.sectionVerticalPadding) {
                     VStack(alignment: .leading, spacing: 14) {
-                        Button { cloud.quickLook(toggling: false) } label: {
+                        Button { if upload.isGallery { cloud.open(upload) } else { cloud.quickLook(toggling: false) } } label: {
                             CloudUploadThumbnail(upload: upload, local: local)
                                 .overlay { CloudFetchOverlay(uploadID: upload.id) }
                                 .aspectRatio(1.45, contentMode: .fit)
@@ -1074,7 +1134,7 @@ struct CloudUploadInspector: View {
                                         .strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5)
                                 }
                                 .overlay(alignment: .bottomTrailing) {
-                                    Image(systemName: upload.isVideo ? "play.fill" : "arrow.up.left.and.arrow.down.right")
+                                    Image(systemName: upload.isVideo ? "play.fill" : upload.isGallery ? "arrow.up.right" : "arrow.up.left.and.arrow.down.right")
                                         .font(.system(size: 11, weight: .medium))
                                         .foregroundStyle(.white)
                                         .padding(8)
@@ -1083,8 +1143,8 @@ struct CloudUploadInspector: View {
                                 }
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("Quick Look \(CloudUploadText.title(upload, local: local))")
-                        .help("Open a large preview")
+                        .accessibilityLabel("\(upload.isGallery ? "Open" : "Quick Look") \(CloudUploadText.title(upload, local: local))")
+                        .help(upload.isGallery ? "Open the gallery’s page" : "Open a large preview")
                         VStack(alignment: .leading, spacing: 7) {
                             Text(CloudUploadText.title(upload, local: local))
                                 .font(.system(size: 16, weight: .semibold))
@@ -1103,6 +1163,7 @@ struct CloudUploadInspector: View {
                             if upload.isVideo, let duration = upload.duration {
                                 detailRow("Duration", value: CloudUploadText.duration(duration))
                             }
+                            if let ids = upload.galleryItemIDs { detailRow("Images", value: ids.count.formatted()) }
                             if let size = upload.size {
                                 detailRow("Size", value: ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))
                             }
@@ -1115,8 +1176,8 @@ struct CloudUploadInspector: View {
                         }
                     }
                     Divider()
-                    if upload.isReceived { received(upload) } else { sharing(upload) }
-                    if !upload.isFile {
+                    if upload.isReceived { received(upload) } else if upload.isGallery { gallerySharing(upload) } else { sharing(upload) }
+                    if !upload.isFile, !upload.isGallery {
                         Divider()
                         VStack(alignment: .leading, spacing: InspectorMetrics.headerSpacing) {
                             sectionTitle("On This Mac")
@@ -1164,6 +1225,22 @@ struct CloudUploadInspector: View {
             .disabled(FileRequestsModel.shared.downloadingIDs.contains(upload.id))
         }
         .font(.system(size: 12))
+    }
+
+    /// A gallery's options, set when it was shared; they can't be changed yet.
+    private func gallerySharing(_ upload: CloudUpload) -> some View {
+        VStack(alignment: .leading, spacing: InspectorMetrics.headerSpacing) {
+            sectionTitle("Sharing")
+            VStack(spacing: InspectorMetrics.rowSpacing) {
+                detailRow("Expires", value: CloudUploadText.expiryShort(upload.expiresAt))
+                detailRow("Password", value: upload.hasPassword == true ? "On" : "Off")
+                detailRow("Comments & likes", value: upload.socialEnabled == false ? "Off" : upload.allowAnonymousComments == false ? "Signed in only" : "On")
+            }
+            Text("Each image has its own page, comments and likes.")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     /// The link's expiry and anonymous comments, changed on the Worker.
@@ -1253,8 +1330,9 @@ struct CloudUploadInspector: View {
                         if cloud.showsFiles || cloud.showsReceived {
                             detailRow("Files", value: "\(uploads.count)")
                         } else {
-                            detailRow("Screenshots", value: "\(uploads.filter { !$0.isVideo }.count)")
+                            detailRow("Screenshots", value: "\(uploads.filter { !$0.isVideo && !$0.isGallery }.count)")
                             detailRow("Recordings", value: "\(uploads.filter(\.isVideo).count)")
+                            if uploads.contains(where: \.isGallery) { detailRow("Galleries", value: "\(uploads.filter(\.isGallery).count)") }
                             detailRow("Cloud only", value: "\(uploads.filter { local[$0.id] == nil }.count)")
                         }
                         if sizes.count == uploads.count {
