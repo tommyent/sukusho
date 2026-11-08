@@ -12,8 +12,9 @@ import AppKit
 /// the monitors here can tell them from the user's own scrolling. The
 /// pointer is never moved. Scrolling by hand or moving the pointer off the
 /// bar hands the session back, and so does the height limit; a frame that
-/// doesn't fit pauses the steps until one is placed again, and the end of the
-/// page finishes the capture, as Done does. No key is watched.
+/// doesn't fit pauses the steps until one is placed again, or hands back if the
+/// view rests there, and the end of the page finishes the capture, as Done
+/// does. No key is watched.
 /// Watching scrolling needs no permission; only posting does.
 final class ScrollingCaptureAutoScroller {
     struct State {
@@ -53,6 +54,8 @@ final class ScrollingCaptureAutoScroller {
     private var monitors: [Any] = []
     private var poller: Task<Void, Never>?
     private var pointerAtStart: CGPoint = .zero
+    /// When `start()` ran, on the stream's clock: a pause it starts in is timed from here.
+    private var startedAt: TimeInterval = 0
     private(set) var isRunning = false
 
     /// `region` is the selection in AppKit screen coordinates. `onEndOfPage`
@@ -77,6 +80,7 @@ final class ScrollingCaptureAutoScroller {
     func start() {
         guard !isRunning, state().canContinue else { return }
         isRunning = true
+        startedAt = ScrollingCaptureSampleTiming.now()
         pointerAtStart = NSEvent.mouseLocation
         poller = Task { [weak self] in
             while !Task.isCancelled {
@@ -111,7 +115,15 @@ final class ScrollingCaptureAutoScroller {
         // A frame that doesn't fit pauses the steps, so the pacer never counts
         // it as a step without progress. The first frame placed after it
         // starts a new pacer with a new step: the wait isn't counted either.
-        guard !current.isWaiting else { pacer = nil; return }
+        // A pause the view rests in has lost track: the user takes over.
+        guard !current.isWaiting else {
+            pacer = nil
+            if AutoScrollPacer.hasLostTrack(lastFrameTime: max(current.lastFrameTime, startedAt),
+                                            now: ScrollingCaptureSampleTiming.now()) {
+                stop()
+            }
+            return
+        }
         guard var pacer else {
             self.pacer = AutoScrollPacer(stepPixels: stepPixels, height: current.height, now: ScrollingCaptureSampleTiming.now())
             return post()
