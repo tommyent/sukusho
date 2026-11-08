@@ -13,8 +13,8 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
     /// a hover, overlay or video over part of the frame doesn't refuse it: the
     /// distinct exact rows and the refusal of ties keep it from guessing
     /// (corpus sweep 0.7 to 0.3: correct 355 to 390, wrong 0 throughout).
-    // ponytail: a hover over most of the frame, inner scrollers, and a video the
-    // bands don't agree past still refuse; step 5's "scroll back a little" hint covers them.
+    // ponytail: inner scrollers, and a video or hover the bands don't agree
+    // past, still refuse; step 5's "scroll back a little" hint covers them.
     // ponytail: 0.3 is the sweep's edge and wrong was 0 at every value, so the
     // corpus can't show false positives here; raise it when one appears.
     static let agreement = 0.3
@@ -26,6 +26,12 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
     /// the true offset, with 104 rows there and 1-2 at its neighbours). Over the corpus's frame
     /// pairs, 4 agreeing bands and twice the minimum rows placed 126 more X frames and no wrong one.
     static let consensusMatchedRows = 2 * minimumMatchedRows
+    /// Distinct exactly matching strips of a row (any strip, any row) that place a frame no row
+    /// matches whole in, where Vision's bands agree: as many as `consensusMatchedRows` whole rows
+    /// have. Over the corpus's frame pairs, the true offset had a median of 942 and the wrong ones
+    /// tried beside it at most 394; with the margin and peak rules of `segmentPeak`, 251 more X
+    /// frames placed and no wrong one, none either with the true offset taken out of the window.
+    static let consensusMatchedSegments = consensusMatchedRows * strips
     /// The candidate can be this far off; every offset within it is tried.
     static let search = 2
     /// The bottom quarter of the band is held back rather than appended, so a
@@ -120,6 +126,35 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
                 }
                 return offsets.compactMap { k in score(k).map { (k, $0) } }.sorted { $0.1 > $1.1 }
             }
+            /// The offset, not upward, `consensusBands` of Vision's bands saw, when the most distinct strips of a
+            /// row match there exactly: at least `consensusMatchedSegments`, twice as many as at any other offset
+            /// tried, with both neighbours tried. For a hover that recolours most of the frame (X greys the
+            /// post under the pointer, and moves the grey when the scrolling pauses): no row matches whole
+            /// across a grey post's edges, but the strips inside it, its picture or video, do. Zero too, or a
+            /// frame placed mid-hover would refuse every frame at rest after it; upward stays out, as it trims.
+            func segmentPeak(_ offsets: Set<Int>) -> Int? {
+                guard offsets.contains(where: { $0 >= 0 && saw($0) >= ScrollingCaptureOffsetEstimator.consensusBands })
+                else { return nil }
+                let columns = (0..<strips).map { ($0 * usable / strips)..<(($0 + 1) * usable / strips) }.filter { !$0.isEmpty }
+                let counts = offsets.map { k -> (offset: Int, segments: Int) in
+                    var matched = Set<Int>()
+                    for y in committed where committed.contains(y + k) {
+                        for x in columns where !blank(y, x) && same(y, y + k, x) {
+                            var hasher = Hasher()
+                            hasher.combine(x.lowerBound)
+                            hasher.combine(bytes: UnsafeRawBufferPointer(start: now.baseAddress! + (y * width + x.lowerBound) * 4,
+                                                                         count: x.count * 4))
+                            matched.insert(hasher.finalize())
+                        }
+                    }
+                    return (k, matched.count)
+                }
+                guard let best = counts.max(by: { $0.segments < $1.segments }), best.offset >= 0,
+                      best.segments >= consensusMatchedSegments, offsets.contains(best.offset - 1),
+                      offsets.contains(best.offset + 1), saw(best.offset) >= ScrollingCaptureOffsetEstimator.consensusBands,
+                      counts.allSatisfy({ $0.offset == best.offset || 2 * $0.segments <= best.segments }) else { return nil }
+                return best.offset
+            }
             /// Columns from each edge inward that stayed put at offset zero over the band, up to the last
             /// one that didn't change at all. A sidebar may change in a few rows (a highlight that follows
             /// the content, as MDN's table of contents does: 64-128 of 1,542 rows); content beside it that
@@ -146,10 +181,13 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
             if passed.isEmpty {
                 // Only while the stitcher's cut lies in the band: an inner scroller that moves above it
                 // while the page stands still would have rows that didn't move appended as if they had.
+                guard height - edges.bottom >= cut(in: 0..<height) else { return nil }
                 let still = stillSides()
-                guard still.left + still.right > 0, height - edges.bottom >= cut(in: 0..<height) else { return nil }
-                sides = still
-                passed = passing(offsets.filter { $0 != 0 }, over: still.left..<(usable - still.right))
+                if still.left + still.right > 0 {
+                    sides = still
+                    passed = passing(offsets.filter { $0 != 0 }, over: still.left..<(usable - still.right))
+                }
+                if passed.isEmpty, let k = segmentPeak(offsets) { passed = [(offset: k, rows: 0)] }
             }
             if let best = passed.first, let rival = passed.first(where: { abs($0.offset - best.offset) > 2 * search }) {
                 if saw(rival.offset) * 2 > votes.count, saw(rival.offset) > saw(best.offset) {
