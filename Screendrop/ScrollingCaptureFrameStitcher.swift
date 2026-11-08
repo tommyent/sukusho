@@ -127,9 +127,10 @@ actor ScrollingCaptureFrameStitcher {
         return .appended(k)
     }
 
-    /// Packed BGRA, `stitchedHeight` rows.
-    func makeImage() -> [UInt8] {
+    /// Packed BGRA, `stitchedHeight` rows, then `below`: more rows, the same width, that go on under
+    /// the last frame.
+    func makeImage(appending below: [UInt8] = []) -> [UInt8] {
         let split = cut * width * 4
-        return Array(first[..<split]) + appended + Array(last[split...])
+        return Array(first[..<split]) + appended + Array(last[split...]) + below
     }
 }

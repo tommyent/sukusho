@@ -64,6 +64,20 @@ import Testing
             == .init(rect: CGRect(x: 600, y: 194, width: 500, height: 918), reason: .clipped, obstacles: [1], target: 3, ignored: [0, 2]))
     }
 
+    @Test("At the end of the page the output goes on to the bottom of the frames, short of the Dock")
+    func rowsBelowTheSelection() {
+        let frames = CGRect(x: 600, y: 38, width: 500, height: 1074)
+        let output = ScrollingCaptureRegion.output(selection: selection, matching: frames, scale: 2)
+        #expect(output.rows == 724..<1324)
+        // The window runs to the bottom of the display: every frame row below the selection.
+        #expect(ScrollingCaptureRegion.rowsBelow(output: output, matching: frames, usableBottom: 1112, scale: 2) == 1324..<2148)
+        // The Dock's full-display window is left out of `matching`; the visible frame stops above its tiles.
+        #expect(ScrollingCaptureRegion.rowsBelow(output: output, matching: frames, usableBottom: 1040, scale: 2) == 1324..<2004)
+        // Frames that are the selection (a window in front of it) have nothing below it.
+        let own = ScrollingCaptureRegion.output(selection: selection, matching: selection, scale: 2)
+        #expect(ScrollingCaptureRegion.rowsBelow(output: own, matching: selection, usableBottom: 1112, scale: 2).isEmpty)
+    }
+
     @Test("A window over most but not all of the display still counts")
     func almostWholeDisplay() {
         #expect(matching(inFront: [CGRect(x: 0, y: 30, width: 1710, height: 1082)])

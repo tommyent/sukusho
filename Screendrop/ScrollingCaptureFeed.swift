@@ -29,6 +29,8 @@ actor ScrollingCaptureFeed {
     private let ignoredTrailingColumns: Int
     private var index = 0
     private var reference = 0
+    /// The reference frame as captured, uncropped: what lies below the selection at the end of the page.
+    private var referenceFrame: CGImage
     /// The last frame added, placed or not.
     private var previous: [UInt8]?
     /// The last frame was placed `.upward`: a repeat of it is the second look that trims.
@@ -48,6 +50,7 @@ actor ScrollingCaptureFeed {
         frameSize = CGSize(width: firstFrame.width, height: firstFrame.height)
         colorSpace = space
         self.ignoredTrailingColumns = ignoredTrailingColumns
+        referenceFrame = firstFrame
         previous = pixels
         dump = ScrollingCaptureFrameDump(width: cropped.width, height: cropped.height,
                                          ignoredTrailingColumns: ignoredTrailingColumns)
@@ -75,14 +78,23 @@ actor ScrollingCaptureFeed {
         } ?? false
         dump?.write(index: index, time: time, frame: cropped, reference: reference, candidateOffset: candidate?.offset,
                     verifiedOffset: placement.offset, action: String(String(describing: placement).prefix { $0 != "(" }))
-        if placement.isReference { reference = index }
+        if placement.isReference {
+            reference = index
+            referenceFrame = frame
+        }
         if case .upward = placement { previousWasUpward = true } else { previousWasUpward = false }
         return Update(placement: placement, height: await stitcher.stitchedHeight, keepsChanging: keepsChanging)
     }
 
-    func makeImage() async -> CGImage? {
-        ScrollingCapturePixels.image(await stitcher.makeImage(), width: Int(selection.width),
-                                     height: await stitcher.stitchedHeight, colorSpace: colorSpace)
+    /// The stitched capture; with `rowsBelow` (frame rows), the reference frame's rows there go on under
+    /// it, over the selection's columns: the window below the selection at the end of the page.
+    func makeImage(rowsBelow: Range<Int>? = nil) async -> CGImage? {
+        let width = Int(selection.width)
+        let below = rowsBelow.flatMap { rows in
+            referenceFrame.cropping(to: CGRect(x: Int(selection.minX), y: rows.lowerBound, width: width, height: rows.count))
+        }.flatMap { ScrollingCapturePixels.bytes(of: $0, in: colorSpace) } ?? []
+        let pixels = await stitcher.makeImage(appending: below)
+        return ScrollingCapturePixels.image(pixels, width: width, height: pixels.count / (width * 4), colorSpace: colorSpace)
     }
 
     private static func crop(_ frame: CGImage, to selection: CGRect) -> CGImage? {

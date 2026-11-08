@@ -61,6 +61,8 @@ final class ScrollingCapturePresenter {
     private(set) var needsScrollPermission = false
 
     @ObservationIgnored private var outcome: Outcome?
+    /// Auto-scroll finished the session at the end of the page.
+    @ObservationIgnored private var reachedEndOfPage = false
     @ObservationIgnored private var isSelectingArea = false
     @ObservationIgnored private var isCapturing = false
     @ObservationIgnored private var panel: NSPanel?
@@ -89,6 +91,7 @@ final class ScrollingCapturePresenter {
         }
         isRunning = true
         outcome = nil
+        reachedEndOfPage = false
         defer { isRunning = false }
 
         guard ScreenRecordingManager.ensureScreenCapturePermission(),
@@ -117,6 +120,10 @@ final class ScrollingCapturePresenter {
             frontToBackWindows: ScrollingCaptureRegion.frontToBackWindows(on: display.displayID, targets: targets)).rect
         let scale = max(1, CGFloat(filter.pointPixelScale))
         let output = ScrollingCaptureRegion.output(selection: selectionRect, matching: sourceRect, scale: scale)
+        let usableBottom = screen.map { ScreenRecordingManager.sourceRect(forAppKitSelectionRect: $0.visibleFrame,
+            screenFrame: $0.frame, contentRect: filter.contentRect).maxY } ?? sourceRect.maxY
+        let rowsBelow = ScrollingCaptureRegion.rowsBelow(output: output, matching: sourceRect, usableBottom: usableBottom,
+                                                         scale: scale)
 
         stitchedHeight = output.rows.count
         isWaiting = false
@@ -143,7 +150,10 @@ final class ScrollingCapturePresenter {
             .init(height: stitchedHeight, lastFrameTime: lastFrameTime, isWaiting: isWaiting,
                   canContinue: outcome == nil && !hasReachedLimit)
         }, bar: { [weak self] in self?.panel?.frame }, onStop: { [weak self] in self?.isAutoScrolling = false },
-           onEndOfPage: { [weak self] in self?.finish() })
+           onEndOfPage: { [weak self] in
+            self?.reachedEndOfPage = true
+            self?.finish()
+        })
         defer { endAutoScroll() }
         let feed: ScrollingCaptureFeed
         do {
@@ -201,7 +211,10 @@ final class ScrollingCapturePresenter {
         while outcome == nil {
             try? await Task.sleep(for: .milliseconds(100))
         }
-        guard outcome != .cancelled, let image = await feed.makeImage() else { return nil }
+        // At the end of the page the window below the selection is kept too; Done by hand, or a
+        // hand-back, may come before the page has ended.
+        guard outcome != .cancelled, let image = await feed.makeImage(rowsBelow: reachedEndOfPage ? rowsBelow : nil)
+        else { return nil }
         let capped = image.height > Self.maximumHeight
             ? image.cropping(to: CGRect(x: 0, y: 0, width: image.width, height: Self.maximumHeight)) : image
         return capped.map { Capture(image: $0, displayID: display.displayID, scale: scale) }

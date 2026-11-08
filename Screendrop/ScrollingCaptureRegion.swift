@@ -81,6 +81,16 @@ nonisolated enum ScrollingCaptureRegion {
         return ScrollingCaptureOutputRect(columns: left..<(left + Int((selection.width * scale).rounded())),
             rows: top..<(top + Int((selection.height * scale).rounded())))
     }
+
+    /// The frame rows below the selection that the output keeps when auto-scroll reaches the end of
+    /// the page: down to the bottom of the frames (the target window's visible bottom, short of windows
+    /// in front), and no lower than `usableBottom`, the bottom of the display's visible frame, so the
+    /// Dock's full-display window, which `matching` leaves out, never ends up in it.
+    static func rowsBelow(output: ScrollingCaptureOutputRect, matching: CGRect, usableBottom: CGFloat,
+                          scale: CGFloat) -> Range<Int> {
+        let bottom = Int(((min(matching.maxY, usableBottom) - matching.minY) * scale).rounded(.down))
+        return output.rows.upperBound..<max(output.rows.upperBound, bottom)
+    }
 }
 
 extension ScrollingCaptureRegion {
