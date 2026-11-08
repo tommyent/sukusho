@@ -6,7 +6,8 @@ import Foundation
 ///
 /// The output is the first frame down to the cut, every row appended since,
 /// then the last reference frame from the cut down: the rows below the cut are
-/// held back (see `ScrollingCaptureOffsetVerifier.heldBackFraction`).
+/// held back (see `ScrollingCaptureOffsetVerifier.heldBackFraction`). A sidebar
+/// pinned while the content moved is shown once (`PinnedRun`).
 actor ScrollingCaptureFrameStitcher {
     enum Placement: Equatable, Sendable {
         /// Moved up by this many rows; they were appended.
@@ -57,6 +58,22 @@ actor ScrollingCaptureFrameStitcher {
     private var lastWasUpward = false
     /// The last offset appended: tried when Vision's candidate doesn't verify.
     private var lastStep: Int?
+    /// Side columns that stayed put while the content between them moved (`Verified.pinnedLeft` and
+    /// `pinnedRight`), from output row `start` to `end` (nil: still pinned). There the output shows the
+    /// frame they stuck in from the cut down, once, then the side's most common colour in that frame
+    /// (a column one colour down most of it, a divider, keeps that), instead of a slice of the same
+    /// sidebar per step.
+    private struct PinnedRun {
+        let isLeft: Bool
+        /// Narrowed to the fewest columns pinned in any of its frames.
+        var columns: Range<Int>
+        let start: Int
+        var end: Int?
+        /// The frame's columns `stored`, rows 0..<height.
+        let stored: Range<Int>
+        let frame: [UInt8]
+    }
+    private var pinnedRuns: [PinnedRun] = []
 
     init?(firstFrame: [UInt8], width: Int, height: Int, ignoredTrailingColumns: Int) {
         guard width > 0, height > 0, firstFrame.count == width * height * 4 else { return nil }
@@ -88,23 +105,23 @@ actor ScrollingCaptureFrameStitcher {
     /// The last step never overrides a confirmed 0: at rest, rows repeating at that distance
     /// would confirm it too.
     func place(_ frame: [UInt8], candidate: Int?, alternatives: [Int] = []) -> Placement {
-        func verified(_ candidates: [Int]) -> Int? {
+        func verified(_ candidates: [Int]) -> ScrollingCaptureOffsetVerifier.Verified? {
             ScrollingCaptureOffsetVerifier.verifiedOffset(candidates: candidates, from: last, to: frame,
-                width: width, height: height, ignoredTrailingColumns: ignoredTrailingColumns)?.offset
+                width: width, height: height, ignoredTrailingColumns: ignoredTrailingColumns)
         }
         let moved = alternatives.filter { $0 != 0 && $0 != candidate }
-        var k = candidate.flatMap { verified([$0]) }
-        if k == 0, !moved.isEmpty {
-            k = verified(moved) ?? 0
-        } else if k == nil {
-            k = verified(Array(Set(moved + [lastStep].compactMap { $0 }.filter { $0 != candidate })))
+        var found = candidate.flatMap { verified([$0]) }
+        if found?.offset == 0, !moved.isEmpty {
+            found = verified(moved) ?? found
+        } else if found == nil {
+            found = verified(Array(Set(moved + [lastStep].compactMap { $0 }.filter { $0 != candidate })))
         }
-        guard frame.count == last.count, let k else {
+        guard frame.count == last.count, let found else {
             // A skipped frame breaks a run of upward frames.
             lastWasUpward = false
             return .skipped
         }
-        let rowBytes = width * 4
+        let k = found.offset, rowBytes = width * 4
         if k < 0 {
             defer { lastWasUpward = true }
             guard lastWasUpward else { return .upward(k) }
@@ -112,9 +129,14 @@ actor ScrollingCaptureFrameStitcher {
             guard -k * rowBytes <= appended.count else {
                 first = frame
                 appended = []
+                pinnedRuns = []
                 return .restarted(k)
             }
             appended.removeLast(-k * rowBytes)
+            // Runs past the new end are gone; the one it ends in is current again.
+            let end = cut + appended.count / rowBytes
+            pinnedRuns.removeAll { $0.start >= end }
+            for i in pinnedRuns.indices where pinnedRuns[i].end ?? end >= end { pinnedRuns[i].end = nil }
             return .trimmed(k)
         }
         lastWasUpward = false
@@ -122,15 +144,62 @@ actor ScrollingCaptureFrameStitcher {
         guard k < cut else { return .skipped }
         last = frame
         guard k > 0 else { return .redrawn }
+        updatePinnedRuns(left: found.pinnedLeft, right: found.pinnedRight, from: cut + appended.count / rowBytes)
         appended.append(contentsOf: frame[((cut - k) * rowBytes)..<(cut * rowBytes)])
         lastStep = k
         return .appended(k)
     }
 
     /// Packed BGRA, `stitchedHeight` rows, then `below`: more rows, the same width, that go on under
-    /// the last frame.
+    /// the last frame, with `pinnedRuns` applied.
     func makeImage(appending below: [UInt8] = []) -> [UInt8] {
         let split = cut * width * 4
-        return Array(first[..<split]) + appended + Array(last[split...]) + below
+        var image = Array(first[..<split]) + appended + Array(last[split...]) + below
+        let rows = image.count / (width * 4)
+        image.withUnsafeMutableBytes { out in
+            for run in pinnedRuns where run.start < rows {
+                run.frame.withUnsafeBytes { frame in
+                    func stored(_ x: Int, _ y: Int) -> UInt32 {
+                        frame.loadUnaligned(fromByteOffset: (y * run.stored.count + x - run.stored.lowerBound) * 4, as: UInt32.self)
+                    }
+                    func mostCommon(_ counts: [UInt32: Int]) -> (colour: UInt32, count: Int) {
+                        counts.max { ($0.value, $0.key) < ($1.value, $1.key) }.map { ($0.key, $0.value) } ?? (0, 0)
+                    }
+                    var side: [UInt32: Int] = [:]
+                    let columns = run.columns.map { x in
+                        var counts: [UInt32: Int] = [:]
+                        for y in 0..<height { counts[stored(x, y), default: 0] += 1 }
+                        side.merge(counts, uniquingKeysWith: +)
+                        return mostCommon(counts)
+                    }
+                    let background = mostCommon(side).colour
+                    // A column that is one colour down most of the frame (a divider, a border) goes on in it.
+                    let fill = columns.map { $0.count * 4 >= height * 3 ? $0.colour : background }
+                    for row in run.start..<min(run.end ?? rows, rows) {
+                        let y = cut + row - run.start
+                        for (i, x) in run.columns.enumerated() {
+                            out.storeBytes(of: y < height ? stored(x, y) : fill[i], toByteOffset: (row * width + x) * 4, as: UInt32.self)
+                        }
+                    }
+                }
+            }
+        }
+        return image
+    }
+
+    /// Opens, narrows or ends each side's run for a frame appended at output row `row`. The right side
+    /// takes the ignored trailing columns too: the overlay scroll bar's strip.
+    private func updatePinnedRuns(left: Int, right: Int, from row: Int) {
+        let usable = ScrollingCaptureOffsetVerifier.hashedWidth(width: width, ignoredTrailingColumns: ignoredTrailingColumns)
+        for (isLeft, pinned) in [(true, left), (false, right)] {
+            let columns = isLeft ? 0..<pinned : (usable - pinned)..<(pinned > 0 ? width : usable - pinned)
+            if let i = pinnedRuns.lastIndex(where: { $0.isLeft == isLeft && $0.end == nil }) {
+                if columns.isEmpty { pinnedRuns[i].end = row } else { pinnedRuns[i].columns = pinnedRuns[i].columns.clamped(to: columns) }
+            } else if !columns.isEmpty {
+                // `last` matches the new frame there, so its rows from the cut down go on from the rows above.
+                let frame = (0..<height).flatMap { y in last[((y * width + columns.lowerBound) * 4)..<((y * width + columns.upperBound) * 4)] }
+                pinnedRuns.append(PinnedRun(isLeft: isLeft, columns: columns, start: row, stored: columns, frame: frame))
+            }
+        }
     }
 }
