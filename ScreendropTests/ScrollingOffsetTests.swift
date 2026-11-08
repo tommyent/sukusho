@@ -194,6 +194,36 @@ private final class OffsetFixtureBundle: NSObject {}
         #expect(await stitcher.place(sidebarFrame(top: 80, page: hover), candidate: 0) == .redrawn)
     }
 
+    @Test("A pinned sidebar redrawn in place stays filled; one that moves with the page shows again")
+    func pinnedRunsFollowTheSidebar() async throws {
+        // A contents column on the left (lines every 20 rows, each its own) and no right sidebar.
+        func toc(_ shift: Int) -> (Int, Int) -> UInt8 {
+            { (y: Int, x: Int) -> UInt8 in
+                let r = y - 20 - shift
+                guard r >= 0, r % 20 < 6, y < 380 else { return 255 }
+                return UInt8(truncatingIfNeeded: (r / 20) * 41 + x * 9 + 7)
+            }
+        }
+        let none: (Int, Int) -> UInt8 = { (_: Int, _: Int) -> UInt8 in 255 }
+        func frame(_ top: Int, left: @escaping (Int, Int) -> UInt8) -> [UInt8] { sidebarFrame(top: top, left: left, right: none) }
+        func sidebarPixels(_ image: [UInt8], rows: Range<Int>) -> Int {
+            rows.reduce(0) { count, y in count + (0..<24).filter { image[(y * 96 + $0) * 4] != 255 }.count }
+        }
+        // Redrawn in place: the current section turns bold and the lines below move down 10 rows.
+        let redrawn = try #require(ScrollingCaptureFrameStitcher(firstFrame: frame(0, left: toc(0)), width: 96, height: 400,
+                                                                 ignoredTrailingColumns: 0))
+        #expect(await redrawn.place(frame(40, left: toc(0)), candidate: 40) == .appended(40))
+        #expect(await redrawn.place(frame(80, left: toc(10)), candidate: 40) == .appended(40))
+        #expect(await redrawn.place(frame(120, left: toc(10)), candidate: 40) == .appended(40))
+        #expect(sidebarPixels(await redrawn.makeImage(), rows: 400..<520) == 0)
+        // Moved with the page (a footer pushing it up): the column's own pixels are kept from there.
+        let moved = try #require(ScrollingCaptureFrameStitcher(firstFrame: frame(0, left: toc(0)), width: 96, height: 400,
+                                                               ignoredTrailingColumns: 0))
+        #expect(await moved.place(frame(40, left: toc(0)), candidate: 40) == .appended(40))
+        #expect(await moved.place(frame(80, left: toc(-40)), candidate: 40) == .appended(40))
+        #expect(sidebarPixels(await moved.makeImage(), rows: 400..<480) > 0)
+    }
+
     @Test("An inner scroller moving above the cut while the page stands still is refused")
     func innerScrollerStaysRefused() async throws {
         // A static page with a box (columns 28-67, rows 100-199) scrolling its own list by 20.
