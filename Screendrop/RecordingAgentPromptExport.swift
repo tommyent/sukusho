@@ -85,11 +85,11 @@ enum RecordingAgentPromptExport {
     }
 
     /// After a successful export: the Read line for an agent outside Rex (Rex's
-    /// Insert Sukusho Prompt reads latest.json), the Glass chime, and the
-    /// Library's card marks. Finder stays put.
+    /// Insert Sukusho Prompt reads latest.json), the "ready to paste" chime
+    /// (Sounds/AgentPromptReady.mp3), and the Library's card marks. Finder stays put.
     static func finished(_ folder: URL) {
         copyReadLine(folder)
-        if ScreendropPreferences.playSounds { NSSound(named: "Glass")?.play() }
+        if ScreendropPreferences.playSounds { NSSound(named: "AgentPromptReady")?.play() }
         AccessibilityNotification.Announcement("Agent Prompt saved").post()
         AgentPromptIndex.shared.reload()
     }
