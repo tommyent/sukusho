@@ -8,8 +8,8 @@ import AppKit
 /// Scrolls the region of a Scrolling Capture a step at a time, paced by
 /// `AutoScrollPacer` from what was actually stitched.
 ///
-/// Steps are posted as pixel scroll events at the region's center, tagged so
-/// the monitors here can tell them from the user's own scrolling. The
+/// Steps are posted as pixel scroll events at a point in the region, tagged
+/// so the monitors here can tell them from the user's own scrolling. The
 /// pointer is never moved. Scrolling by hand or moving the pointer off the
 /// bar hands the session back; a frame that doesn't fit pauses the steps until
 /// one is placed again, or hands back if the view rests there; the end of the
@@ -29,8 +29,8 @@ final class ScrollingCaptureAutoScroller {
     }
 
     /// A step is a quarter of the region's height, 40-240 pt. For regions
-    /// 160 pt and taller that's at most a quarter, so the pacer's two steps
-    /// without progress stay within half a region; smaller regions step 40 pt,
+    /// 160 pt and taller that's at most a quarter, so the pacer's three steps
+    /// without progress stay within three quarters of a region; smaller regions step 40 pt,
     /// a bigger share, so fewer steps fit before frames stop overlapping. The
     /// floor keeps a small region from crawling.
     private static let stepFraction: CGFloat = 0.25
@@ -42,7 +42,12 @@ final class ScrollingCaptureAutoScroller {
     private static let pointerMoveTolerance: CGFloat = 10
     private static let pollInterval: Duration = .milliseconds(30)
 
-    private let point: CGPoint
+    /// Where steps are posted, in Quartz coordinates: the region's centre, then the middle of its
+    /// top and bottom quarters. A step that moves nothing stitched is followed by one at the next
+    /// point, as an inner scroller under this one (MDN's example boxes) takes the steps while the
+    /// page stands still; steps stay at the point that moved the page.
+    private let points: [CGPoint]
+    private var point = 0
     private let stepPoints: Int32
     private let stepPixels: Int
     private let state: () -> State
@@ -63,7 +68,9 @@ final class ScrollingCaptureAutoScroller {
     init(region: CGRect, scale: CGFloat, state: @escaping () -> State,
          bar: @escaping () -> CGRect?, onStop: @escaping () -> Void, onEndOfPage: @escaping () -> Void) {
         // Quartz flips AppKit's y about the main display's height.
-        point = CGPoint(x: region.midX, y: CGDisplayBounds(CGMainDisplayID()).height - region.midY)
+        let flip = CGDisplayBounds(CGMainDisplayID()).height
+        points = [region.midY, region.maxY - region.height / 8, region.minY + region.height / 8]
+            .map { CGPoint(x: region.midX, y: flip - $0) }
         let step = min(max((region.height * Self.stepFraction).rounded(), Self.stepRange.lowerBound), Self.stepRange.upperBound)
         stepPoints = Int32(step)
         stepPixels = Int((step * scale).rounded())
@@ -133,6 +140,9 @@ final class ScrollingCaptureAutoScroller {
         self.pacer = pacer
         switch action {
         case .step: post()
+        case .stepElsewhere:
+            point = (point + 1) % points.count
+            post()
         case .endOfPage:
             stop()
             onEndOfPage()
@@ -145,7 +155,7 @@ final class ScrollingCaptureAutoScroller {
         // delta moves the content up, as scrolling down a page does.
         let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
                             wheel1: -stepPoints, wheel2: 0, wheel3: 0)
-        event?.location = point
+        event?.location = points[point]
         event?.setIntegerValueField(.eventSourceUserData, value: Self.eventTag)
         event?.post(tap: .cghidEventTap)
     }
