@@ -55,8 +55,11 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
     /// As above, over every offset within `search` of any of the candidates. When none passes over
     /// the whole width, a non-zero one may pass with pinned side columns left out: with a sidebar
     /// pinned on each side, few rows match whole at the offset the content between them moved.
-    static func verifiedOffset(candidates: [Int], from last: [UInt8], to new: [UInt8], width: Int, height: Int,
-                               ignoredTrailingColumns: Int) -> Verified? {
+    /// `votes` are Vision's band shifts: when two shifts far apart both pass (a footer pushing a dense
+    /// sidebar up at another rate than the article beside it), the one most of the bands saw wins over
+    /// the one with the most matching rows.
+    static func verifiedOffset(candidates: [Int], votes: [Int] = [], from last: [UInt8], to new: [UInt8], width: Int,
+                               height: Int, ignoredTrailingColumns: Int) -> Verified? {
         guard !candidates.isEmpty, last.count == width * height * 4, new.count == last.count else { return nil }
         let usable = hashedWidth(width: width, ignoredTrailingColumns: ignoredTrailingColumns)
         return last.withUnsafeBytes { old in new.withUnsafeBytes { now in
@@ -131,6 +134,14 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
                 guard still.left + still.right > 0, height - edges.bottom >= cut(in: 0..<height) else { return nil }
                 sides = still
                 passed = passing(offsets.filter { $0 != 0 }, over: still.left..<(usable - still.right))
+            }
+            if let best = passed.first, let rival = passed.first(where: { abs($0.offset - best.offset) > 2 * search }) {
+                func saw(_ k: Int) -> Int {
+                    votes.filter { Double(abs($0 - k)) <= ScrollingCaptureOffsetEstimator.consensusSpread }.count
+                }
+                if saw(rival.offset) * 2 > votes.count, saw(rival.offset) > saw(best.offset) {
+                    passed = passed.filter { abs($0.offset - rival.offset) < abs($0.offset - best.offset) }
+                }
             }
             guard let best = passed.first, passed.dropFirst().first?.rows != best.rows else { return nil }
             let k = best.offset

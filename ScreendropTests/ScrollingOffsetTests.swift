@@ -260,6 +260,46 @@ private final class OffsetFixtureBundle: NSObject {}
         #expect(found == .init(offset: 40, pinnedLeft: 0, pinnedRight: 28))
     }
 
+    /// 100 x 400, Apple's docs at the end of the page in small: a dense navigator (columns 0-36, text in
+    /// 8 rows of 10) from row `side`, and the article (columns 37-99, text in 4 rows of 8) from row `page`:
+    /// a footer pushes the navigator up at another rate than the article.
+    private func pushedSidebarFrame(side: Int, page: Int) -> [UInt8] {
+        let width = 100, height = 400
+        var pixels = [UInt8](repeating: 255, count: width * height * 4)
+        for y in 0..<height {
+            for x in 0..<width {
+                let row = x < 37 ? side + y : page + y
+                guard x < 37 ? row % 10 < 8 : row % 8 < 4 else { continue }
+                let value = UInt8(truncatingIfNeeded: row * 29 + x * 3 + (row / 256) * 101 + (x < 37 ? 0 : 50))
+                pixels.replaceSubrange(((y * width + x) * 4)..<((y * width + x) * 4 + 3), with: [value, value, value])
+            }
+        }
+        return pixels
+    }
+
+    @Test("Of two shifts that both verify, the one most of Vision's bands saw wins over the one with more rows")
+    func bandsPickBetweenShifts() async throws {
+        let last = pushedSidebarFrame(side: 0, page: 0), new = pushedSidebarFrame(side: 24, page: 40)
+        func place(bands: [Int]) async throws -> ScrollingCaptureFrameStitcher.Placement {
+            let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: last, width: 100, height: 400,
+                                                                      ignoredTrailingColumns: 0))
+            // Vision's whole-frame shift doesn't verify, so the shifts two or more bands agree on are tried.
+            return await stitcher.place(new, candidate: -900, alternatives: [24, 40], bands: bands)
+        }
+        // Both verify alone; the dense navigator matches more rows at 24, so the rows pick it.
+        func verified(_ k: Int) -> Int? {
+            ScrollingCaptureOffsetVerifier.verifiedOffset(candidates: [k], from: last, to: new, width: 100, height: 400,
+                                                          ignoredTrailingColumns: 0)?.offset
+        }
+        #expect(verified(24) == 24 && verified(40) == 40)
+        #expect(try await place(bands: []) == .appended(24))
+        // Three of five bands saw the article move 40: it wins.
+        #expect(try await place(bands: [24, 24, 40, 40, 40]) == .appended(40))
+        // Without a majority of the bands, the rows decide as before.
+        #expect(try await place(bands: [24, 24, 24, 40, 40]) == .appended(24))
+        #expect(try await place(bands: [24, 40, 40, 7, 99]) == .appended(24))
+    }
+
     @Test("The bands of two frames with no overlap reach no consensus")
     func estimatorBandsDisagree() throws {
         let last = try frame(3), far = try frame(25)

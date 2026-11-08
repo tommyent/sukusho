@@ -106,10 +106,11 @@ actor ScrollingCaptureFrameStitcher {
     ///   (auto-scroll's equal steps) repeats the last step.
     /// The last step never overrides a confirmed 0 (at rest, rows repeating at that distance would
     /// confirm it too), unless still side columns alone confirmed it: then the content between them
-    /// moved, and the last step and each band's own shift are tried there.
+    /// moved, and the last step and each band's own shift are tried there. Of two shifts far apart that
+    /// both verify, the one most of Vision's bands saw wins (`ScrollingCaptureOffsetVerifier`'s votes).
     func place(_ frame: [UInt8], candidate: Int?, alternatives: [Int] = [], bands: [Int] = []) -> Placement {
         func verified(_ candidates: [Int]) -> ScrollingCaptureOffsetVerifier.Verified? {
-            ScrollingCaptureOffsetVerifier.verifiedOffset(candidates: candidates, from: last, to: frame,
+            ScrollingCaptureOffsetVerifier.verifiedOffset(candidates: candidates, votes: bands, from: last, to: frame,
                 width: width, height: height, ignoredTrailingColumns: ignoredTrailingColumns)
         }
         let moved = alternatives.filter { $0 != 0 && $0 != candidate }
