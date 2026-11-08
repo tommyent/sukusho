@@ -134,6 +134,7 @@ final class CommentsLibraryModel {
         guard !comments.isEmpty else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(comments.map(\.text).joined(separator: "\n\n"), forType: .string)
+        CaptureLibraryModel.shared.actionFeedback.show(comments.count == 1 ? "Comment Copied" : "\(comments.count) Comments Copied")
     }
 
     /// The collection's keys and clicks: a double click opens the share

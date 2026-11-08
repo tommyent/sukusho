@@ -100,7 +100,7 @@ private struct PinnedScreenshotView: View {
     let onClose: () -> Void
 
     @State private var isHovered = false
-    @State private var didCopy = false
+    @State private var copied = ActionFeedback()
 
     var body: some View {
         Image(nsImage: image)
@@ -141,8 +141,9 @@ private struct PinnedScreenshotView: View {
             Spacer(minLength: 0)
 
             toolbarButton(
-                systemImage: didCopy ? "checkmark" : "doc.on.doc",
+                systemImage: copied.isShowing ? "checkmark" : "doc.on.doc",
                 help: "Copy to clipboard",
+                feedback: copied,
                 action: copy
             )
             toolbarButton(systemImage: "square.and.arrow.down", help: "Save…", action: save)
@@ -153,25 +154,24 @@ private struct PinnedScreenshotView: View {
         .environment(\.colorScheme, .dark)
     }
 
-    private func toolbarButton(systemImage: String, help: String, action: @escaping () -> Void) -> some View {
+    private func toolbarButton(systemImage: String, help: String, feedback: ActionFeedback? = nil,
+                               action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white)
+                .foregroundStyle(feedback?.isShowing == true ? Color.green : .white)
                 .frame(width: 22, height: 22)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(help)
+        .actionFeedback(feedback, label: help)
     }
 
     private func copy() {
         Task {
             do {
                 try await ScreenshotFileActions.copyPNGToClipboard(from: url)
-                withAnimation { didCopy = true }
-                try? await Task.sleep(for: .seconds(1.5))
-                withAnimation { didCopy = false }
+                copied.show()
             } catch {
                 print("Failed to copy pinned screenshot: \(error)")
             }
@@ -180,11 +180,18 @@ private struct PinnedScreenshotView: View {
 
     private func copyText() {
         let url = url
+        let displayID = ActiveDisplayResolver.activeDisplayID(preferPointer: true)
+        // Text recognition's first run can take many seconds.
+        CaptureTextFeedbackPresenter.shared.showReading(detail: "Recognizing the screenshot.", displayID: displayID)
         Task {
             let text = await ImageTextRecognizer.recognizeText(at: url)
-            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                CaptureTextFeedbackPresenter.shared.showNoTextFound(displayID: displayID)
+                return
+            }
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
+            CaptureTextFeedbackPresenter.shared.showCopied(text: text, displayID: displayID)
         }
     }
 

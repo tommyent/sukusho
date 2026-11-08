@@ -5,6 +5,7 @@ struct CaptureLibraryInspector: View {
     let model: CaptureLibraryModel
     @State private var byteCount: Int64?
     @State private var showsAllText = false
+    @State private var textCopied = ActionFeedback()
     private var items: [CaptureLibraryItem] { model.selectedItems }
 
     var body: some View {
@@ -155,13 +156,15 @@ struct CaptureLibraryInspector: View {
                     Button {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(all.joined(separator: "\n\n"), forType: .string)
+                        textCopied.show()
                     } label: {
-                        Image(systemName: "doc.on.doc")
+                        Image(systemName: textCopied.isShowing ? "checkmark" : "doc.on.doc")
+                            .foregroundStyle(textCopied.isShowing ? Color.green : .secondary)
+                            // The checkmark is shorter; the row mustn't shrink under it.
+                            .frame(width: 16, height: 16)
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .help("Copy Text")
-                    .accessibilityLabel("Copy Text")
+                    .actionFeedback(textCopied, label: "Copy Text")
                 }
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(Array(paragraphs.prefix(showsAllText ? paragraphs.count : preview).enumerated()), id: \.offset) { _, paragraph in

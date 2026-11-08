@@ -28,10 +28,10 @@ final class CaptureTextFeedbackPresenter {
 
     private init() {}
 
-    func showReading(displayID: CGDirectDisplayID?) {
+    func showReading(detail: String = "Recognizing the selected area.", displayID: CGDirectDisplayID?) {
         present(
             symbol: "text.viewfinder", title: "Reading text…",
-            detail: "Recognizing the selected area.", displayID: displayID,
+            detail: detail, displayID: displayID,
             isReading: true
         )
     }
@@ -49,6 +49,12 @@ final class CaptureTextFeedbackPresenter {
             detail: lines.first.map(String.init) ?? text,
             displayID: displayID
         )
+    }
+
+    /// The same toast for another action that leaves nothing on screen, such as a Copy
+    /// that closes the card or editor it came from.
+    func showDone(_ title: String, detail: String, displayID: CGDirectDisplayID?) {
+        present(symbol: "checkmark.circle", title: title, detail: detail, displayID: displayID)
     }
 
     /// The capture succeeded but Vision found nothing. Not a failure worth an
@@ -115,6 +121,8 @@ final class CaptureTextFeedbackPresenter {
         }
 
         self.panel = panel
+        // The panel never takes focus, so VoiceOver wouldn't read it otherwise.
+        if !isReading { AccessibilityNotification.Announcement(title).post() }
         dismissTask = Task { [weak self] in
             try? await Task.sleep(for: isReading ? .seconds(60) : Self.visibleDuration)
             guard !Task.isCancelled else { return }

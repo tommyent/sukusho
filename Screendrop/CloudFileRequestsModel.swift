@@ -455,24 +455,18 @@ struct FileRequestsOpenLinks: View {
 /// Copies an open link made on this Mac again; a tick shows it worked.
 private struct FileRequestCopyLinkButton: View {
     let link: String
-    @State private var copied = false
+    @State private var copied = ActionFeedback()
 
     var body: some View {
-        Button(copied ? "Copied" : "Copy Link", systemImage: copied ? "checkmark" : "doc.on.doc") {
+        Button("Copy Link", systemImage: copied.isShowing ? "checkmark" : "doc.on.doc") {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(link, forType: .string)
-            copied = true
+            copied.show(ActionFeedback.linksCopied(1))
         }
         .labelStyle(.iconOnly)
         .buttonStyle(.borderless)
-        .foregroundStyle(copied ? Color.green : .secondary)
-        .contentTransition(.symbolEffect(.replace))
-        .help(copied ? "Link copied" : "Copy this link")
-        .task(id: copied) {
-            guard copied else { return }
-            try? await Task.sleep(for: .seconds(1.5))
-            copied = false
-        }
+        .foregroundStyle(copied.isShowing ? Color.green : .secondary)
+        .actionFeedback(copied, label: "Copy Link", help: "Copy this link")
     }
 }
 

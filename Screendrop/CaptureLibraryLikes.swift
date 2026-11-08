@@ -128,8 +128,10 @@ final class LikesLibraryModel {
     /// The share links of the liked uploads, each once.
     func copyLinks(_ likes: [CloudLike]) {
         var seen: Set<String> = []
-        CloudShareLinks.copy(likes.filter { seen.insert($0.upload.shareUrl).inserted }
-            .map { ($0.upload.shareUrl, $0.upload.encrypted == true) })
+        let links = likes.filter { seen.insert($0.upload.shareUrl).inserted }.map { ($0.upload.shareUrl, $0.upload.encrypted == true) }
+        guard !links.isEmpty else { return }
+        CloudShareLinks.copy(links)
+        CaptureLibraryModel.shared.actionFeedback.show(ActionFeedback.linksCopied(links.count))
     }
 
     /// The collection's keys and clicks: a double click opens the share

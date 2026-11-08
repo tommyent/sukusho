@@ -401,6 +401,7 @@ final class ScreenshotPreviewStack {
             Task {
                 guard await copyURLToClipboard(item.url) else { return }
                 dismiss(id: id)
+                showDone("Copied", detail: "The screenshot is on the clipboard.")
             }
         case .video:
             // Flattening can take a moment, so the card stays up showing
@@ -408,8 +409,21 @@ final class ScreenshotPreviewStack {
             Task {
                 guard await copyVideoURLToClipboard(item.url, itemID: id) else { return }
                 dismiss(id: id)
+                showDone("Copied", detail: "The recording is on the clipboard.")
             }
         }
+    }
+
+    /// A card's Copy or Save closes it, so a toast says it worked, on the
+    /// display the pointer clicked it on.
+    private func showDone(_ title: String, detail: String) {
+        CaptureTextFeedbackPresenter.shared.showDone(title, detail: detail,
+                                                     displayID: ActiveDisplayResolver.activeDisplayID(preferPointer: true))
+    }
+
+    private func showSaved(_ file: URL) {
+        showDone("Saved to \(FileManager.default.displayName(atPath: file.deletingLastPathComponent().path))",
+                 detail: file.lastPathComponent)
     }
 
     func compress(id: ScreenshotPreviewItem.ID) {
@@ -485,11 +499,18 @@ final class ScreenshotPreviewStack {
     func copyText(id: ScreenshotPreviewItem.ID) {
         guard let item = items.first(where: { $0.id == id }), item.kind == .image else { return }
         let url = item.url
+        let displayID = ActiveDisplayResolver.activeDisplayID(preferPointer: true)
+        // Text recognition's first run can take many seconds.
+        CaptureTextFeedbackPresenter.shared.showReading(detail: "Recognizing the screenshot.", displayID: displayID)
         Task {
             let text = await ImageTextRecognizer.recognizeText(at: url)
-            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                CaptureTextFeedbackPresenter.shared.showNoTextFound(displayID: displayID)
+                return
+            }
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
+            CaptureTextFeedbackPresenter.shared.showCopied(text: text, displayID: displayID)
         }
     }
 
@@ -557,8 +578,9 @@ final class ScreenshotPreviewStack {
         markEngaged(id: id)
 
         if !choosingLocation && ScreendropPreferences.saveButtonUsesConfiguredFolder {
-            guard items[index].autoSavedURL == nil else {
+            if let saved = items[index].autoSavedURL {
                 dismiss(id: id)
+                showSaved(saved)
                 return
             }
 
@@ -570,13 +592,16 @@ final class ScreenshotPreviewStack {
                         items[index].autoSavedURL = savedURL
                     }
                     dismiss(id: id)
+                    showSaved(savedURL)
                 }
                 return
             }
 
             do {
-                items[index].autoSavedURL = try ScreenshotFileActions.saveToDefaultLocation(from: items[index].url)
+                let saved = try ScreenshotFileActions.saveToDefaultLocation(from: items[index].url)
+                items[index].autoSavedURL = saved
                 dismiss(id: id)
+                showSaved(saved)
             } catch {
                 let alert = NSAlert()
                 alert.alertStyle = .warning

@@ -175,6 +175,8 @@ final class CaptureLibraryModel {
     var savedAgentPrompt: URL?
     /// The status bar's done mark for a gallery whose link was just copied.
     var copiedLink: String?
+    /// The status bar's brief done mark for menu and keyboard actions on every page, such as Copy.
+    let actionFeedback = ActionFeedback(duration: ActionFeedback.textDuration)
     /// The capture an Agent Prompt export is working on, for its card's ring.
     var agentPromptExport: AgentPromptExportProgress?
     var errorMessage: String?

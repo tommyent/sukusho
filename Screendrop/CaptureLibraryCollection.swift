@@ -593,7 +593,8 @@ private struct AgentPromptCardMark: View {
             } else if let state {
                 Button {
                     model.useAgentPrompt(item)
-                    if state == .current {
+                    // Making another recording's prompt current also copies its Read line.
+                    if state != .stale {
                         copies += 1
                         AccessibilityNotification.Announcement("Copied").post()
                     }
@@ -684,7 +685,8 @@ private struct LibraryCloudBadge: View {
             CardCloudBadge(isShared: item.cloudURL != nil) {
                 let model = CaptureLibraryModel.shared
                 model.selection = [item.id]
-                if item.cloudURL != nil { model.copyLink(item) } else { model.pendingCloudUpload = item }
+                // The badge shows its own checkmark, so not copyLink's status bar mark.
+                if let link = item.cloudURL { CloudShareLinks.copy([link]) } else { model.pendingCloudUpload = item }
             }
         }
     }
@@ -696,14 +698,14 @@ private struct LibraryCloudBadge: View {
 struct CardCloudBadge: View {
     let isShared: Bool
     let action: () -> Void
-    @State private var didCopy = false
+    @State private var copied = ActionFeedback()
 
     var body: some View {
         Button {
             action()
-            if isShared { didCopy = true }
+            if isShared { copied.show(ActionFeedback.linksCopied(1)) }
         } label: {
-            Image(systemName: didCopy ? "checkmark" : isShared ? "checkmark.icloud.fill" : "icloud.and.arrow.up")
+            Image(systemName: copied.isShowing ? "checkmark" : isShared ? "checkmark.icloud.fill" : "icloud.and.arrow.up")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(isShared ? CardMark.green : CardMark.idle)
                 .frame(width: 24, height: 24)
@@ -712,13 +714,8 @@ struct CardCloudBadge: View {
         }
         .buttonStyle(.plain)
         .padding(6)
-        .help(didCopy ? "Link copied" : isShared ? "Shared to the cloud. Click to copy its link." : "Share to Cloud")
-        .accessibilityLabel(isShared ? "Copy cloud link" : "Share to Cloud")
-        .task(id: didCopy) {
-            guard didCopy else { return }
-            try? await Task.sleep(for: .seconds(1.5))
-            didCopy = false
-        }
+        .actionFeedback(copied, label: isShared ? "Copy cloud link" : "Share to Cloud",
+                        help: isShared ? "Shared to the cloud. Click to copy its link." : nil)
     }
 }
 

@@ -214,7 +214,9 @@ final class CloudLibraryModel {
     }
 
     func copyLinks(_ uploads: [CloudUpload]) {
+        guard !uploads.isEmpty else { return }
         CloudShareLinks.copy(uploads.map { ($0.url, $0.encrypted == true) })
+        CaptureLibraryModel.shared.actionFeedback.show(ActionFeedback.linksCopied(uploads.count))
     }
 
     /// Whether the Worker says this upload is sealed, so a link without its key needs a warning.
@@ -425,6 +427,7 @@ final class CloudLibraryModel {
                 fileUploads?.done += 1
             }
             CloudShareLinks.copy(links)
+            if !links.isEmpty { CaptureLibraryModel.shared.actionFeedback.show(ActionFeedback.linksCopied(links.count)) }
             if !failures.isEmpty {
                 CaptureLibraryModel.shared.errorMessage = "Couldn’t share:\n" + failures.joined(separator: "\n")
             }
@@ -831,7 +834,8 @@ private struct CloudUploadCard: View {
             // Every upload but a received file is shared: a click copies its link, as on Library cards.
             .overlay(alignment: .topTrailing) {
                 if !upload.isReceived {
-                    CardCloudBadge(isShared: true) { act { $0.copyLinks([upload]) } }
+                    // The badge shows its own checkmark, so not copyLinks' status bar mark.
+                    CardCloudBadge(isShared: true) { act { _ in CloudShareLinks.copy([(upload.url, upload.encrypted == true)]) } }
                         .id(upload.id)
                 }
             }
