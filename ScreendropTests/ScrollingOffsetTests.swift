@@ -300,6 +300,45 @@ private final class OffsetFixtureBundle: NSObject {}
         #expect(try await place(bands: [24, 40, 40, 7, 99]) == .appended(24))
     }
 
+    /// 100 x 400 of a page whose every row is its own, an X timeline in small: a white margin and a dark
+    /// border at each side (columns 0-1 and 98-99, 2 and 97), text pixels on every row between. Page rows
+    /// in `video` show, over columns 12-99, content that changes with `frame`; rows in `post` have a grey
+    /// background when `hovered`, under the text, and a picture over columns 12-87 in its `picture` rows.
+    private func timelineFrame(top: Int, frame: Int = 0, video: Range<Int> = 0..<0, post: Range<Int> = 0..<0,
+                               picture: Range<Int> = 0..<0, hovered: Bool = false) -> [UInt8] {
+        let width = 100, height = 400
+        var pixels = [UInt8](repeating: 255, count: width * height * 4)
+        for y in 0..<height {
+            let row = top + y
+            for x in 0..<width {
+                let value: UInt8
+                if x < 2 || x > 97 { value = 255 }
+                else if x == 2 || x == 97 { value = 40 }
+                else if video.contains(row), x >= 12 { value = UInt8(truncatingIfNeeded: row * 13 + x * 7 + frame * 91) }
+                else if picture.contains(row), (12..<88).contains(x) { value = UInt8(truncatingIfNeeded: row * 29 + x * 3) }
+                else if (x + row) % 4 == 0 { value = UInt8(truncatingIfNeeded: row * 31 + x * 5) % 200 }
+                else { value = post.contains(row) && hovered ? 240 : 255 }
+                pixels.replaceSubrange(((y * width + x) * 4)..<((y * width + x) * 4 + 3), with: [value, value, value])
+            }
+        }
+        return pixels
+    }
+
+    @Test("A video over most of the frame: enough rows stand in for the share where Vision's bands agree")
+    func videoPassesOnAgreeingBands() {
+        // The view moves 40 while the video (page rows 60-359) plays: 20 rows match whole, share 0.19.
+        let last = timelineFrame(top: 0, frame: 0, video: 60..<360), new = timelineFrame(top: 40, frame: 1, video: 60..<360)
+        func verified(_ candidate: Int, votes: [Int]) -> Int? {
+            ScrollingCaptureOffsetVerifier.verifiedOffset(candidates: [candidate], votes: votes, from: last, to: new,
+                width: 100, height: 400, ignoredTrailingColumns: 0)?.offset
+        }
+        #expect(verified(40, votes: []) == nil)
+        #expect(verified(40, votes: [40, 40, 40, 40, 40]) == 40)
+        #expect(verified(40, votes: [40, 40, 40, 7, 99]) == nil)
+        // At the edge of the window tried, the bands' offset isn't taken: the true one may lie past it.
+        #expect(verified(42, votes: [40, 40, 40, 40, 40]) == nil)
+    }
+
     @Test("The bands of two frames with no overlap reach no consensus")
     func estimatorBandsDisagree() throws {
         let last = try frame(3), far = try frame(25)

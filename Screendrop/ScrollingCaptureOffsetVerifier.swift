@@ -13,13 +13,19 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
     /// a hover, overlay or video over part of the frame doesn't refuse it: the
     /// distinct exact rows and the refusal of ties keep it from guessing
     /// (corpus sweep 0.7 to 0.3: correct 355 to 390, wrong 0 throughout).
-    // ponytail: video, a hover over most of the frame and inner scrollers still
-    // refuse; step 5's "scroll back a little" hint covers them, not more rules.
+    // ponytail: a hover over most of the frame, inner scrollers, and a video the
+    // bands don't agree past still refuse; step 5's "scroll back a little" hint covers them.
     // ponytail: 0.3 is the sweep's edge and wrong was 0 at every value, so the
     // corpus can't show false positives here; raise it when one appears.
     static let agreement = 0.3
     /// Fewer distinct fully matching rows than this is a coincidence.
     static let minimumMatchedRows = 8
+    /// Rows enough to stand in for the share where Vision's bands agree on the offset: a video or
+    /// GIF over most of the frame changes every strip it covers between any two frames, so the
+    /// share stays low even where the rows around it all match (X with a playing video: 0.23 at
+    /// the true offset, with 104 rows there and 1-2 at its neighbours). Over the corpus's frame
+    /// pairs, 4 agreeing bands and twice the minimum rows placed 126 more X frames and no wrong one.
+    static let consensusMatchedRows = 2 * minimumMatchedRows
     /// The candidate can be this far off; every offset within it is tried.
     static let search = 2
     /// The bottom quarter of the band is held back rather than appended, so a
@@ -57,7 +63,8 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
     /// pinned on each side, few rows match whole at the offset the content between them moved.
     /// `votes` are Vision's band shifts: when two shifts far apart both pass (a footer pushing a dense
     /// sidebar up at another rate than the article beside it), the one most of the bands saw wins over
-    /// the one with the most matching rows.
+    /// the one with the most matching rows; and at an offset `consensusBands` of them saw,
+    /// `consensusMatchedRows` rows pass without the share.
     static func verifiedOffset(candidates: [Int], votes: [Int] = [], from last: [UInt8], to new: [UInt8], width: Int,
                                height: Int, ignoredTrailingColumns: Int) -> Verified? {
         guard !candidates.isEmpty, last.count == width * height * 4, new.count == last.count else { return nil }
@@ -77,6 +84,10 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
             let edges = unmovedEdges(height: height) { same($0, $0, 0..<usable) }
             let band = edges.top..<(height - edges.bottom)
             let committed = band.lowerBound..<cut(in: band)
+            /// How many of Vision's bands saw `k`.
+            func saw(_ k: Int) -> Int {
+                votes.filter { Double(abs($0 - k)) <= ScrollingCaptureOffsetEstimator.consensusSpread }.count
+            }
             /// Offsets that pass over `range`'s columns, the most distinct matching rows first.
             func passing(_ offsets: Set<Int>, over range: Range<Int>) -> [(offset: Int, rows: Int)] {
                 let columns = (0..<strips).map {
@@ -100,7 +111,12 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
                         }
                     }
                     guard compared > 0, matched.count >= minimumMatchedRows else { return nil }
-                    return Double(agreed) / Double(compared) >= agreement ? matched.count : nil
+                    // Both neighbours tried too, so `k` is a peak rather than the edge of a window that
+                    // missed the true offset (27 rows matched 2 px off it on X).
+                    let agrees = Double(agreed) / Double(compared) >= agreement
+                        || matched.count >= consensusMatchedRows && saw(k) >= ScrollingCaptureOffsetEstimator.consensusBands
+                            && offsets.contains(k - 1) && offsets.contains(k + 1)
+                    return agrees ? matched.count : nil
                 }
                 return offsets.compactMap { k in score(k).map { (k, $0) } }.sorted { $0.1 > $1.1 }
             }
@@ -136,9 +152,6 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
                 passed = passing(offsets.filter { $0 != 0 }, over: still.left..<(usable - still.right))
             }
             if let best = passed.first, let rival = passed.first(where: { abs($0.offset - best.offset) > 2 * search }) {
-                func saw(_ k: Int) -> Int {
-                    votes.filter { Double(abs($0 - k)) <= ScrollingCaptureOffsetEstimator.consensusSpread }.count
-                }
                 if saw(rival.offset) * 2 > votes.count, saw(rival.offset) > saw(best.offset) {
                     passed = passed.filter { abs($0.offset - rival.offset) < abs($0.offset - best.offset) }
                 }
