@@ -84,6 +84,39 @@ private final class OffsetFixtureBundle: NSObject {}
         #expect(await fresh.place(logFrame(top: 40), candidate: -20) == .skipped)
     }
 
+    /// 80 x 400: columns 0-23 and 56-79 pinned (a sidebar each side, the same in every frame),
+    /// 24-55 the page from row `top`. Each has blank rows, as text lines do.
+    private func pinnedFrame(top: Int, change: Bool = false) -> [UInt8] {
+        let width = 80, height = 400
+        var pixels = [UInt8](repeating: 255, count: width * height * 4)
+        for y in 0..<height {
+            let row = top + y
+            for x in 0..<width {
+                let pinned = x < 24 || x >= 56
+                guard pinned ? y % 10 < 5 : row % 8 < 6 else { continue }
+                var value = UInt8(truncatingIfNeeded: pinned ? y * 7 + x * 13 : row * 29 + x * 3)
+                if change, !pinned, y < 40 { value ^= 0x55 }
+                pixels.replaceSubrange(((y * width + x) * 4)..<((y * width + x) * 4 + 3), with: [value, value, value])
+            }
+        }
+        return pixels
+    }
+
+    @Test("Pinned side columns can't pass a moved page as unmoved when another offset fits more rows")
+    func pinnedColumnsDontHideMotion() async throws {
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: pinnedFrame(top: 0), width: 80, height: 400,
+                                                                  ignoredTrailingColumns: 0))
+        // Vision's whole-frame fallback says 0 (the pinned columns); the bands that saw the page say 40.
+        #expect(ScrollingCaptureOffsetVerifier.verifiedOffset(candidate: 0, from: pinnedFrame(top: 0),
+            to: pinnedFrame(top: 40), width: 80, height: 400, ignoredTrailingColumns: 0)?.offset == 0)
+        #expect(await stitcher.place(pinnedFrame(top: 40), candidate: 0, alternatives: [40]) == .appended(40))
+        // At rest, a change in part of the frame still places at 0: the last step (40) never
+        // overrides it, and a shift two bands agree on only does when it's confirmed exactly.
+        #expect(await stitcher.place(pinnedFrame(top: 40, change: true), candidate: 0) == .redrawn)
+        #expect(await stitcher.place(pinnedFrame(top: 40, change: true), candidate: 0, alternatives: [24]) == .redrawn)
+        #expect(ScrollingCaptureOffsetEstimator.pairs([-0.2, 40, 39.5, 120, 40.8]) == [40])
+    }
+
     @Test("The bands of two frames with no overlap reach no consensus")
     func estimatorBandsDisagree() throws {
         let last = try frame(3), far = try frame(25)

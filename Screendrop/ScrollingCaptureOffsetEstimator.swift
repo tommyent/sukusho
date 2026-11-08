@@ -22,6 +22,9 @@ nonisolated enum ScrollingCaptureOffsetEstimator {
         /// proposes an offset for unrelated frames too, so only agreeing
         /// bands say the two frames still overlap.
         let bandsAgree: Bool
+        /// Other shifts at least two bands agree on: with a sidebar pinned on
+        /// each side, the content between can be what moved.
+        var alternatives: [Int] = []
     }
 
     /// The candidate offset: the bands' consensus, else the whole frame's
@@ -31,9 +34,21 @@ nonisolated enum ScrollingCaptureOffsetEstimator {
                           ignoredTrailingColumns: Int) -> Candidate? {
         guard let images = images(last, new, width: width, height: height) else { return nil }
         let usable = ScrollingCaptureOffsetVerifier.hashedWidth(width: width, ignoredTrailingColumns: ignoredTrailingColumns)
-        if let agreed = consensus(bandShifts(images, usable: usable)) { return Candidate(offset: agreed, bandsAgree: true) }
-        return translation(images, in: CGRect(x: 0, y: 0, width: usable, height: height))
-            .map { Candidate(offset: Int($0.rounded()), bandsAgree: false) }
+        let shifts = bandShifts(images, usable: usable)
+        if let agreed = consensus(shifts) { return Candidate(offset: agreed, bandsAgree: true) }
+        return translation(images, in: CGRect(x: 0, y: 0, width: usable, height: height)).map {
+            let offset = Int($0.rounded())
+            return Candidate(offset: offset, bandsAgree: false, alternatives: pairs(shifts).filter { $0 != offset })
+        }
+    }
+
+    /// The rounded mean of each run of two or more shifts within `consensusSpread` of each other.
+    static func pairs(_ shifts: [Double]) -> [Int] {
+        var runs: [[Double]] = []
+        for shift in shifts.sorted() {
+            if let first = runs.last?.first, shift - first <= consensusSpread { runs[runs.count - 1].append(shift) } else { runs.append([shift]) }
+        }
+        return runs.filter { $0.count >= 2 }.map { Int(($0.reduce(0, +) / Double($0.count)).rounded()) }
     }
 
     /// Each band's shift, nil-free, for the consensus.

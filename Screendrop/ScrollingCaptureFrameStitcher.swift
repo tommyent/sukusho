@@ -76,19 +76,30 @@ actor ScrollingCaptureFrameStitcher {
         guard frame.count == last.count else { lastWasUpward = false; return (.skipped, nil) }
         let candidate = ScrollingCaptureOffsetEstimator.candidate(from: last, to: frame,
             width: width, height: height, ignoredTrailingColumns: ignoredTrailingColumns)
-        return (place(frame, candidate: candidate?.offset), candidate)
+        return (place(frame, candidate: candidate?.offset, alternatives: candidate?.alternatives ?? []), candidate)
     }
 
-    /// Places a frame against the reference, trying `candidate` and then the last step appended:
-    /// on repeating rows (log lines, table rows) Vision can land a whole repeat away from the
-    /// true offset, which steady scrolling (auto-scroll's equal steps) repeats.
-    func place(_ frame: [UInt8], candidate: Int?) -> Placement {
-        func verified(_ candidate: Int?) -> Int? {
-            candidate.flatMap { ScrollingCaptureOffsetVerifier.verifiedOffset(candidate: $0, from: last, to: frame,
-                width: width, height: height, ignoredTrailingColumns: ignoredTrailingColumns)?.offset }
+    /// Places a frame against the reference at Vision's candidate.
+    /// - It says the view didn't move: a shift two of Vision's bands agree on, confirmed exactly,
+    ///   wins instead. With a sidebar pinned on each side, the pinned columns alone confirm 0.
+    /// - It doesn't verify: the last step appended and those shifts are tried. On repeating rows
+    ///   (log lines, table rows) Vision can land a whole repeat off, and steady scrolling
+    ///   (auto-scroll's equal steps) repeats the last step.
+    /// The last step never overrides a confirmed 0: at rest, rows repeating at that distance
+    /// would confirm it too.
+    func place(_ frame: [UInt8], candidate: Int?, alternatives: [Int] = []) -> Placement {
+        func verified(_ candidates: [Int]) -> Int? {
+            ScrollingCaptureOffsetVerifier.verifiedOffset(candidates: candidates, from: last, to: frame,
+                width: width, height: height, ignoredTrailingColumns: ignoredTrailingColumns)?.offset
         }
-        guard frame.count == last.count,
-              let k = verified(candidate) ?? (lastStep == candidate ? nil : verified(lastStep)) else {
+        let moved = alternatives.filter { $0 != 0 && $0 != candidate }
+        var k = candidate.flatMap { verified([$0]) }
+        if k == 0, !moved.isEmpty {
+            k = verified(moved) ?? 0
+        } else if k == nil {
+            k = verified(Array(Set(moved + [lastStep].compactMap { $0 }.filter { $0 != candidate })))
+        }
+        guard frame.count == last.count, let k else {
             // A skipped frame breaks a run of upward frames.
             lastWasUpward = false
             return .skipped
