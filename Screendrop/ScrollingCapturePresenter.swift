@@ -13,7 +13,7 @@ import SwiftUI
 /// pixels confirm, and a frame that doesn't fit is skipped until one does.
 /// The region stays highlighted, with `ScrollingCaptureBar` below it; the
 /// scrolled app keeps the keyboard, so the bar or the shortcut ends a session,
-/// or auto-scroll reaching the end of the page.
+/// or auto-scroll reaching the end of the page or the height limit.
 @Observable
 final class ScrollingCapturePresenter {
     static let shared = ScrollingCapturePresenter()
@@ -48,7 +48,7 @@ final class ScrollingCapturePresenter {
     private(set) var isWaiting = false
     /// Frames have been refused for `quietWait`: the bar says so.
     private(set) var showsWaiting = false
-    /// The capture is as tall as it can get; only Done or Cancel are left.
+    /// The capture is as tall as it can get; scrolled by hand, only Done or Cancel are left.
     private(set) var hasReachedLimit = false
     /// Waiting, and the page keeps changing: the bar asks for it to be paused.
     private(set) var keepsChanging = false
@@ -182,13 +182,15 @@ final class ScrollingCapturePresenter {
                 continue
             }
             lastFrameTime = frame.time
-            stitchedHeight = update.height
+            // What will be saved: the output stops at the limit.
+            stitchedHeight = min(update.height, Self.maximumHeight)
             if update.placement == .skipped, !isWaiting { waitingSince = frame.time }
             isWaiting = update.placement == .skipped
             updateShowsWaiting(at: frame.time)
             keepsChanging = update.keepsChanging
-            hasReachedLimit = stitchedHeight >= Self.maximumHeight
-            if hasReachedLimit { source.stop() }
+            hasReachedLimit = update.height >= Self.maximumHeight
+            // Auto-scroll saves at the limit, as at the end of the page; by hand, the bar waits for Done.
+            if hasReachedLimit { isAutoScrolling ? finish() : source.stop() }
         }
         // The stream has ended (Done, Cancel, the height limit or an error):
         // nothing more can be captured, so nothing more may be scrolled.
