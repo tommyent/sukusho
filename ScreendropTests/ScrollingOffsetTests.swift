@@ -41,6 +41,35 @@ private final class OffsetFixtureBundle: NSObject {}
         #expect(await stitcher.makeImage() == top.pixels)
     }
 
+    /// `height` rows from `top` of a page whose rows repeat every 20 rows, apart from the first 8
+    /// columns, which number each repeat: log lines alike but for a counter.
+    private func logFrame(top: Int, height: Int = 400) -> [UInt8] {
+        let width = 64
+        var pixels = [UInt8](repeating: 255, count: width * height * 4)
+        for y in 0..<height {
+            let row = top + y
+            for x in 0..<width {
+                let value = UInt8(truncatingIfNeeded: x < 8 ? (row / 20) * 37 + x * 11 : (row % 20) * 13 + x * 7)
+                pixels.replaceSubrange(((y * width + x) * 4)..<((y * width + x) * 4 + 3), with: [value, value, value])
+            }
+        }
+        return pixels
+    }
+
+    @Test("On repeating rows, a candidate a whole repeat off falls back to the last step")
+    func lastStepRescuesRepeatAlias() async throws {
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: logFrame(top: 0), width: 64, height: 400,
+                                                                  ignoredTrailingColumns: 0))
+        #expect(await stitcher.place(logFrame(top: 40), candidate: 40) == .appended(40))
+        // Three repeats off: most strips agree there, but no row matches whole, so the verifier refuses it.
+        #expect(await stitcher.place(logFrame(top: 80), candidate: -20) == .appended(40))
+        #expect(await stitcher.makeImage() == logFrame(top: 0, height: 480))
+        // Before any step there's nothing to fall back on: the same candidate is refused.
+        let fresh = try #require(ScrollingCaptureFrameStitcher(firstFrame: logFrame(top: 0), width: 64, height: 400,
+                                                               ignoredTrailingColumns: 0))
+        #expect(await fresh.place(logFrame(top: 40), candidate: -20) == .skipped)
+    }
+
     @Test("The bands of two frames with no overlap reach no consensus")
     func estimatorBandsDisagree() throws {
         let last = try frame(3), far = try frame(25)
