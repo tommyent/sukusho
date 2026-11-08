@@ -70,8 +70,8 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
 
     /// As above, over every offset within `search` of any of the candidates, and past them where the best lies at
     /// the edge of those; when every row the best matched repeats in the new frame and rows that occur once in
-    /// each frame line up a repeat away, over that offset instead. When none passes over
-    /// the whole width, a non-zero one may pass with pinned side columns left out: with a sidebar
+    /// each frame line up a repeat away (over the columns that moved, pinned sides left out), over that offset instead.
+    /// When none passes over the whole width, a non-zero one may pass with pinned side columns left out: with a sidebar
     /// pinned on each side, few rows match whole at the offset the content between them moved.
     /// `votes` are Vision's band shifts: when two shifts far apart both pass (a footer pushing a dense
     /// sidebar up at another rate than the article beside it), the one most of the bands saw wins over
@@ -100,8 +100,15 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
             func saw(_ k: Int) -> Int {
                 votes.filter { Double(abs($0 - k)) <= ScrollingCaptureOffsetEstimator.consensusSpread }.count
             }
-            /// The rows of the new frame each offset that passed matched whole, by their hash over the columns it passed over.
-            var matchedRows: [Int: Set<Int>] = [:]
+            func rowHash(_ bytes: UnsafeRawBufferPointer, _ y: Int, over range: Range<Int>) -> Int {
+                var hasher = Hasher()
+                hasher.combine(bytes: UnsafeRawBufferPointer(start: bytes.baseAddress! + (y * width + range.lowerBound) * 4,
+                                                             count: range.count * 4))
+                return hasher.finalize()
+            }
+            /// The rows of the new frame each offset that passed matched whole, one per distinct row over the columns it
+            /// passed over.
+            var matchedRows: [Int: [Int]] = [:]
             /// Offsets that pass over `range`'s columns, the most distinct matching rows first.
             func passing(_ offsets: Set<Int>, over range: Range<Int>) -> [(offset: Int, rows: Int)] {
                 let columns = (0..<strips).map {
@@ -109,7 +116,7 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
                 }.filter { !$0.isEmpty }
                 func score(_ k: Int) -> Int? {
                     var compared = 0, agreed = 0
-                    var matched = Set<Int>()
+                    var matched: [Int: Int] = [:]
                     for y in committed where committed.contains(y + k) {
                         var whole = true, isBlank = true
                         for x in columns where !blank(y, x) {
@@ -117,12 +124,7 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
                             compared += 1
                             if same(y, y + k, x) { agreed += 1 } else { whole = false }
                         }
-                        if whole && !isBlank {
-                            var hasher = Hasher()
-                            hasher.combine(bytes: UnsafeRawBufferPointer(start: now.baseAddress! + (y * width + range.lowerBound) * 4,
-                                                                         count: range.count * 4))
-                            matched.insert(hasher.finalize())
-                        }
+                        if whole && !isBlank { matched[rowHash(now, y, over: range)] = y }
                     }
                     guard compared > 0, matched.count >= minimumMatchedRows else { return nil }
                     // Both neighbours tried too, so `k` is a peak rather than the edge of a window that
@@ -131,7 +133,7 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
                         || matched.count >= consensusMatchedRows && saw(k) >= ScrollingCaptureOffsetEstimator.consensusBands
                             && offsets.contains(k - 1) && offsets.contains(k + 1)
                     guard agrees else { return nil }
-                    matchedRows[k] = matched
+                    matchedRows[k] = Array(matched.values)
                     return matched.count
                 }
                 return offsets.compactMap { k in score(k).map { (k, $0) } }.sorted { $0.1 > $1.1 }
@@ -191,9 +193,7 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
                 for y in 0..<height {
                     let start = bytes.baseAddress! + (y * width + range.lowerBound) * 4
                     guard memcmp(start, start + 4, (range.count - 1) * 4) != 0 else { continue }
-                    var hasher = Hasher()
-                    hasher.combine(bytes: UnsafeRawBufferPointer(start: start, count: range.count * 4))
-                    let hash = hasher.finalize()
+                    let hash = rowHash(bytes, y, over: range)
                     if repeated.contains(hash) { continue }
                     if row.removeValue(forKey: hash) != nil { repeated.insert(hash) } else { row[hash] = y }
                 }
@@ -225,16 +225,27 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
                 offsets.formUnion((best.offset - search)...(best.offset + search))
                 passed = passing(sides == nil ? offsets : offsets.filter { $0 != 0 }, over: range)
             }
+            guard !passed.isEmpty else { return nil }
+            let still = sides ?? stillSides()
+            /// A still side counts as pinned at `k` when it doesn't fit `k` too.
+            func pinned(_ x: Range<Int>, at k: Int) -> Bool {
+                !x.isEmpty && committed.contains { committed.contains($0 + k) && !same($0, $0 + k, x) }
+            }
             // Repeating content lines up a whole repeat off too, on rows the frame shows more than once (MDN's code
             // examples: -138 or 1,059 passed where the view moved 366, and Vision proposed them). When nearly every row
             // the best matched occurs more than once in the new frame, rows that occur once in each frame say where the
             // view moved: if at least `minimumMatchedRows` of them line up a repeat away, the frame is placed there,
             // or refused if that doesn't pass. Not at 0: a still part (a sidebar beside blank lines) makes rows that
-            // occur once and line up there whatever the page did.
-            if let best = passed.first, best.rows > 0, let matched = matchedRows[best.offset] {
-                let onceNow = rowsOnce(now, over: range)
+            // occur once and line up there whatever the page did. Over the columns that moved: a sidebar pinned beside
+            // them makes nearly every row occur once (MDN's examples between both sidebars: 43 of the 54 rows -1,042
+            // matched where the view moved 470; none of 86 between them).
+            if let best = passed.first, best.rows > 0, let rows = matchedRows[best.offset] {
+                let moved = (pinned(0..<still.left, at: best.offset) ? still.left : 0)
+                    ..< (usable - (pinned((usable - still.right)..<usable, at: best.offset) ? still.right : 0))
+                let onceNow = rowsOnce(now, over: moved)
+                let matched = Set(rows.map { rowHash(now, $0, over: moved) })
                 if matched.filter({ onceNow[$0] != nil }).count * repeatedFraction < matched.count {
-                    let onceOld = rowsOnce(old, over: range)
+                    let onceOld = rowsOnce(old, over: moved)
                     var lineUp: [Int: Int] = [:]
                     for (hash, y) in onceNow where committed.contains(y) {
                         if let oldY = onceOld[hash], committed.contains(oldY), oldY != y { lineUp[oldY - y, default: 0] += 1 }
@@ -256,17 +267,11 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
             let k = best.offset
             guard k != 0 else {
                 // Did only the still sides say so? Then the content between them moved.
-                let still = stillSides()
                 return Verified(offset: 0, sidesOnly: still.left + still.right > 0
                     && passing([0], over: still.left..<(usable - still.right)).isEmpty)
             }
-            let still = sides ?? stillSides()
-            /// A side counts as pinned when it doesn't fit the offset too.
-            func pinned(_ x: Range<Int>) -> Bool {
-                !x.isEmpty && committed.contains { committed.contains($0 + k) && !same($0, $0 + k, x) }
-            }
-            return Verified(offset: k, pinnedLeft: pinned(0..<still.left) ? still.left : 0,
-                            pinnedRight: pinned((usable - still.right)..<usable) ? still.right : 0)
+            return Verified(offset: k, pinnedLeft: pinned(0..<still.left, at: k) ? still.left : 0,
+                            pinnedRight: pinned((usable - still.right)..<usable, at: k) ? still.right : 0)
         } }
     }
 

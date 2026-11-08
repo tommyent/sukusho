@@ -400,6 +400,32 @@ private final class OffsetFixtureBundle: NSObject {}
             height: 400, ignoredTrailingColumns: 0)?.offset == 20)
     }
 
+    @Test("Between pinned sidebars, a repeat alias yields too: the sidebars don't make the repeated rows occur once")
+    func uniqueRowsBetweenPinnedSidebars() async throws {
+        // MDN's examples beside both sidebars (Air, frame 132: -1,042 passed where the view moved 470). Blank over the
+        // top quarter and dense below, the sidebars let the alias pass over the whole width, on rows that occur once
+        // across it, while the page between them repeats.
+        let examples = { (row: Int, x: Int) -> UInt8 in
+            UInt8(truncatingIfNeeded: row % 100 < 10 ? (row / 100) * 53 + row * 7 + x * 3 : (row % 100) * 13 + x * 7)
+        }
+        func frame(top: Int) -> [UInt8] {
+            sidebarFrame(top: top, page: examples,
+                         left: { y, x in y < 100 ? 255 : UInt8(truncatingIfNeeded: y * 7 + x * 13) },
+                         right: { y, x in y < 100 ? 255 : UInt8(truncatingIfNeeded: y * 11 + x * 5 + 3) })
+        }
+        let last = frame(top: 0), new = frame(top: 40)
+        func verified(_ candidate: Int) -> ScrollingCaptureOffsetVerifier.Verified? {
+            ScrollingCaptureOffsetVerifier.verifiedOffset(candidate: candidate, from: last, to: new, width: 96, height: 400,
+                                                          ignoredTrailingColumns: 0)
+        }
+        #expect(verified(-60)?.offset == 40)
+        #expect(verified(140)?.offset == 40)
+        #expect(verified(40) == .init(offset: 40, pinnedLeft: 28, pinnedRight: 28))
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: last, width: 96, height: 400,
+                                                                  ignoredTrailingColumns: 0))
+        #expect(await stitcher.place(new, candidate: -60) == .appended(40))
+    }
+
     /// `height` rows of a page drawn in runs of 5 rows, 4 alike and 1 its own, so 2 rows off 2 of each 5 still match
     /// whole: log lines whose glyphs have long vertical strokes.
     private func strokesFrame(top: Int, height: Int = 400) -> [UInt8] {
