@@ -364,6 +364,42 @@ private final class OffsetFixtureBundle: NSObject {}
         #expect(await stitcher.place(frame(40, hovered: true), candidate: 40, bands: [40, 40, 40, 40, 40]) == .appended(40))
     }
 
+    /// 64 x 400 of a page that repeats every 100 rows, MDN's code examples in small: each repeat's first 10 rows
+    /// are its own (a label with the repeat's number), the other 90 are the same in every repeat.
+    private func examplesFrame(top: Int) -> [UInt8] {
+        let width = 64, height = 400
+        var pixels = [UInt8](repeating: 255, count: width * height * 4)
+        for y in 0..<height {
+            let row = top + y
+            for x in 0..<width {
+                let value = UInt8(truncatingIfNeeded: row % 100 < 10 ? (row / 100) * 53 + row * 7 + x * 3 : (row % 100) * 13 + x * 7)
+                pixels.replaceSubrange(((y * width + x) * 4)..<((y * width + x) * 4 + 3), with: [value, value, value])
+            }
+        }
+        return pixels
+    }
+
+    @Test("On repeating content, a candidate a whole repeat off yields to where the rows that occur once line up")
+    func uniqueRowsBeatARepeatAlias() async throws {
+        let last = examplesFrame(top: 0), new = examplesFrame(top: 40)
+        func verified(_ candidate: Int) -> Int? {
+            ScrollingCaptureOffsetVerifier.verifiedOffset(candidate: candidate, from: last, to: new, width: 64, height: 400,
+                                                          ignoredTrailingColumns: 0)?.offset
+        }
+        // A repeat back (-60, the frame would trim) and a repeat on (140): 90 rows of each repeat match there too.
+        #expect(verified(-60) == 40)
+        #expect(verified(140) == 40)
+        #expect(verified(40) == 40)
+        // The stitcher appends the true step, so the labels show once each.
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: last, width: 64, height: 400,
+                                                                  ignoredTrailingColumns: 0))
+        #expect(await stitcher.place(new, candidate: 140) == .appended(40))
+        // With no row of its own in either frame, the page gives nothing to tell them apart: the candidate stands.
+        let plain = { (top: Int) in self.logFrame(top: top).enumerated().map { $0.offset % (64 * 4) < 8 * 4 ? 0 : $0.element } }
+        #expect(ScrollingCaptureOffsetVerifier.verifiedOffset(candidate: 20, from: plain(0), to: plain(40), width: 64,
+            height: 400, ignoredTrailingColumns: 0)?.offset == 20)
+    }
+
     /// `height` rows of a page drawn in runs of 5 rows, 4 alike and 1 its own, so 2 rows off 2 of each 5 still match
     /// whole: log lines whose glyphs have long vertical strokes.
     private func strokesFrame(top: Int, height: Int = 400) -> [UInt8] {
