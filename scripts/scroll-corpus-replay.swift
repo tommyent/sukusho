@@ -34,7 +34,10 @@ import ImageIO
                 print(index, "first")
                 continue
             }
-            let update = await running.add(image, at: Double(index))
+            guard let update = await running.add(image, at: Double(index)) else {
+                print(index, "unchanged")
+                continue
+            }
             print(index, update.placement, "height", update.height, update.keepsChanging ? "keeps-changing" : "")
         }
         try await Task.sleep(for: .seconds(2)) // the dump writes on its own queue

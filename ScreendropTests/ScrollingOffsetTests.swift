@@ -41,6 +41,20 @@ private final class OffsetFixtureBundle: NSObject {}
         #expect(await stitcher.makeImage() == top.pixels)
     }
 
+    @Test("A frame that differs only in the ignored trailing columns repeats the view")
+    func sameViewIgnoresTrailingColumns() throws {
+        let view = try frame(3)
+        var scrollBar = view.pixels
+        for y in 0..<view.height { scrollBar[(y * view.width + view.width - 2) * 4] ^= 0xFF }
+        func same(_ other: [UInt8], ignoring trailing: Int) -> Bool {
+            ScrollingCaptureOffsetVerifier.sameView(view.pixels, other, width: view.width, height: view.height,
+                                                    ignoredTrailingColumns: trailing)
+        }
+        #expect(same(scrollBar, ignoring: 8))
+        #expect(!same(scrollBar, ignoring: 0))
+        #expect(!same(try frame(4).pixels, ignoring: 8))
+    }
+
     /// `height` rows from `top` of a page whose rows repeat every 20 rows, apart from the first 8
     /// columns, which number each repeat: log lines alike but for a counter.
     private func logFrame(top: Int, height: Int = 400) -> [UInt8] {

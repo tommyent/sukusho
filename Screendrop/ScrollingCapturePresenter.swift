@@ -176,7 +176,11 @@ final class ScrollingCapturePresenter {
                 continue
             }
             guard frame.time <= cutoff ?? .infinity else { break events }
-            let update = await feed.add(frame.image, at: frame.time)
+            // A frame that repeats the one before is an idle tick: nothing on screen changed there.
+            guard let update = await feed.add(frame.image, at: frame.time) else {
+                updateShowsWaiting(at: frame.time)
+                continue
+            }
             lastFrameTime = frame.time
             stitchedHeight = update.height
             if update.placement == .skipped, !isWaiting { waitingSince = frame.time }

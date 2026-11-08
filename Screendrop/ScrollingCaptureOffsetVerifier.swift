@@ -94,6 +94,16 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
         abs(offset) + minimumMatchedRows <= cut(in: 0..<height)
     }
 
+    /// Whether two frames are byte for byte the same over the compared columns. SCK sends a frame
+    /// whenever anything on the display changes, so most frames at rest repeat the one before.
+    static func sameView(_ a: [UInt8], _ b: [UInt8], width: Int, height: Int, ignoredTrailingColumns: Int) -> Bool {
+        guard a.count == width * height * 4, b.count == a.count else { return false }
+        let rowBytes = width * 4, compared = hashedWidth(width: width, ignoredTrailingColumns: ignoredTrailingColumns) * 4
+        return a.withUnsafeBytes { a in b.withUnsafeBytes { b in
+            (0..<height).allSatisfy { memcmp(a.baseAddress! + $0 * rowBytes, b.baseAddress! + $0 * rowBytes, compared) == 0 }
+        } }
+    }
+
     // MARK: - From R7
 
     /// Leading columns that are compared. The trailing ones are left out so
