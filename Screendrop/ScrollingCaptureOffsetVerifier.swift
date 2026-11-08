@@ -29,12 +29,18 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
     /// rows are added once, from the last frame, at the end. Verifying leaves
     /// it out for the same reason.
     static let heldBackFraction = 4
+    /// A pinned side column may change in up to this fraction of the band's rows (1/8).
+    static let pinnedChangeFraction = 8
 
     struct Verified: Equatable, Sendable {
         let offset: Int
-        /// Strips identical at offset zero across the band, a non-blank row
-        /// among them: a pinned sidebar while the page moves.
-        let stillColumns: [Range<Int>]
+        /// Columns at the left and right edges that stayed put over the band while the rest moved
+        /// by `offset`, and don't fit it: a sidebar pinned on either side. Zero at rest, and for
+        /// columns that fit both (blank, or repeating at the offset, such as a list's icons).
+        var pinnedLeft = 0, pinnedRight = 0
+        /// Zero passed over the whole width, but not over the columns between the still sides: a
+        /// sidebar pinned on each side confirmed it while the content between them moved.
+        var sidesOnly = false
     }
 
     /// The passing offset within `search` of `candidate` with the most
@@ -46,12 +52,13 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
                        ignoredTrailingColumns: ignoredTrailingColumns)
     }
 
-    /// As above, over every offset within `search` of any of the candidates.
+    /// As above, over every offset within `search` of any of the candidates. When none passes over
+    /// the whole width, a non-zero one may pass with pinned side columns left out: with a sidebar
+    /// pinned on each side, few rows match whole at the offset the content between them moved.
     static func verifiedOffset(candidates: [Int], from last: [UInt8], to new: [UInt8], width: Int, height: Int,
                                ignoredTrailingColumns: Int) -> Verified? {
         guard !candidates.isEmpty, last.count == width * height * 4, new.count == last.count else { return nil }
         let usable = hashedWidth(width: width, ignoredTrailingColumns: ignoredTrailingColumns)
-        let columns = (0..<strips).map { ($0 * usable / strips)..<(($0 + 1) * usable / strips) }.filter { !$0.isEmpty }
         return last.withUnsafeBytes { old in new.withUnsafeBytes { now in
             func same(_ y: Int, _ oldY: Int, _ x: Range<Int>) -> Bool {
                 memcmp(now.baseAddress! + (y * width + x.lowerBound) * 4,
@@ -61,35 +68,85 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
                 let start = now.baseAddress! + (y * width + x.lowerBound) * 4
                 return memcmp(start, start + 4, (x.count - 1) * 4) == 0
             }
+            func pixel(_ bytes: UnsafeRawBufferPointer, _ y: Int, _ x: Int) -> UInt32 {
+                bytes.loadUnaligned(fromByteOffset: (y * width + x) * 4, as: UInt32.self)
+            }
             let edges = unmovedEdges(height: height) { same($0, $0, 0..<usable) }
             let band = edges.top..<(height - edges.bottom)
             let committed = band.lowerBound..<cut(in: band)
-            func score(_ k: Int) -> Int? {
-                var compared = 0, agreed = 0
-                var matched = Set<Int>()
-                for y in committed where committed.contains(y + k) {
-                    var whole = true, isBlank = true
-                    for x in columns where !blank(y, x) {
-                        isBlank = false
-                        compared += 1
-                        if same(y, y + k, x) { agreed += 1 } else { whole = false }
+            /// Offsets that pass over `range`'s columns, the most distinct matching rows first.
+            func passing(_ offsets: Set<Int>, over range: Range<Int>) -> [(offset: Int, rows: Int)] {
+                let columns = (0..<strips).map {
+                    (range.lowerBound + $0 * range.count / strips)..<(range.lowerBound + ($0 + 1) * range.count / strips)
+                }.filter { !$0.isEmpty }
+                func score(_ k: Int) -> Int? {
+                    var compared = 0, agreed = 0
+                    var matched = Set<Int>()
+                    for y in committed where committed.contains(y + k) {
+                        var whole = true, isBlank = true
+                        for x in columns where !blank(y, x) {
+                            isBlank = false
+                            compared += 1
+                            if same(y, y + k, x) { agreed += 1 } else { whole = false }
+                        }
+                        if whole && !isBlank {
+                            var hasher = Hasher()
+                            hasher.combine(bytes: UnsafeRawBufferPointer(start: now.baseAddress! + (y * width + range.lowerBound) * 4,
+                                                                         count: range.count * 4))
+                            matched.insert(hasher.finalize())
+                        }
                     }
-                    if whole && !isBlank {
-                        var hasher = Hasher()
-                        hasher.combine(bytes: UnsafeRawBufferPointer(start: now.baseAddress! + y * width * 4, count: usable * 4))
-                        matched.insert(hasher.finalize())
-                    }
+                    guard compared > 0, matched.count >= minimumMatchedRows else { return nil }
+                    return Double(agreed) / Double(compared) >= agreement ? matched.count : nil
                 }
-                guard compared > 0, matched.count >= minimumMatchedRows else { return nil }
-                return Double(agreed) / Double(compared) >= agreement ? matched.count : nil
+                return offsets.compactMap { k in score(k).map { (k, $0) } }.sorted { $0.1 > $1.1 }
+            }
+            /// Columns from each edge inward that stayed put at offset zero over the band, up to the last
+            /// one that didn't change at all. A sidebar may change in a few rows (a highlight that follows
+            /// the content, as MDN's table of contents does: 64-128 of 1,542 rows); content beside it that
+            /// moved changes in many.
+            func stillSides() -> (left: Int, right: Int) {
+                func run(_ columns: [Int]) -> Int {
+                    var clean = 0
+                    for (i, x) in columns.enumerated() {
+                        var changed = 0
+                        for y in band where pixel(now, y, x) != pixel(old, y, x) {
+                            changed += 1
+                            if changed > band.count / pinnedChangeFraction { return clean }
+                        }
+                        if changed == 0 { clean = i + 1 }
+                    }
+                    return clean
+                }
+                let left = run(Array(0..<usable)), right = run(Array((0..<usable).reversed()))
+                return left + right < usable ? (left, right) : (0, 0)
             }
             let offsets = Set(candidates.flatMap { ($0 - search)...($0 + search) })
-            let passed = offsets.compactMap { k in score(k).map { (k, $0) } }.sorted { $0.1 > $1.1 }
-            guard let best = passed.first, passed.dropFirst().first?.1 != best.1 else { return nil }
-            let still = columns.filter { x in
-                band.allSatisfy { same($0, $0, x) } && band.contains { !blank($0, x) }
+            var passed = passing(offsets, over: 0..<usable)
+            var sides: (left: Int, right: Int)?
+            if passed.isEmpty {
+                // Only while the stitcher's cut lies in the band: an inner scroller that moves above it
+                // while the page stands still would have rows that didn't move appended as if they had.
+                let still = stillSides()
+                guard still.left + still.right > 0, height - edges.bottom >= cut(in: 0..<height) else { return nil }
+                sides = still
+                passed = passing(offsets.filter { $0 != 0 }, over: still.left..<(usable - still.right))
             }
-            return Verified(offset: best.0, stillColumns: still)
+            guard let best = passed.first, passed.dropFirst().first?.rows != best.rows else { return nil }
+            let k = best.offset
+            guard k != 0 else {
+                // Did only the still sides say so? Then the content between them moved.
+                let still = stillSides()
+                return Verified(offset: 0, sidesOnly: still.left + still.right > 0
+                    && passing([0], over: still.left..<(usable - still.right)).isEmpty)
+            }
+            let still = sides ?? stillSides()
+            /// A side counts as pinned when it doesn't fit the offset too.
+            func pinned(_ x: Range<Int>) -> Bool {
+                !x.isEmpty && committed.contains { committed.contains($0 + k) && !same($0, $0 + k, x) }
+            }
+            return Verified(offset: k, pinnedLeft: pinned(0..<still.left) ? still.left : 0,
+                            pinnedRight: pinned((usable - still.right)..<usable) ? still.right : 0)
         } }
     }
 

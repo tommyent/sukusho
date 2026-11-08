@@ -11,10 +11,10 @@ import AppKit
 /// Steps are posted as pixel scroll events at the region's center, tagged so
 /// the monitors here can tell them from the user's own scrolling. The
 /// pointer is never moved. Scrolling by hand or moving the pointer off the
-/// bar hands the session back, and so does the height limit; a frame that
-/// doesn't fit pauses the steps until one is placed again, or hands back if the
-/// view rests there, and the end of the page finishes the capture, as Done
-/// does. No key is watched.
+/// bar hands the session back; a frame that doesn't fit pauses the steps until
+/// one is placed again, or hands back if the view rests there; the end of the
+/// page finishes the capture, as Done does, and so does the height limit (the
+/// presenter's). No key is watched.
 /// Watching scrolling needs no permission; only posting does.
 final class ScrollingCaptureAutoScroller {
     struct State {

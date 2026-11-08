@@ -117,6 +117,149 @@ private final class OffsetFixtureBundle: NSObject {}
         #expect(ScrollingCaptureOffsetEstimator.pairs([-0.2, 40, 39.5, 120, 40.8]) == [40])
     }
 
+    /// 96 x 400, MDN's layout in small: a dense sidebar each side (columns 0-23 and 72-95, the same in
+    /// every frame, something in every row), a gap of 4 blank columns inside each, and between them
+    /// the page from row `top`, whose rows repeat nothing. `left` and `right` replace a sidebar's
+    /// pixels at screen row y, column x (0-23 within it).
+    private func sidebarFrame(top: Int, page: ((Int, Int) -> UInt8)? = nil,
+                              left: ((Int, Int) -> UInt8)? = nil, right: ((Int, Int) -> UInt8)? = nil) -> [UInt8] {
+        let width = 96, height = 400
+        let page: (Int, Int) -> UInt8 = page ?? { (row: Int, x: Int) -> UInt8 in
+            guard row % 8 < 6 else { return 255 }
+            return UInt8(truncatingIfNeeded: row * 29 + x * 3 + (row / 256) * 101)
+        }
+        let left: (Int, Int) -> UInt8 = left ?? { (y: Int, x: Int) -> UInt8 in UInt8(truncatingIfNeeded: y * 7 + x * 13) }
+        let right: (Int, Int) -> UInt8 = right ?? { (y: Int, x: Int) -> UInt8 in UInt8(truncatingIfNeeded: y * 11 + x * 5 + 3) }
+        var pixels = [UInt8](repeating: 255, count: width * height * 4)
+        for y in 0..<height {
+            for x in 0..<width {
+                let value: UInt8 = switch x {
+                case 0..<24: left(y, x)
+                case 72..<96: right(y, x - 72)
+                case 28..<68: page(top + y, x)
+                default: 255
+                }
+                pixels.replaceSubrange(((y * width + x) * 4)..<((y * width + x) * 4 + 3), with: [value, value, value])
+            }
+        }
+        return pixels
+    }
+
+    @Test("With a dense sidebar pinned each side, the content between verifies at its offset")
+    func pinnedSidebarsLeftOut() {
+        // No row matches whole at 40 across the sidebars; with them left out the page does.
+        let found = ScrollingCaptureOffsetVerifier.verifiedOffset(candidate: 40, from: sidebarFrame(top: 0),
+            to: sidebarFrame(top: 40), width: 96, height: 400, ignoredTrailingColumns: 0)
+        #expect(found == .init(offset: 40, pinnedLeft: 28, pinnedRight: 28))
+        // At rest, nothing is pinned.
+        #expect(ScrollingCaptureOffsetVerifier.verifiedOffset(candidate: 0, from: sidebarFrame(top: 40),
+            to: sidebarFrame(top: 40), width: 96, height: 400, ignoredTrailingColumns: 0) == .init(offset: 0))
+    }
+
+    @Test("Pinned sidebars show once, from the first frame, then one plain colour; the page between is whole")
+    func pinnedSidebarsShowOnce() async throws {
+        let first = sidebarFrame(top: 0)
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: first, width: 96, height: 400,
+                                                                  ignoredTrailingColumns: 0))
+        #expect(await stitcher.place(sidebarFrame(top: 40), candidate: 40) == .appended(40))
+        #expect(await stitcher.place(sidebarFrame(top: 80), candidate: 40) == .appended(40))
+        let image = await stitcher.makeImage()
+        #expect(image.count == 96 * 480 * 4)
+        func pixel(_ pixels: [UInt8], _ y: Int, _ x: Int) -> UInt8 { pixels[(y * 96 + x) * 4] }
+        let page = sidebarFrame(top: 0) + sidebarFrame(top: 400)
+        var wrong = 0
+        for y in 0..<480 {
+            for x in 28..<68 where pixel(image, y, x) != pixel(page, y, x) { wrong += 1 }
+            // The gap columns make the side's most common colour blank.
+            for x in Array(0..<28) + Array(68..<96) where pixel(image, y, x) != (y < 400 ? pixel(first, y, x) : 255) { wrong += 1 }
+        }
+        #expect(wrong == 0)
+    }
+
+    @Test("When only the pinned sidebars confirm 0, the last step is tried between them; at rest it isn't")
+    func sidesOnlyZeroYieldsToTheLastStep() async throws {
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: sidebarFrame(top: 0), width: 96, height: 400,
+                                                                  ignoredTrailingColumns: 0))
+        #expect(await stitcher.place(sidebarFrame(top: 40), candidate: 40) == .appended(40))
+        // Vision says 0 with no band pair (MDN, VM 2026-11-08 frames 4-6); the sidebars confirm it.
+        #expect(ScrollingCaptureOffsetVerifier.verifiedOffset(candidate: 0, from: sidebarFrame(top: 40),
+            to: sidebarFrame(top: 80), width: 96, height: 400, ignoredTrailingColumns: 0)
+            == .init(offset: 0, sidesOnly: true))
+        #expect(await stitcher.place(sidebarFrame(top: 80), candidate: 0) == .appended(40))
+        // At rest, something small changes between the sidebars: the content there still confirms 0.
+        let hover: (Int, Int) -> UInt8 = { (row: Int, x: Int) -> UInt8 in
+            let base: UInt8 = row % 8 < 6 ? UInt8(truncatingIfNeeded: row * 29 + x * 3 + (row / 256) * 101) : 255
+            return (200..<216).contains(row) && (40..<52).contains(x) ? base ^ 0x5A : base
+        }
+        #expect(await stitcher.place(sidebarFrame(top: 80, page: hover), candidate: 0) == .redrawn)
+    }
+
+    @Test("A pinned sidebar redrawn in place stays filled; one that moves with the page shows again")
+    func pinnedRunsFollowTheSidebar() async throws {
+        // A contents column on the left (lines every 20 rows, each its own) and no right sidebar.
+        func toc(_ shift: Int) -> (Int, Int) -> UInt8 {
+            { (y: Int, x: Int) -> UInt8 in
+                let r = y - 20 - shift
+                guard r >= 0, r % 20 < 6, y < 380 else { return 255 }
+                return UInt8(truncatingIfNeeded: (r / 20) * 41 + x * 9 + 7)
+            }
+        }
+        let none: (Int, Int) -> UInt8 = { (_: Int, _: Int) -> UInt8 in 255 }
+        func frame(_ top: Int, left: @escaping (Int, Int) -> UInt8) -> [UInt8] { sidebarFrame(top: top, left: left, right: none) }
+        func sidebarPixels(_ image: [UInt8], rows: Range<Int>) -> Int {
+            rows.reduce(0) { count, y in count + (0..<24).filter { image[(y * 96 + $0) * 4] != 255 }.count }
+        }
+        // Redrawn in place: the current section turns bold and the lines below move down 10 rows.
+        let redrawn = try #require(ScrollingCaptureFrameStitcher(firstFrame: frame(0, left: toc(0)), width: 96, height: 400,
+                                                                 ignoredTrailingColumns: 0))
+        #expect(await redrawn.place(frame(40, left: toc(0)), candidate: 40) == .appended(40))
+        #expect(await redrawn.place(frame(80, left: toc(10)), candidate: 40) == .appended(40))
+        #expect(await redrawn.place(frame(120, left: toc(10)), candidate: 40) == .appended(40))
+        #expect(sidebarPixels(await redrawn.makeImage(), rows: 400..<520) == 0)
+        // Moved with the page (a footer pushing it up): the column's own pixels are kept from there.
+        let moved = try #require(ScrollingCaptureFrameStitcher(firstFrame: frame(0, left: toc(0)), width: 96, height: 400,
+                                                               ignoredTrailingColumns: 0))
+        #expect(await moved.place(frame(40, left: toc(0)), candidate: 40) == .appended(40))
+        #expect(await moved.place(frame(80, left: toc(-40)), candidate: 40) == .appended(40))
+        #expect(sidebarPixels(await moved.makeImage(), rows: 400..<480) > 0)
+    }
+
+    @Test("An inner scroller moving above the cut while the page stands still is refused")
+    func innerScrollerStaysRefused() async throws {
+        // A static page with a box (columns 28-67, rows 100-199) scrolling its own list by 20.
+        func frame(_ list: Int) -> [UInt8] {
+            sidebarFrame(top: 0, page: { (row: Int, x: Int) -> UInt8 in
+                guard (100..<200).contains(row) else { return UInt8(truncatingIfNeeded: row * 3 + x * 17) }
+                return UInt8(truncatingIfNeeded: (row + list) * 29 + x * 3)
+            })
+        }
+        #expect(ScrollingCaptureOffsetVerifier.verifiedOffset(candidates: [20], from: frame(0), to: frame(20),
+            width: 96, height: 400, ignoredTrailingColumns: 0) == nil)
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: frame(0), width: 96, height: 400,
+                                                                  ignoredTrailingColumns: 0))
+        #expect(await stitcher.place(frame(20), candidate: 0, alternatives: [20]) == .redrawn)
+    }
+
+    @Test("A sparse page that jumps past the overlap beside a pinned sidebar is refused")
+    func sparseJumpStaysRefused() {
+        // Six-row lines every 50 rows, each its own; the view jumps 1,000 rows.
+        let sparse: (Int, Int) -> UInt8 = { (row: Int, x: Int) -> UInt8 in
+            guard row % 50 < 6 else { return 255 }
+            return UInt8(truncatingIfNeeded: (row / 50) * 37 + row * 5 + x * 3)
+        }
+        let last = sidebarFrame(top: 0, page: sparse), new = sidebarFrame(top: 1000, page: sparse)
+        #expect(ScrollingCaptureOffsetVerifier.verifiedOffset(candidates: [40, 50, -3], from: last, to: new,
+            width: 96, height: 400, ignoredTrailingColumns: 0) == nil)
+    }
+
+    @Test("Side columns that repeat at the offset, such as a list's icons, aren't pinned")
+    func repeatingColumnsArentPinned() {
+        let icons: (Int, Int) -> UInt8 = { y, x in UInt8(truncatingIfNeeded: (y % 40) * 7 + x * 13) }
+        let found = ScrollingCaptureOffsetVerifier.verifiedOffset(candidate: 40, from: sidebarFrame(top: 0, left: icons),
+            to: sidebarFrame(top: 40, left: icons), width: 96, height: 400, ignoredTrailingColumns: 0)
+        #expect(found == .init(offset: 40, pinnedLeft: 0, pinnedRight: 28))
+    }
+
     @Test("The bands of two frames with no overlap reach no consensus")
     func estimatorBandsDisagree() throws {
         let last = try frame(3), far = try frame(25)
