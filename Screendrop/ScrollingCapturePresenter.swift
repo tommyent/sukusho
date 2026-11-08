@@ -183,7 +183,7 @@ final class ScrollingCapturePresenter {
         // Frames arrive until Done, Cancel, the height limit or a stream error
         // stops the stream. Idle ticks say nothing moved, so there's nothing to
         // place, but a wait still grows.
-        var hasScrolled = false
+        var sawInput = false
         events: while let event = await events.next() {
             guard outcome != .cancelled, !hasReachedLimit else { break }
             guard case .frame(let frame) = event else {
@@ -191,17 +191,12 @@ final class ScrollingCapturePresenter {
                 continue
             }
             guard frame.time <= cutoff ?? .infinity else { break events }
-            // Until the view first scrolls, a newer frame takes the first one's place. The window server
-            // answers at once, and this frame was shown before the answer, so it can't show a scroll it missed.
-            if !hasScrolled {
-                hasScrolled = isAutoScrolling || Self.lastScrollTime() > firstTime
-                if !hasScrolled {
-                    await feed.replaceFirst(with: frame.image, at: frame.time)
-                    continue
-                }
-            }
+            // Until the first input that could scroll the view, a frame that doesn't fit may take the first
+            // one's place (`ScrollingCaptureFeed.add`). The window server answers at once, and this frame
+            // was shown before the answer, so it can't show a scroll the answer missed.
+            if !sawInput { sawInput = isAutoScrolling || Self.lastInputTime() > firstTime }
             // A frame that repeats the one before is an idle tick: nothing on screen changed there.
-            guard let update = await feed.add(frame.image, at: frame.time) else {
+            guard let update = await feed.add(frame.image, at: frame.time, mayReplaceFirst: !sawInput) else {
                 updateShowsWaiting(at: frame.time)
                 continue
             }
@@ -234,10 +229,15 @@ final class ScrollingCapturePresenter {
         return capped.map { Capture(image: $0, displayID: display.displayID, scale: scale) }
     }
 
-    /// When the last scroll event reached the window server, from any app, on the capture clock. It
-    /// needs no permission and counts the user's own scrolling (VM, macOS 27.0.1).
-    private static func lastScrollTime() -> TimeInterval {
-        ScrollingCaptureSampleTiming.now() - CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .scrollWheel)
+    /// When the last input that can scroll a view reached the window server, from any app, on the capture
+    /// clock: the wheel or trackpad, a key (Space, Page Down, the arrows) or the left button (a scroll
+    /// bar). Pointer moves don't count: the hand still moving off the selection's drag would count before
+    /// a stale first frame clears. Needs no permission (VM, macOS 27.0.1).
+    private static func lastInputTime() -> TimeInterval {
+        let since = [CGEventType.scrollWheel, .keyDown, .leftMouseDown, .leftMouseDragged].map {
+            CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: $0)
+        }.min() ?? .infinity
+        return ScrollingCaptureSampleTiming.now() - since
     }
 
     /// Set only on a change: idle ticks arrive at the frame rate.
