@@ -32,8 +32,14 @@ nonisolated struct CloudUpload: Identifiable, Hashable, Sendable, Decodable {
     var requestId: String? = nil
     /// Sealed with CryptoKit: the link opens it only with the key this app adds after `#`.
     var encrypted: Bool? = nil
+    /// The gallery this image belongs to; nil from Workers before galleries.
+    var galleryId: String? = nil
+    /// A gallery's images, in order; nil for every upload that isn't a gallery.
+    var galleryItemIDs: [String]? = nil
 
     var isVideo: Bool { mediaType == "video" }
+    /// Several images behind one link (CloudGallery), listed beside the uploads.
+    var isGallery: Bool { galleryItemIDs != nil }
     /// Shared from the Library's Files page rather than captured.
     var isFile: Bool { mediaType == "file" }
     /// Sent by a client: private, so it has no share link and downloads only with the token.
@@ -42,13 +48,14 @@ nonisolated struct CloudUpload: Identifiable, Hashable, Sendable, Decodable {
         guard let title, !title.isEmpty else { return filename }
         return title
     }
-    var kindTitle: String { isReceived ? "Received file" : isFile ? "File" : isVideo ? "Recording" : "Screenshot" }
+    var kindTitle: String { isGallery ? "Gallery" : isReceived ? "Received file" : isFile ? "File" : isVideo ? "Recording" : "Screenshot" }
 }
 
 extension CloudUpload {
     private nonisolated enum CodingKeys: String, CodingKey {
         case id, url, title, filename, mediaType, size, duration, createdAt, views, thumbnailUrl
         case mediaKey, expiresAt, allowAnonymousComments, socialEnabled, hasPassword, commentCount, likeCount, requestId, encrypted
+        case galleryId
     }
 
     /// Without format characters, which can reorder or hide what a name shows (a U+202E in
@@ -84,7 +91,8 @@ extension CloudUpload {
             likeCount: try c.decodeIfPresent(Int.self, forKey: .likeCount),
             supportsShareSettings: c.contains(.expiresAt),
             requestId: try c.decodeIfPresent(String.self, forKey: .requestId),
-            encrypted: try c.decodeIfPresent(Bool.self, forKey: .encrypted)
+            encrypted: try c.decodeIfPresent(Bool.self, forKey: .encrypted),
+            galleryId: try c.decodeIfPresent(String.self, forKey: .galleryId)
         )
     }
 }
@@ -249,5 +257,114 @@ nonisolated enum CloudUploadList {
               url.host?.lowercased() == base.host?.lowercased(), url.port == base.port,
               let id = uploadID(of: link), CloudPreviewCache.isSafeID(id), url.path == "/" + id else { return nil }
         return id
+    }
+
+    /// Whether the Uploads page lists this upload on the page for `files` or `received`. A gallery's
+    /// images show inside their gallery, not on their own.
+    static func isListed(_ upload: CloudUpload, files: Bool, received: Bool) -> Bool {
+        upload.galleryId == nil && (received ? upload.isReceived : !upload.isReceived && upload.isFile == files)
+    }
+}
+
+// MARK: - Errors
+
+enum CloudUploadError: LocalizedError {
+    case notConfigured
+    case invalidURL
+    case networkError(Error)
+    case serverError(Int, String)
+    case invalidResponse
+    case listUnavailable
+    case shareSettingsUnavailable
+    case passwordUnsupported
+    case commentsUnavailable
+    case likesUnavailable
+    case invalidPassword
+    case multipartUnavailable
+    case encryptionUnavailable
+    case encryptedTooLarge
+    case encryptionUnsupported
+    case encryptionUnsupportedNotRemoved
+
+    var errorDescription: String? {
+        switch self {
+        case .notConfigured:
+            "Cloud upload is not configured. Set your worker URL and upload token in Settings."
+        case .invalidURL:
+            "Invalid worker URL."
+        case .networkError(let error):
+            "Network error: \(error.localizedDescription)"
+        case .serverError(let code, let body):
+            "Server error (\(code)): \(body)"
+        case .invalidResponse:
+            "Invalid response from server."
+        case .listUnavailable:
+            "This Worker can't list uploads yet. Update it to manage every upload from the Library."
+        case .commentsUnavailable:
+            "This Worker can’t list comments yet. Update it to read your share pages’ comments in the Library."
+        case .likesUnavailable:
+            "This Worker can’t list likes yet. Update it to see your share pages’ likes in the Library."
+        case .passwordUnsupported:
+            "This Worker doesn’t support passwords yet, so the upload was removed instead of being shared without one. Update the Worker, or share without a password."
+        case .invalidPassword:
+            "Passwords can be 1 to 128 characters."
+        case .multipartUnavailable:
+            "This Worker can’t take files yet. Update the Worker to share files."
+        case .encryptionUnavailable:
+            CloudShareSeal.unavailableNote
+        case .encryptedTooLarge:
+            "End-to-end encryption is for files up to 32 MB for now, because the whole file is decrypted in the viewer’s browser. Share this one without it."
+        case .encryptionUnsupported:
+            "This Worker doesn’t support end-to-end encryption yet, so the upload was removed. Update the Worker, or share without encryption."
+        case .encryptionUnsupportedNotRemoved:
+            "This Worker doesn’t support end-to-end encryption yet, and removing the upload failed, so it may still be published as a page nobody can open. Delete it from the Library’s Cloud page, then update the Worker."
+        case .shareSettingsUnavailable:
+            "The Worker couldn’t change this upload. Update the Worker if it predates link expiry; otherwise the upload is no longer there."
+        }
+    }
+}
+
+/// What an upload sends alongside its bytes: the same headers on PUT /api/upload and POST /api/multipart.
+nonisolated struct UploadMetadata: Sendable {
+    let filename: String
+    let contentType: String
+    let mediaType: String
+    let width: Int?
+    let height: Int?
+    let duration: Double?
+    let title: String?
+    let socialEnabled: Bool
+    let expiresAt: Date?
+    let allowAnonymousComments: Bool
+    let password: String?
+    /// The body is a sealed share (CloudShareSeal).
+    var encrypted = false
+
+    /// URLSession drops header bytes outside ASCII, so such names (and any `%`)
+    /// go percent-encoded; the Worker decodes once. Plain ASCII names stay as
+    /// they are, which older Workers still read.
+    static func headerFilename(_ name: String) -> String {
+        let plain = CharacterSet(charactersIn: Unicode.Scalar(0x20)...Unicode.Scalar(0x7E)).subtracting(CharacterSet(charactersIn: "%"))
+        guard !name.unicodeScalars.allSatisfy(plain.contains) else { return name }
+        return name.addingPercentEncoding(withAllowedCharacters: plain.subtracting(CharacterSet(charactersIn: " "))) ?? name
+    }
+
+    func apply(to request: inout URLRequest) throws {
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+        request.setValue(Self.headerFilename(filename), forHTTPHeaderField: "X-Filename")
+        request.setValue(mediaType, forHTTPHeaderField: "X-Media-Type")
+
+        if let width { request.setValue(String(width), forHTTPHeaderField: "X-Width") }
+        if let height { request.setValue(String(height), forHTTPHeaderField: "X-Height") }
+        if let duration { request.setValue(String(duration), forHTTPHeaderField: "X-Duration") }
+        if let title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let encoded = title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? title
+            request.setValue(encoded, forHTTPHeaderField: "X-Title")
+        }
+        request.setValue(socialEnabled ? "true" : "false", forHTTPHeaderField: "X-Social-Enabled")
+        if encrypted { request.setValue("1", forHTTPHeaderField: "X-Encrypted") }
+        if let password, !CloudUploadList.isValidPassword(password) { throw CloudUploadError.invalidPassword }
+        CloudUploadList.applyShareSettings(to: &request, expiresAt: expiresAt, allowAnonymousComments: allowAnonymousComments,
+                                           password: password)
     }
 }
