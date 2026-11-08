@@ -176,6 +176,24 @@ private final class OffsetFixtureBundle: NSObject {}
         #expect(wrong == 0)
     }
 
+    @Test("When only the pinned sidebars confirm 0, the last step is tried between them; at rest it isn't")
+    func sidesOnlyZeroYieldsToTheLastStep() async throws {
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: sidebarFrame(top: 0), width: 96, height: 400,
+                                                                  ignoredTrailingColumns: 0))
+        #expect(await stitcher.place(sidebarFrame(top: 40), candidate: 40) == .appended(40))
+        // Vision says 0 with no band pair (MDN, VM 2026-11-08 frames 4-6); the sidebars confirm it.
+        #expect(ScrollingCaptureOffsetVerifier.verifiedOffset(candidate: 0, from: sidebarFrame(top: 40),
+            to: sidebarFrame(top: 80), width: 96, height: 400, ignoredTrailingColumns: 0)
+            == .init(offset: 0, sidesOnly: true))
+        #expect(await stitcher.place(sidebarFrame(top: 80), candidate: 0) == .appended(40))
+        // At rest, something small changes between the sidebars: the content there still confirms 0.
+        let hover: (Int, Int) -> UInt8 = { (row: Int, x: Int) -> UInt8 in
+            let base: UInt8 = row % 8 < 6 ? UInt8(truncatingIfNeeded: row * 29 + x * 3 + (row / 256) * 101) : 255
+            return (200..<216).contains(row) && (40..<52).contains(x) ? base ^ 0x5A : base
+        }
+        #expect(await stitcher.place(sidebarFrame(top: 80, page: hover), candidate: 0) == .redrawn)
+    }
+
     @Test("An inner scroller moving above the cut while the page stands still is refused")
     func innerScrollerStaysRefused() async throws {
         // A static page with a box (columns 28-67, rows 100-199) scrolling its own list by 20.

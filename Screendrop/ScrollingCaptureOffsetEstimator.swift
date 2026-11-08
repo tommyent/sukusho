@@ -25,6 +25,9 @@ nonisolated enum ScrollingCaptureOffsetEstimator {
         /// Other shifts at least two bands agree on: with a sidebar pinned on
         /// each side, the content between can be what moved.
         var alternatives: [Int] = []
+        /// Each band's own shift, rounded: what the content between pinned sidebars may have moved
+        /// by when they alone confirm zero.
+        var bands: [Int] = []
     }
 
     /// The candidate offset: the bands' consensus, else the whole frame's
@@ -35,10 +38,11 @@ nonisolated enum ScrollingCaptureOffsetEstimator {
         guard let images = images(last, new, width: width, height: height) else { return nil }
         let usable = ScrollingCaptureOffsetVerifier.hashedWidth(width: width, ignoredTrailingColumns: ignoredTrailingColumns)
         let shifts = bandShifts(images, usable: usable)
-        if let agreed = consensus(shifts) { return Candidate(offset: agreed, bandsAgree: true) }
+        let bands = shifts.map { Int($0.rounded()) }
+        if let agreed = consensus(shifts) { return Candidate(offset: agreed, bandsAgree: true, bands: bands) }
         return translation(images, in: CGRect(x: 0, y: 0, width: usable, height: height)).map {
             let offset = Int($0.rounded())
-            return Candidate(offset: offset, bandsAgree: false, alternatives: pairs(shifts).filter { $0 != offset })
+            return Candidate(offset: offset, bandsAgree: false, alternatives: pairs(shifts).filter { $0 != offset }, bands: bands)
         }
     }
 

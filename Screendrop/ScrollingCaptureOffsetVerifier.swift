@@ -38,6 +38,9 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
         /// by `offset`, and don't fit it: a sidebar pinned on either side. Zero at rest, and for
         /// columns that fit both (blank, or repeating at the offset, such as a list's icons).
         var pinnedLeft = 0, pinnedRight = 0
+        /// Zero passed over the whole width, but not over the columns between the still sides: a
+        /// sidebar pinned on each side confirmed it while the content between them moved.
+        var sidesOnly = false
     }
 
     /// The passing offset within `search` of `candidate` with the most
@@ -131,7 +134,12 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
             }
             guard let best = passed.first, passed.dropFirst().first?.rows != best.rows else { return nil }
             let k = best.offset
-            guard k != 0 else { return Verified(offset: 0) }
+            guard k != 0 else {
+                // Did only the still sides say so? Then the content between them moved.
+                let still = stillSides()
+                return Verified(offset: 0, sidesOnly: still.left + still.right > 0
+                    && passing([0], over: still.left..<(usable - still.right)).isEmpty)
+            }
             let still = sides ?? stillSides()
             /// A side counts as pinned when it doesn't fit the offset too.
             func pinned(_ x: Range<Int>) -> Bool {

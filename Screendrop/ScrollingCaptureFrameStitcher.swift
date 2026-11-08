@@ -93,7 +93,8 @@ actor ScrollingCaptureFrameStitcher {
         guard frame.count == last.count else { lastWasUpward = false; return (.skipped, nil) }
         let candidate = ScrollingCaptureOffsetEstimator.candidate(from: last, to: frame,
             width: width, height: height, ignoredTrailingColumns: ignoredTrailingColumns)
-        return (place(frame, candidate: candidate?.offset, alternatives: candidate?.alternatives ?? []), candidate)
+        return (place(frame, candidate: candidate?.offset, alternatives: candidate?.alternatives ?? [],
+                      bands: candidate?.bands ?? []), candidate)
     }
 
     /// Places a frame against the reference at Vision's candidate.
@@ -102,16 +103,19 @@ actor ScrollingCaptureFrameStitcher {
     /// - It doesn't verify: the last step appended and those shifts are tried. On repeating rows
     ///   (log lines, table rows) Vision can land a whole repeat off, and steady scrolling
     ///   (auto-scroll's equal steps) repeats the last step.
-    /// The last step never overrides a confirmed 0: at rest, rows repeating at that distance
-    /// would confirm it too.
-    func place(_ frame: [UInt8], candidate: Int?, alternatives: [Int] = []) -> Placement {
+    /// The last step never overrides a confirmed 0 (at rest, rows repeating at that distance would
+    /// confirm it too), unless still side columns alone confirmed it: then the content between them
+    /// moved, and the last step and each band's own shift are tried there.
+    func place(_ frame: [UInt8], candidate: Int?, alternatives: [Int] = [], bands: [Int] = []) -> Placement {
         func verified(_ candidates: [Int]) -> ScrollingCaptureOffsetVerifier.Verified? {
             ScrollingCaptureOffsetVerifier.verifiedOffset(candidates: candidates, from: last, to: frame,
                 width: width, height: height, ignoredTrailingColumns: ignoredTrailingColumns)
         }
         let moved = alternatives.filter { $0 != 0 && $0 != candidate }
         var found = candidate.flatMap { verified([$0]) }
-        if found?.offset == 0, !moved.isEmpty {
+        if found?.sidesOnly == true {
+            found = verified(Array(Set(moved + bands + [lastStep].compactMap { $0 }).filter { $0 != 0 })) ?? found
+        } else if found?.offset == 0, !moved.isEmpty {
             found = verified(moved) ?? found
         } else if found == nil {
             found = verified(Array(Set(moved + [lastStep].compactMap { $0 }.filter { $0 != candidate })))
