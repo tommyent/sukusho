@@ -21,7 +21,7 @@ actor ScrollingCaptureFeed {
         let keepsChanging: Bool
     }
 
-    private let stitcher: ScrollingCaptureFrameStitcher
+    private var stitcher: ScrollingCaptureFrameStitcher
     private let dump: ScrollingCaptureFrameDump?
     private let selection: CGRect
     private let frameSize: CGSize
@@ -55,6 +55,25 @@ actor ScrollingCaptureFeed {
         dump = ScrollingCaptureFrameDump(width: cropped.width, height: cropped.height,
                                          ignoredTrailingColumns: ignoredTrailingColumns)
         dump?.write(index: 0, time: time, frame: cropped, verifiedOffset: 0, action: "first")
+    }
+
+    /// Before the view first scrolls, a newer frame takes the first one's place: the first can be stale
+    /// (the selection's dimming caught mid-fade), and every frame after it would be refused against it.
+    /// A repeat of the one before is left out, as in `add`.
+    func replaceFirst(with frame: CGImage, at time: TimeInterval) {
+        guard CGSize(width: frame.width, height: frame.height) == frameSize, let cropped = Self.crop(frame, to: selection),
+              let pixels = ScrollingCapturePixels.bytes(of: cropped, in: colorSpace),
+              previous.map({ !ScrollingCaptureOffsetVerifier.sameView(pixels, $0, width: cropped.width,
+                  height: cropped.height, ignoredTrailingColumns: ignoredTrailingColumns) }) ?? true,
+              let restarted = ScrollingCaptureFrameStitcher(firstFrame: pixels, width: cropped.width,
+                  height: cropped.height, ignoredTrailingColumns: ignoredTrailingColumns) else { return }
+        stitcher = restarted
+        previous = pixels
+        previousWasUpward = false
+        index += 1
+        reference = index
+        referenceFrame = frame
+        dump?.write(index: index, time: time, frame: cropped, verifiedOffset: 0, action: "first")
     }
 
     /// Nil when the frame repeats the one before over the compared columns: nothing new to
