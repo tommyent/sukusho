@@ -33,6 +33,46 @@ private final class FeedFixtureBundle: NSObject {}
         #expect(try pixels(image, rows: 540..<580) == pixels(lower, rows: 360..<400))
     }
 
+    /// The frame under a grey veil: the selection's dimming caught mid-fade.
+    private func veiled(_ image: CGImage) throws -> CGImage {
+        let context = try #require(CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
+            bytesPerRow: 0, space: ScrollingCapturePixels.colorSpace(of: image),
+            bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue))
+        let all = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+        context.draw(image, in: all)
+        context.setFillColor(gray: 0, alpha: 0.1)
+        context.fill(all)
+        return try #require(context.makeImage())
+    }
+
+    @Test("Before any input, a newer frame takes a stale first frame's place")
+    func staleFirstFrameIsReplaced() async throws {
+        let top = try frame(3), lower = try frame(4)
+        // Matched against the stale frame, the scrolled one is refused.
+        let stale = try #require(ScrollingCaptureFeed(firstFrame: veiled(top), at: 0, selection: selection,
+                                                      ignoredTrailingColumns: 0))
+        #expect(await stale.add(lower, at: 2)?.placement == .skipped)
+        let feed = try #require(ScrollingCaptureFeed(firstFrame: veiled(top), at: 0, selection: selection,
+                                                     ignoredTrailingColumns: 0))
+        #expect(await feed.add(top, at: 1, mayReplaceFirst: true) == nil)
+        #expect(await feed.add(lower, at: 2)?.placement == .appended(180))
+        let image = try #require(await feed.makeImage())
+        #expect(image.height == 360 + 180)
+        #expect(try pixels(image, rows: 0..<360) == pixels(top, rows: 0..<360))
+    }
+
+    @Test("Before any input, a frame that moved is placed as always, and once rows are appended one that doesn't fit is refused")
+    func onlyAnUnfittingFirstIsReplaced() async throws {
+        let top = try frame(3), lower = try frame(4)
+        // A page that scrolls itself, or a scroll the input check missed, still stitches.
+        let feed = try #require(ScrollingCaptureFeed(firstFrame: top, at: 0, selection: selection, ignoredTrailingColumns: 0))
+        #expect(await feed.add(lower, at: 1, mayReplaceFirst: true)?.placement == .appended(180))
+        // A frame that doesn't fit then waits for one that does, as without the flag.
+        let unfitting = try veiled(lower)
+        #expect(await feed.add(unfitting, at: 2, mayReplaceFirst: true)?.placement == .skipped)
+        #expect(try #require(await feed.makeImage()).height == 360 + 180)
+    }
+
     @Test("A repeat of an upward frame trims, as one notch back up needs; later repeats are dropped")
     func upwardRepeatTrims() async throws {
         let top = try frame(3), lower = try frame(4)

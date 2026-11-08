@@ -20,17 +20,22 @@ import Foundation
 ///   the capture, so a step that moved, however little, never counts as it.
 /// - Nothing on screen changed since the step (the page didn't move), or the
 ///   frames since it were placed without moving (a playing video at the end
-///   of the page): they share one budget. At most
-///   `maximumStepsWithoutProgress` steps are ever posted since the last
-///   stitched progress, then the page has ended. Frames that don't fit never
-///   count: the caller pauses on one and starts a new pacer once a frame is
-///   placed, so the end of the page only follows steps whose frames were placed.
+///   of the page, or an inner scroller that took the step): they share one
+///   budget. Each such step is followed by one at another of the region's
+///   points, and at most `maximumStepsWithoutProgress` steps are ever posted
+///   since the last stitched progress, then the page has ended. Frames that
+///   don't fit never count: the caller pauses on one and starts a new pacer
+///   once a frame is placed, so the end of the page only follows steps whose
+///   frames were placed.
 nonisolated struct AutoScrollPacer: Equatable {
     enum Action: Equatable {
         /// The step is still under way.
         case wait
-        /// Post the next step now.
+        /// Post the next step now, where the last one went.
         case step
+        /// Post the next step now at the region's next point: the last one moved nothing stitched,
+        /// and an inner scroller under the point (MDN's example boxes) may have taken it.
+        case stepElsewhere
         /// The page has run out.
         case endOfPage
     }
@@ -44,13 +49,14 @@ nonisolated struct AutoScrollPacer: Equatable {
     /// A step after which nothing on screen changed counts as unanswered.
     static let responseTime: TimeInterval = 1
     /// Steps posted since the last stitched progress, the one in flight
-    /// included: two quarter-region steps keep the view within half a region
-    /// of what was stitched. Five carried the page a region and a quarter
-    /// past it on a playing video that blocks registration (VM, 2026-10-10).
+    /// included, one at each of the region's points: the view stays within
+    /// three quarter-region steps of what was stitched. Five carried the page
+    /// a region and a quarter past it on a playing video that blocks
+    /// registration (VM, 2026-10-10).
     /// ponytail: re-covering rows captured before auto-scroll started would
     /// end the capture after this too; the stitcher trims the output when the
     /// view moves back up, so re-covered rows are appended again instead.
-    static let maximumStepsWithoutProgress = 2
+    static let maximumStepsWithoutProgress = 3
 
     /// Paused on a frame that doesn't fit, with no new frame since it for `responseTime`: the
     /// view is at rest where nothing fits, and no further step can bring one back, so
@@ -88,18 +94,19 @@ nonisolated struct AutoScrollPacer: Equatable {
 
     private mutating func progress(height: Int, now: TimeInterval) -> Action {
         stepsWithoutProgress = 1
-        return post(height: height, now: now)
+        post(height: height, now: now)
+        return .step
     }
 
     private mutating func noProgress(height: Int, now: TimeInterval) -> Action {
         guard stepsWithoutProgress < Self.maximumStepsWithoutProgress else { return .endOfPage }
         stepsWithoutProgress += 1
-        return post(height: height, now: now)
+        post(height: height, now: now)
+        return .stepElsewhere
     }
 
-    private mutating func post(height: Int, now: TimeInterval) -> Action {
+    private mutating func post(height: Int, now: TimeInterval) {
         postedAt = now
         startHeight = height
-        return .step
     }
 }

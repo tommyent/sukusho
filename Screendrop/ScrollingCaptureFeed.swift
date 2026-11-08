@@ -21,7 +21,7 @@ actor ScrollingCaptureFeed {
         let keepsChanging: Bool
     }
 
-    private let stitcher: ScrollingCaptureFrameStitcher
+    private var stitcher: ScrollingCaptureFrameStitcher
     private let dump: ScrollingCaptureFrameDump?
     private let selection: CGRect
     private let frameSize: CGSize
@@ -61,7 +61,12 @@ actor ScrollingCaptureFeed {
     /// place, and auto-scroll mustn't take it for the view still moving. A repeat of a frame
     /// placed `.upward` still goes through: one notch back up gives a single distinct frame,
     /// and its repeat at rest is what confirms it and trims, as on main.
-    func add(_ frame: CGImage, at time: TimeInterval) async -> Update? {
+    ///
+    /// With `mayReplaceFirst` (no input that could scroll the view yet), a frame that didn't move,
+    /// or doesn't fit, takes the first frame's place while nothing is appended, and is nil too: the
+    /// first can be stale (the selection's dimming caught mid-fade) and would refuse every frame
+    /// after it. A frame that moved is placed as always (a page that scrolls itself).
+    func add(_ frame: CGImage, at time: TimeInterval, mayReplaceFirst: Bool = false) async -> Update? {
         let cropped = CGSize(width: frame.width, height: frame.height) == frameSize ? Self.crop(frame, to: selection) : nil
         let pixels = cropped.flatMap { ScrollingCapturePixels.bytes(of: $0, in: colorSpace) }
         if !previousWasUpward, let pixels, let previous, ScrollingCaptureOffsetVerifier.sameView(pixels, previous,
@@ -73,6 +78,17 @@ actor ScrollingCaptureFeed {
         // A frame that can't be read goes to the stitcher as one that doesn't
         // fit, so it also breaks a run of upward frames.
         let (placement, candidate) = await stitcher.add(pixels ?? [])
+        if placement == .skipped || placement == .redrawn, mayReplaceFirst, let pixels, let cropped,
+           await stitcher.stitchedHeight == cropped.height,
+           let restarted = ScrollingCaptureFrameStitcher(firstFrame: pixels, width: cropped.width,
+               height: cropped.height, ignoredTrailingColumns: ignoredTrailingColumns) {
+            stitcher = restarted
+            reference = index
+            referenceFrame = frame
+            previousWasUpward = false
+            dump?.write(index: index, time: time, frame: cropped, verifiedOffset: 0, action: "first")
+            return nil
+        }
         let keepsChanging = placement == .skipped && candidate.map {
             $0.bandsAgree && ScrollingCaptureOffsetVerifier.canConfirm($0.offset, height: Int(selection.height))
         } ?? false
