@@ -64,18 +64,23 @@ import Testing
             == .init(rect: CGRect(x: 600, y: 194, width: 500, height: 918), reason: .clipped, obstacles: [1], target: 3, ignored: [0, 2]))
     }
 
-    @Test("At the end of the page the output goes on to the bottom of the frames, short of the Dock")
+    @Test("At the end of the page the output goes on to the window's bottom, short of its rim and the Dock")
     func rowsBelowTheSelection() {
         let frames = CGRect(x: 600, y: 38, width: 500, height: 1074)
         let output = ScrollingCaptureRegion.output(selection: selection, matching: frames, scale: 2)
         #expect(output.rows == 724..<1324)
-        // The window runs to the bottom of the display: every frame row below the selection.
-        #expect(ScrollingCaptureRegion.rowsBelow(output: output, matching: frames, usableBottom: 1112, scale: 2) == 1324..<2148)
+        func below(_ output: ScrollingCaptureOutputRect, _ matching: CGRect, window: CGFloat?, usable: CGFloat) -> Range<Int> {
+            ScrollingCaptureRegion.rowsBelow(output: output, matching: matching, windowBottom: window, usableBottom: usable, scale: 2)
+        }
+        // The window ends at the bottom of the display: the frame rows below the selection, but its 1 pt rim.
+        #expect(below(output, frames, window: 1112, usable: 1112) == 1324..<2146)
+        // A window that runs past the display's bottom has no rim on it.
+        #expect(below(output, frames, window: 1200, usable: 1112) == 1324..<2148)
         // The Dock's full-display window is left out of `matching`; the visible frame stops above its tiles.
-        #expect(ScrollingCaptureRegion.rowsBelow(output: output, matching: frames, usableBottom: 1040, scale: 2) == 1324..<2004)
+        #expect(below(output, frames, window: 1112, usable: 1040) == 1324..<2004)
         // Frames that are the selection (a window in front of it) have nothing below it.
         let own = ScrollingCaptureRegion.output(selection: selection, matching: selection, scale: 2)
-        #expect(ScrollingCaptureRegion.rowsBelow(output: own, matching: selection, usableBottom: 1112, scale: 2).isEmpty)
+        #expect(below(own, selection, window: nil, usable: 1112).isEmpty)
     }
 
     @Test("A window over most but not all of the display still counts")

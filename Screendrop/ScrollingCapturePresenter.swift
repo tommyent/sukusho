@@ -116,14 +116,16 @@ final class ScrollingCapturePresenter {
         let targets = Set(content.windows.filter {
             $0.windowLayer == 0 && $0.owningApplication?.processID != ProcessInfo.processInfo.processIdentifier
         }.map(\.windowID))
-        let sourceRect = ScrollingCaptureRegion.matching(selection: selectionRect, display: filter.contentRect,
-            frontToBackWindows: ScrollingCaptureRegion.frontToBackWindows(on: display.displayID, targets: targets)).rect
+        let windows = ScrollingCaptureRegion.frontToBackWindows(on: display.displayID, targets: targets)
+        let matching = ScrollingCaptureRegion.matching(selection: selectionRect, display: filter.contentRect,
+                                                       frontToBackWindows: windows)
+        let sourceRect = matching.rect
         let scale = max(1, CGFloat(filter.pointPixelScale))
         let output = ScrollingCaptureRegion.output(selection: selectionRect, matching: sourceRect, scale: scale)
         let usableBottom = screen.map { ScreenRecordingManager.sourceRect(forAppKitSelectionRect: $0.visibleFrame,
             screenFrame: $0.frame, contentRect: filter.contentRect).maxY } ?? sourceRect.maxY
-        let rowsBelow = ScrollingCaptureRegion.rowsBelow(output: output, matching: sourceRect, usableBottom: usableBottom,
-                                                         scale: scale)
+        let rowsBelow = ScrollingCaptureRegion.rowsBelow(output: output, matching: sourceRect,
+            windowBottom: matching.target.map { windows[$0].frame.maxY }, usableBottom: usableBottom, scale: scale)
 
         stitchedHeight = output.rows.count
         isWaiting = false

@@ -82,13 +82,19 @@ nonisolated enum ScrollingCaptureRegion {
             rows: top..<(top + Int((selection.height * scale).rounded())))
     }
 
+    /// The rim macOS draws along a window's edge: the last device-pixel row of a Safari window on
+    /// 27.0.1 is lighter than the page above it, with the corners' shading at its ends (VM, 2026-11-08).
+    static let windowRim: CGFloat = 1
+
     /// The frame rows below the selection that the output keeps when auto-scroll reaches the end of
     /// the page: down to the bottom of the frames (the target window's visible bottom, short of windows
-    /// in front), and no lower than `usableBottom`, the bottom of the display's visible frame, so the
-    /// Dock's full-display window, which `matching` leaves out, never ends up in it.
-    static func rowsBelow(output: ScrollingCaptureOutputRect, matching: CGRect, usableBottom: CGFloat,
-                          scale: CGFloat) -> Range<Int> {
-        let bottom = Int(((min(matching.maxY, usableBottom) - matching.minY) * scale).rounded(.down))
+    /// in front), a `windowRim` above `windowBottom` (the target window's frame), and no lower than
+    /// `usableBottom`, the bottom of the display's visible frame, so the Dock's full-display window,
+    /// which `matching` leaves out, never ends up in it.
+    static func rowsBelow(output: ScrollingCaptureOutputRect, matching: CGRect, windowBottom: CGFloat?,
+                          usableBottom: CGFloat, scale: CGFloat) -> Range<Int> {
+        let bottom = Int(((min(matching.maxY, usableBottom, (windowBottom ?? .infinity) - windowRim) - matching.minY) * scale)
+            .rounded(.down))
         return output.rows.upperBound..<max(output.rows.upperBound, bottom)
     }
 }
