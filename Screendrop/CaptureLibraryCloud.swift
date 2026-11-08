@@ -117,6 +117,19 @@ final class CloudLibraryModel {
         return CloudGalleryAPI.supportsGalleries(version: workerVersion.version)
     }
 
+    /// Delete from Cloud… on a Library card: what happens to the image's gallery, if it has one.
+    func galleryNote(forLink link: String?) -> String? {
+        // A Worker that said it predates galleries has none; one that hasn't said yet may.
+        let possible = workerVersion.map { $0.worker != CloudUploader.shared.ownerAccess?.workerBase || supportsGalleries } ?? true
+        return CloudGalleryAPI.deleteNote(uploadID: CloudUploadList.uploadID(of: link), uploads: uploads, galleriesPossible: possible)
+    }
+
+    /// Whether the upload behind this link is in a gallery, as the listing says.
+    func isInGallery(link: String?) -> Bool {
+        let id = CloudUploadList.uploadID(of: link)
+        return uploads.contains { $0.id == id && $0.galleryId != nil }
+    }
+
     /// Library captures by the upload ID in their cloud link.
     var localItems: [String: CaptureLibraryItem] {
         CaptureLibraryModel.shared.items.reduce(into: [:]) { result, item in

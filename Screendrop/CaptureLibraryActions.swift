@@ -323,9 +323,11 @@ extension CaptureLibraryModel {
     func deleteCloudCopy(_ item: CaptureLibraryItem) {
         guard let link = item.cloudURL, let uploadID = URL(string: link)?.lastPathComponent, !isBusy else { return }
         run("Deleting cloud copy…") {
+            let inGallery = CloudLibraryModel.shared.isInGallery(link: link)
             try await CloudUploader.shared.deleteFromCloud(uploadID: uploadID)
             for id in item.historyIDs { ScreenshotHistoryStore.shared.setLibraryCloudURL(id: id, cloudURL: nil) }
-            CloudLibraryModel.shared.refreshUsage()
+            // Its gallery shrank, or went with it: the Uploads page lists it again.
+            if inGallery { CloudLibraryModel.shared.refresh() } else { CloudLibraryModel.shared.refreshUsage() }
             self.refresh()
         }
     }

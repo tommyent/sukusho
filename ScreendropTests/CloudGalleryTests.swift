@@ -370,6 +370,39 @@ struct CloudGalleryTests {
         #expect(card.hasPassword == false && card.expiresAt == nil && card.views == 4)
     }
 
+    @Test func deletingACardsImageSaysWhatHappensToItsGallery() {
+        let date = Date(timeIntervalSince1970: 1_800_000_000)
+        func upload(_ id: String, gallery: String? = nil) -> CloudUpload {
+            CloudUpload(id: id, url: "\(base)/\(id)", title: nil, filename: "\(id).png", mediaType: "image", size: 1, duration: nil,
+                        createdAt: date, views: 0, thumbnailUrl: nil, galleryId: gallery)
+        }
+        func gallery(_ id: String, title: String?, items: [String]) -> CloudUpload {
+            CloudUpload(id: id, url: "\(base)/g/\(id)", title: title, filename: "", mediaType: "gallery", size: nil, duration: nil,
+                        createdAt: date, views: 0, thumbnailUrl: nil, galleryItemIDs: items)
+        }
+        let uploads = [
+            upload("a1", gallery: "g1"), upload("a2", gallery: "g1"), upload("b1", gallery: "g2"), upload("c1", gallery: "g3"),
+            upload("d1", gallery: "gone"), upload("single"),
+            gallery("g1", title: "  Trip ", items: ["a1", "a2"]), gallery("g2", title: nil, items: ["b1", "b9"]),
+            gallery("g3", title: "Last", items: ["c1"]),
+        ]
+        func note(_ id: String?, possible: Bool = true) -> String? {
+            CloudGalleryAPI.deleteNote(uploadID: id, uploads: uploads, galleriesPossible: possible)
+        }
+        #expect(note("a1") == "This image is also removed from its gallery “Trip”. The gallery keeps its other images.")
+        #expect(note("b1") == "This image is also removed from its gallery. The gallery keeps its other images.")
+        #expect(note("c1") == "It’s the last image in its gallery “Last”, so the gallery is deleted too.")
+        // The listing knows it's in a gallery, but not that gallery: no name, still said.
+        #expect(note("d1") == "This image is also removed from its gallery. The gallery keeps its other images.")
+        #expect(note("single") == nil)
+        #expect(note(nil) == nil)
+        // Not in the listing (not loaded yet, or shared since): wording that covers both, unless the Worker has no galleries.
+        #expect(note("unlisted") == "If this image is in a gallery, it’s also removed from it. The gallery keeps its other images.")
+        #expect(note("unlisted", possible: false) == nil)
+        // A gallery's own id isn't a card's image.
+        #expect(note("g1", possible: false) == nil)
+    }
+
     @Test func deletingAGalleryUsesItsOwnRoute() async throws {
         GalleryURLProtocol.configure { call, _ in call.method == "DELETE" ? (404, "") : (500, "") }
         // One already gone counts as deleted.

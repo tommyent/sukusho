@@ -205,6 +205,23 @@ nonisolated enum CloudGalleryAPI {
         return (jpeg as Data, width, height)
     }
 
+    /// What Delete from Cloud… on a Library card adds when its image is in a gallery, from the Uploads
+    /// listing; nil when it isn't. An upload the listing doesn't have may be in one, unless the Worker
+    /// predates galleries.
+    static func deleteNote(uploadID: String?, uploads: [CloudUpload], galleriesPossible: Bool) -> String? {
+        guard let uploadID else { return nil }
+        guard let upload = uploads.first(where: { $0.id == uploadID && !$0.isGallery }) else {
+            return galleriesPossible ? "If this image is in a gallery, it’s also removed from it. The gallery keeps its other images." : nil
+        }
+        guard let galleryID = upload.galleryId else { return nil }
+        let gallery = uploads.first { $0.isGallery && $0.id == galleryID }
+        let title = gallery?.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let name = title.isEmpty ? "its gallery" : "its gallery “\(title)”"
+        // The Worker deletes a gallery left empty.
+        if gallery?.galleryItemIDs == [uploadID] { return "It’s the last image in \(name), so the gallery is deleted too." }
+        return "This image is also removed from \(name). The gallery keeps its other images."
+    }
+
     static func contentType(of fileURL: URL) -> String {
         UTType(filenameExtension: fileURL.pathExtension)?.preferredMIMEType ?? "application/octet-stream"
     }

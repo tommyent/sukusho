@@ -292,8 +292,10 @@ struct CaptureLibraryView: View {
                 model.pendingCloudDelete = nil
             }
             Button("Cancel", role: .cancel) { model.pendingCloudDelete = nil }
-        } message: { _ in
-            Text("This permanently removes the cloud copy and breaks its share link. Your local capture stays in the Library.")
+        } message: { item in
+            Text("This permanently removes the cloud copy and breaks its share link. Your local capture stays in the Library."
+                 // Galleries hold images only.
+                 + ((item.isVideo ? nil : cloud.galleryNote(forLink: item.cloudURL)).map { " " + $0 } ?? ""))
         }
         .alert("The Library action could not be completed", isPresented: Binding(
             get: { model.errorMessage != nil },
