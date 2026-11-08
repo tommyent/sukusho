@@ -364,6 +364,35 @@ private final class OffsetFixtureBundle: NSObject {}
         #expect(await stitcher.place(frame(40, hovered: true), candidate: 40, bands: [40, 40, 40, 40, 40]) == .appended(40))
     }
 
+    /// `height` rows of a page drawn in runs of 5 rows, 4 alike and 1 its own, so 2 rows off 2 of each 5 still match
+    /// whole: log lines whose glyphs have long vertical strokes.
+    private func strokesFrame(top: Int, height: Int = 400) -> [UInt8] {
+        let width = 64
+        var pixels = [UInt8](repeating: 255, count: width * height * 4)
+        for y in 0..<height {
+            let row = top + y, run = row / 5
+            for x in 0..<width {
+                let value = UInt8(truncatingIfNeeded: row % 5 < 4 ? run * 37 + x * (run % 7 + 1) : row * 11 + x * 5 + 101)
+                pixels.replaceSubrange(((y * width + x) * 4)..<((y * width + x) * 4 + 3), with: [value, value, value])
+            }
+        }
+        return pixels
+    }
+
+    @Test("An offset at the edge of the window tried is only taken as a peak: the window grows past it")
+    func edgeOfWindowGrowsToThePeak() async throws {
+        let last = strokesFrame(top: 0), new = strokesFrame(top: 66)
+        // 68 passes, 2 rows off: 2 rows of each 5 match whole. The last step, 70, tried 68...72.
+        #expect(ScrollingCaptureOffsetVerifier.verifiedOffset(candidate: 70, from: last, to: new, width: 64, height: 400,
+            ignoredTrailingColumns: 0)?.offset == 66)
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: strokesFrame(top: 0), width: 64, height: 400,
+                                                                  ignoredTrailingColumns: 0))
+        #expect(await stitcher.place(strokesFrame(top: 70), candidate: 70) == .appended(70))
+        // Vision far off (as on the Air, -1,214); the last step's window finds 66 past its edge.
+        #expect(await stitcher.place(strokesFrame(top: 136), candidate: -1214) == .appended(66))
+        #expect(await stitcher.makeImage() == strokesFrame(top: 0, height: 536))
+    }
+
     @Test("The bands of two frames with no overlap reach no consensus")
     func estimatorBandsDisagree() throws {
         let last = try frame(3), far = try frame(25)

@@ -64,7 +64,8 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
                        ignoredTrailingColumns: ignoredTrailingColumns)
     }
 
-    /// As above, over every offset within `search` of any of the candidates. When none passes over
+    /// As above, over every offset within `search` of any of the candidates, and past them where the best lies at
+    /// the edge of those. When none passes over
     /// the whole width, a non-zero one may pass with pinned side columns left out: with a sidebar
     /// pinned on each side, few rows match whole at the offset the content between them moved.
     /// `votes` are Vision's band shifts: when two shifts far apart both pass (a footer pushing a dense
@@ -175,9 +176,10 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
                 let left = run(Array(0..<usable)), right = run(Array((0..<usable).reversed()))
                 return left + right < usable ? (left, right) : (0, 0)
             }
-            let offsets = Set(candidates.flatMap { ($0 - search)...($0 + search) })
+            var offsets = Set(candidates.flatMap { ($0 - search)...($0 + search) })
             var passed = passing(offsets, over: 0..<usable)
             var sides: (left: Int, right: Int)?
+            var range = 0..<usable
             if passed.isEmpty {
                 // Only while the stitcher's cut lies in the band: an inner scroller that moves above it
                 // while the page stands still would have rows that didn't move appended as if they had.
@@ -185,9 +187,20 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
                 let still = stillSides()
                 if still.left + still.right > 0 {
                     sides = still
-                    passed = passing(offsets.filter { $0 != 0 }, over: still.left..<(usable - still.right))
+                    range = still.left..<(usable - still.right)
+                    passed = passing(offsets.filter { $0 != 0 }, over: range)
                 }
                 if passed.isEmpty, let k = segmentPeak(offsets) { passed = [(offset: k, rows: 0)] }
+            }
+            // The best at the window's edge isn't shown to be a peak: the window may stop short of the offset the view
+            // moved (log lines on the Air: 68 matched 2 px off the true 66, at the edge of the last step's window, and
+            // a 32 px line came out 34). It grows past the edge by `search` at a time, at most 4 times, until the best
+            // has both neighbours.
+            for _ in 0..<4 {
+                guard let best = passed.first, best.rows > 0,
+                      !offsets.contains(best.offset - 1) || !offsets.contains(best.offset + 1) else { break }
+                offsets.formUnion((best.offset - search)...(best.offset + search))
+                passed = passing(sides == nil ? offsets : offsets.filter { $0 != 0 }, over: range)
             }
             if let best = passed.first, let rival = passed.first(where: { abs($0.offset - best.offset) > 2 * search }) {
                 if saw(rival.offset) * 2 > votes.count, saw(rival.offset) > saw(best.offset) {
