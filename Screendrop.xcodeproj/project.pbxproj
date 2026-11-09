@@ -26,6 +26,7 @@
 		AF0500000000000000000005 /* Screendrop/RecordingAgentPromptWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0500000000000000000105 /* Screendrop/RecordingAgentPromptWriter.swift */; };
 		AF0500000000000000000004 /* Screendrop/RecordingAgentPromptPlan.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0500000000000000000104 /* Screendrop/RecordingAgentPromptPlan.swift */; };
 		AF7A00000000000000000001 /* Screendrop/RecordingAppLogs.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF7A00000000000000000101 /* Screendrop/RecordingAppLogs.swift */; };
+		AF7A00000000000000000002 /* Screendrop/RecordingSteps.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF7A00000000000000000102 /* Screendrop/RecordingSteps.swift */; };
 		AF0500000000000000000003 /* Screendrop/RecordingClipTimeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0500000000000000000103 /* Screendrop/RecordingClipTimeline.swift */; };
 		AF0500000000000000000002 /* Screendrop/RecordingInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0500000000000000000102 /* Screendrop/RecordingInput.swift */; };
 		AF0500000000000000000001 /* Screendrop/RecordingTranscript.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0500000000000000000101 /* Screendrop/RecordingTranscript.swift */; };
@@ -185,6 +186,7 @@
 		AF0500000000000000000105 /* Screendrop/RecordingAgentPromptWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingAgentPromptWriter.swift; sourceTree = SOURCE_ROOT; };
 		AF0500000000000000000104 /* Screendrop/RecordingAgentPromptPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingAgentPromptPlan.swift; sourceTree = SOURCE_ROOT; };
 		AF7A00000000000000000101 /* Screendrop/RecordingAppLogs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingAppLogs.swift; sourceTree = SOURCE_ROOT; };
+		AF7A00000000000000000102 /* Screendrop/RecordingSteps.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingSteps.swift; sourceTree = SOURCE_ROOT; };
 		AF0500000000000000000103 /* Screendrop/RecordingClipTimeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingClipTimeline.swift; sourceTree = SOURCE_ROOT; };
 		AF0500000000000000000102 /* Screendrop/RecordingInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingInput.swift; sourceTree = SOURCE_ROOT; };
 		AF0500000000000000000101 /* Screendrop/RecordingTranscript.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingTranscript.swift; sourceTree = SOURCE_ROOT; };
@@ -378,6 +380,7 @@
 				AF0500000000000000000105 /* Screendrop/RecordingAgentPromptWriter.swift */,
 				AF0500000000000000000104 /* Screendrop/RecordingAgentPromptPlan.swift */,
 				AF7A00000000000000000101 /* Screendrop/RecordingAppLogs.swift */,
+				AF7A00000000000000000102 /* Screendrop/RecordingSteps.swift */,
 				AF0500000000000000000103 /* Screendrop/RecordingClipTimeline.swift */,
 				AF0500000000000000000102 /* Screendrop/RecordingInput.swift */,
 				AF0500000000000000000101 /* Screendrop/RecordingTranscript.swift */,
@@ -633,6 +636,7 @@
 				AF0500000000000000000005 /* Screendrop/RecordingAgentPromptWriter.swift in Sources */,
 				AF0500000000000000000004 /* Screendrop/RecordingAgentPromptPlan.swift in Sources */,
 				AF7A00000000000000000001 /* Screendrop/RecordingAppLogs.swift in Sources */,
+				AF7A00000000000000000002 /* Screendrop/RecordingSteps.swift in Sources */,
 				AF0500000000000000000003 /* Screendrop/RecordingClipTimeline.swift in Sources */,
 				AF0500000000000000000002 /* Screendrop/RecordingInput.swift in Sources */,
 				AF0500000000000000000001 /* Screendrop/RecordingTranscript.swift in Sources */,

@@ -486,8 +486,13 @@ struct RecordingStudioAgentPromptCommand: View {
 
     var body: some View {
         if let studio {
-            Button("Export Agent Prompt") { studio.exportAgentPrompt() }
-                .disabled(!studio.isLoaded || studio.hasRunningWork || studio.hasUnreadableDraft || studio.transcriptionState.isTranscribing)
+            Group {
+                Button("Export Agent Prompt") { studio.exportAgentPrompt() }
+                if let session = studio.session {
+                    Button("Export Steps…") { RecordingStepsSheetPresenter.present(session: session) }
+                }
+            }
+            .disabled(!studio.isLoaded || studio.hasRunningWork || studio.hasUnreadableDraft || studio.transcriptionState.isTranscribing)
         }
     }
 }
@@ -3404,8 +3409,15 @@ private struct StudioInspector: View {
                         .foregroundStyle(CardMark.green)
                         .transition(.opacity)
                     } else {
-                        InspectorActionButton("Export Agent Prompt", systemImage: "text.document") {
-                            model.exportAgentPrompt()
+                        VStack(spacing: 8) {
+                            InspectorActionButton("Export Agent Prompt", systemImage: "text.document") {
+                                model.exportAgentPrompt()
+                            }
+                            if let session = model.session {
+                                InspectorActionButton("Export Steps…", systemImage: "list.number") {
+                                    RecordingStepsSheetPresenter.present(session: session)
+                                }
+                            }
                         }
                         .disabled(!model.isLoaded || model.hasRunningWork || model.hasUnreadableDraft || model.transcriptionState.isTranscribing)
                     }

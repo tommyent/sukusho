@@ -118,7 +118,7 @@ struct RecordingAppLogsTests {
             return text.contains("RecordingAppLogs") || text.contains("app-logs.json") || text.contains("appLogSpan")
         }.sorted()
         #expect(readers == ["RecordingAgentPromptExport.swift", "RecordingAgentPromptPlan.swift", "RecordingAgentPromptWriter.swift",
-                            "RecordingAppLogs.swift", "RecordingAppLogsReview.swift", "RecordingSession.swift",
-                            "ScreenRecordingManager.swift", "ScreendropApp.swift"])
+                            "RecordingAppLogs.swift", "RecordingAppLogsReview.swift", "RecordingSession.swift", "RecordingSteps.swift",
+                            "RecordingStepsExport.swift", "ScreenRecordingManager.swift", "ScreendropApp.swift"])
     }
 }

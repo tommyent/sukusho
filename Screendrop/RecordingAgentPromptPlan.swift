@@ -14,6 +14,14 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
         /// Where to look, normalized to the captured source: the moment's
         /// click, rest or scroll, else the pointer at that time.
         var focus: CGPoint? = nil
+        /// The same evidence as Export Steps words it for people, in order.
+        var parts: [Part] = []
+    }
+
+    /// Plain wording, unescaped: what was said, as transcribed, or what was done ("Press ⌘S").
+    enum Part: Sendable, Equatable {
+        case said(String)
+        case did(String)
     }
 
     let title: String
@@ -110,7 +118,7 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
 
         var evidence = transcript.map {
             (time: $0.start, text: "Narration \(Self.timestamp($0.start))–\(Self.timestamp($0.end)): \(Self.escape($0.text))",
-             position: CGPoint?.none)
+             position: CGPoint?.none, part: Part.said($0.text))
         }
         func actionTime(_ source: Double) -> Double? {
             guard source.isFinite,
@@ -132,11 +140,13 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
                   let time = actionTime(click.time) else { continue }
             let button = click.button == 0 ? "left" : click.button == 1 ? "right" : "button \(click.button)"
             evidence.append((time, "Click \(Self.timestamp(time)): \(button); source position \(Self.position(click.x, click.y))\(Self.escape(cursor(click.artworkID))).",
-                             CGPoint(x: click.x, y: click.y)))
+                             CGPoint(x: click.x, y: click.y),
+                             .did(click.button == 0 ? "Click" : click.button == 1 ? "Right-click" : "Click button \(click.button + 1)")))
         }
         for key in capture?.keystrokes ?? [] {
             guard let time = actionTime(key.time) else { continue }
-            evidence.append((time, "Shortcut \(Self.timestamp(time)): \(Self.escape(Self.shortcutLabel(key))).", nil))
+            evidence.append((time, "Shortcut \(Self.timestamp(time)): \(Self.escape(Self.shortcutLabel(key))).", nil,
+                             .did("Press \(Self.shortcutLabel(key))")))
         }
         // Where the pointer rested or scrolled shows hover and scroll bugs that clicks miss.
         func editorSpan(_ start: Double, _ end: Double) -> (start: Double, end: Double)? {
@@ -157,13 +167,16 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
             let hidden = stroke.hideTime.flatMap(actionTime).map { (stroke.fadesOut ? "; it fades out at " : "; undone at ") + Self.timestamp($0) } ?? ""
             // The moment sits where the stroke ends, so its still shows the finished stroke; at its first
             // point the still showed nothing of it yet.
-            evidence.append((span.end, "Drew on screen \(Self.timestamp(span.start))–\(Self.timestamp(span.end)): \(shape)\(hidden).", center))
+            evidence.append((span.end, "Drew on screen \(Self.timestamp(span.start))–\(Self.timestamp(span.end)): \(shape)\(hidden).", center,
+                             .did("Draw on the screen")))
         }
-        var motion: [(time: Double, text: String, position: CGPoint?, score: Double)] = []
+        var motion: [(time: Double, text: String, position: CGPoint?, part: Part, score: Double)] = []
         for rest in Self.rests(in: capture?.travel ?? [], until: timeline.segments.map(\.sourceEnd).max() ?? 0) {
             guard let span = editorSpan(rest.start, rest.end) else { continue }
             motion.append((span.start, "Pointer rested \(Self.timestamp(span.start))–\(Self.timestamp(span.end)) at source position \(Self.position(rest.x, rest.y)).",
-                           CGPoint(x: rest.x, y: rest.y), span.end - span.start))
+                           CGPoint(x: rest.x, y: rest.y),
+                           .did(String(format: "Hover for %.1f s", locale: Locale(identifier: "en_US_POSIX"), span.end - span.start)),
+                           span.end - span.start))
         }
         for run in Self.scrollRuns(capture?.scrolls ?? []) {
             guard let span = editorSpan(run.start, max(run.end, run.start + 0.001)) else { continue }
@@ -174,12 +187,12 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
             let distance = Int((amount < 1e9 ? amount : 1e9).rounded())
             let end = run.end > run.start ? span.end : span.start
             motion.append((span.start, "Scroll \(Self.timestamp(span.start))–\(Self.timestamp(end)): \(direction) \(distance) pt over \(run.count) events at source position \(Self.position(run.x, run.y)).",
-                           CGPoint(x: run.x, y: run.y), end - span.start + 1))
+                           CGPoint(x: run.x, y: run.y), .did("Scroll \(direction)"), end - span.start + 1))
         }
         // A long recording keeps its longest rests and scrolls, not one per pause.
         let motionLimit = min(24, max(6, Int(timeline.duration / 10)))
         evidence += motion.sorted { $0.score == $1.score ? $0.time < $1.time : $0.score > $1.score }
-            .prefix(motionLimit).map { (time: $0.time, text: $0.text, position: $0.position) }
+            .prefix(motionLimit).map { (time: $0.time, text: $0.text, position: $0.position, part: $0.part) }
         let sorted = evidence.enumerated().sorted {
             $0.element.time == $1.element.time ? $0.offset < $1.offset : $0.element.time < $1.element.time
         }.map(\.element)
@@ -187,9 +200,10 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
         for event in sorted {
             if let last = grouped.last, event.time - last.time <= 0.5 {
                 grouped[grouped.count - 1].evidence.append(event.text)
+                grouped[grouped.count - 1].parts.append(event.part)
                 grouped[grouped.count - 1].focus = last.focus ?? event.position
             } else {
-                grouped.append(Moment(time: event.time, evidence: [event.text], focus: event.position))
+                grouped.append(Moment(time: event.time, evidence: [event.text], focus: event.position, parts: [event.part]))
             }
         }
         self.timeline = timeline
@@ -373,7 +387,8 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
         return String(format: "%02d:%02d.%03d", ms / 60_000, ms / 1000 % 60, ms % 1000)
     }
 
-    private static func escape(_ value: String) -> String {
+    /// Markdown-safe text on one line.
+    static func escape(_ value: String) -> String {
         var result = value.replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
         for character in ["\\", "`", "*", "_", "[", "]", "|", "#", "!"] {

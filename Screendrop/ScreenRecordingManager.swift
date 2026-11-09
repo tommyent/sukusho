@@ -169,8 +169,13 @@ final class ScreenRecordingManager {
 
         let targetDisplayID = source.displayID ?? ActiveDisplayResolver.activeDisplayID(preferPointer: true) ?? CGMainDisplayID()
         // Named before the recording bar and camera bubble appear.
-        let captureSource = source.captureSource
-        let recordedApp = source.application(for: captureSource)
+        let named = source.captureSource
+        let recordedApp = source.application(for: named)
+        let captureSource = named.map { source in
+            var source = source
+            source.appVersion = CaptureSource.version(of: recordedApp)
+            return source
+        }
         state = .starting
         errorMessage = nil
         displayID = targetDisplayID
@@ -306,6 +311,7 @@ final class ScreenRecordingManager {
                 manifest.includesMicrophone = options.microphoneDeviceID != nil
                 manifest.includesAppWindows = ScreendropPreferences.includeAppWindowsInCaptures
                 manifest.isBugReport = options.bugReport ? true : nil
+                manifest.systemVersion = ProcessInfo.processInfo.operatingSystemVersionString
                 appLogApp = options.appLogs ? recordedApp : nil
                 if !cameraStarted {
                     manifest.cameraLeadIn = nil

@@ -175,10 +175,13 @@ extension CaptureLibraryModel {
             items.insert(LibraryMenuItem(title: "Export as GIF…", isEnabled: !isBusy) { self.exportGIF(item) }, at: export + 1)
             if let session = item.session {
                 items.insert(LibraryMenuItem(title: "Export Agent Prompt", isEnabled: !isBusy) { self.exportAgentPrompt(item) }, at: export + 2)
+                items.insert(LibraryMenuItem(title: "Export Steps…", isEnabled: !isBusy) {
+                    RecordingStepsSheetPresenter.present(session: session)
+                }, at: export + 3)
                 if let folder = AgentPromptIndex.shared.folder(for: session) {
                     items.insert(LibraryMenuItem(title: "Show Agent Prompt in Finder") {
                         NSWorkspace.shared.activateFileViewerSelecting([folder])
-                    }, at: export + 3)
+                    }, at: export + 4)
                 }
             }
         }

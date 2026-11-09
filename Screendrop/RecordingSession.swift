@@ -346,6 +346,8 @@ nonisolated struct CaptureManifest: Codable, Sendable, Equatable {
     var isBugReport: Bool?
     /// A Bug report take with Include app logs on: whose log to read after Stop, and when.
     var appLogSpan: RecordingAppLogs.Span?
+    /// The macOS the take was recorded on ("Version 27.3 (Build …)"), for Export Steps' bug reports.
+    var systemVersion: String?
 
     static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()

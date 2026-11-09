@@ -47,15 +47,18 @@ enum RecordingAgentPromptExport {
                                         logs: RecordingAppLogs.load(fromPackage: session.directoryURL))
     }
 
+    /// The edit's cuts and speed over the screen recording.
+    static func timeline(session: RecordingSession, document: RecordingEditDocument?) async throws -> RecordingClipTimeline {
+        let duration = try await AVURLAsset(url: session.screenURL).load(.duration).seconds
+        if let clips = document?.clips, !clips.isEmpty {
+            return RecordingClipTimeline(segments: clips).normalized(to: duration)
+        }
+        return .legacyTrim(start: document?.trimStart, end: document?.trimEnd, sourceDuration: duration)
+    }
+
     static func write(session: RecordingSession, document: RecordingEditDocument?, to directory: URL,
                       progress: @escaping @Sendable (Double) -> Void = { _ in }) async throws -> URL {
-        let duration = try await AVURLAsset(url: session.screenURL).load(.duration).seconds
-        let timeline: RecordingClipTimeline
-        if let clips = document?.clips, !clips.isEmpty {
-            timeline = RecordingClipTimeline(segments: clips).normalized(to: duration)
-        } else {
-            timeline = .legacyTrim(start: document?.trimStart, end: document?.trimEnd, sourceDuration: duration)
-        }
+        let timeline = try await Self.timeline(session: session, document: document)
         let cues = document?.subtitleCues ?? [], words = document?.subtitleWords ?? []
         let canTranscribe = session.loadCaptureManifest()?.includesMicrophone == true
         // Stills for clicks, rests and pen strokes don't depend on what was said,
