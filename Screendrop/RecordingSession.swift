@@ -344,6 +344,8 @@ nonisolated struct CaptureManifest: Codable, Sendable, Equatable {
     var includesAppWindows: Bool?
     /// Recorded with Bug report on: Stop writes its Agent Prompt instead of opening Studio.
     var isBugReport: Bool?
+    /// A Bug report take with Include app logs on: whose log to read after Stop, and when.
+    var appLogSpan: RecordingAppLogs.Span?
 
     static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()

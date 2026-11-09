@@ -43,7 +43,8 @@ enum RecordingAgentPromptExport {
                                         files: .init(screen: session.screenURL, input: input),
                                         excludesAppWindows: manifest?.includesAppWindows == false,
                                         source: session.loadProjectMetadata()?.source, transcriptionFailure: transcriptionFailure,
-                                        screen: manifest.flatMap { $0.pixelWidth > 0 ? .init(width: $0.pixelWidth, height: $0.pixelHeight, scale: $0.pixelScale) : nil })
+                                        screen: manifest.flatMap { $0.pixelWidth > 0 ? .init(width: $0.pixelWidth, height: $0.pixelHeight, scale: $0.pixelScale) : nil },
+                                        logs: RecordingAppLogs.load(fromPackage: session.directoryURL))
     }
 
     static func write(session: RecordingSession, document: RecordingEditDocument?, to directory: URL,

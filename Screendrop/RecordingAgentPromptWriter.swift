@@ -130,6 +130,10 @@ nonisolated enum RecordingAgentPromptWriter {
         }
         try plan.markdown(frameTimes: frameTimes, strips: stripSpans, sourceStills: edited == nil)
             .write(to: staging.appendingPathComponent("prompt.md"), atomically: true, encoding: .utf8)
+        if let logs = plan.logs {
+            try logs.text(timeline: plan.timeline)
+                .write(to: staging.appendingPathComponent(RecordingAppLogs.exportFileName), atomically: true, encoding: .utf8)
+        }
         try Task.checkCancellation()
         let destination = directory.appendingPathComponent(folderName(name ?? plan.title), isDirectory: true)
         do {

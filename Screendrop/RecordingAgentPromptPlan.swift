@@ -45,6 +45,8 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
     let screen: Screen?
     /// Why the narration couldn't be transcribed, when it couldn't.
     let transcriptionFailure: String?
+    /// A Bug report take's app log, when the user included it.
+    let logs: RecordingAppLogs?
 
     struct Screen: Sendable {
         var width: Int
@@ -56,7 +58,7 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
     init(title: String, timeline: RecordingClipTimeline, cues: [RecordingSubtitleCue],
          words: [RecordingTranscriptWord], capture: PointerCaptureFile?,
          cursorNames: [String: String] = [:], files: SourceFiles? = nil, excludesAppWindows: Bool = false,
-         source: CaptureSource? = nil, transcriptionFailure: String? = nil, screen: Screen? = nil) {
+         source: CaptureSource? = nil, transcriptionFailure: String? = nil, screen: Screen? = nil, logs: RecordingAppLogs? = nil) {
         self.title = title
         duration = timeline.duration
         hasInput = capture != nil
@@ -65,6 +67,7 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
         self.source = source
         self.screen = screen
         self.transcriptionFailure = transcriptionFailure
+        self.logs = logs
 
         func mapped(_ start: Double, _ end: Double, text: String) -> Text? {
             guard start.isFinite, end.isFinite, end > start else { return nil }
@@ -232,6 +235,13 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
                 text += "- Input log: \(code(input)): JSON on the screen recording's clock, with pointer moves and drags (travel), clicks (presses), shortcuts (keystrokes), scrolls (scrolls), pen strokes drawn on screen (ink) and cursor images (artwork, base-64 PNG). Positions are normalized 0–1 from the top left.\n"
             }
             text += "\n"
+        }
+        if let logs {
+            let summary = logs.summary(timeline: timeline)
+            text += "## Logs\n\n" + Self.escape(summary.text) + "\n\n"
+            if !summary.firstProblems.isEmpty {
+                text += summary.firstProblems.map { "- " + Self.escape($0) }.joined(separator: "\n") + "\n\n"
+            }
         }
         for (index, moment) in moments.enumerated() {
             text += "## Moment \(index + 1) — \(Self.timestamp(moment.time))\n\n"
