@@ -1309,14 +1309,19 @@ struct StudioChapterNameDraft {
     mutating func commit(model: RecordingStudioModel, chapter: RecordingChapter) {
         guard let text else { return }
         if text != chapter.title { model.renameChapter(id: chapter.id, title: text) }
+        model.finishChapterRename()
         if model.chapterError == nil { self.text = nil }
     }
 }
 
+/// A chapter's name. It saves a moment after typing stops (clicking the
+/// video doesn't end editing, and a quit would lose the rename) and when
+/// editing ends, as one undo step.
 private struct StudioChapterNameField: View {
     let model: RecordingStudioModel
     let chapter: RecordingChapter
     @State private var draft = StudioChapterNameDraft()
+    @State private var pendingSave: Task<Void, Never>?
     @FocusState private var isEditing: Bool
 
     var body: some View {
@@ -1326,13 +1331,28 @@ private struct StudioChapterNameField: View {
         ))
         .textFieldStyle(.plain)
         .focused($isEditing)
-        .onSubmit { draft.commit(model: model, chapter: chapter) }
+        .onSubmit(commit)
         .onChange(of: isEditing) { _, editing in
-            if !editing { draft.commit(model: model, chapter: chapter) }
+            if !editing { commit() }
         }
+        .onChange(of: draft.text) { _, text in
+            pendingSave?.cancel()
+            guard let text else { return }
+            pendingSave = Task {
+                try? await Task.sleep(for: .milliseconds(500))
+                guard !Task.isCancelled, text != chapter.title else { return }
+                model.renameChapter(id: chapter.id, title: text)
+            }
+        }
+        // A saved title never replaces the text being typed.
         .onChange(of: chapter.title) {
-            draft.storedTitleChanged()
+            if !isEditing { draft.storedTitleChanged() }
         }
+    }
+
+    private func commit() {
+        pendingSave?.cancel()
+        draft.commit(model: model, chapter: chapter)
     }
 }
 

@@ -173,6 +173,8 @@ final class RecordingStudioModel {
     /// The language being translated now; the view's translation task runs it.
     private(set) var translationConfiguration: TranslationSession.Configuration?
     @ObservationIgnored private var translationQueue: [Locale.Language] = []
+    /// The chapter whose name is being typed, and the undo step its first save made.
+    @ObservationIgnored private var renameUndoMark: (id: UUID, revision: Int)?
 
     private(set) var subtitleCues: [RecordingSubtitleCue] = []
     private(set) var subtitleTimeline = SubtitleTimeline.empty
@@ -2293,12 +2295,21 @@ final class RecordingStudioModel {
         ), actionName: "Suggest Chapters")
     }
 
+    /// The name field saves as you type; saves of one chapter's name until
+    /// editing ends share one undo step, so Undo takes back the whole rename.
     func renameChapter(id: UUID, title: String) {
         var next = chapters
         guard let index = next.firstIndex(where: { $0.id == id }) else { return }
         next[index].title = String(title.prefix(200))
         next[index].autoTitle = false
-        applyChapters(next, actionName: "Rename Chapter")
+        let continuing = renameUndoMark.map { $0.id == id && $0.revision == undoRevision } ?? false
+        applyChapters(next, actionName: "Rename Chapter", registersUndo: !continuing)
+        renameUndoMark = (id, undoRevision)
+    }
+
+    /// Editing a chapter's name ended; the next rename is its own undo step.
+    func finishChapterRename() {
+        renameUndoMark = nil
     }
 
     func removeChapter(id: UUID) {
@@ -2321,12 +2332,12 @@ final class RecordingStudioModel {
         seek(to: chapter.start)
     }
 
-    private func applyChapters(_ next: [RecordingChapter], actionName: String) {
+    private func applyChapters(_ next: [RecordingChapter], actionName: String, registersUndo: Bool = true) {
         guard let session, next != chapters else { return }
         do {
             try session.updateProjectMetadata { $0.chapters = next }
             let previous = chapters
-            registerUndo(actionName) { $0.applyChapters(previous, actionName: actionName) }
+            if registersUndo { registerUndo(actionName) { $0.applyChapters(previous, actionName: actionName) } }
             chapters = next
             chapterError = nil
         } catch {
