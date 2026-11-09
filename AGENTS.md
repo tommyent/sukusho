@@ -4,15 +4,15 @@
 
 Screendrop is a native macOS screenshot and screen recording tool. Its Library window opens on normal launch; login launches remain in the menu bar (`LSUIElement = YES`). `AppActivationPolicy` uses `.regular` while Library, Settings, or editor windows are open, and returns to `.accessory` when they close. Built with SwiftUI + AppKit with a hostless Swift Testing unit test target.
 
-**Deployment target:** macOS 27.0 for every target. Builds with the Xcode 27 beta SDK.
+**Deployment target:** macOS 27.0 for every target. Builds with Xcode 27 (`/Applications/Xcode.app`, 27.2).
 **App:** Sukusho. **Bundle IDs:** `com.tommyent.Sukusho`, Dev `com.tommyent.Sukusho.dev`. The target, schemes and Swift module keep the name Screendrop.
 
 ## Build
 
-Use `xcodebuild` from the command line. The project requires the Xcode 27 beta toolchain (installed as `Xcode-beta.app`):
+Use `xcodebuild` from the command line, with Xcode 27 and its Metal Toolchain:
 
 ```bash
-set -o pipefail; DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer xcodebuild build \
+set -o pipefail; xcodebuild build \
   -project Screendrop.xcodeproj -scheme Screendrop -configuration Debug -destination "platform=macOS" \
   2>&1 | tee <scratchpad>/build.log | xcbeautify -q
 ```
@@ -64,10 +64,14 @@ All annotation positions/sizes are normalized to `[0, 1]` relative to the source
 
 ## Conventions
 
-- **No new SPM packages or external dependencies.** Besides the existing DockProgress package, the project uses only Apple frameworks (SwiftUI, AppKit, ScreenCaptureKit, CoreGraphics, CoreImage, ImageIO, Carbon).
+- **No new SPM packages or external dependencies** without the owner's OK. The existing ones are DockProgress, Sparkle (updates) and the MCP Swift SDK (the `sukusho-mcp` helper only); otherwise the project uses only Apple frameworks (SwiftUI, AppKit, ScreenCaptureKit, CoreGraphics, CoreImage, ImageIO, Carbon).
 - **`@Observable` macro** (Observation framework) is used for state - not `ObservableObject`/`@Published`.
 - **App sandbox is disabled** (`ENABLE_APP_SANDBOX = NO`) - the app needs screen capture permissions and direct filesystem access.
 - Screenshots are saved as lossless PNG to `NSTemporaryDirectory()` first, then optionally compressed to JPEG on export.
+
+## Releases
+
+`scripts/release.sh` builds a release from a clean commit: Developer ID signing with the hardened runtime, a notarized and stapled app inside a notarized and stapled DMG, its checksum, and Sparkle's `appcast.xml`, in a new `../builds/release-<version>.*` folder. It stops at the first check that fails. It needs the release notes in `docs/releases/<MARKETING_VERSION>.md`, the notarytool profile `notary`, and the Sparkle key in the login Keychain (account `com.tommyent.Sukusho`), whose public half is `SUPublicEDKey` in `Info.plist`. A lost key means installed copies refuse every later update. Build numbers are `32.YYMMDD.HHMM` in UTC, because Sparkle compares them and they must only grow. The DMG goes on GitHub Releases and the appcast on the `gh-pages` branch (`scripts/site.sh`), which serves https://tommyent.github.io/sukusho/.
 
 ## Commits
 

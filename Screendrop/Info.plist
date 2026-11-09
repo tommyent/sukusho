@@ -27,6 +27,10 @@
 	<false/>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>Sukusho needs screen recording permission to capture screenshots.</string>
+	<key>SUFeedURL</key>
+	<string>https://tommyent.github.io/sukusho/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>7Oea6ENt6kDhZGIDCzA9V1pn+W51jgVWIlVthcf13NY=</string>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>

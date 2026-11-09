@@ -145,6 +145,22 @@ struct LegacyIdentityImportTests {
         }
     }
 
+    @Test func screendropsUpdateAnswersStayWithScreendrop() throws {
+        try withSandbox { box throws in
+            _ = try box.job(legacyDefaults: [
+                "SUEnableAutomaticChecks": false,
+                "SUHasLaunchedBefore": true,
+                "SULastCheckTime": Date(timeIntervalSince1970: 1_791_525_330),
+                "SUFeedURL": "https://example.com/appcast.xml",
+                "hotkey.region": "⌥2",
+            ]).run()
+            for key in ["SUEnableAutomaticChecks", "SUHasLaunchedBefore", "SULastCheckTime", "SUFeedURL"] {
+                #expect(box.defaults.object(forKey: key) == nil, "\(key) came over from Screendrop")
+            }
+            #expect(box.defaults.string(forKey: "hotkey.region") == "⌥2")
+        }
+    }
+
     @Test func tokenIsCopiedOnlyWhenSukushoHasNone() throws {
         try withSandbox { box throws in
             box.keychain.items["legacy.service"] = "dummy-legacy-token"

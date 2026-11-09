@@ -81,9 +81,10 @@ struct LegacyIdentityImport {
     }
 
     /// Keys this app already has win. Paths into Screendrop's folder are
-    /// pointed at the copy.
+    /// pointed at the copy. Sparkle's keys (`SU…`) stay behind: they answer
+    /// for Screendrop's updates, so Sukusho asks about its own.
     private func copyDefaults() {
-        for (key, value) in legacyDefaults ?? [:] where defaults.object(forKey: key) == nil {
+        for (key, value) in legacyDefaults ?? [:] where defaults.object(forKey: key) == nil && !key.hasPrefix("SU") {
             defaults.set(remapped(value), forKey: key)
         }
     }

@@ -13,7 +13,7 @@ Sukusho started as a fork of [Screendrop](https://github.com/fayazara/Screendrop
 > Sukusho is not affiliated with or supported by Screendrop or its author. Please report Sukusho problems here, not to the Screendrop project.
 
 > [!NOTE]
-> There are no releases yet. To use Sukusho, [build it from source](#building-from-source). It is under active development, so expect rough edges.
+> **[Download Sukusho](https://github.com/tommyent/sukusho/releases/latest)** for macOS 27, a signed and notarized app that can keep itself up to date, or [build it from source](#building-from-source). More at [tommyent.github.io/sukusho](https://tommyent.github.io/sukusho/). It is under active development, so expect rough edges.
 
 <a href="docs/screenshots/share-page.jpg"><img src="docs/screenshots/share-page.jpg" alt="An example Sukusho share page in a browser, with comments allowed: a screenshot of the Sukusho editor marking up a travel website, titled Sukusho editor, with its size, a view count, a like button, a Copy Image button and Download below it, and a comment box beside it" width="100%"></a>
 
@@ -89,7 +89,7 @@ Sharing is optional and self-hosted. Uploads go to a Cloudflare Worker you deplo
 - If you add redactions to a recording that's already shared, Studio says the link still shows the old version and offers to replace the shared video, keeping the same link.
 
 > [!NOTE]
-> End-to-end encryption and file requests need a newer Worker than the one published now. Until your Worker is updated, Sukusho says so: Request Files asks you to update it, and an encrypted upload is removed instead of being shared.
+> End-to-end encryption and file requests need Worker 2.0.0 or later. With an older Worker, Sukusho says so: Request Files asks you to update it, and an encrypted upload is removed instead of being shared.
 
 ### Library
 
@@ -190,7 +190,8 @@ Shortcuts, Siri and Spotlight can take a full-screen, window or area screenshot,
 - With **Shake to upload** on, Sukusho watches pointer drags in other apps for a shake. It checks only whether a drag carries files, reads which files after a shake, and uploads nothing until you drop them on the shelf. macOS asks for no permission for this.
 - With **Agent access** on, Sukusho listens on a socket only your user account can open and answers only its own signed helper. Agents never get the upload token or your Library's files: they get images and text through the tools, with text from captures, visitors and the model marked as untrusted. **Settings → Agents** lists every call.
 - The upload token, your Unsplash Access Key, the keys of end-to-end encrypted uploads and the file request links you make are kept in the Keychain. Captures are uploaded only when you, or an after-capture action you turned on, ask for it.
-- There is no Sukusho account, no central Sukusho server and no automatic app updates. Sukusho goes online for your Worker, a check on GitHub for a newer Worker version in **Settings → Cloud**, Unsplash search and wallpaper downloads, Free To Use music search and downloads, and the setup video in **Settings → Cloud**, which starts loading from the upstream project's server whenever the pane shows its setup steps. Apple's on-device speech models may need a one-time download for transcription or the teleprompter.
+- There is no Sukusho account and no central Sukusho server. Sukusho goes online for your Worker, update checks, a check on GitHub for a newer Worker version in **Settings → Cloud**, Unsplash search and wallpaper downloads, Free To Use music search and downloads, and the setup video in **Settings → Cloud**, which starts loading from the upstream project's server whenever the pane shows its setup steps. Apple's on-device speech models may need a one-time download for transcription or the teleprompter.
+- **Updates:** Sukusho checks for a new version when you choose **Check for Updates…**, and once a day only if you allowed automatic checks, which it asks about on its second launch (**Settings → About → Updates** changes the answer). A check reads the update feed on tommyent.github.io and sends no system profile; updates download from GitHub and install only if they carry this project's signature.
 
 macOS asks for **Screen & System Audio Recording** for captures and recordings, and, when you first use them, **Camera**, **Microphone**, **Input Monitoring** (for keystroke captions), **Accessibility** (for auto-scroll) and **Notifications** (for finished exports and received files). Sukusho's own windows are left out of captures unless you turn on **Settings → General → Include Sukusho windows in captures**.
 
@@ -199,7 +200,7 @@ macOS asks for **Screen & System Audio Recording** for captures and recordings, 
 Requirements:
 
 - macOS 27.0 or newer.
-- Xcode 27 beta (installed as `Xcode-beta.app`), with its Metal Toolchain for Studio's motion-blur shader:
+- Xcode 27, with its Metal Toolchain for Studio's motion-blur shader:
 
   ```bash
   xcodebuild -downloadComponent MetalToolchain
@@ -225,7 +226,7 @@ xcodebuild test -project Screendrop.xcodeproj -scheme "Screendrop Dev" \
   DEVELOPMENT_TEAM=YOUR_TEAM_ID -allowProvisioningUpdates
 ```
 
-The tests use Swift Testing, need no app host, and never touch your captures or settings; see [ScreendropTests/README.md](ScreendropTests/README.md). DockProgress is the only package dependency, and Xcode resolves it. [Editor performance](docs/editor-performance.md) and [export performance](docs/export-performance.md) describe the standalone checks and benchmarks.
+The tests use Swift Testing, need no app host, and never touch your captures or settings; see [ScreendropTests/README.md](ScreendropTests/README.md). Xcode resolves the package dependencies: DockProgress, Sparkle for updates, and the MCP Swift SDK for the agent helper. [Editor performance](docs/editor-performance.md) and [export performance](docs/export-performance.md) describe the standalone checks and benchmarks.
 
 If Screendrop was installed before, Sukusho brings over its captures, recordings, settings and Cloud token once, the first time it opens. Screendrop's own copy is left unchanged.
 
