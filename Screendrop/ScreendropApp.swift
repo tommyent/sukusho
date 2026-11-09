@@ -165,6 +165,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// file. `applicationDidFinishLaunching` is already too late.
     func applicationWillFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = RecordingExportNotificationDelegate.shared
+        // Before the Library opens, so it doesn't appear in the other appearance first.
+        AppAppearance.apply()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {

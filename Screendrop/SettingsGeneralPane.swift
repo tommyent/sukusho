@@ -18,6 +18,7 @@ struct GeneralSettingsPane: View {
     @AppStorage(ScreendropPreferences.libraryUsesIntelligenceKey) private var libraryUsesIntelligence = true
     @AppStorage(ScreendropPreferences.libraryInsightsIncludeExistingKey) private var insightsIncludeExisting = false
     @AppStorage(WorkspaceBackground.styleKey) private var workspaceStyle = WorkspaceBackground.Style.dots
+    @AppStorage(AppAppearance.key) private var appearance = AppAppearance.automatic
     @State private var launchAtLoginStatus = LaunchAtLoginController.status
     @State private var launchAtLoginError: String?
 
@@ -142,6 +143,19 @@ struct GeneralSettingsPane: View {
             }
 
             Section("Workspace") {
+                SettingsControlLabel(
+                    "Appearance",
+                    detail: "Light or dark for Sukusho's windows. Automatic follows macOS."
+                ).control { label in
+                    Picker(selection: $appearance) {
+                        ForEach(AppAppearance.allCases) { Text($0.title).tag($0) }
+                    } label: {
+                        label
+                    }
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                }
+                .onChange(of: appearance) { AppAppearance.apply() }
                 SettingsControlLabel(
                     "Workspace background",
                     detail: "Behind the Library, the image editor and Studio. Captures, exports and uploads never include it."
@@ -387,6 +401,33 @@ private enum LaunchAtLoginController {
         } else {
             guard service.status != .notRegistered else { return }
             try service.unregister()
+        }
+    }
+}
+
+/// Settings › General › Workspace › Appearance: Sukusho's windows follow macOS, or stay light or dark.
+enum AppAppearance: String, CaseIterable, Identifiable {
+    case automatic, light, dark
+
+    static let key = "appAppearance"
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .automatic: "Automatic"
+        case .light: "Light"
+        case .dark: "Dark"
+        }
+    }
+
+    /// Sets the saved choice on every window, at launch and when it changes.
+    static func apply() {
+        let choice = UserDefaults.standard.string(forKey: key).flatMap(Self.init) ?? .automatic
+        NSApp.appearance = switch choice {
+        case .automatic: nil
+        case .light: NSAppearance(named: .aqua)
+        case .dark: NSAppearance(named: .darkAqua)
         }
     }
 }
