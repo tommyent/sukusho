@@ -106,6 +106,7 @@ struct RecordingStepsSheet: View {
                     .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 6))
                     Text("Logs can hold personal data. They stay on this Mac unless you share the export.")
                         .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             Text("Narration is used as transcribed. Copy as Markdown pastes into Jira, Linear or GitHub; the images stay local files to attach.")
