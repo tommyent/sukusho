@@ -331,6 +331,7 @@ extension CaptureLibraryModel {
             for id in item.historyIDs { ScreenshotHistoryStore.shared.setLibraryCloudURL(id: id, cloudURL: nil) }
             // Its gallery shrank, or went with it: the Uploads page lists it again.
             if inGallery { CloudLibraryModel.shared.refresh() } else { CloudLibraryModel.shared.refreshUsage() }
+            CloudLibraryModel.shared.refreshCommentsAndLikes()
             self.refresh()
         }
     }

@@ -510,7 +510,14 @@ final class CloudLibraryModel {
             }
             if !failures.isEmpty { CaptureLibraryModel.shared.errorMessage = failures.joined(separator: "\n") }
             refreshUsage()
+            refreshCommentsAndLikes()
         }
+    }
+
+    /// A cloud delete takes the upload's comments and likes with it.
+    func refreshCommentsAndLikes() {
+        CommentsLibraryModel.shared.refresh()
+        LikesLibraryModel.shared.refresh()
     }
 }
 

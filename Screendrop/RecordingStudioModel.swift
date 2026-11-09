@@ -3255,6 +3255,7 @@ final class RecordingStudioModel {
                 ScreenshotHistoryStore.shared.setLibraryCloudURL(id: item.id, cloudURL: nil)
                 CloudUploader.shared.clearUploadState(for: item.id)
                 CloudLibraryModel.shared.refreshUsage()
+                CloudLibraryModel.shared.refreshCommentsAndLikes()
                 self?.shareState = .idle
             } catch { self?.sharedVideoError = error.localizedDescription }
         }
