@@ -18,7 +18,8 @@ git show gh-pages:index.html > "$WORK/index.html"
 # The page names the version only as v1.2.0 (links), Sukusho-1.2.0 (the DMG), "Version 1.2.0" and "Sukusho 1.2.0"
 sed -E -i '' -e "s/v[0-9]+\.[0-9]+\.[0-9]+/v$VERSION/g" -e "s/Sukusho-[0-9]+\.[0-9]+\.[0-9]+/Sukusho-$VERSION/g" \
     -e "s/(Version|Sukusho) [0-9]+\.[0-9]+\.[0-9]+/\1 $VERSION/g" -e "s/[0-9]+\.[0-9] MB/$SIZE/g" "$WORK/index.html"
-STALE="$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+' "$WORK/index.html" | sort -u | grep -vxF "$VERSION" || true)"
+STALE="$(grep -oE '(v|Sukusho-|Version |Sukusho )[0-9]+\.[0-9]+\.[0-9]+' "$WORK/index.html" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' \
+    | sort -u | grep -vxF "$VERSION" || true)"   # other versions, such as the Worker's, are left alone
 [[ -z "$STALE" ]] || fail "the page still names another version ($STALE); fix it on gh-pages first"
 
 export GIT_INDEX_FILE="$WORK/index"   # a private index, so the checked-out branch is never touched
