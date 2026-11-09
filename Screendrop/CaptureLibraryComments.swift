@@ -25,6 +25,8 @@ final class CommentsLibraryModel {
     private var watermark: FeedWatermark?
     private var watermarkWorker: String?
     private var readTask: Task<Void, Never>?
+    /// Asked for while a load was running: that load may predate a delete, so load again after it.
+    private var reloadPending = false
 
     private init() {}
 
@@ -66,7 +68,7 @@ final class CommentsLibraryModel {
     }
 
     func refresh() {
-        guard !isLoading else { return }
+        guard !isLoading else { reloadPending = true; return }
         guard CloudUploader.shared.isConfigured else {
             comments = []
             hasLoaded = true
@@ -78,6 +80,10 @@ final class CommentsLibraryModel {
             defer {
                 isLoading = false
                 hasLoaded = true
+                if reloadPending {
+                    reloadPending = false
+                    refresh()
+                }
             }
             do {
                 comments = try await CloudUploader.shared.listComments()
