@@ -43,6 +43,8 @@ enum RecordingStepsExport {
         let folder = try write(steps, format: .guide, stills: stills)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(steps.markdown(.guide, localFolder: folder), forType: .string)
+        // The same "ready to paste" chime as the bug report.
+        if ScreendropPreferences.playSounds { NSSound(named: "AgentPromptReady")?.play() }
         AccessibilityNotification.Announcement("Guide saved and copied as Markdown").post()
         NSWorkspace.shared.activateFileViewerSelecting([folder.appendingPathComponent(RecordingSteps.Format.guide.fileName + ".html")])
         return folder

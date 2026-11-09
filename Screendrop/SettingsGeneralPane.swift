@@ -104,7 +104,7 @@ struct GeneralSettingsPane: View {
 
                 SettingsControlLabel(
                     "Play sounds",
-                    detail: "Play the camera shutter when a screenshot is taken, and a chime when a bug report is ready."
+                    detail: "Play the camera shutter when a screenshot is taken, and a chime when a bug report or guide is ready."
                 ).control { label in
                     Toggle(isOn: $playSounds) { label }
                 }
