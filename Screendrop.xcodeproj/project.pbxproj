@@ -132,6 +132,8 @@
 		AB0C00000000000000000011 /* Screendrop/AgentAccessCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0C00000000000000000012 /* Screendrop/AgentAccessCore.swift */; };
 		AB0C00000000000000000013 /* Screendrop/AgentAccessSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0C00000000000000000014 /* Screendrop/AgentAccessSocket.swift */; };
 		AB0C00000000000000000015 /* Screendrop/AgentAccessTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0C00000000000000000016 /* Screendrop/AgentAccessTools.swift */; };
+		AB0D00000000000000000001 /* Screendrop/RecordingTextIntelligence.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0D00000000000000000002 /* Screendrop/RecordingTextIntelligence.swift */; };
+		AB0D00000000000000000003 /* Screendrop/RecordingCaptionTracks.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0D00000000000000000004 /* Screendrop/RecordingCaptionTracks.swift */; };
 		AB0C00000000000000000017 /* Screendrop/AgentAccessServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0C00000000000000000018 /* Screendrop/AgentAccessServer.swift */; };
 /* End PBXBuildFile section */
 
@@ -164,6 +166,8 @@
 		AB0C00000000000000000012 /* Screendrop/AgentAccessCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AgentAccessCore.swift; sourceTree = SOURCE_ROOT; };
 		AB0C00000000000000000014 /* Screendrop/AgentAccessSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AgentAccessSocket.swift; sourceTree = SOURCE_ROOT; };
 		AB0C00000000000000000016 /* Screendrop/AgentAccessTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AgentAccessTools.swift; sourceTree = SOURCE_ROOT; };
+		AB0D00000000000000000002 /* Screendrop/RecordingTextIntelligence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingTextIntelligence.swift; sourceTree = SOURCE_ROOT; };
+		AB0D00000000000000000004 /* Screendrop/RecordingCaptionTracks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingCaptionTracks.swift; sourceTree = SOURCE_ROOT; };
 		AB0C00000000000000000018 /* Screendrop/AgentAccessServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AgentAccessServer.swift; sourceTree = SOURCE_ROOT; };
 		AFAC00000000000000000002 /* Screendrop/Engine/AnnoEditorClipboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/Engine/AnnoEditorClipboard.swift; sourceTree = SOURCE_ROOT; };
 		AE7C00000000000000000002 /* Screendrop/Engine/AnnoTextEditorOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/Engine/AnnoTextEditorOverlay.swift; sourceTree = SOURCE_ROOT; };
@@ -478,6 +482,8 @@
 				AB0C00000000000000000012 /* Screendrop/AgentAccessCore.swift */,
 				AB0C00000000000000000014 /* Screendrop/AgentAccessSocket.swift */,
 				AB0C00000000000000000016 /* Screendrop/AgentAccessTools.swift */,
+				AB0D00000000000000000002 /* Screendrop/RecordingTextIntelligence.swift */,
+				AB0D00000000000000000004 /* Screendrop/RecordingCaptionTracks.swift */,
 				AB0C00000000000000000018 /* Screendrop/AgentAccessServer.swift */,
 			);
 			name = "Tested logic";
@@ -735,6 +741,8 @@
 				AB0C00000000000000000011 /* Screendrop/AgentAccessCore.swift in Sources */,
 				AB0C00000000000000000013 /* Screendrop/AgentAccessSocket.swift in Sources */,
 				AB0C00000000000000000015 /* Screendrop/AgentAccessTools.swift in Sources */,
+				AB0D00000000000000000001 /* Screendrop/RecordingTextIntelligence.swift in Sources */,
+				AB0D00000000000000000003 /* Screendrop/RecordingCaptionTracks.swift in Sources */,
 				AB0C00000000000000000017 /* Screendrop/AgentAccessServer.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

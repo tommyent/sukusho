@@ -14,6 +14,7 @@ import AVFoundation
 import CoreGraphics
 import Foundation
 import Observation
+import Translation
 
 enum RecordingTranscriptionState: Equatable {
     case idle
@@ -161,6 +162,17 @@ final class RecordingStudioModel {
     private var reframeFocusResolved = false
     private(set) var chapters: [RecordingChapter] = []
     private(set) var chapterError: String?
+    /// The on-device model behind Summarize and Name Chapters.
+    @ObservationIgnored var textModel: any OnDeviceTextModel = SystemTextModel()
+    private(set) var summary: String?
+    private(set) var summaryNote: String?
+    private(set) var isSummarizing = false
+    private(set) var isNamingChapters = false
+    private(set) var captionTracks: [RecordingCaptionTrack] = []
+    private(set) var translationNote: String?
+    /// The language being translated now; the view's translation task runs it.
+    private(set) var translationConfiguration: TranslationSession.Configuration?
+    @ObservationIgnored private var translationQueue: [Locale.Language] = []
 
     private(set) var subtitleCues: [RecordingSubtitleCue] = []
     private(set) var subtitleTimeline = SubtitleTimeline.empty
@@ -667,6 +679,8 @@ final class RecordingStudioModel {
         if let session {
             let metadata = session.loadProjectMetadata()
             chapters = metadata?.chapters ?? []
+            summary = metadata?.summary
+            captionTracks = metadata?.captionTracks ?? []
             manifest = session.loadCaptureManifest()
             pointerCapture = session.loadPointerCapture() ?? PointerCaptureFile()
         }
@@ -2293,6 +2307,163 @@ final class RecordingStudioModel {
 
     var openingSentenceTitle: String {
         RecordingChapterPlanner.openingSentenceTitle(cues: subtitleCues, words: transcriptWords, through: clipTimeline)
+    }
+
+    // MARK: - Summary and chapter titles (Apple Intelligence)
+
+    /// Why Summarize and Name Chapters can't run here, or nil when they can.
+    var textModelUnavailableReason: String? { OnDeviceText.unavailableReason() }
+
+    /// The narration as it survives the edits, a chapter's title before its first line.
+    private var narrationLines: [String] {
+        RecordingTextIntelligence.narrationLines(
+            chapters: visibleChapters,
+            cues: RecordingChapterPlanner.survivingCues(subtitleCues, words: transcriptWords, through: clipTimeline),
+            editorTime: { [clipTimeline] in clipTimeline.editorTime(forSourceTime: $0) })
+    }
+
+    func summarize() {
+        guard !isSummarizing, textModelUnavailableReason == nil else { return }
+        let lines = narrationLines
+        guard !lines.isEmpty else {
+            summaryNote = "Transcribe the narration first; the summary is written from it."
+            return
+        }
+        let source = session?.loadProjectMetadata()?.source
+        let model = textModel
+        isSummarizing = true
+        summaryNote = nil
+        Task { [weak self] in
+            do {
+                let text = try await RecordingTextIntelligence.summary(lines: lines, source: source, model: model)
+                guard let self, !self.isTornDown else { return }
+                self.isSummarizing = false
+                if text.isEmpty { self.summaryNote = "Apple Intelligence wrote nothing for this narration." } else { self.setSummary(text) }
+            } catch {
+                self?.isSummarizing = false
+                self?.summaryNote = OnDeviceText.message(for: error)
+            }
+        }
+    }
+
+    /// Saves the summary as edited; empty removes it.
+    func setSummary(_ text: String?) {
+        guard let session else { return }
+        let trimmed = CloudShareText.trimmedSummary(text)
+        let next = trimmed.isEmpty ? nil : trimmed
+        guard next != summary else { return }
+        do {
+            try session.updateProjectMetadata { $0.summary = next }
+            summary = next
+            summaryNote = nil
+        } catch {
+            summaryNote = "The summary could not be saved: \(error.localizedDescription)"
+        }
+    }
+
+    /// Replaces the chapters' titles with the model's, as one undoable edit.
+    func nameChapters() {
+        guard !isNamingChapters, textModelUnavailableReason == nil else { return }
+        let visible = visibleChapters
+        let readable = RecordingChapterPlanner.survivingCues(subtitleCues, words: transcriptWords, through: clipTimeline)
+        let texts = visible.indices.map { index in
+            RecordingChapterPlanner.chapterText(readable, through: clipTimeline, start: visible[index].start,
+                                                end: index + 1 < visible.count ? visible[index + 1].start : clipTimeline.duration)
+        }
+        guard texts.contains(where: { !$0.isEmpty }) else {
+            chapterError = "Transcribe the narration first; chapters are named from it."
+            return
+        }
+        let model = textModel
+        isNamingChapters = true
+        chapterError = nil
+        Task { [weak self] in
+            do {
+                let titles = try await RecordingTextIntelligence.chapterTitles(texts, model: model)
+                guard let self, !self.isTornDown else { return }
+                self.isNamingChapters = false
+                var named: [UUID: String] = [:]
+                for (chapter, title) in zip(visible, titles) { if let title { named[chapter.id] = title } }
+                // Edits made while the model wrote stay; only the titles change.
+                self.applyChapters(RecordingChapterPlanner.named(self.chapters, titles: named), actionName: "Name Chapters")
+            } catch {
+                self?.isNamingChapters = false
+                self?.chapterError = OnDeviceText.message(for: error)
+            }
+        }
+    }
+
+    // MARK: - Translated captions
+
+    /// The language the captions are in, as read from their text.
+    var captionSourceLanguage: Locale.Language? {
+        RecordingCaptionTranslation.sourceLanguage(of: subtitleCues)
+    }
+
+    /// Translates the captions into each language in turn; the view's
+    /// translation task runs each one, after the system's download prompt if it needs one.
+    func translateCaptions(to languages: [Locale.Language]) {
+        guard translationConfiguration == nil, hasSubtitles, !languages.isEmpty else { return }
+        translationQueue = languages
+        translationNote = nil
+        startNextTranslation()
+    }
+
+    private func startNextTranslation() {
+        guard !translationQueue.isEmpty else {
+            translationConfiguration = nil
+            return
+        }
+        translationConfiguration = TranslationSession.Configuration(source: captionSourceLanguage, target: translationQueue.removeFirst())
+    }
+
+    func translate(using session: TranslationSession) async {
+        guard let target = translationConfiguration?.target else { return }
+        let cues = subtitleCues
+        let lang = RecordingCaptionTranslation.tag(target)
+        do {
+            let requests = cues.map { TranslationSession.Request(sourceText: $0.text, clientIdentifier: $0.id.uuidString) }
+            let responses = try await session.translations(from: requests)
+            var translations: [String: String] = [:]
+            for response in responses { if let id = response.clientIdentifier { translations[id] = response.targetText } }
+            let track = RecordingCaptionTranslation.track(lang: lang, cues: cues, translations: translations)
+            saveCaptionTracks(RecordingCaptionTranslation.merging(track, into: captionTracks))
+        } catch is CancellationError {
+            translationQueue = []
+        } catch {
+            translationNote = "\(RecordingCaptionTranslation.label(for: lang)) couldn’t be translated: \(error.localizedDescription)"
+        }
+        startNextTranslation()
+    }
+
+    var isTranslating: Bool { translationConfiguration != nil }
+
+    func cancelTranslation() {
+        translationQueue = []
+        translationConfiguration = nil
+    }
+
+    func updateTranslatedCue(lang: String, id: UUID, text: String) {
+        guard let track = captionTracks.firstIndex(where: { $0.lang == lang }),
+              let cue = captionTracks[track].cues.firstIndex(where: { $0.id == id }),
+              captionTracks[track].cues[cue].text != text else { return }
+        var tracks = captionTracks
+        tracks[track].cues[cue].text = text
+        saveCaptionTracks(tracks)
+    }
+
+    func removeCaptionTrack(lang: String) {
+        saveCaptionTracks(captionTracks.filter { $0.lang != lang })
+    }
+
+    private func saveCaptionTracks(_ tracks: [RecordingCaptionTrack]) {
+        guard let session else { return }
+        do {
+            try session.updateProjectMetadata { $0.captionTracks = tracks.isEmpty ? nil : tracks }
+            captionTracks = tracks
+        } catch {
+            translationNote = "Translations could not be saved: \(error.localizedDescription)"
+        }
     }
 
     // MARK: - Transcript editing

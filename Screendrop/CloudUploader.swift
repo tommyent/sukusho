@@ -49,7 +49,7 @@ final class CloudUploader: NSObject {
 
     /// One cancellable operation covers preparation and transport. Its ID
     /// keeps a cancelled completion from clearing a newer retry's state.
-    private var activeTasks: [UUID: (id: UUID, task: Task<(CloudUploadResult, URL, Data?, Data?, [RecordingRedaction]?), any Error>)] = [:]
+    private var activeTasks: [UUID: (id: UUID, task: Task<(CloudUploadResult, URL, Data?, Data?, [RecordingRedaction]?, CloudShareText.Payload?), any Error>)] = [:]
 
     private override init() {
         super.init()
@@ -93,7 +93,7 @@ final class CloudUploader: NSObject {
         uploadProgress[itemID] = 0
         failedItemIDs.remove(itemID)
 
-        let uploadTask = Task { [weak self] () throws -> (CloudUploadResult, URL, Data?, Data?, [RecordingRedaction]?) in
+        let uploadTask = Task { [weak self] () throws -> (CloudUploadResult, URL, Data?, Data?, [RecordingRedaction]?, CloudShareText.Payload?) in
             guard let self else { throw CancellationError() }
             try Task.checkCancellation()
 
@@ -118,6 +118,8 @@ final class CloudUploader: NSObject {
                 : chapterData
             let redactions = RecordingSession.isSessionDirectory(sessionDirectory)
                 ? RecordingSession(directoryURL: sessionDirectory).loadRenderStamp()?.redactions : nil
+            let shareText = isVideo && !encrypt && RecordingSession.isSessionDirectory(sessionDirectory)
+                ? CloudSidecarUploader.shareText(sessionDirectory: sessionDirectory, uploadedFileURL: fileURL) : nil
             if replacingUploadID != nil {
                 // Studio may invalidate final.mov while transport or sidecars suspend.
                 let snapshot = FileManager.default.temporaryDirectory
@@ -169,7 +171,7 @@ final class CloudUploader: NSObject {
                     socialEnabled: socialEnabled, expiresAt: expiresAt, allowAnonymousComments: allowAnonymousComments,
                     password: password, creds: creds, progress: progress
                 )
-                return (result, fileURL, nil, nil, nil)
+                return (result, fileURL, nil, nil, nil, nil)
             }
             // Past Cloudflare's 100 MB request cap a body goes up in parts. Files
             // always do, so an older Worker refuses them instead of mislabelling them.
@@ -188,7 +190,7 @@ final class CloudUploader: NSObject {
                     metadata: metadata, replacingUploadID: replacingUploadID, creds: creds, progress: progress)
             }
 
-            return (result, fileURL, transcriptData, frozenChapters, redactions)
+            return (result, fileURL, transcriptData, frozenChapters, redactions, shareText)
         }
 
         activeTasks[itemID] = (operationID, uploadTask)
@@ -202,7 +204,7 @@ final class CloudUploader: NSObject {
         }
 
         do {
-            let (result, uploadedFileURL, transcriptData, frozenChapters, redactions) = try await withTaskCancellationHandler {
+            let (result, uploadedFileURL, transcriptData, frozenChapters, redactions, shareText) = try await withTaskCancellationHandler {
                 try await uploadTask.value
             } onCancel: {
                 uploadTask.cancel()
@@ -222,7 +224,8 @@ final class CloudUploader: NSObject {
                 guard let mediaKey = result.mediaKey, result.id == replacingUploadID else { throw CloudUploadError.invalidResponse }
                 CloudPreviewCache.shared.remove(result.id)
                 try await CloudSidecarUploader.uploadVideoSidecars(uploadID: result.id, uploadedFileURL: uploadedFileURL,
-                    transcriptData: transcriptData, chapterData: frozenChapters, createdAt: Date(), mediaKey: mediaKey, replacingVideo: true, creds: creds)
+                    transcriptData: transcriptData, chapterData: frozenChapters, createdAt: Date(), mediaKey: mediaKey, replacingVideo: true,
+                    shareText: shareText, creds: creds)
                 try Task.checkCancellation()
                 guard activeTasks[itemID]?.id == operationID else { throw CancellationError() }
             }
@@ -230,7 +233,8 @@ final class CloudUploader: NSObject {
             uploadedURLs[itemID] = result.url
             if result.expiryIgnored { showExpiryIgnoredNotice() }
             if replacingUploadID == nil, !asFile, mimeTypeForFile(uploadedFileURL).hasPrefix("video/") {
-                scheduleSidecarUpload(uploadID: result.id, fileURL: uploadedFileURL, transcriptData: transcriptData, chapterData: frozenChapters, title: title, mediaKey: result.mediaKey, creds: creds)
+                scheduleSidecarUpload(uploadID: result.id, fileURL: uploadedFileURL, transcriptData: transcriptData, chapterData: frozenChapters,
+                                      shareText: shareText, sealed: result.shareKey != nil, title: title, mediaKey: result.mediaKey, creds: creds)
             }
             ScreenshotHistoryStore.shared.recordCloudUpload(id: itemID, cloudURL: result.url, redactions: redactions)
             // The Library's storage bar; a video's sidecars land in the next reading.
@@ -252,7 +256,8 @@ final class CloudUploader: NSObject {
     /// Ships the share-page extras (poster, title, transcript) after the
     /// video itself is up. Best-effort and detached: the share link is
     /// already usable, sidecars enrich the page when they land.
-    private func scheduleSidecarUpload(uploadID: String, fileURL: URL, transcriptData: Data?, chapterData: Data?, title: String?, mediaKey: String?, creds: CloudCredentials) {
+    private func scheduleSidecarUpload(uploadID: String, fileURL: URL, transcriptData: Data?, chapterData: Data?,
+                                       shareText: CloudShareText.Payload?, sealed: Bool, title: String?, mediaKey: String?, creds: CloudCredentials) {
         let item = ScreenshotHistoryStore.shared.items.first {
             $0.url.standardizedFileURL == fileURL.standardizedFileURL
         }
@@ -267,6 +272,8 @@ final class CloudUploader: NSObject {
                     createdAt: createdAt,
                     customTitle: title,
                     mediaKey: mediaKey,
+                    shareText: shareText,
+                    sealed: sealed,
                     creds: creds
                 )
             } catch { print("Sidecar upload failed for \(uploadID): \(error)") }

@@ -62,6 +62,18 @@ nonisolated enum RecordingChapterPlanner {
         return result
     }
 
+    /// Name Chapters: the model's titles replace the opening sentences, and
+    /// stay through later cuts as a typed title does.
+    static func named(_ chapters: [RecordingChapter], titles: [UUID: String]) -> [RecordingChapter] {
+        chapters.map { chapter in
+            guard let title = titles[chapter.id] else { return chapter }
+            var named = chapter
+            named.title = String(title.prefix(200))
+            named.autoTitle = false
+            return named
+        }
+    }
+
     static func chapterText(_ cues: [RecordingSubtitleCue], through timeline: RecordingClipTimeline, start: TimeInterval, end: TimeInterval) -> String {
         let sourceStart = timeline.sourceTime(at: start)
         return cues.filter {
