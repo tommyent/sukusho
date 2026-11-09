@@ -126,6 +126,8 @@ struct ScreendropApp: App {
                 RecordingProjectStore.shared.reload()
                 // A bug report goes straight to its Agent Prompt: no preview card, after-capture actions or Studio.
                 if session.loadCaptureManifest()?.isBugReport == true {
+                    // With Include app logs on, the user sees the log and chooses before it joins the prompt.
+                    await RecordingAppLogsReview.collect(for: session)
                     // The Library comes forward to say why it failed; the bar is gone and the app was behind.
                     if await !CaptureLibraryModel.shared.exportBugReport(session) { CaptureLibraryModel.shared.show() }
                     return

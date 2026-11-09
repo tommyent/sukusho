@@ -130,6 +130,10 @@ nonisolated enum RecordingAgentPromptWriter {
         }
         try plan.markdown(frameTimes: frameTimes, strips: stripSpans, sourceStills: edited == nil)
             .write(to: staging.appendingPathComponent("prompt.md"), atomically: true, encoding: .utf8)
+        if let logs = plan.logs {
+            try logs.text(timeline: plan.timeline)
+                .write(to: staging.appendingPathComponent(RecordingAppLogs.exportFileName), atomically: true, encoding: .utf8)
+        }
         try Task.checkCancellation()
         let destination = directory.appendingPathComponent(folderName(name ?? plan.title), isDirectory: true)
         do {
@@ -143,10 +147,13 @@ nonisolated enum RecordingAgentPromptWriter {
 
     static let folderSuffix = "_agent-prompt"
 
-    static func folderName(_ name: String) -> String {
+    static func folderName(_ name: String) -> String { safeName(name) + folderSuffix }
+
+    /// `name` as a file name: no slashes, colons or control characters, at most 100 characters.
+    static func safeName(_ name: String) -> String {
         let safe = name.components(separatedBy: CharacterSet(charactersIn: "/:\\").union(.controlCharacters))
             .joined(separator: "-").trimmingCharacters(in: .whitespacesAndNewlines)
-        return String((safe.isEmpty || safe == "." || safe == ".." ? "Recording" : safe).prefix(100)) + folderSuffix
+        return String((safe.isEmpty || safe == "." || safe == ".." ? "Recording" : safe).prefix(100))
     }
 
     /// The recording ID a folder is named with: what follows its last "_". Folders

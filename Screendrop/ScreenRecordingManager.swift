@@ -58,6 +58,16 @@ struct ScreenRecordingSource {
             display.displayID
         }
     }
+
+    /// The app `source` names, running: the recorded window's own, else the active copy of that bundle.
+    func application(for source: CaptureSource?) -> NSRunningApplication? {
+        if case .window(let window) = kind, let app = window.owningApplication {
+            return NSRunningApplication(processIdentifier: app.processID)
+        }
+        guard let id = source?.bundleIdentifier else { return nil }
+        let apps = NSRunningApplication.runningApplications(withBundleIdentifier: id)
+        return apps.first { $0.isActive } ?? apps.first
+    }
 }
 
 private enum ScreenRecordingFinishAction: Equatable {
@@ -72,6 +82,8 @@ nonisolated struct ScreenRecordingCaptureOptions: Sendable {
     var capturesSystemAudio = false
     var cleanDesktop = true
     var bugReport = false
+    /// A Bug report take that reads the recorded app's log after Stop. Off unless chosen for the take.
+    var appLogs = false
     var microphoneDeviceID: String?
     var cameraDeviceID: String?
 
@@ -80,6 +92,7 @@ nonisolated struct ScreenRecordingCaptureOptions: Sendable {
         var options = ScreenRecordingCaptureOptions()
         options.capturesSystemAudio = ScreendropPreferences.recordingSystemAudio
         options.bugReport = ScreendropPreferences.recordingBugReport
+        options.appLogs = options.bugReport && ScreendropPreferences.recordingAppLogs
         // A bug report keeps the menu bar and notification banners: they can be part of the bug.
         options.cleanDesktop = ScreendropPreferences.recordingCleanDesktop && !options.bugReport
         let micID = ScreendropPreferences.recordingMicrophoneDeviceID
@@ -117,6 +130,10 @@ final class ScreenRecordingManager {
     private var startedAt: Date?
     private var pausedAt: Date?
     private var accumulatedPauseDuration: TimeInterval = 0
+    /// The take's pauses by the wall clock, which the app log's times use.
+    private var pauseIntervals: [ClosedRange<Double>] = []
+    /// The recorded app, for a take with Include app logs on.
+    private var appLogApp: NSRunningApplication?
     private var timer: Timer?
     private var finishAction: ScreenRecordingFinishAction = .preview
     private var isStopping = false
@@ -152,7 +169,13 @@ final class ScreenRecordingManager {
 
         let targetDisplayID = source.displayID ?? ActiveDisplayResolver.activeDisplayID(preferPointer: true) ?? CGMainDisplayID()
         // Named before the recording bar and camera bubble appear.
-        let captureSource = source.captureSource
+        let named = source.captureSource
+        let recordedApp = source.application(for: named)
+        let captureSource = named.map { source in
+            var source = source
+            source.appVersion = CaptureSource.version(of: recordedApp)
+            return source
+        }
         state = .starting
         errorMessage = nil
         displayID = targetDisplayID
@@ -288,6 +311,8 @@ final class ScreenRecordingManager {
                 manifest.includesMicrophone = options.microphoneDeviceID != nil
                 manifest.includesAppWindows = ScreendropPreferences.includeAppWindowsInCaptures
                 manifest.isBugReport = options.bugReport ? true : nil
+                manifest.systemVersion = ProcessInfo.processInfo.operatingSystemVersionString
+                appLogApp = options.appLogs ? recordedApp : nil
                 if !cameraStarted {
                     manifest.cameraLeadIn = nil
                 }
@@ -295,6 +320,7 @@ final class ScreenRecordingManager {
                 startedAt = Date()
                 pausedAt = nil
                 accumulatedPauseDuration = 0
+                pauseIntervals = []
                 elapsedTime = 0
                 microphoneLevel = options.microphoneDeviceID == nil ? nil : 0
                 state = .recording
@@ -336,6 +362,7 @@ final class ScreenRecordingManager {
 
         if let pausedAt {
             accumulatedPauseDuration += Date().timeIntervalSince(pausedAt)
+            pauseIntervals.append(pausedAt.timeIntervalSince1970...Date().timeIntervalSince1970)
         }
 
         self.pausedAt = nil
@@ -431,6 +458,15 @@ final class ScreenRecordingManager {
                         "The screen footage was saved, but its cursor, click and drawing data could not be saved."
                     )
                 }
+                if let app = appLogApp {
+                    var pauses = pauseIntervals
+                    if let pausedAt { pauses.append(pausedAt.timeIntervalSince1970...Date().timeIntervalSince1970) }
+                    // The first frame's host time, by the wall clock the log store uses.
+                    let start = Date().timeIntervalSince1970 - (ProcessInfo.processInfo.systemUptime - sessionStart)
+                    manifest.appLogSpan = RecordingAppLogs.Span(
+                        processIdentifier: app.processIdentifier, appName: app.localizedName ?? "The app",
+                        bundleIdentifier: app.bundleIdentifier, start: start, duration: result.duration, pauses: pauses)
+                }
             } else {
                 metadataWarnings.append(
                     "The screen footage was saved, but its cursor timeline could not be aligned to the video."
@@ -447,6 +483,9 @@ final class ScreenRecordingManager {
         }
 
         cleanupAfterRecording()
+        appLogApp = nil
+        // Include app logs is chosen per take; Start Over keeps it for the new take.
+        if action != .restart { UserDefaults.standard.removeObject(forKey: ScreendropPreferences.recordingAppLogsKey) }
 
         guard let session, result.fileIsUsable else {
             if let session {

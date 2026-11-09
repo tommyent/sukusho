@@ -30,6 +30,7 @@ struct RecordingPickerControls: View {
     @AppStorage(ScreendropPreferences.recordingBugReportKey) private var bugReport = false
     @AppStorage(ScreendropPreferences.includeAppWindowsInCapturesKey) private var includeAppWindows = false
     @AppStorage(ScreendropPreferences.recordingBugReportAddedAppWindowsKey) private var bugReportAddedAppWindows = false
+    @AppStorage(ScreendropPreferences.recordingAppLogsKey) private var appLogs = false
     @AppStorage(ScreendropPreferences.recordingStartDelaySecondsKey) private var startDelaySeconds = 0
     @AppStorage(ScreendropPreferences.recordingTeleprompterEnabledKey) private var teleprompterEnabled = false
 
@@ -128,6 +129,7 @@ struct RecordingPickerControls: View {
             // A bug in Sukusho needs its windows: Bug report turns them on, with the usual banner and its
             // switch, and turns them back off with itself unless they were on before.
             .onChange(of: bugReport) { _, on in
+                if !on { appLogs = false }
                 if on, !includeAppWindows {
                     includeAppWindows = true
                     bugReportAddedAppWindows = true
@@ -135,6 +137,22 @@ struct RecordingPickerControls: View {
                     includeAppWindows = false
                     bugReportAddedAppWindows = false
                 }
+            }
+
+            if bugReport {
+                Toggle(isOn: $appLogs) {
+                    BarActionLabel(
+                        id: .appLogs,
+                        title: appLogs ? "App logs on" : "App logs off",
+                        systemImage: appLogs ? "doc.plaintext.fill" : "doc.plaintext",
+                        tint: appLogs ? BarMetrics.activeTint : BarMetrics.inactiveTint
+                    )
+                }
+                .toggleStyle(.button)
+                .buttonStyle(BarButtonStyle())
+                .accessibilityLabel("Include app logs")
+                .accessibilityHint("Adds the recorded app's own log to this take's Agent Prompt. You see what was captured before it's saved, and it turns off after the take.")
+                .disabled(CaptureCountdownPresenter.shared.isRunning)
             }
 
             BarActionButton(
