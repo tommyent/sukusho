@@ -4,10 +4,10 @@
         <title>Sukusho</title>
         <item>
             <title>1.2.0</title>
-            <pubDate>Mon, 09 Nov 2026 13:23:28 -0500</pubDate>
+            <pubDate>Mon, 09 Nov 2026 13:36:32 -0500</pubDate>
             <link>https://tommyent.github.io/sukusho/</link>
             <sparkle:fullReleaseNotesLink>https://github.com/tommyent/sukusho/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:version>32.261109.1820</sparkle:version>
+            <sparkle:version>32.261109.1833</sparkle:version>
             <sparkle:shortVersionString>1.2.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
             <description sparkle:format="markdown"><![CDATA[# Sukusho 1.2.0
@@ -52,7 +52,7 @@ Sharing needs your own Cloudflare Worker: deploy [sukusho-worker](https://github
 ### Agents
 - **Agent access** (**Settings › Agents**, off by default) lets coding agents such as Claude Code or Codex add, find and share captures through Sukusho's own MCP server. Sukusho asks you before anything is shared, deleted or captured.
 ]]></description>
-            <enclosure url="https://github.com/tommyent/sukusho/releases/download/v1.2.0/Sukusho-1.2.0.dmg" length="9650154" type="application/octet-stream" sparkle:edSignature="78IlPnt2BiJ42sp0LoEdm44q8W7g3aIfGHmDMQ0wgnNKKGA1OVgQS3rqXT4yDWHnSXvezsBZ2rGdGfXJn4vYAA=="/>
+            <enclosure url="https://github.com/tommyent/sukusho/releases/download/v1.2.0/Sukusho-1.2.0.dmg" length="9650659" type="application/octet-stream" sparkle:edSignature="fxXgBOYVNJudTRSV+jyv8c23TbJAvlwQqT09oy7qvdpMlg2waYgm08S2ZkxKupKZ1lOh6OPMgsUp7gE4Izj8Cg=="/>
         </item>
     </channel>
 </rss>
