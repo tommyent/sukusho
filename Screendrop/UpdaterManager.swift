@@ -54,6 +54,7 @@ final class UpdaterManager: NSObject, SPUStandardUserDriverDelegate {
 
     func start() {
         guard Self.updatesThisBuild else { return }
+        LegacyIdentityImport.clearImportedSparkleKeysOnce(in: .standard)
         controller.startUpdater()
     }
 
