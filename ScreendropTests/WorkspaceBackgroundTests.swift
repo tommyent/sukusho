@@ -58,6 +58,29 @@ struct WorkspaceBackgroundTests {
         #expect(WorkspaceBackground.pixelSize(of: text) == nil)
     }
 
+    /// Every Add keeps Sukusho's own copy: the bytes are copied, a taken name
+    /// gets `_2`, and a file already in the folder isn't copied again.
+    @Test func addedWallpapersAreCopiedIntoTheWallpapersFolder() throws {
+        let directory = try Self.temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let picked = directory.appendingPathComponent("Desk photo.png")
+        try Self.write(Self.image(width: 40, height: 30, red: 0.7), to: picked, type: .png)
+        let wallpapers = directory.appendingPathComponent("Wallpapers", isDirectory: true)
+
+        let first = try AnnotationWallpaperStore.copy(picked, into: wallpapers)
+        #expect(first.lastPathComponent == "Desk photo.png")
+        #expect(first.deletingLastPathComponent().standardizedFileURL == wallpapers.standardizedFileURL)
+        #expect(try Data(contentsOf: first) == Data(contentsOf: picked))
+        let second = try AnnotationWallpaperStore.copy(picked, into: wallpapers)
+        #expect(second.lastPathComponent == "Desk photo_2.png")
+        #expect(try AnnotationWallpaperStore.copy(first, into: wallpapers) == first.standardizedFileURL)
+        // The copy outlives the original.
+        try FileManager.default.removeItem(at: picked)
+        #expect(WorkspaceBackground.pixelSize(of: first) == CGSize(width: 40, height: 30))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: wallpapers.path).sorted()
+            == ["Desk photo.png", "Desk photo_2.png"])
+    }
+
     /// The workspace wallpaper is drawn only behind the windows' content: the
     /// export (PNG and JPEG), the file Copy and Upload send, Copy's clipboard
     /// item and an Agent Prompt's stills and strips are the same bytes with it on.

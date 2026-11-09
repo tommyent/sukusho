@@ -442,7 +442,7 @@ struct AnnotationEditorWindow: View {
     private func pickCustomWallpaper() {
         clearInspectorFocus()
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.image]
+        panel.allowedContentTypes = AnnotationWallpaperStore.supportedContentTypes
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
@@ -450,8 +450,7 @@ struct AnnotationEditorWindow: View {
 
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            let wallpaper = AnnotationCustomWallpaper(url: url)
-            wallpaperStore.addRecentWallpaper(url)
+            let wallpaper = AnnotationCustomWallpaper(url: wallpaperStore.addPickedWallpaper(url))
             model.backgroundSettings.customWallpaper = wallpaper
             model.backgroundSettings.style = .customWallpaper(wallpaper)
         }
