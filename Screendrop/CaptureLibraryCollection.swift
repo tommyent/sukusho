@@ -431,10 +431,9 @@ struct LibraryCellContent: View {
                     thumbnail(item)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     labels(item)
-                        .padding(.horizontal, 4)
-                        .padding(.bottom, 4)
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, 10)
                 }
-                .padding(6)
                 .background(
                     Color.primary.opacity(selected ? 0.075 : isHovering ? 0.035 : 0.012),
                     in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
@@ -522,12 +521,8 @@ struct LibraryCellContent: View {
 
     private func thumbnail(_ item: CaptureLibraryItem) -> some View {
         CaptureLibraryThumbnail(item: item, showsTopOfTall: true)
-            // Concentric inside the card: its radius minus its 6 pt padding.
-            .clipShape(.rect(cornerRadius: DS.Radius.m, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
-            }
+            .clipShape(libraryCardImageShape)
+            .overlay { libraryCardImageShape.strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5) }
             .overlay(alignment: .topLeading) {
                 if let tag = item.tags.first(where: { CaptureTagStyles.shared.color(for: $0) != nil }) ?? item.tags.first {
                     // One small badge rather than a mark per tag, so small
@@ -566,8 +561,8 @@ struct LibraryCellContent: View {
 
 /// A recording's Agent Prompt circle, at the right of its card's title, where
 /// the white ground makes it stand out: a green ring and percent while
-/// exporting, a green tick for the prompt Rex's ⌃⌥⌘P sends, an outline tick
-/// for one it doesn't (a click makes it the one), amber once the recording
+/// exporting, sparkles in a green circle for the prompt Rex's ⌃⌥⌘P sends, in an
+/// outline for one it doesn't (a click makes it the one), amber once the recording
 /// was edited since (a click exports again).
 private struct AgentPromptCardMark: View {
     let item: CaptureLibraryItem
@@ -606,9 +601,7 @@ private struct AgentPromptCardMark: View {
                                 .foregroundStyle(CardMark.green)
                                 .transition(.opacity)
                         }
-                        Image(systemName: state.symbol)
-                            .font(.system(size: 19, weight: .medium))
-                            .foregroundStyle(state.tint)
+                        AgentPromptGlyph(state: state)
                             .symbolEffect(.bounce, value: reduceMotion ? nil : state)
                             .symbolEffect(.bounce, value: reduceMotion ? 0 : copies)
                             .contentShape(Circle())
@@ -623,7 +616,7 @@ private struct AgentPromptCardMark: View {
                 }
                 .disabled(model.isBusy)
                 .help(state.help)
-                // The tick springs in when an export finishes; Reduce Motion fades it.
+                // The mark springs in when an export finishes; Reduce Motion fades it.
                 .transition(reduceMotion ? .opacity : .scale(scale: 0.3).combined(with: .opacity))
             }
         }
@@ -633,23 +626,31 @@ private struct AgentPromptCardMark: View {
     }
 }
 
+/// Sparkles say "AI" where a tick read as "done" and matched the cloud badge's
+/// "shared" tick. The circle, not just the colour, tells the states apart:
+/// filled for the prompt Rex sends, an outline for an older one. An edited
+/// recording keeps the refresh arrow, since a click exports it again.
+private struct AgentPromptGlyph: View {
+    let state: AgentPromptIndex.State
+
+    var body: some View {
+        if state == .stale {
+            Image(systemName: "arrow.clockwise.circle.fill")
+                .font(.system(size: 19, weight: .medium))
+                .foregroundStyle(.orange)
+        } else {
+            let isCurrent = state == .current
+            Image(systemName: "sparkles")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(isCurrent ? Color.white : Color.secondary)
+                .frame(width: 19, height: 19)
+                .background(Circle().fill(isCurrent ? CardMark.green : Color.clear))
+                .overlay(Circle().strokeBorder(isCurrent ? Color.clear : Color.secondary, lineWidth: 1.5))
+        }
+    }
+}
+
 extension AgentPromptIndex.State {
-    var symbol: String {
-        switch self {
-        case .current: "checkmark.circle.fill"
-        case .available: "checkmark.circle"
-        case .stale: "arrow.clockwise.circle.fill"
-        }
-    }
-
-    var tint: Color {
-        switch self {
-        case .current: CardMark.green
-        case .available: .secondary
-        case .stale: .orange
-        }
-    }
-
     var help: String {
         switch self {
         case .current: "Agent Prompt ready: ⌃⌥⌘P in Rex sends it. Click to copy a line that asks any agent to read it."
@@ -747,6 +748,10 @@ extension View {
             .cardMark(Capsule())
     }
 }
+
+/// A card's image runs edge to edge: the card's own corners at the top,
+/// square where it meets the title. Shared by capture and upload cards.
+let libraryCardImageShape = UnevenRoundedRectangle(topLeadingRadius: DS.Radius.card, topTrailingRadius: DS.Radius.card, style: .continuous)
 
 /// A Library card's border: a 2 pt accent ring when selected, grey while
 /// the window isn't key, as Finder does; a hairline otherwise (design pass
