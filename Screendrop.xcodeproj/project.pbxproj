@@ -930,7 +930,7 @@
 					"$(PROJECT_DIR)/Screendrop/Vendor/DeepFilterNet/lib",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 27.0;
-				MARKETING_VERSION = 1.1.0;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.tommyent.Sukusho;
 				PRODUCT_MODULE_NAME = Screendrop;
 				PRODUCT_NAME = Sukusho;
@@ -973,7 +973,7 @@
 					"$(PROJECT_DIR)/Screendrop/Vendor/DeepFilterNet/lib",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 27.0;
-				MARKETING_VERSION = 1.1.0;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.tommyent.Sukusho;
 				PRODUCT_MODULE_NAME = Screendrop;
 				PRODUCT_NAME = Sukusho;
@@ -1080,7 +1080,7 @@
 					"$(PROJECT_DIR)/Screendrop/Vendor/DeepFilterNet/lib",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 27.0;
-				MARKETING_VERSION = 1.1.0;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.tommyent.Sukusho.dev;
 				PRODUCT_MODULE_NAME = Screendrop;
 				PRODUCT_NAME = "Sukusho Dev";
