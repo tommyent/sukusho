@@ -117,8 +117,17 @@ nonisolated struct RecordingAppLogs: Codable, Sendable, Equatable {
             }
             return RecordingAppLogs(span: span, lines: lines)
         } catch {
-            return RecordingAppLogs(span: span, lines: [], failure: error.localizedDescription)
+            // Seen on macOS 26.5.1: a standard account gets "Client lacks entitlement to perform operation".
+            let hint = isAdministrator() ? "" : " macOS lets only administrator accounts read another app's log."
+            return RecordingAppLogs(span: span, lines: [], failure: error.localizedDescription + hint)
         }
+    }
+
+    /// True when this user is in the admin group (gid 80), which reading another process's log needs.
+    private static func isAdministrator() -> Bool {
+        var groups = [gid_t](repeating: 0, count: Int(NGROUPS_MAX))
+        let count = getgroups(Int32(groups.count), &groups)
+        return count > 0 && groups.prefix(Int(count)).contains(80)
     }
 
     static func load(fromPackage directory: URL) -> RecordingAppLogs? {

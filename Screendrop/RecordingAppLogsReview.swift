@@ -17,9 +17,16 @@ enum RecordingAppLogsReview {
         if let text = scroll.documentView as? NSTextView {
             text.isEditable = false
             text.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
+            // In the VM the alert opened partway down the log, then with the first line half hidden;
+            // whole layout, a top inset and a scroll once it shows open it on the header.
+            text.layoutManager?.allowsNonContiguousLayout = false
+            text.textContainerInset = NSSize(width: 2, height: 10)
             text.string = logs.text(timeline: nil)
         }
         alert.accessoryView = scroll
+        RunLoop.main.perform(inModes: [.modalPanel]) {
+            (scroll.documentView as? NSTextView)?.scrollToBeginningOfDocument(nil)
+        }
         return alert.runModal() == .alertFirstButtonReturn
     }
 
