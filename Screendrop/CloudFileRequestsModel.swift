@@ -237,12 +237,29 @@ nonisolated enum FileRequestError: LocalizedError {
 /// link, already copied. Open links are under Manage, which copies the ones made on this Mac again.
 struct FileRequestsSheet: View {
     @State private var model = FileRequestsModel.shared
-    @State private var draft = CloudFileRequestDraft()
+    @State private var draft: CloudFileRequestDraft
     @State private var created: CloudFileRequest?
     @State private var showsLimits = false
     /// Each copy bounces the Copied mark.
     @State private var copies = 0
+    @FocusState private var passwordFocused: Bool
     @Environment(\.dismiss) private var dismiss
+    private let focusesPassword: Bool
+    private let submitTitle: String
+    private let cancelTitle: String
+    private let onCancel: (() -> Void)?
+    /// An agent's request (AgentAccess): the owner's draft goes here instead of to the Worker.
+    private let onSubmit: ((CloudFileRequestDraft) -> Void)?
+
+    init(draft: CloudFileRequestDraft = .init(), focusesPassword: Bool = false, submitTitle: String = "Create Link",
+         cancelTitle: String = "Cancel", onCancel: (() -> Void)? = nil, onSubmit: ((CloudFileRequestDraft) -> Void)? = nil) {
+        _draft = State(initialValue: draft)
+        self.focusesPassword = focusesPassword
+        self.submitTitle = submitTitle
+        self.cancelTitle = cancelTitle
+        self.onCancel = onCancel
+        self.onSubmit = onSubmit
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -318,8 +335,10 @@ struct FileRequestsSheet: View {
                     .labelsHidden()
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 160)
+                    .focused($passwordFocused)
             }
             .help("The client needs it to send files. Up to 128 characters.")
+            .onAppear { if focusesPassword { passwordFocused = true } }
             // The sizes are rarely changed, so they fold into one line.
             DisclosureGroup(isExpanded: $showsLimits) {
                 limits.padding(.top, 6)
@@ -342,8 +361,13 @@ struct FileRequestsSheet: View {
             }
             HStack {
                 Spacer()
-                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Create Link") {
+                Button(cancelTitle) {
+                    onCancel?()
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+                Button(submitTitle) {
+                    if let onSubmit { return onSubmit(draft) }
                     Task {
                         created = await model.create(draft)
                         if created?.url != nil { AccessibilityNotification.Announcement("Link copied").post() }

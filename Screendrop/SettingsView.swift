@@ -12,6 +12,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     case video
     case overlay
     case cloud
+    case agents
     case about
 
     var id: Self { self }
@@ -23,6 +24,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .video: "Screen Recordings"
         case .overlay: "Overlay"
         case .cloud: "Cloud"
+        case .agents: "Agents"
         case .about: "About"
         }
     }
@@ -34,6 +36,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .video: "video"
         case .overlay: "square.on.square"
         case .cloud: "cloud"
+        case .agents: "terminal"
         case .about: "info.circle"
         }
     }
@@ -220,6 +223,8 @@ private struct SettingsDetailView: View {
                 OverlaySettingsPane()
             case .cloud:
                 CloudSettingsPane()
+            case .agents:
+                AgentsSettingsPane()
             case .about:
                 SettingsAboutPane()
             }

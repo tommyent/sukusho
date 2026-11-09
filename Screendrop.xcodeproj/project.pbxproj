@@ -111,9 +111,44 @@
 		AF1400000000000000000005 /* Screendrop/SortedSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF140000000000000000000E /* Screendrop/SortedSearch.swift */; };
 		AF5E00000000000000000002 /* Screendrop/RecordingPointerStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF5E00000000000000000012 /* Screendrop/RecordingPointerStream.swift */; };
 		AF5E00000000000000000001 /* Screendrop/RecordingInk.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF5E00000000000000000011 /* Screendrop/RecordingInk.swift */; };
+		AB0C0000000000000000000A /* MCP in Frameworks */ = {isa = PBXBuildFile; productRef = AB0C0000000000000000000C /* MCP */; };
+		AB0C0000000000000000000E /* sukusho-mcp in Embed Helpers */ = {isa = PBXBuildFile; fileRef = AB0C00000000000000000001 /* sukusho-mcp */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		AB0C00000000000000000011 /* Screendrop/AgentAccessCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0C00000000000000000012 /* Screendrop/AgentAccessCore.swift */; };
+		AB0C00000000000000000013 /* Screendrop/AgentAccessSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0C00000000000000000014 /* Screendrop/AgentAccessSocket.swift */; };
+		AB0C00000000000000000015 /* Screendrop/AgentAccessTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0C00000000000000000016 /* Screendrop/AgentAccessTools.swift */; };
+		AB0C00000000000000000017 /* Screendrop/AgentAccessServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0C00000000000000000018 /* Screendrop/AgentAccessServer.swift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		AB0C00000000000000000010 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 316389152F9DC05A002A7AF3 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AB0C00000000000000000003;
+			remoteInfo = "sukusho-mcp";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		AB0C0000000000000000000D /* Embed Helpers */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Helpers;
+			dstSubfolderSpec = 1;
+			files = (
+				AB0C0000000000000000000E /* sukusho-mcp in Embed Helpers */,
+			);
+			name = "Embed Helpers";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		AB0C00000000000000000001 /* sukusho-mcp */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "sukusho-mcp"; sourceTree = BUILT_PRODUCTS_DIR; };
+		AB0C00000000000000000012 /* Screendrop/AgentAccessCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AgentAccessCore.swift; sourceTree = SOURCE_ROOT; };
+		AB0C00000000000000000014 /* Screendrop/AgentAccessSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AgentAccessSocket.swift; sourceTree = SOURCE_ROOT; };
+		AB0C00000000000000000016 /* Screendrop/AgentAccessTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AgentAccessTools.swift; sourceTree = SOURCE_ROOT; };
+		AB0C00000000000000000018 /* Screendrop/AgentAccessServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AgentAccessServer.swift; sourceTree = SOURCE_ROOT; };
 		AFAC00000000000000000002 /* Screendrop/Engine/AnnoEditorClipboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/Engine/AnnoEditorClipboard.swift; sourceTree = SOURCE_ROOT; };
 		AE7C00000000000000000002 /* Screendrop/Engine/AnnoTextEditorOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/Engine/AnnoTextEditorOverlay.swift; sourceTree = SOURCE_ROOT; };
 		AF3100000000000000000006 /* Screendrop/FreeToUseMusicPickerModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/FreeToUseMusicPickerModel.swift; sourceTree = SOURCE_ROOT; };
@@ -232,6 +267,11 @@
 			path = ScreendropTests;
 			sourceTree = "<group>";
 		};
+		AB0C00000000000000000002 /* SukushoMCP */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = SukushoMCP;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -249,6 +289,14 @@
 			files = ();
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AB0C00000000000000000009 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AB0C0000000000000000000A /* MCP in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -258,6 +306,7 @@
 				AF2200000000000000000011 /* Screendrop/RecordingRedaction.swift */,
 				3163891F2F9DC05A002A7AF3 /* Screendrop */,
 				AA6100000000000000000002 /* ScreendropTests */,
+				AB0C00000000000000000002 /* SukushoMCP */,
 				AA6100000000000000000003 /* Tested logic */,
 				3163891E2F9DC05A002A7AF3 /* Products */,
 			);
@@ -268,6 +317,7 @@
 			children = (
 				3163891D2F9DC05A002A7AF3 /* Sukusho.app */,
 				AA6100000000000000000001 /* ScreendropTests.xctest */,
+				AB0C00000000000000000001 /* sukusho-mcp */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -377,6 +427,10 @@
 				AD5500000000000000000012 /* Screendrop/LegacyIdentityImport.swift */,
 				AF5D00000000000000000002 /* Screendrop/CaptureLibraryText.swift */,
 				AF5D00000000000000000004 /* Screendrop/CaptureSource.swift */,
+				AB0C00000000000000000012 /* Screendrop/AgentAccessCore.swift */,
+				AB0C00000000000000000014 /* Screendrop/AgentAccessSocket.swift */,
+				AB0C00000000000000000016 /* Screendrop/AgentAccessTools.swift */,
+				AB0C00000000000000000018 /* Screendrop/AgentAccessServer.swift */,
 			);
 			name = "Tested logic";
 			sourceTree = "<group>";
@@ -391,10 +445,12 @@
 				316389192F9DC05A002A7AF3 /* Sources */,
 				3163891A2F9DC05A002A7AF3 /* Frameworks */,
 				3163891B2F9DC05A002A7AF3 /* Resources */,
+				AB0C0000000000000000000D /* Embed Helpers */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				AB0C0000000000000000000F /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				3163891F2F9DC05A002A7AF3 /* Screendrop */,
@@ -418,6 +474,28 @@
 			productName = ScreendropTests;
 			productReference = AA6100000000000000000001 /* ScreendropTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		AB0C00000000000000000003 /* sukusho-mcp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AB0C00000000000000000004 /* Build configuration list for PBXNativeTarget "sukusho-mcp" */;
+			buildPhases = (
+				AB0C00000000000000000008 /* Sources */,
+				AB0C00000000000000000009 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				AB0C00000000000000000002 /* SukushoMCP */,
+			);
+			name = "sukusho-mcp";
+			packageProductDependencies = (
+				AB0C0000000000000000000C /* MCP */,
+			);
+			productName = "sukusho-mcp";
+			productReference = AB0C00000000000000000001 /* sukusho-mcp */;
+			productType = "com.apple.product-type.tool";
 		};
 /* End PBXNativeTarget section */
 
@@ -445,6 +523,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				BAD69099DE38A64197B1CFDA /* XCRemoteSwiftPackageReference "DockProgress" */,
+				AB0C0000000000000000000B /* XCRemoteSwiftPackageReference "swift-sdk" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 3163891E2F9DC05A002A7AF3 /* Products */;
@@ -453,6 +532,7 @@
 			targets = (
 				3163891C2F9DC05A002A7AF3 /* Screendrop */,
 				AA6100000000000000000004 /* ScreendropTests */,
+				AB0C00000000000000000003 /* sukusho-mcp */,
 			);
 		};
 /* End PBXProject section */
@@ -588,10 +668,29 @@
 				AD5500000000000000000002 /* Screendrop/LegacyIdentityImport.swift in Sources */,
 				AF5D00000000000000000001 /* Screendrop/CaptureLibraryText.swift in Sources */,
 				AF5D00000000000000000003 /* Screendrop/CaptureSource.swift in Sources */,
+				AB0C00000000000000000011 /* Screendrop/AgentAccessCore.swift in Sources */,
+				AB0C00000000000000000013 /* Screendrop/AgentAccessSocket.swift in Sources */,
+				AB0C00000000000000000015 /* Screendrop/AgentAccessTools.swift in Sources */,
+				AB0C00000000000000000017 /* Screendrop/AgentAccessServer.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AB0C00000000000000000008 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		AB0C0000000000000000000F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AB0C00000000000000000003 /* sukusho-mcp */;
+			targetProxy = AB0C00000000000000000010 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		316389262F9DC05B002A7AF3 /* Debug */ = {
@@ -964,6 +1063,54 @@
 			};
 			name = "Release";
 		};
+		AB0C00000000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				DEVELOPMENT_TEAM = NMM3956F6W;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tommyent.Sukusho.mcp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		AB0C00000000000000000006 /* Debug Dev */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				DEVELOPMENT_TEAM = NMM3956F6W;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tommyent.Sukusho.mcp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = "Debug Dev";
+		};
+		AB0C00000000000000000007 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CREATE_INFOPLIST_SECTION_IN_BINARY = YES;
+				DEVELOPMENT_TEAM = NMM3956F6W;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tommyent.Sukusho.mcp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -993,6 +1140,16 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		AB0C00000000000000000004 /* Build configuration list for PBXNativeTarget "sukusho-mcp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AB0C00000000000000000005 /* Debug */,
+				AB0C00000000000000000006 /* Debug Dev */,
+				AB0C00000000000000000007 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
@@ -1004,6 +1161,14 @@
 				minimumVersion = 5.0.0;
 			};
 		};
+		AB0C0000000000000000000B /* XCRemoteSwiftPackageReference "swift-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/modelcontextprotocol/swift-sdk.git";
+			requirement = {
+				kind = exactVersion;
+				version = 0.12.1;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1011,6 +1176,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = BAD69099DE38A64197B1CFDA /* XCRemoteSwiftPackageReference "DockProgress" */;
 			productName = DockProgress;
+		};
+		AB0C0000000000000000000C /* MCP */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AB0C0000000000000000000B /* XCRemoteSwiftPackageReference "swift-sdk" */;
+			productName = MCP;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

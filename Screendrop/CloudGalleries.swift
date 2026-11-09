@@ -179,7 +179,7 @@ nonisolated enum CloudGalleryAPI {
 
     /// The image's pixel size, and a JPEG of it at most 800 px on the long edge, flattened
     /// onto white: a window's transparent shadow would turn black in a JPEG.
-    static func thumbnail(of fileURL: URL) throws -> (jpeg: Data, width: Int, height: Int) {
+    static func thumbnail(of fileURL: URL, maxPixels: Int = thumbnailPixels) throws -> (jpeg: Data, width: Int, height: Int) {
         let unreadable = CocoaError(.fileReadCorruptFile, userInfo: [NSURLErrorKey: fileURL])
         guard let source = CGImageSourceCreateWithURL(fileURL as CFURL, nil),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
@@ -188,7 +188,7 @@ nonisolated enum CloudGalleryAPI {
               let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                   kCGImageSourceCreateThumbnailFromImageAlways: true,
                   kCGImageSourceCreateThumbnailWithTransform: true,
-                  kCGImageSourceThumbnailMaxPixelSize: thumbnailPixels,
+                  kCGImageSourceThumbnailMaxPixelSize: maxPixels,
               ] as CFDictionary),
               let context = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0,
                                       space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),

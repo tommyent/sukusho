@@ -177,17 +177,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         CaptureLibraryIndex.shared.start()
         FileRequestsModel.shared.start()
         ShakeToUpload.shared.update()
+        AgentAccess.shared.start()
         RecordingRecoveryCoordinator.recoverInterruptedRecordings()
         let launchEvent = NSAppleEventManager.shared().currentAppleEvent
         let launchReason = launchEvent?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue
+        // An agent's helper starting Sukusho keeps it in the menu bar, as a login launch does.
         let launchedInBackground = launchReason == keyAELaunchedAsLogInItem
             || launchReason == keyAELaunchedAsServiceItem
+            || CommandLine.arguments.contains(AgentAccess.launchArgument)
         // Let Finder's open-file event reach its editor without also opening a
         // Library. Login/service launches keep the existing quiet menu-bar mode.
         DispatchQueue.main.async { [weak self] in
             guard let self, !launchedInBackground, !self.openedFilesAtLaunch else { return }
             CaptureLibraryModel.shared.show()
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        AgentAccess.shared.stop()
     }
 
     /// Finder "Open With" / `open -a Sukusho file.png` entry point.
