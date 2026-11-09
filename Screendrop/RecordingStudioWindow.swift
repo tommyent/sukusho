@@ -1331,12 +1331,14 @@ private struct StudioChapterNameField: View {
     }
 }
 
-/// The recording's summary, edited in place; it saves when editing ends,
-/// and clearing it removes it.
+/// The recording's summary, edited in place. It saves a moment after typing
+/// stops (clicking the video doesn't end editing) and when editing ends;
+/// clearing it removes it once editing ends.
 private struct StudioSummaryField: View {
     let model: RecordingStudioModel
     let summary: String
     @State private var draft: String?
+    @State private var pendingSave: Task<Void, Never>?
     @FocusState private var isEditing: Bool
     @Environment(\.colorScheme) private var colorScheme
 
@@ -1353,23 +1355,37 @@ private struct StudioSummaryField: View {
             .onChange(of: isEditing) { _, editing in
                 if !editing { commit() }
             }
-            .onChange(of: summary) { draft = nil }
+            .onChange(of: draft) { _, text in
+                pendingSave?.cancel()
+                // An empty field only deletes the summary once editing ends.
+                guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                pendingSave = Task {
+                    try? await Task.sleep(for: .milliseconds(500))
+                    guard !Task.isCancelled else { return }
+                    model.setSummary(text)
+                }
+            }
+            // A new summary from the model replaces what's shown, but never the text being typed.
+            .onChange(of: summary) { if !isEditing { draft = nil } }
             .accessibilityLabel("Summary")
     }
 
     private func commit() {
+        pendingSave?.cancel()
         guard let draft else { return }
-        if draft != summary { model.setSummary(draft) }
+        model.setSummary(draft)
         self.draft = nil
     }
 }
 
 /// One translated line: its timestamp and text, edited like the original's.
+/// It saves a moment after typing stops and when editing ends.
 private struct StudioTranslatedCueRow: View {
     let model: RecordingStudioModel
     let lang: String
     let cue: RecordingSubtitleCue
     @State private var draft: String?
+    @State private var pendingSave: Task<Void, Never>?
     @FocusState private var isEditing: Bool
 
     var body: some View {
@@ -1392,6 +1408,15 @@ private struct StudioTranslatedCueRow: View {
                 .onChange(of: isEditing) { _, editing in
                     if editing { model.seekToSubtitle(cue) } else { commit() }
                 }
+                .onChange(of: draft) { _, text in
+                    pendingSave?.cancel()
+                    guard let text else { return }
+                    pendingSave = Task {
+                        try? await Task.sleep(for: .milliseconds(500))
+                        guard !Task.isCancelled else { return }
+                        model.updateTranslatedCue(lang: lang, id: cue.id, text: text)
+                    }
+                }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
@@ -1399,6 +1424,7 @@ private struct StudioTranslatedCueRow: View {
     }
 
     private func commit() {
+        pendingSave?.cancel()
         guard let draft else { return }
         model.updateTranslatedCue(lang: lang, id: cue.id, text: draft)
         self.draft = nil
@@ -4166,17 +4192,30 @@ private struct StudioInspector: View {
         VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
             if !model.captionTracks.isEmpty {
                 InspectorRow("Showing") {
-                    Picker("Showing", selection: $captionLanguage) {
-                        Text("Original").tag(String?.none)
-                        ForEach(model.captionTracks) { track in
-                            Text(track.label).tag(Optional(track.lang))
+                    HStack(spacing: 8) {
+                        Picker("Showing", selection: $captionLanguage) {
+                            Text("Original").tag(String?.none)
+                            ForEach(model.captionTracks) { track in
+                                Text(track.label).tag(Optional(track.lang))
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        // Beside its menu, apart from the transcription's own Remove below.
+                        if let track = shownTranslation {
+                            Button("Remove the \(track.label) captions", systemImage: "trash", role: .destructive) {
+                                captionLanguage = nil
+                                model.removeCaptionTrack(lang: track.lang)
+                            }
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.plain)
+                            .foregroundStyle(Color.red.opacity(0.88))
+                            .help("Remove the \(track.label) captions")
                         }
                     }
-                    .labelsHidden()
-                    .pickerStyle(.menu)
                 }
             }
-            HStack(spacing: InspectorMetrics.rowSpacing) {
+            Group {
                 if model.isTranslating {
                     InspectorActionButton("Stop Translating", systemImage: "stop.circle") {
                         model.cancelTranslation()
@@ -4186,13 +4225,6 @@ private struct StudioInspector: View {
                         isTranslationPickerPresented = true
                     }
                     .help("Translate the captions on this Mac, keeping their times. The share page offers each language.")
-                }
-                if let track = shownTranslation {
-                    InspectorActionButton("Remove", systemImage: "trash", role: .destructive) {
-                        captionLanguage = nil
-                        model.removeCaptionTrack(lang: track.lang)
-                    }
-                    .help("Remove the \(track.label) captions")
                 }
             }
             .popover(isPresented: $isTranslationPickerPresented, arrowEdge: .leading) {
