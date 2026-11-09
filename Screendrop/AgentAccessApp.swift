@@ -78,10 +78,11 @@ final class AgentLiveBackend: AgentBackend {
         CloudUploader.shared.ownerAccess.map { AgentCloud(workerBase: $0.workerBase, token: $0.token) }
     }
 
+    /// What a share that skips Share Options gets, as the shake shelf's Option-drop does.
     var defaultShare: AgentShareSettings {
-        AgentShareSettings(title: nil, expiry: CloudUploadPreferences.defaultExpiry,
-                           comments: CloudUploadPreferences.lastSocialEnabled,
-                           anonymousComments: CloudUploadPreferences.lastAnonymousComments)
+        let saved = CloudUploadOptions.savedDefaults
+        return AgentShareSettings(title: nil, expiry: saved.expiry, comments: saved.socialEnabled,
+                                  anonymousComments: saved.allowAnonymousComments)
     }
 
     func libraryItems() -> [AgentItem] {
@@ -161,13 +162,8 @@ final class AgentLiveBackend: AgentBackend {
 
     /// The Library's gallery path.
     func shareGallery(_ items: [AgentItem], settings: AgentShareSettings) async throws -> AgentShareResult {
-        guard let owner = CloudUploader.shared.ownerAccess else { throw CloudUploadError.notConfigured }
-        let creds = CloudCredentialStore.shared.snapshot()
+        guard let share = CloudGalleryShare.configured() else { throw CloudUploadError.notConfigured }
         StudioProjectRegistry.shared.flushDrafts()
-        let share = CloudGalleryShare(workerBase: owner.workerBase, token: owner.token, large: (CloudUploader.multipartThreshold, { file, size, metadata in
-            let result = try await CloudUploader.multipartUpload(fileURL: file, size: size, metadata: metadata, creds: creds, progress: nil)
-            return CloudGalleryShare.Item(id: result.id, url: result.url, mediaKey: result.mediaKey)
-        }))
         let shared = try await share.share(items.map { CloudGalleryShare.Image(fileURL: $0.fileURL, title: $0.title) },
                                            settings: .init(title: settings.title, expiresAt: settings.expiry.date(), password: settings.password,
                                                            socialEnabled: settings.comments, allowAnonymousComments: settings.anonymousComments)) { _ in }

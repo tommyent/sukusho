@@ -117,6 +117,13 @@ final class CloudLibraryModel {
         return CloudGalleryAPI.supportsGalleries(version: workerVersion.version)
     }
 
+    /// Asks the Worker's version when no refresh has for this Worker, so the shake shelf
+    /// can offer a gallery without the Library having opened.
+    func checkWorkerVersion() {
+        guard let owner = CloudUploader.shared.ownerAccess, workerVersion?.worker != owner.workerBase else { return }
+        Task { workerVersion = (owner.workerBase, await CloudGalleryAPI.workerVersion(workerBase: owner.workerBase)) }
+    }
+
     /// Delete from Cloud… on a Library card: what happens to the image's gallery, if it has one.
     func galleryNote(forLink link: String?) -> String? {
         // A Worker that said it predates galleries has none; one that hasn't said yet may.
@@ -384,17 +391,30 @@ final class CloudLibraryModel {
     /// Files dropped or chosen; Share Options asks how to share them.
     func addFiles(_ urls: [URL]) {
         guard fileUploads == nil else { return }
-        let files = urls.filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
+        let files = Self.regularFiles(urls)
         if files.count < urls.count {
             CaptureLibraryModel.shared.errorMessage = "Folders can’t be shared. Choose the files inside them instead."
         }
         pendingFiles = files
     }
 
+    /// Folders and packages can't go up as files.
+    static func regularFiles(_ urls: [URL]) -> [URL] {
+        urls.filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
+    }
+
     /// Uploads the pending files one after another, then copies their links.
     func uploadPendingFiles(options: CloudUploadOptions) {
         let files = pendingFiles
         pendingFiles = []
+        uploadFiles(files, options: options) { copied, _ in
+            if copied > 0 { CaptureLibraryModel.shared.actionFeedback.show(ActionFeedback.linksCopied(copied)) }
+        }
+    }
+
+    /// Uploads files one after another as the Files page does, copies their links, and
+    /// says how many it copied and whether any failed, which the Library's alert tells.
+    func uploadFiles(_ files: [URL], options: CloudUploadOptions, finished: @escaping (_ copied: Int, _ failed: Bool) -> Void) {
         guard !files.isEmpty, fileUploads == nil else { return }
         fileUploads = FileUploads(total: files.count)
         fileUploadTask = Task {
@@ -427,9 +447,36 @@ final class CloudLibraryModel {
                 fileUploads?.done += 1
             }
             CloudShareLinks.copy(links)
-            if !links.isEmpty { CaptureLibraryModel.shared.actionFeedback.show(ActionFeedback.linksCopied(links.count)) }
             if !failures.isEmpty {
                 CaptureLibraryModel.shared.errorMessage = "Couldn’t share:\n" + failures.joined(separator: "\n")
+            }
+            finished(links.count, !failures.isEmpty)
+        }
+    }
+
+    /// Images from Finder behind one link, as the Library shares several captures.
+    func shareGallery(_ files: [URL], options: CloudUploadOptions, finished: @escaping (_ link: String?) -> Void) {
+        guard !files.isEmpty, fileUploads == nil, let share = CloudGalleryShare.configured() else { return }
+        fileUploads = FileUploads(total: files.count)
+        fileUploadTask = Task {
+            defer {
+                fileUploads = nil
+                fileUploadTask = nil
+                refresh()
+            }
+            do {
+                let shared = try await share.share(
+                    files.map { CloudGalleryShare.Image(fileURL: $0, title: nil) },
+                    settings: .init(title: options.trimmedTitleOrNil, expiresAt: options.expiry.date(), password: options.password,
+                                    socialEnabled: options.socialEnabled, allowAnonymousComments: options.allowAnonymousComments)
+                ) { index in self.fileUploads?.done = index }
+                CloudShareLinks.copy([shared.gallery.url])
+                finished(shared.gallery.url)
+            } catch {
+                if !(error is CancellationError) {
+                    CaptureLibraryModel.shared.errorMessage = "Couldn’t share the gallery:\n" + error.localizedDescription
+                }
+                finished(nil)
             }
         }
     }
