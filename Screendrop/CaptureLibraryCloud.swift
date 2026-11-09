@@ -781,9 +781,8 @@ private struct CloudUploadCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             thumbnail.frame(maxWidth: .infinity, maxHeight: .infinity)
-            labels.padding(.horizontal, 4).padding(.bottom, 4)
+            labels.padding(.horizontal, 10).padding(.bottom, 10)
         }
-        .padding(6)
         .background(
             Color.primary.opacity(selected ? 0.075 : isHovering ? 0.035 : 0.012),
             in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
@@ -843,12 +842,8 @@ private struct CloudUploadCard: View {
     private var thumbnail: some View {
         CloudUploadThumbnail(upload: upload, local: local, showsTopOfTall: true)
             .overlay { CloudFetchOverlay(uploadID: upload.id) }
-            // Concentric inside the card: its radius minus its 6 pt padding.
-            .clipShape(.rect(cornerRadius: DS.Radius.m, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
-            }
+            .clipShape(libraryCardImageShape)
+            .overlay { libraryCardImageShape.strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5) }
             // Bottom left, clear of the pills above. Side by side when they fit
             // beside the duration, stacked when the card is too small.
             .overlay(alignment: .bottomLeading) {

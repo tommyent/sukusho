@@ -431,10 +431,9 @@ struct LibraryCellContent: View {
                     thumbnail(item)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     labels(item)
-                        .padding(.horizontal, 4)
-                        .padding(.bottom, 4)
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, 10)
                 }
-                .padding(6)
                 .background(
                     Color.primary.opacity(selected ? 0.075 : isHovering ? 0.035 : 0.012),
                     in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
@@ -522,12 +521,8 @@ struct LibraryCellContent: View {
 
     private func thumbnail(_ item: CaptureLibraryItem) -> some View {
         CaptureLibraryThumbnail(item: item, showsTopOfTall: true)
-            // Concentric inside the card: its radius minus its 6 pt padding.
-            .clipShape(.rect(cornerRadius: DS.Radius.m, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
-            }
+            .clipShape(libraryCardImageShape)
+            .overlay { libraryCardImageShape.strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5) }
             .overlay(alignment: .topLeading) {
                 if let tag = item.tags.first(where: { CaptureTagStyles.shared.color(for: $0) != nil }) ?? item.tags.first {
                     // One small badge rather than a mark per tag, so small
@@ -753,6 +748,10 @@ extension View {
             .cardMark(Capsule())
     }
 }
+
+/// A card's image runs edge to edge: the card's own corners at the top,
+/// square where it meets the title. Shared by capture and upload cards.
+let libraryCardImageShape = UnevenRoundedRectangle(topLeadingRadius: DS.Radius.card, topTrailingRadius: DS.Radius.card, style: .continuous)
 
 /// A Library card's border: a 2 pt accent ring when selected, grey while
 /// the window isn't key, as Finder does; a hairline otherwise (design pass
