@@ -14,7 +14,11 @@ import Foundation
 
 nonisolated struct AgentItem: Sendable, Equatable {
     let id: String
+    /// The owner's own name for it, else when it was taken.
     let title: String
+    /// The title Apple Intelligence wrote from the capture's text, when the owner hasn't named it:
+    /// outside text in effect, so tools return it under `untrusted`.
+    var modelTitle: String? = nil
     /// "screenshot", "recording" or "video".
     let kind: String
     let createdAt: Date
@@ -29,6 +33,8 @@ nonisolated struct AgentItem: Sendable, Equatable {
     var foldedText: String? = nil
 
     var isImage: Bool { kind == "screenshot" }
+    /// What the Library card shows.
+    var shownTitle: String { modelTitle ?? title }
 }
 
 nonisolated struct AgentShareSettings: Sendable, Equatable {
@@ -376,7 +382,8 @@ final class AgentToolbox {
         let since = try args.date("since")
         let limit = try args.int("limit", in: 1...100) ?? 20
         let matches = backend.libraryItems().filter { item in
-            let fields = [item.title, item.fileURL.lastPathComponent, item.source?.appName, item.source?.windowTitle].compactMap { $0 } + item.tags
+            let fields = [item.title, item.modelTitle, item.fileURL.lastPathComponent, item.source?.appName, item.source?.windowTitle]
+                .compactMap { $0 } + item.tags
             return (kind == "any" || (kind == "screenshot") == item.isImage)
                 && tags.allSatisfy(item.tags.contains)
                 && since.map { item.createdAt >= $0 } ?? true
@@ -417,12 +424,14 @@ final class AgentToolbox {
         ]
         if let duration = item.duration { object["duration_seconds"] = (duration * 10).rounded() / 10 }
         if let link = item.cloudURL { object["cloud_url"] = link }
-        // Window titles come from other apps and web pages.
+        // Window titles come from other apps and web pages, and a model's title from the capture's text.
+        var untrusted: [String: Any] = [:]
         if let source = item.source {
-            var fields: [String: Any] = ["app": source.appName]
-            if let window = source.windowTitle { fields["window"] = window }
-            object["untrusted"] = AgentUntrusted.wrap(fields)
+            untrusted["app"] = source.appName
+            if let window = source.windowTitle { untrusted["window"] = window }
         }
+        if let modelTitle = item.modelTitle { untrusted["title"] = modelTitle }
+        if !untrusted.isEmpty { object["untrusted"] = AgentUntrusted.wrap(untrusted) }
         return object
     }
 
@@ -442,14 +451,15 @@ final class AgentToolbox {
         }
         var settings = backend.defaultShare
         settings.title = try args.string("title", maxLength: 200).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .flatMap { $0.isEmpty ? nil : $0 } ?? (items.count == 1 ? items[0].title : nil)
+            .flatMap { $0.isEmpty ? nil : $0 } ?? (items.count == 1 ? items[0].shownTitle : nil)
         settings.expiry = try args.expiry("expires_in_days", allowsNever: true) ?? settings.expiry
         settings.comments = try args.bool("comments") ?? settings.comments
         settings.anonymousComments = try args.bool("anonymous_comments") ?? settings.anonymousComments
         let wantsPassword = try args.bool("password") ?? false
-        let what = items.count == 1 ? "share “\(items[0].title)”" : "share \(items.count) images as a gallery"
+        // The owner sees the names their Library shows.
+        let what = items.count == 1 ? "share “\(items[0].shownTitle)”" : "share \(items.count) images as a gallery"
         var ask = AgentAsk(agent: session.agent, group: .publish, action: what,
-                           details: items.prefix(8).map(\.title) + (items.count > 8 ? ["and \(items.count - 8) more"] : []),
+                           details: items.prefix(8).map(\.shownTitle) + (items.count > 8 ? ["and \(items.count - 8) more"] : []),
                            thumbnails: items.filter(\.isImage).prefix(6).map(\.fileURL))
         ask.encryptionUnavailable = items.count > 1 ? "Galleries can’t be end-to-end encrypted yet."
             : CloudShareSeal.unavailableReason(fileURLs: [items[0].fileURL], isRecording: !items[0].isImage)
@@ -507,6 +517,11 @@ final class AgentToolbox {
             "email": AgentEmail.share(title: shared.title, url: shared.url, expiresAt: shared.expiresAt, hasPassword: shared.hasPassword,
                                       thumbnailURL: shared.thumbnailURL, count: items.count),
         ]
+        // A link named after a model's title carries that title as outside text.
+        if items.count == 1, let modelTitle = items[0].modelTitle, shared.title == modelTitle {
+            object["title"] = nil
+            object["untrusted"] = AgentUntrusted.wrap(["title": modelTitle])
+        }
         if let thumbnail = shared.thumbnailURL { object["thumbnail_url"] = thumbnail }
         if shared.isGallery { object["images"] = items.count }
         if shared.url.contains("#") {

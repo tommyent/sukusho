@@ -89,8 +89,11 @@ final class AgentLiveBackend: AgentBackend {
         CaptureLibraryModel.shared.items.map(Self.item)
     }
 
+    /// The owner's name, else the date; a model's title (shown only while the owner hasn't named it) apart.
     static func item(_ item: CaptureLibraryItem) -> AgentItem {
-        AgentItem(id: item.id, title: item.title, kind: item.session != nil ? "recording" : item.isVideo ? "video" : "screenshot",
+        AgentItem(id: item.id, title: item.customName ?? CaptureLibraryItem.dateTitle(item.createdAt),
+                  modelTitle: item.customName == nil ? item.modelTitle : nil,
+                  kind: item.session != nil ? "recording" : item.isVideo ? "video" : "screenshot",
                   createdAt: item.createdAt, width: item.pixelWidth, height: item.pixelHeight, duration: item.duration,
                   tags: item.tags, source: item.source, cloudURL: item.cloudURL, fileURL: item.fileURL,
                   foldedText: CaptureLibraryIndex.shared.foldedText[item.id])
@@ -154,7 +157,7 @@ final class AgentLiveBackend: AgentBackend {
         ScreenshotHistoryStore.shared.setLibraryCloudURL(id: id, cloudURL: result.url)
         CaptureLibraryModel.shared.refresh()
         let image = item.isImage && settings.password == nil && !settings.encrypted
-        return AgentShareResult(id: result.id, url: result.url, title: settings.title ?? item.title,
+        return AgentShareResult(id: result.id, url: result.url, title: settings.title ?? item.shownTitle,
                                 expiresAt: result.expiryIgnored ? nil : settings.expiry.date(), hasPassword: settings.password != nil,
                                 thumbnailURL: image ? cloud.map { $0.workerBase + "/api/image/" + result.id } : nil,
                                 isGallery: false, uploadIDs: [])
@@ -164,7 +167,8 @@ final class AgentLiveBackend: AgentBackend {
     func shareGallery(_ items: [AgentItem], settings: AgentShareSettings) async throws -> AgentShareResult {
         guard let share = CloudGalleryShare.configured() else { throw CloudUploadError.notConfigured }
         StudioProjectRegistry.shared.flushDrafts()
-        let shared = try await share.share(items.map { CloudGalleryShare.Image(fileURL: $0.fileURL, title: $0.title) },
+        // Each image is named as its Library card is, as the Library's gallery share names them.
+        let shared = try await share.share(items.map { CloudGalleryShare.Image(fileURL: $0.fileURL, title: $0.shownTitle) },
                                            settings: .init(title: settings.title, expiresAt: settings.expiry.date(), password: settings.password,
                                                            socialEnabled: settings.comments, allowAnonymousComments: settings.anonymousComments)) { _ in }
         let library = Dictionary(CaptureLibraryModel.shared.items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
