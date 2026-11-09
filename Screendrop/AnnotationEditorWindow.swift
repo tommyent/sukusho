@@ -211,6 +211,7 @@ struct AnnotationEditorWindow: View {
             CloudUploadButton(
                 // The name its Library card shows, as the Library suggests; never the file name.
                 suggestedTitle: historyItem == nil ? "" : windowTitle,
+                messageSource: ShareMessageSource(isVideo: false),
                 onUpload: uploadAnnotation
             ) {
                 if isUploading {

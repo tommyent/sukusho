@@ -192,6 +192,11 @@ private struct RecordingStudioContent: View {
         model.session == nil ? model.projectDisplayName : windowTitle
     }
 
+    /// Draft message writes from the summary and chapters as they stand.
+    private var shareMessageSource: ShareMessageSource {
+        ShareMessageSource(summary: model.summary, chapters: model.visibleChapters.map(\.title), isVideo: true)
+    }
+
     @ViewBuilder
     private var videoCropActions: some View {
         Menu {
@@ -294,7 +299,7 @@ private struct RecordingStudioContent: View {
         switch model.shareState {
         case .idle:
             CloudUploadButton(suggestedTitle: shareSuggestedTitle, encryptionUnavailable: CloudShareSeal.unavailableNote,
-                              onUpload: { model.shareToCloud(options: $0) }) {
+                              messageSource: shareMessageSource, onUpload: { model.shareToCloud(options: $0) }) {
                 Label("Upload", systemImage: "icloud.and.arrow.up")
                     .labelStyle(.titleAndIcon)
             }
@@ -331,7 +336,7 @@ private struct RecordingStudioContent: View {
                     .help(message)
 
                 CloudUploadButton(suggestedTitle: shareSuggestedTitle, encryptionUnavailable: CloudShareSeal.unavailableNote,
-                                  onUpload: { model.shareToCloud(options: $0) }) {
+                                  messageSource: shareMessageSource, onUpload: { model.shareToCloud(options: $0) }) {
                     Text("Retry")
                 }
                 .disabled(model.hasRunningWork || model.needsSharedVideoReplacement)

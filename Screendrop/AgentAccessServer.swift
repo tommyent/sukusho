@@ -158,7 +158,7 @@ nonisolated enum AgentToolCatalog {
              "A capture’s details, the text read from it, and its cloud link if shared. `image: true` adds the screenshot, downscaled." + untrusted,
              schema(["id": string, "image": bool], required: ["id"]), readOnly: true),
         tool("share", "Share captures",
-             "Shares one capture as a link, or 2 to 100 screenshots as one gallery. Returns the link, its expiry, and `email.text` / `email.html` ready for a draft. With `password: true` the owner types the password in Sukusho’s Share Options and clicks Upload; you never see it. If they take longer than 10 minutes you get `pending` and an id for share_status." + asks,
+             "Shares one capture as a link, or 2 to 100 screenshots as one gallery. Returns the link, its expiry, and `email.text` / `email.html` ready for a draft; when the owner had Apple Intelligence draft a message in Share Options, `email.untrusted.message` holds it. With `password: true` the owner types the password in Sukusho’s Share Options and clicks Upload; you never see it. If they take longer than 10 minutes you get `pending` and an id for share_status." + asks,
              schema(["ids": strings.merging(["description": "Capture ids from library_search or library_add."]) { $1 },
                      "title": string("The link’s title. Default: the capture’s."),
                      "expires_in_days": expiry(allowsNever: true),

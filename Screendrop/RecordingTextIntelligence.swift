@@ -1,7 +1,7 @@
 import Foundation
 import FoundationModels
 
-/// What Studio asks of Apple's on-device model. The app
+/// What Studio and Share Options ask of Apple's on-device model. The app
 /// uses `SystemTextModel`; tests use a fake.
 nonisolated protocol OnDeviceTextModel: Sendable {
     /// Tokens a prompt and its answer share.
@@ -101,7 +101,7 @@ nonisolated enum OnDeviceText {
     }
 }
 
-/// Summary and chapter titles.
+/// Summary, chapter titles and the note that goes with a link.
 nonisolated enum RecordingTextIntelligence {
     /// The Worker takes up to 2,000 characters.
     static let summaryLimit = 2000
@@ -124,6 +124,13 @@ nonisolated enum RecordingTextIntelligence {
         Answer with the title only: two to six words saying what the chapter is about, in the language of the narration, \
         in sentence case (a capital first letter, and capitals for names), as in 'Exporting the quarterly report'. \
         No quotes or trailing period.
+        """
+
+    static let messageInstructions = """
+        You draft the short note a person sends with a link to their screen recording or screenshot. \
+        Write two to four plain sentences in the first person, friendly and direct, saying what the link shows \
+        and, for a recording, what to look at. Use only the details given; never invent names, dates or numbers. \
+        No greeting line, sign-off, subject line, placeholders, links or markdown.
         """
 
     /// The narration as lines, a chapter's title before its first line.
@@ -205,5 +212,35 @@ nonisolated enum RecordingTextIntelligence {
         title = String(title.prefix(80)).trimmingCharacters(in: .whitespaces)
         // The model sometimes answers all in lowercase.
         return title.isEmpty ? nil : title.prefix(1).uppercased() + title.dropFirst()
+    }
+
+    static func messagePrompt(title: String, source: ShareMessageSource) -> String {
+        var parts = ["Link to: \(source.isVideo ? "a screen recording" : "a screenshot")"]
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !title.isEmpty { parts.append("Title: \(title)") }
+        if let summary = source.summary?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
+            parts.append("Summary: \(summary)")
+        }
+        let chapters = source.chapters.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        if !chapters.isEmpty { parts.append("Chapters:\n" + chapters.prefix(20).map { "- \($0)" }.joined(separator: "\n")) }
+        return parts.joined(separator: "\n")
+    }
+
+    static func message(title: String, source: ShareMessageSource, model: some OnDeviceTextModel) async throws -> String {
+        OnDeviceText.plain(try await model.reply(instructions: messageInstructions, prompt: messagePrompt(title: title, source: source)),
+                           limit: 1200)
+    }
+}
+
+/// What Draft message writes from, besides the title Share Options shows.
+nonisolated struct ShareMessageSource: Sendable, Equatable {
+    var summary: String? = nil
+    var chapters: [String] = []
+    var isVideo: Bool
+
+    /// A recording's saved summary and chapter titles.
+    static func recording(_ metadata: RecordingProjectMetadata?) -> ShareMessageSource {
+        ShareMessageSource(summary: metadata?.summary,
+                           chapters: (metadata?.chapters ?? []).sorted { $0.start < $1.start }.map(\.title), isVideo: true)
     }
 }

@@ -124,6 +124,20 @@ struct OnDeviceTextTests {
         #expect(RecordingChapterPlanner.named(original, titles: [:]) == original)
     }
 
+    // MARK: Draft message
+
+    @Test func theMessagePromptCarriesTheTitleSummaryAndChapters() async throws {
+        let source = ShareMessageSource(summary: " It shows the new Cloud page. ", chapters: ["Intro", " ", "Setup"], isVideo: true)
+        #expect(RecordingTextIntelligence.messagePrompt(title: " Cloud tour ", source: source)
+                == "Link to: a screen recording\nTitle: Cloud tour\nSummary: It shows the new Cloud page.\nChapters:\n- Intro\n- Setup")
+        #expect(RecordingTextIntelligence.messagePrompt(title: "", source: ShareMessageSource(isVideo: false)) == "Link to: a screenshot")
+
+        let model = FakeTextModel { _, _ in "**Hi!** Here is the tour.\n\n- Watch the setup part." }
+        let message = try await RecordingTextIntelligence.message(title: "Cloud tour", source: source, model: model)
+        #expect(message == "Hi! Here is the tour.\n\nWatch the setup part.")
+        #expect(await model.prompts.first?.instructions == RecordingTextIntelligence.messageInstructions)
+    }
+
     @Test @MainActor func theModelExplainsWhyItCantRun() {
         #expect(OnDeviceText.unavailableReason(.available, settingOn: true) == nil)
         #expect(OnDeviceText.unavailableReason(.available, settingOn: false)?.contains("Settings › General") == true)

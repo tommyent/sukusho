@@ -231,6 +231,13 @@ final class AgentLiveBackend: AgentBackend {
         return latest
     }
 
+    func messageSource(of item: AgentItem) -> ShareMessageSource {
+        guard let session = CaptureLibraryModel.shared.items.first(where: { $0.id == item.id })?.session else {
+            return ShareMessageSource(isVideo: !item.isImage)
+        }
+        return .recording(session.loadProjectMetadata())
+    }
+
     /// The App Intents' capture paths.
     func capture(_ mode: AgentCaptureMode) async -> AgentCaptureOutcome {
         switch mode {
@@ -309,11 +316,11 @@ final class AgentApprovalPresenter: AgentAsker {
                 encryptionUnavailable: ask.encryptionUnavailable,
                 initial: initial, focusesPassword: !ask.grantable,
                 confirmTitle: ask.grantable ? "Allow" : "Upload", cancelTitle: ask.grantable ? "Deny" : "Cancel",
-                onCancel: { finish(nil) }
+                onCancel: { finish(nil) }, messageSource: ask.messageSource
             ) { options in
                 finish((choice.decision, AgentShareSettings(title: options.trimmedTitleOrNil, expiry: options.expiry, password: options.password,
                                                             comments: options.socialEnabled, anonymousComments: options.allowAnonymousComments,
-                                                            encrypted: options.encrypted)))
+                                                            encrypted: options.encrypted, message: options.message)))
             }
         }
     }
