@@ -45,6 +45,20 @@ struct SettingsAboutPane: View {
                 }
             }
 
+            if UpdaterManager.updatesThisBuild {
+                Section("Updates") {
+                    Toggle("Automatically check for updates", isOn: Binding(
+                        get: { UpdaterManager.shared.automaticallyChecksForUpdates },
+                        set: { UpdaterManager.shared.automaticallyChecksForUpdates = $0 }
+                    ))
+
+                    Button("Check for Updates…") {
+                        UpdaterManager.shared.checkForUpdates()
+                    }
+                    .disabled(!UpdaterManager.shared.canCheckForUpdates)
+                }
+            }
+
             Section("Project") {
                 Text("Sukusho is a lightweight open-source app for capturing screenshots and screen recordings on macOS.")
                     .foregroundStyle(.secondary)

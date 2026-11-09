@@ -11,6 +11,7 @@ import uuid
 repo = Path(__file__).resolve().parent.parent
 derived = Path(sys.argv[1]).resolve()
 products = derived / "Build/Products/Debug Dev"
+sparkle = derived / "SourcePackages/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64"
 check_source = Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else repo / "scripts/check-editor-idle-save.swift"
 build = derived / (check_source.stem if len(sys.argv) > 2 else "IdleSaveHarness")
 build.mkdir(exist_ok=True)
@@ -29,7 +30,9 @@ command = [
     "-target", f"{platform.machine()}-apple-macos27.0", "-default-isolation", "MainActor",
     "-enable-upcoming-feature", "MemberImportVisibility",
     "-enable-upcoming-feature", "NonisolatedNonsendingByDefault", "-D", "DEBUG",
-    "-I", str(products), str(products / "DockProgress.o"), "@" + str(source_list), "-o", str(binary),
+    "-I", str(products), "-F", str(sparkle), "-framework", "Sparkle",
+    "-Xlinker", "-rpath", "-Xlinker", str(sparkle),
+    str(products / "DockProgress.o"), "@" + str(source_list), "-o", str(binary),
 ]
 with (build / "compile.log").open("w") as log:
     result = subprocess.run(command, cwd=repo, stdout=log, stderr=subprocess.STDOUT)

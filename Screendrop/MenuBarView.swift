@@ -114,8 +114,15 @@ struct MenuBarView: View {
             }
             .keyboardShortcut(",", modifiers: [.command])
 
+            Button {
+                UpdaterManager.shared.checkForUpdates()
+            } label: {
+                Label("Check for Updates…", systemImage: "arrow.down.circle")
+            }
+            .disabled(!UpdaterManager.shared.canCheckForUpdates)
+
             Divider()
-            
+
             Button("Quit Sukusho") {
                 NSApplication.shared.terminate(nil)
             }

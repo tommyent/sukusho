@@ -13,8 +13,9 @@ enum AppActivationPolicy {
     private static var activeWindowCount = 0
 
     /// Call when a regular window (annotation editor, video editor, settings, etc.) appears.
-    /// Pass `hidePreview: true` for editing flows launched from the preview panel.
-    static func enter(hidePreview: Bool = false) {
+    /// Pass `hidePreview: true` for editing flows launched from the preview panel,
+    /// and `activate: false` to show the Dock icon without taking focus.
+    static func enter(hidePreview: Bool = false, activate: Bool = true) {
         activeWindowCount += 1
         if hidePreview {
             // The overlay stays on screen but tucks into the peek tab so it
@@ -23,6 +24,7 @@ enum AppActivationPolicy {
             ScreenshotPreviewStack.shared.collapse()
         }
         NSApp.setActivationPolicy(.regular)
+        guard activate else { return }
         NSApp.unhide(nil)
         NSApp.activate(ignoringOtherApps: true)
     }

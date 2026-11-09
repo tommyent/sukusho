@@ -30,6 +30,9 @@ struct ScreendropApp: App {
         .defaultLaunchBehavior(.suppressed)
         .restorationBehavior(.disabled)
         .commands {
+            CommandGroup(after: .appInfo) {
+                CheckForUpdatesCommand()
+            }
             CommandGroup(after: .newItem) {
                 Button("Show Library") { CaptureLibraryModel.shared.show() }
                     .keyboardShortcut("l", modifiers: [.command, .shift])
@@ -182,6 +185,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         FileRequestsModel.shared.start()
         ShakeToUpload.shared.update()
         AgentAccess.shared.start()
+        UpdaterManager.shared.start()
         RecordingRecoveryCoordinator.recoverInterruptedRecordings()
         let launchEvent = NSAppleEventManager.shared().currentAppleEvent
         let launchReason = launchEvent?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue
