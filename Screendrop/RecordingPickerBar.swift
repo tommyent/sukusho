@@ -124,7 +124,7 @@ struct RecordingPickerControls: View {
             .toggleStyle(.button)
             .buttonStyle(BarButtonStyle())
             .accessibilityLabel("Bug report")
-            .accessibilityHint("Stop writes an Agent Prompt for a coding agent instead of opening Studio, and the recording keeps the menu bar, notification banners and Sukusho's own windows.")
+            .accessibilityHint("Stop writes a bug report, with a prompt for your coding agent, instead of opening Studio, and the recording keeps the menu bar, notification banners and Sukusho's own windows.")
             .disabled(CaptureCountdownPresenter.shared.isRunning)
             // A bug in Sukusho needs its windows: Bug report turns them on, with the usual banner and its
             // switch, and turns them back off with itself unless they were on before.
@@ -151,7 +151,7 @@ struct RecordingPickerControls: View {
                 .toggleStyle(.button)
                 .buttonStyle(BarButtonStyle())
                 .accessibilityLabel("Include app logs")
-                .accessibilityHint("Adds the recorded app's own log to this take's Agent Prompt. You see what was captured before it's saved, and it turns off after the take.")
+                .accessibilityHint("Adds the recorded app's own log to this take's bug report. You see what was captured before it's saved, and it turns off after the take.")
                 .disabled(CaptureCountdownPresenter.shared.isRunning)
             }
 

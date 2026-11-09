@@ -1,16 +1,21 @@
 import AVFoundation
 import Foundation
 
-/// Export Steps: the moments Agent Prompt finds (clicks, shortcuts, pointer rests, scrolls,
-/// pen strokes and narration), written for people as a guide or a bug report, in Markdown
-/// and a self-contained HTML page. Narration is used as transcribed; nothing is rewritten.
+/// The moments Agent Prompt finds (clicks, shortcuts, pointer rests, scrolls, pen strokes and
+/// narration), written for people as a how-to guide or a bug report, in Markdown and a
+/// self-contained HTML page. Narration is used as transcribed; nothing is rewritten.
 nonisolated struct RecordingSteps: Sendable {
     enum Format: String, CaseIterable, Sendable {
         case guide
         case bugReport
 
         var title: String { self == .guide ? "Guide" : "Bug Report" }
+        /// `guide.md` and `guide.html`, or `bug-report.md` and `bug-report.html`.
+        var fileName: String { self == .guide ? "guide" : "bug-report" }
     }
+
+    /// The bug report's folder inside its Agent Prompt's.
+    static let reportFolder = "Bug Report"
 
     struct Step: Sendable, Equatable {
         var time: Double
@@ -34,7 +39,7 @@ nonisolated struct RecordingSteps: Sendable {
     let summary: String?
 
     /// `systemVersion` is the macOS the take was recorded on, when the manifest kept it.
-    init(plan: RecordingAgentPromptPlan, systemVersion: String?, includesLogs: Bool = true, summary: String? = nil) {
+    init(plan: RecordingAgentPromptPlan, systemVersion: String?, summary: String? = nil) {
         title = plan.title.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         steps = plan.moments.map { moment in
             var actions: [String] = [], reproduction: [String] = [], said: [String] = []
@@ -63,7 +68,7 @@ nonisolated struct RecordingSteps: Sendable {
                                       screen.width, screen.height, screen.scale))
         }
         self.environment = environment
-        logs = includesLogs ? plan.logs : nil
+        logs = plan.logs
         timeline = plan.timeline
         self.summary = summary?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
     }
@@ -149,7 +154,7 @@ nonisolated struct RecordingSteps: Sendable {
 
     static func imagePath(_ index: Int) -> String { "images/" + RecordingAgentPromptPlan.stillName(index) }
 
-    /// `steps.md`. With `localFolder`, it's the text Copy as Markdown puts on the clipboard:
+    /// The `.md` file. With `localFolder`, it's the text the Guide puts on the clipboard:
     /// images are named, not embedded, under a note that they're files in that folder.
     func markdown(_ format: Format, localFolder: URL? = nil) -> String {
         let escape = RecordingAgentPromptPlan.escape
@@ -173,7 +178,7 @@ nonisolated struct RecordingSteps: Sendable {
         return text
     }
 
-    /// `steps.html`, which needs nothing beside it: `stills` (one JPEG per step) are embedded.
+    /// The `.html` page, which needs nothing beside it: `stills` (one JPEG per step) are embedded.
     func html(_ format: Format, stills: [Data]) -> String {
         let listed = listed(format)
         func escape(_ value: String) -> String {
@@ -263,7 +268,7 @@ nonisolated struct RecordingSteps: Sendable {
         return stills
     }
 
-    /// Writes `steps.md`, `steps.html`, `images/` and, for a bug report with logs, `logs.txt`
+    /// Writes the format's `.md` and `.html`, `images/` and, for a bug report with logs, `logs.txt`
     /// into a new folder at `destination`, which must not exist yet. Nothing is left on failure.
     func write(_ format: Format, stills: [Data], to destination: URL) throws -> URL {
         let staging = destination.deletingLastPathComponent().appendingPathComponent(".steps-\(UUID().uuidString)", isDirectory: true)
@@ -272,8 +277,8 @@ nonisolated struct RecordingSteps: Sendable {
         for (index, item) in listed(format).enumerated() where stills.indices.contains(item.still) {
             try stills[item.still].write(to: staging.appendingPathComponent(Self.imagePath(index)))
         }
-        try markdown(format).write(to: staging.appendingPathComponent("steps.md"), atomically: true, encoding: .utf8)
-        try html(format, stills: stills).write(to: staging.appendingPathComponent("steps.html"), atomically: true, encoding: .utf8)
+        try markdown(format).write(to: staging.appendingPathComponent(format.fileName + ".md"), atomically: true, encoding: .utf8)
+        try html(format, stills: stills).write(to: staging.appendingPathComponent(format.fileName + ".html"), atomically: true, encoding: .utf8)
         if format == .bugReport, let logs {
             try logs.text(timeline: timeline).write(to: staging.appendingPathComponent(RecordingAppLogs.exportFileName),
                                                     atomically: true, encoding: .utf8)

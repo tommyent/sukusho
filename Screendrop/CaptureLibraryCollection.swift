@@ -483,7 +483,7 @@ struct LibraryCellContent: View {
 
     private func agentPromptDescription(_ item: CaptureLibraryItem) -> String {
         if let export = CaptureLibraryModel.shared.agentPromptExport, export.id == item.id {
-            return ", exporting agent prompt, \(Int((export.progress * 100).rounded())) percent"
+            return ", exporting bug report, \(Int((export.progress * 100).rounded())) percent"
         }
         return AgentPromptIndex.shared.state(for: item).map { ", " + $0.accessibilityDescription } ?? ""
     }
@@ -584,7 +584,7 @@ private struct AgentPromptCardMark: View {
                     StudioProgressRing(progress: progress, size: 17, tint: CardMark.green, lineWidth: 2.5)
                 }
                 .foregroundStyle(CardMark.green)
-                .help("Exporting agent prompt")
+                .help("Exporting bug report")
             } else if let state {
                 Button {
                     model.useAgentPrompt(item)
@@ -655,7 +655,7 @@ extension AgentPromptIndex.State {
         switch self {
         case .current: "Agent Prompt ready: ⌃⌥⌘P in Rex sends it. Click to copy a line that asks any agent to read it."
         case .available: "Agent Prompt saved. Click to make it the one ⌃⌥⌘P in Rex sends."
-        case .stale: "Edited since its Agent Prompt. Click to export it again."
+        case .stale: "Edited since its bug report. Click to export it again."
         }
     }
 
@@ -663,7 +663,7 @@ extension AgentPromptIndex.State {
         switch self {
         case .current: "Copy Agent Prompt"
         case .available: "Use Agent Prompt"
-        case .stale: "Export Agent Prompt Again"
+        case .stale: "Export Bug Report Again"
         }
     }
 
@@ -671,7 +671,7 @@ extension AgentPromptIndex.State {
         switch self {
         case .current: "agent prompt ready"
         case .available: "agent prompt saved"
-        case .stale: "agent prompt out of date"
+        case .stale: "bug report out of date"
         }
     }
 }

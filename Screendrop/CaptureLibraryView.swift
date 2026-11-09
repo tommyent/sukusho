@@ -255,7 +255,7 @@ struct CaptureLibraryView: View {
             Button("Cancel", role: .cancel) { model.pendingTrash = [] }
         } message: {
             if model.pendingTrash.contains(where: { AgentPromptIndex.shared.state(for: $0) != nil }) {
-                Text("The local files, their edits and their Agent Prompts will move to Trash. Other exported copies and cloud links will remain available.")
+                Text("The local files, their edits and their bug reports will move to Trash. Other exported copies and cloud links will remain available.")
             } else {
                 Text("The local files and their edits will move to Trash. Exported copies and cloud links will remain available.")
             }
@@ -449,7 +449,7 @@ struct CaptureLibraryView: View {
                 Button {
                     NSWorkspace.shared.activateFileViewerSelecting([folder])
                 } label: {
-                    Label("Agent Prompt Saved", systemImage: "checkmark.circle.fill")
+                    Label("Prompt Copied", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.green)
                 }
                 .buttonStyle(.plain)

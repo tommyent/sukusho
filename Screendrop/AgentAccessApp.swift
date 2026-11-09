@@ -225,7 +225,7 @@ final class AgentLiveBackend: AgentBackend {
         guard let session = CaptureLibraryModel.shared.items.first(where: { $0.id == item.id })?.session else {
             throw AgentToolError("That recording is gone from the Library.")
         }
-        guard await CaptureLibraryModel.shared.exportBugReport(session), let latest = latestAgentPrompt() else {
+        guard await CaptureLibraryModel.shared.exportBugReport(session, reveals: false), let latest = latestAgentPrompt() else {
             throw AgentToolError(CaptureLibraryModel.shared.errorMessage ?? "The export failed.")
         }
         return latest

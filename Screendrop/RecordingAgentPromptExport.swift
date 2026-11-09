@@ -77,6 +77,13 @@ enum RecordingAgentPromptExport {
         let id = AgentPromptIndex.recordingID(session)
         let folder = try await RecordingAgentPromptWriter.write(movie: nil, plan: plan, to: directory, name: String(plan.title.prefix(80)) + "_" + id,
                                                                 master: screen, prerendered: await prerendered, progress: progress)
+        // The same moments for a person: a bug report to send, from the prompt's own stills.
+        let stills = try plan.moments.indices.map {
+            try Data(contentsOf: folder.appendingPathComponent("stills", isDirectory: true).appendingPathComponent(RecordingAgentPromptPlan.stillName($0)))
+        }
+        let report = RecordingSteps(plan: plan, systemVersion: session.loadCaptureManifest()?.systemVersion,
+                                    summary: await RecordingStepsExport.summary?(session))
+        _ = try report.write(.bugReport, stills: stills, to: folder.appendingPathComponent(RecordingSteps.reportFolder, isDirectory: true))
         // A cancelled export (Studio closed) doesn't become the one Rex sends.
         try Task.checkCancellation()
         // One folder per recording: one under an earlier name (renamed since, or named after its package) goes.
@@ -90,12 +97,17 @@ enum RecordingAgentPromptExport {
 
     /// After a successful export: the Read line for an agent outside Rex (Rex's
     /// Insert Sukusho Prompt reads latest.json), the "ready to paste" chime
-    /// (Sounds/AgentPromptReady.mp3), and the Library's card marks. Finder stays put.
-    static func finished(_ folder: URL) {
+    /// (Sounds/AgentPromptReady.mp3), and the Library's card marks. With `reveals`,
+    /// Finder shows the bug report to send to a person; an agent's export leaves Finder alone.
+    static func finished(_ folder: URL, reveals: Bool = true) {
         copyReadLine(folder)
         if ScreendropPreferences.playSounds { NSSound(named: "AgentPromptReady")?.play() }
-        AccessibilityNotification.Announcement("Agent Prompt saved").post()
+        AccessibilityNotification.Announcement("Bug report saved, prompt copied").post()
         AgentPromptIndex.shared.reload()
+        let page = folder.appendingPathComponent(RecordingSteps.reportFolder, isDirectory: true)
+            .appendingPathComponent(RecordingSteps.Format.bugReport.fileName + ".html")
+        // A bare movie's prompt (no recording package) has no bug report.
+        if reveals { NSWorkspace.shared.activateFileViewerSelecting([FileManager.default.fileExists(atPath: page.path) ? page : folder]) }
     }
 
     /// The line people paste to an agent, as Rex types it.

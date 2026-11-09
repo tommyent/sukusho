@@ -7,9 +7,9 @@ enum RecordingAppLogsReview {
     static func confirm(_ logs: RecordingAppLogs) -> Bool {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "Add \(logs.appName)'s log to the Agent Prompt?"
+        alert.messageText = "Add \(logs.appName)'s log to the bug report?"
         alert.informativeText = logs.countsLine
-            + " Logs can hold personal data, such as names, file paths or what you typed. They stay on this Mac unless you share the prompt."
+            + " Logs can hold personal data, such as names, file paths or what you typed. They stay on this Mac unless you share the bug report."
         alert.addButton(withTitle: "Include Log")
         alert.addButton(withTitle: "Leave Out")
         let scroll = NSTextView.scrollableTextView()

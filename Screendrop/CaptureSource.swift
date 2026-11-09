@@ -8,7 +8,7 @@ nonisolated struct CaptureSource: Codable, Sendable, Hashable {
     var bundleIdentifier: String?
     var appName: String
     var windowTitle: String?
-    /// "18.2 (20620.1.16)": kept for recordings, for Export Steps' bug reports.
+    /// "18.2 (20620.1.16)": kept for recordings, for bug reports.
     var appVersion: String?
 
     /// An app's version and build, as its bundle states them.

@@ -3,7 +3,7 @@ import Foundation
 import ImageIO
 import Testing
 
-/// Export Steps: a guide or a bug report from Agent Prompt's moments.
+/// A how-to guide or a bug report from Agent Prompt's moments.
 struct RecordingStepsTests {
     private func temporaryDirectory() throws -> URL {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -92,7 +92,7 @@ struct RecordingStepsTests {
         let steps = RecordingSteps(plan: plan, systemVersion: "Version 27.3 (Build 27D60)")
 
         let guide = try steps.write(.guide, stills: stills, to: directory.appendingPathComponent("Guide"))
-        let guideText = try String(contentsOf: guide.appendingPathComponent("steps.md"), encoding: .utf8)
+        let guideText = try String(contentsOf: guide.appendingPathComponent("guide.md"), encoding: .utf8)
         #expect(guideText.hasPrefix("# Save fails\n\n## Step 1 · 00:00.100\n\n**Click, then press ⌘S.**\n\n![Step 1 at 00:00.100](images/0001.jpg)"))
         #expect(guideText.contains("## Step 5 · 00:02.500\n\nThe dialog stays empty\n\n![Step 5 at 00:02.500](images/0005.jpg)"))
         let images = try FileManager.default.contentsOfDirectory(atPath: guide.appendingPathComponent("images").path).sorted()
@@ -100,10 +100,10 @@ struct RecordingStepsTests {
         let first = try Data(contentsOf: guide.appendingPathComponent("images/0001.jpg"))
         let image = try #require(CGImageSourceCreateWithData(first as CFData, nil).flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) })
         #expect(image.width == 96 && image.height == 64)
-        #expect(try FileManager.default.contentsOfDirectory(atPath: guide.path).sorted() == ["images", "steps.html", "steps.md"])
+        #expect(try FileManager.default.contentsOfDirectory(atPath: guide.path).sorted() == ["guide.html", "guide.md", "images"])
 
         let report = try steps.write(.bugReport, stills: stills, to: directory.appendingPathComponent("Report"))
-        let reportText = try String(contentsOf: report.appendingPathComponent("steps.md"), encoding: .utf8)
+        let reportText = try String(contentsOf: report.appendingPathComponent("bug-report.md"), encoding: .utf8)
         #expect(reportText.contains("## Environment\n\n- App: Notes 2.1 (210) (com.example.Notes)\n- macOS: Version 27.3 (Build 27D60)\n- Screen: 96 × 64 px at 2x"))
         #expect(reportText.contains("## Steps to reproduce\n\n1. Click, then press ⌘S (00:00.100; image 1)\n2. Double-click (00:01.300; image 2)"))
         #expect(reportText.contains("4. “The dialog stays empty” (00:02.500; image 4)"))
@@ -178,17 +178,17 @@ struct RecordingStepsTests {
         let stills = try await RecordingSteps.stills(plan: withLogs, master: movie)
         let report = try RecordingSteps(plan: withLogs, systemVersion: nil).write(.bugReport, stills: stills, to: directory.appendingPathComponent("Report"))
         #expect(try String(contentsOf: report.appendingPathComponent("logs.txt"), encoding: .utf8) == captured.text(timeline: withLogs.timeline))
-        let text = try String(contentsOf: report.appendingPathComponent("steps.md"), encoding: .utf8)
+        let text = try String(contentsOf: report.appendingPathComponent("bug-report.md"), encoding: .utf8)
         #expect(text.contains("## Logs\n\nNotes's unified log while the recording ran (process 42): 1 line: 1 error, 0 faults, 0 default-level."))
         #expect(text.contains("- 00:02.000 \\[00:02.000\\]: error, com.example.Notes: Save failed\n\nThe whole log: `logs.txt`.\n\n## Attachments"))
-        // Left out in the sheet, or a guide: no section and no file.
-        let leftOut = try RecordingSteps(plan: withLogs, systemVersion: nil, includesLogs: false)
+        // A take whose log was left out after Stop (none kept), or a guide: no section and no file.
+        let leftOut = try RecordingSteps(plan: plan(), systemVersion: nil)
             .write(.bugReport, stills: stills, to: directory.appendingPathComponent("No logs"))
         #expect(!FileManager.default.fileExists(atPath: leftOut.appendingPathComponent("logs.txt").path))
-        #expect(!(try String(contentsOf: leftOut.appendingPathComponent("steps.md"), encoding: .utf8)).contains("## Logs"))
+        #expect(!(try String(contentsOf: leftOut.appendingPathComponent("bug-report.md"), encoding: .utf8)).contains("## Logs"))
         let guide = try RecordingSteps(plan: withLogs, systemVersion: nil).write(.guide, stills: stills, to: directory.appendingPathComponent("Guide"))
         #expect(!FileManager.default.fileExists(atPath: guide.appendingPathComponent("logs.txt").path))
-        #expect(!(try String(contentsOf: guide.appendingPathComponent("steps.md"), encoding: .utf8)).contains("## Logs"))
+        #expect(!(try String(contentsOf: guide.appendingPathComponent("guide.md"), encoding: .utf8)).contains("## Logs"))
     }
 }
 

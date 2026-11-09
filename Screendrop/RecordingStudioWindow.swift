@@ -497,9 +497,9 @@ struct RecordingStudioAgentPromptCommand: View {
     var body: some View {
         if let studio {
             Group {
-                Button("Export Agent Prompt") { studio.exportAgentPrompt() }
-                if let session = studio.session {
-                    Button("Export Steps…") { RecordingStepsSheetPresenter.present(session: session) }
+                Button("Export Bug Report") { studio.exportAgentPrompt() }
+                if studio.session != nil {
+                    Button("Export How-To Guide") { studio.exportGuide() }
                 }
             }
             .disabled(!studio.isLoaded || studio.hasRunningWork || studio.hasUnreadableDraft || studio.transcriptionState.isTranscribing)
@@ -3608,7 +3608,7 @@ private struct StudioInspector: View {
                     if model.isExportingAgentPrompt, case .exporting(let progress) = model.exportState {
                         HStack(spacing: 6) {
                             StudioProgressRing(progress: progress, size: 12, tint: CardMark.green)
-                            Text("Exporting Agent Prompt \(Int((progress * 100).rounded()))%")
+                            Text("Exporting Bug Report \(Int((progress * 100).rounded()))%")
                                 .font(.inspectorValue.monospacedDigit())
                                 .contentTransition(.numericText())
                         }
@@ -3620,7 +3620,7 @@ private struct StudioInspector: View {
                         HStack(spacing: 6) {
                             BouncingCheck()
                                 .font(.system(size: 12, weight: .semibold))
-                            Text("Agent Prompt Saved")
+                            Text("Prompt Copied")
                                 .font(.inspectorValue)
                         }
                         .lineLimit(1)
@@ -3629,14 +3629,19 @@ private struct StudioInspector: View {
                         .foregroundStyle(CardMark.green)
                         .transition(.opacity)
                     } else {
-                        VStack(spacing: 8) {
-                            InspectorActionButton("Export Agent Prompt", systemImage: "text.document") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Bug Reports & Guides")
+                                .font(.inspectorSectionHeader)
+                                .foregroundStyle(InspectorControlPalette.label)
+                            InspectorActionButton("Bug Report", systemImage: "ladybug") {
                                 model.exportAgentPrompt()
                             }
-                            if let session = model.session {
-                                InspectorActionButton("Export Steps…", systemImage: "list.number") {
-                                    RecordingStepsSheetPresenter.present(session: session)
+                            .help("Copies a prompt for your coding agent and shows the bug report to send to a person in Finder.")
+                            if model.session != nil {
+                                InspectorActionButton("How-To Guide", systemImage: "list.number", isBusy: model.isExportingGuide) {
+                                    model.exportGuide()
                                 }
+                                .help("Saves a step-by-step guide to your export folder, copies it as Markdown and shows it in Finder.")
                             }
                         }
                         .disabled(!model.isLoaded || model.hasRunningWork || model.hasUnreadableDraft || model.transcriptionState.isTranscribing)

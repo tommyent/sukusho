@@ -239,10 +239,12 @@ final class RecordingStudioModel {
         }
     }
     var exportState: RecordingStudioExportState = .idle
-    /// The running export is Export Agent Prompt's, so its button shows the progress.
+    /// The running export is the Bug Report's (its Agent Prompt), so its button shows the progress.
     private(set) var isExportingAgentPrompt = false
-    /// Export Agent Prompt's button says it's done for a moment after a success.
+    /// The Bug Report button says the prompt was copied for a moment after a success.
     private(set) var showsAgentPromptSaved = false
+    /// The How-To Guide is being written; its button shows it's busy.
+    private(set) var isExportingGuide = false
     var audioExportState: RecordingStudioExportState = .idle
     var shareState: RecordingStudioShareState = .idle
     private(set) var isDeletingSharedLink = false
@@ -3117,6 +3119,22 @@ final class RecordingStudioModel {
     /// Sessions use their shared deliverable instead, so they need none.
     func makeAgentPromptConfiguration() throws -> RecordingStudioExporter.Configuration? {
         session == nil ? try makeExportConfiguration(settings: currentDocument().forVideoRendering.exportSettings) : nil
+    }
+
+    /// The How-To Guide, with the edits as they stand: saved to the export location, its
+    /// Markdown copied, and shown in Finder.
+    func exportGuide() {
+        guard let session, isLoaded, !isExportingGuide, !hasRunningWork, !hasUnreadableDraft,
+              !transcriptionState.isTranscribing else { return }
+        pause()
+        flushDraft()
+        isExportingGuide = true
+        Task {
+            defer { isExportingGuide = false }
+            do { _ = try await RecordingStepsExport.exportGuide(session: session) }
+            catch is CancellationError {}
+            catch { exportState = .failed(error.localizedDescription) }
+        }
     }
 
     func exportAgentPrompt() {

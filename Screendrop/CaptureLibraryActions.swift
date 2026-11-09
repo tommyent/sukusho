@@ -174,12 +174,10 @@ extension CaptureLibraryModel {
            let export = items.firstIndex(where: { $0.title == CaptureLibraryAction.export.rawValue }) {
             items.insert(LibraryMenuItem(title: "Export as GIF…", isEnabled: !isBusy) { self.exportGIF(item) }, at: export + 1)
             if let session = item.session {
-                items.insert(LibraryMenuItem(title: "Export Agent Prompt", isEnabled: !isBusy) { self.exportAgentPrompt(item) }, at: export + 2)
-                items.insert(LibraryMenuItem(title: "Export Steps…", isEnabled: !isBusy) {
-                    RecordingStepsSheetPresenter.present(session: session)
-                }, at: export + 3)
+                items.insert(LibraryMenuItem(title: "Export Bug Report", isEnabled: !isBusy) { self.exportAgentPrompt(item) }, at: export + 2)
+                items.insert(LibraryMenuItem(title: "Export How-To Guide", isEnabled: !isBusy) { self.exportGuide(session) }, at: export + 3)
                 if let folder = AgentPromptIndex.shared.folder(for: session) {
-                    items.insert(LibraryMenuItem(title: "Show Agent Prompt in Finder") {
+                    items.insert(LibraryMenuItem(title: "Show Bug Report in Finder") {
                         NSWorkspace.shared.activateFileViewerSelecting([folder])
                     }, at: export + 4)
                 }
@@ -394,18 +392,22 @@ extension CaptureLibraryModel {
 
     private func exportAgentPrompt(_ item: CaptureLibraryItem) {
         guard !isBusy, let session = item.session else { return }
-        run("Exporting agent prompt…") { try await self.writeAgentPrompt(session, id: item.id) }
+        run("Exporting bug report…") { try await self.writeAgentPrompt(session, id: item.id) }
     }
 
-    /// A Bug report take, as soon as it stops; the Library may not be open.
-    /// False when it failed, with the reason in `errorMessage`.
-    func exportBugReport(_ session: RecordingSession) async -> Bool {
+    private func exportGuide(_ session: RecordingSession) {
+        run("Exporting guide…") { _ = try await RecordingStepsExport.exportGuide(session: session) }
+    }
+
+    /// A Bug report take, as soon as it stops (the Library may not be open), or an agent's
+    /// export, which leaves Finder alone. False when it failed, with the reason in `errorMessage`.
+    func exportBugReport(_ session: RecordingSession, reveals: Bool = true) async -> Bool {
         // One Library operation at a time, as from its menus: Trash or another export waits, and the status bar shows it.
         while isBusy { try? await Task.sleep(for: .milliseconds(250)) }
-        operationTitle = "Exporting agent prompt…"
+        operationTitle = "Exporting bug report…"
         defer { operationTitle = nil }
         do {
-            try await writeAgentPrompt(session, id: "recording:" + session.directoryURL.standardizedFileURL.path)
+            try await writeAgentPrompt(session, id: "recording:" + session.directoryURL.standardizedFileURL.path, reveals: reveals)
             return true
         } catch {
             errorMessage = error.localizedDescription
@@ -413,7 +415,7 @@ extension CaptureLibraryModel {
         }
     }
 
-    private func writeAgentPrompt(_ session: RecordingSession, id: String) async throws {
+    private func writeAgentPrompt(_ session: RecordingSession, id: String, reveals: Bool = true) async throws {
         StudioProjectRegistry.shared.flushDrafts()
         let document = try StudioProjectRegistry.shared.document(for: session.directoryURL) ?? session.editDocumentForRendering()
         let export = AgentPromptExportProgress(id: id)
@@ -423,7 +425,7 @@ extension CaptureLibraryModel {
                                                                 to: RecordingAgentPromptWriter.centralDirectory()) { progress in
             Task { @MainActor in export.progress = progress }
         }
-        RecordingAgentPromptExport.finished(folder)
+        RecordingAgentPromptExport.finished(folder, reveals: reveals)
         savedAgentPrompt = folder
         // Outside the operation, so the Library isn't busy while the mark shows.
         Task {

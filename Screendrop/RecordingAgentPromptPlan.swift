@@ -14,7 +14,7 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
         /// Where to look, normalized to the captured source: the moment's
         /// click, rest or scroll, else the pointer at that time.
         var focus: CGPoint? = nil
-        /// The same evidence as Export Steps words it for people, in order.
+        /// The same evidence as the bug report and guide word it for people, in order.
         var parts: [Part] = []
     }
 
