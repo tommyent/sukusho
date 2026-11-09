@@ -32,9 +32,9 @@ struct CloudSettingsPane: View {
     // Worker version signalling (non-blocking "update available" notice).
     @State private var deployedWorkerVersion: String?
     @State private var latestWorkerVersion: String?
-    @State private var updateGuideURL = "https://github.com/fayazara/screendrop-worker#updating-your-worker"
+    @State private var updateGuideURL = "https://github.com/tommyent/sukusho-worker#updating-your-worker"
 
-    private static let versionManifestURL = "https://raw.githubusercontent.com/fayazara/screendrop-worker/main/version.json"
+    private static let versionManifestURL = "https://raw.githubusercontent.com/tommyent/sukusho-worker/main/version.json"
 
     private var isWorkerOutdated: Bool {
         guard let deployed = deployedWorkerVersion, let latest = latestWorkerVersion else {
@@ -51,7 +51,7 @@ struct CloudSettingsPane: View {
     private var setupGuide: some View {
         Section {
             Button {
-                if let url = URL(string: "https://deploy.workers.cloudflare.com/?url=https://github.com/fayazara/screendrop-worker") {
+                if let url = URL(string: "https://deploy.workers.cloudflare.com/?url=https://github.com/tommyent/sukusho-worker") {
                     NSWorkspace.shared.open(url)
                 }
             } label: {
@@ -101,7 +101,7 @@ struct CloudSettingsPane: View {
                 Text("Setup Guide")
                 Spacer()
                 Button("View on GitHub") {
-                    if let url = URL(string: "https://github.com/fayazara/screendrop-worker") {
+                    if let url = URL(string: "https://github.com/tommyent/sukusho-worker") {
                         NSWorkspace.shared.open(url)
                     }
                 }
