@@ -176,6 +176,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ImageTextWarmUp.shared.start()
         CaptureLibraryIndex.shared.start()
         FileRequestsModel.shared.start()
+        ShakeToUpload.shared.update()
         RecordingRecoveryCoordinator.recoverInterruptedRecordings()
         let launchEvent = NSAppleEventManager.shared().currentAppleEvent
         let launchReason = launchEvent?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue

@@ -26,6 +26,14 @@ struct CloudUploadOptions: Sendable {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
+
+    /// What a share that skips Share Options gets: the Settings expiry and the remembered
+    /// comment choices, with no title, password or encryption.
+    static var savedDefaults: CloudUploadOptions {
+        CloudUploadOptions(title: "", socialEnabled: CloudUploadPreferences.lastSocialEnabled,
+                           expiry: CloudUploadPreferences.defaultExpiry,
+                           allowAnonymousComments: CloudUploadPreferences.lastAnonymousComments)
+    }
 }
 
 /// Remembers the last-chosen "allow comments & likes" toggle across
@@ -74,6 +82,8 @@ struct CloudUploadOptionsPopover: View {
     var showsTitle = true
     /// Why this share can't be encrypted; nil when it can.
     var encryptionUnavailable: String? = nil
+    /// Cancel outside a sheet or popover, where `dismiss` does nothing.
+    var onCancel: (() -> Void)? = nil
     let onConfirm: (CloudUploadOptions) -> Void
 
     @State private var title: String
@@ -87,10 +97,11 @@ struct CloudUploadOptionsPopover: View {
     @Environment(\.dismiss) private var dismiss
 
     init(suggestedTitle: String = "", showsTitle: Bool = true, encryptionUnavailable: String? = nil,
-         onConfirm: @escaping (CloudUploadOptions) -> Void) {
+         onCancel: (() -> Void)? = nil, onConfirm: @escaping (CloudUploadOptions) -> Void) {
         self.suggestedTitle = suggestedTitle
         self.showsTitle = showsTitle
         self.encryptionUnavailable = encryptionUnavailable
+        self.onCancel = onCancel
         self.onConfirm = onConfirm
         _title = State(initialValue: suggestedTitle)
     }
@@ -175,6 +186,7 @@ struct CloudUploadOptionsPopover: View {
             HStack {
                 Spacer()
                 Button("Cancel") {
+                    onCancel?()
                     dismiss()
                 }
                 .keyboardShortcut(.cancelAction)
@@ -203,12 +215,18 @@ struct CloudUploadOptionsPopover: View {
 /// says otherwise.
 struct CloudShareDefaultsSection: View {
     @AppStorage(CloudUploadPreferences.defaultExpiryKey) private var expiry = CloudExpiry.never
+    @AppStorage(ShakeToUpload.enabledKey) private var shakeToUpload = false
 
     var body: some View {
         Section {
             Picker("Default link expiry", selection: $expiry) {
                 ForEach(CloudExpiry.allCases) { Text($0.title).tag($0) }
             }
+            Toggle(isOn: $shakeToUpload) {
+                Text("Shake while dragging files to upload")
+                Text("Shake the pointer while you drag files from Finder or the Desktop, then drop them on the shelf that appears. Hold Option as you drop to skip Share Options.")
+            }
+            .onChange(of: shakeToUpload) { ShakeToUpload.shared.update() }
         } header: {
             Text("Sharing")
         } footer: {
