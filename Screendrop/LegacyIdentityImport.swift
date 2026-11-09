@@ -19,6 +19,19 @@ struct LegacyIdentityImport {
     }
 
     static let markerKey = "migration.screendrop"
+    static let sparkleKeysClearedKey = "migration.screendropSparkleKeysCleared"
+
+    /// Imports before 1.2.0 copied Screendrop's Sparkle keys (`SU…`) too. No
+    /// earlier Sukusho ran Sparkle, so any found before the updater first
+    /// starts are Screendrop's answers: cleared once, so Sparkle asks about
+    /// Sukusho's own updates.
+    static func clearImportedSparkleKeysOnce(in defaults: UserDefaults) {
+        guard !defaults.bool(forKey: sparkleKeysClearedKey) else { return }
+        for key in defaults.dictionaryRepresentation().keys where key.hasPrefix("SU") {
+            defaults.removeObject(forKey: key)
+        }
+        defaults.set(true, forKey: sparkleKeysClearedKey)
+    }
     /// `ScreendropPreferences.exportDirectoryPathKey`.
     static let exportDirectoryPathKey = "exportDirectoryPath"
 

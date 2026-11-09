@@ -145,6 +145,22 @@ struct LegacyIdentityImportTests {
         }
     }
 
+    @Test func sparkleKeysAnEarlierImportCopiedAreClearedOnce() throws {
+        try withSandbox { box throws in
+            box.defaults.set(true, forKey: "SUEnableAutomaticChecks")
+            box.defaults.set(true, forKey: "SUHasLaunchedBefore")
+            box.defaults.set("⌥2", forKey: "hotkey.region")
+            LegacyIdentityImport.clearImportedSparkleKeysOnce(in: box.defaults)
+            #expect(box.defaults.object(forKey: "SUEnableAutomaticChecks") == nil)
+            #expect(box.defaults.object(forKey: "SUHasLaunchedBefore") == nil)
+            #expect(box.defaults.string(forKey: "hotkey.region") == "⌥2")
+            // The answer the person then gives Sukusho's own question stays.
+            box.defaults.set(false, forKey: "SUEnableAutomaticChecks")
+            LegacyIdentityImport.clearImportedSparkleKeysOnce(in: box.defaults)
+            #expect(box.defaults.object(forKey: "SUEnableAutomaticChecks") as? Bool == false)
+        }
+    }
+
     @Test func screendropsUpdateAnswersStayWithScreendrop() throws {
         try withSandbox { box throws in
             _ = try box.job(legacyDefaults: [
