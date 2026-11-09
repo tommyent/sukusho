@@ -185,7 +185,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         FileRequestsModel.shared.start()
         ShakeToUpload.shared.update()
         AgentAccess.shared.start()
-        UpdaterManager.shared.start()
+        // shortcut: a fixed 3 s lets the Library or an editor open first, so Sparkle's question on the second
+        // launch lands in front of it, not behind (seen in the VM); start it from that window's appearance if one ever opens later.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { UpdaterManager.shared.start() }
         RecordingRecoveryCoordinator.recoverInterruptedRecordings()
         let launchEvent = NSAppleEventManager.shared().currentAppleEvent
         let launchReason = launchEvent?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue
