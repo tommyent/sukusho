@@ -15,27 +15,27 @@ Sukusho started as a fork of [Screendrop](https://github.com/fayazara/Screendrop
 > [!NOTE]
 > There are no releases yet. To use Sukusho, [build it from source](#building-from-source). It is under active development, so expect rough edges.
 
-<a href="https://screendrop-worker.tommyent.workers.dev/cfcda18c"><img src="docs/screenshots/share-page.jpg" alt="An example Sukusho share page in a browser, with comments allowed: a screenshot of the Sukusho editor marking up a travel website, titled Sukusho editor, with its size, a view count, a like button, Copy Image and Download below it, and a comment box beside it" width="100%"></a>
+<a href="docs/screenshots/share-page.jpg"><img src="docs/screenshots/share-page.jpg" alt="An example Sukusho share page in a browser, with comments allowed: a screenshot of the Sukusho editor marking up a travel website, titled Sukusho editor, with its size, a view count, a like button, a Copy Image button and Download below it, and a comment box beside it" width="100%"></a>
 
-This is a typical share page, as the person you send a link to sees it: the capture, a like button, Copy Image and Download, and a place to comment. Comments can be turned off for each share. The page carries the name and logo you choose in Sukusho's settings. [Open the demo share](https://screendrop-worker.tommyent.workers.dev/cfcda18c), which has comments turned off.
+This is a typical share page, as the person you send a link to sees it: the capture, a like button, Copy Image and Download, and a place to comment. Comments can be turned off for each share. The page carries the name and logo you choose in Sukusho's settings, and follows the viewer's light or dark setting.
 
 ## Screenshots
 
 The Library keeps your captures in one window, next to everything that came back from your share pages: uploads, shared files, comments and likes.
 
-<a href="docs/screenshots/library.jpg"><img src="docs/screenshots/library.jpg" alt="Sukusho Library with nine captures of a travel website in a grid, including a 29-second recording and green cloud badges on the shared ones, the Cloud section with 7 uploads, Files, Comments and 11 likes, a green Travel tag in the sidebar, and the inspector for a lake photo" width="100%"></a>
+<a href="docs/screenshots/library.jpg"><img src="docs/screenshots/library.jpg" alt="Sukusho Library with ten captures of a travel website in a grid, including two recordings with their Agent Prompt marks and green cloud badges on the shared photos, the Cloud section with 8 uploads, Files, Received, 9 comments and 19 likes, a green Travel tag in the sidebar, and the inspector for a lake photo" width="100%"></a>
 
 Click a picture to see it full size.
 
 <table>
   <tr>
     <td width="50%" valign="top">
-      <a href="docs/screenshots/comments.jpg"><img src="docs/screenshots/thumbs/comments.jpg" alt="Sukusho Comments view listing seven viewer comments with thumbnails of the captures they're on, one of them open in the inspector" width="100%"></a>
+      <a href="docs/screenshots/comments.jpg"><img src="docs/screenshots/thumbs/comments.jpg" alt="Sukusho Comments view listing viewer comments with thumbnails of the captures they're on, one of them open in the inspector with the photo it's on" width="100%"></a>
       <br><b>Comments</b> from your share pages arrive in the Library, each with the upload it's on.
     </td>
     <td width="50%" valign="top">
-      <a href="docs/screenshots/studio.jpg"><img src="docs/screenshots/thumbs/studio.jpg" alt="Sukusho Studio editing a 29-second recording of a travel website: the video zoomed in on a gradient background, the clip timeline with two zooms below, and the inspector with background, redaction and zoom settings" width="100%"></a>
-      <br><b>Studio</b> edits a recording before you export or upload it.
+      <a href="docs/screenshots/studio.jpg"><img src="docs/screenshots/thumbs/studio.jpg" alt="Sukusho Studio editing a 59-second recording of a travel website: the video zoomed in on a card circled in red pen, on a gradient background, the clip timeline with two zooms below, and the inspector with background, zoom, cursor and drawing settings, ending in Bug Report and How-To Guide buttons" width="100%"></a>
+      <br><b>Studio</b> edits a recording before you export or upload it, and turns it into a bug report or a how-to guide.
     </td>
   </tr>
   <tr>
@@ -50,12 +50,22 @@ Click a picture to see it full size.
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <a href="docs/screenshots/agent-prompt.jpg"><img src="docs/screenshots/thumbs/agent-prompt.jpg" alt="Above, the Sukusho Library with a recording called Slow Roads walkthrough selected, a green check beside its title for its current Agent Prompt and an outline circle on an older recording, and the inspector naming Safari and the window it was recorded in. Below, a strip of eight frames from the prompt, with a red ring on the pointer as it draws a red pen loop around a card of the travel website" width="100%"></a>
-      <br><b>Bug Report</b> turns a recording into a walkthrough for a coding agent and a report to send to a person. The green check marks the newest prompt; below it, one of the prompt's frame strips, with the pointer ringed and the pen stroke drawn in.
+      <a href="docs/screenshots/agent-prompt.jpg"><img src="docs/screenshots/thumbs/agent-prompt.jpg" alt="Above, the Sukusho Library with a recording called Slow Roads walkthrough selected, a green sparkles circle beside its title for its current Agent Prompt and an outline one on an older recording, and the inspector naming Safari and the window it was recorded in. Below, a strip of eight frames from the prompt, with a red ring on the pointer and a red pen loop around a card of the travel website" width="100%"></a>
+      <br><b>Bug Report</b> turns a recording into a walkthrough for a coding agent and a report to send to a person. The green sparkles mark the newest prompt; below it, one of the prompt's frame strips, with the pointer ringed and the pen stroke drawn in.
     </td>
     <td width="50%" valign="top">
-      <a href="docs/screenshots/share-options.jpg"><img src="docs/screenshots/thumbs/share-options.jpg" alt="Sukusho Share Options over the image editor: the title Home page, a link that expires in 7 days, a password, End-to-end encryption turned on with its note that only people with the full link can open the file, and comments and likes allowed, with Cancel and Upload buttons" width="100%"></a>
+      <a href="docs/screenshots/share-options.jpg"><img src="docs/screenshots/thumbs/share-options.jpg" alt="Sukusho Share Options for a file: the title Coast trip notes, a link that expires in 7 days, a password, End-to-end encryption turned on with its note that only people with the full link can open the file, and comments and likes allowed, with Cancel and Upload buttons" width="100%"></a>
       <br><b>Share Options</b> set a title, an expiry and a password for the link, and can encrypt the file end to end, so the Worker stores only a file it can't read.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/gallery.jpg"><img src="docs/screenshots/thumbs/gallery.jpg" alt="A Sukusho gallery page in a browser: the title Slow Roads trip, its owner and 6 images, and six travel photos as thumbnails in rows, each at its own shape" width="100%"></a>
+      <br><b>Galleries</b> put 2 to 100 screenshots behind one link, on a page of thumbnails.
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/gallery-lightbox.jpg"><img src="docs/screenshots/thumbs/gallery-lightbox.jpg" alt="A gallery image open in the lightbox: a coast photo, 4 of 6, with arrows to the others, and beside it the image's title, size, 2 views, 6 likes, copy and Download buttons, two comments and a comment box" width="100%"></a>
+      <br>Each image in a gallery opens in a <b>lightbox</b> with its own likes and comments.
     </td>
   </tr>
 </table>
@@ -114,7 +124,7 @@ Opening Sukusho shows the Library; when it starts at login, it stays in the menu
   - The report for people is in the folder's `Bug Report` folder: `bug-report.html` holds its images and opens on its own, so it's the file to send, and `bug-report.md` with `images/` is for Jira, Linear or GitHub. It gives the environment (the app and its version, macOS and the screen's scale), the steps to reproduce (without pointer rests, which the prompt keeps), what happened from the narration, the take's app log when it has one, and the stills. An agent's export through Agent access writes it too, but leaves Finder alone.
   - It's saved in `~/Agent Prompts`, one folder per recording, named after the recording's package and replaced when you export again. `~/Agent Prompts/latest.json` names the newest export, so a terminal action can read it.
   - A progress ring shows on Studio's button and on the Library card while it works, and a short "ready to paste" chime plays when it's done if **Play sounds** is on.
-  - On the Library card, a sparkles circle beside the title shows the prompt's state: green for the one `latest.json` names (click to show it in Finder), an outline for an older one (click to make it the newest), and amber when the recording was edited since (click to export it again).
+  - On the Library card, a sparkles circle beside the title shows the prompt's state: green for the one `latest.json` names (click to show it in Finder), an outline for an older one (click to make it the newest), and an orange arrow when the recording was edited since (click to export it again).
   - Moving a recording to the Trash moves its prompt too.
 - **How-To Guide**, beside Bug Report in Studio and the Library's right-click menu, writes the same moments as a step-by-step guide: a title and a numbered step for each click, shortcut, pointer rest, scroll and pen stroke, with its still and what was said. It saves a folder in your export location with `guide.html` (its images inside, so it opens on its own), `guide.md` and `images/`, copies the Markdown for Jira, Linear or GitHub with a note that the images are local files to attach, shows the folder in Finder, and plays the same "ready to paste" chime. Narration is used as transcribed.
 - Studio has no Save button: a project saves after a two-second pause, when you switch away, close or quit, and with **File → Save** (**Command + S**). **File → Revert To** goes back to the original recording, to how the window opened, or to one of the last five sessions. Double-click the title to rename the recording.
