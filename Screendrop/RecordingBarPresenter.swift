@@ -238,7 +238,8 @@ final class RecordingBarPresenter {
     }
 }
 
-private final class RecordingBarPanel: NSPanel {
+/// Internal so the pointer capture can tell the bar's own clicks apart.
+final class RecordingBarPanel: NSPanel {
     override var canBecomeKey: Bool {
         true
     }

@@ -100,6 +100,9 @@ nonisolated struct PointerPressEvent: Codable, Sendable, Equatable {
     var phase: PressPhase
     /// Pointer appearance active when the button event was captured.
     var artworkID: String? = nil
+    /// True for a click on Sukusho's recording bar (Stop, Pause, the pen), which exports
+    /// leave out; nil otherwise, and in recordings made before it was kept.
+    var onRecordingBar: Bool? = nil
 }
 
 /// A captured pointer image embedded in input.json. `Data` is encoded as a

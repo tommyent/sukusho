@@ -132,12 +132,19 @@ nonisolated enum RecordingPressCopies {
     /// person's double-click repeats far slower than the window.
     static func isCopy<Press>(_ press: Press, of presses: [Press], window: TimeInterval,
                               uptime: (Press) -> TimeInterval, matches: (Press, Press) -> Bool) -> Bool {
-        for earlier in presses.reversed() {
+        copyIndex(press, of: presses, window: window, uptime: uptime, matches: matches) != nil
+    }
+
+    /// The index of the press `press` copies, if any.
+    static func copyIndex<Press>(_ press: Press, of presses: [Press], window: TimeInterval,
+                                 uptime: (Press) -> TimeInterval, matches: (Press, Press) -> Bool) -> Int? {
+        for index in presses.indices.reversed() {
+            let earlier = presses[index]
             // Presses arrive in time order, give or take a copy's delay.
-            if uptime(press) - uptime(earlier) >= window { return false }
-            if abs(uptime(press) - uptime(earlier)) < window, matches(earlier, press) { return true }
+            if uptime(press) - uptime(earlier) >= window { return nil }
+            if abs(uptime(press) - uptime(earlier)) < window, matches(earlier, press) { return index }
         }
-        return false
+        return nil
     }
 }
 

@@ -104,7 +104,8 @@ nonisolated enum PointerStreamSanitizer {
                     y: point.y,
                     button: max(0, press.button),
                     phase: press.phase,
-                    artworkID: validArtworkID(press.artworkID, in: validArtworkIDs)
+                    artworkID: validArtworkID(press.artworkID, in: validArtworkIDs),
+                    onRecordingBar: press.onRecordingBar
                 )
             )
         }.sorted { lhs, rhs in

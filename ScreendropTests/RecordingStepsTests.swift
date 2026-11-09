@@ -38,12 +38,47 @@ struct RecordingStepsTests {
         let steps = RecordingSteps(plan: plan(), systemVersion: "Version 27.3 (Build 27D60)")
         #expect(steps.steps.map(\.action) == ["Click, then press ⌘S", "Hover for 0.8 s", "Double-click", "Scroll down", ""])
         #expect(steps.steps.map(\.time) == [0.1, 0.7, 1.3, 1.9, 2.5])
+        // A bug report leaves out the step that was only a rest, and keeps each step's own still.
+        #expect(steps.listed(.bugReport).map(\.step.action) == ["Click, then press ⌘S", "Double-click", "Scroll down", ""])
+        #expect(steps.listed(.bugReport).map(\.still) == [0, 2, 3, 4])
+        #expect(steps.listed(.guide).map(\.still) == [0, 1, 2, 3, 4])
         #expect(steps.steps.last?.narration == "The dialog stays empty")
         #expect(RecordingSteps.sentence(["Right-click", "Scroll up", "Scroll up", "Scroll up"]) == "Right-click, then scroll up ×3")
         #expect(steps.environment == ["App: Notes 2.1 (210) (com.example.Notes)", "macOS: Version 27.3 (Build 27D60)", "Screen: 96 × 64 px at 2x"])
         let unknown = RecordingSteps(plan: RecordingAgentPromptPlan(title: "Bare", timeline: .full(sourceDuration: 3), cues: [], words: [], capture: nil),
                                      systemVersion: nil)
         #expect(unknown.environment == ["App: not recorded", "macOS: not recorded"])
+    }
+
+    /// Like a real take: a click, Pause on the bar, narration over a rest, then a rest on Stop and its click,
+    /// released as the take ends. The Stop click isn't marked, as in recordings made before the mark.
+    @Test func recordingBarClicksAndTheStopClickAreNotSteps() {
+        let plan = RecordingAgentPromptPlan(
+            title: "Bar", timeline: .full(sourceDuration: 12),
+            cues: [.init(start: 7.8, end: 9.3, text: "It should be this")], words: [],
+            capture: PointerCaptureFile(
+                travel: [(0, 0.2, 0.5), (7.9, 0.28, 0.37), (9.4, 0.29, 0.37), (11.3, 0.56, 0.94)]
+                    .map { PointerTravelSample(time: $0.0, x: $0.1, y: $0.2) },
+                presses: [
+                    .init(time: 2, x: 0.2, y: 0.5, button: 0, phase: .down),
+                    .init(time: 2.1, x: 0.2, y: 0.5, button: 0, phase: .up),
+                    .init(time: 5, x: 0.6, y: 0.94, button: 0, phase: .down, onRecordingBar: true),
+                    .init(time: 11.9, x: 0.56, y: 0.936, button: 0, phase: .down),
+                    .init(time: 11.96, x: 0.56, y: 0.936, button: 0, phase: .up),
+                ]))
+        let prompt = plan.markdown(frameTimes: [])
+        #expect(prompt.contains("Click 00:02.000"))
+        #expect(!prompt.contains("Click 00:05.000") && !prompt.contains("Click 00:11.900"))
+        #expect(prompt.contains("Pointer rested 00:07.900"))
+        #expect(!prompt.contains("Pointer rested 00:11.300"))
+        // The bug report words the rest under narration as the narration alone.
+        let report = RecordingSteps(plan: plan, systemVersion: nil).markdown(.bugReport)
+        #expect(report.contains("## Steps to reproduce\n\n1. Click (00:02.000; image 1)\n2. “It should be this” (00:07.800; image 2)\n\n"))
+        // A click released early is still a step, whatever comes last.
+        let early = RecordingAgentPromptPlan(title: "Early", timeline: .full(sourceDuration: 12), cues: [], words: [],
+            capture: PointerCaptureFile(presses: [.init(time: 11, x: 0.5, y: 0.5, button: 0, phase: .down),
+                                                  .init(time: 11.1, x: 0.5, y: 0.5, button: 0, phase: .up)]))
+        #expect(early.markdown(frameTimes: []).contains("Click 00:11.000"))
     }
 
     @Test func bothFormatsWriteMarkdownHTMLAndOneStillPerStep() async throws {
@@ -70,8 +105,14 @@ struct RecordingStepsTests {
         let report = try steps.write(.bugReport, stills: stills, to: directory.appendingPathComponent("Report"))
         let reportText = try String(contentsOf: report.appendingPathComponent("steps.md"), encoding: .utf8)
         #expect(reportText.contains("## Environment\n\n- App: Notes 2.1 (210) (com.example.Notes)\n- macOS: Version 27.3 (Build 27D60)\n- Screen: 96 × 64 px at 2x"))
-        #expect(reportText.contains("## Steps to reproduce\n\n1. Click, then press ⌘S (00:00.100; image 1)\n2. Hover for 0.8 s (00:00.700; image 2)\n3. Double-click (00:01.300; image 3)"))
-        #expect(reportText.contains("5. “The dialog stays empty” (00:02.500; image 5)"))
+        #expect(reportText.contains("## Steps to reproduce\n\n1. Click, then press ⌘S (00:00.100; image 1)\n2. Double-click (00:01.300; image 2)"))
+        #expect(reportText.contains("4. “The dialog stays empty” (00:02.500; image 4)"))
+        #expect(!reportText.contains("Hover"))
+        #expect(reportText.contains("![Image 2: step 2 at 00:01.300](images/0002.jpg)"))
+        let reportImages = try FileManager.default.contentsOfDirectory(atPath: report.appendingPathComponent("images").path).sorted()
+        #expect(reportImages == (0..<4).map(RecordingAgentPromptPlan.stillName))
+        // Image 2 is the double-click's still, the third moment's.
+        #expect(try Data(contentsOf: report.appendingPathComponent("images/0002.jpg")) == stills[2])
         #expect(reportText.contains("## What happened\n\n- 00:02.500–00:02.900: The dialog stays empty"))
         #expect(reportText.contains("## Attachments\n\n![Image 1: step 1 at 00:00.100](images/0001.jpg)"))
         #expect(!reportText.contains("## Logs") && !FileManager.default.fileExists(atPath: report.appendingPathComponent("logs.txt").path))
@@ -91,9 +132,10 @@ struct RecordingStepsTests {
                 #expect(!html.contains(reference), "\(format): \(reference)")
             }
             let sources = html.components(separatedBy: "src=\"").dropFirst().map { $0.prefix { $0 != "\"" } }
-            #expect(sources.count == 5)
+            let shown = steps.listed(format).map { stills[$0.still] }
+            #expect(sources.count == shown.count)
             #expect(sources.allSatisfy { $0.hasPrefix("data:image/jpeg;base64,") })
-            #expect(sources.compactMap { Data(base64Encoded: String($0.dropFirst("data:image/jpeg;base64,".count))) } == stills)
+            #expect(sources.compactMap { Data(base64Encoded: String($0.dropFirst("data:image/jpeg;base64,".count))) } == shown)
         }
         // The bug report carries the whole log inline, too.
         #expect(steps.html(.bugReport, stills: stills).contains("<details><summary>The whole log (logs.txt)</summary><pre>Notes (com.example.Notes), process 42"))

@@ -22,6 +22,8 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
     enum Part: Sendable, Equatable {
         case said(String)
         case did(String)
+        /// A pointer rest ("Hover for 0.8 s"), which a bug report's steps leave out.
+        case rested(String)
     }
 
     let title: String
@@ -134,7 +136,20 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
             return String(format: "; cursor: custom, %.0f × %.0f pt, hot spot %.0f, %.0f", locale: Locale(identifier: "en_US_POSIX"),
                           image.referenceSize.width, image.referenceSize.height, image.anchorPoint.x, image.anchorPoint.y)
         }
-        for click in capture?.presses ?? [] where click.phase == .down {
+        let presses = capture?.presses ?? []
+        let sourceEnd = timeline.segments.map(\.sourceEnd).max() ?? 0
+        // Clicks on Sukusho's recording bar aren't steps. Older takes didn't mark them, so the
+        // last click also counts when its release came within 0.25 s of the end: Stop, released.
+        let lastDown = presses.lastIndex { $0.phase == .down }
+        let controls = presses.indices.filter { index in
+            let press = presses[index]
+            guard press.phase == .down else { return false }
+            if press.onRecordingBar == true { return true }
+            guard index == lastDown else { return false }
+            let release = presses[(index + 1)...].first { $0.phase == .up && $0.button == press.button }
+            return release.map { $0.time >= sourceEnd - 0.25 } ?? false
+        }.map { presses[$0] }
+        for click in presses where click.phase == .down && !controls.contains(click) {
             guard click.x.isFinite, click.y.isFinite,
                   (0...1).contains(click.x), (0...1).contains(click.y),
                   let time = actionTime(click.time) else { continue }
@@ -171,11 +186,15 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
                              .did("Draw on the screen")))
         }
         var motion: [(time: Double, text: String, position: CGPoint?, part: Part, score: Double)] = []
-        for rest in Self.rests(in: capture?.travel ?? [], until: timeline.segments.map(\.sourceEnd).max() ?? 0) {
-            guard let span = editorSpan(rest.start, rest.end) else { continue }
+        for rest in Self.rests(in: capture?.travel ?? [], until: sourceEnd) {
+            // The pause on a bar button before clicking it isn't a step either.
+            let onControl = controls.contains {
+                $0.time >= rest.start && $0.time <= rest.end + 0.5 && hypot($0.x - rest.x, $0.y - rest.y) < 0.02
+            }
+            guard !onControl, let span = editorSpan(rest.start, rest.end) else { continue }
             motion.append((span.start, "Pointer rested \(Self.timestamp(span.start))–\(Self.timestamp(span.end)) at source position \(Self.position(rest.x, rest.y)).",
                            CGPoint(x: rest.x, y: rest.y),
-                           .did(String(format: "Hover for %.1f s", locale: Locale(identifier: "en_US_POSIX"), span.end - span.start)),
+                           .rested(String(format: "Hover for %.1f s", locale: Locale(identifier: "en_US_POSIX"), span.end - span.start)),
                            span.end - span.start))
         }
         for run in Self.scrollRuns(capture?.scrolls ?? []) {

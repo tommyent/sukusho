@@ -39,6 +39,8 @@ nonisolated final class PointerActivityRecorder: NSObject, @unchecked Sendable {
         let button: Int
         let phase: PointerPressEvent.PressPhase
         let artworkID: String?
+        /// On Sukusho's recording bar; only the AppKit local monitor can tell.
+        var onRecordingBar = false
     }
 
     private struct CapturedScroll {
@@ -332,7 +334,8 @@ nonisolated final class PointerActivityRecorder: NSObject, @unchecked Sendable {
                     y: point.y,
                     button: press.button,
                     phase: press.phase,
-                    artworkID: press.artworkID
+                    artworkID: press.artworkID,
+                    onRecordingBar: press.onRecordingBar ? true : nil
                 )
             }
             capture.scrolls = PointerScrollEvent.coalesced(scrolls.compactMap { scroll in
@@ -578,6 +581,8 @@ nonisolated final class PointerActivityRecorder: NSObject, @unchecked Sendable {
         default:
             return
         }
+        // Only the local monitor sees Sukusho's own windows; its exports leave the bar's clicks out.
+        let onRecordingBar = event.window is RecordingBarPanel
 
         lock.withLock {
             guard pauseStartedUptime == nil else { return }
@@ -592,7 +597,8 @@ nonisolated final class PointerActivityRecorder: NSObject, @unchecked Sendable {
                 point: point,
                 button: button,
                 phase: phase,
-                artworkID: activeArtworkID
+                artworkID: activeArtworkID,
+                onRecordingBar: onRecordingBar
             ))
         }
     }
@@ -615,10 +621,14 @@ nonisolated final class PointerActivityRecorder: NSObject, @unchecked Sendable {
     /// `duplicatePressWindow` marks a duplicate rather than a human
     /// double-click - those repeat far slower and interleave a release.
     private func appendPress(_ press: CapturedPressEvent) {
-        let isCopy = RecordingPressCopies.isCopy(press, of: presses, window: Self.duplicatePressWindow, uptime: \.uptime) {
+        if let copied = RecordingPressCopies.copyIndex(press, of: presses, window: Self.duplicatePressWindow, uptime: \.uptime, matches: {
             $0.button == $1.button && $0.phase == $1.phase && hypot($0.point.x - $1.point.x, $0.point.y - $1.point.y) < 1
+        }) {
+            // The event tap's copy can arrive first, not knowing the click hit the recording bar.
+            if press.onRecordingBar { presses[copied].onRecordingBar = true }
+        } else {
+            presses.append(press)
         }
-        if !isCopy { presses.append(press) }
     }
 
     // MARK: - Pointer artwork

@@ -16,6 +16,8 @@ nonisolated struct RecordingSteps: Sendable {
         var time: Double
         /// What was done, as one sentence ("Click, then press ⌘S"); empty when the moment is only narration.
         var action: String
+        /// The same without pointer rests: what a bug report's Steps to reproduce lists.
+        var reproduction: String
         /// What was said at the moment, as transcribed.
         var narration: String
     }
@@ -35,14 +37,16 @@ nonisolated struct RecordingSteps: Sendable {
     init(plan: RecordingAgentPromptPlan, systemVersion: String?, includesLogs: Bool = true, summary: String? = nil) {
         title = plan.title.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         steps = plan.moments.map { moment in
-            var actions: [String] = [], said: [String] = []
+            var actions: [String] = [], reproduction: [String] = [], said: [String] = []
             for part in moment.parts {
                 switch part {
-                case .did(let action): actions.append(action)
+                case .did(let action): actions.append(action); reproduction.append(action)
+                case .rested(let action): actions.append(action)
                 case .said(let text): said.append(text)
                 }
             }
-            return Step(time: moment.time, action: Self.sentence(actions), narration: said.joined(separator: " "))
+            return Step(time: moment.time, action: Self.sentence(actions), reproduction: Self.sentence(reproduction),
+                        narration: said.joined(separator: " "))
         }
         narration = plan.transcript
         transcriptionFailure = plan.transcriptionFailure
@@ -86,7 +90,7 @@ nonisolated struct RecordingSteps: Sendable {
         case paragraph(String)
         case strong(String)
         case list([String], numbered: Bool)
-        /// A step's still, by step index.
+        /// A listed step's still, by its place in `listed(format)`.
         case image(Int, alt: String)
         /// The whole log: inline in HTML, a pointer to `logs.txt` in Markdown.
         case log
@@ -94,7 +98,21 @@ nonisolated struct RecordingSteps: Sendable {
 
     private static func time(_ value: Double) -> String { RecordingAgentPromptPlan.timestamp(value) }
 
+    /// The steps a format lists, each with the index of its still. A bug report words steps
+    /// without pointer rests and leaves out the steps that were only a rest.
+    func listed(_ format: Format) -> [(step: Step, still: Int)] {
+        steps.indices.compactMap { index in
+            var step = steps[index]
+            if format == .bugReport {
+                if step.reproduction.isEmpty, !step.action.isEmpty, step.narration.isEmpty { return nil }
+                step.action = step.reproduction
+            }
+            return (step, index)
+        }
+    }
+
     func blocks(_ format: Format) -> [Block] {
+        let steps = listed(format).map(\.step)
         var blocks: [Block] = []
         if let summary { blocks += [.heading("Summary"), .paragraph(summary)] }
         switch format {
@@ -157,6 +175,7 @@ nonisolated struct RecordingSteps: Sendable {
 
     /// `steps.html`, which needs nothing beside it: `stills` (one JPEG per step) are embedded.
     func html(_ format: Format, stills: [Data]) -> String {
+        let listed = listed(format)
         func escape(_ value: String) -> String {
             value.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
                 .replacingOccurrences(of: ">", with: "&gt;").replacingOccurrences(of: "\"", with: "&quot;")
@@ -172,8 +191,10 @@ nonisolated struct RecordingSteps: Sendable {
                 let tag = numbered ? "ol" : "ul"
                 body += "<\(tag)>\n" + items.map { "<li>\(escape($0))</li>\n" }.joined() + "</\(tag)>\n"
             case .image(let index, let alt):
-                guard stills.indices.contains(index) else { body += "<p class=\"muted\">\(escape(alt)): frame unavailable.</p>\n"; continue }
-                body += "<figure><img src=\"data:image/jpeg;base64,\(stills[index].base64EncodedString())\" alt=\"\(escape(alt))\">"
+                guard listed.indices.contains(index), stills.indices.contains(listed[index].still) else {
+                    body += "<p class=\"muted\">\(escape(alt)): frame unavailable.</p>\n"; continue
+                }
+                body += "<figure><img src=\"data:image/jpeg;base64,\(stills[listed[index].still].base64EncodedString())\" alt=\"\(escape(alt))\">"
                     + "<figcaption>\(escape(alt))</figcaption></figure>\n"
             case .log:
                 guard let logs else { continue }
@@ -248,8 +269,8 @@ nonisolated struct RecordingSteps: Sendable {
         let staging = destination.deletingLastPathComponent().appendingPathComponent(".steps-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: staging.appendingPathComponent("images", isDirectory: true), withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: staging) }
-        for (index, still) in stills.enumerated() {
-            try still.write(to: staging.appendingPathComponent(Self.imagePath(index)))
+        for (index, item) in listed(format).enumerated() where stills.indices.contains(item.still) {
+            try stills[item.still].write(to: staging.appendingPathComponent(Self.imagePath(index)))
         }
         try markdown(format).write(to: staging.appendingPathComponent("steps.md"), atomically: true, encoding: .utf8)
         try html(format, stills: stills).write(to: staging.appendingPathComponent("steps.html"), atomically: true, encoding: .utf8)
