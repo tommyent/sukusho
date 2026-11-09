@@ -1450,7 +1450,8 @@ private struct StudioTranscriptEditPanel: View {
                     isSelected: selection?.contains(index) ?? false,
                     isActive: index == activeIndex,
                     isCut: !model.transcriptWordSurvives(index),
-                    isFiller: model.isFillerWord(index)
+                    isFiller: model.isFillerWord(index),
+                    previewsCut: model.previewsFillerWords
                 ) {
                     handleTap(on: index)
                 }
@@ -1504,13 +1505,17 @@ private struct StudioTranscriptWordView: View {
     let isActive: Bool
     let isCut: Bool
     let isFiller: Bool
+    /// Remove Filler Words' preview: fillers show as they'd look once cut.
+    var previewsCut = false
     let action: () -> Void
+
+    private var isPreviewedCut: Bool { previewsCut && isFiller && !isCut }
 
     var body: some View {
         Text(text)
             .font(.system(size: 11.5))
             .foregroundStyle(foreground)
-            .strikethrough(isCut, color: .secondary.opacity(0.6))
+            .strikethrough(isCut || isPreviewedCut, color: isPreviewedCut ? .orange : .secondary.opacity(0.6))
             .padding(.horizontal, 1.5)
             .padding(.vertical, 1)
             .background(
@@ -1531,7 +1536,7 @@ private struct StudioTranscriptWordView: View {
         } else if isActive, !isCut {
             Color.accentColor.opacity(0.2)
         } else if isFiller, !isCut {
-            Color.orange.opacity(0.16)
+            Color.orange.opacity(isPreviewedCut ? 0.32 : 0.16)
         } else {
             Color.clear
         }
@@ -3941,29 +3946,7 @@ private struct StudioInspector: View {
         if model.hasTranscriptWords {
             StudioTranscriptEditPanel(model: model)
 
-            if model.removableFillerWordCount > 0 || model.trimmableSilenceCount > 0 {
-                HStack(spacing: InspectorMetrics.rowSpacing) {
-                    if model.removableFillerWordCount > 0 {
-                        InspectorActionButton(
-                            "Fillers (\(model.removableFillerWordCount))",
-                            systemImage: "scissors"
-                        ) {
-                            model.removeFillerWords()
-                        }
-                        .help("Cut every filler word, like “um” and “uh”")
-                    }
-
-                    if model.trimmableSilenceCount > 0 {
-                        InspectorActionButton(
-                            "Silences (\(model.trimmableSilenceCount))",
-                            systemImage: "waveform.badge.minus"
-                        ) {
-                            model.trimNarrationSilences()
-                        }
-                        .help("Trim long pauses in the narration")
-                    }
-                }
-            }
+            StudioCleanupControls(model: model)
 
             InspectorHint("Click a word to jump there. Shift-click to select a passage, then cut it.")
         } else {

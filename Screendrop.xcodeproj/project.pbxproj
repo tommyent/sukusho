@@ -111,6 +111,7 @@
 		B5A4E100000000000000001C /* Screendrop/ScreenshotFileNaming.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5A4E100000000000000001B /* Screendrop/ScreenshotFileNaming.swift */; };
 		B5A4E100000000000000001E /* Screendrop/ScreenshotImageLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5A4E100000000000000001D /* Screendrop/ScreenshotImageLoader.swift */; };
 		B5A4E1000000000000000020 /* Screendrop/AnnotationWallpaperStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5A4E100000000000000001F /* Screendrop/AnnotationWallpaperStore.swift */; };
+		B5A4E1000000000000000022 /* Screendrop/RecordingTranscriptEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5A4E1000000000000000021 /* Screendrop/RecordingTranscriptEditing.swift */; };
 		AD5500000000000000000001 /* Screendrop/ScreendropStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5500000000000000000011 /* Screendrop/ScreendropStorage.swift */; };
 		AD5500000000000000000002 /* Screendrop/LegacyIdentityImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5500000000000000000012 /* Screendrop/LegacyIdentityImport.swift */; };
 		AF5D00000000000000000001 /* Screendrop/CaptureLibraryText.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF5D00000000000000000002 /* Screendrop/CaptureLibraryText.swift */; };
@@ -270,6 +271,7 @@
 		B5A4E100000000000000001B /* Screendrop/ScreenshotFileNaming.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ScreenshotFileNaming.swift; sourceTree = SOURCE_ROOT; };
 		B5A4E100000000000000001D /* Screendrop/ScreenshotImageLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ScreenshotImageLoader.swift; sourceTree = SOURCE_ROOT; };
 		B5A4E100000000000000001F /* Screendrop/AnnotationWallpaperStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AnnotationWallpaperStore.swift; sourceTree = SOURCE_ROOT; };
+		B5A4E1000000000000000021 /* Screendrop/RecordingTranscriptEditing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingTranscriptEditing.swift; sourceTree = SOURCE_ROOT; };
 		AD5500000000000000000011 /* Screendrop/ScreendropStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ScreendropStorage.swift; sourceTree = SOURCE_ROOT; };
 		AD5500000000000000000012 /* Screendrop/LegacyIdentityImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/LegacyIdentityImport.swift; sourceTree = SOURCE_ROOT; };
 		AF5D00000000000000000002 /* Screendrop/CaptureLibraryText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/CaptureLibraryText.swift; sourceTree = SOURCE_ROOT; };
@@ -471,6 +473,7 @@
 				B5A4E100000000000000001B /* Screendrop/ScreenshotFileNaming.swift */,
 				B5A4E100000000000000001D /* Screendrop/ScreenshotImageLoader.swift */,
 				B5A4E100000000000000001F /* Screendrop/AnnotationWallpaperStore.swift */,
+				B5A4E1000000000000000021 /* Screendrop/RecordingTranscriptEditing.swift */,
 				AD5500000000000000000011 /* Screendrop/ScreendropStorage.swift */,
 				AD5500000000000000000012 /* Screendrop/LegacyIdentityImport.swift */,
 				AF5D00000000000000000002 /* Screendrop/CaptureLibraryText.swift */,
@@ -728,6 +731,7 @@
 				B5A4E100000000000000001C /* Screendrop/ScreenshotFileNaming.swift in Sources */,
 				B5A4E100000000000000001E /* Screendrop/ScreenshotImageLoader.swift in Sources */,
 				B5A4E1000000000000000020 /* Screendrop/AnnotationWallpaperStore.swift in Sources */,
+				B5A4E1000000000000000022 /* Screendrop/RecordingTranscriptEditing.swift in Sources */,
 				AD5500000000000000000001 /* Screendrop/ScreendropStorage.swift in Sources */,
 				AD5500000000000000000002 /* Screendrop/LegacyIdentityImport.swift in Sources */,
 				AF5D00000000000000000001 /* Screendrop/CaptureLibraryText.swift in Sources */,
