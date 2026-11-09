@@ -191,12 +191,17 @@ final class AgentLiveBackend: AgentBackend {
         return created
     }
 
-    func cloudDidChange(deletedURL: String?) {
-        if let deletedURL {
-            for row in ScreenshotHistoryStore.shared.items where row.cloudURL == deletedURL {
-                ScreenshotHistoryStore.shared.setLibraryCloudURL(id: row.id, cloudURL: nil)
+    /// As the Uploads page's own delete: the cards lose those links, a gallery's images included.
+    func cloudDidChange(deleted: Set<String>) {
+        if !deleted.isEmpty {
+            let history = ScreenshotHistoryStore.shared
+            for row in history.items where CloudUploadList.uploadID(of: row.cloudURL).map(deleted.contains) == true {
+                history.setLibraryCloudURL(id: row.id, cloudURL: nil)
             }
-            if let id = URL(string: deletedURL)?.lastPathComponent { CloudShareLinks.forget(uploadID: id) }
+            for id in deleted {
+                CloudShareLinks.forget(uploadID: id)
+                CloudPreviewCache.shared.remove(id)
+            }
             CaptureLibraryModel.shared.refresh()
         }
         CloudLibraryModel.shared.refresh()

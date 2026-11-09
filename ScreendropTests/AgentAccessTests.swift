@@ -49,7 +49,7 @@ final class AgentFakeBackend: AgentBackend {
                          filesReceived: 0, bytesReceived: 0, url: "https://share.example/r/secret")
     }
 
-    func cloudDidChange(deletedURL: String?) {}
+    func cloudDidChange(deleted: Set<String>) {}
     func latestAgentPrompt() -> AgentPromptInfo? { nil }
     func exportAgentPrompt(_ item: AgentItem) async throws -> AgentPromptInfo { throw AgentToolError("not here") }
 

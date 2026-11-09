@@ -84,8 +84,8 @@ protocol AgentBackend: AnyObject {
     func shareOne(_ item: AgentItem, settings: AgentShareSettings) async throws -> AgentShareResult
     func shareGallery(_ items: [AgentItem], settings: AgentShareSettings) async throws -> AgentShareResult
     func createFileRequest(_ draft: CloudFileRequestDraft) async throws -> CloudFileRequest
-    /// After a link changed or went: the Library's cards and Cloud pages catch up.
-    func cloudDidChange(deletedURL: String?)
+    /// After links changed or went (`deleted`: upload and gallery IDs): the Library's cards and Cloud pages catch up.
+    func cloudDidChange(deleted: Set<String>)
     func latestAgentPrompt() -> AgentPromptInfo?
     func exportAgentPrompt(_ item: AgentItem) async throws -> AgentPromptInfo
     func capture(_ mode: AgentCaptureMode) async -> AgentCaptureOutcome
@@ -500,7 +500,7 @@ final class AgentToolbox {
         let shared = items.count == 1 ? try await backend.shareOne(items[0], settings: settings)
             : try await backend.shareGallery(items, settings: settings)
         grants.recordOwned([shared.id] + shared.uploadIDs, by: session.agent)
-        backend.cloudDidChange(deletedURL: nil)
+        backend.cloudDidChange(deleted: [])
         var object: [String: Any] = [
             "status": "shared", "id": shared.id, "kind": shared.isGallery ? "gallery" : "upload", "url": shared.url,
             "title": shared.title, "has_password": shared.hasPassword, "expires_at": shared.expiresAt.map(Self.iso) ?? NSNull(),
@@ -591,7 +591,7 @@ final class AgentToolbox {
         let ask = AgentAsk(agent: session.agent, group: .publish, action: "change “\(upload.title ?? upload.filename)”", details: details)
         guard await approve(.publish, items: [id], session: session, ask: ask) != nil else { return .denied }
         let updated = try await cloud.update(id: id, expiresAt: expiry.map { $0.date(from: now()) }, anonymousComments: anonymous)
-        backend.cloudDidChange(deletedURL: nil)
+        backend.cloudDidChange(deleted: [])
         return ToolResult(object: ["status": "updated", "link": Self.link(updated ?? upload)], summary: "updated")
     }
 
@@ -614,8 +614,10 @@ final class AgentToolbox {
         } else {
             try await cloud.deleteUpload(id)
         }
-        grants.forget(Set([id] + (gallery?.uploadIds ?? [])))
-        backend.cloudDidChange(deletedURL: target.url)
+        // A gallery goes with its images, as the Library's own delete takes them.
+        let removed = Set([id] + (gallery?.uploadIds ?? []))
+        grants.forget(removed)
+        backend.cloudDidChange(deleted: removed)
         return ToolResult(object: ["status": "deleted", "id": id], summary: "deleted")
     }
 
@@ -693,7 +695,7 @@ final class AgentToolbox {
                                      "\(request.filesReceived) files received stay."])
         guard await approve(.publish, items: [id], session: session, ask: ask) != nil else { return .denied }
         try await cloud.closeFileRequest(id)
-        backend.cloudDidChange(deletedURL: nil)
+        backend.cloudDidChange(deleted: [])
         return ToolResult(object: ["status": "closed", "id": id], summary: "closed")
     }
 
