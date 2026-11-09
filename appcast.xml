@@ -1,0 +1,58 @@
+<?xml version="1.0" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>Sukusho</title>
+        <item>
+            <title>1.2.0</title>
+            <pubDate>Mon, 09 Nov 2026 13:23:28 -0500</pubDate>
+            <link>https://tommyent.github.io/sukusho/</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/tommyent/sukusho/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:version>32.261109.1820</sparkle:version>
+            <sparkle:shortVersionString>1.2.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# Sukusho 1.2.0
+
+The first Sukusho you can download: a signed, notarized app for macOS 27. Open the DMG and drag Sukusho to Applications.
+
+From this version, Sukusho can update itself. On its second launch it asks whether to check for updates automatically, and **Sukusho › Check for Updates…** checks at any time. **Settings › About › Updates** changes the answer later.
+
+Sharing needs your own Cloudflare Worker: deploy [sukusho-worker](https://github.com/tommyent/sukusho-worker) 2.1.0 or later, then add its URL and upload token in **Settings › Cloud**.
+
+## New since 1.1.0
+
+### Sharing
+- **Galleries:** share 2 to 100 screenshots behind one link, with a thumbnail page and a lightbox where each image keeps its own likes, comments and views.
+- **Files:** the Library's Files page shares files of any kind. Large files upload in parts.
+- **File requests:** a link someone can use to send you files, with an optional message, password, expiry and limits. What they send arrives on the Library's **Received** page.
+- **End-to-end encryption:** images and files of up to 32 MB are sealed on your Mac before upload, so the Worker stores a file it can't read.
+- **Shake to upload:** shake the pointer while dragging files from Finder to upload them from a small shelf.
+- **Draft Message:** Apple Intelligence writes a short note to send with a link, on your Mac, and the note and the link are copied together.
+
+### Recording and Studio
+- **Draw while recording** with the pen on the recording bar. Strokes replay in Studio, exports and shares.
+- **Bug Report** turns a recording into a walkthrough for a coding agent and a report for a person. **How-To Guide** writes the same moments as numbered steps.
+- **Background music** from your own file or the Free To Use library, lowered while you speak. **Isolate voice** cleans the microphone track.
+- **Redactions:** blur or pixelate a region for part of a recording.
+- **Remove Filler Words** and **Shorten Pauses** cut the "um"s and long silences from the transcript, with one Undo.
+- **Chapters**, named from what you said, with a jump list on the share page. **Summarize**, **Name Chapters** and **Translate Captions…** run on your Mac.
+- **Clean desktop** keeps desktop icons, the Dock and notification banners out of recordings. A level meter shows the microphone during a take.
+- Movie exports use HEVC by default; shares stay H.264.
+
+### Screenshots and the editor
+- A **Highlighter** pen, an opacity slider for annotation colours, and copy and paste of annotations.
+- Text labels can have a speech-bubble tail.
+- **File › Revert To** keeps the last five sessions in both editors.
+- **Scrolling Capture** auto-scrolls to the end of the page and saves by itself, and stitches pinned sidebars and repeating content more reliably.
+
+### Library
+- Search finds the words inside captures, read on your Mac, and `app:` keeps only captures taken in one app.
+- Apple Intelligence names untitled captures and suggests tags, on your Mac.
+- **Settings › General › Workspace** sets the appearance (Automatic, Light or Dark) and what sits behind your captures: dots, plain grey or a wallpaper.
+
+### Agents
+- **Agent access** (**Settings › Agents**, off by default) lets coding agents such as Claude Code or Codex add, find and share captures through Sukusho's own MCP server. Sukusho asks you before anything is shared, deleted or captured.
+]]></description>
+            <enclosure url="https://github.com/tommyent/sukusho/releases/download/v1.2.0/Sukusho-1.2.0.dmg" length="9650154" type="application/octet-stream" sparkle:edSignature="78IlPnt2BiJ42sp0LoEdm44q8W7g3aIfGHmDMQ0wgnNKKGA1OVgQS3rqXT4yDWHnSXvezsBZ2rGdGfXJn4vYAA=="/>
+        </item>
+    </channel>
+</rss>
