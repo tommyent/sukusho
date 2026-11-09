@@ -163,11 +163,14 @@ Draw the box around the part that scrolls: a sidebar or button that stays put in
 
 Shortcuts, Siri and Spotlight can take a full-screen, window or area screenshot, capture text, and start, stop or toggle a screen recording.
 
+**Agent access** (**Settings → Agents**, off by default) lets coding agents such as Claude Code or Codex use Sukusho through a local MCP server inside the app (`Sukusho.app/Contents/Helpers/sukusho-mcp`). Agents can add and find captures, share one or a gallery, make file requests, list what clients sent, and read comments. Sukusho asks you in its own window before anything is shared, deleted or captured, and a share's password is typed by you in Share Options, never by the agent.
+
 ## Privacy and permissions
 
 - Captures, projects, edits and transcripts stay on your Mac. Transcription, text recognition and Apple Intelligence run on-device. The text read from captures, the app and window they came from, and the model's titles stay on this Mac and are never uploaded.
 - Agent Prompts hold stills and frames of your screen, so `~/Agent Prompts` is a folder only your user account can open. Nothing in it is uploaded.
 - With **Shake to upload** on, Sukusho watches pointer drags in other apps for a shake. It checks only whether a drag carries files, reads which files after a shake, and uploads nothing until you drop them on the shelf. macOS asks for no permission for this.
+- With **Agent access** on, Sukusho listens on a socket only your user account can open and answers only its own signed helper. Agents never get the upload token or your Library's files: they get images and text through the tools, with text from captures, visitors and the model marked as untrusted. **Settings → Agents** lists every call.
 - The upload token, your Unsplash Access Key, the keys of end-to-end encrypted uploads and the file request links you make are kept in the Keychain. Captures are uploaded only when you, or an after-capture action you turned on, ask for it.
 - There is no Sukusho account, no central Sukusho server and no automatic app updates. Sukusho goes online for your Worker, a check on GitHub for a newer Worker version in **Settings → Cloud**, Unsplash search and wallpaper downloads, Free To Use music search and downloads, and the setup video in **Settings → Cloud**, which starts loading from the upstream project's server whenever the pane shows its setup steps. Apple's on-device speech models may need a one-time download for transcription or the teleprompter.
 
