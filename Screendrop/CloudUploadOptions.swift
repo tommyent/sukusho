@@ -20,7 +20,8 @@ struct CloudUploadOptions: Sendable {
     var password: String? = nil
     /// Sealed before upload; the key goes in the link (CloudShareSeal).
     var encrypted = false
-    /// The note Draft message wrote, as the owner left it; never sent anywhere by Sukusho.
+    /// The note Draft message wrote, as the owner left it. Never uploaded: it's copied above
+    /// the link once the upload finishes, or handed to the agent that asked for the share.
     var message: String? = nil
 
     /// `nil` title means "let the worker fall back to the filename (or,
@@ -101,7 +102,6 @@ struct CloudUploadOptionsPopover: View {
     @State private var message: String?
     @State private var isDrafting = false
     @State private var messageNote: String?
-    @State private var copiedMessage = false
     @State private var socialEnabled = CloudUploadPreferences.lastSocialEnabled
     @State private var expiry = CloudUploadPreferences.defaultExpiry
     @State private var allowAnonymousComments = CloudUploadPreferences.lastAnonymousComments
@@ -248,11 +248,12 @@ struct CloudUploadOptionsPopover: View {
         .frame(width: 280)
     }
 
-    /// Draft message: Apple Intelligence writes the note to send with the link,
-    /// from the title, summary and chapters. Copy is the only way it leaves.
+    /// Draft message: Apple Intelligence writes the note to send with the link, from the title,
+    /// summary and chapters. Upload copies it above the link; an agent's share hands it to the agent.
     @ViewBuilder
     private func messageControls(_ source: ShareMessageSource) -> some View {
         let unavailable = OnDeviceText.unavailableReason()
+        let destination = initial == nil ? "Copied above the link when the upload finishes." : "Goes to the agent with the link."
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text("Message")
@@ -267,7 +268,7 @@ struct CloudUploadOptionsPopover: View {
                     }
                     .controlSize(.small)
                     .disabled(unavailable != nil)
-                    .help("Apple Intelligence drafts a short note to send with the link, on this Mac. Nothing is sent.")
+                    .help("Apple Intelligence drafts a short note to go with the link, on this Mac. It isn't uploaded.")
                 }
             }
             if let message {
@@ -276,18 +277,8 @@ struct CloudUploadOptionsPopover: View {
                     .textFieldStyle(.roundedBorder)
                     .lineLimit(3...10)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack {
-                    Spacer()
-                    Button(copiedMessage ? "Copied" : "Copy", systemImage: copiedMessage ? "checkmark" : "doc.on.doc") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(message, forType: .string)
-                        copiedMessage = true
-                    }
-                    .controlSize(.small)
-                    .help("Copy the message. The link is copied after the upload, so paste the message first.")
-                }
             }
-            if let note = unavailable ?? messageNote {
+            if let note = unavailable ?? messageNote ?? (message == nil ? nil : destination) {
                 Text(note)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -305,7 +296,6 @@ struct CloudUploadOptionsPopover: View {
             do {
                 let text = try await RecordingTextIntelligence.message(title: title, source: source, model: SystemTextModel())
                 if text.isEmpty { messageNote = "Apple Intelligence wrote nothing; try again." } else { message = text }
-                copiedMessage = false
             } catch {
                 messageNote = OnDeviceText.message(for: error)
             }

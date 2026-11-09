@@ -278,7 +278,7 @@ extension CaptureLibraryModel {
                 expiresAt: options.expiry.date(), allowAnonymousComments: options.allowAnonymousComments,
                 password: options.password, encrypt: options.encrypted)
             ScreenshotHistoryStore.shared.setLibraryCloudURL(id: id, cloudURL: result.url)
-            CloudShareLinks.copy([result.url])
+            CloudShareLinks.copy([result.url], message: options.message)
             self.actionFeedback.show(ActionFeedback.linksCopied(1))
             if item.isVideo { ScreenshotPreviewStack.shared.dismissVideo(for: item.ownedURL) }
             self.refresh()

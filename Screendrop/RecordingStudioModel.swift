@@ -3627,7 +3627,7 @@ final class RecordingStudioModel {
                     chapterData: sharedChapterData
                 )
 
-                CloudShareLinks.copy([result.url])
+                CloudShareLinks.copy([result.url], message: options.message)
                 if session != nil {
                     ScreenshotHistoryStore.shared.setCloudURL(for: uploadURL, cloudURL: result.url)
                 }

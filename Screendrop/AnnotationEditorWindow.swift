@@ -488,7 +488,7 @@ struct AnnotationEditorWindow: View {
                     password: options.password,
                     encrypt: options.encrypted
                 )
-                CloudShareLinks.copy([result.url])
+                CloudShareLinks.copy([result.url], message: options.message)
                 ScreenshotHistoryStore.shared.setCloudURL(for: resultURL, cloudURL: result.url)
                 // An edit made during the upload isn't in the link: the link is
                 // still copied, but Upload stays rather than claiming it's current.

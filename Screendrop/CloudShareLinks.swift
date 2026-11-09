@@ -53,14 +53,20 @@ enum CloudShareLinks {
         if let url = links([(url, encrypted)]).first.flatMap(URL.init(string:)) { NSWorkspace.shared.open(url) }
     }
 
-    static func copy(_ items: [(url: String, encrypted: Bool)]) {
+    /// `message`, the note Share Options drafted, goes above the links, so one paste fills the email.
+    static func copy(_ items: [(url: String, encrypted: Bool)], message: String? = nil) {
         guard !items.isEmpty else { return }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(links(items).joined(separator: "\n"), forType: .string)
+        NSPasteboard.general.setString(clipboardText(links: links(items), message: message), forType: .string)
     }
 
-    static func copy(_ urls: [String]) {
-        copy(urls.map { ($0, false) })
+    static func copy(_ urls: [String], message: String? = nil) {
+        copy(urls.map { ($0, false) }, message: message)
+    }
+
+    nonisolated static func clipboardText(links: [String], message: String?) -> String {
+        let note = message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "", joined = links.joined(separator: "\n")
+        return note.isEmpty ? joined : note + "\n\n" + joined
     }
 
     /// Keeps a new encrypted upload's key before its link is handed out. When the Keychain
