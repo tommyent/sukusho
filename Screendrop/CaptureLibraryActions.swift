@@ -285,17 +285,12 @@ extension CaptureLibraryModel {
     /// Several images behind one link. Each image goes up fresh, even one shared before;
     /// a card without a link gets its image's page, which links back to the gallery.
     func shareGallery(_ items: [CaptureLibraryItem], options: CloudUploadOptions) {
-        guard !isBusy, let owner = CloudUploader.shared.ownerAccess else { return }
-        let creds = CloudCredentialStore.shared.snapshot()
+        guard !isBusy, let share = CloudGalleryShare.configured() else { return }
         let total = items.count
         run("Uploading 1 of \(total)…") {
             StudioProjectRegistry.shared.flushDrafts()
             let dock = DockExportProgressCoordinator.shared.start()
             defer { DockExportProgressCoordinator.shared.finish(dock) }
-            let share = CloudGalleryShare(workerBase: owner.workerBase, token: owner.token, large: (CloudUploader.multipartThreshold, { file, size, metadata in
-                let result = try await CloudUploader.multipartUpload(fileURL: file, size: size, metadata: metadata, creds: creds, progress: nil)
-                return CloudGalleryShare.Item(id: result.id, url: result.url, mediaKey: result.mediaKey)
-            }))
             let shared = try await share.share(
                 items.map { CloudGalleryShare.Image(fileURL: $0.fileURL, title: $0.title) },
                 settings: .init(title: options.trimmedTitleOrNil, expiresAt: options.expiry.date(), password: options.password,

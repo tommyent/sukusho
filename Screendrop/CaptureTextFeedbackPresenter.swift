@@ -53,8 +53,19 @@ final class CaptureTextFeedbackPresenter {
 
     /// The same toast for another action that leaves nothing on screen, such as a Copy
     /// that closes the card or editor it came from.
-    func showDone(_ title: String, detail: String, displayID: CGDirectDisplayID?) {
-        present(symbol: "checkmark.circle", title: title, detail: detail, displayID: displayID)
+    func showDone(_ title: String, detail: String, symbol: String = "checkmark.circle", displayID: CGDirectDisplayID?) {
+        present(symbol: symbol, title: title, detail: detail, displayID: displayID)
+    }
+
+    /// A spinner until the next toast replaces it, or `dismissWorking`, for work with no window of its own.
+    func showWorking(_ title: String, detail: String, displayID: CGDirectDisplayID?) {
+        present(symbol: "", title: title, detail: detail, displayID: displayID, isReading: true)
+        AccessibilityNotification.Announcement(title).post()
+    }
+
+    func dismissWorking() {
+        dismissTask?.cancel()
+        dismiss()
     }
 
     /// The capture succeeded but Vision found nothing. Not a failure worth an
@@ -179,7 +190,7 @@ private struct CaptureTextFeedbackView: View {
         HStack(spacing: 10) {
             if isReading {
                 ProgressView().controlSize(.small).tint(.white)
-                    .accessibilityLabel("Reading text")
+                    .accessibilityLabel(title)
             } else {
                 Image(systemName: symbol)
                     .font(.system(size: 18, weight: .medium))
