@@ -43,6 +43,7 @@ enum ScreendropPreferences {
     static let recordingBugReportKey = "recordingBugReport"
     /// Bug report turned on Include Sukusho windows, so turning Bug report off turns it back off.
     static let recordingBugReportAddedAppWindowsKey = "recordingBugReportAddedAppWindows"
+    static let recordingAppLogsKey = "recordingAppLogs"
     static let recordingStartDelaySecondsKey = "recordingStartDelaySeconds"
     static let recordingTeleprompterEnabledKey = "recordingTeleprompterEnabled"
     static let recordingTeleprompterScriptKey = "recordingTeleprompterScript"
@@ -134,6 +135,12 @@ enum ScreendropPreferences {
     /// Agent Prompt instead of opening Studio. Defaults to off.
     static var recordingBugReport: Bool {
         UserDefaults.standard.bool(forKey: recordingBugReportKey)
+    }
+
+    /// A Bug report take also reads the recorded app's log. Off by default, and
+    /// cleared after each take, since logs can hold personal data.
+    static var recordingAppLogs: Bool {
+        UserDefaults.standard.bool(forKey: recordingAppLogsKey)
     }
 
     /// Countdown delay (in seconds) before a recording starts. 0 means off.

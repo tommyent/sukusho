@@ -8,6 +8,16 @@ nonisolated struct CaptureSource: Codable, Sendable, Hashable {
     var bundleIdentifier: String?
     var appName: String
     var windowTitle: String?
+    /// "18.2 (20620.1.16)": kept for recordings, for Export Steps' bug reports.
+    var appVersion: String?
+
+    /// An app's version and build, as its bundle states them.
+    static func version(of app: NSRunningApplication?) -> String? {
+        guard let info = app?.bundleURL.flatMap(Bundle.init(url:))?.infoDictionary,
+              let short = info["CFBundleShortVersionString"] as? String else { return nil }
+        let build = info["CFBundleVersion"] as? String
+        return build.map { $0 == short ? short : "\(short) (\($0))" } ?? short
+    }
 
     /// For `app:`: the app's name, or the last part of its bundle ID, contains
     /// `folded` (already case- and accent-folded).
