@@ -74,6 +74,12 @@ struct CloudUploadOptionsPopover: View {
     var showsTitle = true
     /// Why this share can't be encrypted; nil when it can.
     var encryptionUnavailable: String? = nil
+    /// An agent's choices to start from (AgentAccess); they don't become the remembered defaults.
+    var initial: CloudUploadOptions? = nil
+    var focusesPassword = false
+    var confirmTitle = "Upload"
+    var cancelTitle = "Cancel"
+    var onCancel: (() -> Void)? = nil
     let onConfirm: (CloudUploadOptions) -> Void
 
     @State private var title: String
@@ -84,15 +90,28 @@ struct CloudUploadOptionsPopover: View {
     @State private var password = ""
     /// Off every time, like the password.
     @State private var encrypted = false
+    @FocusState private var passwordFocused: Bool
     @Environment(\.dismiss) private var dismiss
 
     init(suggestedTitle: String = "", showsTitle: Bool = true, encryptionUnavailable: String? = nil,
+         initial: CloudUploadOptions? = nil, focusesPassword: Bool = false, confirmTitle: String = "Upload",
+         cancelTitle: String = "Cancel", onCancel: (() -> Void)? = nil,
          onConfirm: @escaping (CloudUploadOptions) -> Void) {
         self.suggestedTitle = suggestedTitle
         self.showsTitle = showsTitle
         self.encryptionUnavailable = encryptionUnavailable
+        self.initial = initial
+        self.focusesPassword = focusesPassword
+        self.confirmTitle = confirmTitle
+        self.cancelTitle = cancelTitle
+        self.onCancel = onCancel
         self.onConfirm = onConfirm
-        _title = State(initialValue: suggestedTitle)
+        _title = State(initialValue: initial?.title ?? suggestedTitle)
+        if let initial {
+            _socialEnabled = State(initialValue: initial.socialEnabled)
+            _expiry = State(initialValue: initial.expiry)
+            _allowAnonymousComments = State(initialValue: initial.allowAnonymousComments)
+        }
     }
 
     var body: some View {
@@ -130,8 +149,10 @@ struct CloudUploadOptionsPopover: View {
                     .labelsHidden()
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 130)
+                    .focused($passwordFocused)
             }
             .help("Visitors need it to open the link. Up to 128 characters.")
+            .onAppear { if focusesPassword { passwordFocused = true } }
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
@@ -174,14 +195,17 @@ struct CloudUploadOptionsPopover: View {
 
             HStack {
                 Spacer()
-                Button("Cancel") {
+                Button(cancelTitle) {
+                    onCancel?()
                     dismiss()
                 }
                 .keyboardShortcut(.cancelAction)
 
-                Button("Upload") {
-                    CloudUploadPreferences.lastSocialEnabled = socialEnabled
-                    CloudUploadPreferences.lastAnonymousComments = allowAnonymousComments
+                Button(confirmTitle) {
+                    if initial == nil {
+                        CloudUploadPreferences.lastSocialEnabled = socialEnabled
+                        CloudUploadPreferences.lastAnonymousComments = allowAnonymousComments
+                    }
                     let options = CloudUploadOptions(title: title, socialEnabled: socialEnabled, expiry: expiry,
                                                      allowAnonymousComments: allowAnonymousComments,
                                                      password: password.isEmpty ? nil : password,
