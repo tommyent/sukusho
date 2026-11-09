@@ -166,7 +166,36 @@ final class RecordingStudioModel {
     private(set) var subtitleTimeline = SubtitleTimeline.empty
     /// Word-level timing behind the cues; empty for projects transcribed
     /// before transcript editing shipped (cues only).
-    private(set) var transcriptWords: [RecordingTranscriptWord] = []
+    private(set) var transcriptWords: [RecordingTranscriptWord] = [] {
+        didSet { refreshFillerWords() }
+    }
+    /// The transcript's language as read from its words, for its filler list.
+    private(set) var transcriptLanguage: String?
+    private(set) var fillerWordIndices: Set<Int> = []
+    /// Also cut words that are often filler ("like", "you know"); off by default.
+    var includesDiscourseFillers = UserDefaults.standard.bool(forKey: RecordingStudioModel.discourseFillersKey) {
+        didSet {
+            UserDefaults.standard.set(includesDiscourseFillers, forKey: Self.discourseFillersKey)
+            refreshFillerWords()
+        }
+    }
+    /// The transcript shows the filler words struck through, as a cut would.
+    var previewsFillerWords = false
+    /// Shorten Pauses: pauses longer than this…
+    var pauseThreshold = UserDefaults.standard.object(forKey: RecordingStudioModel.pauseThresholdKey) as? Double
+        ?? PausePlanner.defaultThreshold {
+        didSet { UserDefaults.standard.set(pauseThreshold, forKey: Self.pauseThresholdKey) }
+    }
+    /// …keep this much.
+    var pauseBeat = UserDefaults.standard.object(forKey: RecordingStudioModel.pauseBeatKey) as? Double
+        ?? PausePlanner.defaultBeat {
+        didSet { UserDefaults.standard.set(pauseBeat, forKey: Self.pauseBeatKey) }
+    }
+    /// Whether each quiet pause's frames stay still, by its source range in ms.
+    private(set) var pauseScreenStill: [[Int]: Bool] = [:]
+    static let discourseFillersKey = "studio.cleanup.discourseFillers"
+    static let pauseThresholdKey = "studio.cleanup.pauseThreshold"
+    static let pauseBeatKey = "studio.cleanup.pauseBeat"
     /// Word-timing lookup for karaoke captions; rebuilt with the cues.
     private(set) var karaokeTimeline = KaraokeTimeline.empty
     /// Word under the playhead, updated only on word boundaries so the
@@ -2310,20 +2339,64 @@ final class RecordingStudioModel {
     }
 
     func isFillerWord(_ index: Int) -> Bool {
-        guard transcriptWords.indices.contains(index) else { return false }
-        return TranscriptEditPlanner.isFiller(transcriptWords[index])
+        fillerWordIndices.contains(index)
     }
 
     /// Fillers that would actually be cut - ones already removed don't count.
-    var removableFillerWordCount: Int {
-        TranscriptEditPlanner.fillerIndices(in: transcriptWords)
-            .count { transcriptWordSurvives($0) }
+    var removableFillerWordIndices: [Int] {
+        fillerWordIndices.sorted().filter { transcriptWordSurvives($0) }
     }
 
-    /// Narration pauses long enough to trim that still exist in the edit.
-    var trimmableSilenceCount: Int {
-        TranscriptEditPlanner.silenceCutRanges(in: transcriptWords, sourceDuration: sourceDuration)
-            .count { !clipTimeline.slices(overlapping: $0.lowerBound, sourceEnd: $0.upperBound).isEmpty }
+    var removableFillerWordCount: Int { removableFillerWordIndices.count }
+
+    /// Filler words in the transcript's language, read once when the words
+    /// or the discourse option change, not for every word chip drawn.
+    private func refreshFillerWords() {
+        transcriptLanguage = transcriptWords.isEmpty ? nil : TranscriptEditPlanner.language(of: transcriptWords)
+        fillerWordIndices = Set(TranscriptEditPlanner.fillerIndices(
+            in: transcriptWords, language: transcriptLanguage, includingDiscourse: includesDiscourseFillers))
+    }
+
+    /// Pauses over the threshold that are quiet and still, ready to shorten;
+    /// how many stay because something happens on screen; and the ones whose
+    /// frames haven't been compared yet.
+    struct PauseSummary {
+        var shortenable: [PausePlanner.Pause] = []
+        var kept: [PausePlanner.Pause] = []
+        var checking: [PausePlanner.Pause] = []
+        var saved: TimeInterval { shortenable.reduce(0) { $0 + $1.saved } }
+    }
+
+    var pauseSummary: PauseSummary {
+        let size = CGSize(width: videoSize.width / CGFloat(max(manifest?.pixelScale ?? 1, 1)),
+                          height: videoSize.height / CGFloat(max(manifest?.pixelScale ?? 1, 1)))
+        var summary = PauseSummary()
+        for pause in PausePlanner.pauses(
+            words: transcriptWords, timeline: clipTimeline, sourceDuration: sourceDuration,
+            threshold: pauseThreshold, beat: pauseBeat, capture: pointerCapture, pointSize: size
+        ) {
+            switch (pause.activity, pauseScreenStill[Self.pauseKey(pause.gap)]) {
+            case (nil, true?): summary.shortenable.append(pause)
+            case (nil, nil): summary.checking.append(pause)
+            default: summary.kept.append(pause)
+            }
+        }
+        return summary
+    }
+
+    private static func pauseKey(_ gap: ClosedRange<TimeInterval>) -> [Int] {
+        [Int((gap.lowerBound * 1000).rounded()), Int((gap.upperBound * 1000).rounded())]
+    }
+
+    /// Compares the frames of every quiet pause not yet checked. The source
+    /// movie never changes, so a pause is checked once per Studio session.
+    func checkPauseScreens() async {
+        guard let asset = screenAsset else { return }
+        while let pause = pauseSummary.checking.first, !Task.isCancelled {
+            let still = await StudioPauseScreenCheck.isStill(asset: asset, gap: pause.gap)
+            guard !Task.isCancelled, !isTornDown else { return }
+            pauseScreenStill[Self.pauseKey(pause.gap)] = still
+        }
     }
 
     /// Moves the paused playhead to a word's first surviving frame.
@@ -2347,18 +2420,19 @@ final class RecordingStudioModel {
         cutSourceRanges([cut], actionName: range.count == 1 ? "Cut Word" : "Cut Words")
     }
 
+    /// Cuts every surviving filler in one undoable step.
     func removeFillerWords() {
         cutSourceRanges(
-            TranscriptEditPlanner.fillerCutRanges(in: transcriptWords, sourceDuration: sourceDuration),
+            TranscriptEditPlanner.fillerCutRanges(at: removableFillerWordIndices, in: transcriptWords,
+                                                  sourceDuration: sourceDuration),
             actionName: "Remove Filler Words"
         )
+        previewsFillerWords = false
     }
 
-    func trimNarrationSilences() {
-        cutSourceRanges(
-            TranscriptEditPlanner.silenceCutRanges(in: transcriptWords, sourceDuration: sourceDuration),
-            actionName: "Trim Silences"
-        )
+    /// Shortens every quiet, still pause to the beat in one undoable step.
+    func shortenPauses() {
+        cutSourceRanges(pauseSummary.shortenable.map(\.cut), actionName: "Shorten Pauses")
     }
 
     /// The shared transcript-cut path: removes source ranges from the clip
@@ -2371,6 +2445,11 @@ final class RecordingStudioModel {
               let next = clipTimeline.removingSourceRanges(merged)?.normalized(to: sourceDuration),
               next != clipTimeline else {
             return
+        }
+
+        let keptChapters = TranscriptEditPlanner.chapters(chapters, keptThrough: merged)
+        if keptChapters != chapters {
+            applyChapters(keptChapters, actionName: actionName)
         }
 
         let updatedCues = Self.rebuildingCueTexts(
