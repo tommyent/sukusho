@@ -26,6 +26,10 @@ nonisolated struct RecordingProjectMetadata: Codable, Sendable, Equatable {
     /// The app and window it was recorded from. Optional so older project
     /// files still decode. Stays on this Mac.
     var source: CaptureSource?
+    /// What Summarize wrote, as the user left it; shared as the link's summary.
+    var summary: String?
+    /// Captions translated on this Mac, on the original cues' times.
+    var captionTracks: [RecordingCaptionTrack]?
 
     init(
         version: Int? = RecordingProjectMetadata.currentVersion,

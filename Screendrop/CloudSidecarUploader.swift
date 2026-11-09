@@ -45,6 +45,8 @@ nonisolated enum CloudSidecarUploader {
         customTitle: String? = nil,
         mediaKey: String? = nil,
         replacingVideo: Bool = false,
+        shareText: CloudShareText.Payload? = nil,
+        sealed: Bool = false,
         creds: CloudCredentials
     ) async throws {
         var fields: [(name: String, value: String)] = []
@@ -76,14 +78,43 @@ nonisolated enum CloudSidecarUploader {
             fields.append(("chapters", String(decoding: chapterData, as: UTF8.self)))
         }
 
+        // Only a Worker that says 2.1.0 or later gets the summary and translations.
+        let version = shareText == nil || sealed ? nil : await CloudGalleryAPI.workerVersion(workerBase: workerBase(creds))
+        let textFields = CloudShareText.fields(shareText, workerVersion: version, sealed: sealed)
         try Task.checkCancellation()
-        try await postAssets(
-            uploadID: uploadID,
-            fields: fields,
-            files: files,
-            mediaKey: mediaKey,
-            creds: creds
-        )
+        do {
+            try await postAssets(uploadID: uploadID, fields: fields + textFields, files: files, mediaKey: mediaKey, creds: creds)
+        } catch CloudUploadError.serverError(400, _) where !textFields.isEmpty {
+            // A refused summary or translation mustn't cost the poster, transcript or a Replace.
+            print("Summary or translated captions refused for \(uploadID); sending the rest without them")
+            try await postAssets(uploadID: uploadID, fields: fields, files: files, mediaKey: mediaKey, creds: creds)
+        }
+    }
+
+    /// What the summary and translated captions send, read when the upload
+    /// starts. Only recordings with a project have them.
+    static func shareText(sessionDirectory: URL, uploadedFileURL: URL) -> CloudShareText.Payload {
+        let session = RecordingSession(directoryURL: sessionDirectory)
+        let metadata = session.loadProjectMetadata()
+        // As the transcript: the raw master keeps source times, a flattened cut maps them through its clips.
+        let finalCut = uploadedFileURL.standardizedFileURL != session.screenURL.standardizedFileURL
+        let document = finalCut ? session.loadRenderStamp() : session.effectiveEditDocument()
+        let timeline = finalCut ? document?.clips.flatMap { $0.isEmpty ? nil : RecordingClipTimeline(segments: $0) } : nil
+        // Read from the transcript's own text, since projects don't keep the transcriber's locale.
+        let transcriptLang = (document?.subtitleCues).flatMap(RecordingCaptionTranslation.sourceLanguage(of:))
+            .map(RecordingCaptionTranslation.tag)
+        return CloudShareText.payload(summary: metadata?.summary, tracks: metadata?.captionTracks ?? [],
+                                      transcriptLang: transcriptLang) { start, end in
+            guard finalCut else { return (start, end) }
+            return timeline.flatMap { mapRange(start, end, through: $0) }
+        }
+    }
+
+    private static func workerBase(_ creds: CloudCredentials) -> String {
+        let workerBase = creds.workerURL
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return workerBase.lowercased().hasPrefix("http") ? workerBase : "https://\(workerBase)"
     }
 
     // MARK: - Title
@@ -339,11 +370,7 @@ nonisolated enum CloudSidecarUploader {
     ) async throws {
         guard !fields.isEmpty || !files.isEmpty else { return }
 
-        let workerBase = creds.workerURL
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let base = workerBase.lowercased().hasPrefix("http") ? workerBase : "https://\(workerBase)"
-        guard let url = URL(string: "\(base)/api/assets/\(uploadID)") else {
+        guard let url = URL(string: "\(workerBase(creds))/api/assets/\(uploadID)") else {
             throw CloudUploadError.invalidURL
         }
 

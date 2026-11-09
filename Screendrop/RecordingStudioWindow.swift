@@ -12,6 +12,7 @@
 import AppKit
 import AVFoundation
 import SwiftUI
+import Translation
 import UniformTypeIdentifiers
 
 struct RecordingStudioWindow: View {
@@ -99,6 +100,10 @@ private struct RecordingStudioContent: View {
             }
         }
         .frame(minWidth: 980, minHeight: 720)
+        // One language at a time; the system asks first if it needs to download one.
+        .translationTask(model.translationConfiguration) { session in
+            await model.translate(using: session)
+        }
         .confirmationDialog("Delete this shared link?", isPresented: $confirmsSharedLinkDeletion) {
             Button("Delete link", role: .destructive) { model.deleteSharedLink() }
         } message: {
@@ -185,6 +190,11 @@ private struct RecordingStudioContent: View {
     /// The package name ("Screendrop_…") was suggested before.
     private var shareSuggestedTitle: String {
         model.session == nil ? model.projectDisplayName : windowTitle
+    }
+
+    /// Draft message writes from the summary and chapters as they stand.
+    private var shareMessageSource: ShareMessageSource {
+        ShareMessageSource(summary: model.summary, chapters: model.visibleChapters.map(\.title), isVideo: true)
     }
 
     @ViewBuilder
@@ -289,7 +299,7 @@ private struct RecordingStudioContent: View {
         switch model.shareState {
         case .idle:
             CloudUploadButton(suggestedTitle: shareSuggestedTitle, encryptionUnavailable: CloudShareSeal.unavailableNote,
-                              onUpload: { model.shareToCloud(options: $0) }) {
+                              messageSource: shareMessageSource, onUpload: { model.shareToCloud(options: $0) }) {
                 Label("Upload", systemImage: "icloud.and.arrow.up")
                     .labelStyle(.titleAndIcon)
             }
@@ -326,7 +336,7 @@ private struct RecordingStudioContent: View {
                     .help(message)
 
                 CloudUploadButton(suggestedTitle: shareSuggestedTitle, encryptionUnavailable: CloudShareSeal.unavailableNote,
-                                  onUpload: { model.shareToCloud(options: $0) }) {
+                                  messageSource: shareMessageSource, onUpload: { model.shareToCloud(options: $0) }) {
                     Text("Retry")
                 }
                 .disabled(model.hasRunningWork || model.needsSharedVideoReplacement)
@@ -1299,14 +1309,19 @@ struct StudioChapterNameDraft {
     mutating func commit(model: RecordingStudioModel, chapter: RecordingChapter) {
         guard let text else { return }
         if text != chapter.title { model.renameChapter(id: chapter.id, title: text) }
+        model.finishChapterRename()
         if model.chapterError == nil { self.text = nil }
     }
 }
 
+/// A chapter's name. It saves a moment after typing stops (clicking the
+/// video doesn't end editing, and a quit would lose the rename) and when
+/// editing ends, as one undo step.
 private struct StudioChapterNameField: View {
     let model: RecordingStudioModel
     let chapter: RecordingChapter
     @State private var draft = StudioChapterNameDraft()
+    @State private var pendingSave: Task<Void, Never>?
     @FocusState private var isEditing: Bool
 
     var body: some View {
@@ -1316,13 +1331,210 @@ private struct StudioChapterNameField: View {
         ))
         .textFieldStyle(.plain)
         .focused($isEditing)
-        .onSubmit { draft.commit(model: model, chapter: chapter) }
+        .onSubmit(commit)
         .onChange(of: isEditing) { _, editing in
-            if !editing { draft.commit(model: model, chapter: chapter) }
+            if !editing { commit() }
         }
+        .onChange(of: draft.text) { _, text in
+            pendingSave?.cancel()
+            guard let text else { return }
+            pendingSave = Task {
+                try? await Task.sleep(for: .milliseconds(500))
+                guard !Task.isCancelled, text != chapter.title else { return }
+                model.renameChapter(id: chapter.id, title: text)
+            }
+        }
+        // A saved title never replaces the text being typed.
         .onChange(of: chapter.title) {
-            draft.storedTitleChanged()
+            if !isEditing { draft.storedTitleChanged() }
         }
+    }
+
+    private func commit() {
+        pendingSave?.cancel()
+        draft.commit(model: model, chapter: chapter)
+    }
+}
+
+/// The recording's summary, edited in place. It saves a moment after typing
+/// stops (clicking the video doesn't end editing) and when editing ends;
+/// clearing it removes it once editing ends.
+private struct StudioSummaryField: View {
+    let model: RecordingStudioModel
+    let summary: String
+    @State private var draft: String?
+    @State private var pendingSave: Task<Void, Never>?
+    @FocusState private var isEditing: Bool
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        TextField("Summary", text: Binding(get: { draft ?? summary }, set: { draft = $0 }), axis: .vertical)
+            .textFieldStyle(.plain)
+            .font(.inspectorValue)
+            .lineLimit(3...12)
+            .focused($isEditing)
+            .padding(8)
+            .background(RoundedRectangle(cornerRadius: InspectorMetrics.listRadius, style: .continuous)
+                .fill(InspectorControlPalette.trackFill(for: colorScheme)))
+            .onSubmit(commit)
+            .onChange(of: isEditing) { _, editing in
+                if !editing { commit() }
+            }
+            .onChange(of: draft) { _, text in
+                pendingSave?.cancel()
+                // An empty field only deletes the summary once editing ends.
+                guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                pendingSave = Task {
+                    try? await Task.sleep(for: .milliseconds(500))
+                    guard !Task.isCancelled else { return }
+                    model.setSummary(text)
+                }
+            }
+            // A new summary from the model replaces what's shown, but never the text being typed.
+            .onChange(of: summary) { if !isEditing { draft = nil } }
+            .accessibilityLabel("Summary")
+    }
+
+    private func commit() {
+        pendingSave?.cancel()
+        guard let draft else { return }
+        model.setSummary(draft)
+        self.draft = nil
+    }
+}
+
+/// One translated line: its timestamp and text, edited like the original's.
+/// It saves a moment after typing stops and when editing ends.
+private struct StudioTranslatedCueRow: View {
+    let model: RecordingStudioModel
+    let lang: String
+    let cue: RecordingSubtitleCue
+    @State private var draft: String?
+    @State private var pendingSave: Task<Void, Never>?
+    @FocusState private var isEditing: Bool
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Button {
+                model.seekToSubtitle(cue)
+            } label: {
+                Text(timestamp ?? "–:––")
+                    .font(.system(size: 10.5, weight: .medium).monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .disabled(editorTime == nil)
+
+            TextField("Translation", text: Binding(get: { draft ?? cue.text }, set: { draft = $0 }), axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.inspectorValue)
+                .focused($isEditing)
+                .onSubmit(commit)
+                .onChange(of: isEditing) { _, editing in
+                    if editing { model.seekToSubtitle(cue) } else { commit() }
+                }
+                .onChange(of: draft) { _, text in
+                    pendingSave?.cancel()
+                    guard let text else { return }
+                    pendingSave = Task {
+                        try? await Task.sleep(for: .milliseconds(500))
+                        guard !Task.isCancelled else { return }
+                        model.updateTranslatedCue(lang: lang, id: cue.id, text: text)
+                    }
+                }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .opacity(editorTime == nil ? 0.5 : 1)
+    }
+
+    private func commit() {
+        pendingSave?.cancel()
+        guard let draft else { return }
+        model.updateTranslatedCue(lang: lang, id: cue.id, text: draft)
+        self.draft = nil
+    }
+
+    private var editorTime: TimeInterval? {
+        model.editorTime(forSourceTime: cue.start) ?? model.editorTime(forSourceTime: (cue.start + cue.end) / 2)
+    }
+
+    private var timestamp: String? {
+        guard let editorTime else { return nil }
+        let total = max(0, Int(editorTime.rounded()))
+        return String(format: "%d:%02d", total / 60, total % 60)
+    }
+}
+
+/// Translate Captions…: the languages Translation offers from the captions' own.
+private struct StudioTranslationPicker: View {
+    let model: RecordingStudioModel
+    let done: () -> Void
+    @State private var languages: [Locale.Language]?
+    @State private var chosen: Set<String> = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Translate Captions")
+                .font(.headline)
+            Text("Translated on this Mac, keeping each caption’s time. macOS may ask to download a language first.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let languages {
+                List(languages, id: \.minimalIdentifier) { language in
+                    let tag = RecordingCaptionTranslation.tag(language)
+                    Toggle(Self.name(language), isOn: Binding(
+                        get: { chosen.contains(tag) },
+                        set: { if $0 { chosen.insert(tag) } else { chosen.remove(tag) } }
+                    ))
+                    .disabled(!chosen.contains(tag) && !model.captionTracks.contains { $0.lang == tag } && isFull)
+                }
+                .frame(height: 260)
+                if isFull {
+                    Text("Up to \(RecordingCaptionTranslation.maximumTracks) languages; remove one to add another.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(maxWidth: .infinity, minHeight: 60)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel", action: done)
+                    .keyboardShortcut(.cancelAction)
+                Button("Translate") {
+                    model.translateCaptions(to: (languages ?? []).filter { chosen.contains(RecordingCaptionTranslation.tag($0)) })
+                    done()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(chosen.isEmpty)
+            }
+        }
+        .padding(16)
+        .frame(width: 300)
+        .task {
+            let source = model.captionSourceLanguage
+            let availability = LanguageAvailability()
+            var offered: [Locale.Language] = []
+            for language in await availability.supportedLanguages where language.languageCode != source?.languageCode {
+                if let source, await availability.status(from: source, to: language) == .unsupported { continue }
+                offered.append(language)
+            }
+            languages = offered.sorted { Self.name($0).localizedStandardCompare(Self.name($1)) == .orderedAscending }
+        }
+    }
+
+    /// Existing tracks a new choice would join (re-translating one replaces it).
+    private var isFull: Bool {
+        chosen.union(model.captionTracks.map(\.lang)).count >= RecordingCaptionTranslation.maximumTracks
+    }
+
+    private static func name(_ language: Locale.Language) -> String {
+        let tag = RecordingCaptionTranslation.tag(language)
+        return Locale.current.localizedString(forIdentifier: tag) ?? tag
     }
 }
 
@@ -3172,6 +3384,9 @@ private struct StudioInspector: View {
     @State private var stylePresetStore = RecordingStudioStylePresetStore.shared
     @State private var expandedSections = StudioInspectorSectionState.load()
     @State private var transcriptTab: StudioTranscriptTab = .captions
+    /// The translated captions the list shows; nil for the original.
+    @State private var captionLanguage: String?
+    @State private var isTranslationPickerPresented = false
     @State private var isAudioExportOptionsPresented = false
     @State private var isMusicPickerPresented = false
     @Environment(\.colorScheme) private var colorScheme
@@ -3812,6 +4027,15 @@ private struct StudioInspector: View {
             .disabled(!model.hasSubtitles)
             .help("Suggest breaks at narration pauses after Transcribe Narration")
 
+            InspectorActionButton("Name Chapters", systemImage: "sparkles", isBusy: model.isNamingChapters) {
+                model.nameChapters()
+            }
+            .disabled(!model.hasSubtitles || model.visibleChapters.isEmpty || model.textModelUnavailableReason != nil)
+            .help("Apple Intelligence titles each chapter from its narration, on this Mac")
+            if !model.visibleChapters.isEmpty, model.hasSubtitles, let reason = model.textModelUnavailableReason {
+                InspectorHint(reason)
+            }
+
             InspectorHint("Chapters save immediately. Undo restores changes.")
             if let error = model.chapterError {
                 InspectorHint(error, tint: .orange)
@@ -3866,6 +4090,9 @@ private struct StudioInspector: View {
                 if model.hasSubtitles {
                     subtitleEditor
                     transcriptionActions
+                    if model.isProject {
+                        summaryControls
+                    }
                 } else {
                     InspectorActionButton("Transcribe Narration", systemImage: "waveform") {
                         model.transcribe()
@@ -3907,6 +4134,9 @@ private struct StudioInspector: View {
             switch transcriptTab {
             case .captions:
                 captionControls
+                if model.isProject {
+                    translationControls
+                }
             case .edit:
                 transcriptEditControls
             }
@@ -3946,11 +4176,126 @@ private struct StudioInspector: View {
                 )
             }
 
-            subtitleList
-                .help("Click a timestamp to jump there. Edit any line to fix the transcription.")
+            if let track = shownTranslation {
+                translatedCueList(track)
+                    .help("Click a timestamp to jump there. Edit any line to fix the translation.")
+            } else {
+                subtitleList
+                    .help("Click a timestamp to jump there. Edit any line to fix the transcription.")
+            }
         }
         .disabled(!model.showsSubtitles)
         .opacity(model.showsSubtitles ? 1 : 0.48)
+    }
+
+    // MARK: Summary and translations
+
+    private var summaryControls: some View {
+        VStack(alignment: .leading, spacing: InspectorMetrics.groupLabelSpacing) {
+            InspectorGroupLabel("Summary")
+            if let summary = model.summary {
+                StudioSummaryField(model: model, summary: summary)
+                HStack(spacing: InspectorMetrics.rowSpacing) {
+                    InspectorActionButton("Summarize Again", systemImage: "sparkles", isBusy: model.isSummarizing) {
+                        model.summarize()
+                    }
+                    .disabled(model.textModelUnavailableReason != nil)
+                    InspectorActionButton("Remove", systemImage: "trash", role: .destructive) {
+                        model.setSummary(nil)
+                    }
+                    .help("Remove the summary")
+                }
+            } else {
+                InspectorActionButton("Summarize", systemImage: "sparkles", isBusy: model.isSummarizing) {
+                    model.summarize()
+                }
+                .disabled(model.textModelUnavailableReason != nil)
+                .help("Apple Intelligence writes a short summary from the narration, on this Mac. The share page shows it.")
+            }
+            if let reason = model.textModelUnavailableReason {
+                InspectorHint(reason)
+            } else if let note = model.summaryNote {
+                InspectorHint(note, tint: .orange)
+            }
+        }
+    }
+
+    /// The translation the caption list shows, or nil for the original.
+    private var shownTranslation: RecordingCaptionTrack? {
+        captionLanguage.flatMap { lang in model.captionTracks.first { $0.lang == lang } }
+    }
+
+    private var translationControls: some View {
+        VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
+            if !model.captionTracks.isEmpty {
+                InspectorRow("Showing") {
+                    HStack(spacing: 8) {
+                        Picker("Showing", selection: $captionLanguage) {
+                            Text("Original").tag(String?.none)
+                            ForEach(model.captionTracks) { track in
+                                Text(track.label).tag(Optional(track.lang))
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        // Beside its menu, apart from the transcription's own Remove below.
+                        if let track = shownTranslation {
+                            Button("Remove the \(track.label) captions", systemImage: "trash", role: .destructive) {
+                                captionLanguage = nil
+                                model.removeCaptionTrack(lang: track.lang)
+                            }
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.plain)
+                            .foregroundStyle(Color.red.opacity(0.88))
+                            .help("Remove the \(track.label) captions")
+                        }
+                    }
+                }
+            }
+            Group {
+                if model.isTranslating {
+                    InspectorActionButton("Stop Translating", systemImage: "stop.circle") {
+                        model.cancelTranslation()
+                    }
+                } else {
+                    InspectorActionButton("Translate Captions…", systemImage: "translate") {
+                        isTranslationPickerPresented = true
+                    }
+                    .help("Translate the captions on this Mac, keeping their times. The share page offers each language.")
+                }
+            }
+            .popover(isPresented: $isTranslationPickerPresented, arrowEdge: .leading) {
+                StudioTranslationPicker(model: model) { isTranslationPickerPresented = false }
+            }
+            if model.isTranslating {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    InspectorHint("Translating captions…")
+                }
+            }
+            if let note = model.translationNote {
+                InspectorHint(note, tint: .orange)
+            }
+        }
+    }
+
+    private func translatedCueList(_ track: RecordingCaptionTrack) -> some View {
+        let shape = RoundedRectangle(cornerRadius: InspectorMetrics.listRadius, style: .continuous)
+        return ScrollView(.vertical) {
+            VStack(spacing: 0) {
+                ForEach(Array(track.cues.enumerated()), id: \.element.id) { index, cue in
+                    StudioTranslatedCueRow(model: model, lang: track.lang, cue: cue)
+                    if index < track.cues.count - 1 {
+                        Divider()
+                            .padding(.leading, 10)
+                            .opacity(0.6)
+                    }
+                }
+            }
+        }
+        .frame(maxHeight: 300)
+        .background(shape.fill(InspectorControlPalette.trackFill(for: colorScheme)))
+        .clipShape(shape)
     }
 
     @ViewBuilder

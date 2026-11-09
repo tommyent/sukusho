@@ -46,6 +46,8 @@ nonisolated struct AgentShareSettings: Sendable, Equatable {
     var anonymousComments: Bool
     /// Only ever ticked by the owner; the key then travels in the link.
     var encrypted = false
+    /// The note the owner had Draft message write in Share Options; model-written, so it reaches agents as untrusted.
+    var message: String? = nil
 }
 
 nonisolated struct AgentShareResult: Sendable, Equatable {
@@ -95,6 +97,8 @@ protocol AgentBackend: AnyObject {
     func latestAgentPrompt() -> AgentPromptInfo?
     func exportAgentPrompt(_ item: AgentItem) async throws -> AgentPromptInfo
     func capture(_ mode: AgentCaptureMode) async -> AgentCaptureOutcome
+    /// What Share Options' Draft message writes from: a recording's summary and chapters.
+    func messageSource(of item: AgentItem) -> ShareMessageSource
 }
 
 /// One question to the owner, in Sukusho's own window.
@@ -111,6 +115,8 @@ nonisolated struct AgentAsk: Sendable {
     var deadline: Date? = nil
     /// Why Share Options can't offer end-to-end encryption; nil when it can.
     var encryptionUnavailable: String? = nil
+    /// Offers Draft message in Share Options, for one capture.
+    var messageSource: ShareMessageSource? = nil
 }
 
 @MainActor
@@ -463,6 +469,7 @@ final class AgentToolbox {
                            thumbnails: items.filter(\.isImage).prefix(6).map(\.fileURL))
         ask.encryptionUnavailable = items.count > 1 ? "Galleries can’t be end-to-end encrypted yet."
             : CloudShareSeal.unavailableReason(fileURLs: [items[0].fileURL], isRecording: !items[0].isImage)
+        if items.count == 1 { ask.messageSource = backend.messageSource(of: items[0]) }
         if wantsPassword {
             ask.grantable = false
             return try await handOff(ask: ask, settings: settings, items: items, session: session)
@@ -511,11 +518,14 @@ final class AgentToolbox {
             : try await backend.shareGallery(items, settings: settings)
         grants.recordOwned([shared.id] + shared.uploadIDs, by: session.agent)
         backend.cloudDidChange(deleted: [])
+        var email: [String: Any] = AgentEmail.share(title: shared.title, url: shared.url, expiresAt: shared.expiresAt,
+                                                    hasPassword: shared.hasPassword, thumbnailURL: shared.thumbnailURL, count: items.count)
+        // The model wrote it from the capture's text and summary: outside text, kept out of the ready-made draft.
+        if let message = settings.message { email["untrusted"] = AgentUntrusted.wrap(["message": message]) }
         var object: [String: Any] = [
             "status": "shared", "id": shared.id, "kind": shared.isGallery ? "gallery" : "upload", "url": shared.url,
             "title": shared.title, "has_password": shared.hasPassword, "expires_at": shared.expiresAt.map(Self.iso) ?? NSNull(),
-            "email": AgentEmail.share(title: shared.title, url: shared.url, expiresAt: shared.expiresAt, hasPassword: shared.hasPassword,
-                                      thumbnailURL: shared.thumbnailURL, count: items.count),
+            "email": email,
         ]
         // A link named after a model's title carries that title as outside text.
         if items.count == 1, let modelTitle = items[0].modelTitle, shared.title == modelTitle {

@@ -8,6 +8,7 @@
 //  remembered comment toggles.
 //
 
+import AppKit
 import SwiftUI
 
 struct CloudUploadOptions: Sendable {
@@ -19,6 +20,8 @@ struct CloudUploadOptions: Sendable {
     var password: String? = nil
     /// Sealed before upload; the key goes in the link (CloudShareSeal).
     var encrypted = false
+    /// The note Draft message wrote, as the owner left it; never sent anywhere by Sukusho.
+    var message: String? = nil
 
     /// `nil` title means "let the worker fall back to the filename (or,
     /// for recordings, the auto-generated 'Screen Recording - …' title)".
@@ -89,9 +92,16 @@ struct CloudUploadOptionsPopover: View {
     var cancelTitle = "Cancel"
     /// Cancel outside a sheet or popover, where `dismiss` does nothing: the shake shelf, an agent's approval panel.
     var onCancel: (() -> Void)? = nil
+    /// Offers Draft message for one recording or capture; nil hides it.
+    var messageSource: ShareMessageSource? = nil
     let onConfirm: (CloudUploadOptions) -> Void
 
     @State private var title: String
+    /// Nil until Draft message has written one.
+    @State private var message: String?
+    @State private var isDrafting = false
+    @State private var messageNote: String?
+    @State private var copiedMessage = false
     @State private var socialEnabled = CloudUploadPreferences.lastSocialEnabled
     @State private var expiry = CloudUploadPreferences.defaultExpiry
     @State private var allowAnonymousComments = CloudUploadPreferences.lastAnonymousComments
@@ -104,7 +114,7 @@ struct CloudUploadOptionsPopover: View {
 
     init(suggestedTitle: String = "", showsTitle: Bool = true, encryptionUnavailable: String? = nil,
          initial: CloudUploadOptions? = nil, focusesPassword: Bool = false, confirmTitle: String = "Upload",
-         cancelTitle: String = "Cancel", onCancel: (() -> Void)? = nil,
+         cancelTitle: String = "Cancel", onCancel: (() -> Void)? = nil, messageSource: ShareMessageSource? = nil,
          onConfirm: @escaping (CloudUploadOptions) -> Void) {
         self.suggestedTitle = suggestedTitle
         self.showsTitle = showsTitle
@@ -114,6 +124,7 @@ struct CloudUploadOptionsPopover: View {
         self.confirmTitle = confirmTitle
         self.cancelTitle = cancelTitle
         self.onCancel = onCancel
+        self.messageSource = messageSource
         self.onConfirm = onConfirm
         _title = State(initialValue: initial?.title ?? suggestedTitle)
         if let initial {
@@ -138,6 +149,10 @@ struct CloudUploadOptionsPopover: View {
                         .textFieldStyle(.roundedBorder)
                         .lineLimit(1)
                 }
+            }
+
+            if let messageSource, showsTitle {
+                messageControls(messageSource)
             }
 
             HStack {
@@ -215,10 +230,12 @@ struct CloudUploadOptionsPopover: View {
                         CloudUploadPreferences.lastSocialEnabled = socialEnabled
                         CloudUploadPreferences.lastAnonymousComments = allowAnonymousComments
                     }
+                    let drafted = message?.trimmingCharacters(in: .whitespacesAndNewlines)
                     let options = CloudUploadOptions(title: title, socialEnabled: socialEnabled, expiry: expiry,
                                                      allowAnonymousComments: allowAnonymousComments,
                                                      password: password.isEmpty ? nil : password,
-                                                     encrypted: encrypted && encryptionUnavailable == nil)
+                                                     encrypted: encrypted && encryptionUnavailable == nil,
+                                                     message: drafted?.isEmpty == false ? drafted : nil)
                     // Confirm first: the Files sheet's dismissal clears the files it would upload.
                     onConfirm(options)
                     dismiss()
@@ -229,6 +246,71 @@ struct CloudUploadOptionsPopover: View {
         }
         .padding(16)
         .frame(width: 280)
+    }
+
+    /// Draft message: Apple Intelligence writes the note to send with the link,
+    /// from the title, summary and chapters. Copy is the only way it leaves.
+    @ViewBuilder
+    private func messageControls(_ source: ShareMessageSource) -> some View {
+        let unavailable = OnDeviceText.unavailableReason()
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Message")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if isDrafting {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button(message == nil ? "Draft Message" : "Draft Again", systemImage: "sparkles") {
+                        draftMessage(source)
+                    }
+                    .controlSize(.small)
+                    .disabled(unavailable != nil)
+                    .help("Apple Intelligence drafts a short note to send with the link, on this Mac. Nothing is sent.")
+                }
+            }
+            if let message {
+                TextField("Message", text: Binding(get: { message }, set: { self.message = $0 }), axis: .vertical)
+                    .labelsHidden()
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(3...10)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Spacer()
+                    Button(copiedMessage ? "Copied" : "Copy", systemImage: copiedMessage ? "checkmark" : "doc.on.doc") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(message, forType: .string)
+                        copiedMessage = true
+                    }
+                    .controlSize(.small)
+                    .help("Copy the message. The link is copied after the upload, so paste the message first.")
+                }
+            }
+            if let note = unavailable ?? messageNote {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func draftMessage(_ source: ShareMessageSource) {
+        guard !isDrafting, OnDeviceText.unavailableReason() == nil else { return }
+        isDrafting = true
+        messageNote = nil
+        let title = title
+        Task {
+            do {
+                let text = try await RecordingTextIntelligence.message(title: title, source: source, model: SystemTextModel())
+                if text.isEmpty { messageNote = "Apple Intelligence wrote nothing; try again." } else { message = text }
+                copiedMessage = false
+            } catch {
+                messageNote = OnDeviceText.message(for: error)
+            }
+            isDrafting = false
+        }
     }
 }
 
@@ -262,6 +344,7 @@ struct CloudShareDefaultsSection: View {
 struct CloudUploadButton<Label: View>: View {
     let suggestedTitle: String
     var encryptionUnavailable: String? = nil
+    var messageSource: ShareMessageSource? = nil
     let onUpload: (CloudUploadOptions) -> Void
     @ViewBuilder let label: () -> Label
 
@@ -275,7 +358,7 @@ struct CloudUploadButton<Label: View>: View {
         }
         .popover(isPresented: $showingOptions, arrowEdge: .bottom) {
             CloudUploadOptionsPopover(suggestedTitle: suggestedTitle, encryptionUnavailable: encryptionUnavailable,
-                                      onConfirm: onUpload)
+                                      messageSource: messageSource, onConfirm: onUpload)
         }
     }
 }

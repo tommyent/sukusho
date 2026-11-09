@@ -264,7 +264,9 @@ struct CaptureLibraryView: View {
             // The card's own name: yours, else Apple Intelligence's, else the date; never the file name.
             CloudUploadOptionsPopover(suggestedTitle: item.title,
                                       encryptionUnavailable: CloudShareSeal.unavailableReason(fileURLs: [item.fileURL],
-                                                                                              isRecording: item.isVideo)) { options in
+                                                                                              isRecording: item.isVideo),
+                                      messageSource: item.session.map { .recording($0.loadProjectMetadata()) }
+                                          ?? ShareMessageSource(isVideo: item.isVideo)) { options in
                 model.upload(item, options: options)
             }
         }
