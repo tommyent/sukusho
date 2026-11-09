@@ -812,6 +812,18 @@ final class CloudUploader: NSObject {
     }
 }
 
+extension CloudGalleryShare {
+    /// A gallery share to the configured Worker; images too big for one PUT go up in parts, as single uploads do.
+    static func configured() -> CloudGalleryShare? {
+        guard let owner = CloudUploader.shared.ownerAccess else { return nil }
+        let creds = CloudCredentialStore.shared.snapshot()
+        return CloudGalleryShare(workerBase: owner.workerBase, token: owner.token, large: (CloudUploader.multipartThreshold, { file, size, metadata in
+            let result = try await CloudUploader.multipartUpload(fileURL: file, size: size, metadata: metadata, creds: creds, progress: nil)
+            return CloudGalleryShare.Item(id: result.id, url: result.url, mediaKey: result.mediaKey)
+        }))
+    }
+}
+
 // MARK: - Upload Progress Delegate
 
 private final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate, Sendable {

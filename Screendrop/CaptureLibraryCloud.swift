@@ -384,17 +384,30 @@ final class CloudLibraryModel {
     /// Files dropped or chosen; Share Options asks how to share them.
     func addFiles(_ urls: [URL]) {
         guard fileUploads == nil else { return }
-        let files = urls.filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
+        let files = Self.regularFiles(urls)
         if files.count < urls.count {
             CaptureLibraryModel.shared.errorMessage = "Folders can’t be shared. Choose the files inside them instead."
         }
         pendingFiles = files
     }
 
+    /// Folders and packages can't go up as files.
+    static func regularFiles(_ urls: [URL]) -> [URL] {
+        urls.filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
+    }
+
     /// Uploads the pending files one after another, then copies their links.
     func uploadPendingFiles(options: CloudUploadOptions) {
         let files = pendingFiles
         pendingFiles = []
+        uploadFiles(files, options: options) { copied, _ in
+            if copied > 0 { CaptureLibraryModel.shared.actionFeedback.show(ActionFeedback.linksCopied(copied)) }
+        }
+    }
+
+    /// Uploads files one after another as the Files page does, copies their links, and
+    /// says how many it copied and whether any failed, which the Library's alert tells.
+    func uploadFiles(_ files: [URL], options: CloudUploadOptions, finished: @escaping (_ copied: Int, _ failed: Bool) -> Void) {
         guard !files.isEmpty, fileUploads == nil else { return }
         fileUploads = FileUploads(total: files.count)
         fileUploadTask = Task {
@@ -427,10 +440,10 @@ final class CloudLibraryModel {
                 fileUploads?.done += 1
             }
             CloudShareLinks.copy(links)
-            if !links.isEmpty { CaptureLibraryModel.shared.actionFeedback.show(ActionFeedback.linksCopied(links.count)) }
             if !failures.isEmpty {
                 CaptureLibraryModel.shared.errorMessage = "Couldn’t share:\n" + failures.joined(separator: "\n")
             }
+            finished(links.count, !failures.isEmpty)
         }
     }
 
