@@ -181,14 +181,16 @@ struct LikesLibraryPage: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
             }
+            .workspaceTextPlate()
         } else if !likes.hasLoaded {
-            ProgressView("Loading Likes…").frame(maxWidth: .infinity, maxHeight: .infinity)
+            ProgressView("Loading Likes…").workspaceTextPlate().frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if likes.isUnavailable {
             ContentUnavailableView {
                 Label("Update Your Worker", systemImage: "arrow.up.circle")
             } description: {
                 Text("This Worker can’t list likes yet. Update it to see your share pages’ likes here.")
             }
+            .workspaceTextPlate()
         } else if let error = likes.loadError, likes.likes.isEmpty {
             ContentUnavailableView {
                 Label("Couldn’t Load Likes", systemImage: "exclamationmark.triangle")
@@ -199,6 +201,7 @@ struct LikesLibraryPage: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
             }
+            .workspaceTextPlate()
         } else if visible.isEmpty {
             let search = CaptureLibraryModel.shared.searchText
             ContentUnavailableView {
@@ -212,6 +215,7 @@ struct LikesLibraryPage: View {
                     ? "Likes people give your share pages appear here."
                     : "Check the spelling or try a new search.")
             }
+            .workspaceTextPlate()
         } else {
             let uploads = Dictionary(CloudLibraryModel.shared.uploads.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             let local = CloudLibraryModel.shared.localItems

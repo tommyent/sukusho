@@ -647,6 +647,7 @@ private struct AnnotationLoadFailureView: View {
             Button("Close", action: onClose)
                 .keyboardShortcut(.cancelAction)
         }
+        .workspaceTextPlate()
         .padding(32)
     }
 }

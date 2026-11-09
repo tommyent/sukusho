@@ -586,8 +586,9 @@ struct CloudLibraryPage: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
                 }
+                .workspaceTextPlate()
             } else if !cloud.hasLoaded {
-                ProgressView("Loading Uploads…").frame(maxWidth: .infinity, maxHeight: .infinity)
+                ProgressView("Loading Uploads…").workspaceTextPlate().frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = cloud.loadError, cloud.uploads.isEmpty {
                 ContentUnavailableView {
                     Label("Couldn’t Load Uploads", systemImage: "exclamationmark.triangle")
@@ -598,6 +599,7 @@ struct CloudLibraryPage: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
                 }
+                .workspaceTextPlate()
             } else if uploads.isEmpty {
                 let search = CaptureLibraryModel.shared.searchText
                 ContentUnavailableView {
@@ -627,6 +629,7 @@ struct CloudLibraryPage: View {
                             .controlSize(.large)
                     }
                 }
+                .workspaceTextPlate()
             } else {
                 // The Library's own collection, so uploads select, open and
                 // delete as captures do.
