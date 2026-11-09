@@ -5,9 +5,9 @@ import SwiftUI
 /// Bug Report, then writes a folder to the export location or copies the Markdown.
 @MainActor
 enum RecordingStepsExport {
-    /// Hook for an on-device summary of the recording (gallery-app is adding one to Studio).
-    /// When set, its text leads both formats under "Summary"; narration is never rewritten.
-    static var summary: (@MainActor (RecordingSession) async -> String?)?
+    /// The recording's summary as Studio saved it (Summarize, or typed), never a new model call.
+    /// When there is one, it leads both formats under "Summary"; narration is never rewritten.
+    static var summary: (@MainActor (RecordingSession) async -> String?)? = { $0.loadProjectMetadata()?.summary }
 
     /// Narration (transcribed on-device when the edit has none), the moments and their stills.
     static func prepare(session: RecordingSession, document: RecordingEditDocument?, includesLogs: Bool,
