@@ -95,6 +95,22 @@
 		AA6100000000000000000098 /* Screendrop/CloudGalleries.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA61000000000000000000FC /* Screendrop/CloudGalleries.swift */; };
 		AA6100000000000000000099 /* Screendrop/ActionFeedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA61000000000000000000FD /* Screendrop/ActionFeedback.swift */; };
 		B5A4E00000000000000000A2 /* Screendrop/ShakeDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5A4E00000000000000000A1 /* Screendrop/ShakeDetector.swift */; };
+		B5A4E1000000000000000002 /* Screendrop/WorkspaceBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5A4E1000000000000000001 /* Screendrop/WorkspaceBackground.swift */; };
+		B5A4E1000000000000000004 /* Screendrop/AnnotationRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5A4E1000000000000000003 /* Screendrop/AnnotationRenderer.swift */; };
+		B5A4E1000000000000000006 /* Screendrop/AnnotationBackgroundRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5A4E1000000000000000005 /* Screendrop/AnnotationBackgroundRenderer.swift */; };
+		B5A4E1000000000000000008 /* Screendrop/AnnotationMockupEffectsRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5A4E1000000000000000007 /* Screendrop/AnnotationMockupEffectsRenderer.swift */; };
+		B5A4E100000000000000000A /* Screendrop/AnnotationCanvasExpansion.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5A4E1000000000000000009 /* Screendrop/AnnotationCanvasExpansion.swift */; };
+		B5A4E100000000000000000C /* Screendrop/AnnotationBackgroundLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5A4E100000000000000000B /* Screendrop/AnnotationBackgroundLayout.swift */; };
+		B5A4E100000000000000000E /* Screendrop/AnnotationWallpaperPreviewCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5A4E100000000000000000D /* Screendrop/AnnotationWallpaperPreviewCache.swift */; };
+		B5A4E1000000000000000010 /* Screendrop/AnnotationCameraGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5A4E100000000000000000F /* Screendrop/AnnotationCameraGeometry.swift */; };
+		B5A4E1000000000000000012 /* Screendrop/AnnotationProgressiveBlurGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5A4E1000000000000000011 /* Screendrop/AnnotationProgressiveBlurGeometry.swift */; };
+		B5A4E1000000000000000014 /* Screendrop/AnnotationScreenshotFrameGeometry.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5A4E1000000000000000013 /* Screendrop/AnnotationScreenshotFrameGeometry.swift */; };
+		B5A4E1000000000000000016 /* Screendrop/PerCornerRadii.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5A4E1000000000000000015 /* Screendrop/PerCornerRadii.swift */; };
+		B5A4E1000000000000000018 /* Screendrop/ScreendropPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5A4E1000000000000000017 /* Screendrop/ScreendropPreferences.swift */; };
+		B5A4E100000000000000001A /* Screendrop/ScreenshotClipboardImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5A4E1000000000000000019 /* Screendrop/ScreenshotClipboardImage.swift */; };
+		B5A4E100000000000000001C /* Screendrop/ScreenshotFileNaming.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5A4E100000000000000001B /* Screendrop/ScreenshotFileNaming.swift */; };
+		B5A4E100000000000000001E /* Screendrop/ScreenshotImageLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5A4E100000000000000001D /* Screendrop/ScreenshotImageLoader.swift */; };
+		B5A4E1000000000000000020 /* Screendrop/AnnotationWallpaperStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5A4E100000000000000001F /* Screendrop/AnnotationWallpaperStore.swift */; };
 		AD5500000000000000000001 /* Screendrop/ScreendropStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5500000000000000000011 /* Screendrop/ScreendropStorage.swift */; };
 		AD5500000000000000000002 /* Screendrop/LegacyIdentityImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5500000000000000000012 /* Screendrop/LegacyIdentityImport.swift */; };
 		AF5D00000000000000000001 /* Screendrop/CaptureLibraryText.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF5D00000000000000000002 /* Screendrop/CaptureLibraryText.swift */; };
@@ -238,6 +254,22 @@
 		AA61000000000000000000FC /* Screendrop/CloudGalleries.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/CloudGalleries.swift; sourceTree = SOURCE_ROOT; };
 		AA61000000000000000000FD /* Screendrop/ActionFeedback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ActionFeedback.swift; sourceTree = SOURCE_ROOT; };
 		B5A4E00000000000000000A1 /* Screendrop/ShakeDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ShakeDetector.swift; sourceTree = SOURCE_ROOT; };
+		B5A4E1000000000000000001 /* Screendrop/WorkspaceBackground.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/WorkspaceBackground.swift; sourceTree = SOURCE_ROOT; };
+		B5A4E1000000000000000003 /* Screendrop/AnnotationRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AnnotationRenderer.swift; sourceTree = SOURCE_ROOT; };
+		B5A4E1000000000000000005 /* Screendrop/AnnotationBackgroundRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AnnotationBackgroundRenderer.swift; sourceTree = SOURCE_ROOT; };
+		B5A4E1000000000000000007 /* Screendrop/AnnotationMockupEffectsRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AnnotationMockupEffectsRenderer.swift; sourceTree = SOURCE_ROOT; };
+		B5A4E1000000000000000009 /* Screendrop/AnnotationCanvasExpansion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AnnotationCanvasExpansion.swift; sourceTree = SOURCE_ROOT; };
+		B5A4E100000000000000000B /* Screendrop/AnnotationBackgroundLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AnnotationBackgroundLayout.swift; sourceTree = SOURCE_ROOT; };
+		B5A4E100000000000000000D /* Screendrop/AnnotationWallpaperPreviewCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AnnotationWallpaperPreviewCache.swift; sourceTree = SOURCE_ROOT; };
+		B5A4E100000000000000000F /* Screendrop/AnnotationCameraGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AnnotationCameraGeometry.swift; sourceTree = SOURCE_ROOT; };
+		B5A4E1000000000000000011 /* Screendrop/AnnotationProgressiveBlurGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AnnotationProgressiveBlurGeometry.swift; sourceTree = SOURCE_ROOT; };
+		B5A4E1000000000000000013 /* Screendrop/AnnotationScreenshotFrameGeometry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AnnotationScreenshotFrameGeometry.swift; sourceTree = SOURCE_ROOT; };
+		B5A4E1000000000000000015 /* Screendrop/PerCornerRadii.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/PerCornerRadii.swift; sourceTree = SOURCE_ROOT; };
+		B5A4E1000000000000000017 /* Screendrop/ScreendropPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ScreendropPreferences.swift; sourceTree = SOURCE_ROOT; };
+		B5A4E1000000000000000019 /* Screendrop/ScreenshotClipboardImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ScreenshotClipboardImage.swift; sourceTree = SOURCE_ROOT; };
+		B5A4E100000000000000001B /* Screendrop/ScreenshotFileNaming.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ScreenshotFileNaming.swift; sourceTree = SOURCE_ROOT; };
+		B5A4E100000000000000001D /* Screendrop/ScreenshotImageLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ScreenshotImageLoader.swift; sourceTree = SOURCE_ROOT; };
+		B5A4E100000000000000001F /* Screendrop/AnnotationWallpaperStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AnnotationWallpaperStore.swift; sourceTree = SOURCE_ROOT; };
 		AD5500000000000000000011 /* Screendrop/ScreendropStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ScreendropStorage.swift; sourceTree = SOURCE_ROOT; };
 		AD5500000000000000000012 /* Screendrop/LegacyIdentityImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/LegacyIdentityImport.swift; sourceTree = SOURCE_ROOT; };
 		AF5D00000000000000000002 /* Screendrop/CaptureLibraryText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/CaptureLibraryText.swift; sourceTree = SOURCE_ROOT; };
@@ -423,6 +455,22 @@
 				AA61000000000000000000FC /* Screendrop/CloudGalleries.swift */,
 				AA61000000000000000000FD /* Screendrop/ActionFeedback.swift */,
 				B5A4E00000000000000000A1 /* Screendrop/ShakeDetector.swift */,
+				B5A4E1000000000000000001 /* Screendrop/WorkspaceBackground.swift */,
+				B5A4E1000000000000000003 /* Screendrop/AnnotationRenderer.swift */,
+				B5A4E1000000000000000005 /* Screendrop/AnnotationBackgroundRenderer.swift */,
+				B5A4E1000000000000000007 /* Screendrop/AnnotationMockupEffectsRenderer.swift */,
+				B5A4E1000000000000000009 /* Screendrop/AnnotationCanvasExpansion.swift */,
+				B5A4E100000000000000000B /* Screendrop/AnnotationBackgroundLayout.swift */,
+				B5A4E100000000000000000D /* Screendrop/AnnotationWallpaperPreviewCache.swift */,
+				B5A4E100000000000000000F /* Screendrop/AnnotationCameraGeometry.swift */,
+				B5A4E1000000000000000011 /* Screendrop/AnnotationProgressiveBlurGeometry.swift */,
+				B5A4E1000000000000000013 /* Screendrop/AnnotationScreenshotFrameGeometry.swift */,
+				B5A4E1000000000000000015 /* Screendrop/PerCornerRadii.swift */,
+				B5A4E1000000000000000017 /* Screendrop/ScreendropPreferences.swift */,
+				B5A4E1000000000000000019 /* Screendrop/ScreenshotClipboardImage.swift */,
+				B5A4E100000000000000001B /* Screendrop/ScreenshotFileNaming.swift */,
+				B5A4E100000000000000001D /* Screendrop/ScreenshotImageLoader.swift */,
+				B5A4E100000000000000001F /* Screendrop/AnnotationWallpaperStore.swift */,
 				AD5500000000000000000011 /* Screendrop/ScreendropStorage.swift */,
 				AD5500000000000000000012 /* Screendrop/LegacyIdentityImport.swift */,
 				AF5D00000000000000000002 /* Screendrop/CaptureLibraryText.swift */,
@@ -664,6 +712,22 @@
 				AA6100000000000000000098 /* Screendrop/CloudGalleries.swift in Sources */,
 				AA6100000000000000000099 /* Screendrop/ActionFeedback.swift in Sources */,
 				B5A4E00000000000000000A2 /* Screendrop/ShakeDetector.swift in Sources */,
+				B5A4E1000000000000000002 /* Screendrop/WorkspaceBackground.swift in Sources */,
+				B5A4E1000000000000000004 /* Screendrop/AnnotationRenderer.swift in Sources */,
+				B5A4E1000000000000000006 /* Screendrop/AnnotationBackgroundRenderer.swift in Sources */,
+				B5A4E1000000000000000008 /* Screendrop/AnnotationMockupEffectsRenderer.swift in Sources */,
+				B5A4E100000000000000000A /* Screendrop/AnnotationCanvasExpansion.swift in Sources */,
+				B5A4E100000000000000000C /* Screendrop/AnnotationBackgroundLayout.swift in Sources */,
+				B5A4E100000000000000000E /* Screendrop/AnnotationWallpaperPreviewCache.swift in Sources */,
+				B5A4E1000000000000000010 /* Screendrop/AnnotationCameraGeometry.swift in Sources */,
+				B5A4E1000000000000000012 /* Screendrop/AnnotationProgressiveBlurGeometry.swift in Sources */,
+				B5A4E1000000000000000014 /* Screendrop/AnnotationScreenshotFrameGeometry.swift in Sources */,
+				B5A4E1000000000000000016 /* Screendrop/PerCornerRadii.swift in Sources */,
+				B5A4E1000000000000000018 /* Screendrop/ScreendropPreferences.swift in Sources */,
+				B5A4E100000000000000001A /* Screendrop/ScreenshotClipboardImage.swift in Sources */,
+				B5A4E100000000000000001C /* Screendrop/ScreenshotFileNaming.swift in Sources */,
+				B5A4E100000000000000001E /* Screendrop/ScreenshotImageLoader.swift in Sources */,
+				B5A4E1000000000000000020 /* Screendrop/AnnotationWallpaperStore.swift in Sources */,
 				AD5500000000000000000001 /* Screendrop/ScreendropStorage.swift in Sources */,
 				AD5500000000000000000002 /* Screendrop/LegacyIdentityImport.swift in Sources */,
 				AF5D00000000000000000001 /* Screendrop/CaptureLibraryText.swift in Sources */,

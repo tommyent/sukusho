@@ -313,7 +313,7 @@ struct CaptureLibraryView: View {
         } else if cloud.isShown {
             CloudLibraryPage(cloud: cloud, cardWidth: cardWidth)
         } else if !model.hasLoaded {
-            ProgressView("Loading Library…").frame(maxWidth: .infinity, maxHeight: .infinity)
+            ProgressView("Loading Library…").workspaceTextPlate().frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if model.visibleItems.isEmpty {
             if !model.searchText.isEmpty {
                 ContentUnavailableView {
@@ -335,6 +335,7 @@ struct CaptureLibraryView: View {
                     }
                     .controlSize(.large)
                 }
+                .workspaceTextPlate()
             } else {
                 ContentUnavailableView {
                     Label(emptyLibraryTitle, systemImage: activeFilter.symbol)
@@ -352,6 +353,7 @@ struct CaptureLibraryView: View {
                         }
                     }
                 }
+                .workspaceTextPlate()
             }
         } else {
             CaptureLibraryCollection(items: model.visibleItems, revision: model.contentRevision, layout: .grid,

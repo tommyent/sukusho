@@ -3517,15 +3517,15 @@ private struct StudioInspector: View {
 
     private func pickWallpaper() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.image]
+        panel.allowedContentTypes = AnnotationWallpaperStore.supportedContentTypes
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         panel.title = "Choose Video Background Wallpaper"
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            wallpaperStore.addRecentWallpaper(url)
-            model.style.background = .customWallpaper(AnnotationCustomWallpaper(url: url))
+            let file = wallpaperStore.addPickedWallpaper(url)
+            model.style.background = .customWallpaper(AnnotationCustomWallpaper(url: file))
         }
     }
 

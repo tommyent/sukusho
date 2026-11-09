@@ -212,14 +212,16 @@ struct CommentsLibraryPage: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
                 }
+                .workspaceTextPlate()
             } else if !comments.hasLoaded {
-                ProgressView("Loading Comments…").frame(maxWidth: .infinity, maxHeight: .infinity)
+                ProgressView("Loading Comments…").workspaceTextPlate().frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if comments.isUnavailable {
                 ContentUnavailableView {
                     Label("Update Your Worker", systemImage: "arrow.up.circle")
                 } description: {
                     Text("This Worker can’t list comments yet. Update it to read your share pages’ comments here.")
                 }
+                .workspaceTextPlate()
             } else if let error = comments.loadError, comments.comments.isEmpty {
                 ContentUnavailableView {
                     Label("Couldn’t Load Comments", systemImage: "exclamationmark.bubble")
@@ -230,6 +232,7 @@ struct CommentsLibraryPage: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
                 }
+                .workspaceTextPlate()
             } else if visible.isEmpty {
                 let search = CaptureLibraryModel.shared.searchText
                 ContentUnavailableView {
@@ -243,6 +246,7 @@ struct CommentsLibraryPage: View {
                         ? "Comments people leave on your share pages appear here."
                         : "Check the spelling or try a new search.")
                 }
+                .workspaceTextPlate()
             } else {
                 let uploads = Dictionary(CloudLibraryModel.shared.uploads.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
                 let local = CloudLibraryModel.shared.localItems

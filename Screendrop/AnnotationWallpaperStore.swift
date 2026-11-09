@@ -5,6 +5,7 @@
 
 import Foundation
 import Observation
+import UniformTypeIdentifiers
 
 @MainActor
 @Observable
@@ -20,6 +21,11 @@ final class AnnotationWallpaperStore {
     nonisolated private static let supportedImageExtensions: Set<String> = [
         "bmp", "gif", "heic", "heif", "jpeg", "jpg", "png", "tif", "tiff", "webp"
     ]
+
+    /// What a wallpaper picker offers: the files this list keeps.
+    static var supportedContentTypes: [UTType] {
+        supportedImageExtensions.sorted().compactMap { UTType(filenameExtension: $0) }
+    }
 
     private(set) var recentWallpapers: [AnnotationCustomWallpaper] = []
 
@@ -65,6 +71,35 @@ final class AnnotationWallpaperStore {
         UserDefaults.standard.set(recentPaths, forKey: Self.recentWallpaperPathsKey)
         recentWallpapers = recentPaths.map { AnnotationCustomWallpaper(url: URL(fileURLWithPath: $0)) }
         Task { await reload() }
+    }
+
+    /// Copies a picked image into Sukusho's wallpapers folder, so it stays when
+    /// the original moves or goes, and lists it. A file already in that
+    /// folder is listed as it is.
+    func importWallpaper(from url: URL) throws -> URL {
+        let file = try Self.copy(url, into: Self.wallpapersDirectory)
+        addRecentWallpaper(file)
+        return file
+    }
+
+    /// Every Add (Settings, the editor and Studio) keeps its own copy. If the
+    /// copy fails, the picked file is used where it is, as before copies.
+    func addPickedWallpaper(_ url: URL) -> URL {
+        let file = (try? importWallpaper(from: url)) ?? url
+        addRecentWallpaper(file)
+        return file
+    }
+
+    /// `url` copied into `directory` (`name_2` and so on when taken), or `url`
+    /// itself when it's already inside.
+    nonisolated static func copy(_ url: URL, into directory: URL) throws -> URL {
+        let directory = directory.standardizedFileURL
+        let file = url.standardizedFileURL
+        guard !file.path.hasPrefix(directory.path + "/") else { return file }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let copy = ScreenshotFileNaming.uniqueURL(for: file.lastPathComponent, in: directory)
+        try FileManager.default.copyItem(at: file, to: copy)
+        return copy
     }
 
     // MARK: - Off-main filesystem work

@@ -92,6 +92,7 @@ One window for screenshots, recordings and recording projects, with **Uploads**,
 - Each card has a cloud badge: click it to share the capture, or to copy its link once shared. Shared captures show a green cloud with a tick.
 - Right-click between the cards to change the sort order or **Refresh** (**Command + R**).
 - **Space** opens Quick Look and **Return** renames. Select several captures to copy, export, share, reveal or trash them together.
+- **Workspace background:** **Settings → General → Workspace** sets what the Library, the image editor and Studio draw behind your captures: **Dots** (the default), **Plain** grey, or a **Wallpaper**: one of the wallpapers the screenshot background keeps, an image you add (Sukusho keeps its own copy) or an Unsplash photo. **Dim** fades it into the grey, more in dark mode, and **Blur** softens it. It never appears in captures, exports or uploads. With Reduce Transparency or Increase Contrast on, the workspaces stay plain grey.
 
 Opening Sukusho shows the Library; when it starts at login, it stays in the menu bar.
 

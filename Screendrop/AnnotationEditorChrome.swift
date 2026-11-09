@@ -44,6 +44,9 @@ struct AnnotationZoomControl: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+        // On 27.0.1 the label's glass doesn't show inside the menu, so the
+        // readout would sit bare on a photo.
+        .workspaceTextPlate(capsule: true)
         .help("Zoom")
     }
 }
@@ -122,39 +125,172 @@ enum WorkspaceChrome {
     }
 }
 
+/// The ground behind the Library's browser, the editor's canvas and Studio's
+/// canvas: Dots, Plain or a wallpaper, from Settings › General › Workspace.
 struct AnnotationEditorWorkspaceBackground: View {
+    @AppStorage(WorkspaceBackground.styleKey) private var style = WorkspaceBackground.Style.dots
+    @AppStorage(WorkspaceBackground.wallpaperPathKey) private var wallpaperPath = ""
+    @AppStorage(WorkspaceBackground.dimKey) private var dim = WorkspaceBackground.defaultDim
+    @AppStorage(WorkspaceBackground.blurKey) private var blurs = false
+
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var body: some View {
+        // A flat, fully desaturated gray rather than a system material -
+        // vibrancy materials pick up a bluish cast from the accent color
+        // and whatever's behind the window, which reads as tinted rather
+        // than neutral.
+        let ground = colorScheme == .dark ? Color(white: 0.16) : Color(white: 0.93)
+        ZStack {
+            Rectangle().fill(ground)
+
+            switch WorkspaceBackground.shown(style, reduceTransparency: reduceTransparency,
+                                             increaseContrast: contrast == .increased) {
+            case .dots:
+                WorkspaceDots()
+            case .plain:
+                EmptyView()
+            case .wallpaper:
+                if wallpaperPath.isEmpty {
+                    WorkspaceDots()
+                } else {
+                    WorkspaceWallpaper(
+                        url: URL(fileURLWithPath: wallpaperPath),
+                        blurred: blurs,
+                        dimming: ground.opacity(WorkspaceBackground.dimOpacity(dim, dark: colorScheme == .dark))
+                    )
+                }
+            }
+        }
+    }
+}
+
+/// The chosen photo at the window's pixel size, decoded and cached by the
+/// wallpaper thumbnails' cache. Dots stand in while it can't be read, such
+/// as after the file was deleted.
+private struct WorkspaceWallpaper: View {
+    let url: URL
+    let blurred: Bool
+    let dimming: Color
+
+    @Environment(\.displayScale) private var displayScale
+    @State private var image: CGImage?
+    @State private var failed = false
+    @State private var cacheLease: BoundedCGImageCache.Lease?
+
+    var body: some View {
+        GeometryReader { proxy in
+            let pixels = WorkspaceBackground.bucketed(CGSize(width: proxy.size.width * displayScale,
+                                                             height: proxy.size.height * displayScale))
+            Group {
+                if failed {
+                    WorkspaceDots()
+                } else if let image {
+                    Image(decorative: image, scale: 1)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: proxy.size.width, height: proxy.size.height)
+                        .clipped()
+                        .blur(radius: blurred ? WorkspaceBackground.blurRadius : 0, opaque: true)
+                        .overlay(dimming)
+                } else {
+                    Color.clear
+                }
+            }
+            .task(id: "\(url.path)#\(Int(pixels.width))x\(Int(pixels.height))#\(blurred)") {
+                await load(bounds: pixels)
+            }
+        }
+        .onAppear { cacheLease = AnnotationWallpaperPreviewCache.beginUse() }
+        .onDisappear {
+            cacheLease = nil
+            image = nil
+        }
+    }
+
+    /// Keeps the last image up until the next one is ready, so a resize
+    /// never flashes the grey.
+    private func load(bounds: CGSize) async {
+        if cacheLease == nil { cacheLease = AnnotationWallpaperPreviewCache.beginUse() }
+        let url = url
+        let size = await Task.detached(priority: .utility) { WorkspaceBackground.pixelSize(of: url) }.value
+        guard !Task.isCancelled else { return }
+        guard let size else {
+            image = nil
+            failed = true
+            return
+        }
+        let decodeSize = WorkspaceBackground.decodeSize(image: size, bounds: bounds, blurred: blurred)
+        let loaded = await AnnotationWallpaperPreviewCache.shared.image(for: url, maxPixelSize: CGFloat(decodeSize))
+        guard !Task.isCancelled else { return }
+        image = loaded
+        failed = loaded == nil
+    }
+}
+
+extension View {
+    /// A chrome-coloured backing under text drawn straight on the workspace,
+    /// shown only while a wallpaper may be behind it, as the Library's cards
+    /// have under their titles. With Dots or Plain nothing changes. `capsule`
+    /// fits a small padded label, such as the editor's zoom readout.
+    func workspaceTextPlate(capsule: Bool = false) -> some View { modifier(WorkspaceTextPlate(capsule: capsule)) }
+}
+
+private struct WorkspaceTextPlate: ViewModifier {
+    let capsule: Bool
+
+    @AppStorage(WorkspaceBackground.styleKey) private var style = WorkspaceBackground.Style.dots
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if WorkspaceBackground.shown(style, reduceTransparency: reduceTransparency,
+                                     increaseContrast: contrast == .increased) != .wallpaper {
+            content
+        } else if capsule {
+            content.background(WorkspaceChrome.background, in: Capsule())
+        } else {
+            // Drawn past the text without padding or fixedSize, so the page's
+            // layout stays as it is. A padded, fixedSize plate crashed AppKit
+            // (an update-constraints loop) when a search emptied the Library
+            // on 27.0.1; the size change is the inferred cause.
+            content
+                .frame(maxWidth: 520)
+                .background {
+                    RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
+                        .fill(WorkspaceChrome.background)
+                        .padding(-DS.Space.xl)
+                }
+        }
+    }
+}
+
+/// Today's 18 pt dot grid, the default.
+private struct WorkspaceDots: View {
     private let dotSpacing: CGFloat = 18
     private let dotRadius: CGFloat = 1.15
 
-    @Environment(\.colorScheme) private var colorScheme
-
     var body: some View {
-        ZStack {
-            // A flat, fully desaturated gray rather than a system material -
-            // vibrancy materials pick up a bluish cast from the accent color
-            // and whatever's behind the window, which reads as tinted rather
-            // than neutral.
-            Rectangle()
-                .fill(colorScheme == .dark ? Color(white: 0.16) : Color(white: 0.93))
+        Canvas { context, size in
+            var path = Path()
+            let offset = dotSpacing / 2
 
-            Canvas { context, size in
-                var path = Path()
-                let offset = dotSpacing / 2
-
-                stride(from: offset, through: size.width, by: dotSpacing).forEach { x in
-                    stride(from: offset, through: size.height, by: dotSpacing).forEach { y in
-                        path.addEllipse(in: CGRect(
-                            x: x - dotRadius,
-                            y: y - dotRadius,
-                            width: dotRadius * 2,
-                            height: dotRadius * 2
-                        ))
-                    }
+            stride(from: offset, through: size.width, by: dotSpacing).forEach { x in
+                stride(from: offset, through: size.height, by: dotSpacing).forEach { y in
+                    path.addEllipse(in: CGRect(
+                        x: x - dotRadius,
+                        y: y - dotRadius,
+                        width: dotRadius * 2,
+                        height: dotRadius * 2
+                    ))
                 }
-
-                context.fill(path, with: .color(Color.secondary.opacity(0.14)))
             }
-            .allowsHitTesting(false)
+
+            context.fill(path, with: .color(Color.secondary.opacity(0.14)))
         }
+        .allowsHitTesting(false)
     }
 }

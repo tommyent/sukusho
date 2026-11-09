@@ -523,7 +523,8 @@ struct RecordingAgentPromptTests {
         return pixel
     }
 
-    private func makeMovie(at url: URL) async throws {
+    /// Red for the first second, then blue; 96 x 64 at 10 fps. Also used by WorkspaceBackgroundTests.
+    func makeMovie(at url: URL) async throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 96, AVVideoHeightKey: 64,

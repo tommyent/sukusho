@@ -552,7 +552,7 @@ struct AnnotationWatermarkInspector: View {
 
 }
 
-private struct AnnotationAddWallpaperTile: View {
+struct AnnotationAddWallpaperTile: View {
     let action: () -> Void
 
     var body: some View {

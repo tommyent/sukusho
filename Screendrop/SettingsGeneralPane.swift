@@ -17,6 +17,7 @@ struct GeneralSettingsPane: View {
     @AppStorage(ScreendropPreferences.libraryReadsTextKey) private var libraryReadsText = true
     @AppStorage(ScreendropPreferences.libraryUsesIntelligenceKey) private var libraryUsesIntelligence = true
     @AppStorage(ScreendropPreferences.libraryInsightsIncludeExistingKey) private var insightsIncludeExisting = false
+    @AppStorage(WorkspaceBackground.styleKey) private var workspaceStyle = WorkspaceBackground.Style.dots
     @State private var launchAtLoginStatus = LaunchAtLoginController.status
     @State private var launchAtLoginError: String?
 
@@ -140,6 +141,24 @@ struct GeneralSettingsPane: View {
                 }
             }
 
+            Section("Workspace") {
+                SettingsControlLabel(
+                    "Workspace background",
+                    detail: "Behind the Library, the image editor and Studio. Captures, exports and uploads never include it."
+                ).control { label in
+                    Picker(selection: $workspaceStyle) {
+                        ForEach(WorkspaceBackground.Style.allCases) { style in
+                            Text(style.title).tag(style)
+                        }
+                    } label: {
+                        label
+                    }
+                }
+                if workspaceStyle == .wallpaper {
+                    WorkspaceWallpaperSettings()
+                }
+            }
+
             Section("Capture Visibility") {
                 SettingsControlLabel(
                     "Include Sukusho windows in captures",
@@ -226,6 +245,107 @@ struct GeneralSettingsPane: View {
         }
 
         refreshLaunchAtLoginStatus()
+    }
+}
+
+/// The Wallpaper choice's rows: the wallpapers the screenshot background
+/// picker keeps, Add… and Unsplash, then Dim and Blur.
+private struct WorkspaceWallpaperSettings: View {
+    @AppStorage(WorkspaceBackground.wallpaperPathKey) private var wallpaperPath = ""
+    @AppStorage(WorkspaceBackground.dimKey) private var dim = WorkspaceBackground.defaultDim
+    @AppStorage(WorkspaceBackground.blurKey) private var blurs = false
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+    @State private var addError: String?
+
+    private let store = AnnotationWallpaperStore.shared
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: DS.Space.s), count: 6)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Space.m) {
+            LazyVGrid(columns: columns, spacing: DS.Space.s) {
+                ForEach(store.recentWallpapers) { wallpaper in
+                    InspectorTile(title: wallpaper.title, aspectRatio: 1.35, isSelected: isChosen(wallpaper)) {
+                        choose(wallpaper.url)
+                    } content: {
+                        AnnotationCustomWallpaperPreview(wallpaper: wallpaper, maxPixelSize: 320)
+                    }
+                    .accessibilityLabel(store.accessibilityTitle(for: wallpaper))
+                }
+                AnnotationAddWallpaperTile(action: addWallpaper)
+                    .help("Add a wallpaper")
+                    .accessibilityLabel("Add Wallpaper…")
+            }
+            if let message = addError ?? missingMessage {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            UnsplashWallpaperSearchView(search: UnsplashWallpaperSearch.shared) { choose($0) }
+        }
+
+        LabeledContent {
+            HStack(spacing: DS.Space.l) {
+                Slider(value: $dim, in: WorkspaceBackground.dimRange, step: 0.05)
+                    .frame(width: 180)
+                    .accessibilityLabel("Dim")
+                    .accessibilityValue(dim.formatted(.percent.precision(.fractionLength(0))))
+                Text(dim, format: .percent.precision(.fractionLength(0)))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .frame(width: 40, alignment: .trailing)
+            }
+        } label: {
+            SettingsControlLabel("Dim", detail: "Fades the wallpaper into the workspace grey so cards and canvases stand out, half as much again in dark mode.")
+        }
+
+        SettingsControlLabel(
+            "Blur",
+            detail: "Softens the wallpaper so a busy photo sits back."
+        ).control { label in
+            Toggle(isOn: $blurs) { label }
+        }
+        .toggleStyle(.switch)
+
+        if reduceTransparency || contrast == .increased {
+            Text("Reduce Transparency or Increase Contrast is on in Accessibility settings, so the workspaces use the plain grey.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// Nothing chosen yet, or the chosen file is gone: the workspaces show Dots meanwhile.
+    private var missingMessage: String? {
+        if wallpaperPath.isEmpty { return "Choose a wallpaper. Until then the workspaces show dots." }
+        guard !FileManager.default.fileExists(atPath: wallpaperPath) else { return nil }
+        return "The chosen wallpaper is gone, so the workspaces show dots. Choose another."
+    }
+
+    private func isChosen(_ wallpaper: AnnotationCustomWallpaper) -> Bool {
+        wallpaper.url.standardizedFileURL.path == wallpaperPath
+    }
+
+    private func choose(_ url: URL) {
+        store.addRecentWallpaper(url)
+        wallpaperPath = url.standardizedFileURL.path
+        addError = nil
+    }
+
+    private func addWallpaper() {
+        let panel = NSOpenPanel()
+        panel.title = "Add Wallpaper"
+        panel.prompt = "Add"
+        panel.allowedContentTypes = AnnotationWallpaperStore.supportedContentTypes
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            choose(try store.importWallpaper(from: url))
+        } catch {
+            addError = "Couldn't add the wallpaper: \(error.localizedDescription)"
+        }
     }
 }
 
