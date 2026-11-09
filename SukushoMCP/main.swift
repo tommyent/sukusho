@@ -42,12 +42,8 @@ enum Helper {
 
 /// The connection to the app: one line of JSON per message (see AgentAccessServer.swift).
 actor AppLink {
-    enum LinkError: LocalizedError {
-        case unavailable(String)
-        var errorDescription: String? {
-            switch self { case .unavailable(let why): why }
-        }
-    }
+    /// What the agent reads when Sukusho can't be reached or says no: a server error, not an internal one.
+    static func unavailable(_ why: String) -> MCPError { .serverError(code: -32000, message: why) }
 
     private var fd: Int32 = -1
     private var nextID = 1
@@ -83,16 +79,20 @@ actor AppLink {
 
     private func connect() async throws {
         var socket = Self.open(Helper.socketPath)
+        var started = false
         if socket < 0, Helper.testSocket == nil {
-            launchApp()
-            // Up to 15 seconds for the app to start and listen.
+            // Opening a running app reopens it, which brings up its Library: start it only when it isn't running.
+            started = !Self.isAppRunning
+            if started { launchApp() }
+            // Up to 15 seconds for the app to start, or to get past whatever holds it, and listen.
             for _ in 0..<60 where socket < 0 {
                 try await Task.sleep(for: .milliseconds(250))
                 socket = Self.open(Helper.socketPath)
             }
         }
         guard socket >= 0 else {
-            throw LinkError.unavailable("Sukusho isn’t letting agents in. Turn on Settings › Agents › Let agents use Sukusho, then try again.")
+            throw Self.unavailable((started ? "Sukusho started but isn’t letting agents in." : "Sukusho isn’t letting agents in.")
+                + " Turn on Settings › Agents › Let agents use Sukusho, and check whether Sukusho is waiting on a dialog, then try again.")
         }
         fd = socket
         let hello: [String: Any] = ["hello": ["name": client?.name ?? "", "version": client?.version ?? ""]]
@@ -101,13 +101,20 @@ actor AppLink {
         guard write(data), let reply = Self.readLine(socket),
               let object = try? JSONSerialization.jsonObject(with: reply) as? [String: Any] else {
             close()
-            throw LinkError.unavailable("Sukusho didn’t answer.")
+            throw Self.unavailable("Sukusho didn’t answer.")
         }
         guard object["welcome"] as? Bool == true else {
             close()
-            throw LinkError.unavailable(object["refused"] as? String ?? "Sukusho refused the connection.")
+            throw Self.unavailable(object["refused"] as? String ?? "Sukusho refused the connection.")
         }
         Thread.detachNewThread { [socket] in Self.readLoop(socket, link: self) }
+    }
+
+    private static var isAppRunning: Bool {
+        guard let identifier = Bundle(url: Helper.appURL)?.bundleIdentifier else { return false }
+        let app = Helper.appURL.resolvingSymlinksInPath()
+        return NSRunningApplication.runningApplications(withBundleIdentifier: identifier)
+            .contains { $0.bundleURL?.resolvingSymlinksInPath() == app }
     }
 
     private func launchApp() {
@@ -138,7 +145,7 @@ actor AppLink {
         if let result = object["result"], let data = try? JSONSerialization.data(withJSONObject: result) {
             continuation.resume(returning: data)
         } else {
-            continuation.resume(throwing: MCPError.internalError(object["error"] as? String ?? "Sukusho sent no result."))
+            continuation.resume(throwing: Self.unavailable(object["error"] as? String ?? "Sukusho sent no result."))
         }
     }
 
@@ -146,7 +153,7 @@ actor AppLink {
         close()
         let pending = waiting
         waiting = [:]
-        for continuation in pending.values { continuation.resume(throwing: LinkError.unavailable(why)) }
+        for continuation in pending.values { continuation.resume(throwing: Self.unavailable(why)) }
     }
 
     private func close() {

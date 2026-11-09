@@ -84,17 +84,26 @@ struct AgentsSettingsPane: View {
                         Text("No calls yet.").foregroundStyle(.secondary)
                     }
                     ForEach(access.log.entries.prefix(100)) { entry in
-                        HStack(alignment: .firstTextBaseline) {
-                            Text(entry.time.formatted(date: .numeric, time: .shortened))
+                        // Two lines, so a narrow Settings window keeps every part readable.
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(entry.tool)
+                                    .font(.system(.callout, design: .monospaced))
+                                    .lineLimit(1)
+                                    .layoutPriority(1)
+                                Spacer(minLength: 8)
+                                Text(entry.result)
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .help(entry.result)
+                            }
+                            Text(entry.time.formatted(date: .numeric, time: .shortened) + " · " + entry.agent)
+                                .font(.caption)
                                 .monospacedDigit()
                                 .foregroundStyle(.secondary)
-                                .frame(width: 130, alignment: .leading)
-                            Text(entry.agent).lineLimit(1)
-                            Text(entry.tool).font(.system(.body, design: .monospaced))
-                            Spacer()
-                            Text(entry.result).foregroundStyle(.secondary).lineLimit(1)
+                                .lineLimit(1)
                         }
-                        .font(.callout)
                     }
                 } header: {
                     HStack {
