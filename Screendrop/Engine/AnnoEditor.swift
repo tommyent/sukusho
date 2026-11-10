@@ -430,6 +430,28 @@ final class AnnoEditor {
         notifyChanged()
     }
 
+    /// A side shorter than this on screen has no middle handle: it wouldn't fit between the corners.
+    static let minSideForMiddleHandle = 32.0
+
+    /// The resize handles of a selection frame with their screen points. Drawing and hit testing
+    /// both read this, so a handle can be grabbed exactly where one is shown.
+    func resizeHandlePoints(_ bounds: AnnoSelectionBounds) -> [(handle: AnnoSelectionHandle, screen: Vec)] {
+        func screen(_ x: Double, _ y: Double) -> Vec { pageToScreen(bounds.pagePoint(Vec(x, y))) }
+        let width = Vec.dist(screen(0, 0), screen(1, 0))
+        let height = Vec.dist(screen(0, 0), screen(0, 1))
+        var points: [(handle: AnnoSelectionHandle, screen: Vec)] = [
+            (.topLeft, screen(0, 0)), (.topRight, screen(1, 0)),
+            (.bottomRight, screen(1, 1)), (.bottomLeft, screen(0, 1)),
+        ]
+        if width >= Self.minSideForMiddleHandle {
+            points += [(.top, screen(0.5, 0)), (.bottom, screen(0.5, 1))]
+        }
+        if height >= Self.minSideForMiddleHandle {
+            points += [(.left, screen(0, 0.5)), (.right, screen(1, 0.5))]
+        }
+        return points
+    }
+
     /// Which selection handle, if any, is under a screen point. Handles are tested in screen space
     /// so they stay the same size to grab at every zoom level.
     func handle(at screenPoint: Vec) -> AnnoSelectionHandle? {
@@ -463,14 +485,8 @@ final class AnnoEditor {
 
         if let tail = textTailHandlePoint, Vec.dist(tail, screenPoint) <= hitRadius { return .textTail }
 
-        let handles: [(AnnoSelectionHandle, Vec)] = [
-            (.topLeft, Vec(0, 0)), (.top, Vec(0.5, 0)), (.topRight, Vec(1, 0)),
-            (.right, Vec(1, 0.5)), (.bottomRight, Vec(1, 1)), (.bottom, Vec(0.5, 1)),
-            (.bottomLeft, Vec(0, 1)), (.left, Vec(0, 0.5)),
-        ]
-        for (handle, normalized) in handles {
-            let screen = pageToScreen(bounds.pagePoint(normalized))
-            if Vec.dist(screen, screenPoint) <= hitRadius { return handle }
+        for (handle, screen) in resizeHandlePoints(bounds) where Vec.dist(screen, screenPoint) <= hitRadius {
+            return handle
         }
 
         // The rotate handles sit just outside each corner.
@@ -486,7 +502,7 @@ final class AnnoEditor {
     }
 
     /// How far below a boxed label's bottom edge the tail's pull handle sits, in screen points:
-    /// clear of the invisible bottom resize handle's 9 pt reach.
+    /// clear of the bottom resize handle's 9 pt reach.
     static let tailPullHandleOffset = 20.0
 
     /// Where a lone selected boxed label shows its tail handle (sd-cxui), in screen points: at
