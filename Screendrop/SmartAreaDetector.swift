@@ -75,23 +75,27 @@ nonisolated enum SmartAreaDetector {
             guard box != whole, size >= box.width + box.height, isSolid(box, filled: size, minSide: minSide),
                   size * 2 >= box.area || areas.standsOut(id, in: bitmap),
                   areas.reachesAllSides(id) else { continue }
-            exact.append(box)
+            exact.append(areas.boxWithBorder(id, in: bitmap, maxWidth: max(2, minSide / 6)))
         }
 
         var grouped: [PixelBox] = []
         surfaces.sort { areas.size[$0] > areas.size[$1] }
         for id in surfaces.prefix(maxSurfaces) {
-            let surface = Int32(id)
-            grouped += areas.groups(in: areas.box(id), minSide: minSide) { $0 != surface }
+            // The faint outer part of a soft shadow counts as the surface, or
+            // the shadows of neighbouring cards would join them into one group.
+            grouped += areas.groups(in: areas.box(id), minSide: minSide) { areas.liesOn(surface: id, $0, in: bitmap) }
+                .map { areas.tightened($0, in: bitmap, maxDepth: minSide) }
         }
         // A photo has no two neighbours alike: its areas are a pixel or a few,
         // and it fills its bounds, which the grain of a gradient doesn't.
-        grouped += areas.groups(in: whole, minSide: minSide, minFill: 85) { areas.size[Int($0)] < 16 }
+        grouped += areas.groups(in: whole, minSide: minSide, minFill: 85) { areas.size[Int(areas.label[$0])] < 16 }
+            .map { areas.tightened($0, in: bitmap, maxDepth: minSide) }
 
-        // An area's own bounds are exact; a group's may take in a shadow, so
-        // it only counts where no area gave nearly the same box.
-        var kept = merged(exact, into: [])
-        kept = merged(grouped.filter { $0 != whole }, into: kept)
+        // An area's own bounds are exact; a group's may keep some shadow, so
+        // it only counts where nothing gave nearly the same box. A shadow shows
+        // up in several groups a few pixels apart: one of them is enough.
+        var kept = merged(exact, into: [], within: 4)
+        kept = merged(grouped.filter { $0 != whole && $0.width >= minSide && $0.height >= minSide }, into: kept, within: 8)
         return kept.map(\.rect).sorted { $0.width * $0.height < $1.width * $1.height }
     }
 
@@ -104,15 +108,15 @@ nonisolated enum SmartAreaDetector {
     /// The largest areas looked at for things lying on them: each costs a pass over its bounds.
     private static let maxSurfaces = 32
 
-    /// Adds `boxes` to `kept`, largest first, leaving out any within four
+    /// Adds `boxes` to `kept`, largest first, leaving out any within `within`
     /// pixels a side of one already kept: of a card's fill and the border
     /// line around it, the border's box stays.
-    private static func merged(_ boxes: [PixelBox], into kept: [PixelBox]) -> [PixelBox] {
+    private static func merged(_ boxes: [PixelBox], into kept: [PixelBox], within: Int) -> [PixelBox] {
         var kept = kept
         for box in boxes.sorted(by: { $0.area > $1.area }) {
             let isRepeat = kept.contains {
-                abs($0.minX - box.minX) <= 4 && abs($0.minY - box.minY) <= 4
-                    && abs($0.maxX - box.maxX) <= 4 && abs($0.maxY - box.maxY) <= 4
+                abs($0.minX - box.minX) <= within && abs($0.minY - box.minY) <= within
+                    && abs($0.maxX - box.maxX) <= within && abs($0.maxY - box.maxY) <= within
             }
             if !isRepeat { kept.append(box) }
         }
@@ -248,20 +252,96 @@ private nonisolated struct FlatAreas {
         var sides = 0, distinct = 0
         for (x, y) in [(middleX, box.minY - 1), (middleX, box.maxY + 1), (box.minX - 1, middleY), (box.maxX + 1, middleY)]
         where x >= 0 && y >= 0 && x < width && y < height {
-            let other = bitmap.pixels[y * width + x]
-            let difference = (0..<3).map { abs(Int(own >> ($0 * 8) & 0xFF) - Int(other >> ($0 * 8) & 0xFF)) }.max() ?? 0
             sides += 1
-            if difference >= 6 { distinct += 1 }
+            if Self.differ(own, bitmap.pixels[y * width + x]) { distinct += 1 }
         }
         return distinct * 2 > sides
     }
 
-    /// The bounds of each 8-connected group of pixels inside `bounds` whose
-    /// area passes `isMember`. A group cut off by one side of the bounds still
+    /// Two colors a person would tell apart: six levels or more in some channel.
+    private static func differ(_ a: UInt32, _ b: UInt32, by levels: Int = 6) -> Bool {
+        (0..<3).contains { abs(Int(a >> ($0 * 8) & 0xFF) - Int(b >> ($0 * 8) & 0xFF)) >= levels }
+    }
+
+    /// The pixel at `index` belongs to something lying on area `surface`: it
+    /// isn't part of it, and isn't a shade within ten levels of it either.
+    func liesOn(surface: Int, _ index: Int, in bitmap: SmartAreaBitmap) -> Bool {
+        label[index] != Int32(surface) && Self.differ(bitmap.pixels[index], color[surface], by: 10)
+    }
+
+    /// `box` without the shadow a group's bounds took in. From each side
+    /// inward, rows of one shade that follow smoothly on what lies outside
+    /// are shadow; the box's real edge is where a row breaks from the one
+    /// before it, or stops being one shade (a picture). A border line breaks
+    /// from what lies outside it, so it stays.
+    func tightened(_ box: PixelBox, in bitmap: SmartAreaBitmap, maxDepth: Int) -> PixelBox {
+        let pixels = bitmap.pixels
+        /// The row `depth` pixels inside a side (-1: just outside), along the
+        /// side's middle half: its first color, and whether the rest is like it.
+        func line(_ side: Int, _ depth: Int) -> (color: UInt32, isOneShade: Bool)? {
+            let alongX = side < 2
+            let length = alongX ? box.width : box.height
+            let from = (alongX ? box.minX : box.minY) + length / 4
+            let fixed = [box.minY + depth, box.maxY - depth, box.minX + depth, box.maxX - depth][side]
+            guard fixed >= 0, fixed < (alongX ? height : width) else { return nil }
+            func pixel(_ at: Int) -> UInt32 { alongX ? pixels[fixed * width + at] : pixels[at * width + fixed] }
+            let first = pixel(from)
+            return (first, (from...(from + length / 2)).allSatisfy { !Self.differ(pixel($0), first) })
+        }
+        var insets = [0, 0, 0, 0]
+        for side in 0..<4 {
+            let limit = min(maxDepth, (side < 2 ? box.height : box.width) / 4)
+            var depth = 0
+            while depth < limit, let before = line(side, depth - 1), before.isOneShade,
+                  let row = line(side, depth), row.isOneShade, !Self.differ(before.color, row.color) {
+                depth += 1
+            }
+            // Only a run that ends at a break was shadow; one that runs out was the box's own fill.
+            if depth > 0, depth < limit { insets[side] = depth }
+        }
+        return PixelBox(minX: box.minX + insets[2], minY: box.minY + insets[0],
+                        maxX: box.maxX - insets[3], maxY: box.maxY - insets[1])
+    }
+
+    /// The bounds of area `id`, grown by the border line around it when it
+    /// has one: on each of the four sides, one to `maxWidth` rows of pixels
+    /// that differ from what lies beyond them. Rounded corners cut such a line
+    /// into four pieces too thin to be boxes themselves, and a line that falls
+    /// between pixels is drawn as two or three rows of different shades. A
+    /// soft shadow barely changes over that distance, and a surrounding
+    /// surface doesn't change at all, so neither counts.
+    func boxWithBorder(_ id: Int, in bitmap: SmartAreaBitmap, maxWidth: Int) -> PixelBox {
+        let box = box(id), pixels = bitmap.pixels
+        /// The one color of the line `step` pixels outside a side, along the side's middle half.
+        func line(_ side: Int, _ step: Int) -> UInt32? {
+            let alongX = side < 2
+            let length = alongX ? box.width : box.height
+            let from = (alongX ? box.minX : box.minY) + length / 4
+            let fixed = [box.minY - step, box.maxY + step, box.minX - step, box.maxX + step][side]
+            guard fixed >= 0, fixed < (alongX ? height : width) else { return nil }
+            func pixel(_ at: Int) -> UInt32 { alongX ? pixels[fixed * width + at] : pixels[at * width + fixed] }
+            let first = pixel(from)
+            return (from...(from + length / 2)).allSatisfy { pixel($0) == first } ? first : nil
+        }
+        var widths = [0, 0, 0, 0]
+        for side in 0..<4 {
+            guard let beyond = line(side, maxWidth + 1) else { return box }
+            var lineWidth = 0
+            while lineWidth < maxWidth, let color = line(side, lineWidth + 1), Self.differ(color, beyond) { lineWidth += 1 }
+            // It stopped at the first row like what lies beyond, not at a row of mixed colors.
+            guard lineWidth > 0, let next = line(side, lineWidth + 1), !Self.differ(next, beyond) else { return box }
+            widths[side] = lineWidth
+        }
+        return PixelBox(minX: box.minX - widths[2], minY: box.minY - widths[0],
+                        maxX: box.maxX + widths[3], maxY: box.maxY + widths[1])
+    }
+
+    /// The bounds of each 8-connected group of pixels inside `bounds` that
+    /// pass `isMember`, which gets a pixel's place in the whole image. A group cut off by one side of the bounds still
     /// counts (a card half out of view); one that reaches two sides is the
     /// surroundings, not a thing lying there.
     /// `minFill` is the percentage of its bounds a group must cover.
-    func groups(in bounds: PixelBox, minSide: Int, minFill: Int = 0, isMember: (Int32) -> Bool) -> [PixelBox] {
+    func groups(in bounds: PixelBox, minSide: Int, minFill: Int = 0, isMember: (Int) -> Bool) -> [PixelBox] {
         let w = bounds.width, h = bounds.height
         var parent = [Int32](repeating: -1, count: w * h)
         var result: [PixelBox] = []
@@ -283,7 +363,7 @@ private nonisolated struct FlatAreas {
                 }
                 for y in 0..<h {
                     let source = (bounds.minY + y) * width + bounds.minX
-                    for x in 0..<w where isMember(label[source + x]) {
+                    for x in 0..<w where isMember(source + x) {
                         let index = y * w + x
                         var mine = index
                         parent[index] = Int32(index)

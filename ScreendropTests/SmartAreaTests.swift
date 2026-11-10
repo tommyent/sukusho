@@ -68,6 +68,25 @@ struct SmartAreaTests {
         #expect(found == [card])
     }
 
+    @Test func aBorderWithRoundedCornersIsPartOfItsCard() {
+        let card = CGRect(x: 60, y: 50, width: 180, height: 100)
+        let found = boxes(bitmap { canvas in
+            canvas.fill(card, 0xFFCCCCCC)
+            // The top and bottom lines fall between pixels: a lighter row outside the full one.
+            canvas.fill(CGRect(x: 60, y: 50, width: 180, height: 1), 0xFFE2E2E2)
+            canvas.fill(CGRect(x: 60, y: 149, width: 180, height: 1), 0xFFE2E2E2)
+            canvas.fill(card.insetBy(dx: 2, dy: 2), Self.white)
+            // Smoothed corners: in-between colors cut the border into four lines.
+            for corner in [card.origin, CGPoint(x: card.maxX - 6, y: card.minY),
+                           CGPoint(x: card.minX, y: card.maxY - 6), CGPoint(x: card.maxX - 6, y: card.maxY - 6)] {
+                canvas.fill(CGRect(origin: corner, size: CGSize(width: 6, height: 6))) { x, y in
+                    0xFFE0E0E0 + UInt32((x + y) % 5)
+                }
+            }
+        })
+        #expect(found == [card])
+    }
+
     @Test func aPictureOnThePageIsABox() {
         let picture = CGRect(x: 100, y: 80, width: 160, height: 90)
         #expect(boxes(bitmap { $0.photo(picture) }) == [picture])
@@ -84,6 +103,30 @@ struct SmartAreaTests {
         #expect(found == [panel, picture, picture.union(panel)])
     }
 
+    @Test func cardsWhoseShadowsTouchStayApart() {
+        // Two cards, each a picture over a text panel, 16 pixels apart with 12-pixel shadows.
+        let cards = [CGRect(x: 40, y: 60, width: 140, height: 160), CGRect(x: 196, y: 60, width: 140, height: 160)]
+        let found = boxes(bitmap { canvas in
+            // Each pixel takes the darker of the two shadows, so they run into each other between the cards.
+            canvas.fill(CGRect(x: 28, y: 48, width: 320, height: 184)) { x, y in
+                let depth = cards.map { card in
+                    let dx = max(card.minX - Double(x), Double(x) - card.maxX + 1, 0)
+                    let dy = max(card.minY - Double(y), Double(y) - card.maxY + 1, 0)
+                    return max(0, 12 - Int(max(dx, dy)))
+                }.max() ?? 0
+                let level = UInt32(245 - 2 * depth)
+                return 0xFF000000 | level << 16 | level << 8 | level
+            }
+            for card in cards {
+                canvas.photo(CGRect(x: card.minX, y: card.minY, width: 140, height: 90))
+                canvas.fill(CGRect(x: card.minX, y: card.minY + 90, width: 140, height: 70), Self.white)
+            }
+        })
+        // Each card whole, to the pixel, and never the pair as one box.
+        for card in cards { #expect(found.contains(card)) }
+        #expect(!found.contains { $0.width > 200 })
+    }
+
     @Test func aSoftShadowDoesNotMoveTheCardsOwnBox() {
         let card = CGRect(x: 100, y: 80, width: 200, height: 120)
         let found = boxes(bitmap { canvas in
@@ -96,9 +139,8 @@ struct SmartAreaTests {
             }
             canvas.fill(card, Self.white)
         })
-        #expect(found.first == card)
-        // The card with its shadow is the only other box.
-        #expect(found.count == 2 && found.last?.contains(card) == true)
+        // The shadow adds no box of its own.
+        #expect(found == [card])
     }
 
     @Test func aButtonInsideACardComesBeforeTheCard() {
