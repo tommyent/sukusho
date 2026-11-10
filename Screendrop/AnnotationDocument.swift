@@ -3,7 +3,7 @@
 //  Screendrop
 //
 //  Codable sidecar document that stores the editable annotation state for a
-//  screenshot. Persisted next to the rendered image as `<image>.screendrop`
+//  screenshot. Persisted next to the rendered image as `<image>.sukusho`
 //  so annotations remain non-destructive and can be re-opened for editing.
 //
 

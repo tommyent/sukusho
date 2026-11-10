@@ -3,7 +3,7 @@
 //  Screendrop
 //
 //  Studio styles shared as files. They use the image editor's
-//  .screendroppreset type with a format name of their own, so each editor
+//  .sukushopreset type with a format name of their own, so each editor
 //  can say a file belongs to the other instead of misreading it. As there,
 //  a custom wallpaper is a local file and is left out.
 //
@@ -12,7 +12,10 @@ import Foundation
 
 struct RecordingStudioStyleTransferFile: Codable {
     static let currentVersion = 1
-    static let formatIdentifier = "screendrop-recording-presets"
+    static let formatIdentifier = "sukusho-recording-presets"
+    /// What files exported before the rename say.
+    static let legacyFormatIdentifier = "screendrop-recording-presets"
+    static func isFormat(_ format: String) -> Bool { format == formatIdentifier || format == legacyFormatIdentifier }
 
     var format: String
     var version: Int
@@ -47,10 +50,10 @@ struct RecordingStudioStyleTransferFile: Codable {
         guard let header = try? JSONDecoder().decode(Header.self, from: data) else {
             throw AnnotationBackgroundPresetTransferError.invalidJSON
         }
-        guard header.format != AnnotationBackgroundPresetTransferFile.formatIdentifier else {
+        guard !AnnotationBackgroundPresetTransferFile.isFormat(header.format) else {
             throw AnnotationBackgroundPresetTransferError.screenshotStyle
         }
-        guard header.format == formatIdentifier else {
+        guard isFormat(header.format) else {
             throw AnnotationBackgroundPresetTransferError.invalidRecordingFormat
         }
         let file: RecordingStudioStyleTransferFile

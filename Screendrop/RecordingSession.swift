@@ -13,7 +13,6 @@ import CoreGraphics
 import Foundation
 
 nonisolated struct RecordingSession: Sendable, Equatable {
-    static let directoryExtension = "screendroprec"
     static let screenFileName = "screen.mov"
     static let cameraFileName = "camera.mov"
     static let pointerCaptureFileName = "input.json"
@@ -156,7 +155,7 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     }
 
     static func isSessionDirectory(_ url: URL) -> Bool {
-        url.pathExtension == directoryExtension
+        SukushoFileNames.isRecordingExtension(url.pathExtension)
             && FileManager.default.fileExists(atPath: url.appendingPathComponent(screenFileName).path)
     }
 
@@ -370,13 +369,9 @@ nonisolated enum RecordingSessionStore {
     }
 
     static func createSession() throws -> RecordingSession {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd-HH-mm-ss"
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        let name = "Screendrop_\(formatter.string(from: Date()))_\(UUID().uuidString.prefix(6))"
         let directory = recordingsDirectory
-            .appendingPathComponent(name)
-            .appendingPathExtension(RecordingSession.directoryExtension)
+            .appendingPathComponent(SukushoFileNames.recordingName())
+            .appendingPathExtension(SukushoFileNames.recordingExtension)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return RecordingSession(directoryURL: directory)
     }

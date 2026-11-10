@@ -73,7 +73,7 @@ struct VideoInkChecks {
                   && home.hasPrefix("/private/tmp/"), "Foundation storage is not isolated: \(actualHome), \(support)")
         NSApplication.shared.setActivationPolicy(.prohibited)
 
-        let root = URL(fileURLWithPath: home).appendingPathComponent("fixture.screendroprec")
+        let root = URL(fileURLWithPath: home).appendingPathComponent("fixture.sukushorec")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let session = RecordingSession(directoryURL: root)
         try await movie(at: session.screenURL)

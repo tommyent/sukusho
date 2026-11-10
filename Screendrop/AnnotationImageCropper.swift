@@ -49,7 +49,7 @@ enum AnnotationImageCropper {
         }
 
         let destinationURL = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("Screendrop_Crop_\(UUID().uuidString.prefix(8)).png")
+            .appendingPathComponent("\(SukushoFileNames.prefix)_Crop_\(UUID().uuidString.prefix(8)).png")
 
         guard let destination = CGImageDestinationCreateWithURL(
             destinationURL as CFURL,

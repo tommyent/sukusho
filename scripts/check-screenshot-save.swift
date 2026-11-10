@@ -28,7 +28,7 @@ struct ScreenshotSaveChecks {
         }
         func expectNoStagingFiles() throws {
             let files = try manager.contentsOfDirectory(atPath: root.path)
-            precondition(!files.contains(where: { $0.hasPrefix(".screendrop-save-") }))
+            precondition(!files.contains(where: { $0.hasPrefix(".sukusho-save-") }))
         }
 
         let display = try file("display.png", "original pixels")

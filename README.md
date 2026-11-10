@@ -142,7 +142,7 @@ Editing is non-destructive. The untouched image and an editable copy of your mar
 - **Crop** freeform or to a fixed ratio, or **Command-click** the image to crop to the box under the pointer. Annotations follow the crop.
 - Shapes snap to each other and to the image's edges and centre, with alignment guides. The colour popover includes an opacity slider.
 - **Find sensitive text…**, with pixelate or blur chosen, finds sensitive text and covers it.
-- **Inspector:** **Styles** saves and reapplies a whole look, sets a default for new screenshots, and imports or exports `.screendroppreset` files. **Background** offers colours, gradients, wallpapers, your own images and [Unsplash](https://unsplash.com/oauth/applications) search with your own Access Key. Add padding, corner radius, shadow, a border, a watermark, a camera angle and progressive blur.
+- **Inspector:** **Styles** saves and reapplies a whole look, sets a default for new screenshots, and imports or exports `.sukushopreset` files (and still imports `.screendroppreset`). **Background** offers colours, gradients, wallpapers, your own images and [Unsplash](https://unsplash.com/oauth/applications) search with your own Access Key. Add padding, corner radius, shadow, a border, a watermark, a camera angle and progressive blur.
 
 ### Capture
 

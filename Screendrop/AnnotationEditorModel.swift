@@ -402,7 +402,7 @@ final class AnnotationEditorModel {
         if let sourceURL { _ = try ScreenshotHistoryStore.shared.loadEditDocument(for: sourceURL) }
     }
 
-    /// Renders the composite, writes the `.screendrop` sidecar, and repoints
+    /// Renders the composite, writes the `.sukusho` sidecar, and repoints
     /// the editor at the preserved base image so continued edits don't re-bake
     /// annotations onto an already-composited picture. Returns nil when there
     /// is nothing to persist or an idle save is not eligible.
@@ -1515,7 +1515,7 @@ extension AnnotationEditorModel {
 
         let fileExtension = url.pathExtension.isEmpty ? "png" : url.pathExtension
         let destinationURL = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("Screendrop_CropSnapshot_\(UUID().uuidString.prefix(8))")
+            .appendingPathComponent("\(SukushoFileNames.prefix)_CropSnapshot_\(UUID().uuidString.prefix(8))")
             .appendingPathExtension(fileExtension)
 
         do {

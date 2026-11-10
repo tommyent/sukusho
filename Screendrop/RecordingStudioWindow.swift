@@ -187,7 +187,7 @@ private struct RecordingStudioContent: View {
     }
 
     /// The name the recording's Library card shows; a bare movie's is its file name.
-    /// The package name ("Screendrop_…") was suggested before.
+    /// The package name ("Sukusho_…") was suggested before.
     private var shareSuggestedTitle: String {
         model.session == nil ? model.projectDisplayName : windowTitle
     }

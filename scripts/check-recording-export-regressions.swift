@@ -67,7 +67,7 @@ struct RecordingExportRegressionChecks {
     }
 
     static func chapterRenameUndo(in directory: URL) async throws {
-        let session = RecordingSession(directoryURL: directory.appendingPathComponent("chapter.screendroprec"))
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("chapter.sukushorec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
         try await movie(at: session.screenURL)
         let chapter = RecordingChapter(title: "Chapter 1", start: 0)
@@ -117,7 +117,7 @@ struct RecordingExportRegressionChecks {
     }
 
     static func unchangedRenderReuse(in directory: URL) async throws {
-        let session = RecordingSession(directoryURL: directory.appendingPathComponent("reuse.screendroprec"))
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("reuse.sukushorec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
         try await movie(at: session.screenURL)
         func installStopRender() throws { // An unedited recording's render is stamped with no document.
@@ -149,7 +149,7 @@ struct RecordingExportRegressionChecks {
 
     /// A second request for the same edits while the first renders waits for it instead of encoding beside it (sd-5oxt).
     static func sameEditRendersOnce(in directory: URL) async throws {
-        let session = RecordingSession(directoryURL: directory.appendingPathComponent("joined.screendroprec"))
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("joined.sukushorec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
         try await movie(at: session.screenURL)
         var settings = VideoCompressionSettings()
@@ -187,7 +187,7 @@ struct RecordingExportRegressionChecks {
 
     /// Agent Prompt on a never-saved, unedited recording uses the render made at Stop, which then survives closing Studio (sd-5oxt).
     static func agentPromptReusesStopRender(in directory: URL) async throws {
-        let session = RecordingSession(directoryURL: directory.appendingPathComponent("prompt-reuse.screendroprec"))
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("prompt-reuse.sukushorec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
         try await movie(at: session.screenURL)
         var manifest = CaptureManifest()
@@ -229,7 +229,7 @@ struct RecordingExportRegressionChecks {
     }
 
     static func quickLookInstant(in directory: URL) async throws {
-        let session = RecordingSession(directoryURL: directory.appendingPathComponent("quicklook.screendroprec"))
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("quicklook.sukushorec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
         try await movie(at: session.screenURL)
         func shown(_ url: URL) -> URL? { QuickLookPreviewPresenter.immediateURL(for: url) }
@@ -255,7 +255,7 @@ struct RecordingExportRegressionChecks {
     }
 
     static func unreadableDraft(in directory: URL) async throws {
-        let session = RecordingSession(directoryURL: directory.appendingPathComponent("unreadable-draft.screendroprec"))
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("unreadable-draft.sukushorec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
         try await movie(at: session.screenURL)
         try session.writeEditDocument(RecordingEditDocument(style: RecordingStudioStyle(), zoomEnabled: false, zoomCues: []))
@@ -280,7 +280,7 @@ struct RecordingExportRegressionChecks {
         try check(model.saveProject(reportingFailure: false) && StudioProjectRegistry.shared.document(for: session.directoryURL) != nil,
                   "Studio stayed blocked after Discard")
 
-        let broken = RecordingSession(directoryURL: directory.appendingPathComponent("unreadable-edit.screendroprec"))
+        let broken = RecordingSession(directoryURL: directory.appendingPathComponent("unreadable-edit.sukushorec"))
         try FileManager.default.createDirectory(at: broken.directoryURL, withIntermediateDirectories: false)
         try await movie(at: broken.screenURL)
         try corrupt.write(to: broken.editDocumentURL)
@@ -292,7 +292,7 @@ struct RecordingExportRegressionChecks {
     }
 
     static func chapterAtPlayhead(in directory: URL) async throws {
-        let session = RecordingSession(directoryURL: directory.appendingPathComponent("chapter-at-playhead.screendroprec"))
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("chapter-at-playhead.sukushorec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
         try await movie(at: session.screenURL)
         let legacy = RecordingChapter(title: "Chapter 7", start: 0)
@@ -343,7 +343,7 @@ struct RecordingExportRegressionChecks {
     }
 
     static func chapterMarkerDrag(in directory: URL) async throws {
-        let session = RecordingSession(directoryURL: directory.appendingPathComponent("chapter-marker-drag.screendroprec"))
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("chapter-marker-drag.sukushorec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
         try await movie(at: session.screenURL)
         let chapters = [RecordingChapter(title: "First", start: 0.5), RecordingChapter(title: "Middle", start: 5),
@@ -403,7 +403,7 @@ struct RecordingExportRegressionChecks {
     /// shape's antialiased edge as a dark outline (sd-p5zo). White footage over a light background can
     /// never leave an edge pixel darker than the shadowed background just outside it.
     static func shadowEdges(in directory: URL) async throws {
-        let session = RecordingSession(directoryURL: directory.appendingPathComponent("shadow-edges.screendroprec"))
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("shadow-edges.sukushorec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
         let white: (Double) -> CGColor = { _ in CGColor(gray: 1, alpha: 1) }
         // 1920x1080 puts Original's card edge at x = 73.56, partly covered as in real exports.
@@ -463,7 +463,7 @@ struct RecordingExportRegressionChecks {
     }
 
     static func captionPixels(in directory: URL) async throws {
-        let session = RecordingSession(directoryURL: directory.appendingPathComponent("fixture.screendroprec"))
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("fixture.sukushorec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
         try await movie(at: session.screenURL)
         let cut = RecordingClipTimeline(segments: [.init(sourceStart: 0, sourceEnd: 2), .init(sourceStart: 4, sourceEnd: 8)])
@@ -634,7 +634,7 @@ struct RecordingExportRegressionChecks {
 
     static func musicDelivery(in directory: URL) async throws {
         print("CHECK: preparing mic/camera/MP3 delivery fixture")
-        let session = RecordingSession(directoryURL: directory.appendingPathComponent("music-delivery.screendroprec"))
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("music-delivery.sukushorec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
         let video = directory.appendingPathComponent("delivery-screen.mov")
         let mic = directory.appendingPathComponent("delivery-mic.wav")
@@ -759,7 +759,7 @@ struct RecordingExportRegressionChecks {
 
     /// Local exports may be HEVC, but whatever is shared renders H.264, which every browser plays (sd-3ohr).
     static func sharedRendersStayH264(in directory: URL) async throws {
-        let session = RecordingSession(directoryURL: directory.appendingPathComponent("hevc-project.screendroprec"))
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("hevc-project.sukushorec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
         try await movie(at: session.screenURL)
         var settings = VideoCompressionSettings(codec: .hevc)
@@ -810,7 +810,7 @@ struct RecordingExportRegressionChecks {
             UserDefaults.standard.removePersistentDomain(forName: domain)
             CFPreferencesAppSynchronize(domain as CFString)
         }
-        let session = RecordingSession(directoryURL: directory.appendingPathComponent("remembered.screendroprec"))
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("remembered.sukushorec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
         try await movie(at: session.screenURL)
         let plain = try await RecordingSessionRenderer.makeConfiguration(for: session).exportSettings
@@ -864,7 +864,7 @@ struct RecordingExportRegressionChecks {
         // Projects that saved a codec keep it; ones that never did follow the remembered default.
         var codecs: [VideoCompressionCodec] = []
         for saved in [VideoCompressionCodec.h264, nil] {
-            let session = RecordingSession(directoryURL: directory.appendingPathComponent("saved-\(saved?.rawValue ?? "none").screendroprec"))
+            let session = RecordingSession(directoryURL: directory.appendingPathComponent("saved-\(saved?.rawValue ?? "none").sukushorec"))
             try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
             try await movie(at: session.screenURL)
             try session.writeEditDocument(RecordingEditDocument(style: RecordingStudioStyle(), zoomEnabled: false, zoomCues: [],
@@ -894,7 +894,7 @@ struct RecordingExportRegressionChecks {
         func level(_ url: URL, at time: Double, frequency: Float) async throws -> Float {
             try await audioLevels(at: url, time: time, length: 0.12, frequencies: [frequency])[0]
         }
-        let session = RecordingSession(directoryURL: directory.appendingPathComponent("music-mix.screendroprec"))
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("music-mix.sukushorec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
         let videoURL = directory.appendingPathComponent("music-video.mov")
         let micURL = directory.appendingPathComponent("music-mic.wav")
@@ -1020,7 +1020,7 @@ struct RecordingExportRegressionChecks {
     }
 
     static func replacementVideoTiming(in directory: URL) async throws {
-        let session = RecordingSession(directoryURL: directory.appendingPathComponent("replacement-video.screendroprec"))
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("replacement-video.sukushorec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
         let videoURL = directory.appendingPathComponent("replacement-colors.mov")
         try await movie(at: videoURL, colorAt: { time in
@@ -1082,7 +1082,7 @@ struct RecordingExportRegressionChecks {
     }
 
     static func backgroundMusicHistory(in directory: URL) async throws {
-        let session = RecordingSession(directoryURL: directory.appendingPathComponent("music-history.screendroprec"))
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("music-history.sukushorec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
         try await movie(at: session.screenURL)
         let first = directory.appendingPathComponent("history-a.wav"), second = directory.appendingPathComponent("history-b.wav")
@@ -1163,7 +1163,7 @@ struct RecordingExportRegressionChecks {
     }
 
     static func backgroundMusicDragAcrossImport(in directory: URL) async throws {
-        let session = RecordingSession(directoryURL: directory.appendingPathComponent("music-drag-import.screendroprec"))
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("music-drag-import.sukushorec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
         try await movie(at: session.screenURL)
         let first = directory.appendingPathComponent("drag-a.wav"), second = directory.appendingPathComponent("drag-b.wav")
@@ -1204,7 +1204,7 @@ struct RecordingExportRegressionChecks {
     }
 
     static func backgroundMusicRetention(in directory: URL) async throws {
-        let session = RecordingSession(directoryURL: directory.appendingPathComponent("music-retention.screendroprec"))
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("music-retention.sukushorec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
         try await movie(at: session.screenURL)
         let sourceBytes = try Data(contentsOf: session.screenURL)
@@ -1262,7 +1262,7 @@ struct RecordingExportRegressionChecks {
         try check(reopened.backgroundMusicSettings == snapshotOnly && reopened.backgroundMusic != nil, "Undo Revert to Original did not restore music")
         reopened.teardown()
 
-        let broken = RecordingSession(directoryURL: directory.appendingPathComponent("music-unreadable-snapshot.screendroprec"))
+        let broken = RecordingSession(directoryURL: directory.appendingPathComponent("music-unreadable-snapshot.sukushorec"))
         try FileManager.default.createDirectory(at: broken.directoryURL, withIntermediateDirectories: false)
         try FileManager.default.copyItem(at: session.screenURL, to: broken.screenURL)
         let protectedURL = broken.directoryURL.appendingPathComponent("\(RecordingBackgroundMusic.baseName).\(UUID().uuidString).wav")
@@ -1283,7 +1283,7 @@ struct RecordingExportRegressionChecks {
     }
 
     static func backgroundMusicStorage(in directory: URL) async throws {
-        let session = RecordingSession(directoryURL: directory.appendingPathComponent("music-storage.screendroprec"))
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("music-storage.sukushorec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
         try await movie(at: session.screenURL)
         let input = directory.appendingPathComponent("download.wav")
@@ -1355,7 +1355,7 @@ struct RecordingExportRegressionChecks {
     }
 
     static func voiceIsolation(in directory: URL) async throws {
-        let session = RecordingSession(directoryURL: directory.appendingPathComponent("voice.screendroprec"))
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("voice.sukushorec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
         let videoURL = directory.appendingPathComponent("voice-video.mov")
         let systemURL = directory.appendingPathComponent("system.wav")
@@ -1445,7 +1445,7 @@ struct RecordingExportRegressionChecks {
         try check(firstUse.currentDocument().isolateVoice, "Completed isolation was not persistable")
         firstUse.teardown()
         try check(try Data(contentsOf: session.screenURL) == sourceBytes, "Isolation modified the original recording")
-        let broken = RecordingSession(directoryURL: directory.appendingPathComponent("missing-mic.screendroprec"))
+        let broken = RecordingSession(directoryURL: directory.appendingPathComponent("missing-mic.sukushorec"))
         try FileManager.default.createDirectory(at: broken.directoryURL, withIntermediateDirectories: false)
         try FileManager.default.copyItem(at: videoURL, to: broken.screenURL)
         try broken.writeCaptureManifest(manifest)

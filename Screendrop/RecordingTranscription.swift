@@ -356,7 +356,7 @@ nonisolated enum RecordingTranscriptionService {
             throw TranscriptionError.narrationUnreadable
         }
         let outputURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("screendrop-narration-\(UUID().uuidString)")
+            .appendingPathComponent("sukusho-narration-\(UUID().uuidString)")
             .appendingPathExtension("m4a")
         try await exportSession.export(to: outputURL, as: .m4a)
         return outputURL
