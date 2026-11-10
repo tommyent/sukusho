@@ -20,6 +20,38 @@ private final class FeedFixtureBundle: NSObject {}
         return try #require(ScrollingCapturePixels.bytes(of: crop, in: ScrollingCapturePixels.colorSpace(of: image)))
     }
 
+    @Test("The live preview is the capture so far, every few pixels of every few rows")
+    func previewIsTheCaptureShrunk() async throws {
+        let top = try frame(3), lower = try frame(4)
+        let feed = try #require(ScrollingCaptureFeed(firstFrame: top, at: 0, selection: selection, ignoredTrailingColumns: 0))
+        #expect(await feed.add(lower, at: 1)?.placement == .appended(180))
+        let full = try #require(await feed.makeImage())
+        let preview = try #require(await feed.makePreview(maxWidth: 150))
+        // 600 px across fits 150 at every fourth pixel; 540 rows give 135.
+        #expect(preview.width == 150 && preview.height == 135)
+        let all = try pixels(full, rows: 0..<full.height), small = try pixels(preview, rows: 0..<preview.height)
+        for (x, y) in [(0, 0), (149, 0), (37, 60), (80, 100), (149, 134)] {
+            let from = (y * 4 * 600 + x * 4) * 4, to = (y * 150 + x) * 4
+            #expect(Array(all[from..<from + 4]) == Array(small[to..<to + 4]), "pixel \(x),\(y)")
+        }
+        #expect(try #require(await feed.makePreview(maxWidth: 4000)).width == 600, "never enlarged")
+    }
+
+    @Test("The preview strip sits right of the region, else left, and keeps clear of the bar")
+    func previewPlacement() {
+        let visible = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        func frame(_ rect: CGRect, bar: CGRect? = nil) -> CGRect? {
+            ScrollingCapturePreviewPlacement.frame(beside: rect, visible: visible, avoiding: bar, width: 156)
+        }
+        #expect(frame(CGRect(x: 200, y: 100, width: 800, height: 600)) == CGRect(x: 1004, y: 100, width: 156, height: 600))
+        #expect(frame(CGRect(x: 500, y: 100, width: 900, height: 600)) == CGRect(x: 340, y: 100, width: 156, height: 600))
+        #expect(frame(CGRect(x: 100, y: 100, width: 1300, height: 600)) == nil)
+        // A short region gets a taller strip, upward, unless the bar is in the way there.
+        let short = CGRect(x: 200, y: 300, width: 300, height: 200)
+        #expect(frame(short)?.height == 420 && frame(short)?.minY == 300)
+        #expect(frame(short, bar: CGRect(x: 100, y: 500, width: 524, height: 76))?.height == 200)
+    }
+
     @Test("At the end of the page the reference frame's rows below the selection go on under the capture")
     func rowsBelowComeFromTheReference() async throws {
         let top = try frame(3), lower = try frame(4)
