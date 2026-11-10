@@ -55,6 +55,9 @@ final class SettingsNavigation {
 // MARK: - Main Settings View
 
 struct SettingsView: View {
+    /// The sidebar's 200 points plus the widest pane: General needs 476 (measured on macOS
+    /// 27.0.1 and 27.3 as the window's 660 minus the squeezed sidebar's 184), with room to spare.
+    static let minimumWidth: CGFloat = 720
     @State private var navigation = SettingsNavigation.shared
     @State private var navigationHistory: [SettingsTab] = [.general]
     @State private var historyIndex = 0
@@ -66,6 +69,9 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationSplitView(columnVisibility: .constant(.all)) {
+            // The window's minimum width (`minimumWidth`) leaves this column its 200 points
+            // beside the widest pane. Below that, General's rows squeezed the column to 184
+            // and the 200-point sidebar hung over both edges, losing its left inset.
             SettingsSidebarView(selectedTab: $navigation.selectedTab)
                 .frame(width: 200)
                 .navigationSplitViewColumnWidth(
@@ -79,7 +85,7 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .navigationSplitViewStyle(.balanced)
-        .frame(minWidth: 660, minHeight: 540)
+        .frame(minWidth: SettingsView.minimumWidth, minHeight: 540)
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
                 Button {
@@ -186,7 +192,8 @@ private struct SettingsSidebarRow: View {
 private struct SettingsSidebarFooter: View {
     var body: some View {
         HStack(spacing: 6) {
-            Text(AppVersion.displayString)
+            // Without the word "Version": the build number is long and the sidebar narrow.
+            Text(AppVersion.displayString.replacingOccurrences(of: "Version ", with: ""))
                 .font(.footnote)
                 .foregroundStyle(.tertiary)
                 .fontDesign(.monospaced)
