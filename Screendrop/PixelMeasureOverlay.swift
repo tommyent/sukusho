@@ -13,6 +13,8 @@ struct PixelMeasureOverlay: View {
     let pointer: CGPoint?
     /// Set by the render check; otherwise Shift as held.
     var forcesBorder = false
+    /// The dock's crosshair draws both rulers with one shared label.
+    var crossAxis: PixelMeasureAxis?
 
     @State private var shiftHeld = false
 
@@ -22,7 +24,12 @@ struct PixelMeasureOverlay: View {
         ZStack(alignment: .topLeading) {
             if let ruler {
                 line(ruler)
-                label(ruler)
+                if let crossAxis, let other = self.ruler(crossAxis), let pointer {
+                    line(other)
+                    crosshairLabel(ruler, other, pointer: pointer)
+                } else {
+                    label(ruler)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -31,10 +38,40 @@ struct PixelMeasureOverlay: View {
         .accessibilityHidden(true)
     }
 
-    var ruler: PixelRuler? {
+    var ruler: PixelRuler? { ruler(axis) }
+
+    private func ruler(_ axis: PixelMeasureAxis) -> PixelRuler? {
         guard let pointer, let buffer = probe.buffer else { return nil }
         return PixelRuler(buffer: buffer, imageFrame: imageFrame, pointer: pointer, axis: axis,
                           includingBorder: shiftHeld || forcesBorder, pixelsPerPoint: probe.pixelsPerPoint)
+    }
+
+    /// One bubble for both rulers, in the quadrant below and right of the crossing, where
+    /// neither line runs; it flips to the other side near the canvas's right or bottom edge.
+    private func crosshairLabel(_ first: PixelRuler, _ second: PixelRuler, pointer: CGPoint) -> some View {
+        let horizontal = first.axis == .horizontal ? first : second
+        let vertical = first.axis == .horizontal ? second : first
+        let text = PixelMeasurement.label(width: horizontal.pixels, height: vertical.pixels,
+                                          pixelsPerPoint: probe.pixelsPerPoint)
+        let room = CGSize(width: 220, height: 20), gap: CGFloat = 10
+        return GeometryReader { proxy in
+            let right = pointer.x + gap + room.width <= proxy.size.width
+            let below = pointer.y + gap + room.height <= proxy.size.height
+            pill(text)
+                .frame(width: room.width, height: room.height, alignment: right ? .leading : .trailing)
+                .position(x: pointer.x + (right ? 1 : -1) * (gap + room.width / 2),
+                          y: pointer.y + (below ? 1 : -1) * (gap + room.height / 2))
+        }
+    }
+
+    private func pill(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .semibold).monospacedDigit())
+            .foregroundStyle(.white)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Self.tint, in: RoundedRectangle(cornerRadius: 4))
+            .fixedSize()
     }
 
     private func line(_ ruler: PixelRuler) -> some View {
@@ -64,13 +101,7 @@ struct PixelMeasureOverlay: View {
     private func label(_ ruler: PixelRuler) -> some View {
         let mid = CGPoint(x: (ruler.start.x + ruler.end.x) / 2, y: (ruler.start.y + ruler.end.y) / 2)
         let room: CGFloat = 130, gap: CGFloat = 8
-        let pill = Text(ruler.label)
-            .font(.system(size: 11, weight: .semibold).monospacedDigit())
-            .foregroundStyle(.white)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Self.tint, in: RoundedRectangle(cornerRadius: 4))
-            .fixedSize()
+        let pill = self.pill(ruler.label)
         return Group {
             if ruler.axis == .vertical {
                 if mid.x - gap - room >= 0 {

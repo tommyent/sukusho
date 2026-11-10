@@ -243,5 +243,7 @@ struct PixelMathTests {
                            axis: .vertical, includingBorder: false, pixelsPerPoint: 2) == nil)
         #expect(PixelMeasurement.label(pixels: 101, pixelsPerPoint: 2) == "50.5 pt · 101 px")
         #expect(PixelMeasurement.label(pixels: 101, pixelsPerPoint: 1) == "101 px")
+        #expect(PixelMeasurement.label(width: 886, height: 101, pixelsPerPoint: 2) == "443 × 50.5 pt · 886 × 101 px")
+        #expect(PixelMeasurement.label(width: 886, height: 178, pixelsPerPoint: 1) == "886 × 178 px")
     }
 }
