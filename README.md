@@ -172,6 +172,7 @@ Draw a box over a scrolling view, then scroll through it yourself or click the a
 - **Auto-scroll** moves the view a step at a time, paced by what has been captured, and finishes by itself at the end of the page. Scrolling yourself or moving the pointer off the bar hands control back to you. Auto-scroll needs the Accessibility permission; the bar offers to open it.
 - **Every frame is checked before it's added.** Apple's Vision framework proposes where the new frame fits, and Sukusho adds it only once an exact pixel match confirms it. A frame that doesn't fit is skipped, not joined in the wrong place.
 - **The capture bar** stays quiet through brief misses. If frames keep failing to fit, it says **Scroll back a little** when the view has moved past where it can line up, or **Something on the page keeps changing** for a video, an animation or a hover.
+- **A live preview** beside the box shows the whole capture so far, growing as you scroll, so a bad join is visible before you finish.
 - Click **Done**, or press the Scrolling Capture shortcut again, to keep everything captured so far. At the height limit the capture stops and waits for **Done**.
 
 Draw the box around the part that scrolls: a sidebar or button that stays put inside the box is repeated down the image.

@@ -123,3 +123,30 @@ nonisolated struct ScrollingCaptureOutputRect: Sendable {
     let columns: Range<Int>
     let rows: Range<Int>
 }
+
+/// Where the live preview strip goes, in AppKit screen coordinates.
+nonisolated enum ScrollingCapturePreviewPlacement {
+    /// The least height the strip gets beside a short region, so a long capture stays legible.
+    static let minimumHeight: CGFloat = 420
+    static let gap: CGFloat = 4
+
+    /// Right of the region, else left of it; nil when neither side has room. It starts at the
+    /// region's bottom edge and is at least `minimumHeight` tall where the screen allows,
+    /// unless that would run over the bar.
+    static func frame(beside rect: CGRect, visible: CGRect, avoiding bar: CGRect?, width: CGFloat) -> CGRect? {
+        let x: CGFloat
+        if rect.maxX + gap + width <= visible.maxX {
+            x = rect.maxX + gap
+        } else if rect.minX - gap - width >= visible.minX {
+            x = rect.minX - gap - width
+        } else {
+            return nil
+        }
+        let bottom = Swift.max(rect.minY, visible.minY)
+        let tall = CGRect(x: x, y: bottom, width: width,
+                          height: Swift.min(Swift.max(rect.height, minimumHeight), visible.maxY - bottom))
+        let short = CGRect(x: x, y: bottom, width: width, height: Swift.min(rect.height, visible.maxY - bottom))
+        let frame = bar.map(tall.intersects) == true ? short : tall
+        return frame.height >= 80 ? frame : nil
+    }
+}

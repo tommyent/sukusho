@@ -113,6 +113,12 @@ actor ScrollingCaptureFeed {
         return ScrollingCapturePixels.image(pixels, width: width, height: pixels.count / (width * 4), colorSpace: colorSpace)
     }
 
+    /// The capture so far, no wider than `maxWidth` pixels, for the live preview beside the region.
+    func makePreview(maxWidth: Int) async -> CGImage? {
+        let preview = await stitcher.preview(maxWidth: maxWidth)
+        return ScrollingCapturePixels.image(preview.pixels, width: preview.width, height: preview.height, colorSpace: colorSpace)
+    }
+
     private static func crop(_ frame: CGImage, to selection: CGRect) -> CGImage? {
         guard CGRect(x: 0, y: 0, width: frame.width, height: frame.height).contains(selection) else { return nil }
         return frame.cropping(to: selection)
