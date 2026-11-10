@@ -85,7 +85,9 @@ struct MenuBarView: View {
             } label: {
                 Label("Show Library", systemImage: "square.grid.2x2")
             }
-            .keyboardShortcut("l", modifiers: [.command, .shift])
+            // Shown here, registered system-wide by `HotkeyManager`: a menu's own shortcut
+            // only fires while Sukusho is the front app.
+            .keyboardShortcut(Self.shortcut(for: .library))
 
             Menu {
                 projectsMenuContent

@@ -160,6 +160,8 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
     case screenRecording
     case textCapture
     case scrollingCapture
+    /// Not a capture: brings the Library forward from any app.
+    case library
 
     var id: Self { self }
 
@@ -171,6 +173,7 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
         case .screenRecording: 4
         case .textCapture: 5
         case .scrollingCapture: 6
+        case .library: 7
         }
     }
 
@@ -182,6 +185,7 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
         case .screenRecording: "Screen Recording"
         case .textCapture: "Capture Text"
         case .scrollingCapture: "Scrolling Capture"
+        case .library: "Show Library"
         }
     }
 
@@ -204,6 +208,8 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
             HotkeyShortcut(modifiers: [.command, .shift], keyCode: Int(kVK_ANSI_5))
         case .scrollingCapture:
             HotkeyShortcut(modifiers: [.command, .shift], keyCode: Int(kVK_ANSI_4))
+        case .library:
+            HotkeyShortcut(modifiers: [.command, .shift], keyCode: Int(kVK_ANSI_L))
         }
     }
 
@@ -221,6 +227,8 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
             ScreendropPreferences.textCaptureHotkeyKey
         case .scrollingCapture:
             ScreendropPreferences.scrollingCaptureHotkeyKey
+        case .library:
+            ScreendropPreferences.libraryHotkeyKey
         }
     }
 
@@ -248,6 +256,8 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
             CaptureCoordinator.shared.captureText()
         case .scrollingCapture:
             CaptureCoordinator.shared.captureScrolling()
+        case .library:
+            CaptureLibraryModel.shared.show()
         }
     }
 }

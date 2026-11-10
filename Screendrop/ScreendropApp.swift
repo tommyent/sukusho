@@ -35,7 +35,7 @@ struct ScreendropApp: App {
             }
             CommandGroup(after: .newItem) {
                 Button("Show Library") { CaptureLibraryModel.shared.show() }
-                    .keyboardShortcut("l", modifiers: [.command, .shift])
+                    .keyboardShortcut(MenuBarView.shortcut(for: .library))
             }
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") { SettingsWindowController.show(tab: .general) }
