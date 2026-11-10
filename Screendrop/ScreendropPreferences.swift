@@ -31,8 +31,9 @@ enum ScreendropPreferences {
     static let captureWindowShadowKey = "captureWindowShadow"
     static let captureDelaySecondsKey = "captureDelaySeconds"
     /// Hidden: `defaults write <bundle id> areaCaptureUsesSystemPicker -bool YES`
-    /// brings back the system crosshair for the Area screenshot.
+    /// brings back the system crosshair for the Area screenshot and Capture Text.
     static let areaCaptureUsesSystemPickerKey = "areaCaptureUsesSystemPicker"
+    static let areaPickerHintsShownKey = "areaPickerHintsShown"
     static let previewPositionKey = "previewPosition"
     static let previewAutoCloseSecondsKey = "previewAutoCloseSeconds"
     static let previewCloseAfterDraggingKey = "previewCloseAfterDragging"
@@ -196,10 +197,19 @@ enum ScreendropPreferences {
         UserDefaults.standard.bool(forKey: captureWindowShadowKey)
     }
 
-    /// The Area screenshot uses `screencapture -s` instead of Sukusho's own
-    /// picker: no snapping and no loupe, but the system's own crosshair.
+    /// The Area screenshot and Capture Text use `screencapture -s` instead of
+    /// Sukusho's own picker: no snapping and no loupe, but the system's own crosshair.
     static var areaCaptureUsesSystemPicker: Bool {
         UserDefaults.standard.bool(forKey: areaCaptureUsesSystemPickerKey)
+    }
+
+    /// Whether the picker opening now shows its line about Shift and Option:
+    /// the first three times it opens, counted here, and never again.
+    static func takeAreaPickerHint() -> Bool {
+        let shown = UserDefaults.standard.integer(forKey: areaPickerHintsShownKey)
+        guard shown < 3 else { return false }
+        UserDefaults.standard.set(shown + 1, forKey: areaPickerHintsShownKey)
+        return true
     }
 
     /// Countdown delay (in seconds) before a capture is taken. 0 means off.

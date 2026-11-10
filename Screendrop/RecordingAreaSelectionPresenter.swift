@@ -9,8 +9,8 @@ import AppKit
 import ScreenCaptureKit
 
 /// The drag-an-area picker: for an area recording and a scrolling capture on
-/// one display, and for the Area screenshot on every display, where Shift
-/// snaps to the box under the pointer and Option shows a loupe.
+/// one display, and for the Area screenshot and Capture Text on every display,
+/// where Shift snaps to the box under the pointer and Option shows a loupe.
 @MainActor
 final class RecordingAreaSelectionPresenter {
     static let shared = RecordingAreaSelectionPresenter()
@@ -46,19 +46,23 @@ final class RecordingAreaSelectionPresenter {
         }
     }
 
-    /// The Area screenshot's picker, on every display: drag a free area, or
-    /// hold Shift and click the highlighted box. Returns the area in global
+    /// The picker of the Area screenshot and Capture Text, on every display:
+    /// drag a free area, or hold Shift and click the highlighted box. Returns the area in global
     /// Quartz points (top-left origin), whole pixels, or nil when cancelled.
     /// `windows` are the on-screen app windows, front to back, in the same space.
     func selectScreenshotArea(windows: [CGRect]) async -> CGRect? {
         cancel()
 
+        let showsHint = ScreendropPreferences.takeAreaPickerHint()
         return await withCheckedContinuation { continuation in
             completion = { continuation.resume(returning: $0) }
             for screen in NSScreen.screens {
                 guard let displayID = ActiveDisplayResolver.displayID(for: screen) else { continue }
                 let scale = screen.backingScaleFactor
-                show(on: screen, pixelScale: CGSize(width: scale, height: scale), isScreenshot: true) { panel, localRect in
+                // Above the Dock, when it's at the bottom of this display.
+                let hintInset = showsHint ? screen.visibleFrame.minY - screen.frame.minY + 28 : nil
+                show(on: screen, pixelScale: CGSize(width: scale, height: scale), isScreenshot: true,
+                     hintInset: hintInset) { panel, localRect in
                     // From the display's own top-left corner, so it doesn't matter where AppKit puts the screen.
                     let origin = CGDisplayBounds(displayID).origin
                     return CGRect(
@@ -78,7 +82,7 @@ final class RecordingAreaSelectionPresenter {
         finish(rect: nil)
     }
 
-    private func show(on screen: NSScreen, pixelScale: CGSize, isScreenshot: Bool,
+    private func show(on screen: NSScreen, pixelScale: CGSize, isScreenshot: Bool, hintInset: CGFloat? = nil,
                       globalRect: @escaping (NSPanel, CGRect) -> CGRect) {
         let panel = RecordingAreaSelectionPanel(
             contentRect: screen.frame,
@@ -101,7 +105,8 @@ final class RecordingAreaSelectionPresenter {
         let selectionView = RecordingAreaSelectionView(
             frame: CGRect(origin: .zero, size: screen.frame.size),
             pixelScale: pixelScale,
-            isScreenshot: isScreenshot
+            isScreenshot: isScreenshot,
+            hintInset: hintInset
         )
         selectionView.onCancel = { [weak self] in
             self?.finish(rect: nil)
@@ -228,6 +233,9 @@ private final class RecordingAreaSelectionView: NSView {
     private let pixelScale: CGSize
     /// The Area screenshot's picker: Shift snaps, Option magnifies, Space moves the area.
     private let isScreenshot: Bool
+    /// How far above the display's bottom edge the line about Shift and
+    /// Option sits; nil once it has been shown often enough.
+    private let hintInset: CGFloat?
     private var didPushSelectionCursor = false
 
     /// Where the pointer is, while it's on this display.
@@ -247,9 +255,10 @@ private final class RecordingAreaSelectionView: NSView {
         true
     }
 
-    init(frame frameRect: NSRect, pixelScale: CGSize, isScreenshot: Bool) {
+    init(frame frameRect: NSRect, pixelScale: CGSize, isScreenshot: Bool, hintInset: CGFloat?) {
         self.pixelScale = pixelScale
         self.isScreenshot = isScreenshot
+        self.hintInset = hintInset
         heldSinceOpen = NSEvent.modifierFlags
         super.init(frame: frameRect)
         wantsLayer = true
@@ -289,8 +298,19 @@ private final class RecordingAreaSelectionView: NSView {
             drawBadge(sizeLabel(for: snapRect)) { self.badgeOrigin(for: snapRect, size: $0) }
         }
 
-        if isScreenshot, modifiers.contains(.option), let pointer, let frozenImage {
+        let showsLoupe = isScreenshot && modifiers.contains(.option) && pointer != nil && frozenImage != nil
+        if showsLoupe, let pointer, let frozenImage {
             drawLoupe(of: frozenImage, at: pointer)
+        }
+
+        // Only while nothing else is drawn, and not under the pointer: it
+        // never meets the size label, the loupe or an area being placed.
+        if let hintInset, selectionRect == nil, pressedSnap == nil, snapRect == nil, !showsLoupe {
+            drawBadge("Hold Shift to snap to a box  ·  Hold Option to zoom in") { size in
+                let origin = CGPoint(x: self.bounds.midX - size.width / 2, y: hintInset)
+                let reach = CGRect(origin: origin, size: size).insetBy(dx: -48, dy: -48)
+                return self.pointer.map(reach.contains) == true ? nil : origin
+            }
         }
     }
 
@@ -310,7 +330,8 @@ private final class RecordingAreaSelectionView: NSView {
         return "\(pixelWidth) x \(pixelHeight)"
     }
 
-    private func drawBadge(_ label: String, at origin: (CGSize) -> CGPoint) {
+    /// `origin` places the badge given its size, or returns nil to leave it out.
+    private func drawBadge(_ label: String, at origin: (CGSize) -> CGPoint?) {
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold),
             .foregroundColor: NSColor.white
@@ -319,7 +340,8 @@ private final class RecordingAreaSelectionView: NSView {
         let textSize = attributedLabel.size()
         let padding = CGSize(width: 10, height: 6)
         let badgeSize = CGSize(width: textSize.width + padding.width * 2, height: textSize.height + padding.height * 2)
-        let badgeRect = CGRect(origin: origin(badgeSize), size: badgeSize)
+        guard let badgeOrigin = origin(badgeSize) else { return }
+        let badgeRect = CGRect(origin: badgeOrigin, size: badgeSize)
 
         NSColor.black.withAlphaComponent(0.72).setFill()
         NSBezierPath(roundedRect: badgeRect, xRadius: 7, yRadius: 7).fill()
