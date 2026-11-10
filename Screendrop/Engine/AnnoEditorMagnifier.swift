@@ -4,6 +4,7 @@ extension AnnoEditor {
     func beginMagnifier(_ pointer: PointerInfo) {
         markUndo()
         var props = MagnifierProps()
+        props.shape = currentMagnifierShape
         props.ringSize = Swift.max(24, Double(Swift.max(viewport.imageSize.width, viewport.imageSize.height)) * 0.06)
         props.loupeSize = props.ringSize * currentMagnifierZoom
         props.loupe = Vec((props.ringSize + props.loupeSize) / 2 + props.ringSize * 0.5, 0)
@@ -19,7 +20,13 @@ extension AnnoEditor {
         guard abs(dx) + abs(dy) > 2 else { return }
         document.update(id) { shape in
             guard case var .magnifier(props) = shape.kind else { return }
-            props.ringSize = Swift.max(8, Swift.max(abs(dx), abs(dy)))
+            if props.shape == .rectangle, abs(dx) >= 8, abs(dy) >= 8 {
+                // A rectangle takes the drag's own proportions, within 4:1 either way.
+                props.aspect = Swift.min(4, Swift.max(0.25, abs(dx) / abs(dy)))
+                props.ringSize = abs(dx)
+            } else {
+                props.ringSize = Swift.max(8, Swift.max(abs(dx), abs(dy)))
+            }
             props.ring = Vec(dx / 2, dy / 2)
             props.loupeSize = props.ringSize * currentMagnifierZoom
             props.loupe = Vec(props.ring.x + (props.ringSize + props.loupeSize) / 2 + props.ringSize * 0.5, props.ring.y)
@@ -62,13 +69,15 @@ extension AnnoEditor {
             setSnapGuides(result.guides)
         case .magnifierRingResize, .magnifierLoupeResize:
             let center = handle == .magnifierRingResize ? props.ring : props.loupe
-            let size = Swift.max(8, 2 * Swift.max(abs(local.x - center.x), abs(local.y - center.y)))
+            // Sizes are widths; a rectangle keeps the proportions it was drawn with.
+            let ratio = props.heightRatio
+            let size = Swift.max(8, 2 * Swift.max(abs(local.x - center.x), abs(local.y - center.y) / ratio))
             let direction = Vec(local.x < center.x ? -1 : 1, local.y < center.y ? -1 : 1)
-            let corner = Vec.add(center, Vec.mul(direction, size / 2))
+            let corner = Vec(center.x + direction.x * size / 2, center.y + direction.y * size * ratio / 2)
             let point = snapPoint(shape.pageTransform.applyToPoint(corner), excluding: [id],
                                   pointer: pointer, direction: Vec.rot(direction, shape.rotation))
             let snapped = document.pointInShapeSpace(shape, point)
-            let snappedSize = Swift.max(8, 2 * Swift.max(abs(snapped.x - center.x), abs(snapped.y - center.y)))
+            let snappedSize = Swift.max(8, 2 * Swift.max(abs(snapped.x - center.x), abs(snapped.y - center.y) / ratio))
             if handle == .magnifierRingResize { props.ringSize = snappedSize }
             else { props.loupeSize = snappedSize }
         default: return
@@ -81,7 +90,7 @@ extension AnnoEditor {
             let center = handle == .magnifierRingResize ? props.ring : props.loupe
             let size = handle == .magnifierRingResize ? props.ringSize : props.loupeSize
             let corner = Vec(center.x + (local.x < center.x ? -size : size) / 2,
-                             center.y + (local.y < center.y ? -size : size) / 2)
+                             center.y + (local.y < center.y ? -size : size) * props.heightRatio / 2)
             anchors += AnnoSnapping.anchors(shape.pageTransform.applyToPoint(corner))
         }
         retainSnapGuides(alignedWith: anchors)

@@ -326,6 +326,18 @@ struct AnnotationEditorInspector: View {
                         get: { model.magnifierZoom },
                         set: { onEditorAction(); model.setMagnifierZoom($0) }
                     ), range: 1...8, format: .magnification(fractionDigits: 1))
+                    InspectorRow("Shape") {
+                        InspectorSegmented(
+                            options: MagnifierShape.allCases,
+                            isSelected: { $0 == model.magnifierShape },
+                            onTap: {
+                                onEditorAction()
+                                model.setMagnifierShape($0)
+                            },
+                            label: { Text($0.label) },
+                            height: InspectorMetrics.controlHeight
+                        )
+                    }
                 }
                 if model.isFillStyleAvailable {
                     InspectorRow("Fill") {

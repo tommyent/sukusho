@@ -199,7 +199,7 @@ enum AnnoShapeDrawing {
     private static func drawMagnifier(_ props: MagnifierProps, shape: AnnoShape, source: CGImage?,
         in context: CGContext, pageSize: CGSize) {
         guard props.isValid else { return }
-        let ring = MagnifierProps.path(props.ringRect), loupe = MagnifierProps.path(props.loupeRect)
+        let ring = props.path(props.ringRect), loupe = props.path(props.loupeRect)
         context.setStrokeColor(props.swatch.nsColor.cgColor)
         context.setLineWidth(props.strokeWidth)
         context.setLineCap(.round)
@@ -234,9 +234,14 @@ enum AnnoShapeDrawing {
         let outlineWidth = Swift.max(1, props.diameter * 0.055)
 
         context.setFillColor(props.swatch.nsColor.cgColor)
-        context.fillEllipse(in: rect)
         context.setStrokeColor(props.swatch.numberedCircleOutlineNSColor.cgColor)
         context.setLineWidth(outlineWidth)
+        if let tail = props.tailPath {
+            // Under the disc, whose fill covers the tail's base and its outline there.
+            context.setLineJoin(.round)
+            context.addPath(tail); context.drawPath(using: .fillStroke)
+        }
+        context.fillEllipse(in: rect)
         context.strokeEllipse(in: rect.insetBy(dx: outlineWidth / 2, dy: outlineWidth / 2))
 
         // The digits go through the same glyph-outline path text uses, so a rotated callout's

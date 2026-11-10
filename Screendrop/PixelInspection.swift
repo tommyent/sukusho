@@ -207,6 +207,16 @@ nonisolated enum PixelMeasurement {
         let shown = points.rounded() == points ? String(Int(points)) : String(format: "%.1f", points)
         return "\(shown) pt · \(pixels) px"
     }
+
+    /// Width by height, for the crosshair's one label: "443 × 89 pt · 886 × 178 px".
+    static func label(width: Int, height: Int, pixelsPerPoint: CGFloat) -> String {
+        guard pixelsPerPoint > 1.001 else { return "\(width) × \(height) px" }
+        func points(_ pixels: Int) -> String {
+            let points = Double(pixels) / Double(pixelsPerPoint)
+            return points.rounded() == points ? String(Int(points)) : String(format: "%.1f", points)
+        }
+        return "\(points(width)) × \(points(height)) pt · \(width) × \(height) px"
+    }
 }
 
 nonisolated struct PixelPoint: Hashable, Sendable {

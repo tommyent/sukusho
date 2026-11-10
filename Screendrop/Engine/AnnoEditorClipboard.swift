@@ -37,7 +37,7 @@ private struct AnnotationClipboard: Codable {
         case let .highlight(p):
             return positive(p.w, p.h)
         case let .numbered(p):
-            return positive(p.diameter) && safe(Double(p.value))
+            return positive(p.diameter) && safe(Double(p.value)) && (p.tail.map { safe($0) } ?? true)
         case let .magnifier(p):
             return p.isValid && positive(p.ringSize, p.loupeSize) && safe(p.ring) && safe(p.loupe) && safe(p.strokeWidth)
         case let .image(p):

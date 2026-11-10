@@ -83,8 +83,8 @@ extension AnnoEditor {
         if let shape = hitShape(at: pointer.pagePoint) {
             if !pointer.shift, case let .magnifier(props) = shape.kind {
                 let local = document.pointInShapeSpace(shape, pointer.pagePoint)
-                let handle: AnnoSelectionHandle? = MagnifierProps.path(props.loupeRect).contains(local.cgPoint) ? .magnifierLoupe
-                    : MagnifierProps.path(props.ringRect).contains(local.cgPoint) ? .magnifierRing : nil
+                let handle: AnnoSelectionHandle? = props.path(props.loupeRect).contains(local.cgPoint) ? .magnifierLoupe
+                    : props.path(props.ringRect).contains(local.cgPoint) ? .magnifierRing : nil
                 if let handle {
                     selectedIds = [shape.id]
                     beginMagnifierDrag(shape, handle: handle, pointer: pointer)
@@ -242,7 +242,6 @@ extension AnnoEditor {
         switch interaction {
         case let .creatingMagnifier(id, _):
             selectedIds = [id]
-            tool = .select
         case let .drawing(id, _):
             document.update(id) { shape in
                 if case var .draw(props) = shape.kind {
@@ -270,7 +269,6 @@ extension AnnoEditor {
                 setBoxSize(id, width: fallback, height: fallback)
             }
             selectedIds = [id]
-            tool = .select
 
         case let .creatingArrow(id):
             if let shape = document.shape(id), let props = shape.arrowProps,
@@ -279,12 +277,15 @@ extension AnnoEditor {
                 document.delete([id])
             } else {
                 selectedIds = [id]
-                if document.shape(id)?.tool != .highlighter { tool = .select }
             }
 
         case let .draggingTextTail(id):
             // Dropped back on the box: no tail.
             document.update(id) { shape in
+                if case var .numbered(props) = shape.kind, props.tail != nil, props.tailPath == nil {
+                    props.tail = nil
+                    shape.kind = .numbered(props)
+                }
                 guard case var .text(props) = shape.kind, props.tail != nil, TextMeasure.tailPath(props) == nil else { return }
                 props.tail = nil
                 shape.kind = .text(props)
@@ -723,9 +724,15 @@ extension AnnoEditor {
         guard let shape = document.shape(id) else { return }
         let tip = document.pointInShapeSpace(shape, pointer.pagePoint)
         document.update(id) { shape in
-            guard case var .text(props) = shape.kind else { return }
-            props.tail = tip
-            shape.kind = .text(props)
+            switch shape.kind {
+            case var .text(props):
+                props.tail = tip
+                shape.kind = .text(props)
+            case var .numbered(props):
+                props.tail = props.tailTip(toward: tip)
+                shape.kind = .numbered(props)
+            default: break
+            }
         }
     }
 
@@ -841,8 +848,6 @@ extension AnnoEditor {
             selectedIds.remove(id)
         }
         onEditingTextChanged?(nil)
-        // Keep an explicitly chosen next tool when its observer commits the text.
-        if tool == .text { tool = .select }
         notifyChanged()
     }
 

@@ -268,7 +268,7 @@ final class AnnoCanvasNSView: NSView {
         if editor.selectedIds.count == 1, let shape = editor.selectedShapes.first, case let .magnifier(props) = shape.kind {
             var transform = shape.pageTransform.cgAffineTransform.concatenating(pageToView)
             for rect in [props.ringRect, props.loupeRect] {
-                if let path = MagnifierProps.path(rect).copy(using: &transform) {
+                if let path = props.path(rect).copy(using: &transform) {
                     context.addPath(path); context.setStrokeColor(accent.cgColor)
                     context.setLineWidth(lineWidth); context.strokePath()
                 }
