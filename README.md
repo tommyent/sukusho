@@ -98,13 +98,13 @@ One window for screenshots, recordings and recording projects, with **Uploads**,
 - Cards with an adjustable size, search (**Command + F**), and filters for screenshots or recordings. Tags have their own colours and icons.
 - **Search inside captures:** search matches names, titles, tags, the app and window a capture was taken from, and the words in it. The Library reads the text in screenshots, and in recordings three frames plus their captions, on your Mac. Type `app:` and a name, such as `app:safari` or `app:"visual studio"`, to keep only captures taken in that app.
 - An inspector with dimensions, dates, duration, disk use, the app and window a capture came from, the text read in it (with **Copy Text**), and tags (**Option + Command + I** shows or hides it). It suggests tags, starting with the app's name; a suggestion is added only when you click it, and one you dismiss stays gone for that capture.
-- **Apple Intelligence**, where it's available, names captures you haven't named and suggests more tags, from the text read in them, on your Mac. **Settings → General → Library** turns text reading and this off, and titles older captures when you click **Start**.
+- **Apple Intelligence**, where it's available, names captures you haven't named and suggests more tags, from the text read in them, on your Mac. **Settings → Library** turns text reading and this off, and titles older captures when you click **Start**.
 - Right-click a capture for **Quick Look**, **Edit**, **Rename**, **Revert to Original…** (on an edited capture), **Copy**, **Export…**, the system **Share…** sheet, **Reveal in Finder** and **Move to Trash**. Recordings add **Export as GIF…**, **Export Bug Report** and **Export How-To Guide**. The same menu holds the cloud actions: **Share to Cloud…** before upload; **Copy Cloud Link**, **Open Shared Capture** and **Delete from Cloud…** after.
 - Each card has a cloud badge: click it to share the capture, or to copy its link once shared. Shared captures show a green cloud with a tick.
 - Right-click between the cards to change the sort order or **Refresh** (**Command + R**).
 - **Space** opens Quick Look and **Return** renames. Select several captures to copy, export, share, reveal or trash them together.
-- **Appearance:** **Settings → General → Workspace → Appearance** keeps Sukusho's windows **Light** or **Dark**, or follows macOS with **Automatic**, the default.
-- **Workspace background:** **Settings → General → Workspace** sets what the Library, the image editor and Studio draw behind your captures: **Dots** (the default), **Plain** grey, or a **Wallpaper**: one of the wallpapers the screenshot background keeps, an image you add (Sukusho keeps its own copy) or an Unsplash photo. **Dim** fades it into the grey, more in dark mode, and **Blur** softens it. It never appears in captures, exports or uploads. With Reduce Transparency or Increase Contrast on, the workspaces stay plain grey.
+- **Appearance:** **Settings → General → Appearance → Theme** keeps Sukusho's windows **Light** or **Dark**, or follows macOS with **Automatic**, the default.
+- **Workspace background:** **Settings → General → Appearance** sets what the Library, the image editor and Studio draw behind your captures: **Dots** (the default), **Plain** grey, or a **Wallpaper**: one of the wallpapers the screenshot background keeps, an image you add (Sukusho keeps its own copy) or an Unsplash photo. **Dim** fades it into the grey, more in dark mode, and **Blur** softens it. It never appears in captures, exports or uploads. With Reduce Transparency or Increase Contrast on, the workspaces stay plain grey.
 
 Opening Sukusho shows the Library; when it starts at login, it stays in the menu bar.
 
@@ -158,7 +158,7 @@ Capture a display, a window, an area, a scrolling region, or just the text in an
 | `Command + Shift + 6` | Screen recording |
 | `Command + Shift + L` | Show the Library |
 
-`Command + Shift + 3`, `4` and `5` are also macOS's own screenshot shortcuts, so turn those off in macOS's keyboard shortcut settings (under Screenshots) for Sukusho to get them. Change any shortcut in **Settings → General**. If a shortcut can't be registered, Settings says why and keeps the previous one.
+`Command + Shift + 3`, `4` and `5` are also macOS's own screenshot shortcuts, so turn those off in macOS's keyboard shortcut settings (under Screenshots) for Sukusho to get them. Change any shortcut in **Settings → Shortcuts**. If a shortcut can't be registered, Settings says why and keeps the previous one.
 
 - **Screenshot options** in **Settings → Screenshots**: a 3, 5 or 10 second timer, window shadows, trimming the empty menu bar strip from full-screen captures on notched Macs, PNG or JPEG, and an option to also copy as TIFF for apps that can't paste PNG.
 - **After each capture**, choose any of: show the preview, copy, save, upload and copy the link, and open the editor or pin the screenshot above other windows. Recordings have their own set, and open in Studio by default.
