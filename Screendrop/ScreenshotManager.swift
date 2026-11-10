@@ -78,6 +78,41 @@ final class ScreenshotManager {
         return await runScreencapture(args: ["-s"] + delayArguments(delaySeconds))
     }
 
+    /// Captures an area already chosen in Sukusho's own picker: `-R` takes
+    /// it in global points from the main display's top-left corner. The delay
+    /// fires before the capture, as it does after a drag with `-s`.
+    ///
+    /// `-R` captures whole points (a 102-point-tall area starting on a half
+    /// point came out 103 points tall, VM, macOS 27.0.1), so the whole points
+    /// around the area are captured and the extra pixels cut off.
+    func captureArea(_ rect: CGRect, delaySeconds: Int = 0) async -> URL? {
+        let outer = rect.integral
+        let values = [outer.minX, outer.minY, outer.width, outer.height].map { String(Int($0)) }
+        guard let url = await runScreencapture(
+            args: ["-R", values.joined(separator: ",")] + delayArguments(delaySeconds)
+        ) else { return nil }
+        if outer != rect { cropCapture(at: url, of: outer, to: rect) }
+        return url
+    }
+
+    /// Rewrites the PNG of `outer` (in points) as the part of it showing
+    /// `rect`, keeping its properties (DPI). Left as it is when it can't be read.
+    private func cropCapture(at url: URL, of outer: CGRect, to rect: CGRect) {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return }
+        let scale = CGFloat(image.width) / outer.width
+        let pixels = CGRect(
+            x: ((rect.minX - outer.minX) * scale).rounded(), y: ((rect.minY - outer.minY) * scale).rounded(),
+            width: (rect.width * scale).rounded(), height: (rect.height * scale).rounded()
+        )
+        guard let cropped = image.cropping(to: pixels),
+              let destination = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) else {
+            return
+        }
+        CGImageDestinationAddImage(destination, cropped, CGImageSourceCopyPropertiesAtIndex(source, 0, nil))
+        CGImageDestinationFinalize(destination)
+    }
+
     /// Builds the `-T <seconds>` delay arguments, or none when the timer is off.
     private func delayArguments(_ seconds: Int) -> [String] {
         seconds > 0 ? ["-T", "\(seconds)"] : []

@@ -63,7 +63,7 @@ final class CaptureSourceProbe {
     }
 
     /// Front to back, as the window server reports them.
-    private let windows: [Window]
+    let windows: [Window]
     private let frontmostPID: pid_t?
     private var pressedAt: CGPoint?
     private var releasedAt: CGPoint?

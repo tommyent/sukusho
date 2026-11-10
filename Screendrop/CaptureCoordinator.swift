@@ -121,8 +121,27 @@ final class CaptureCoordinator {
         return await finishCapture(url: url, displayID: displayID, source: source)
     }
 
+    /// Sukusho's own picker draws the area (Shift snaps to a box, Option
+    /// magnifies); `screencapture` then takes it, so the file, its DPI and the
+    /// self-timer are the same as with the system crosshair.
     @discardableResult
     private func performCaptureArea() async -> URL? {
+        guard !ScreendropPreferences.areaCaptureUsesSystemPicker else { return await performSystemCaptureArea() }
+        // The windows as they are before the picker's own panels go up.
+        let probe = CaptureSourceProbe(tracksPointer: false)
+        let picked = await RecordingAreaSelectionPresenter.shared.selectScreenshotArea(windows: probe.windows.map(\.bounds))
+        guard let rect = picked else { return nil }
+        let source = probe.finish(.region(rect))
+        let displayID = ActiveDisplayResolver.activeDisplayID(preferPointer: true)
+        guard let url = await ScreenshotManager.shared.captureArea(
+            rect, delaySeconds: ScreendropPreferences.captureDelaySeconds
+        ) else { return nil }
+        return await finishCapture(url: url, displayID: displayID, source: source)
+    }
+
+    /// The system crosshair, kept behind `areaCaptureUsesSystemPicker`.
+    @discardableResult
+    private func performSystemCaptureArea() async -> URL? {
         // The self-timer is handled by screencapture's `-T` so the delay
         // happens *after* the area is drawn, not before.
         let probe = CaptureSourceProbe(tracksPointer: true)
