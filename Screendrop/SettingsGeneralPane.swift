@@ -41,7 +41,7 @@ struct GeneralSettingsPane: View {
             // Every capture shortcut in one place, images first and the
             // recording last (design pass choice 12).
             CaptureHotkeySettingsSection(
-                actions: [.fullscreen, .window, .area, .scrollingCapture, .textCapture, .screenRecording]
+                actions: [.fullscreen, .window, .area, .scrollingCapture, .textCapture, .screenRecording, .library]
             )
 
             Section("Save Location") {
