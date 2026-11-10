@@ -30,6 +30,9 @@ enum ScreendropPreferences {
     static let includeAppWindowsInCapturesKey = "includeAppWindowsInCaptures"
     static let captureWindowShadowKey = "captureWindowShadow"
     static let captureDelaySecondsKey = "captureDelaySeconds"
+    /// Hidden: `defaults write <bundle id> areaCaptureUsesSystemPicker -bool YES`
+    /// brings back the system crosshair for the Area screenshot.
+    static let areaCaptureUsesSystemPickerKey = "areaCaptureUsesSystemPicker"
     static let previewPositionKey = "previewPosition"
     static let previewAutoCloseSecondsKey = "previewAutoCloseSeconds"
     static let previewCloseAfterDraggingKey = "previewCloseAfterDragging"
@@ -190,6 +193,12 @@ enum ScreendropPreferences {
     /// (tighter, shadow-free crops).
     static var captureWindowShadow: Bool {
         UserDefaults.standard.bool(forKey: captureWindowShadowKey)
+    }
+
+    /// The Area screenshot uses `screencapture -s` instead of Sukusho's own
+    /// picker: no snapping and no loupe, but the system's own crosshair.
+    static var areaCaptureUsesSystemPicker: Bool {
+        UserDefaults.standard.bool(forKey: areaCaptureUsesSystemPickerKey)
     }
 
     /// Countdown delay (in seconds) before a capture is taken. 0 means off.
