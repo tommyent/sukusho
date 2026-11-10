@@ -359,7 +359,7 @@ struct CaptureLibraryView: View {
             }
         } else {
             CaptureLibraryCollection(items: model.visibleItems, revision: model.contentRevision, layout: .grid,
-                cardWidth: cardWidth, selection: $model.selection, isBusy: model.isBusy,
+                cardWidth: cardWidth, selection: $model.selection, isBusy: model.isBusy, reveal: model.revealed,
                 cell: { item, selected, onTitleFrame in
                     AnyView(LibraryCellContent(item: item, selected: selected, onTitleFrame: onTitleFrame))
                 },

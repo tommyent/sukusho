@@ -38,6 +38,12 @@ nonisolated enum CaptureLibraryLayout {
     case grid, list
 }
 
+/// A request to scroll a capture into view; `serial` tells a repeat apart.
+nonisolated struct CaptureReveal: Equatable {
+    let id: String
+    let serial: Int
+}
+
 /// A running Library export of an Agent Prompt. Its progress is its own
 /// observable, so a tick redraws only the card and status bar that show it.
 @Observable
@@ -200,6 +206,10 @@ final class CaptureLibraryModel {
     @ObservationIgnored private var visibleIndices: [String: Int] = [:]
     @ObservationIgnored var openWindow: (() -> Void)?
     @ObservationIgnored private var pendingOpen = false
+    /// A capture to select once it's listed.
+    @ObservationIgnored private var pendingReveal: String?
+    /// The capture last revealed, for the grid to scroll to.
+    private(set) var revealed: CaptureReveal?
 
     private init() {}
 
@@ -268,6 +278,8 @@ final class CaptureLibraryModel {
             tags = tagCounts.keys.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
             if let tagFilter, tagCounts[tagFilter] == nil { self.tagFilter = nil }
             updateVisibleItems()
+            // Not in a fresh scan: deleted since Spotlight listed it.
+            pendingReveal = nil
             isLoading = false
             hasLoaded = true
             CaptureLibraryIndex.shared.sync(result, isComplete: historyLoaded && recordingsListed)
@@ -333,6 +345,21 @@ final class CaptureLibraryModel {
             contentRevision &+= 1
         }
         selection.formIntersection(Set(visibleIndices.keys))
+        if let id = pendingReveal, visibleIndices[id] != nil {
+            pendingReveal = nil
+            selection = [id]
+            revealed = CaptureReveal(id: id, serial: (revealed?.serial ?? 0) + 1)
+        }
+    }
+
+    /// Shows the Library with one capture selected and scrolled into view:
+    /// a capture picked in Spotlight or opened by a Shortcut. One the Library
+    /// doesn't list yet is selected by the scan this starts, if it exists.
+    func reveal(_ id: String) {
+        show(filter: .all)
+        pendingReveal = id
+        updateVisibleItems()
+        if pendingReveal != nil { refresh() }
     }
 }
 

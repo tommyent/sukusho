@@ -182,6 +182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.removeObject(forKey: "captureLibrary.layout")
         ImageTextWarmUp.shared.start()
         CaptureLibraryIndex.shared.start()
+        CaptureLibrarySpotlight.shared.start()
         FileRequestsModel.shared.start()
         ShakeToUpload.shared.update()
         AgentAccess.shared.start()
@@ -215,6 +216,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         onOpenFiles(urls)
+    }
+
+    /// A capture picked in Spotlight.
+    func application(_ application: NSApplication, continue userActivity: NSUserActivity,
+                     restorationHandler: @escaping ([any NSUserActivityRestoring]) -> Void) -> Bool {
+        CaptureLibrarySpotlight.shared.open(userActivity)
     }
 
     /// Finder, Spotlight and the Dock all reopen the same Library window.

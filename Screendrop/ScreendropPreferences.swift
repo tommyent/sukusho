@@ -54,6 +54,7 @@ enum ScreendropPreferences {
     static let revealExportInFinderKey = "revealExportInFinder"
     static let libraryReadsTextKey = "libraryReadsText"
     static let libraryUsesIntelligenceKey = "libraryUsesIntelligence"
+    static let libraryShowsInSpotlightKey = "libraryShowsInSpotlight"
     static let libraryInsightsIncludeExistingKey = "libraryInsightsIncludeExisting"
     private static let libraryInsightsSinceKey = "libraryInsightsSince"
 
@@ -234,6 +235,12 @@ enum ScreendropPreferences {
     /// Defaults to on; off stops reading but keeps what was read.
     static var libraryReadsText: Bool {
         UserDefaults.standard.object(forKey: libraryReadsTextKey) as? Bool ?? true
+    }
+
+    /// Whether captures show in Spotlight. Defaults to on; off takes every
+    /// capture out of Spotlight's index.
+    static var libraryShowsInSpotlight: Bool {
+        UserDefaults.standard.object(forKey: libraryShowsInSpotlightKey) as? Bool ?? true
     }
 
     /// Whether Apple Intelligence titles captures and suggests tags, where
