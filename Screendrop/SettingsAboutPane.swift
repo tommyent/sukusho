@@ -7,42 +7,10 @@ import AppKit
 import SwiftUI
 
 struct SettingsAboutPane: View {
-    private var versionText: String {
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String
-
-        switch (version, build) {
-        case let (version?, build?):
-            return "Version \(version) (\(build))"
-        case let (version?, nil):
-            return "Version \(version)"
-        default:
-            return "Version 1.0"
-        }
-    }
-
     var body: some View {
         Form {
             Section {
-                HStack(alignment: .center, spacing: 16) {
-                    Image(nsImage: NSApp.applicationIconImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 72, height: 72)
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Sukusho")
-                            .font(.largeTitle.bold())
-
-                        Text(versionText)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-
-                        Text("A native screenshot and recording tool for macOS.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                AboutHeader()
             }
 
             if UpdaterManager.updatesThisBuild {

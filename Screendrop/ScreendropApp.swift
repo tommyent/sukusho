@@ -30,7 +30,8 @@ struct ScreendropApp: App {
         .defaultLaunchBehavior(.suppressed)
         .restorationBehavior(.disabled)
         .commands {
-            CommandGroup(after: .appInfo) {
+            CommandGroup(replacing: .appInfo) {
+                Button("About Sukusho") { AboutWindowController.show() }
                 CheckForUpdatesCommand()
             }
             CommandGroup(after: .newItem) {

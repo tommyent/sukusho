@@ -52,14 +52,6 @@ final class SettingsNavigation {
     private init() {}
 }
 
-private enum AppVersion {
-    static let displayString: String = {
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0"
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0"
-        return "Version \(version) (\(build))"
-    }()
-}
-
 // MARK: - Main Settings View
 
 struct SettingsView: View {
@@ -169,10 +161,10 @@ private struct SettingsSidebarView: View {
                 SettingsSidebarRow(tab: tab)
                     .tag(tab)
             }
-
-            SettingsSidebarFooter()
         }
         .listStyle(.sidebar)
+        // Pinned to the bottom of the sidebar, below however many panes there are.
+        .safeAreaInset(edge: .bottom, spacing: 0) { SettingsSidebarFooter() }
         .scrollEdgeEffectStyle(.soft, for: .all)
         .navigationTitle("Settings")
     }
@@ -193,15 +185,18 @@ private struct SettingsSidebarRow: View {
 
 private struct SettingsSidebarFooter: View {
     var body: some View {
-        Text(AppVersion.displayString)
-            .font(.footnote)
-            .foregroundStyle(.tertiary)
-            .fontDesign(.monospaced)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 8)
-            .listRowSeparator(.hidden)
-            .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 6, trailing: 0))
+        HStack(spacing: 6) {
+            Text(AppVersion.displayString)
+                .font(.footnote)
+                .foregroundStyle(.tertiary)
+                .fontDesign(.monospaced)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Spacer(minLength: 0)
+            AppVersionCopyButton()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 }
 
