@@ -199,7 +199,7 @@ enum AnnoShapeDrawing {
     private static func drawMagnifier(_ props: MagnifierProps, shape: AnnoShape, source: CGImage?,
         in context: CGContext, pageSize: CGSize) {
         guard props.isValid else { return }
-        let ring = MagnifierProps.path(props.ringRect), loupe = MagnifierProps.path(props.loupeRect)
+        let ring = props.path(props.ringRect), loupe = props.path(props.loupeRect)
         context.setStrokeColor(props.swatch.nsColor.cgColor)
         context.setLineWidth(props.strokeWidth)
         context.setLineCap(.round)

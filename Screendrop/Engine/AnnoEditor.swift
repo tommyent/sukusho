@@ -142,6 +142,7 @@ final class AnnoEditor {
     /// Stroke width as the inspector's slider value; converted to page units on creation.
     var currentStrokeWidth: Double = 4
     var currentMagnifierZoom: Double = 3
+    var currentMagnifierShape: MagnifierShape = .roundedSquare
     var currentGeoFill: AnnoFillStyle = .none
     var currentDash: DashStyle = .solid
     var currentRedactionDensity: Double = 0.55

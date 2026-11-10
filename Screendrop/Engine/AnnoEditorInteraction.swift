@@ -83,8 +83,8 @@ extension AnnoEditor {
         if let shape = hitShape(at: pointer.pagePoint) {
             if !pointer.shift, case let .magnifier(props) = shape.kind {
                 let local = document.pointInShapeSpace(shape, pointer.pagePoint)
-                let handle: AnnoSelectionHandle? = MagnifierProps.path(props.loupeRect).contains(local.cgPoint) ? .magnifierLoupe
-                    : MagnifierProps.path(props.ringRect).contains(local.cgPoint) ? .magnifierRing : nil
+                let handle: AnnoSelectionHandle? = props.path(props.loupeRect).contains(local.cgPoint) ? .magnifierLoupe
+                    : props.path(props.ringRect).contains(local.cgPoint) ? .magnifierRing : nil
                 if let handle {
                     selectedIds = [shape.id]
                     beginMagnifierDrag(shape, handle: handle, pointer: pointer)
