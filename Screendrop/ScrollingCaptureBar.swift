@@ -92,9 +92,10 @@ struct ScrollingCaptureBar: View {
     }
 
     private var autoScrollHelp: String {
-        if presenter.isAutoScrolling { return "Pause auto-scroll" }
-        if presenter.needsScrollPermission { return "Auto-scroll needs Accessibility. Click to open Privacy & Security." }
-        return "Auto-scroll"
+        if presenter.isAutoScrolling { return "Pause auto-scroll (Space)" }
+        // macOS 27 lists this permission as "Device Control and Data Access"; earlier versions as Accessibility.
+        if presenter.needsScrollPermission { return "Auto-scroll needs permission to scroll for you. Click to open Privacy & Security." }
+        return "Auto-scroll (Space)"
     }
 
     /// A short wait says nothing: see `ScrollingCapturePresenter.quietWait`.

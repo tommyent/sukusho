@@ -169,7 +169,7 @@ Capture a display, a window, an area, a scrolling region, or just the text in an
 
 Draw a box over a scrolling view, then scroll through it yourself or click the auto-scroll button on the capture bar. Sukusho lines up each new frame with the last one and adds only the rows that scrolled into view, giving one tall image up to 16,384 pixels high.
 
-- **Auto-scroll** moves the view a step at a time, paced by what has been captured, and finishes by itself at the end of the page. Scrolling yourself or moving the pointer off the bar hands control back to you. Auto-scroll needs the Accessibility permission; the bar offers to open it.
+- **Auto-scroll** (the bar's button, or **Space**) moves the view a step at a time, paced by what has been captured, and finishes by itself at the end of the page. Scrolling yourself or moving the pointer off the bar hands control back to you. Auto-scroll needs the **Device Control and Data Access** permission (macOS 27's name for Accessibility); the bar offers to open it.
 - **Every frame is checked before it's added.** Apple's Vision framework proposes where the new frame fits, and Sukusho adds it only once an exact pixel match confirms it. A frame that doesn't fit is skipped, not joined in the wrong place.
 - **The capture bar** stays quiet through brief misses. If frames keep failing to fit, it says **Scroll back a little** when the view has moved past where it can line up, or **Something on the page keeps changing** for a video, an animation or a hover.
 - **A live preview** beside the box shows the whole capture so far, growing as you scroll, so a bad join is visible before you finish.
@@ -194,7 +194,7 @@ Shortcuts, Siri and Spotlight can take a full-screen, window or area screenshot,
 - There is no Sukusho account and no central Sukusho server. Sukusho goes online for your Worker, update checks, a check on GitHub for a newer Worker version in **Settings → Cloud**, Unsplash search and wallpaper downloads, Free To Use music search and downloads, and the setup video in **Settings → Cloud**, which starts loading from the upstream project's server whenever the pane shows its setup steps. Apple's on-device speech models may need a one-time download for transcription or the teleprompter.
 - **Updates:** Sukusho checks for a new version when you choose **Check for Updates…**, and once a day only if you allowed automatic checks, which it asks about on its second launch (**Settings → About → Updates** changes the answer). A check reads the update feed on tommyent.github.io and sends no system profile; updates download from GitHub and install only if they carry this project's signature.
 
-macOS asks for **Screen & System Audio Recording** for captures and recordings, and, when you first use them, **Camera**, **Microphone**, **Input Monitoring** (for keystroke captions), **Accessibility** (for auto-scroll) and **Notifications** (for finished exports and received files). Sukusho's own windows are left out of captures unless you turn on **Settings → General → Include Sukusho windows in captures**.
+macOS asks for **Screen & System Audio Recording** for captures and recordings, and, when you first use them, **Camera**, **Microphone**, **Input Monitoring** (for keystroke captions), **Device Control and Data Access** (for auto-scroll) and **Notifications** (for finished exports and received files). Sukusho's own windows are left out of captures unless you turn on **Settings → General → Include Sukusho windows in captures**.
 
 ## Building from source
 
