@@ -219,6 +219,9 @@ struct AnnotationBackgroundColor: Identifiable, Equatable, Hashable {
         NSColor(srgbRed: red, green: green, blue: blue, alpha: alpha)
     }
 
+    /// No fill, but still a background: the padding, corners and shadow stay, over see-through
+    /// pixels in the export.
+    static let transparent = AnnotationBackgroundColor("transparent", title: "Transparent", red: 1, green: 1, blue: 1, alpha: 0)
     static let black = AnnotationBackgroundColor("black", title: "Black", red: 0.02, green: 0.02, blue: 0.024)
     static let white = AnnotationBackgroundColor("white", title: "White", red: 0.96, green: 0.96, blue: 0.94)
     static let graphite = AnnotationBackgroundColor("graphite", title: "Graphite", red: 0.17, green: 0.18, blue: 0.21)

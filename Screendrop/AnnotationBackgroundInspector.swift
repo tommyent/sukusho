@@ -300,6 +300,25 @@ struct InspectorBackgroundFillPicker: View {
                 }
                 .frame(width: InspectorMetrics.controlHeight, height: InspectorMetrics.controlHeight)
 
+                InspectorTile(title: "Transparent",
+                              isSelected: style == .solid(.transparent)) {
+                    onEditorAction()
+                    style = .solid(.transparent)
+                } content: {
+                    Canvas { context, size in
+                        // The usual checkerboard for see-through pixels.
+                        context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.white))
+                        let cell = size.width / 4
+                        for row in 0..<4 {
+                            for column in 0..<4 where (row + column).isMultiple(of: 2) {
+                                context.fill(Path(CGRect(x: CGFloat(column) * cell, y: CGFloat(row) * cell,
+                                                         width: cell, height: cell)), with: .color(.gray.opacity(0.45)))
+                            }
+                        }
+                    }
+                }
+                .frame(width: InspectorMetrics.controlHeight, height: InspectorMetrics.controlHeight)
+
                 InspectorSegmented(
                     options: AnnotationBackgroundFillLibrary.allCases,
                     isSelected: { $0 == selectedFillLibrary },
