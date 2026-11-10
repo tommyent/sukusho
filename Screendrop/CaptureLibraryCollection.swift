@@ -48,8 +48,6 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
     @Binding var selection: Set<String>
     let isBusy: Bool
     var accessibilityLabel = "Captures"
-    /// An entry to scroll into view, once per request.
-    var reveal: CaptureReveal? = nil
     /// The card for an entry, given whether it's selected and a callback for
     /// where its title is drawn (clicking the title renames).
     let cell: (Entry, Bool, @escaping (CGRect) -> Void) -> AnyView
@@ -122,13 +120,6 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
             coordinator.indices[id].map { IndexPath(item: $0, section: 0) }
         })
         if collection.selectionIndexPaths != paths { collection.selectionIndexPaths = paths }
-        if let reveal, reveal != coordinator.revealed, let index = coordinator.indices[reveal.id] {
-            coordinator.revealed = reveal
-            // After this update's reload has laid the cards out.
-            DispatchQueue.main.async {
-                collection.scrollToItems(at: [IndexPath(item: index, section: 0)], scrollPosition: .centeredVertically)
-            }
-        }
     }
 
     final class Coordinator: NSObject, NSCollectionViewDataSource, NSCollectionViewDelegate {
@@ -136,7 +127,6 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
         weak var collection: LibraryCollectionView?
         var updating = false
         var initialLoad = true
-        var revealed: CaptureReveal?
         var indices: [String: Int] = [:]
         private var selectionAnchorID: String?
         private var pendingRange: (anchor: String, end: String)?

@@ -143,7 +143,6 @@ final class CaptureLibraryIndex {
             write { $0.remove(ids: gone) }
         }
         planInsights(items)
-        CaptureLibrarySpotlight.shared.sync(items, entries: entries, insight: visibleInsight, isComplete: isComplete)
         guard ScreendropPreferences.libraryReadsText else {
             queue = []
             updatePending()
