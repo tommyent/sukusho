@@ -142,6 +142,7 @@ final class AnnoEditor {
     /// Stroke width as the inspector's slider value; converted to page units on creation.
     var currentStrokeWidth: Double = 4
     var currentMagnifierZoom: Double = 3
+    var currentMagnifierShape: MagnifierShape = .roundedSquare
     var currentGeoFill: AnnoFillStyle = .none
     var currentDash: DashStyle = .solid
     var currentRedactionDensity: Double = 0.55
@@ -356,6 +357,7 @@ final class AnnoEditor {
                         && Self.drawnStroke(document.renderElements(shape.id), contains: localPoint, margin: margin))
                     // So does a label's tail, which is drawn past its box (sd-cxui).
                     || shape.textProps.flatMap(TextMeasure.tailPath)?.contains(localPoint.cgPoint) == true
+                    || shape.numberedProps?.tailPath?.contains(localPoint.cgPoint) == true
             if hit {
                 return shape
             }
@@ -391,11 +393,12 @@ final class AnnoEditor {
         notifyChanged()
     }
 
-    /// The first Escape clears the selection; another leaves no drawing tool armed.
+    /// Escape puts an armed drawing tool away, keeping what it just drew selected; with Select
+    /// it clears the selection.
     func escapeSelectionOrDisarm() {
         guard case .idle = interaction else { return }
         stopEditingText()
-        if selectedIds.isEmpty {
+        if tool != .select {
             tool = .select
         } else {
             selectedIds.removeAll()
@@ -490,6 +493,14 @@ final class AnnoEditor {
     /// the tip, or with no tail yet, the pull handle below the middle of the box. Nil while the
     /// label is being typed into.
     var textTailHandlePoint: Vec? {
+        if selectedIds.count == 1, let shape = selectedShapes.first, let props = shape.numberedProps {
+            // A numbered circle's: at the tip, or the pull handle below the circle.
+            let transform = shape.pageTransform
+            if let tip = props.tailPoint { return pageToScreen(transform.applyToPoint(tip)) }
+            let bottom = pageToScreen(transform.applyToPoint(Vec(props.diameter / 2, props.diameter)))
+            let below = pageToScreen(transform.applyToPoint(Vec(props.diameter / 2, props.diameter + 1)))
+            return Vec.add(bottom, Vec.mul(Vec.sub(below, bottom).uni, Self.tailPullHandleOffset))
+        }
         guard selectedIds.count == 1, let shape = selectedShapes.first, shape.id != editingTextId,
               let props = shape.textProps, props.hasBox, !props.text.isEmpty else { return nil }
         let transform = shape.pageTransform

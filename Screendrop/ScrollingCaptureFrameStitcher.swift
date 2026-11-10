@@ -158,6 +158,38 @@ actor ScrollingCaptureFrameStitcher {
         return .appended(k)
     }
 
+    /// The capture so far, shrunk for the live preview: every `step`th pixel of every `step`th
+    /// row, packed like `makeImage`, with `step` the smallest that fits `maxWidth`.
+    // shortcut: nearest-neighbour and without `pinnedRuns`, which reads fine at thumbnail
+    // size and costs nothing per frame; average the pixels if the preview ever gets large.
+    func preview(maxWidth: Int) -> (pixels: [UInt8], width: Int, height: Int) {
+        let step = Swift.max(1, (width + Swift.max(1, maxWidth) - 1) / Swift.max(1, maxWidth))
+        let outWidth = (width + step - 1) / step, outHeight = (stitchedHeight + step - 1) / step
+        let rowBytes = width * 4, appendedRows = appended.count / rowBytes
+        var out = [UInt8](repeating: 0, count: outWidth * outHeight * 4)
+        out.withUnsafeMutableBytes { out in
+            first.withUnsafeBytes { first in
+                appended.withUnsafeBytes { appended in
+                    last.withUnsafeBytes { last in
+                        for outY in 0..<outHeight {
+                            let y = outY * step
+                            // The same three pieces `makeImage` joins: the first frame down to the
+                            // cut, what was appended, the last frame from the cut.
+                            let (source, base) = y < cut ? (first, y * rowBytes)
+                                : y < cut + appendedRows ? (appended, (y - cut) * rowBytes)
+                                : (last, (y - appendedRows) * rowBytes)
+                            for outX in 0..<outWidth {
+                                out.storeBytes(of: source.loadUnaligned(fromByteOffset: base + outX * step * 4, as: UInt32.self),
+                                               toByteOffset: (outY * outWidth + outX) * 4, as: UInt32.self)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return (out, outWidth, outHeight)
+    }
+
     /// Packed BGRA, `stitchedHeight` rows, then `below`: more rows, the same width, that go on under
     /// the last frame, with `pinnedRuns` applied.
     func makeImage(appending below: [UInt8] = []) -> [UInt8] {

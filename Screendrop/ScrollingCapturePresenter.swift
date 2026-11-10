@@ -4,6 +4,7 @@
 //
 
 import AppKit
+import Carbon.HIToolbox
 import CoreGraphics
 import ScreenCaptureKit
 import SwiftUI
@@ -56,6 +57,8 @@ final class ScrollingCapturePresenter {
     private(set) var isAutoScrolling = false
     /// Frames are coming in, so auto-scroll has something to follow.
     private(set) var canAutoScroll = false
+    /// The capture so far, shrunk: the live preview beside the region.
+    private(set) var preview: CGImage?
     /// Auto-scroll was asked for without the Accessibility permission it
     /// needs to post scroll events; the user scrolls by hand.
     private(set) var needsScrollPermission = false
@@ -66,6 +69,10 @@ final class ScrollingCapturePresenter {
     @ObservationIgnored private var isSelectingArea = false
     @ObservationIgnored private var isCapturing = false
     @ObservationIgnored private var panel: NSPanel?
+    @ObservationIgnored private var previewPanel: NSPanel?
+    /// The display time of the frame the preview last showed: it's redrawn a few times a second.
+    @ObservationIgnored private var previewTime: TimeInterval = 0
+    private static let previewInterval: TimeInterval = 0.2
     @ObservationIgnored private var stream: ScrollingCaptureStream?
     /// Done's or Cancel's click, on the stream's clock: frames shown after it aren't kept.
     @ObservationIgnored private var cutoff: TimeInterval?
@@ -135,7 +142,13 @@ final class ScrollingCapturePresenter {
         RecordingAreaHighlightPresenter.shared.show(display: display, rect: rect)
         panel = ScrollingCaptureBar.makePanel(below: rect, on: screen)
         panel?.orderFrontRegardless()
+        preview = nil
+        previewPanel = ScrollingCapturePreview.makePanel(beside: rect, on: screen, avoiding: panel?.frame)
+        previewPanel?.orderFrontRegardless()
         defer {
+            previewPanel?.orderOut(nil)
+            previewPanel = nil
+            preview = nil
             panel?.orderOut(nil)
             panel = nil
             RecordingAreaHighlightPresenter.shared.hide()
@@ -172,6 +185,8 @@ final class ScrollingCapturePresenter {
                       ignoredTrailingColumns: Int((Self.scrollBarWidth * scale).rounded())) else { return nil }
             feed = firstFeed
             firstTime = firstFrame.time
+            previewTime = firstTime
+            preview = await feed.makePreview(maxWidth: ScrollingCapturePreview.pixelWidth)
         } catch {
             FailureAlert.present(message: "Scrolling capture couldn't start", error: error)
             return nil
@@ -180,6 +195,12 @@ final class ScrollingCapturePresenter {
         isCapturing = true
         defer { isCapturing = false }
         canAutoScroll = true
+        // Space starts and pauses auto-scroll while frames are being captured. Registered as a
+        // hot key, it's Sukusho's for the session and doesn't reach the page, which would
+        // scroll a screenful on it.
+        let spaceKey = HotkeyManager.shared.registerTemporaryHotKey(
+            HotkeyShortcut(modifiers: [], keyCode: Int(kVK_Space))) { [weak self] in self?.toggleAutoScroll() }
+        defer { spaceKey.map(HotkeyManager.shared.unregisterTemporaryHotKey) }
         // Frames arrive until Done, Cancel, the height limit or a stream error
         // stops the stream. Idle ticks say nothing moved, so there's nothing to
         // place, but a wait still grows.
@@ -201,6 +222,10 @@ final class ScrollingCapturePresenter {
                 continue
             }
             lastFrameTime = frame.time
+            if previewPanel != nil, frame.time - previewTime >= Self.previewInterval {
+                previewTime = frame.time
+                preview = await feed.makePreview(maxWidth: ScrollingCapturePreview.pixelWidth)
+            }
             // What will be saved: the output stops at the limit.
             stitchedHeight = min(update.height, Self.maximumHeight)
             if update.placement == .skipped, !isWaiting { waitingSince = frame.time }

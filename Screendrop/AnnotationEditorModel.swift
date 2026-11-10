@@ -84,6 +84,7 @@ final class AnnotationEditorModel {
     var geoFill: AnnoFillStyle = .none
     var handDrawn = false
     var magnifierZoom: CGFloat = 3
+    var magnifierShape: MagnifierShape = .roundedSquare
     var redactionDensity: CGFloat = 0.55
     var backgroundSettings = AnnotationBackgroundSettings() {
         willSet {
@@ -827,6 +828,17 @@ final class AnnotationEditorModel {
         }
     }
 
+    func setMagnifierShape(_ shape: MagnifierShape) {
+        magnifierShape = shape
+        engine.currentMagnifierShape = shape
+        engine.applyStyleToSelection { annotation in
+            if case var .magnifier(props) = annotation.kind {
+                props.shape = shape
+                annotation.kind = .magnifier(props)
+            }
+        }
+    }
+
     func setHandDrawn(_ enabled: Bool) {
         handDrawn = enabled
         engine.currentDash = enabled ? .draw : .solid
@@ -919,6 +931,8 @@ final class AnnotationEditorModel {
         if case let .magnifier(props) = shape.kind {
             magnifierZoom = CGFloat(props.zoom)
             engine.currentMagnifierZoom = props.zoom
+            magnifierShape = props.shape ?? .roundedSquare
+            engine.currentMagnifierShape = magnifierShape
         }
         if case let .geo(props) = shape.kind {
             geoFill = props.fill

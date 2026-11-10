@@ -121,8 +121,27 @@ final class CaptureCoordinator {
         return await finishCapture(url: url, displayID: displayID, source: source)
     }
 
+    /// Sukusho's own picker draws the area (Shift snaps to a box, Option
+    /// magnifies); `screencapture` then takes it, so the file, its DPI and the
+    /// self-timer are the same as with the system crosshair.
     @discardableResult
     private func performCaptureArea() async -> URL? {
+        guard !ScreendropPreferences.areaCaptureUsesSystemPicker else { return await performSystemCaptureArea() }
+        // The windows as they are before the picker's own panels go up.
+        let probe = CaptureSourceProbe(tracksPointer: false)
+        let picked = await RecordingAreaSelectionPresenter.shared.selectScreenshotArea(windows: probe.windows.map(\.bounds))
+        guard let rect = picked else { return nil }
+        let source = probe.finish(.region(rect))
+        let displayID = ActiveDisplayResolver.activeDisplayID(preferPointer: true)
+        guard let url = await ScreenshotManager.shared.captureArea(
+            rect, delaySeconds: ScreendropPreferences.captureDelaySeconds
+        ) else { return nil }
+        return await finishCapture(url: url, displayID: displayID, source: source)
+    }
+
+    /// The system crosshair, kept behind `areaCaptureUsesSystemPicker`.
+    @discardableResult
+    private func performSystemCaptureArea() async -> URL? {
         // The self-timer is handled by screencapture's `-T` so the delay
         // happens *after* the area is drawn, not before.
         let probe = CaptureSourceProbe(tracksPointer: true)
@@ -155,14 +174,25 @@ final class CaptureCoordinator {
     /// history, no preview card to raise, and no after-capture action to run -
     /// so the toast and the capture sound are its only feedback.
     ///
-    /// The self-timer is handled by screencapture's `-T`, so the delay happens
-    /// after the area is drawn, matching Capture Area.
+    /// The area is drawn in the same picker as Capture Area (Shift snaps to a
+    /// box, Option magnifies), or with the system crosshair behind
+    /// `areaCaptureUsesSystemPicker`. The self-timer is handled by
+    /// screencapture's `-T`, so the delay happens after the area is drawn,
+    /// matching Capture Area.
     @discardableResult
     private func performCaptureText() async -> CaptureTextOutcome {
         ImageTextWarmUp.shared.start()
-        guard let url = await ScreenshotManager.shared.captureArea(
-            delaySeconds: ScreendropPreferences.captureDelaySeconds
-        ) else { return .cancelled }
+        let delay = ScreendropPreferences.captureDelaySeconds
+        var captured: URL?
+        if ScreendropPreferences.areaCaptureUsesSystemPicker {
+            captured = await ScreenshotManager.shared.captureArea(delaySeconds: delay)
+        } else {
+            let windows = CaptureSourceProbe(tracksPointer: false).windows.map(\.bounds)
+            if let rect = await RecordingAreaSelectionPresenter.shared.selectScreenshotArea(windows: windows) {
+                captured = await ScreenshotManager.shared.captureArea(rect, delaySeconds: delay)
+            }
+        }
+        guard let url = captured else { return .cancelled }
         defer { try? FileManager.default.removeItem(at: url) }
 
         // Resolved before recognition runs, so the toast lands on the display
@@ -170,7 +200,11 @@ final class CaptureCoordinator {
         // drifted to while Vision worked.
         let displayID = ActiveDisplayResolver.activeDisplayID(preferPointer: true)
         CaptureTextFeedbackPresenter.shared.showReading(displayID: displayID)
-        let text = await ImageTextRecognizer.recognizeText(at: url)
+        // A table or a list keeps its shape; anything else is read line by line, as always.
+        var blocks: [CapturedTextBlock]?
+        if let image = ScreenshotImageLoader.uprightImage(at: url) { blocks = await CapturedDocumentText.structuredBlocks(in: image) }
+        let text: String
+        if let blocks { text = CapturedDocumentText.plainText(blocks) } else { text = await ImageTextRecognizer.recognizeText(at: url) }
 
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             CaptureTextFeedbackPresenter.shared.showNoTextFound(displayID: displayID)
@@ -181,6 +215,9 @@ final class CaptureCoordinator {
         }
 
         NSPasteboard.general.clearContents()
+        // Paste takes the structured version where an app accepts it; Paste and Match Style
+        // takes the plain one.
+        if let blocks { NSPasteboard.general.setString(CapturedDocumentText.html(blocks), forType: .html) }
         NSPasteboard.general.setString(text, forType: .string)
         CaptureTextFeedbackPresenter.shared.showCopied(text: text, displayID: displayID)
         if ScreendropPreferences.playSounds {

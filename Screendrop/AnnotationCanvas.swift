@@ -475,9 +475,9 @@ struct AnnotationCanvas: View {
                 // the image it measures.
                 PixelMeasureOverlay(probe: probe, axis: axis, imageFrame: imageFrame, pointer: hoveredLocation)
             } else if let probe, probe.isMeasuringTool {
-                // The dock's ruler: a crosshair, both ways at once.
-                PixelMeasureOverlay(probe: probe, axis: .horizontal, imageFrame: imageFrame, pointer: hoveredLocation)
-                PixelMeasureOverlay(probe: probe, axis: .vertical, imageFrame: imageFrame, pointer: hoveredLocation)
+                // The dock's ruler: a crosshair, both ways at once, under one label.
+                PixelMeasureOverlay(probe: probe, axis: .horizontal, imageFrame: imageFrame, pointer: hoveredLocation,
+                                    crossAxis: .vertical)
             } else if let probe, probe.isPicking || probe.copiedHex != nil,
                       let color = probe.hovered, let pointer = hoveredLocation {
                 PixelColorBadge(color: color, copied: probe.copiedHex != nil)
