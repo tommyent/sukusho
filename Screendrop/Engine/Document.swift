@@ -76,6 +76,10 @@ final class AnnoDocument {
                 case let .numbered(props):
                     let disc = CGRect(x: 0, y: 0, width: props.diameter, height: props.diameter)
                     page = CGPath(ellipseIn: disc, transform: &toPage).boundingBoxOfPath
+                    if let tail = props.tailPath?.copy(using: &toPage) {
+                        let outline = Swift.max(1, props.diameter * 0.055) / 2
+                        page = page.union(tail.boundingBoxOfPath.insetBy(dx: -outline, dy: -outline))
+                    }
                 case let .magnifier(props):
                     page = props.ringRect.union(props.loupeRect)
                         .insetBy(dx: -props.strokeWidth / 2, dy: -props.strokeWidth / 2)

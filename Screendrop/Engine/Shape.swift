@@ -175,6 +175,42 @@ struct NumberedProps: Codable, Equatable {
     var value: Int = 1
     var diameter: Double = 64
     var swatch: AnnotationSwatch = .red
+    /// A short pointer's tip, from the circle's centre in diameters, so it scales with the
+    /// circle. Missing means no tail.
+    var tail: Vec?
+
+    /// The furthest a tip gets from the centre, in diameters: three quarters of one past the
+    /// edge. A label's tail can be any length; a number's stays a nub.
+    static let tailMaxReach = 1.25
+    /// Nearer the centre than this, in diameters, there is no tail: how dragging it back removes it.
+    static let tailMinReach = 0.62
+
+    /// `point`, in the shape's local space, as a tail tip no further out than `tailMaxReach`.
+    func tailTip(toward point: Vec) -> Vec {
+        let offset = Vec((point.x - diameter / 2) / diameter, (point.y - diameter / 2) / diameter)
+        let length = hypot(offset.x, offset.y)
+        return length > Self.tailMaxReach ? Vec.mul(offset, Self.tailMaxReach / length) : offset
+    }
+
+    /// The tail's tip in the shape's local space, when there is a tail.
+    var tailPoint: Vec? {
+        guard let tail, hypot(tail.x, tail.y) >= Self.tailMinReach else { return nil }
+        return Vec(diameter / 2 + tail.x * diameter, diameter / 2 + tail.y * diameter)
+    }
+
+    /// The tail in the shape's local space: a triangle from inside the disc, which covers its
+    /// base, out to the tip.
+    var tailPath: CGPath? {
+        guard let tip = tailPoint, let tail else { return nil }
+        let angle = atan2(tail.y, tail.x), radius = diameter / 2, spread = 0.5
+        let path = CGMutablePath()
+        for side in [-spread, spread] {
+            let point = CGPoint(x: radius + cos(angle + side) * radius * 0.9, y: radius + sin(angle + side) * radius * 0.9)
+            if side < 0 { path.move(to: point) } else { path.addLine(to: tip.cgPoint); path.addLine(to: point) }
+        }
+        path.closeSubpath()
+        return path
+    }
 }
 
 /// A pasted picture (sd-eec), drawn into a `w` x `h` box. Its pixels live in the editor's

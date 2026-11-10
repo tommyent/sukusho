@@ -282,6 +282,10 @@ extension AnnoEditor {
         case let .draggingTextTail(id):
             // Dropped back on the box: no tail.
             document.update(id) { shape in
+                if case var .numbered(props) = shape.kind, props.tail != nil, props.tailPath == nil {
+                    props.tail = nil
+                    shape.kind = .numbered(props)
+                }
                 guard case var .text(props) = shape.kind, props.tail != nil, TextMeasure.tailPath(props) == nil else { return }
                 props.tail = nil
                 shape.kind = .text(props)
@@ -720,9 +724,15 @@ extension AnnoEditor {
         guard let shape = document.shape(id) else { return }
         let tip = document.pointInShapeSpace(shape, pointer.pagePoint)
         document.update(id) { shape in
-            guard case var .text(props) = shape.kind else { return }
-            props.tail = tip
-            shape.kind = .text(props)
+            switch shape.kind {
+            case var .text(props):
+                props.tail = tip
+                shape.kind = .text(props)
+            case var .numbered(props):
+                props.tail = props.tailTip(toward: tip)
+                shape.kind = .numbered(props)
+            default: break
+            }
         }
     }
 
