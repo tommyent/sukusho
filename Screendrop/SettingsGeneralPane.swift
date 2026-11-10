@@ -14,9 +14,6 @@ struct GeneralSettingsPane: View {
     @AppStorage(ScreendropPreferences.showMenuBarIconKey) private var showMenuBarIcon = true
     @AppStorage(ScreendropPreferences.includeAppWindowsInCapturesKey)
     private var includeAppWindowsInCaptures = false
-    @AppStorage(ScreendropPreferences.libraryReadsTextKey) private var libraryReadsText = true
-    @AppStorage(ScreendropPreferences.libraryUsesIntelligenceKey) private var libraryUsesIntelligence = true
-    @AppStorage(ScreendropPreferences.libraryInsightsIncludeExistingKey) private var insightsIncludeExisting = false
     @AppStorage(WorkspaceBackground.styleKey) private var workspaceStyle = WorkspaceBackground.Style.dots
     @AppStorage(AppAppearance.key) private var appearance = AppAppearance.automatic
     @State private var launchAtLoginStatus = LaunchAtLoginController.status
@@ -38,12 +35,6 @@ struct GeneralSettingsPane: View {
 
     var body: some View {
         Form {
-            // Every capture shortcut in one place, images first and the
-            // recording last (design pass choice 12).
-            CaptureHotkeySettingsSection(
-                actions: [.fullscreen, .window, .area, .scrollingCapture, .textCapture, .screenRecording, .library]
-            )
-
             Section("Save Location") {
                 // One row and one name, "Save folder", as in the menu bar
                 // menu; "Use Default" only once a custom folder is set
@@ -120,31 +111,9 @@ struct GeneralSettingsPane: View {
                 .toggleStyle(.switch)
             }
 
-            Section("Library") {
+            Section("Appearance") {
                 SettingsControlLabel(
-                    "Read text in captures",
-                    detail: "Search finds captures by the words in them. Text is read on this Mac and never uploaded."
-                ).control { label in
-                    Toggle(isOn: $libraryReadsText) { label }
-                }
-                .toggleStyle(.switch)
-                // Only where the model can run; elsewhere nothing mentions it.
-                if CaptureLibraryIndex.shared.modelAvailable {
-                    SettingsControlLabel(
-                        "Use Apple Intelligence for titles and tag suggestions",
-                        detail: "Names captures you haven't named and suggests tags, from the text read in them. Runs on this Mac and is never uploaded."
-                    ).control { label in
-                        Toggle(isOn: $libraryUsesIntelligence) { label }
-                    }
-                    .toggleStyle(.switch)
-                    .disabled(!libraryReadsText)
-                    existingCapturesRow
-                }
-            }
-
-            Section("Workspace") {
-                SettingsControlLabel(
-                    "Appearance",
+                    "Theme",
                     detail: "Light or dark for Sukusho's windows. Automatic follows macOS."
                 ).control { label in
                     Picker(selection: $appearance) {
@@ -188,45 +157,11 @@ struct GeneralSettingsPane: View {
         .contentMargins(.top, 8, for: .scrollContent)
         .onAppear {
             refreshLaunchAtLoginStatus()
-            // Apple Intelligence may have been switched on or off since.
-            CaptureLibraryIndex.shared.settingsDidChange()
         }
         .onChange(of: includeAppWindowsInCaptures) { _, _ in
             PreviewWindowCaptureExclusion.shared.refreshRegisteredWindows()
         }
-        .onChange(of: libraryReadsText) { _, _ in
-            CaptureLibraryIndex.shared.settingsDidChange()
-        }
-        .onChange(of: libraryUsesIntelligence) { _, _ in
-            CaptureLibraryIndex.shared.settingsDidChange()
-        }
     }
-
-    /// Older captures wait for the user, since there can be many: about
-    /// `secondsPerCapture` each on this Mac.
-    @ViewBuilder
-    private var existingCapturesRow: some View {
-        let index = CaptureLibraryIndex.shared
-        let count = index.olderWithoutInsight
-        if libraryReadsText, libraryUsesIntelligence, !insightsIncludeExisting, count > 0 {
-            let minutes = max(1, Int((Double(count) * Self.secondsPerCapture / 60).rounded(.up)))
-            HStack {
-                SettingsControlLabel(
-                    "Title and tag existing captures",
-                    detail: "\(count.formatted()) older \(count == 1 ? "capture" : "captures"), about \(minutes) min. New captures are done as you take them."
-                )
-                Spacer()
-                Button("Start") { index.includeExistingCaptures() }
-                    .controlSize(.small)
-                    .accessibilityLabel("Title and tag existing captures")
-            }
-        } else if insightsIncludeExisting, index.insightsPending > 0 {
-            SettingsControlLabel("Title and tag existing captures",
-                                 detail: "\(index.insightsPending.formatted()) left. Pauses while recording, in Low Power Mode or when the Mac is hot.")
-        }
-    }
-
-    private static let secondsPerCapture = 2.5
 
     private func chooseExportDirectory() {
         let panel = NSOpenPanel()
