@@ -39,6 +39,15 @@ crop $SHOTS/share-options.jpg 421 52 563 700 "$OUT/share-options-sheet.jpg"
 
 # The marked-up Slow Roads page from the editor (editor.jpg is 2200 x 1520): the hero strip pans across it
 crop $SHOTS/editor.jpg 184 371 1274 1010 "$OUT/markup.jpg" 1400
+# The Bug Report frame strip at the foot of agent-prompt.jpg (2360 x 2306); x is 1 because sips ignores
+# --cropOffset when x is 0
+crop $SHOTS/agent-prompt.jpg 1 1568 2359 738 "$OUT/bug-report-strip.jpg" 1600
+# The whole stitched demo page that the Scrolling Capture viewer opens, 1400 px wide
+sips --resampleWidth 1400 -s format jpeg -s formatOptions 78 ../notes/readme-assets/captures/screenshot_2026-10-12_065921.png --out "$OUT/scrolling-capture-full.jpg" >/dev/null
+# Not made here: recordings, uploads, file-requests, tags and clean-desktop-off/-on were taken in the VMPal VM on
+# 2026-11-10 and copied in by hand from ../site-mockup/Sukusho modernist redesign/img/v2/ (recordings and uploads
+# from its retake/ folder, made with the build that names files Sukusho).
+
 # The link preview card: the top of the marked-up page, 1200 x 630
 crop $SHOTS/editor.jpg 184 371 1274 669 assets/og.jpg 1200
 
