@@ -391,11 +391,12 @@ final class AnnoEditor {
         notifyChanged()
     }
 
-    /// The first Escape clears the selection; another leaves no drawing tool armed.
+    /// Escape puts an armed drawing tool away, keeping what it just drew selected; with Select
+    /// it clears the selection.
     func escapeSelectionOrDisarm() {
         guard case .idle = interaction else { return }
         stopEditingText()
-        if selectedIds.isEmpty {
+        if tool != .select {
             tool = .select
         } else {
             selectedIds.removeAll()

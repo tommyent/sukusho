@@ -242,7 +242,6 @@ extension AnnoEditor {
         switch interaction {
         case let .creatingMagnifier(id, _):
             selectedIds = [id]
-            tool = .select
         case let .drawing(id, _):
             document.update(id) { shape in
                 if case var .draw(props) = shape.kind {
@@ -270,7 +269,6 @@ extension AnnoEditor {
                 setBoxSize(id, width: fallback, height: fallback)
             }
             selectedIds = [id]
-            tool = .select
 
         case let .creatingArrow(id):
             if let shape = document.shape(id), let props = shape.arrowProps,
@@ -279,7 +277,6 @@ extension AnnoEditor {
                 document.delete([id])
             } else {
                 selectedIds = [id]
-                if document.shape(id)?.tool != .highlighter { tool = .select }
             }
 
         case let .draggingTextTail(id):
@@ -841,8 +838,6 @@ extension AnnoEditor {
             selectedIds.remove(id)
         }
         onEditingTextChanged?(nil)
-        // Keep an explicitly chosen next tool when its observer commits the text.
-        if tool == .text { tool = .select }
         notifyChanged()
     }
 

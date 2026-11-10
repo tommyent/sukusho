@@ -199,7 +199,8 @@ final class AnnoTextEditorOverlay: NSTextView {
     }
 
     override func cancelOperation(_ sender: Any?) {
-        editor?.stopEditingText()
+        // Commits the text and puts the Text tool away, as Escape does for every tool.
+        editor?.escapeSelectionOrDisarm()
     }
 }
 
