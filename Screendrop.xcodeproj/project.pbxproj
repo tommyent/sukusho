@@ -42,6 +42,7 @@
 		AC6600000000000000000007 /* ScrollingCaptureRegion.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC6600000000000000000008 /* ScrollingCaptureRegion.swift */; };
 		AE7700000000000000000001 /* ScrollingCaptureFeed.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE7700000000000000000002 /* ScrollingCaptureFeed.swift */; };
 		B7C400000000000000000001 /* CapturedDocumentText.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7C400000000000000000002 /* CapturedDocumentText.swift */; };
+		B8D500000000000000000001 /* AppVersion.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8D500000000000000000002 /* AppVersion.swift */; };
 		AE7700000000000000000003 /* ScrollingCaptureStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE7700000000000000000004 /* ScrollingCaptureStream.swift */; };
 		AC6600000000000000000001 /* ScrollingCaptureRaster.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC6600000000000000000002 /* ScrollingCaptureRaster.swift */; };
 		5EB13EE1F16DFCBCFE9A3449 /* DockProgress in Frameworks */ = {isa = PBXBuildFile; productRef = 6711E7AD88BD96C1258D3CE6 /* DockProgress */; };
@@ -210,6 +211,7 @@
 		AC6600000000000000000008 /* ScrollingCaptureRegion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ScrollingCaptureRegion.swift; sourceTree = SOURCE_ROOT; };
 		AE7700000000000000000002 /* ScrollingCaptureFeed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ScrollingCaptureFeed.swift; sourceTree = SOURCE_ROOT; };
 		B7C400000000000000000002 /* CapturedDocumentText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/CapturedDocumentText.swift; sourceTree = SOURCE_ROOT; };
+		B8D500000000000000000002 /* AppVersion.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AppVersion.swift; sourceTree = SOURCE_ROOT; };
 		AE7700000000000000000004 /* ScrollingCaptureStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ScrollingCaptureStream.swift; sourceTree = SOURCE_ROOT; };
 		AC6600000000000000000002 /* ScrollingCaptureRaster.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ScrollingCaptureRaster.swift; sourceTree = SOURCE_ROOT; };
 		3163891D2F9DC05A002A7AF3 /* Sukusho.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Sukusho.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -461,6 +463,7 @@
 				AC6600000000000000000008 /* ScrollingCaptureRegion.swift */,
 				AE7700000000000000000002 /* ScrollingCaptureFeed.swift */,
 				B7C400000000000000000002 /* CapturedDocumentText.swift */,
+				B8D500000000000000000002 /* AppVersion.swift */,
 				AE7700000000000000000004 /* ScrollingCaptureStream.swift */,
 				AA61000000000000000000F3 /* Screendrop/PixelInspection.swift */,
 				AA61000000000000000000F4 /* Screendrop/CloudCommentList.swift */,
@@ -727,6 +730,7 @@
 				AC6600000000000000000007 /* ScrollingCaptureRegion.swift in Sources */,
 				AE7700000000000000000001 /* ScrollingCaptureFeed.swift in Sources */,
 				B7C400000000000000000001 /* CapturedDocumentText.swift in Sources */,
+				B8D500000000000000000001 /* AppVersion.swift in Sources */,
 				AE7700000000000000000003 /* ScrollingCaptureStream.swift in Sources */,
 				AA610000000000000000008F /* Screendrop/PixelInspection.swift in Sources */,
 				AA6100000000000000000090 /* Screendrop/CloudCommentList.swift in Sources */,
