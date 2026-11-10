@@ -4,6 +4,7 @@
 //
 
 import AppKit
+import Carbon.HIToolbox
 import CoreGraphics
 import ScreenCaptureKit
 import SwiftUI
@@ -194,6 +195,12 @@ final class ScrollingCapturePresenter {
         isCapturing = true
         defer { isCapturing = false }
         canAutoScroll = true
+        // Space starts and pauses auto-scroll while frames are being captured. Registered as a
+        // hot key, it's Sukusho's for the session and doesn't reach the page, which would
+        // scroll a screenful on it.
+        let spaceKey = HotkeyManager.shared.registerTemporaryHotKey(
+            HotkeyShortcut(modifiers: [], keyCode: Int(kVK_Space))) { [weak self] in self?.toggleAutoScroll() }
+        defer { spaceKey.map(HotkeyManager.shared.unregisterTemporaryHotKey) }
         // Frames arrive until Done, Cancel, the height limit or a stream error
         // stops the stream. Idle ticks say nothing moved, so there's nothing to
         // place, but a wait still grows.
