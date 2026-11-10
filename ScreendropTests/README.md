@@ -95,6 +95,8 @@ The Library grid's updates run in the same harness: `python3 scripts/check-edito
 
 `CaptureSourceSearchTests` checks the search operator parser (`app:`, quoted values, words around operators, unknown operators and other colons kept as words, half-typed operators), `app:` matching on the app name or the bundle ID's last part, AND with words and other operators, and decoding project metadata with and without a source.
 
+`CaptureSpotlightTests` checks what Spotlight is sent for a capture (title, tags, the app, the model's keywords while they show, the words read in it and a recording's captions, bounded) and when: a new capture goes in, a rename, retag, edit or newly read text sends it again, a trashed or deleted one comes out only after a complete scan (the last one too), a relaunch sends only what changed, another index version or the system's request sends everything again, the Settings switch empties the index once, a failed send is retried by the next scan, and a large Library goes in batches. Spotlight itself is a fake behind `CaptureSpotlightBackend`; the real index, a picked result opening the Library and the Open Capture action need the live round.
+
 `FreeToUseMusicTests` compiles the production API client, picker model and preview
 controller. Saved category/search JSON checks all category pages, ordered artist
 and tag pairs, premium filtering, media URL validation, credit text, search query

@@ -16,6 +16,7 @@ struct GeneralSettingsPane: View {
     private var includeAppWindowsInCaptures = false
     @AppStorage(ScreendropPreferences.libraryReadsTextKey) private var libraryReadsText = true
     @AppStorage(ScreendropPreferences.libraryUsesIntelligenceKey) private var libraryUsesIntelligence = true
+    @AppStorage(ScreendropPreferences.libraryShowsInSpotlightKey) private var libraryShowsInSpotlight = true
     @AppStorage(ScreendropPreferences.libraryInsightsIncludeExistingKey) private var insightsIncludeExisting = false
     @AppStorage(WorkspaceBackground.styleKey) private var workspaceStyle = WorkspaceBackground.Style.dots
     @AppStorage(AppAppearance.key) private var appearance = AppAppearance.automatic
@@ -128,6 +129,13 @@ struct GeneralSettingsPane: View {
                     Toggle(isOn: $libraryReadsText) { label }
                 }
                 .toggleStyle(.switch)
+                SettingsControlLabel(
+                    "Show captures in Spotlight",
+                    detail: "Spotlight finds captures by title, tags, app and the words in them. Its index stays on this Mac."
+                ).control { label in
+                    Toggle(isOn: $libraryShowsInSpotlight) { label }
+                }
+                .toggleStyle(.switch)
                 // Only where the model can run; elsewhere nothing mentions it.
                 if CaptureLibraryIndex.shared.modelAvailable {
                     SettingsControlLabel(
@@ -196,6 +204,9 @@ struct GeneralSettingsPane: View {
         }
         .onChange(of: libraryReadsText) { _, _ in
             CaptureLibraryIndex.shared.settingsDidChange()
+        }
+        .onChange(of: libraryShowsInSpotlight) { _, _ in
+            CaptureLibrarySpotlight.shared.settingsDidChange()
         }
         .onChange(of: libraryUsesIntelligence) { _, _ in
             CaptureLibraryIndex.shared.settingsDidChange()

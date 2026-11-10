@@ -119,6 +119,7 @@
 		AD5500000000000000000002 /* Screendrop/LegacyIdentityImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5500000000000000000012 /* Screendrop/LegacyIdentityImport.swift */; };
 		AF5D00000000000000000001 /* Screendrop/CaptureLibraryText.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF5D00000000000000000002 /* Screendrop/CaptureLibraryText.swift */; };
 		AF5D00000000000000000003 /* Screendrop/CaptureSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF5D00000000000000000004 /* Screendrop/CaptureSource.swift */; };
+		AF6100000000000000000001 /* Screendrop/CaptureSpotlight.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF6100000000000000000002 /* Screendrop/CaptureSpotlight.swift */; };
 		AA6200000000000000000001 /* Screendrop/ScreenshotHistoryMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA6200000000000000000011 /* Screendrop/ScreenshotHistoryMetadata.swift */; };
 		AA6200000000000000000002 /* Screendrop/AnnotationDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA6200000000000000000012 /* Screendrop/AnnotationDocument.swift */; };
 		AA6200000000000000000003 /* Screendrop/AnnotationBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA6200000000000000000013 /* Screendrop/AnnotationBackground.swift */; };
@@ -285,6 +286,7 @@
 		AD5500000000000000000012 /* Screendrop/LegacyIdentityImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/LegacyIdentityImport.swift; sourceTree = SOURCE_ROOT; };
 		AF5D00000000000000000002 /* Screendrop/CaptureLibraryText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/CaptureLibraryText.swift; sourceTree = SOURCE_ROOT; };
 		AF5D00000000000000000004 /* Screendrop/CaptureSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/CaptureSource.swift; sourceTree = SOURCE_ROOT; };
+		AF6100000000000000000002 /* Screendrop/CaptureSpotlight.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/CaptureSpotlight.swift; sourceTree = SOURCE_ROOT; };
 		AA6200000000000000000011 /* Screendrop/ScreenshotHistoryMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ScreenshotHistoryMetadata.swift; sourceTree = SOURCE_ROOT; };
 		AA6200000000000000000012 /* Screendrop/AnnotationDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AnnotationDocument.swift; sourceTree = SOURCE_ROOT; };
 		AA6200000000000000000013 /* Screendrop/AnnotationBackground.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AnnotationBackground.swift; sourceTree = SOURCE_ROOT; };
@@ -490,6 +492,7 @@
 				AD5500000000000000000012 /* Screendrop/LegacyIdentityImport.swift */,
 				AF5D00000000000000000002 /* Screendrop/CaptureLibraryText.swift */,
 				AF5D00000000000000000004 /* Screendrop/CaptureSource.swift */,
+				AF6100000000000000000002 /* Screendrop/CaptureSpotlight.swift */,
 				AB0C00000000000000000012 /* Screendrop/AgentAccessCore.swift */,
 				AB0C00000000000000000014 /* Screendrop/AgentAccessSocket.swift */,
 				AB0C00000000000000000016 /* Screendrop/AgentAccessTools.swift */,
@@ -754,6 +757,7 @@
 				AD5500000000000000000002 /* Screendrop/LegacyIdentityImport.swift in Sources */,
 				AF5D00000000000000000001 /* Screendrop/CaptureLibraryText.swift in Sources */,
 				AF5D00000000000000000003 /* Screendrop/CaptureSource.swift in Sources */,
+				AF6100000000000000000001 /* Screendrop/CaptureSpotlight.swift in Sources */,
 				AB0C00000000000000000011 /* Screendrop/AgentAccessCore.swift in Sources */,
 				AB0C00000000000000000013 /* Screendrop/AgentAccessSocket.swift in Sources */,
 				AB0C00000000000000000015 /* Screendrop/AgentAccessTools.swift in Sources */,
