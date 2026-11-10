@@ -121,19 +121,20 @@ final class ScreenshotHistoryStore {
     }
 
     /// Location of the editable annotation sidecar document for a display image,
-    /// e.g. `Screendrop_2026.png` -> `Screendrop_2026.png.screendrop`.
+    /// e.g. `shot.png` -> `shot.png.sukusho` (`shot.png.screendrop` where an
+    /// older capture already has one).
     nonisolated static func editDocumentURL(for displayURL: URL) -> URL {
-        displayURL.appendingPathExtension("screendrop")
+        SukushoFileNames.editDocumentURL(for: displayURL)
     }
 
     /// Location of the base image the annotations are drawn on (cropped, if
-    /// the capture was), e.g. `Screendrop_2026.png` -> `Screendrop_2026.base.png`.
+    /// the capture was), e.g. `shot.png` -> `shot.base.png`.
     nonisolated static func baseImageURL(for displayURL: URL) -> URL {
         taggedImageURL(for: displayURL, tag: "base")
     }
 
     /// Location of the image as captured, kept from the first save of an edit
-    /// and never overwritten, e.g. `Screendrop_2026.png` -> `Screendrop_2026.original.png`.
+    /// and never overwritten, e.g. `shot.png` -> `shot.original.png`.
     nonisolated static func originalImageURL(for displayURL: URL) -> URL {
         taggedImageURL(for: displayURL, tag: "original")
     }
@@ -267,7 +268,7 @@ final class ScreenshotHistoryStore {
     /// - Preserves the untouched base image (lazily, on first edit) so future
     ///   edits always re-render from the original pixels.
     /// - Overwrites the display image with the freshly rendered composite.
-    /// - Writes the editable `.screendrop` sidecar document so the annotations
+    /// - Writes the editable `.sukusho` sidecar document so the annotations
     ///   can be re-opened and edited later.
     @discardableResult
     func commitAnnotations(

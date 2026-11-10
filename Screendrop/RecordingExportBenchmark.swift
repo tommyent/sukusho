@@ -3,7 +3,7 @@
 //  Screendrop
 //
 //  Debug-only headless export timing. Launch the binary with
-//  `-benchmarkExport <path to .screendroprec>` and it renders that
+//  `-benchmarkExport <path to .sukushorec>` and it renders that
 //  project's Studio export, prints the wall time to stdout, deletes the
 //  output (unless `-benchmarkKeepOutput YES`), and exits - no windows,
 //  hotkeys, or updater. The exporter's own StudioExport log lines carry

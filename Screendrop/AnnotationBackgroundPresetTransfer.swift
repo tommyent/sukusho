@@ -8,8 +8,14 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 extension UTType {
+    /// What Sukusho exports: `.sukushopreset`.
+    static let sukushoPreset = UTType(
+        exportedAs: "com.tommyent.sukusho.preset",
+        conformingTo: .json
+    )
+    /// Screendrop's `.screendroppreset`, which earlier builds exported too. Still imported.
     static let screendropPreset = UTType(
-        exportedAs: "com.fayazahmed.screendrop.preset",
+        importedAs: "com.fayazahmed.screendrop.preset",
         conformingTo: .json
     )
 }
@@ -19,8 +25,11 @@ extension UTType {
 /// while a shared preset must not be able to represent a path or image asset.
 struct AnnotationBackgroundPresetTransferFile: Codable {
     static let currentVersion = 1
-    static let formatIdentifier = "screendrop-screenshot-presets"
-    static let filenameExtension = "screendroppreset"
+    static let formatIdentifier = "sukusho-screenshot-presets"
+    /// What files exported before the rename, and Screendrop's, say.
+    static let legacyFormatIdentifier = "screendrop-screenshot-presets"
+    static func isFormat(_ format: String) -> Bool { format == formatIdentifier || format == legacyFormatIdentifier }
+    static let filenameExtension = SukushoFileNames.presetExtension
     static let maximumFileSize = 1_000_000
     static let maximumPresetCount = 100
 
@@ -60,7 +69,7 @@ struct AnnotationBackgroundPresetTransferFile: Codable {
 
         // A Studio style shares the file type; say so rather than misread it.
         struct Header: Decodable { var format: String }
-        if (try? JSONDecoder().decode(Header.self, from: data))?.format == RecordingStudioStyleTransferFile.formatIdentifier {
+        if let format = (try? JSONDecoder().decode(Header.self, from: data))?.format, RecordingStudioStyleTransferFile.isFormat(format) {
             throw AnnotationBackgroundPresetTransferError.recordingStyle
         }
         do {
@@ -71,7 +80,7 @@ struct AnnotationBackgroundPresetTransferFile: Codable {
     }
 
     func validatedPresets() throws -> [Preset] {
-        guard format == Self.formatIdentifier else {
+        guard Self.isFormat(format) else {
             throw AnnotationBackgroundPresetTransferError.invalidFormat
         }
         guard version == Self.currentVersion else {

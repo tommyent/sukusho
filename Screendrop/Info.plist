@@ -41,6 +41,28 @@
 			<key>UTTypeDescription</key>
 			<string>Sukusho Screenshot Preset</string>
 			<key>UTTypeIdentifier</key>
+			<string>com.tommyent.sukusho.preset</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>sukushopreset</string>
+				</array>
+				<key>public.mime-type</key>
+				<string>application/vnd.sukusho.preset+json</string>
+			</dict>
+		</dict>
+	</array>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.json</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Screendrop Screenshot Preset</string>
+			<key>UTTypeIdentifier</key>
 			<string>com.fayazahmed.screendrop.preset</string>
 			<key>UTTypeTagSpecification</key>
 			<dict>

@@ -337,7 +337,7 @@ struct IdleSaveChecks {
     }
 
     @MainActor static func studioSessionRestore() async throws {
-        let root = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("StudioSessions.screendroprec")
+        let root = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("StudioSessions.sukushorec")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let session = RecordingSession(directoryURL: root)
         let writer = try AVAssetWriter(outputURL: session.screenURL, fileType: .mov)
@@ -589,7 +589,7 @@ struct IdleSaveChecks {
             throw Failure(description: "Couldn't save the Studio style fixture")
         }
         let exported = try store.exportedData(for: saved.id)
-        let imported = try store.importStyles(from: write(exported.data, "dawn.screendroppreset"))
+        let imported = try store.importStyles(from: write(exported.data, "dawn.sukushopreset"))
         try check(!exported.omitsWallpaper && imported.omittedWallpaperCount == 0 && imported.presets.count == 1,
                   "A Studio style export or import miscounted")
         try check(imported.presets[0].value == style && imported.presets[0].name != saved.name,
@@ -598,7 +598,7 @@ struct IdleSaveChecks {
         var walledStyle = style
         walledStyle.background = .customWallpaper(AnnotationCustomWallpaper(url: folder.appendingPathComponent("wall.png")))
         let walled = RecordingStudioStyleTransferFile(preset: RecordingStudioStylePreset(name: "Walled", style: walledStyle))
-        let walledImport = try store.importStyles(from: write(walled.encodedData(), "walled.screendroppreset"))
+        let walledImport = try store.importStyles(from: write(walled.encodedData(), "walled.sukushopreset"))
         try check(walledImport.omittedWallpaperCount == 1 && walledImport.presets[0].value.background == .none,
                   "A local wallpaper went into a shared Studio style")
 
@@ -607,11 +607,11 @@ struct IdleSaveChecks {
             preset: AnnotationBackgroundPreset(name: "Shot", settings: AnnotationBackgroundSettings())
         )
         do {
-            _ = try store.importStyles(from: write(shot.encodedData(), "shot.screendroppreset"))
+            _ = try store.importStyles(from: write(shot.encodedData(), "shot.sukushopreset"))
             throw Failure(description: "Studio imported a screenshot style")
         } catch AnnotationBackgroundPresetTransferError.screenshotStyle {}
         do {
-            _ = try AnnotationBackgroundPresetStore.shared.importStyles(from: write(exported.data, "dawn-2.screendroppreset"))
+            _ = try AnnotationBackgroundPresetStore.shared.importStyles(from: write(exported.data, "dawn-2.sukushopreset"))
             throw Failure(description: "The image editor imported a Studio style")
         } catch AnnotationBackgroundPresetTransferError.recordingStyle {}
 
@@ -623,7 +623,7 @@ struct IdleSaveChecks {
             throw Failure(description: "Couldn't save the screenshot style fixture")
         }
         let editorExported = try editorStore.exportedData(for: editorSaved.id)
-        let editorImported = try editorStore.importStyles(from: write(editorExported.data, "shot-2.screendroppreset"))
+        let editorImported = try editorStore.importStyles(from: write(editorExported.data, "shot-2.sukushopreset"))
         try check(editorImported.presets.count == 1 && editorImported.presets[0].settings.style == settings.style,
                   "A screenshot style didn't round-trip")
 

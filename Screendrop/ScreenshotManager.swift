@@ -192,7 +192,7 @@ final class ScreenshotManager {
     func writeCapture(_ image: CGImage, scale: CGFloat) async -> URL? {
         // Encoding suspends the caller, so reserve a unique name before another capture starts.
         let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("Screendrop_\(UUID()).png")
+            .appendingPathComponent("\(SukushoFileNames.prefix)_\(UUID()).png")
         return await Task.detached(priority: .userInitiated) {
             autoreleasepool { Self.writePNG(image, to: url, scale: scale) }
         }.value

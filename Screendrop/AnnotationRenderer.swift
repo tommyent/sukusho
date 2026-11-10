@@ -65,7 +65,7 @@ enum AnnotationRenderer {
         backgroundSettings: AnnotationBackgroundSettings = AnnotationBackgroundSettings()
     ) throws -> URL {
         let destinationURL = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("Screendrop_Annotated_\(UUID().uuidString.prefix(6)).png")
+            .appendingPathComponent("\(SukushoFileNames.prefix)_Annotated_\(UUID().uuidString.prefix(6)).png")
         try render(
             sourceURL: sourceURL,
             shapes: shapes,

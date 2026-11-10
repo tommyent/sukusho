@@ -157,7 +157,7 @@ nonisolated enum RecordingAgentPromptWriter {
     }
 
     /// The recording ID a folder is named with: what follows its last "_". Folders
-    /// named after the whole package ("Screendrop_…_20F562") end in the same ID.
+    /// named after the whole package ("Sukusho_…_20F562") end in the same ID.
     static func recordingID(ofFolder name: String) -> String? {
         guard name.hasSuffix(folderSuffix) else { return nil }
         let stem = name.dropLast(folderSuffix.count)

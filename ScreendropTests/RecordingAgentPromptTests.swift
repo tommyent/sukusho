@@ -159,15 +159,15 @@ struct RecordingAgentPromptTests {
             .init(time: 3, x: 0.2, y: 0.2, button: 0, phase: .down, artworkID: "custom"),
             .init(time: 5, x: 0.3, y: 0.3, button: 0, phase: .down),
         ], artwork: [shape])
-        let files = RecordingAgentPromptPlan.SourceFiles(screen: URL(fileURLWithPath: "/tmp/A b.screendroprec/screen.mov"),
-                                                         input: URL(fileURLWithPath: "/tmp/A b.screendroprec/input.json"))
+        let files = RecordingAgentPromptPlan.SourceFiles(screen: URL(fileURLWithPath: "/tmp/A b.sukushorec/screen.mov"),
+                                                         input: URL(fileURLWithPath: "/tmp/A b.sukushorec/input.json"))
         let markdown = RecordingAgentPromptPlan(title: "Fixture", timeline: .full(sourceDuration: 6), cues: [], words: [],
             capture: capture, cursorNames: ["grab": "open hand (can grab)"], files: files).markdown(frameTimes: [])
         #expect(markdown.contains("Click 00:01.000: left; source position x=0.100, y=0.100; cursor: open hand (can grab)."))
         #expect(markdown.contains("Click 00:03.000: left; source position x=0.200, y=0.200; cursor: custom, 64 × 40 pt, hot spot 15, 15."))
         #expect(markdown.contains("Click 00:05.000: left; source position x=0.300, y=0.300."))
-        #expect(markdown.contains("- Screen recording: `/tmp/A b.screendroprec/screen.mov`: the unedited screen"))
-        #expect(markdown.contains("- Input log: `/tmp/A b.screendroprec/input.json`: JSON on the screen recording's clock"))
+        #expect(markdown.contains("- Screen recording: `/tmp/A b.sukushorec/screen.mov`: the unedited screen"))
+        #expect(markdown.contains("- Input log: `/tmp/A b.sukushorec/input.json`: JSON on the screen recording's clock"))
         let bare = RecordingAgentPromptPlan(title: "Fixture", timeline: .full(sourceDuration: 1), cues: [], words: [], capture: nil)
         #expect(!bare.markdown(frameTimes: []).contains("## Source files"))
     }
@@ -271,12 +271,12 @@ struct RecordingAgentPromptTests {
         #expect(try mode() == 0o700) // an existing folder is tightened
 
         let first = central.appendingPathComponent("Demo_agent-prompt"), second = central.appendingPathComponent("Demo_agent-prompt_2")
-        try RecordingAgentPromptWriter.recordLatest(first, title: "Demo", recording: "Screendrop_1", time: Date(timeIntervalSince1970: 0))
-        try RecordingAgentPromptWriter.recordLatest(second, title: "Demo / 2", recording: "Screendrop_1", time: Date(timeIntervalSince1970: 60))
+        try RecordingAgentPromptWriter.recordLatest(first, title: "Demo", recording: "Sukusho_1", time: Date(timeIntervalSince1970: 0))
+        try RecordingAgentPromptWriter.recordLatest(second, title: "Demo / 2", recording: "Sukusho_1", time: Date(timeIntervalSince1970: 60))
         let data = try Data(contentsOf: central.appendingPathComponent("latest.json"))
         // The Rex action reads these keys by name.
         let fields = try #require(try JSONSerialization.jsonObject(with: data) as? [String: String])
-        #expect(fields == ["path": second.path, "title": "Demo / 2", "recording": "Screendrop_1", "time": "1970-01-01T00:01:00Z"])
+        #expect(fields == ["path": second.path, "title": "Demo / 2", "recording": "Sukusho_1", "time": "1970-01-01T00:01:00Z"])
         #expect(try FileManager.default.contentsOfDirectory(atPath: central.path) == ["latest.json"]) // no temporary file left
     }
 
@@ -466,8 +466,8 @@ struct RecordingAgentPromptTests {
         #expect(again.path == first.path)
         #expect(!FileManager.default.fileExists(atPath: stale.path))
         #expect(try String(contentsOf: first.appendingPathComponent("prompt.md"), encoding: .utf8) == markdown)
-        let named = try await RecordingAgentPromptWriter.write(movie: movie, plan: plan, to: directory, name: "Screendrop_1")
-        #expect(named.lastPathComponent == "Screendrop_1_agent-prompt")
+        let named = try await RecordingAgentPromptWriter.write(movie: movie, plan: plan, to: directory, name: "Sukusho_1")
+        #expect(named.lastPathComponent == "Sukusho_1_agent-prompt")
         #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).filter { $0.contains("_agent-prompt") }.count == 2)
         let invalid = RecordingAgentPromptPlan(title: "Fixture", timeline: .full(sourceDuration: 99), cues: [], words: [], capture: nil)
         do { _ = try await RecordingAgentPromptWriter.write(movie: movie, plan: invalid, to: directory); Issue.record("Mismatched movie accepted") }

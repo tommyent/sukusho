@@ -321,7 +321,7 @@ struct StylePresetPicker<Library: StylePresetLibrary, Preview: View>: View {
 
     private func importPresets() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.screendropPreset]
+        panel.allowedContentTypes = [.sukushoPreset, .screendropPreset]
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
@@ -364,7 +364,7 @@ struct StylePresetPicker<Library: StylePresetLibrary, Preview: View>: View {
         do {
             let exported = try library.exportedData(for: preset.id)
             let panel = NSSavePanel()
-            panel.allowedContentTypes = [.screendropPreset]
+            panel.allowedContentTypes = [.sukushoPreset]
             panel.canCreateDirectories = true
             panel.isExtensionHidden = false
             panel.title = "Export \(styleNoun)"

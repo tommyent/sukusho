@@ -159,7 +159,7 @@ struct VideoRedactionChecks {
     }
 
     static func frozenChapterSidecars(in home: URL) async throws {
-        let session = RecordingSession(directoryURL: home.appendingPathComponent("chapter-fixture.screendroprec"))
+        let session = RecordingSession(directoryURL: home.appendingPathComponent("chapter-fixture.sukushorec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: true)
         try session.writeCaptureManifest(CaptureManifest(duration: 3, pixelWidth: 384, pixelHeight: 216))
         try session.updateProjectMetadata {
@@ -213,7 +213,7 @@ struct VideoRedactionChecks {
                   && home.hasPrefix("/private/tmp/"), "Foundation storage is not isolated: \(actualHome), \(support)")
         NSApplication.shared.setActivationPolicy(.prohibited)
         try await frozenChapterSidecars(in: URL(fileURLWithPath: home))
-        let root = URL(fileURLWithPath: home).appendingPathComponent("fixture.screendroprec")
+        let root = URL(fileURLWithPath: home).appendingPathComponent("fixture.sukushorec")
         try check(root.path.hasPrefix("/private/tmp/"), "Harness home is not isolated")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let session = RecordingSession(directoryURL: root)

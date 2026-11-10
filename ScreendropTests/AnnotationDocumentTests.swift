@@ -11,7 +11,7 @@ struct AnnotationDocumentTests {
         let base = folder.appendingPathComponent("capture.base.png")
         try Data("display pixels".utf8).write(to: display)
         try Data("untouched pixels".utf8).write(to: base)
-        try body(display, base, display.appendingPathExtension("screendrop"))
+        try body(display, base, display.appendingPathExtension(SukushoFileNames.editDocumentExtension))
     }
 
     @Test func absentSidecarIsDifferentFromAnUnreadableOne() throws {

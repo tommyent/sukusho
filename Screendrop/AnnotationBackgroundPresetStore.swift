@@ -8,7 +8,7 @@ import Observation
 
 /// A named, reusable snapshot of the annotation editor's background, layout,
 /// camera, focus blur, screenshot border, and watermark settings.
-/// `StoredBackground` is shared with editable `.screendrop` documents so both
+/// `StoredBackground` is shared with editable `.sukusho` documents so both
 /// persistence paths round-trip identically.
 struct AnnotationBackgroundPreset: Identifiable, Codable, Equatable {
     let id: UUID

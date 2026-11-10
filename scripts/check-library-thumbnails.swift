@@ -163,7 +163,7 @@ nonisolated struct CaptureLibraryItem: Sendable {
         precondition(!afterPending.contains { $0.lastPathComponent.hasPrefix(disk.sourceKey(for: pendingURL)) },
             "A concurrent request must not recreate a deleted thumbnail")
 
-        let package = root.appendingPathComponent("recording.screendrop-recording")
+        let package = root.appendingPathComponent("recording.sukusho-recording")
         disk.store(small, for: "old-render", source: package)
         disk.store(large, for: "new-render", source: package)
         await thumbnails.remove(for: [package])

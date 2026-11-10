@@ -446,7 +446,7 @@ enum ScreenshotFileActions {
             ])
         }
         return destinationURL.deletingLastPathComponent()
-            .appendingPathComponent(".Screendrop-\(UUID().uuidString)")
+            .appendingPathComponent(".\(SukushoFileNames.prefix)-\(UUID().uuidString)")
             .appendingPathExtension(destinationURL.pathExtension)
     }
 

@@ -4,7 +4,7 @@ import ImageIO
 import UniformTypeIdentifiers
 
 /// Opt-in frame dump (`defaults write com.tommyent.Sukusho ScrollingCaptureTrace -bool YES`).
-/// Each capture writes a new folder in Caches/Screendrop/ScrollingCaptureFrames, laid out as a
+/// Each capture writes a new folder in Caches/Sukusho/ScrollingCaptureFrames, laid out as a
 /// corpus page (scripts/scroll-corpus-run.swift): NNNN.png, the selection crop the stitcher sees
 /// at full resolution; page.json with the selection and ignored trailing columns; and
 /// frames.jsonl, one line per frame: index, time (mach seconds), reference (the frame it was
@@ -20,7 +20,7 @@ nonisolated final class ScrollingCaptureFrameDump: Sendable {
     init?(width: Int, height: Int, ignoredTrailingColumns: Int) {
         guard UserDefaults.standard.bool(forKey: "ScrollingCaptureTrace"),
               let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return nil }
-        folder = caches.appendingPathComponent("Screendrop/ScrollingCaptureFrames/"
+        folder = caches.appendingPathComponent("Sukusho/ScrollingCaptureFrames/"
             + Date.now.formatted(.iso8601.dateSeparator(.dash).timeSeparator(.omitted)) + "-" + UUID().uuidString.prefix(8))
         let page = #"{"selection":{"columns":[0,\#(width)],"rows":[0,\#(height)]},"ignoredTrailingColumns":\#(ignoredTrailingColumns)}"#
         let jsonl = folder.appendingPathComponent("frames.jsonl")
