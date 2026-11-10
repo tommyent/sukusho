@@ -174,14 +174,25 @@ final class CaptureCoordinator {
     /// history, no preview card to raise, and no after-capture action to run -
     /// so the toast and the capture sound are its only feedback.
     ///
-    /// The self-timer is handled by screencapture's `-T`, so the delay happens
-    /// after the area is drawn, matching Capture Area.
+    /// The area is drawn in the same picker as Capture Area (Shift snaps to a
+    /// box, Option magnifies), or with the system crosshair behind
+    /// `areaCaptureUsesSystemPicker`. The self-timer is handled by
+    /// screencapture's `-T`, so the delay happens after the area is drawn,
+    /// matching Capture Area.
     @discardableResult
     private func performCaptureText() async -> CaptureTextOutcome {
         ImageTextWarmUp.shared.start()
-        guard let url = await ScreenshotManager.shared.captureArea(
-            delaySeconds: ScreendropPreferences.captureDelaySeconds
-        ) else { return .cancelled }
+        let delay = ScreendropPreferences.captureDelaySeconds
+        var captured: URL?
+        if ScreendropPreferences.areaCaptureUsesSystemPicker {
+            captured = await ScreenshotManager.shared.captureArea(delaySeconds: delay)
+        } else {
+            let windows = CaptureSourceProbe(tracksPointer: false).windows.map(\.bounds)
+            if let rect = await RecordingAreaSelectionPresenter.shared.selectScreenshotArea(windows: windows) {
+                captured = await ScreenshotManager.shared.captureArea(rect, delaySeconds: delay)
+            }
+        }
+        guard let url = captured else { return .cancelled }
         defer { try? FileManager.default.removeItem(at: url) }
 
         // Resolved before recognition runs, so the toast lands on the display
