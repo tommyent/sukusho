@@ -48,4 +48,21 @@ struct NumberedTailTests {
         old["tail"] = nil
         #expect(try JSONDecoder().decode(NumberedProps.self, from: JSONSerialization.data(withJSONObject: old)).tail == nil)
     }
+
+    /// Side handles exist only where they are drawn: on sides long enough to fit one.
+    @Test(arguments: [(40.0, true), (20.0, false)])
+    static func sideHandlesAreGrabbableOnlyWhereShown(diameter: Double, hasSides: Bool) throws {
+        let editor = AnnoEditor()
+        editor.viewport = AnnoViewport(imageFrame: CGRect(x: 0, y: 0, width: 800, height: 600),
+                                       imageSize: CGSize(width: 800, height: 600))
+        var props = NumberedProps()
+        props.diameter = diameter
+        let shape = AnnoShape(x: 200, y: 200, kind: .numbered(props))
+        editor.replaceDocument(shapes: [shape])
+        editor.selectedIds = [shape.id]
+        let bounds = try #require(editor.selectionBounds)
+        #expect(editor.resizeHandlePoints(bounds).count == (hasSides ? 8 : 4))
+        #expect(editor.handle(at: Vec(200, 200)) == .topLeft)
+        #expect(editor.handle(at: Vec(200 + diameter, 200 + diameter / 2)) == (hasSides ? .right : nil))
+    }
 }

@@ -307,10 +307,8 @@ final class AnnoCanvasNSView: NSView {
 
         guard let bounds = editor.selectionBounds else { return }
 
-        // Draw in the selection's own frame so the box and its corner squares follow a rotated
-        // shape. Sizes are divided by the scale to come out fixed on screen.
+        // Draw the box in the selection's own frame so it follows a rotated shape.
         let transform = bounds.transform.cgAffineTransform.concatenating(pageToView)
-        let scale = imageFrame.width / imageSize.width
         let box = bounds.box
 
         let framePath = CGMutablePath()
@@ -320,28 +318,9 @@ final class AnnoCanvasNSView: NSView {
         context.setLineWidth(lineWidth)
         context.strokePath()
 
-        // Only the corners are drawn. The edge and rotate handles stay live for hit testing but are
-        // invisible, which is what keeps the selection quiet.
-        let handleSize = 8.0 / scale
-        let cornersPath = CGMutablePath()
-        for corner in box.corners {
-            cornersPath.addRect(
-                CGRect(
-                    x: corner.x - handleSize / 2,
-                    y: corner.y - handleSize / 2,
-                    width: handleSize,
-                    height: handleSize
-                ),
-                transform: transform
-            )
-        }
-        context.addPath(cornersPath)
-        context.setFillColor(AnnoTheme.handleFill.cgColor)
-        context.fillPath()
-        context.addPath(cornersPath)
-        context.setStrokeColor(accent.cgColor)
-        context.setLineWidth(lineWidth)
-        context.strokePath()
+        // Every handle that can be grabbed is drawn; the rotate handles outside the corners stay
+        // invisible.
+        for (_, point) in editor.resizeHandlePoints(bounds) { drawRoundHandle(at: point, in: context) }
 
         if let tail = editor.textTailHandlePoint { drawRoundHandle(at: tail, in: context) }
     }
