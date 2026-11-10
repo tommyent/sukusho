@@ -8,6 +8,9 @@
 # com.tommyent.Sukusho, and the release notes in docs/releases/<version>.md (MARKETING_VERSION in the project).
 # The build number is 32.YYMMDD.HHMM in UTC, which Sparkle compares and which only ever grows.
 # scripts/site.sh then puts the appcast on the gh-pages branch.
+# PERSONAL=1 stops after the signature checks: the same Developer ID signature for the owner's own Macs, with no
+# release notes, notarization, DMG or appcast, in ../builds/personal-<version>.*. Signed like a release, such a
+# build keeps the privacy permissions a release was granted; a development-signed one loses them.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PROFILE="${NOTARY_PROFILE:-notary}"
@@ -31,10 +34,10 @@ VERSIONS=("${(@f)$(sed -n 's/.*MARKETING_VERSION = \(.*\);/\1/p' Screendrop.xcod
 (( ${#VERSIONS} == 1 )) || fail "the configurations disagree on MARKETING_VERSION: ${VERSIONS[*]}"
 VERSION="${VERSIONS[1]}"
 NOTES="docs/releases/$VERSION.md"
-[[ -s "$NOTES" ]] || fail "write the release notes first: $NOTES"
+[[ -n "${PERSONAL:-}" || -s "$NOTES" ]] || fail "write the release notes first: $NOTES"
 BUILD="32.$(date -u +%y%m%d.%H%M)"
 
-OUT="$(mktemp -d "../builds/release-$VERSION.XXXXXX")"
+OUT="$(mktemp -d "../builds/${${PERSONAL:+personal}:-release}-$VERSION.XXXXXX")"
 OUT="${OUT:A}"
 DD="${OUT:h}/dd-release"   # kept between releases so packages resolve once; the build itself is clean
 print -r -- "release: $VERSION ($BUILD) into $OUT"
@@ -82,6 +85,10 @@ ENTITLEMENTS="$(codesign -d --entitlements - --xml "$APP" 2>/dev/null)"
 EXE="$APP/Contents/MacOS/Sukusho"
 (( $(nm "$EXE" | grep -c __profc_ || true) == 0 )) || fail "the executable carries code-coverage counters"
 ARCHS="$(lipo -archs "$EXE")"
+if [[ -n "${PERSONAL:-}" ]]; then
+    print -r -- "personal build $VERSION ($BUILD), $ARCHS, Developer ID signed, not notarized: $APP"
+    exit 0
+fi
 
 NOTARY=()
 notarize() {   # $1: the file to submit; returns only when Apple's answer is Accepted
