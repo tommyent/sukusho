@@ -162,7 +162,7 @@ Capture a display, a window, an area, a scrolling region, or just the text in an
 - **Screenshot options** in **Settings → Screenshots**: a 3, 5 or 10 second timer, window shadows, trimming the empty menu bar strip from full-screen captures on notched Macs, PNG or JPEG, and an option to also copy as TIFF for apps that can't paste PNG.
 - **After each capture**, choose any of: show the preview, copy, save, upload and copy the link, and open the editor or pin the screenshot above other windows. Recordings have their own set, and open in Studio by default.
 - **Floating preview cards** let you copy, drag, save, compress, pin, view, edit, upload or delete a capture. Rearrange their actions, and set where they appear and when they close, in **Settings → Overlay**.
-- **Capture Text** drags out an area, reads its text on-device, and puts the text on the clipboard. No image is saved.
+- **Capture Text** drags out an area, reads its text on-device, and puts the text on the clipboard. No image is saved. A table or a list keeps its shape: **Paste** gives table cells and list items where the app takes them, and **Paste and Match Style** gives plain text, with a table's cells separated by tabs.
 - **Open With → Sukusho** in Finder imports a copy of an image and opens the copy in the editor. The original file is never changed.
 
 ### Scrolling Capture

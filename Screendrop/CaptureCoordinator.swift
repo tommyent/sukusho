@@ -170,7 +170,11 @@ final class CaptureCoordinator {
         // drifted to while Vision worked.
         let displayID = ActiveDisplayResolver.activeDisplayID(preferPointer: true)
         CaptureTextFeedbackPresenter.shared.showReading(displayID: displayID)
-        let text = await ImageTextRecognizer.recognizeText(at: url)
+        // A table or a list keeps its shape; anything else is read line by line, as always.
+        var blocks: [CapturedTextBlock]?
+        if let image = ScreenshotImageLoader.uprightImage(at: url) { blocks = await CapturedDocumentText.structuredBlocks(in: image) }
+        let text: String
+        if let blocks { text = CapturedDocumentText.plainText(blocks) } else { text = await ImageTextRecognizer.recognizeText(at: url) }
 
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             CaptureTextFeedbackPresenter.shared.showNoTextFound(displayID: displayID)
@@ -181,6 +185,9 @@ final class CaptureCoordinator {
         }
 
         NSPasteboard.general.clearContents()
+        // Paste takes the structured version where an app accepts it; Paste and Match Style
+        // takes the plain one.
+        if let blocks { NSPasteboard.general.setString(CapturedDocumentText.html(blocks), forType: .html) }
         NSPasteboard.general.setString(text, forType: .string)
         CaptureTextFeedbackPresenter.shared.showCopied(text: text, displayID: displayID)
         if ScreendropPreferences.playSounds {
