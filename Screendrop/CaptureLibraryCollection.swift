@@ -477,7 +477,10 @@ struct LibraryCellContent: View {
 
     private func act(_ action: CaptureLibraryAction, on item: CaptureLibraryItem) {
         let model = CaptureLibraryModel.shared
+        let followed = QuickLookPreviewPresenter.followsLibrary && model.selection != [item.id]
         model.selection = [item.id]
+        // An open Quick Look has already followed the selection; .preview would toggle it closed.
+        if action == .preview, followed { return }
         model.perform(action)
     }
 

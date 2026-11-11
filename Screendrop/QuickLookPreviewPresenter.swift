@@ -20,6 +20,8 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
     /// again by something else while Quick Look stays open, closing still
     /// expands it.
     private var collapsedPreviewStack = false
+    /// Whether the open preview came from the Library and not the floating stack.
+    private var openedFromLibrary = false
     
     static var isShown: Bool {
         QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared()?.isVisible == true
@@ -40,6 +42,16 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
         shared.show(urls: urls, collapsingPreviewStack: false)
     }
     
+    /// Whether the Library's Quick Look is open, which shows whatever the Library has selected.
+    static var followsLibrary: Bool { isShown && shared.openedFromLibrary }
+
+    /// The Library's selection changed under its open Quick Look: shows it in
+    /// the same panel, as Finder does, and leaves the key window alone.
+    static func follow(urls: [URL]) {
+        guard followsLibrary, !urls.isEmpty else { return }
+        shared.show(urls: urls, collapsingPreviewStack: false, keepingFocus: true)
+    }
+
     static func dismiss() {
         shared.dismiss()
     }
@@ -54,14 +66,14 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
         return source.url
     }
 
-    private func show(urls: [URL], collapsingPreviewStack: Bool) {
+    private func show(urls: [URL], collapsingPreviewStack: Bool, keepingFocus: Bool = false) {
         preparationTask?.cancel()
         if urls.contains(where: { RecordingDeliverable.session(for: $0) != nil }) {
             StudioProjectRegistry.shared.flushDrafts()
         }
         let immediate = urls.map(Self.immediateURL)
         guard immediate.contains(nil) else {
-            present(urls: immediate.compactMap { $0 }, collapsingPreviewStack: collapsingPreviewStack)
+            present(urls: immediate.compactMap { $0 }, collapsingPreviewStack: collapsingPreviewStack, keepingFocus: keepingFocus)
             return
         }
         preparationTask = Task { [weak self] in
@@ -71,7 +83,7 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
                     if let ready { prepared.append(ready) } else { prepared.append(try await RecordingDeliverable.resolve(for: url)) }
                 }
                 guard !Task.isCancelled else { return }
-                self?.present(urls: prepared, collapsingPreviewStack: collapsingPreviewStack)
+                self?.present(urls: prepared, collapsingPreviewStack: collapsingPreviewStack, keepingFocus: keepingFocus)
             } catch {
                 guard !Task.isCancelled else { return }
                 FailureAlert.present(message: "The recording preview could not be prepared", error: error)
@@ -79,8 +91,11 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
         }
     }
 
-    private func present(urls: [URL], collapsingPreviewStack: Bool) {
+    private func present(urls: [URL], collapsingPreviewStack: Bool, keepingFocus: Bool) {
+        // Following the selection never reopens a panel that closed while a recording rendered.
+        if keepingFocus, !Self.isShown { return }
         previewURLs = urls.map { $0 as NSURL }
+        openedFromLibrary = !collapsingPreviewStack
         
         guard let panel = QLPreviewPanel.shared() else {
             restorePreviewStack()
@@ -90,7 +105,7 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
         // Activate the app *before* presenting the panel so macOS considers
         // it the frontmost process. Without this, the QuickLook window opens
         // unfocused and videos won't autoplay until manually clicked.
-        NSApp.activate()
+        if !keepingFocus { NSApp.activate() }
 
         panel.dataSource = self
         panel.delegate = self
@@ -108,6 +123,7 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
         } else {
             panel.makeKeyAndOrderFront(nil)
         }
+        guard !keepingFocus else { return }
 
         // Re-assert key status on the next runloop pass. The window server
         // sometimes needs a tick to finish processing the activation, so an
