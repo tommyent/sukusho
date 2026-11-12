@@ -27,7 +27,12 @@ final class CloudLibraryModel {
     /// The files going up from the Files page, one at a time.
     private(set) var fileUploads: FileUploads?
     private var fileUploadTask: Task<Void, Never>?
-    var selection: Set<String> = []
+    var selection: Set<String> = [] {
+        didSet {
+            guard selection != oldValue, QuickLookPreviewPresenter.followsLibrary else { return }
+            quickLook(toggling: false, following: true)
+        }
+    }
     /// Waiting for the Delete from Cloud confirmation.
     var pendingDelete: [CloudUpload] = []
     private(set) var uploads: [CloudUpload] = []
@@ -290,7 +295,9 @@ final class CloudLibraryModel {
     /// Downloads the selected uploads' full files from the Worker's public
     /// routes, then opens Quick Look on them in display order. Asked again
     /// while it downloads or shows, it stops, like Space in Finder.
-    func quickLook(toggling: Bool = true) {
+    /// `following` is a selection change under the open panel: the panel
+    /// keeps its keys (Esc still closes it) and isn't reopened if it closed.
+    func quickLook(toggling: Bool = true, following: Bool = false) {
         if toggling, previewTask != nil { cancelPreview(); return }
         if toggling, QuickLookPreviewPresenter.isShown { QuickLookPreviewPresenter.dismiss(); return }
         // A gallery has no file of its own; Open Link shows it.
@@ -301,11 +308,11 @@ final class CloudLibraryModel {
         let fetchID = fetch.id
         previewFetch = fetch
         let window = NSApp.keyWindow
-        escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak window] event in
+        if !following { escapeMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self, weak window] event in
             guard event.keyCode == 53, event.window === window else { return event }
             self?.cancelPreview()
             return nil
-        }
+        } }
         let kept = Set(fetch.uploadIDs)
         let owner = CloudUploader.shared.ownerAccess
         previewTask = Task {
@@ -327,7 +334,7 @@ final class CloudLibraryModel {
             }
             if Task.isCancelled { return }
             if !files.isEmpty { previewRevision += 1 }
-            QuickLookPreviewPresenter.show(urls: files)
+            if following { QuickLookPreviewPresenter.follow(urls: files) } else { QuickLookPreviewPresenter.show(urls: files) }
             if !failures.isEmpty {
                 CaptureLibraryModel.shared.errorMessage = "Couldn’t download for Quick Look:\n" + failures.joined(separator: "\n")
             }
