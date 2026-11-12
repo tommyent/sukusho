@@ -24,18 +24,23 @@ Click a picture to see it full size.
 
 <table>
   <tr>
-    <td width="33%" valign="top"><a href="docs/screenshots/library.jpg"><img src="docs/screenshots/thumbs/library.jpg" alt="The Library" width="100%"></a><br><b>Library</b> with search inside captures</td>
-    <td width="33%" valign="top"><a href="docs/screenshots/editor.jpg"><img src="docs/screenshots/thumbs/editor.jpg" alt="The image editor" width="100%"></a><br><b>Image editor</b> with labels, arrows and blur</td>
-    <td width="33%" valign="top"><a href="docs/screenshots/studio.jpg"><img src="docs/screenshots/thumbs/studio.jpg" alt="Studio" width="100%"></a><br><b>Screen recording</b> and Studio</td>
+    <td width="50%" valign="top"><a href="docs/screenshots/library.jpg"><img src="docs/screenshots/thumbs/library.jpg" alt="The Library" width="100%"></a><br><b>Library</b> with search inside captures</td>
+    <td width="50%" valign="top"><a href="docs/screenshots/library-background.jpg"><img src="docs/screenshots/thumbs/library-background.jpg" alt="The Library with a custom sky wallpaper behind the capture grid" width="100%"></a><br><b>Custom Library backgrounds</b></td>
   </tr>
   <tr>
-    <td valign="top"><a href="docs/screenshots/scrolling-capture.png"><img src="docs/screenshots/thumbs/scrolling-capture.jpg" alt="A scrolling capture" width="100%"></a><br><b>Scrolling Capture</b> of a whole page</td>
+    <td valign="top"><a href="docs/screenshots/editor.jpg"><img src="docs/screenshots/thumbs/editor.jpg" alt="The image editor" width="100%"></a><br><b>Image editor</b> with labels, arrows and blur</td>
+    <td valign="top"><a href="docs/screenshots/studio.jpg"><img src="docs/screenshots/thumbs/studio.jpg" alt="Studio" width="100%"></a><br><b>Screen recording</b> and Studio</td>
+  </tr>
+  <tr>
+    <td valign="top"><a href="docs/screenshots/scrolling-capture-window.jpg"><img src="docs/screenshots/thumbs/scrolling-capture-window.jpg" alt="A visible part of a travel page beside one tall capture of the full page" width="100%"></a><br><b>Scrolling Capture</b> of a whole page</td>
+    <td valign="top"><a href="docs/screenshots/agent-prompt.jpg"><img src="docs/screenshots/thumbs/agent-prompt.jpg" alt="An Agent Prompt" width="100%"></a><br><b>Bug Report</b> and How-To Guide for coding agents</td>
+  </tr>
+  <tr>
     <td valign="top"><a href="docs/screenshots/share-options.jpg"><img src="docs/screenshots/thumbs/share-options.jpg" alt="Share Options" width="100%"></a><br><b>Share links</b> with expiry, password and end-to-end encryption</td>
     <td valign="top"><a href="docs/screenshots/comments.jpg"><img src="docs/screenshots/thumbs/comments.jpg" alt="Comments" width="100%"></a><br><b>Comments and likes</b> come back to the Library</td>
   </tr>
   <tr>
     <td valign="top"><a href="docs/screenshots/gallery.jpg"><img src="docs/screenshots/thumbs/gallery.jpg" alt="A gallery page" width="100%"></a><br><b>Galleries</b>: up to 100 screenshots behind one link</td>
-    <td valign="top"><a href="docs/screenshots/agent-prompt.jpg"><img src="docs/screenshots/thumbs/agent-prompt.jpg" alt="An Agent Prompt" width="100%"></a><br><b>Bug Report</b> and How-To Guide for coding agents</td>
     <td valign="top"><a href="docs/screenshots/gallery-lightbox.jpg"><img src="docs/screenshots/thumbs/gallery-lightbox.jpg" alt="A gallery image open in a lightbox" width="100%"></a><br><b>Gallery lightbox</b> with comments and likes</td>
   </tr>
 </table>

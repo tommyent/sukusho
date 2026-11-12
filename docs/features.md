@@ -39,8 +39,8 @@ Click a picture to see it full size.
       <br>The <b>editor</b> marks up a screenshot, here with a boxed label and its tail, and sets it on a background.
     </td>
     <td width="50%" valign="top">
-      <a href="screenshots/scrolling-capture.png"><img src="screenshots/thumbs/scrolling-capture.jpg" alt="A full-page Scrolling Capture of a travel website, 2,108 by 6,524 pixels, shown in four columns" width="100%"></a>
-      <br><b>Scrolling Capture</b> turns a whole page into one tall image, shown here in four columns.
+      <a href="screenshots/scrolling-capture-window.jpg"><img src="screenshots/thumbs/scrolling-capture-window.jpg" alt="The visible travel page beside one tall capture of its full length" width="100%"></a>
+      <br><b>Scrolling Capture</b> turns a whole page into one tall image.
     </td>
   </tr>
   <tr>
@@ -100,6 +100,8 @@ One window for screenshots, recordings and recording projects, with **Uploads**,
 - **Keyboard and batch actions:** **Space** opens Quick Look and **Return** renames. Select several captures to copy, export, share, reveal or trash them together.
 - **Appearance:** **Settings → General → Appearance → Theme** keeps Sukusho's windows **Light** or **Dark**, or follows macOS with **Automatic**, the default.
 - **Custom Library backgrounds:** **Settings → General → Appearance** sets what the Library, the image editor and Studio draw behind your captures: **Dots** (the default), **Plain** grey, or a **Wallpaper**: one of the wallpapers the screenshot background keeps, an image you add (Sukusho keeps its own copy) or an Unsplash photo. **Dim** fades it into the grey, more in dark mode, and **Blur** softens it. It never appears in captures, exports or uploads. With Reduce Transparency or Increase Contrast on, the workspaces stay plain grey.
+
+<a href="screenshots/library-background.jpg"><img src="screenshots/thumbs/library-background.jpg" alt="A custom sky wallpaper behind the Library's travel captures" width="100%"></a>
 
 Opening Sukusho shows the Library; when it starts at login, it stays in the menu bar.
 
