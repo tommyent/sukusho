@@ -40,7 +40,7 @@ Click a picture to see it full size.
   <tr>
     <td valign="top"><a href="docs/screenshots/library-background.jpg"><img src="docs/screenshots/thumbs/library-background.jpg" alt="Sky wallpaper behind the Library capture grid" width="100%"></a><br><b>Custom Library backgrounds</b></td>
     <td valign="top"><a href="docs/screenshots/library.jpg"><img src="docs/screenshots/thumbs/library.jpg" alt="The Library capture grid and search" width="100%"></a><br><b>Library</b> with search inside captures</td>
-    <td valign="top"><a href="docs/screenshots/agent-prompt.jpg"><img src="docs/screenshots/thumbs/agent-prompt.jpg" alt="A selected recording with a green Bug Report marker" width="100%"></a><br><b>Bug reports</b> for people and coding agents, and <b>how-to guides</b></td>
+    <td valign="top"><a href="docs/screenshots/agent-prompt.jpg"><img src="docs/screenshots/thumbs/agent-prompt.jpg" alt="Four bug report frames with a red pen loop and ringed pointer" width="100%"></a><br><b>Bug reports</b> for people and coding agents, and <b>how-to guides</b></td>
   </tr>
 </table>
 
