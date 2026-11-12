@@ -120,7 +120,7 @@ Capture a display, a window, an area, a scrolling region, or just the text in an
 
 ## Scrolling Capture
 
-<a href="screenshots/scrolling-capture-window.jpg"><img src="screenshots/thumbs/scrolling-capture-window.jpg" alt="The visible travel page beside one tall capture of the full page" width="620"></a>
+<a href="screenshots/scrolling-capture-strip.jpg"><img src="screenshots/thumbs/scrolling-capture-strip.jpg" alt="One tall travel page capture with the visible section boxed, beside the browser window" width="620"></a>
 
 Draw a box over a scrolling view, then scroll through it yourself or click the auto-scroll button on the capture bar. Sukusho lines up each new frame with the last one and adds only the rows that scrolled into view, giving one tall image up to 16,384 pixels high.
 

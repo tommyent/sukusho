@@ -28,7 +28,7 @@ Click a picture to see it full size.
 
 <table>
   <tr>
-    <td width="33%" valign="top"><a href="docs/screenshots/scrolling-capture-window.jpg"><img src="docs/screenshots/thumbs/scrolling-capture-window.jpg" alt="A visible travel page beside one tall capture of the full page" width="100%"></a><br><b>Scrolling Capture</b> of a whole page</td>
+    <td width="33%" valign="top"><a href="docs/screenshots/scrolling-capture-strip.jpg"><img src="docs/screenshots/thumbs/scrolling-capture-strip.jpg" alt="One tall travel page capture with the visible section boxed, beside the browser window" width="100%"></a><br><b>Scrolling Capture</b> of a whole page</td>
     <td width="33%" valign="top"><a href="docs/screenshots/editor.jpg"><img src="docs/screenshots/thumbs/editor.jpg" alt="A marked-up travel page in the image editor" width="100%"></a><br><b>Image editor</b> with labels, arrows and blur</td>
     <td width="33%" valign="top"><a href="docs/screenshots/studio.jpg"><img src="docs/screenshots/thumbs/studio.jpg" alt="A travel site recording in Studio" width="100%"></a><br><b>Screen recording</b> and Studio</td>
   </tr>
