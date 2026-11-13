@@ -198,7 +198,7 @@ final class ScreenshotManager {
         }.value
     }
 
-    nonisolated private static func writePNG(_ image: CGImage, to url: URL, scale: CGFloat) -> URL? {
+    nonisolated static func writePNG(_ image: CGImage, to url: URL, scale: CGFloat) -> URL? {
         guard let destination = CGImageDestinationCreateWithURL(
             url as CFURL,
             "public.png" as CFString,
@@ -212,6 +212,23 @@ final class ScreenshotManager {
         let properties: [CFString: Any] = [kCGImagePropertyDPIWidth: dpi, kCGImagePropertyDPIHeight: dpi]
         CGImageDestinationAddImage(destination, image, properties as CFDictionary)
         return CGImageDestinationFinalize(destination) ? url : nil
+    }
+
+    nonisolated static func makePreviewThumbnail(of image: CGImage, maxPixelSize: Int = 640) -> CGImage? {
+        let maxSide = max(image.width, image.height)
+        guard maxSide > 0 else { return nil }
+        if maxSide <= maxPixelSize { return image }
+        let scale = Double(maxPixelSize) / Double(maxSide)
+        let width = max(1, Int((Double(image.width) * scale).rounded()))
+        let height = max(1, Int((Double(image.height) * scale).rounded()))
+        let space = image.colorSpace.flatMap { $0.model == .rgb && $0.supportsOutput ? $0 : nil }
+            ?? CGColorSpace(name: CGColorSpace.sRGB)!
+        let bitmapInfo = CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: space, bitmapInfo: bitmapInfo) else { return nil }
+        context.interpolationQuality = .medium
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()
     }
 
     // MARK: - Helpers

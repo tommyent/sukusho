@@ -173,6 +173,7 @@ final class ScreenshotHistoryStore {
 
     private(set) var items: [ScreenshotHistoryItem] = []
 
+    @ObservationIgnored private var reservedHistoryURLs: Set<URL> = []
     var recentItems: [ScreenshotHistoryItem] {
         Array(items.prefix(5))
     }
@@ -211,6 +212,44 @@ final class ScreenshotHistoryStore {
             print("Failed to import screenshot into history: \(error)")
             return sourceURL
         }
+    }
+
+    func prepareUniqueHistoryURL(extension ext: String = "png") throws -> URL {
+        try FileManager.default.createDirectory(at: Self.historyDirectory, withIntermediateDirectories: true)
+        let base = ScreenshotFileNaming.fileName(extension: ext)
+        var candidate = ScreenshotFileNaming.uniqueURL(for: base, in: Self.historyDirectory)
+        if reservedHistoryURLs.contains(candidate.standardizedFileURL) {
+            let stem = candidate.deletingPathExtension().lastPathComponent
+            for index in 2...10_000 {
+                let next = Self.historyDirectory.appendingPathComponent("\(stem)_\(index).\(ext)")
+                if !FileManager.default.fileExists(atPath: next.path),
+                   !reservedHistoryURLs.contains(next.standardizedFileURL) {
+                    candidate = next
+                    break
+                }
+            }
+        }
+        reservedHistoryURLs.insert(candidate.standardizedFileURL)
+        return candidate
+    }
+
+    func releaseReservedHistoryURL(_ url: URL) {
+        reservedHistoryURLs.remove(url.standardizedFileURL)
+    }
+
+    func registerImportedScreenshot(at destinationURL: URL, pixelSize: CGSize, source: CaptureSource? = nil) {
+        reservedHistoryURLs.remove(destinationURL.standardizedFileURL)
+        let item = ScreenshotHistoryItem(
+            id: UUID(),
+            createdAt: Date(),
+            updatedAt: Date(),
+            fileName: destinationURL.lastPathComponent,
+            pixelWidth: Int(pixelSize.width),
+            pixelHeight: Int(pixelSize.height),
+            source: source
+        )
+        items.insert(item, at: 0)
+        saveMetadata()
     }
 
     /// Adds a Studio recording to history without copying its potentially huge
@@ -515,10 +554,20 @@ final class ScreenshotHistoryStore {
 
     private func uniqueHistoryURL(for sourceURL: URL) -> URL {
         let pathExtension = sourceURL.pathExtension.isEmpty ? "png" : sourceURL.pathExtension
-        return ScreenshotFileNaming.uniqueURL(
+        let candidate = ScreenshotFileNaming.uniqueURL(
             for: ScreenshotFileNaming.fileName(extension: pathExtension),
             in: Self.historyDirectory
         )
+        guard reservedHistoryURLs.contains(candidate.standardizedFileURL) else { return candidate }
+        let stem = candidate.deletingPathExtension().lastPathComponent
+        for index in 2...10_000 {
+            let next = Self.historyDirectory.appendingPathComponent("\(stem)_\(index).\(pathExtension)")
+            if !FileManager.default.fileExists(atPath: next.path),
+               !reservedHistoryURLs.contains(next.standardizedFileURL) {
+                return next
+            }
+        }
+        return candidate
     }
 
     private func videoMetadata(at url: URL) async -> (width: Int, height: Int, duration: Double?) {

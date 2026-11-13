@@ -32,6 +32,22 @@ actor CaptureLibraryThumbnails {
         await image(at: url, owner: url, isVideo: isVideo, version: url.path, maxPixelSize: maxPixelSize, top: false)
     }
 
+
+    /// Seeds the memory and disk thumbnail caches for an image just written to disk,
+    /// avoiding a full-resolution PNG decode when the Library or preview reads it.
+    func seed(_ image: CGImage, for url: URL, maxPixelSize: Int = 640) {
+        let size = Self.bucket(for: CGFloat(maxPixelSize))
+        var resourceURL = url
+        resourceURL.removeAllCachedResourceValues()
+        guard let values = try? resourceURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) else { return }
+        let version = "v4:\(url.path):\(values.fileSize ?? 0):\(values.contentModificationDate?.timeIntervalSince1970 ?? 0):::\(size)"
+        let filename = disk.url(for: version, source: url).lastPathComponent
+        cache.setObject(image, forKey: filename as NSString, cost: image.bytesPerRow * image.height)
+        let disk = disk
+        Task.detached(priority: .utility) {
+            autoreleasepool { disk.store(image, for: version, source: url) }
+        }
+    }
     private func image(at url: URL, owner: URL, isVideo: Bool, version: String, maxPixelSize: Int, top: Bool) async -> CGImage? {
         guard !Task.isCancelled else { return nil }
         let preview: RecordingPreviewSource?

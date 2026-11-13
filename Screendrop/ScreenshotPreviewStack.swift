@@ -6,6 +6,7 @@
 import AppKit
 import Observation
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 @Observable
@@ -44,6 +45,15 @@ final class ScreenshotPreviewStack {
     @ObservationIgnored private var compressionTasks: [ScreenshotPreviewItem.ID: Task<Void, Never>] = [:]
     @ObservationIgnored private var compressionBadgeTasks: [ScreenshotPreviewItem.ID: Task<Void, Never>] = [:]
     private var visibleCapacity: Int?
+    @ObservationIgnored private var pendingImageTasks: [ScreenshotPreviewItem.ID: Task<Void, Never>] = [:]
+
+    var hasPendingImageSaves: Bool { !pendingImageTasks.isEmpty }
+
+    func waitForPendingImageSaves() async {
+        for task in pendingImageTasks.values {
+            await task.value
+        }
+    }
 
     var itemIDs: [ScreenshotPreviewItem.ID] {
         items.map(\.id)
@@ -87,7 +97,7 @@ final class ScreenshotPreviewStack {
            let image = await CaptureLibraryThumbnails.shared.image(at: url) {
             var item = ScreenshotPreviewItem(url: url, previewImage: NSImage(cgImage: image, size: CGSize(width: image.width, height: image.height)))
             if AfterCaptureActions.isEnabled(.save, for: .screenshot) {
-                item.autoSavedURL = saveToDefaultLocation(from: url)
+                item.autoSavedURL = await saveToDefaultLocationAsync(from: url)
             }
             prepareForInsertedPreview()
             items.insert(item, at: 0)
@@ -95,9 +105,96 @@ final class ScreenshotPreviewStack {
             scheduleAutoClose(id: item.id)
         } else {
             if AfterCaptureActions.isEnabled(.save, for: .screenshot) {
-                _ = saveToDefaultLocation(from: url)
+                _ = await saveToDefaultLocationAsync(from: url)
             }
             await runAfterCaptureActions(type: .screenshot, url: url, itemID: UUID())
+        }
+    }
+
+    /// Shows a composed capture (such as a scrolling capture) and plays its sound
+    /// as soon as an in-memory thumbnail is ready, while encoding PNG, importing into
+    /// History, auto-saving, and copying run off the main actor.
+    func addComposedCapture(_ image: CGImage, scale: CGFloat, displayID: CGDirectDisplayID?,
+                            source: CaptureSource?, playSound: Bool) async {
+        QuickLookPreviewPresenter.dismiss()
+
+        let destinationURL: URL
+        do {
+            destinationURL = try ScreenshotHistoryStore.shared.prepareUniqueHistoryURL(extension: "png")
+        } catch {
+            FailureAlert.present(message: "Scrolling capture couldn't be saved", error: error)
+            return
+        }
+
+        let stagingURL = destinationURL.deletingLastPathComponent()
+            .appendingPathComponent(".\(SukushoFileNames.prefix)-\(UUID().uuidString).png")
+        let showsOverlay = AfterCaptureActions.isEnabled(.showOverlay, for: .screenshot)
+        let thumb = showsOverlay
+            ? await Task.detached(priority: .userInitiated) { ScreenshotManager.makePreviewThumbnail(of: image, maxPixelSize: 640) }.value
+            : nil
+
+        if playSound {
+            CaptureFeedbackSound.play()
+        }
+
+        let itemID: UUID
+        if showsOverlay, let previewCG = thumb ?? Optional(image) {
+            let item = ScreenshotPreviewItem(
+                url: destinationURL,
+                previewImage: NSImage(cgImage: previewCG, size: CGSize(width: previewCG.width, height: previewCG.height))
+            )
+            itemID = item.id
+            preparingItemIDs.insert(itemID)
+            prepareForInsertedPreview()
+            items.insert(item, at: 0)
+            PreviewPanelPresenter.shared.show(displayID: displayID)
+        } else {
+            itemID = UUID()
+        }
+
+        pendingImageTasks[itemID] = Task { [weak self] in
+            let savedOK = await Task.detached(priority: .userInitiated) {
+                autoreleasepool {
+                    guard ScreenshotManager.writePNG(image, to: stagingURL, scale: scale) != nil else { return false }
+                    guard rename(stagingURL.path, destinationURL.path) == 0 else {
+                        try? FileManager.default.removeItem(at: stagingURL)
+                        return false
+                    }
+                    return true
+                }
+            }.value
+
+            guard let self else { return }
+            self.pendingImageTasks[itemID] = nil
+
+            guard savedOK else {
+                ScreenshotHistoryStore.shared.releaseReservedHistoryURL(destinationURL)
+                self.preparingItemIDs.remove(itemID)
+                if showsOverlay { self.removeImmediately(id: itemID) }
+                FailureAlert.present(message: "Scrolling capture couldn't be saved", error: CocoaError(.fileWriteUnknown))
+                return
+            }
+
+            ScreenshotHistoryStore.shared.registerImportedScreenshot(
+                at: destinationURL,
+                pixelSize: CGSize(width: image.width, height: image.height),
+                source: source
+            )
+            if let thumb {
+                await CaptureLibraryThumbnails.shared.seed(thumb, for: destinationURL)
+            }
+            self.preparingItemIDs.remove(itemID)
+
+            if AfterCaptureActions.isEnabled(.save, for: .screenshot) {
+                let savedURL = await self.saveToDefaultLocationAsync(from: destinationURL)
+                if let index = self.items.firstIndex(where: { $0.id == itemID }) {
+                    self.items[index].autoSavedURL = savedURL
+                }
+            }
+            await self.runAfterCaptureActions(type: .screenshot, url: destinationURL, itemID: itemID)
+            if self.items.contains(where: { $0.id == itemID }) {
+                self.scheduleAutoClose(id: itemID)
+            }
         }
     }
 
@@ -276,6 +373,7 @@ final class ScreenshotPreviewStack {
             || hoveredItemID == id
             || draggingItemID == id
             || compressingItemIDs.contains(id)
+            || preparingItemIDs.contains(id)
             || CloudUploader.shared.uploadingItems.contains(id) {
             Task {
                 try? await Task.sleep(for: .seconds(2))
@@ -394,8 +492,7 @@ final class ScreenshotPreviewStack {
     }
 
     func copyToClipboard(id: ScreenshotPreviewItem.ID) {
-        guard let item = items.first(where: { $0.id == id }) else { return }
-
+        guard !preparingItemIDs.contains(id), let item = items.first(where: { $0.id == id }) else { return }
         switch item.kind {
         case .image:
             Task {
@@ -427,8 +524,7 @@ final class ScreenshotPreviewStack {
     }
 
     func compress(id: ScreenshotPreviewItem.ID) {
-        guard let item = items.first(where: { $0.id == id }), item.kind == .image else { return }
-        guard !compressingItemIDs.contains(id) else { return }
+        guard !preparingItemIDs.contains(id), let item = items.first(where: { $0.id == id }), item.kind == .image else { return }
 
         markEngaged(id: id)
         QuickLookPreviewPresenter.dismiss()
@@ -497,7 +593,7 @@ final class ScreenshotPreviewStack {
     /// Runs OCR on the item's image and copies the recognised text to the
     /// clipboard. No-op for videos or images without detectable text.
     func copyText(id: ScreenshotPreviewItem.ID) {
-        guard let item = items.first(where: { $0.id == id }), item.kind == .image else { return }
+        guard !preparingItemIDs.contains(id), let item = items.first(where: { $0.id == id }), item.kind == .image else { return }
         let url = item.url
         let displayID = ActiveDisplayResolver.activeDisplayID(preferPointer: true)
         // Text recognition's first run can take many seconds.
@@ -522,8 +618,7 @@ final class ScreenshotPreviewStack {
     }
 
     func deleteScreenshot(id: ScreenshotPreviewItem.ID) {
-        guard let item = items.first(where: { $0.id == id }), !isOpenInEditor(id: id) else { return }
-
+        guard !preparingItemIDs.contains(id), let item = items.first(where: { $0.id == id }), !isOpenInEditor(id: id) else { return }
         if ScreenshotHistoryStore.shared.delete(url: item.url) {
             // The history store owns this file and has moved it to the Trash.
         } else {
@@ -572,7 +667,7 @@ final class ScreenshotPreviewStack {
     }
 
     func save(id: ScreenshotPreviewItem.ID, choosingLocation: Bool = false) {
-        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        guard !preparingItemIDs.contains(id), let index = items.firstIndex(where: { $0.id == id }) else { return }
         let kind = items[index].kind
         // A save dialog, cancellation, or failure must not expire the preview.
         markEngaged(id: id)
@@ -845,6 +940,35 @@ final class ScreenshotPreviewStack {
             print("Failed to auto save: \(error)")
             return nil
         }
+    }
+
+    private func saveToDefaultLocationAsync(from url: URL) async -> URL? {
+        let destinationURL: URL
+        do {
+            destinationURL = try ScreenshotFileActions.prepareDefaultSaveURL(for: url)
+        } catch {
+            print("Failed to auto save: \(error)")
+            return nil
+        }
+        let format = ScreendropPreferences.exportFormat
+        let isPNG = format == .png
+        let contentTypeIdentifier = format.contentType.identifier
+        let quality = ScreendropPreferences.compressionQuality
+        return await Task.detached(priority: .userInitiated) {
+            do {
+                try ScreenshotFileActions.save(
+                    from: url,
+                    to: destinationURL,
+                    isPNG: isPNG,
+                    contentTypeIdentifier: contentTypeIdentifier,
+                    compressionQuality: quality
+                )
+                return destinationURL
+            } catch {
+                print("Failed to auto save: \(error)")
+                return nil
+            }
+        }.value
     }
 
     /// Copying and saving both hand the file to the user, so both resolve the

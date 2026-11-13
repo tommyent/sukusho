@@ -304,6 +304,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return .terminateLater
         }
 
+        if ScreenshotPreviewStack.shared.hasPendingImageSaves {
+            Task { @MainActor in
+                await ScreenshotPreviewStack.shared.waitForPendingImageSaves()
+                sender.reply(toApplicationShouldTerminate: true)
+            }
+            return .terminateLater
+        }
+
         guard unsavedCount > 0 else { return .terminateNow }
 
         NSApp.activate(ignoringOtherApps: true)

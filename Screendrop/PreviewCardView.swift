@@ -99,7 +99,7 @@ struct PreviewCardView: View {
                     }
                 }
             }
-            .draggable(CaptureDragExport(url: item.url, isVideo: item.kind == .video)) {
+            .draggable(CaptureDragExport(url: item.url, isVideo: item.kind == .video, isReady: !isPreparing)) {
                 Image(nsImage: item.previewImage)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
@@ -123,6 +123,7 @@ struct PreviewCardView: View {
             }
             .simultaneousGesture(
                 TapGesture(count: 2).onEnded {
+                    guard !isPreparing else { return }
                     if item.kind == .video {
                         onEditVideo()
                     } else {
@@ -141,7 +142,7 @@ struct PreviewCardView: View {
             }
             .animation(previewStackAnimation, value: isDismissing)
             .contextMenu {
-                if item.kind == .image {
+                if item.kind == .image, !isPreparing {
                     Button("Copy Text from Image") { onCopyText() }
                 }
             }

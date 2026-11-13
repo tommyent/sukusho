@@ -379,32 +379,51 @@ enum ScreenshotFileActions {
     
     @discardableResult
     static func saveToDefaultLocation(from url: URL) throws -> URL {
+        let destinationURL = try prepareDefaultSaveURL(for: url)
+        try save(from: url, to: destinationURL)
+        return destinationURL
+    }
+
+    static func prepareDefaultSaveURL(for url: URL) throws -> URL {
         let destinationDirectory = ScreendropPreferences.exportDirectory
         try FileManager.default.createDirectory(
             at: destinationDirectory,
             withIntermediateDirectories: true
         )
-        
-        let destinationURL = ScreenshotFileNaming.uniqueURL(
+        return ScreenshotFileNaming.uniqueURL(
             for: exportFileName(for: url),
             in: destinationDirectory
         )
-        try save(from: url, to: destinationURL)
-        return destinationURL
     }
-    
+
     static func save(from sourceURL: URL, to destinationURL: URL) throws {
+        let format = ScreendropPreferences.exportFormat
+        try save(
+            from: sourceURL,
+            to: destinationURL,
+            isPNG: format == .png,
+            contentTypeIdentifier: format.contentType.identifier,
+            compressionQuality: ScreendropPreferences.compressionQuality
+        )
+    }
+
+    nonisolated static func save(
+        from sourceURL: URL,
+        to destinationURL: URL,
+        isPNG: Bool,
+        contentTypeIdentifier: String,
+        compressionQuality: Double
+    ) throws {
         let stagingURL = try stagingURL(from: sourceURL, to: destinationURL)
         defer { try? FileManager.default.removeItem(at: stagingURL) }
 
-        if ScreendropPreferences.exportFormat == .png {
+        if isPNG {
             try FileManager.default.copyItem(at: sourceURL, to: stagingURL)
         } else {
-            try exportImage(from: sourceURL, to: stagingURL, contentType: ScreendropPreferences.exportFormat.contentType)
+            try exportImage(from: sourceURL, to: stagingURL, contentTypeIdentifier: contentTypeIdentifier, compressionQuality: compressionQuality)
         }
         try installExport(from: stagingURL, at: destinationURL)
     }
-
     /// Updates an already-associated export without changing its file format.
     /// The replacement is staged beside the destination and atomically swapped
     /// in only after encoding succeeds, so the last good export is never deleted
@@ -468,33 +487,46 @@ enum ScreenshotFileActions {
     }
     
     private static func exportImage(from sourceURL: URL, to destinationURL: URL, contentType: UTType) throws {
+        try exportImage(
+            from: sourceURL,
+            to: destinationURL,
+            contentTypeIdentifier: contentType.identifier,
+            compressionQuality: ScreendropPreferences.compressionQuality
+        )
+    }
+
+    nonisolated private static func exportImage(
+        from sourceURL: URL,
+        to destinationURL: URL,
+        contentTypeIdentifier: String,
+        compressionQuality: Double
+    ) throws {
         guard let source = CGImageSourceCreateWithURL(
             sourceURL as CFURL,
             [kCGImageSourceShouldCache: false] as CFDictionary
         ) else {
             throw CocoaError(.fileReadCorruptFile)
         }
-        
+
         guard let destination = CGImageDestinationCreateWithURL(
             destinationURL as CFURL,
-            contentType.identifier as CFString,
+            contentTypeIdentifier as CFString,
             1,
             nil
         ) else {
             throw CocoaError(.fileWriteUnknown)
         }
-        
-        let options: [CFString: Any] = contentType == .png ? [:] : [
-            kCGImageDestinationLossyCompressionQuality: ScreendropPreferences.compressionQuality
+
+        let options: [CFString: Any] = contentTypeIdentifier == "public.png" ? [:] : [
+            kCGImageDestinationLossyCompressionQuality: compressionQuality
         ]
-        
+
         CGImageDestinationAddImageFromSource(destination, source, 0, options as CFDictionary)
-        
+
         guard CGImageDestinationFinalize(destination) else {
             throw CocoaError(.fileWriteUnknown)
         }
     }
-
     private static func exportContentType(for url: URL) -> UTType? {
         guard let type = UTType(filenameExtension: url.pathExtension) else { return nil }
         if type.conforms(to: .png) { return .png }
