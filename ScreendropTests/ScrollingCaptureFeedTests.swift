@@ -133,4 +133,16 @@ private final class FeedFixtureBundle: NSObject {}
         #expect(finish["wallTime"] as? Double == 1_700_000_000)
         #expect(finish["height"] as? Int == 1080)
     }
+
+    @Test("Evicted frames from the newest-frame slot are retained in order to bridge fast-scroll jumps")
+    func streamRetainsEvictedFramesForBridging() throws {
+        let top = try frame(3), mid = try frame(4)
+        let stream = ScrollingCaptureStream()
+        stream.enqueue(.init(image: top, time: 1.0))
+        stream.enqueue(.init(image: mid, time: 1.025))
+        stream.enqueue(.init(image: top, time: 1.05))
+        let bridged = stream.drainDroppedFrames(before: 1.05)
+        #expect(bridged.map(\.time) == [1.0, 1.025])
+        #expect(stream.drainDroppedFrames(before: 2.0).isEmpty)
+    }
 }

@@ -2,8 +2,8 @@ import CoreGraphics
 import CoreMedia
 import CoreVideo
 import Foundation
+import os
 import ScreenCaptureKit
-
 /// The capture clock: mach absolute time in seconds, as ScreenCaptureKit's displayTime.
 nonisolated enum ScrollingCaptureSampleTiming {
     static func now() -> TimeInterval { Double(mach_absolute_time()) * secondsPerTick }
@@ -39,16 +39,16 @@ nonisolated final class ScrollingCaptureStream: NSObject, SCStreamOutput, SCStre
     private let continuation: AsyncStream<Event>.Continuation
     private var stream: SCStream?
     private let queue = DispatchQueue(label: "com.screendrop.scrolling-capture.stream", qos: .userInteractive)
-
+    private let droppedFrames = OSAllocatedUnfairLock<[Frame]>(initialState: [])
+    private static let maxDroppedFrames = 3
     override init() {
         (events, continuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
         super.init()
     }
 
     /// Scrolling further than the region's height between two samples leaves
-    /// no overlap to line frames up with, so sample often.
-    static let frameInterval = CMTime(value: 1, timescale: 20)
-
+    /// no overlap to line frames up with, so sample often enough to catch fast flicks.
+    static let frameInterval = CMTime(value: 1, timescale: 40)
     /// The region at the display's full pixel scale, without the cursor, in BGRA.
     static func configuration(sourceRect: CGRect, scale: CGFloat) -> SCStreamConfiguration {
         let configuration = SCStreamConfiguration()
@@ -72,11 +72,30 @@ nonisolated final class ScrollingCaptureStream: NSObject, SCStreamOutput, SCStre
     /// No more events; one already waiting in the slot is still delivered.
     func stop() {
         continuation.finish()
+        droppedFrames.withLock { $0.removeAll() }
         guard let stream else { return }
         self.stream = nil
         Task { try? await stream.stopCapture() }
     }
 
+    /// Returns any frames evicted by the newest-frame slot before `time`, oldest first,
+    /// clearing the ring so they are only used once to bridge a fast-scroll jump.
+    func drainDroppedFrames(before time: TimeInterval) -> [Frame] {
+        droppedFrames.withLock { list in
+            let frames = list.filter { $0.time < time }
+            list.removeAll()
+            return frames
+        }
+    }
+
+    func enqueue(_ frame: Frame) {
+        if case .dropped(.frame(let evicted)) = continuation.yield(.frame(frame)) {
+            droppedFrames.withLock { list in
+                list.append(evicted)
+                if list.count > Self.maxDroppedFrames { list.removeFirst(list.count - Self.maxDroppedFrames) }
+            }
+        }
+    }
     private static func seconds(_ ticks: UInt64) -> TimeInterval { Double(ticks) * ScrollingCaptureSampleTiming.secondsPerTick }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
@@ -89,6 +108,8 @@ nonisolated final class ScrollingCaptureStream: NSObject, SCStreamOutput, SCStre
             // A frame still waiting in the slot matters more: put it back.
             if case .dropped(.frame(let waiting)) = continuation.yield(.idle(callbackTime)) {
                 continuation.yield(.frame(waiting))
+            } else {
+                droppedFrames.withLock { $0.removeAll() }
             }
             return
         }
@@ -96,14 +117,14 @@ nonisolated final class ScrollingCaptureStream: NSObject, SCStreamOutput, SCStre
               let pixels = sampleBuffer.imageBuffer,
               let image = Self.copy(pixels) else { return }
         let time = (info[.displayTime] as? UInt64).map(Self.seconds) ?? callbackTime
-        continuation.yield(.frame(Frame(image: image, time: time)))
+        enqueue(Frame(image: image, time: time))
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
         NSLog("Scrolling Capture stream stopped: %@", error.localizedDescription)
+        droppedFrames.withLock { $0.removeAll() }
         continuation.finish()
     }
-
     /// Byte for byte, tagged with the surface's colour space. Skip-first
     /// alpha, so whatever SCK leaves in the alpha byte never darkens a pixel.
     private static func copy(_ buffer: CVPixelBuffer) -> CGImage? {

@@ -41,6 +41,9 @@ final class ScrollingCapturePresenter {
     /// short runs shows, and 195 of 277 refused frames still do, all in runs
     /// of 1 s or more (x-manual 128 of 146).
     static let quietWait: TimeInterval = 1
+    /// When overlap is lost without an animation/hover (`!keepsChanging`), warn early
+    /// before the user scrolls several more screens past the last confirmed view.
+    static let jumpWait: TimeInterval = 0.25
 
     private(set) var isRunning = false
     private(set) var stitchedHeight = 0
@@ -228,23 +231,43 @@ final class ScrollingCapturePresenter {
             // was shown before the answer, so it can't show a scroll the answer missed.
             if !sawInput { sawInput = isAutoScrolling || Self.lastInputTime() > firstTime }
             // A frame that repeats the one before is an idle tick: nothing on screen changed there.
-            guard let update = await feed.add(frame.image, at: frame.time, mayReplaceFirst: !sawInput) else {
+            guard var update = await feed.add(frame.image, at: frame.time, mayReplaceFirst: !sawInput) else {
                 lastSampleTime = max(lastSampleTime, frame.time)
                 updateShowsWaiting(at: frame.time)
                 continue
             }
-            lastFrameTime = frame.time
-            lastSampleTime = max(lastSampleTime, frame.time)
-            if previewPanel != nil, frame.time - previewTime >= Self.previewInterval {
-                previewTime = frame.time
+            var latestTime = frame.time
+            if update.placement == .skipped, sawInput {
+                let dropped = source.drainDroppedFrames(before: frame.time)
+                var bridged = false
+                for mid in dropped {
+                    guard outcome != .cancelled, !hasReachedLimit, !reachedEndOfPage else { break }
+                    guard let midUpdate = await feed.add(mid.image, at: mid.time, mayReplaceFirst: false) else { continue }
+                    latestTime = mid.time
+                    if midUpdate.placement != .skipped {
+                        bridged = true
+                        update = midUpdate
+                        if midUpdate.height >= Self.maximumHeight { break }
+                    }
+                }
+                if bridged, update.height < Self.maximumHeight,
+                   let retried = await feed.add(frame.image, at: frame.time, mayReplaceFirst: false) {
+                    update = retried
+                    latestTime = frame.time
+                }
+            }
+            lastFrameTime = latestTime
+            lastSampleTime = max(lastSampleTime, latestTime)
+            if previewPanel != nil, latestTime - previewTime >= Self.previewInterval {
+                previewTime = latestTime
                 preview = await feed.makePreview(maxWidth: ScrollingCapturePreview.pixelWidth)
             }
             // What will be saved: the output stops at the limit.
             stitchedHeight = min(update.height, Self.maximumHeight)
-            if update.placement == .skipped, !isWaiting { waitingSince = frame.time }
+            if update.placement == .skipped, !isWaiting { waitingSince = latestTime }
             isWaiting = update.placement == .skipped
-            updateShowsWaiting(at: frame.time)
             keepsChanging = update.keepsChanging
+            updateShowsWaiting(at: latestTime)
             hasReachedLimit = update.height >= Self.maximumHeight
             // Auto-scroll saves at the limit, as at the end of the page; by hand, the bar waits for Done.
             if hasReachedLimit {
@@ -287,7 +310,8 @@ final class ScrollingCapturePresenter {
 
     /// Set only on a change: idle ticks arrive at the frame rate.
     private func updateShowsWaiting(at time: TimeInterval) {
-        let shows = isWaiting && time - waitingSince >= Self.quietWait
+        let delay = keepsChanging ? Self.quietWait : Self.jumpWait
+        let shows = isWaiting && time - waitingSince >= delay
         if shows != showsWaiting { showsWaiting = shows }
     }
 
