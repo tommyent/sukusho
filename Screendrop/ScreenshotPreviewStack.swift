@@ -114,8 +114,9 @@ final class ScreenshotPreviewStack {
     /// Shows a composed capture (such as a scrolling capture) and plays its sound
     /// as soon as an in-memory thumbnail is ready, while encoding PNG, importing into
     /// History, auto-saving, and copying run off the main actor.
+    @discardableResult
     func addComposedCapture(_ image: CGImage, scale: CGFloat, displayID: CGDirectDisplayID?,
-                            source: CaptureSource?, playSound: Bool) async {
+                            source: CaptureSource?, playSound: Bool) async -> URL? {
         QuickLookPreviewPresenter.dismiss()
 
         let destinationURL: URL
@@ -123,7 +124,7 @@ final class ScreenshotPreviewStack {
             destinationURL = try ScreenshotHistoryStore.shared.prepareUniqueHistoryURL(extension: "png")
         } catch {
             FailureAlert.present(message: "Scrolling capture couldn't be saved", error: error)
-            return
+            return nil
         }
 
         let stagingURL = destinationURL.deletingLastPathComponent()
@@ -196,6 +197,7 @@ final class ScreenshotPreviewStack {
                 self.scheduleAutoClose(id: itemID)
             }
         }
+        return destinationURL
     }
 
     /// Runs the non-save after-capture actions (copy / upload / annotate / pin /

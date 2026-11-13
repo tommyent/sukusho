@@ -155,22 +155,22 @@ final class CaptureCoordinator {
     }
 
     /// No self-timer: the capture runs for as long as the user scrolls.
+    /// Returns the reserved History URL immediately while PNG encoding finishes in the background
+    /// (no awaitable scrolling caller exists today).
     @discardableResult
     private func performCaptureScrolling() async -> URL? {
         // The app being scrolled is frontmost when the capture starts.
         let probe = CaptureSourceProbe(tracksPointer: false)
         guard let capture = await ScrollingCapturePresenter.shared.run() else { return nil }
         let source = probe.finish(.display(capture.displayID))
-        await ScreenshotPreviewStack.shared.addComposedCapture(
+        return await ScreenshotPreviewStack.shared.addComposedCapture(
             capture.image,
             scale: capture.scale,
             displayID: capture.displayID,
             source: source,
             playSound: ScreendropPreferences.playSounds
         )
-        return ScreenshotHistoryStore.shared.items.first?.url
     }
-
     /// Capture Text is the odd one out: it recognizes the text inside the drawn
     /// area, puts it on the clipboard, and throws the image away. It
     /// deliberately skips `finishCapture` - there is no file to import into
