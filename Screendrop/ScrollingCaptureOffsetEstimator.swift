@@ -1,6 +1,5 @@
 import CoreGraphics
 import Foundation
-import os
 import Vision
 /// Proposes how far the content moved up between two frames, in device pixels
 /// (`new[y] == last[y + offset]`), with Vision's translational registration.
@@ -90,13 +89,10 @@ nonisolated enum ScrollingCaptureOffsetEstimator {
 
     private static func bandShifts(_ images: (last: CGImage, new: CGImage), band: CGRect) -> [Double] {
         let usable = Int(band.width)
-        let results = OSAllocatedUnfairLock(initialState: [Double?](repeating: nil, count: bands))
-        DispatchQueue.concurrentPerform(iterations: bands) { index in
-            let rect = CGRect(x: index * usable / bands, y: Int(band.minY), width: usable / bands, height: Int(band.height))
-            let shift = translation(images, in: rect)
-            results.withLock { $0[index] = shift }
+        return (0..<bands).compactMap { index in
+            translation(images, in: CGRect(x: index * usable / bands, y: Int(band.minY),
+                                           width: usable / bands, height: Int(band.height)))
         }
-        return results.withLock { $0.compactMap { $0 } }
     }
     /// Vision's vertical translation from `last` to `new`, as an upward content
     /// offset: Vision's y axis points up, so content moving up reads negative.
