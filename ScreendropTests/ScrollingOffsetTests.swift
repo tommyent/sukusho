@@ -164,6 +164,7 @@ private final class OffsetFixtureBundle: NSObject {}
         #expect(await stitcher.place(sidebarFrame(top: 40), candidate: 40) == .appended(40))
         #expect(await stitcher.place(sidebarFrame(top: 80), candidate: 40) == .appended(40))
         let image = await stitcher.makeImage()
+        #expect(await stitcher.makeImageData() == Data(image))
         #expect(image.count == 96 * 480 * 4)
         func pixel(_ pixels: [UInt8], _ y: Int, _ x: Int) -> UInt8 { pixels[(y * 96 + x) * 4] }
         let page = sidebarFrame(top: 0) + sidebarFrame(top: 400)

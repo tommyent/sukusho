@@ -25,8 +25,12 @@ nonisolated enum ScrollingCapturePixels {
     }
 
     static func image(_ pixels: [UInt8], width: Int, height: Int, colorSpace: CGColorSpace) -> CGImage? {
-        guard width > 0, height > 0, pixels.count == width * height * 4,
-              let provider = CGDataProvider(data: Data(pixels) as CFData) else { return nil }
+        image(data: Data(pixels), width: width, height: height, colorSpace: colorSpace)
+    }
+
+    static func image(data: Data, width: Int, height: Int, colorSpace: CGColorSpace) -> CGImage? {
+        guard width > 0, height > 0, data.count == width * height * 4,
+              let provider = CGDataProvider(data: data as CFData) else { return nil }
         return CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
                        space: colorSpace, bitmapInfo: CGBitmapInfo(rawValue: bitmapInfo), provider: provider,
                        decode: nil, shouldInterpolate: false, intent: .defaultIntent)

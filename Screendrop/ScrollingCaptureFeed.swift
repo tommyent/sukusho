@@ -115,8 +115,8 @@ actor ScrollingCaptureFeed {
         let below = rowsBelow.flatMap { rows in
             referenceFrame.cropping(to: CGRect(x: Int(selection.minX), y: rows.lowerBound, width: width, height: rows.count))
         }.flatMap { ScrollingCapturePixels.bytes(of: $0, in: colorSpace) } ?? []
-        let pixels = await stitcher.makeImage(appending: below)
-        return ScrollingCapturePixels.image(pixels, width: width, height: pixels.count / (width * 4), colorSpace: colorSpace)
+        let data = await stitcher.makeImageData(appending: below)
+        return ScrollingCapturePixels.image(data: data, width: width, height: data.count / (width * 4), colorSpace: colorSpace)
     }
 
     /// The capture so far, no wider than `maxWidth` pixels, for the live preview beside the region.
