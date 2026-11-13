@@ -20,9 +20,17 @@ enum ScreenshotFileNaming {
     }
 
     /// `fileName` in `directory`, or the first free of `name_2`, `name_3`…
-    static func uniqueURL(for fileName: String, in directory: URL, fileManager: FileManager = .default) -> URL {
+    static func uniqueURL(
+        for fileName: String,
+        in directory: URL,
+        reserved: Set<URL> = [],
+        fileManager: FileManager = .default
+    ) -> URL {
         let first = directory.appendingPathComponent(fileName)
-        guard fileManager.fileExists(atPath: first.path) else { return first }
+        let isFree: (URL) -> Bool = { url in
+            !fileManager.fileExists(atPath: url.path) && !reserved.contains(url.standardizedFileURL)
+        }
+        if isFree(first) { return first }
 
         let baseName = first.deletingPathExtension().lastPathComponent
         let pathExtension = first.pathExtension
@@ -32,7 +40,7 @@ enum ScreenshotFileNaming {
         }
         for index in 2...10_000 {
             let candidate = named(String(index))
-            if !fileManager.fileExists(atPath: candidate.path) { return candidate }
+            if isFree(candidate) { return candidate }
         }
         return named(UUID().uuidString)
     }

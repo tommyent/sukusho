@@ -47,4 +47,22 @@ struct SukushoFileNamesTests {
         #expect(SukushoFileNames.editDocumentURL(for: old).lastPathComponent == "old.png.sukusho")
         #expect(FileManager.default.fileExists(atPath: oldSidecar.path))
     }
+
+    @Test func uniqueURLSkipsReservedInFlightExports() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("Sukusho-ReservedNames-\(UUID())")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let first = ScreenshotFileNaming.uniqueURL(for: "screenshot_2026-11-13_120000.png", in: folder)
+        #expect(first.lastPathComponent == "screenshot_2026-11-13_120000.png")
+        let reserved: Set<URL> = [first.standardizedFileURL]
+        let second = ScreenshotFileNaming.uniqueURL(for: "screenshot_2026-11-13_120000.png", in: folder, reserved: reserved)
+        #expect(second.lastPathComponent == "screenshot_2026-11-13_120000_2.png")
+        let third = ScreenshotFileNaming.uniqueURL(
+            for: "screenshot_2026-11-13_120000.png",
+            in: folder,
+            reserved: reserved.union([second.standardizedFileURL])
+        )
+        #expect(third.lastPathComponent == "screenshot_2026-11-13_120000_3.png")
+    }
 }

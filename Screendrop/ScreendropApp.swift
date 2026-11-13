@@ -298,6 +298,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     if let session {
                         _ = await ScreenshotHistoryStore.shared.importRecordingSession(session)
                     }
+                    await ScreenshotPreviewStack.shared.waitForPendingImageSaves()
                     sender.reply(toApplicationShouldTerminate: true)
                 }
             }

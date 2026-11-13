@@ -377,23 +377,35 @@ enum ScreenshotFileActions {
         }
     }
     
+    private static var reservedSaveURLs: Set<URL> = []
+
     @discardableResult
     static func saveToDefaultLocation(from url: URL) throws -> URL {
-        let destinationURL = try prepareDefaultSaveURL(for: url)
+        let destinationURL = try prepareDefaultSaveURL(for: url, reserving: true)
+        defer { releaseReservedSaveURL(destinationURL) }
         try save(from: url, to: destinationURL)
         return destinationURL
     }
 
-    static func prepareDefaultSaveURL(for url: URL) throws -> URL {
+    static func prepareDefaultSaveURL(for url: URL, reserving: Bool = false) throws -> URL {
         let destinationDirectory = ScreendropPreferences.exportDirectory
         try FileManager.default.createDirectory(
             at: destinationDirectory,
             withIntermediateDirectories: true
         )
-        return ScreenshotFileNaming.uniqueURL(
+        let destination = ScreenshotFileNaming.uniqueURL(
             for: exportFileName(for: url),
-            in: destinationDirectory
+            in: destinationDirectory,
+            reserved: reservedSaveURLs
         )
+        if reserving {
+            reservedSaveURLs.insert(destination.standardizedFileURL)
+        }
+        return destination
+    }
+
+    static func releaseReservedSaveURL(_ url: URL) {
+        reservedSaveURLs.remove(url.standardizedFileURL)
     }
 
     static func save(from sourceURL: URL, to destinationURL: URL) throws {
