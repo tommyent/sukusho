@@ -82,6 +82,7 @@ final class ScrollingCapturePresenter {
     /// The display time of the newest frame placed or skipped, which
     /// auto-scroll waits for before each step.
     @ObservationIgnored private var lastFrameTime: TimeInterval = 0
+    @ObservationIgnored private var lastSampleTime: TimeInterval = 0
     /// The display time of the first frame refused since the last one placed.
     @ObservationIgnored private var waitingSince: TimeInterval = 0
     /// macOS shows the Accessibility prompt at most once, so it's asked for
@@ -166,8 +167,8 @@ final class ScrollingCapturePresenter {
         // Its monitors start before the stream; leaving by any path, a failed
         // start or Cancel included, removes them.
         autoScroller = ScrollingCaptureAutoScroller(region: rect, scale: scale, state: { [unowned self] in
-            .init(height: stitchedHeight, lastFrameTime: lastFrameTime, isWaiting: isWaiting,
-                  canContinue: outcome == nil && !hasReachedLimit)
+            .init(height: stitchedHeight, lastFrameTime: lastFrameTime, lastSampleTime: lastSampleTime,
+                  isWaiting: isWaiting, canContinue: outcome == nil && !hasReachedLimit)
         }, bar: { [weak self] in self?.panel?.frame }, onStop: { [weak self] in self?.isAutoScrolling = false },
            onEndOfPage: { [weak self] in
             self?.reachedEndOfPage = true
@@ -190,6 +191,8 @@ final class ScrollingCapturePresenter {
                       ignoredTrailingColumns: Int((Self.scrollBarWidth * scale).rounded())) else { return nil }
             feed = firstFeed
             firstTime = firstFrame.time
+            lastFrameTime = 0
+            lastSampleTime = firstTime
             previewTime = firstTime
             preview = await feed.makePreview(maxWidth: ScrollingCapturePreview.pixelWidth)
         } catch {
@@ -213,7 +216,10 @@ final class ScrollingCapturePresenter {
         events: while let event = await events.next() {
             guard outcome != .cancelled, !hasReachedLimit, !reachedEndOfPage else { break }
             guard case .frame(let frame) = event else {
-                if case .idle(let time) = event { updateShowsWaiting(at: time) }
+                if case .idle(let time) = event {
+                    lastSampleTime = max(lastSampleTime, time)
+                    updateShowsWaiting(at: time)
+                }
                 continue
             }
             guard frame.time <= cutoff ?? .infinity else { break events }
@@ -223,10 +229,12 @@ final class ScrollingCapturePresenter {
             if !sawInput { sawInput = isAutoScrolling || Self.lastInputTime() > firstTime }
             // A frame that repeats the one before is an idle tick: nothing on screen changed there.
             guard let update = await feed.add(frame.image, at: frame.time, mayReplaceFirst: !sawInput) else {
+                lastSampleTime = max(lastSampleTime, frame.time)
                 updateShowsWaiting(at: frame.time)
                 continue
             }
             lastFrameTime = frame.time
+            lastSampleTime = max(lastSampleTime, frame.time)
             if previewPanel != nil, frame.time - previewTime >= Self.previewInterval {
                 previewTime = frame.time
                 preview = await feed.makePreview(maxWidth: ScrollingCapturePreview.pixelWidth)

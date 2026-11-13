@@ -61,9 +61,9 @@ import Testing
         var p = pacer()
         var now = 10.0
         var actions: [AutoScrollPacer.Action] = []
-        for _ in 0..<AutoScrollPacer.maximumStepsWithoutProgress {
+        for step in 0..<AutoScrollPacer.maximumStepsWithoutProgress {
             // A frame just now, so the view never settles; the step times out.
-            now += AutoScrollPacer.stepTimeout
+            now += step == 0 ? AutoScrollPacer.stepTimeout : AutoScrollPacer.retryStepTimeout
             actions.append(p.update(height: 1000, lastFrameTime: now - 0.01, now: now))
         }
         #expect(actions == Array(repeating: .stepElsewhere, count: AutoScrollPacer.maximumStepsWithoutProgress - 1) + [.endOfPage])
@@ -95,15 +95,33 @@ import Testing
     func recoversAfterUnstitched() {
         var p = pacer()
         var now = 10.0
-        for _ in 0..<(AutoScrollPacer.maximumStepsWithoutProgress - 1) {
-            now += AutoScrollPacer.stepTimeout
+        for step in 0..<(AutoScrollPacer.maximumStepsWithoutProgress - 1) {
+            now += step == 0 ? AutoScrollPacer.stepTimeout : AutoScrollPacer.retryStepTimeout
             #expect(p.update(height: 1000, lastFrameTime: now - 0.01, now: now) == .stepElsewhere)
         }
         now += 0.5
         #expect(p.update(height: 1100, lastFrameTime: now - 0.25, now: now) == .step)
-        for _ in 0..<(AutoScrollPacer.maximumStepsWithoutProgress - 1) {
-            now += AutoScrollPacer.stepTimeout
+        for step in 0..<(AutoScrollPacer.maximumStepsWithoutProgress - 1) {
+            now += step == 0 ? AutoScrollPacer.stepTimeout : AutoScrollPacer.retryStepTimeout
             #expect(p.update(height: 1100, lastFrameTime: now - 0.25, now: now) == .stepElsewhere)
         }
+    }
+
+    @Test("Stream idle samples after a step confirm no movement faster than the stall fallback")
+    func idleSamplesConfirmEndOfPage() {
+        var p = pacer()
+        let t = 10.0
+        // Too early for idle confirmation while a slow app may still be painting.
+        #expect(p.update(height: 1000, lastFrameTime: 9, lastSampleTime: t + 0.25, now: t + 0.25) == .wait)
+        // Slow app responds at 0.28s with a full step: keeps scrolling.
+        var slow = pacer()
+        #expect(slow.update(height: 1100, lastFrameTime: t + 0.28, lastSampleTime: t + 0.28, now: t + 0.29) == .step)
+        // Three points confirmed idle by stream samples end the page in 3 * idleResponseTime.
+        let t1 = t + AutoScrollPacer.idleResponseTime
+        #expect(p.update(height: 1000, lastFrameTime: 9, lastSampleTime: t1, now: t1) == .stepElsewhere)
+        let t2 = t1 + AutoScrollPacer.idleResponseTime
+        #expect(p.update(height: 1000, lastFrameTime: 9, lastSampleTime: t2, now: t2) == .stepElsewhere)
+        let t3 = t2 + AutoScrollPacer.idleResponseTime
+        #expect(p.update(height: 1000, lastFrameTime: 9, lastSampleTime: t3, now: t3) == .endOfPage)
     }
 }
