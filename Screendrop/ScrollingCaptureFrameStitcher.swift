@@ -94,8 +94,17 @@ actor ScrollingCaptureFrameStitcher {
         guard frame.count == last.count else { lastWasUpward = false; return (.skipped, nil) }
         let candidate = ScrollingCaptureOffsetEstimator.candidate(from: last, to: frame,
             width: width, height: height, ignoredTrailingColumns: ignoredTrailingColumns)
-        return (place(frame, candidate: candidate?.offset, alternatives: candidate?.alternatives ?? [],
-                      bands: candidate?.bands ?? []), candidate)
+        let wasUpward = lastWasUpward
+        let placement = place(frame, candidate: candidate?.offset, alternatives: candidate?.alternatives ?? [],
+                              bands: candidate?.bands ?? [])
+        if placement == .skipped,
+           let fallback = ScrollingCaptureOffsetVerifier.uniqueLineUpCandidate(from: last, to: frame, width: width,
+               height: height, ignoredTrailingColumns: ignoredTrailingColumns) {
+            lastWasUpward = wasUpward
+            return (place(frame, candidate: fallback, alternatives: candidate?.alternatives ?? [],
+                          bands: candidate?.bands ?? []), candidate)
+        }
+        return (placement, candidate)
     }
 
     /// Places a frame against the reference at Vision's candidate.

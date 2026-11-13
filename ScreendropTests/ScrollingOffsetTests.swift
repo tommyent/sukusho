@@ -489,4 +489,29 @@ private final class OffsetFixtureBundle: NSObject {}
         let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: last, width: w, height: h, ignoredTrailingColumns: 0))
         #expect(await stitcher.add(new).placement == .appended(180))
     }
+
+    @Test("Unique-row line-up rescues rhythmic line-height pages when Vision misses, without placing non-overlapping jumps")
+    func uniqueLineUpRescuesMissedOverlap() async throws {
+        // Regular 24-row line rhythm (16 px text, 8 px gap) with unique per-line pixels:
+        // mimics prose/code where Vision can miss at uneven hand-scroll steps.
+        let w = 120, h = 400
+        func rhythmicFrame(top: Int) -> [UInt8] {
+            var px = [UInt8](repeating: 255, count: w * h * 4)
+            for y in 0..<h {
+                let row = top + y
+                guard row % 24 < 16 else { continue }
+                for x in 10..<(w - 10) where (x + (row / 24) * 5) % 4 < 3 {
+                    let v = UInt8(truncatingIfNeeded: row * 31 + (row / 256) * 53 + x * 13)
+                    px.replaceSubrange(((y * w + x) * 4)..<((y * w + x) * 4 + 3), with: [v, v, v])
+                }
+            }
+            return px
+        }
+        let f0 = rhythmicFrame(top: 0), f1 = rhythmicFrame(top: 220), far = rhythmicFrame(top: 900)
+        #expect(ScrollingCaptureOffsetVerifier.uniqueLineUpCandidate(from: f0, to: f1, width: w, height: h, ignoredTrailingColumns: 0) == 220)
+        #expect(ScrollingCaptureOffsetVerifier.uniqueLineUpCandidate(from: f0, to: far, width: w, height: h, ignoredTrailingColumns: 0) == nil)
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: f0, width: w, height: h, ignoredTrailingColumns: 0))
+        #expect(await stitcher.add(f1).placement == .appended(220))
+        #expect(await stitcher.add(far).placement == .skipped)
+    }
 }

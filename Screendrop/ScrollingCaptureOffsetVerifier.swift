@@ -275,6 +275,74 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
         } }
     }
 
+    /// Exact unique-row line-up shift when Vision fails (e.g. regular line-height rhythm,
+    /// sticky chrome, or large flicks still within `cut`): requires at least `2 * minimumMatchedRows`
+    /// unique non-blank rows lining up at one shift, at least 3x any rival shift. Still verified
+    /// byte-for-byte by `verifiedOffset` before placement.
+    static func uniqueLineUpCandidate(from last: [UInt8], to new: [UInt8], width: Int, height: Int,
+                                      ignoredTrailingColumns: Int) -> Int? {
+        guard width > 0, height > 0, last.count == width * height * 4, new.count == last.count else { return nil }
+        let usable = hashedWidth(width: width, ignoredTrailingColumns: ignoredTrailingColumns)
+        return last.withUnsafeBytes { old in new.withUnsafeBytes { now in
+            func same(_ y: Int, _ oldY: Int, _ x: Range<Int>) -> Bool {
+                memcmp(now.baseAddress! + (y * width + x.lowerBound) * 4,
+                       old.baseAddress! + (oldY * width + x.lowerBound) * 4, x.count * 4) == 0
+            }
+            func pixel(_ bytes: UnsafeRawBufferPointer, _ y: Int, _ x: Int) -> UInt32 {
+                bytes.loadUnaligned(fromByteOffset: (y * width + x) * 4, as: UInt32.self)
+            }
+            let edges = unmovedEdges(height: height) { same($0, $0, 0..<usable) }
+            let band = edges.top..<(height - edges.bottom)
+            let committed = band.lowerBound..<cut(in: band)
+            func rowHash(_ bytes: UnsafeRawBufferPointer, _ y: Int, over range: Range<Int>) -> Int {
+                var hasher = Hasher()
+                hasher.combine(bytes: UnsafeRawBufferPointer(start: bytes.baseAddress! + (y * width + range.lowerBound) * 4,
+                                                             count: range.count * 4))
+                return hasher.finalize()
+            }
+            func rowsOnce(_ bytes: UnsafeRawBufferPointer, over range: Range<Int>) -> [Int: Int] {
+                var row: [Int: Int] = [:], repeated = Set<Int>()
+                for y in 0..<height {
+                    let start = bytes.baseAddress! + (y * width + range.lowerBound) * 4
+                    guard memcmp(start, start + 4, (range.count - 1) * 4) != 0 else { continue }
+                    let hash = rowHash(bytes, y, over: range)
+                    if repeated.contains(hash) { continue }
+                    if row.removeValue(forKey: hash) != nil { repeated.insert(hash) } else { row[hash] = y }
+                }
+                return row
+            }
+            func peak(over range: Range<Int>) -> Int? {
+                guard range.count > 1 else { return nil }
+                let onceNow = rowsOnce(now, over: range), onceOld = rowsOnce(old, over: range)
+                var lineUp: [Int: Int] = [:]
+                for (hash, y) in onceNow where committed.contains(y) {
+                    if let oldY = onceOld[hash], committed.contains(oldY) { lineUp[oldY - y, default: 0] += 1 }
+                }
+                let sorted = lineUp.sorted { $0.value > $1.value }
+                guard let best = sorted.first, best.value >= 2 * minimumMatchedRows else { return nil }
+                let second = sorted.dropFirst().first?.value ?? 0
+                guard best.value >= second * 3 else { return nil }
+                return best.key
+            }
+            if let k = peak(over: 0..<usable) { return k }
+            func stillRun(_ columns: [Int]) -> Int {
+                var clean = 0
+                for (i, x) in columns.enumerated() {
+                    var changed = 0
+                    for y in band where pixel(now, y, x) != pixel(old, y, x) {
+                        changed += 1
+                        if changed > band.count / pinnedChangeFraction { return clean }
+                    }
+                    if changed == 0 { clean = i + 1 }
+                }
+                return clean
+            }
+            let left = stillRun(Array(0..<usable)), right = stillRun(Array((0..<usable).reversed()))
+            guard left + right > 0, left + right < usable else { return nil }
+            return peak(over: left..<(usable - right))
+        } }
+    }
+
     /// Whether `offset` leaves at least `minimumMatchedRows` rows of overlap
     /// above the cut, the most any frame of this height can: further, the
     /// view has scrolled past what can be confirmed. A sticky header or
