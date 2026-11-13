@@ -165,7 +165,7 @@ final class ScreenshotPreviewStack {
             }.value
 
             guard let self else { return }
-            self.pendingImageTasks[itemID] = nil
+            defer { self.pendingImageTasks[itemID] = nil }
 
             guard savedOK else {
                 ScreenshotHistoryStore.shared.releaseReservedHistoryURL(destinationURL)
@@ -945,11 +945,12 @@ final class ScreenshotPreviewStack {
     private func saveToDefaultLocationAsync(from url: URL) async -> URL? {
         let destinationURL: URL
         do {
-            destinationURL = try ScreenshotFileActions.prepareDefaultSaveURL(for: url)
+            destinationURL = try ScreenshotFileActions.prepareDefaultSaveURL(for: url, reserving: true)
         } catch {
             print("Failed to auto save: \(error)")
             return nil
         }
+        defer { ScreenshotFileActions.releaseReservedSaveURL(destinationURL) }
         let format = ScreendropPreferences.exportFormat
         let isPNG = format == .png
         let contentTypeIdentifier = format.contentType.identifier
