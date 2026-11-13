@@ -99,10 +99,13 @@ actor ScrollingCaptureFrameStitcher {
                               bands: candidate?.bands ?? [])
         if placement == .skipped,
            let fallback = ScrollingCaptureOffsetVerifier.uniqueLineUpCandidate(from: last, to: frame, width: width,
-               height: height, ignoredTrailingColumns: ignoredTrailingColumns) {
+               height: height, ignoredTrailingColumns: ignoredTrailingColumns),
+           let found = ScrollingCaptureOffsetVerifier.verifiedOffset(candidates: [fallback],
+               votes: candidate?.bands ?? [], from: last, to: frame, width: width, height: height,
+               ignoredTrailingColumns: ignoredTrailingColumns),
+           found.offset != 0, abs(found.offset - fallback) <= ScrollingCaptureOffsetVerifier.search {
             lastWasUpward = wasUpward
-            return (place(frame, candidate: fallback, alternatives: candidate?.alternatives ?? [],
-                          bands: candidate?.bands ?? []), candidate)
+            return (apply(found, to: frame), candidate)
         }
         return (placement, candidate)
     }
@@ -136,6 +139,10 @@ actor ScrollingCaptureFrameStitcher {
             lastWasUpward = false
             return .skipped
         }
+        return apply(found, to: frame)
+    }
+
+    private func apply(_ found: ScrollingCaptureOffsetVerifier.Verified, to frame: [UInt8]) -> Placement {
         let k = found.offset, rowBytes = width * 4
         if k < 0 {
             defer { lastWasUpward = true }

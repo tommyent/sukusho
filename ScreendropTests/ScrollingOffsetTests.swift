@@ -514,4 +514,48 @@ private final class OffsetFixtureBundle: NSObject {}
         #expect(await stitcher.add(f1).placement == .appended(220))
         #expect(await stitcher.add(far).placement == .skipped)
     }
+
+    @Test("Unique-row fallback ignores shift 0 even with a sticky header broken at row 0 and a jump near cut")
+    func uniqueLineUpNeverPicksShiftZero() async throws {
+        let w = 120, h = 400 // cut = 300
+        func frame(top: Int, headerTick: Int) -> [UInt8] {
+            var px = [UInt8](repeating: 255, count: w * h * 4)
+            for y in 0..<h {
+                if y == 0 {
+                    // Changing top row defeats unmovedEdges so the header stays in the band.
+                    let v = UInt8(truncatingIfNeeded: headerTick * 73 + 11)
+                    for x in 0..<w { px.replaceSubrange(((y * w + x) * 4)..<((y * w + x) * 4 + 3), with: [v, v, v]) }
+                } else if y <= 20 {
+                    // 20 unique header rows in center columns (3 of 5 bands < consensusBands=4; share < 0.3)
+                    // so direct Vision verification returns nil and the fallback is exercised.
+                    for x in 30..<(w - 30) {
+                        let v = UInt8(truncatingIfNeeded: y * 41 + x * 17 + 5)
+                        px.replaceSubrange(((y * w + x) * 4)..<((y * w + x) * 4 + 3), with: [v, v, v])
+                    }
+                } else {
+                    let row = top + y
+                    for x in 10..<(w - 10) {
+                        let v: UInt8 = switch x {
+                        case 10: UInt8(truncatingIfNeeded: row)
+                        case 11: UInt8(truncatingIfNeeded: row >> 8)
+                        default: UInt8(truncatingIfNeeded: row * 31 + x * 13)
+                        }
+                        px.replaceSubrange(((y * w + x) * 4)..<((y * w + x) * 4 + 3), with: [v, v, v])
+                    }
+                }
+            }
+            return px
+        }
+        let last = frame(top: 0, headerTick: 0), jumped = frame(top: 295, headerTick: 1) // 5 rows overlap (< 8)
+        // Confirm Vision itself misses (does not verify 0) so the fallback path is exercised.
+        let est = ScrollingCaptureOffsetEstimator.candidate(from: last, to: jumped, width: w, height: h, ignoredTrailingColumns: 0)
+        if let est {
+            let direct = ScrollingCaptureOffsetVerifier.verifiedOffset(candidates: [est.offset] + est.alternatives,
+                votes: est.bands, from: last, to: jumped, width: w, height: h, ignoredTrailingColumns: 0)
+            #expect(direct == nil)
+        }
+        #expect(ScrollingCaptureOffsetVerifier.uniqueLineUpCandidate(from: last, to: jumped, width: w, height: h, ignoredTrailingColumns: 0) == nil)
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: last, width: w, height: h, ignoredTrailingColumns: 0))
+        #expect(await stitcher.add(jumped).placement == .skipped)
+    }
 }

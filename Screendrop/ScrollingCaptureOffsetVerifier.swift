@@ -316,7 +316,7 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
                 let onceNow = rowsOnce(now, over: range), onceOld = rowsOnce(old, over: range)
                 var lineUp: [Int: Int] = [:]
                 for (hash, y) in onceNow where committed.contains(y) {
-                    if let oldY = onceOld[hash], committed.contains(oldY) { lineUp[oldY - y, default: 0] += 1 }
+                    if let oldY = onceOld[hash], committed.contains(oldY), oldY != y { lineUp[oldY - y, default: 0] += 1 }
                 }
                 let sorted = lineUp.sorted { $0.value > $1.value }
                 guard let best = sorted.first, best.value >= 2 * minimumMatchedRows else { return nil }
