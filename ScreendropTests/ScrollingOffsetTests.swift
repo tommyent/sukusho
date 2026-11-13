@@ -464,4 +464,29 @@ private final class OffsetFixtureBundle: NSObject {}
         #expect(shifts.count == ScrollingCaptureOffsetEstimator.bands)
         #expect(ScrollingCaptureOffsetEstimator.consensus(shifts) == nil)
     }
+
+    @Test("Sticky headers and footers are trimmed before Vision proposes an offset")
+    func stickyChromeDoesNotHijackVision() async throws {
+        let base = try frame(3), moved = try frame(4) // 600x400, true offset 180
+        let w = base.width, h = base.height, header = 70, footer = 50
+        func withStickyChrome(_ pixels: [UInt8]) -> [UInt8] {
+            var out = pixels
+            for y in 0..<header {
+                for x in 0..<w {
+                    let v: UInt8 = (y % 6 < 3 && x % 12 < 6) ? 30 : 210
+                    out.replaceSubrange(((y * w + x) * 4)..<((y * w + x) * 4 + 3), with: [v, v, v])
+                }
+            }
+            for y in (h - footer)..<h {
+                for x in 0..<w {
+                    let v: UInt8 = (y % 5 < 2 && x % 10 < 5) ? 50 : 220
+                    out.replaceSubrange(((y * w + x) * 4)..<((y * w + x) * 4 + 3), with: [v, v, v])
+                }
+            }
+            return out
+        }
+        let last = withStickyChrome(base.pixels), new = withStickyChrome(moved.pixels)
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: last, width: w, height: h, ignoredTrailingColumns: 0))
+        #expect(await stitcher.add(new).placement == .appended(180))
+    }
 }

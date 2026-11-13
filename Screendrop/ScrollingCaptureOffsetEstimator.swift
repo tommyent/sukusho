@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
+import os
 import Vision
-
 /// Proposes how far the content moved up between two frames, in device pixels
 /// (`new[y] == last[y + offset]`), with Vision's translational registration.
 /// Only a candidate: it can be a few pixels off, so OffsetVerifier confirms it
@@ -37,10 +37,11 @@ nonisolated enum ScrollingCaptureOffsetEstimator {
                           ignoredTrailingColumns: Int) -> Candidate? {
         guard let images = images(last, new, width: width, height: height) else { return nil }
         let usable = ScrollingCaptureOffsetVerifier.hashedWidth(width: width, ignoredTrailingColumns: ignoredTrailingColumns)
-        let shifts = bandShifts(images, usable: usable)
+        let bandRect = activeBand(from: last, to: new, width: width, height: height, usable: usable)
+        let shifts = bandShifts(images, band: bandRect)
         let bands = shifts.map { Int($0.rounded()) }
         if let agreed = consensus(shifts) { return Candidate(offset: agreed, bandsAgree: true, bands: bands) }
-        return translation(images, in: CGRect(x: 0, y: 0, width: usable, height: height)).map {
+        return translation(images, in: bandRect).map {
             let offset = Int($0.rounded())
             return Candidate(offset: offset, bandsAgree: false, alternatives: pairs(shifts).filter { $0 != offset }, bands: bands)
         }
@@ -59,10 +60,9 @@ nonisolated enum ScrollingCaptureOffsetEstimator {
     static func bandShifts(from last: [UInt8], to new: [UInt8], width: Int, height: Int,
                            ignoredTrailingColumns: Int) -> [Double] {
         guard let images = images(last, new, width: width, height: height) else { return [] }
-        return bandShifts(images, usable: ScrollingCaptureOffsetVerifier.hashedWidth(width: width,
-            ignoredTrailingColumns: ignoredTrailingColumns))
+        let usable = ScrollingCaptureOffsetVerifier.hashedWidth(width: width, ignoredTrailingColumns: ignoredTrailingColumns)
+        return bandShifts(images, band: activeBand(from: last, to: new, width: width, height: height, usable: usable))
     }
-
     /// The mean of the tightest `consensusBands` shifts, rounded, when they lie
     /// within `consensusSpread` of each other.
     static func consensus(_ shifts: [Double]) -> Int? {
@@ -74,13 +74,30 @@ nonisolated enum ScrollingCaptureOffsetEstimator {
         return Int((run.reduce(0, +) / Double(run.count)).rounded())
     }
 
-    private static func bandShifts(_ images: (last: CGImage, new: CGImage), usable: Int) -> [Double] {
-        (0..<bands).compactMap { band in
-            translation(images, in: CGRect(x: band * usable / bands, y: 0, width: usable / bands,
-                                           height: images.new.height))
+    private static func activeBand(from last: [UInt8], to new: [UInt8], width: Int, height: Int, usable: Int) -> CGRect {
+        guard last.count == width * height * 4, new.count == last.count else {
+            return CGRect(x: 0, y: 0, width: usable, height: height)
         }
+        let edges = last.withUnsafeBytes { old in new.withUnsafeBytes { now in
+            ScrollingCaptureOffsetVerifier.unmovedEdges(height: height) { y in
+                memcmp(now.baseAddress! + y * width * 4, old.baseAddress! + y * width * 4, usable * 4) == 0
+            }
+        }}
+        let bandHeight = height - edges.top - edges.bottom
+        guard bandHeight >= 64 else { return CGRect(x: 0, y: 0, width: usable, height: height) }
+        return CGRect(x: 0, y: edges.top, width: usable, height: bandHeight)
     }
 
+    private static func bandShifts(_ images: (last: CGImage, new: CGImage), band: CGRect) -> [Double] {
+        let usable = Int(band.width)
+        let results = OSAllocatedUnfairLock(initialState: [Double?](repeating: nil, count: bands))
+        DispatchQueue.concurrentPerform(iterations: bands) { index in
+            let rect = CGRect(x: index * usable / bands, y: Int(band.minY), width: usable / bands, height: Int(band.height))
+            let shift = translation(images, in: rect)
+            results.withLock { $0[index] = shift }
+        }
+        return results.withLock { $0.compactMap { $0 } }
+    }
     /// Vision's vertical translation from `last` to `new`, as an upward content
     /// offset: Vision's y axis points up, so content moving up reads negative.
     private static func translation(_ images: (last: CGImage, new: CGImage), in rect: CGRect) -> Double? {
