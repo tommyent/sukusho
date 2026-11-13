@@ -115,4 +115,22 @@ private final class FeedFixtureBundle: NSObject {}
         #expect(await feed.add(top, at: 4) == nil)
         #expect(try #require(await feed.makeImage()).height == 360)
     }
+
+    @Test("Frame dump finish metadata records reason, clock times, and height without altering frames.jsonl")
+    func frameDumpWritesFinishMetadata() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("scroll-dump-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let dump = try #require(ScrollingCaptureFrameDump(folder: folder, width: 600, height: 360, ignoredTrailingColumns: 0))
+        dump.write(index: 0, time: 12.5, frame: nil, verifiedOffset: 0, action: "first")
+        dump.writeFinish(reason: "endOfPage", at: 15.25, wallTime: 1_700_000_000, height: 1080)
+        await dump.flushForTesting()
+        let frames = try String(contentsOf: folder.appendingPathComponent("frames.jsonl"), encoding: .utf8)
+        #expect(frames.split(separator: "\n").count == 1)
+        let finishData = try Data(contentsOf: folder.appendingPathComponent("finish.json"))
+        let finish = try #require(try JSONSerialization.jsonObject(with: finishData) as? [String: Any])
+        #expect(finish["reason"] as? String == "endOfPage")
+        #expect(finish["machTime"] as? Double == 15.25)
+        #expect(finish["wallTime"] as? Double == 1_700_000_000)
+        #expect(finish["height"] as? Int == 1080)
+    }
 }

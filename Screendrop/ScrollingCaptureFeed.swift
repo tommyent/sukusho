@@ -102,6 +102,12 @@ actor ScrollingCaptureFeed {
         return Update(placement: placement, height: await stitcher.stitchedHeight, keepsChanging: keepsChanging)
     }
 
+    /// Records when and why the session finished in the frame dump, if tracing is enabled.
+    func finishTrace(reason: String, at time: TimeInterval) async {
+        let height = await stitcher.stitchedHeight
+        dump?.writeFinish(reason: reason, at: time, height: height)
+    }
+
     /// The stitched capture; with `rowsBelow` (frame rows), the reference frame's rows there go on under
     /// it, over the selection's columns: the window below the selection at the end of the page.
     func makeImage(rowsBelow: Range<Int>? = nil) async -> CGImage? {

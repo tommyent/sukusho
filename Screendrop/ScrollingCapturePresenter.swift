@@ -66,6 +66,8 @@ final class ScrollingCapturePresenter {
     @ObservationIgnored private var outcome: Outcome?
     /// Auto-scroll finished the session at the end of the page.
     @ObservationIgnored private var reachedEndOfPage = false
+    @ObservationIgnored private var finishReason: String?
+    @ObservationIgnored private var outcomeContinuation: CheckedContinuation<Void, Never>?
     @ObservationIgnored private var isSelectingArea = false
     @ObservationIgnored private var isCapturing = false
     @ObservationIgnored private var panel: NSPanel?
@@ -99,6 +101,8 @@ final class ScrollingCapturePresenter {
         isRunning = true
         outcome = nil
         reachedEndOfPage = false
+        finishReason = nil
+        outcomeContinuation = nil
         defer { isRunning = false }
 
         guard ScreenRecordingManager.ensureScreenCapturePermission(),
@@ -167,6 +171,7 @@ final class ScrollingCapturePresenter {
         }, bar: { [weak self] in self?.panel?.frame }, onStop: { [weak self] in self?.isAutoScrolling = false },
            onEndOfPage: { [weak self] in
             self?.reachedEndOfPage = true
+            self?.finishReason = "endOfPage"
             self?.finish()
         })
         defer { endAutoScroll() }
@@ -206,7 +211,7 @@ final class ScrollingCapturePresenter {
         // place, but a wait still grows.
         var sawInput = false
         events: while let event = await events.next() {
-            guard outcome != .cancelled, !hasReachedLimit else { break }
+            guard outcome != .cancelled, !hasReachedLimit, !reachedEndOfPage else { break }
             guard case .frame(let frame) = event else {
                 if case .idle(let time) = event { updateShowsWaiting(at: time) }
                 continue
@@ -234,7 +239,14 @@ final class ScrollingCapturePresenter {
             keepsChanging = update.keepsChanging
             hasReachedLimit = update.height >= Self.maximumHeight
             // Auto-scroll saves at the limit, as at the end of the page; by hand, the bar waits for Done.
-            if hasReachedLimit { isAutoScrolling ? finish() : source.stop() }
+            if hasReachedLimit {
+                if isAutoScrolling {
+                    finishReason = "heightLimit"
+                    finish()
+                } else {
+                    source.stop()
+                }
+            }
         }
         // The stream has ended (Done, Cancel, the height limit or an error):
         // nothing more can be captured, so nothing more may be scrolled.
@@ -242,10 +254,10 @@ final class ScrollingCapturePresenter {
 
         // ponytail: after a stream error the bar doesn't say capture stopped;
         // it waits for Done, which keeps what's captured, or Cancel.
-        while outcome == nil {
-            try? await Task.sleep(for: .milliseconds(100))
+        if outcome == nil {
+            await withCheckedContinuation { outcomeContinuation = $0 }
         }
-        // At the end of the page the window below the selection is kept too; Done by hand, or a
+        await feed.finishTrace(reason: finishReason ?? "streamEnded", at: cutoff ?? ScrollingCaptureSampleTiming.now())
         // hand-back, may come before the page has ended.
         guard outcome != .cancelled, let image = await feed.makeImage(rowsBelow: reachedEndOfPage ? rowsBelow : nil)
         else { return nil }
@@ -279,6 +291,9 @@ final class ScrollingCapturePresenter {
         if isCapturing {
             cutoff = cutoff ?? ScrollingCaptureSampleTiming.now()
             outcome = outcome ?? .done
+            finishReason = finishReason ?? "done"
+            outcomeContinuation?.resume()
+            outcomeContinuation = nil
             stream?.stop()
         } else {
             cancel()
@@ -289,6 +304,9 @@ final class ScrollingCapturePresenter {
         autoScroller?.stop()
         cutoff = cutoff ?? ScrollingCaptureSampleTiming.now()
         outcome = .cancelled
+        finishReason = finishReason ?? "cancelled"
+        outcomeContinuation?.resume()
+        outcomeContinuation = nil
         stream?.stop()
         if isSelectingArea {
             RecordingAreaSelectionPresenter.shared.cancel()

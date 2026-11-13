@@ -17,11 +17,16 @@ nonisolated final class ScrollingCaptureFrameDump: Sendable {
     private let lines: FileHandle
     private let queue = DispatchQueue(label: "ScrollingCaptureFrameDump", qos: .utility)
 
-    init?(width: Int, height: Int, ignoredTrailingColumns: Int) {
+    convenience init?(width: Int, height: Int, ignoredTrailingColumns: Int) {
         guard UserDefaults.standard.bool(forKey: "ScrollingCaptureTrace"),
               let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return nil }
-        folder = caches.appendingPathComponent("Sukusho/ScrollingCaptureFrames/"
+        let folder = caches.appendingPathComponent("Sukusho/ScrollingCaptureFrames/"
             + Date.now.formatted(.iso8601.dateSeparator(.dash).timeSeparator(.omitted)) + "-" + UUID().uuidString.prefix(8))
+        self.init(folder: folder, width: width, height: height, ignoredTrailingColumns: ignoredTrailingColumns)
+    }
+
+    init?(folder: URL, width: Int, height: Int, ignoredTrailingColumns: Int) {
+        self.folder = folder
         let page = #"{"selection":{"columns":[0,\#(width)],"rows":[0,\#(height)]},"ignoredTrailingColumns":\#(ignoredTrailingColumns)}"#
         let jsonl = folder.appendingPathComponent("frames.jsonl")
         guard (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true,
@@ -30,6 +35,12 @@ nonisolated final class ScrollingCaptureFrameDump: Sendable {
               FileManager.default.createFile(atPath: jsonl.path, contents: nil),
               let lines = try? FileHandle(forWritingTo: jsonl) else { return nil }
         self.lines = lines
+    }
+
+    func flushForTesting() async {
+        await withCheckedContinuation { continuation in
+            queue.async { continuation.resume() }
+        }
     }
 
     // ponytail: no queue or disk budget; it's an opt-in diagnostic, turn it off when done.
@@ -45,6 +56,13 @@ nonisolated final class ScrollingCaptureFrameDump: Sendable {
             lines.write(Data((#"{"index":\#(index),"time":\#(time),"reference":\#(json(reference)),"#
                 + #""candidateOffset":\#(json(candidateOffset)),"verifiedOffset":\#(json(verifiedOffset)),"action":"\#(action)"}"#
                 + "\n").utf8))
+        }
+    }
+
+    func writeFinish(reason: String, at time: TimeInterval, wallTime: TimeInterval = Date.now.timeIntervalSince1970, height: Int) {
+        queue.async { [folder] in
+            let json = #"{"reason":"\#(reason)","machTime":\#(time),"wallTime":\#(wallTime),"height":\#(height)}"#
+            try? Data(json.utf8).write(to: folder.appendingPathComponent("finish.json"))
         }
     }
 }
