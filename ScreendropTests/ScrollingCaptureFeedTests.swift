@@ -134,15 +134,45 @@ private final class FeedFixtureBundle: NSObject {}
         #expect(finish["height"] as? Int == 1080)
     }
 
-    @Test("Evicted frames from the newest-frame slot are retained in order to bridge fast-scroll jumps")
-    func streamRetainsEvictedFramesForBridging() throws {
-        let top = try frame(3), mid = try frame(4)
+    @Test("Bridge ignores evicted frames older than the last placed frame, preserves newer ones, and stops on upward")
+    func bridgeIgnoresStaleAndUpwardFrames() async throws {
+        let top = try frame(3), lower = try frame(4), far = try frame(25)
         let stream = ScrollingCaptureStream()
-        stream.enqueue(.init(image: top, time: 1.0))
-        stream.enqueue(.init(image: mid, time: 1.025))
-        stream.enqueue(.init(image: top, time: 1.05))
-        let bridged = stream.drainDroppedFrames(before: 1.05)
-        #expect(bridged.map(\.time) == [1.0, 1.025])
-        #expect(stream.drainDroppedFrames(before: 2.0).isEmpty)
+        // Slot + evicted frames older than lastPlacedTime (t=1.0), plus one newer frame (t=2.5).
+        stream.enqueue(.init(image: top, time: 0.5))
+        stream.enqueue(.init(image: top, time: 0.6))
+        stream.enqueue(.init(image: far, time: 2.5))
+        stream.enqueue(.init(image: far, time: 3.0)) // pushes t=2.5 into ring while t=3.0 sits in slot
+
+        let feed = try #require(ScrollingCaptureFeed(firstFrame: top, at: 0, selection: selection, ignoredTrailingColumns: 0))
+        var lastPlacedTime = 0.0
+        let placed = try #require(await ScrollingCaptureFeed.addWithBridge(
+            frame: .init(image: lower, time: 1.0), to: feed, stream: stream,
+            lastPlacedTime: &lastPlacedTime, mayReplaceFirst: false, maximumHeight: 16_384))
+        #expect(placed.update.placement == .appended(180))
+        #expect(lastPlacedTime == 1.0)
+
+        // Skipping frame at t=2.0 must NOT replay t=0.5/0.6 (which would trim height back to 360)
+        // and must NOT discard the newer frame at t=2.5.
+        let skipped = try #require(await ScrollingCaptureFeed.addWithBridge(
+            frame: .init(image: far, time: 2.0), to: feed, stream: stream,
+            lastPlacedTime: &lastPlacedTime, mayReplaceFirst: false, maximumHeight: 16_384))
+        #expect(skipped.update.placement == .skipped)
+        #expect(skipped.time == 2.0)
+        #expect(try #require(await feed.makeImage()).height == 540)
+        #expect(stream.drainDroppedFrames(after: 1.0, before: 3.0).map(\.time) == [2.5])
+
+        // A bridged frame between lastPlacedTime and frame.time that goes .upward stops immediately
+        // without feeding a second frame to trim.
+        stream.enqueue(.init(image: top, time: 2.2))
+        stream.enqueue(.init(image: top, time: 2.3))
+        stream.enqueue(.init(image: far, time: 2.4))
+        let veiledFar = try veiled(far)
+        let upward = try #require(await ScrollingCaptureFeed.addWithBridge(
+            frame: .init(image: veiledFar, time: 2.5), to: feed, stream: stream,
+            lastPlacedTime: &lastPlacedTime, mayReplaceFirst: false, maximumHeight: 16_384))
+        #expect(upward.update.placement == .skipped)
+        #expect(upward.time == 2.5)
+        #expect(try #require(await feed.makeImage()).height == 540)
     }
 }

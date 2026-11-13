@@ -78,12 +78,17 @@ nonisolated final class ScrollingCaptureStream: NSObject, SCStreamOutput, SCStre
         Task { try? await stream.stopCapture() }
     }
 
-    /// Returns any frames evicted by the newest-frame slot before `time`, oldest first,
-    /// clearing the ring so they are only used once to bridge a fast-scroll jump.
-    func drainDroppedFrames(before time: TimeInterval) -> [Frame] {
+    /// Drops evicted frames at or before a frame that was already placed.
+    func dropFrames(through time: TimeInterval) {
+        droppedFrames.withLock { $0.removeAll { $0.time <= time } }
+    }
+
+    /// Returns evicted frames strictly between `startTime` and `endTime`, oldest first,
+    /// while keeping frames at or after `endTime` in the ring.
+    func drainDroppedFrames(after startTime: TimeInterval, before endTime: TimeInterval) -> [Frame] {
         droppedFrames.withLock { list in
-            let frames = list.filter { $0.time < time }
-            list.removeAll()
+            let frames = list.filter { $0.time > startTime && $0.time < endTime }
+            list.removeAll { $0.time < endTime }
             return frames
         }
     }

@@ -216,6 +216,7 @@ final class ScrollingCapturePresenter {
         // stops the stream. Idle ticks say nothing moved, so there's nothing to
         // place, but a wait still grows.
         var sawInput = false
+        var lastPlacedTime = firstTime
         events: while let event = await events.next() {
             guard outcome != .cancelled, !hasReachedLimit, !reachedEndOfPage else { break }
             guard case .frame(let frame) = event else {
@@ -231,31 +232,24 @@ final class ScrollingCapturePresenter {
             // was shown before the answer, so it can't show a scroll the answer missed.
             if !sawInput { sawInput = isAutoScrolling || Self.lastInputTime() > firstTime }
             // A frame that repeats the one before is an idle tick: nothing on screen changed there.
-            guard var update = await feed.add(frame.image, at: frame.time, mayReplaceFirst: !sawInput) else {
+            guard let result = await ScrollingCaptureFeed.addWithBridge(
+                frame: frame,
+                to: feed,
+                stream: source,
+                lastPlacedTime: &lastPlacedTime,
+                mayReplaceFirst: !sawInput,
+                maximumHeight: Self.maximumHeight,
+                shouldContinue: { [weak self] in
+                    guard let self else { return false }
+                    return self.outcome != .cancelled && !self.hasReachedLimit && !self.reachedEndOfPage
+                }
+            ) else {
                 lastSampleTime = max(lastSampleTime, frame.time)
                 updateShowsWaiting(at: frame.time)
                 continue
             }
-            var latestTime = frame.time
-            if update.placement == .skipped, sawInput {
-                let dropped = source.drainDroppedFrames(before: frame.time)
-                var bridged = false
-                for mid in dropped {
-                    guard outcome != .cancelled, !hasReachedLimit, !reachedEndOfPage else { break }
-                    guard let midUpdate = await feed.add(mid.image, at: mid.time, mayReplaceFirst: false) else { continue }
-                    latestTime = mid.time
-                    if midUpdate.placement != .skipped {
-                        bridged = true
-                        update = midUpdate
-                        if midUpdate.height >= Self.maximumHeight { break }
-                    }
-                }
-                if bridged, update.height < Self.maximumHeight,
-                   let retried = await feed.add(frame.image, at: frame.time, mayReplaceFirst: false) {
-                    update = retried
-                    latestTime = frame.time
-                }
-            }
+            let update = result.update
+            let latestTime = result.time
             lastFrameTime = latestTime
             lastSampleTime = max(lastSampleTime, latestTime)
             if previewPanel != nil, latestTime - previewTime >= Self.previewInterval {
@@ -289,6 +283,7 @@ final class ScrollingCapturePresenter {
             await withCheckedContinuation { outcomeContinuation = $0 }
         }
         await feed.finishTrace(reason: finishReason ?? "streamEnded", at: cutoff ?? ScrollingCaptureSampleTiming.now())
+        // At the end of the page the window below the selection is kept too; Done by hand, or a
         // hand-back, may come before the page has ended.
         guard outcome != .cancelled, let image = await feed.makeImage(rowsBelow: reachedEndOfPage ? rowsBelow : nil)
         else { return nil }

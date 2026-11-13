@@ -108,6 +108,61 @@ actor ScrollingCaptureFeed {
         dump?.writeFinish(reason: reason, at: time, height: height)
     }
 
+    /// Adds `frame` to `feed`, bridging across any intermediate frames evicted from `stream`
+    /// strictly after `lastPlacedTime` and before `frame.time` when `frame` is skipped.
+    /// Stale frames (`<= lastPlacedTime`) are dropped, newer frames (`>= frame.time`) are kept,
+    /// and a bridged frame that resolves `.upward`/`.trimmed`/`.restarted` is never applied as a change.
+    @MainActor
+    static func addWithBridge(
+        frame: ScrollingCaptureStream.Frame,
+        to feed: ScrollingCaptureFeed,
+        stream: ScrollingCaptureStream,
+        lastPlacedTime: inout TimeInterval,
+        mayReplaceFirst: Bool,
+        maximumHeight: Int,
+        shouldContinue: () -> Bool = { true }
+    ) async -> (update: Update, time: TimeInterval)? {
+        guard var update = await feed.add(frame.image, at: frame.time, mayReplaceFirst: mayReplaceFirst) else {
+            return nil
+        }
+        if update.placement != .skipped {
+            lastPlacedTime = max(lastPlacedTime, frame.time)
+            stream.dropFrames(through: frame.time)
+            return (update, frame.time)
+        }
+        guard !mayReplaceFirst else { return (update, frame.time) }
+        let dropped = stream.drainDroppedFrames(after: lastPlacedTime, before: frame.time)
+        var bridged = false
+        var latestTime = frame.time
+        for mid in dropped {
+            guard shouldContinue() else { break }
+            guard let midUpdate = await feed.add(mid.image, at: mid.time, mayReplaceFirst: false) else { continue }
+            switch midUpdate.placement {
+            case .appended, .redrawn:
+                bridged = true
+                update = midUpdate
+                latestTime = mid.time
+                lastPlacedTime = max(lastPlacedTime, mid.time)
+                stream.dropFrames(through: mid.time)
+                if midUpdate.height >= maximumHeight { return (update, latestTime) }
+            case .upward, .trimmed, .restarted:
+                return (update, latestTime)
+            case .skipped:
+                continue
+            }
+        }
+        if bridged, update.height < maximumHeight,
+           let retried = await feed.add(frame.image, at: frame.time, mayReplaceFirst: false) {
+            update = retried
+            latestTime = frame.time
+            if retried.placement != .skipped {
+                lastPlacedTime = max(lastPlacedTime, frame.time)
+                stream.dropFrames(through: frame.time)
+            }
+        }
+        return (update, latestTime)
+    }
+
     /// The stitched capture; with `rowsBelow` (frame rows), the reference frame's rows there go on under
     /// it, over the selection's columns: the window below the selection at the end of the page.
     func makeImage(rowsBelow: Range<Int>? = nil) async -> CGImage? {
