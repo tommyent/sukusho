@@ -42,8 +42,8 @@ nonisolated struct AutoScrollPacer: Equatable {
 
     /// No new frame for this long means the view has stopped moving.
     static let settleTime: TimeInterval = 0.25
-    /// SCK idle/unchanged samples covering this long after a posted step mean
-    /// the view did not move in response to it.
+    /// SCK idle/unchanged samples covering this long after a retry probe
+    /// (`stepsWithoutProgress > 1`) mean the view did not move in response to it.
     static let idleResponseTime: TimeInterval = 0.375
     /// First step whose view keeps changing (a playing video) is judged by
     /// what it stitched after this long; subsequent probe steps tighten to `retryStepTimeout`.
@@ -87,7 +87,9 @@ nonisolated struct AutoScrollPacer: Equatable {
     mutating func update(height: Int, lastFrameTime: TimeInterval, lastSampleTime: TimeInterval = -.infinity, now: TimeInterval) -> Action {
         let stitched = height - startHeight
         guard lastFrameTime > postedAt else {
-            let idleConfirmed = lastSampleTime - postedAt >= Self.idleResponseTime && now - postedAt >= Self.idleResponseTime
+            let idleConfirmed = stepsWithoutProgress > 1
+                && lastSampleTime - postedAt >= Self.idleResponseTime
+                && now - postedAt >= Self.idleResponseTime
             guard idleConfirmed || now - postedAt >= Self.responseTime else { return .wait }
             return noProgress(height: height, now: now)
         }
