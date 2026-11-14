@@ -50,7 +50,7 @@ final class ScreenshotPreviewStack {
     var hasPendingImageSaves: Bool { !pendingImageTasks.isEmpty }
 
     func waitForPendingImageSaves() async {
-        for task in pendingImageTasks.values {
+        for task in Array(pendingImageTasks.values) {
             await task.value
         }
     }
