@@ -594,4 +594,60 @@ private final class OffsetFixtureBundle: NSObject {}
         }
         #expect(marked == 0)
     }
+
+    @Test("A full-width footer ends a mostly blank side's run where it comes in: level, never under the run's fill")
+    func footerEndsTheSideRunLevel() async throws {
+        // Text between columns 28 and 67 and blank margins, then from page row 600 a full-width footer: a dark
+        // band with text lines between the margins.
+        func page(_ row: Int, _ x: Int) -> UInt8 {
+            if row >= 600 {
+                guard (28..<68).contains(x), row % 4 < 3 else { return 30 }
+                return UInt8(truncatingIfNeeded: (row - 600) * 13 + x * 7 + 60)
+            }
+            guard (28..<68).contains(x), row % 8 < 6 else { return 255 }
+            return UInt8(truncatingIfNeeded: row * 29 + x * 3 + (row / 256) * 101)
+        }
+        // A sticky widget in the right margin (rows 250-309, columns 76-83) is in every slice, so the margin
+        // opens a run; the footer pushes it up. `thumb`: the overlay scroll thumb, fading, in the 8 trailing
+        // columns. `card`: a hover card over the right margin's top half, drawn anew each frame.
+        func frame(_ top: Int, thumb: Bool, card: Bool) -> [UInt8] {
+            var pixels = [UInt8](repeating: 255, count: 96 * 400 * 4)
+            let widget = min(250, 600 - top - 70)
+            for y in 0..<400 {
+                for x in 0..<96 {
+                    var value = page(top + y, x)
+                    if (76..<84).contains(x), (widget..<(widget + 60)).contains(y) {
+                        value = UInt8(truncatingIfNeeded: (y - widget) * 5 + x * 11)
+                    }
+                    if card, (68..<88).contains(x), y < 200 { value = UInt8(truncatingIfNeeded: y * 3 + x * 17 + top) }
+                    if thumb, (90..<94).contains(x), ((10 + top / 4)..<(210 + top / 4)).contains(y) {
+                        value = UInt8(60 + top / 40 % 3 * 40)
+                    }
+                    pixels.replaceSubrange(((y * 96 + x) * 4)..<((y * 96 + x) * 4 + 3), with: [value, value, value])
+                }
+            }
+            return pixels
+        }
+        // The thumb's changes kept the run as if the margin were redrawn in place, so it never ended (the
+        // owner's capture 1); the card's kept it while the footer's first rows were appended, so it ended
+        // late (capture 2).
+        for (thumb, cards, trailing) in [(true, Set<Int>(), 8), (false, Set([280, 320]), 0)] {
+            let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: frame(0, thumb: thumb, card: false),
+                                                                      width: 96, height: 400, ignoredTrailingColumns: trailing))
+            for top in stride(from: 40, through: 400, by: 40) {
+                #expect(await stitcher.place(frame(top, thumb: thumb, card: cards.contains(top)), candidate: 40) == .appended(40))
+            }
+            let image = await stitcher.makeImage()
+            #expect(image.count == 96 * 800 * 4)
+            // The footer starts on row 600 in every column, and no pixel of it is the run's fill. Not the
+            // trailing strip: the thumb is kept wherever it was appended (sd-g39).
+            let columns = 0..<(96 - trailing)
+            #expect(columns.allSatisfy { image[(599 * 96 + $0) * 4] == 255 })
+            var wrong = 0
+            for y in 600..<800 {
+                for x in columns where image[(y * 96 + x) * 4] != page(y, x) { wrong += 1 }
+            }
+            #expect(wrong == 0)
+        }
+    }
 }

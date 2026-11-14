@@ -278,18 +278,31 @@ actor ScrollingCaptureFrameStitcher {
     /// `previous`. The right side takes the ignored trailing columns too: the overlay scroll bar's strip.
     private func updatePinnedRuns(left: Int, right: Int, from row: Int, previous: [UInt8], offset k: Int) {
         let usable = ScrollingCaptureOffsetVerifier.hashedWidth(width: width, ignoredTrailingColumns: ignoredTrailingColumns)
-        /// The rows that changed in these columns, if most didn't move with the content: a sidebar redrawn
-        /// in place (Wikipedia's contents reflowing as the current section turns bold), still pinned.
-        func redrawnInPlace(_ columns: Range<Int>) -> Bool {
-            func row(_ pixels: [UInt8], _ y: Int) -> ArraySlice<UInt8> {
-                pixels[((y * width + columns.lowerBound) * 4)..<((y * width + columns.upperBound) * 4)]
-            }
-            var changed = 0, moved = 0
-            for y in 0..<(height - k) where row(last, y) != row(previous, y) {
-                changed += 1
-                if row(last, y) == row(previous, y + k) { moved += 1 }
-            }
-            return changed == 0 || moved * 2 < changed
+        func line(_ pixels: [UInt8], _ y: Int, _ columns: Range<Int>) -> ArraySlice<UInt8> {
+            pixels[((y * width + columns.lowerBound) * 4)..<((y * width + columns.upperBound) * 4)]
+        }
+        /// Row `y` of the new frame changed in these columns and moved there with the content.
+        func moved(_ y: Int, _ columns: Range<Int>) -> Bool {
+            line(last, y, columns) != line(previous, y, columns) && line(last, y, columns) == line(previous, y + k, columns)
+        }
+        /// These columns, left out of the pinned ones this time, still are: most rows that changed there
+        /// didn't move with the content (a sidebar redrawn in place: Wikipedia's contents reflowing as the
+        /// current section turns bold), or none changed and the slice still shows something there (a
+        /// sidebar that happened to fit the offset). Blank columns that didn't change hold no sidebar.
+        func stillPinned(_ columns: Range<Int>) -> Bool {
+            let changed = (0..<(height - k)).filter { line(last, $0, columns) != line(previous, $0, columns) }
+            guard !changed.isEmpty else { return showsInSlice(columns) }
+            return changed.filter { moved($0, columns) }.count * 2 < changed.count
+        }
+        /// The output row, from `start` on, where content moving with the page first shows in these columns:
+        /// a row of the new frame that moved there, and that the rows already appended show too when it lands
+        /// above this frame's slice (a footer appended while a redraw beside it kept the run). It can lie below
+        /// the slice: the run then covers the side down to it.
+        func entry(_ columns: Range<Int>, from start: Int) -> Int? {
+            let top = row - (cut - k)
+            return (max(0, start - top)..<(height - k)).first { y in
+                moved(y, columns) && (top + y >= row || line(appended, top + y - cut, columns) == line(last, y, columns))
+            }.map { top + $0 }
         }
         /// The rows this frame appends show something in these columns, not one plain colour: only then does a
         /// still side repeat into every slice. A sticky header's ends (a logo, a search icon) sit far above the
@@ -308,15 +321,19 @@ actor ScrollingCaptureFrameStitcher {
         for (isLeft, pinned) in [(true, left), (false, right)] {
             let columns = isLeft ? 0..<pinned : (usable - pinned)..<(pinned > 0 ? width : usable - pinned)
             if let i = pinnedRuns.lastIndex(where: { $0.isLeft == isLeft && $0.end == nil }) {
-                // The run's columns that aren't pinned this time leave it only when they moved with the
-                // content (a footer pushing the sidebar up, say): from here it goes on in the rest, if any.
+                // The run's columns that aren't pinned this time leave it when they aren't still pinned anyway
+                // (a footer coming in, or pushing the sidebar up): where the content moving with the page first
+                // shows there, else from this frame's slice. It goes on in the rest, if any. The overlay scroll
+                // bar's strip says nothing either way: its thumb fades and moves on its own.
                 let run = pinnedRuns[i]
                 let kept = run.columns.clamped(to: columns.isEmpty ? (isLeft ? 0..<0 : width..<width) : columns)
                 let dropped = isLeft ? kept.upperBound..<run.columns.upperBound : run.columns.lowerBound..<kept.lowerBound
-                guard !dropped.isEmpty, !redrawnInPlace(dropped) else { continue }
-                pinnedRuns[i].end = row
+                let judged = dropped.clamped(to: 0..<usable)
+                guard !dropped.isEmpty, !stillPinned(judged) else { continue }
+                let end = max(run.from, entry(judged, from: run.from) ?? row)
+                pinnedRuns[i].end = end
                 if !kept.isEmpty {
-                    pinnedRuns.append(PinnedRun(isLeft: isLeft, columns: kept, start: run.start, from: row,
+                    pinnedRuns.append(PinnedRun(isLeft: isLeft, columns: kept, start: run.start, from: end,
                                                 stored: run.stored, frame: run.frame))
                 }
             } else if !columns.isEmpty, showsInSlice(columns) {
