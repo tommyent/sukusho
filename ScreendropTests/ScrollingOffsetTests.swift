@@ -650,4 +650,33 @@ private final class OffsetFixtureBundle: NSObject {}
             #expect(wrong == 0)
         }
     }
+
+    @Test("A pinned sidebar's rows stop at the band's bottom, so a sticky bar under it doesn't show mid-image")
+    func pinnedRunsStopAtTheBandsBottom() async throws {
+        // MDN's layout in small over a bar that stays at the bottom of every frame (rows 370-399, full
+        // width), a cookie banner. The run's rows from the cut down would put the bar mid-image at the sides.
+        func frame(_ top: Int) -> [UInt8] {
+            var pixels = sidebarFrame(top: top)
+            for y in 370..<400 {
+                for x in 0..<96 {
+                    let value = UInt8(truncatingIfNeeded: x * 2 + y * 3 + 1)
+                    pixels.replaceSubrange(((y * 96 + x) * 4)..<((y * 96 + x) * 4 + 3), with: [value, value, value])
+                }
+            }
+            return pixels
+        }
+        let first = frame(0)
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: first, width: 96, height: 400,
+                                                                  ignoredTrailingColumns: 0))
+        #expect(await stitcher.place(frame(40), candidate: 40) == .appended(40))
+        #expect(await stitcher.place(frame(80), candidate: 40) == .appended(40))
+        let image = await stitcher.makeImage()
+        #expect(image.count == 96 * 480 * 4)
+        // The sidebars go on as in the first frame down to the bar, then in their plain colour.
+        var wrong = 0
+        for x in Array(0..<28) + Array(68..<96) {
+            for y in 300..<480 where image[(y * 96 + x) * 4] != (y < 370 ? first[(y * 96 + x) * 4] : 255) { wrong += 1 }
+        }
+        #expect(wrong == 0)
+    }
 }

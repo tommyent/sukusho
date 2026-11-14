@@ -60,9 +60,9 @@ actor ScrollingCaptureFrameStitcher {
     private var lastStep: Int?
     /// Side columns that stayed put while the content between them moved (`Verified.pinnedLeft` and
     /// `pinnedRight`), stuck at output row `start`, over output rows `from` to `end` (nil: still pinned).
-    /// There the output shows the frame they stuck in from the cut down, once, then the side's most
-    /// common colour in that frame (a column one colour down most of it, a divider, keeps that),
-    /// instead of a slice of the same sidebar per step. A run that loses columns goes on in fewer from
+    /// There the output shows the frame they stuck in from the cut down to the band's bottom, once, then
+    /// the side's most common colour in that frame (a column one colour down most of it, a divider, keeps
+    /// that), instead of a slice of the same sidebar per step. A run that loses columns goes on in fewer from
     /// that row, as another run with the same `start`.
     private struct PinnedRun {
         let isLeft: Bool
@@ -70,7 +70,7 @@ actor ScrollingCaptureFrameStitcher {
         let start: Int
         var from: Int
         var end: Int?
-        /// The frame's columns `stored`, rows 0..<height.
+        /// The frame's columns `stored`, from its top down to the band's bottom.
         let stored: Range<Int>
         let frame: [UInt8]
     }
@@ -247,6 +247,7 @@ actor ScrollingCaptureFrameStitcher {
 
     private func applyPinnedRuns(to out: UnsafeMutableRawBufferPointer, rows: Int) {
         for run in pinnedRuns where run.from < rows {
+            let storedRows = run.frame.count / (run.stored.count * 4)
             run.frame.withUnsafeBytes { frame in
                 func stored(_ x: Int, _ y: Int) -> UInt32 {
                     frame.loadUnaligned(fromByteOffset: (y * run.stored.count + x - run.stored.lowerBound) * 4, as: UInt32.self)
@@ -257,17 +258,17 @@ actor ScrollingCaptureFrameStitcher {
                 var side: [UInt32: Int] = [:]
                 let columns = run.columns.map { x in
                     var counts: [UInt32: Int] = [:]
-                    for y in 0..<height { counts[stored(x, y), default: 0] += 1 }
+                    for y in 0..<storedRows { counts[stored(x, y), default: 0] += 1 }
                     side.merge(counts, uniquingKeysWith: +)
                     return mostCommon(counts)
                 }
                 let background = mostCommon(side).colour
                 // A column that is one colour down most of the frame (a divider, a border) goes on in it.
-                let fill = columns.map { $0.count * 4 >= height * 3 ? $0.colour : background }
+                let fill = columns.map { $0.count * 4 >= storedRows * 3 ? $0.colour : background }
                 for row in run.from..<min(run.end ?? rows, rows) {
                     let y = cut + row - run.start
                     for (i, x) in run.columns.enumerated() {
-                        out.storeBytes(of: y < height ? stored(x, y) : fill[i], toByteOffset: (row * width + x) * 4, as: UInt32.self)
+                        out.storeBytes(of: y < storedRows ? stored(x, y) : fill[i], toByteOffset: (row * width + x) * 4, as: UInt32.self)
                     }
                 }
             }
@@ -337,8 +338,18 @@ actor ScrollingCaptureFrameStitcher {
                                                 stored: run.stored, frame: run.frame))
                 }
             } else if !columns.isEmpty, showsInSlice(columns) {
-                // `last` matches the new frame there, so its rows from the cut down go on from the rows above.
-                let frame = (0..<height).flatMap { y in last[((y * width + columns.lowerBound) * 4)..<((y * width + columns.upperBound) * 4)] }
+                // The new frame's rows from the cut down go on from the rows above, down to the band's bottom:
+                // rows both frames share at the bottom (a sticky bar, a cookie banner) belong to no sidebar. Not
+                // when none of them shows anything between the sides: those are the page's blank lines, lined up.
+                let shared = ScrollingCaptureOffsetVerifier.unmovedEdges(height: height) {
+                    line(last, $0, 0..<usable) == line(previous, $0, 0..<usable)
+                }.bottom
+                let between = left..<max(left, usable - right)
+                let bar = ((height - shared)..<height).contains { y in
+                    let pixels = line(last, y, between)
+                    return !pixels.dropFirst(4).elementsEqual(pixels.dropLast(4))
+                }
+                let frame = (0..<(bar ? height - shared : height)).flatMap { line(last, $0, columns) }
                 pinnedRuns.append(PinnedRun(isLeft: isLeft, columns: columns, start: row, from: row, stored: columns, frame: frame))
             }
         }
