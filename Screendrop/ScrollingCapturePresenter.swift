@@ -31,9 +31,6 @@ final class ScrollingCapturePresenter {
     /// ponytail: stops at 16,384 px, the GPU texture limit on Apple silicon:
     /// the editor isn't verified with taller images. Raise once it is.
     private static let maximumHeight = 16_384
-    /// Right-edge strip left out of matching, where the overlay scroll bar
-    /// appears while scrolling.
-    private static let scrollBarWidth: CGFloat = 20
     /// How long frames must keep being refused before the bar says so: a hover
     /// or a frame mid-scroll is refused briefly and needs nothing from the user.
     /// Corpus (28 pages, stream-timed user pages): the longest short run, a
@@ -136,7 +133,10 @@ final class ScrollingCapturePresenter {
                                                        frontToBackWindows: windows)
         let sourceRect = matching.rect
         let scale = max(1, CGFloat(filter.pointPixelScale))
-        let output = ScrollingCaptureRegion.output(selection: selectionRect, matching: sourceRect, scale: scale)
+        // The target window's bottom rim, rounded corners and overlay scroll bar are window, not
+        // page: the crop stops short of them, so no frame can stitch them in.
+        let page = ScrollingCaptureRegion.pageCrop(selection: selectionRect, matching: matching, windows: windows)
+        let output = ScrollingCaptureRegion.output(selection: page.rect, matching: sourceRect, scale: scale)
         let usableBottom = screen.map { ScreenRecordingManager.sourceRect(forAppKitSelectionRect: $0.visibleFrame,
             screenFrame: $0.frame, contentRect: filter.contentRect).maxY } ?? sourceRect.maxY
         let rowsBelow = ScrollingCaptureRegion.rowsBelow(output: output, matching: sourceRect,
@@ -191,7 +191,7 @@ final class ScrollingCapturePresenter {
             }
             guard let firstFrame = first, outcome == nil,
                   let firstFeed = ScrollingCaptureFeed(firstFrame: firstFrame.image, at: firstFrame.time, selection: output,
-                      ignoredTrailingColumns: Int((Self.scrollBarWidth * scale).rounded())) else { return nil }
+                      ignoredTrailingColumns: 0) else { return nil }
             feed = firstFeed
             firstTime = firstFrame.time
             lastFrameTime = 0

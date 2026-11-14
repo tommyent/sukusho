@@ -64,7 +64,7 @@ import Testing
             == .init(rect: CGRect(x: 600, y: 194, width: 500, height: 918), reason: .clipped, obstacles: [1], target: 3, ignored: [0, 2]))
     }
 
-    @Test("At the end of the page the output goes on to the window's bottom, short of its rim and the Dock")
+    @Test("At the end of the page the output goes on to the window's bottom, short of its chrome and the Dock")
     func rowsBelowTheSelection() {
         let frames = CGRect(x: 600, y: 38, width: 500, height: 1074)
         let output = ScrollingCaptureRegion.output(selection: selection, matching: frames, scale: 2)
@@ -72,15 +72,46 @@ import Testing
         func below(_ output: ScrollingCaptureOutputRect, _ matching: CGRect, window: CGFloat?, usable: CGFloat) -> Range<Int> {
             ScrollingCaptureRegion.rowsBelow(output: output, matching: matching, windowBottom: window, usableBottom: usable, scale: 2)
         }
-        // The window ends at the bottom of the display: the frame rows below the selection, but its 1 pt rim.
-        #expect(below(output, frames, window: 1112, usable: 1112) == 1324..<2146)
-        // A window that runs past the display's bottom has no rim on it.
+        // The window ends at the bottom of the display: the frame rows below the selection, but its
+        // bottom chrome (the rim and the rounded corners above it).
+        #expect(below(output, frames, window: 1112, usable: 1112) == 1324..<2132)
+        // A window that runs past the display's bottom has no chrome on it.
         #expect(below(output, frames, window: 1200, usable: 1112) == 1324..<2148)
         // The Dock's full-display window is left out of `matching`; the visible frame stops above its tiles.
         #expect(below(output, frames, window: 1112, usable: 1040) == 1324..<2004)
         // Frames that are the selection (a window in front of it) have nothing below it.
         let own = ScrollingCaptureRegion.output(selection: selection, matching: selection, scale: 2)
         #expect(below(own, selection, window: nil, usable: 1112).isEmpty)
+    }
+
+    @Test("A crop that reaches the window's bottom or right edge stops short of its chrome")
+    func pageCropKeepsWindowChromeOut() {
+        func pageCrop(selection: CGRect, inFront: [CGRect] = [], target: CGRect? = nil) -> ScrollingCaptureRegion.PageCrop {
+            let window = target ?? self.target.frame
+            let windows = inFront.map { (frame: $0, isTarget: false) } + [(frame: window, isTarget: true)]
+            let matching = ScrollingCaptureRegion.matching(selection: selection, display: display, frontToBackWindows: windows)
+            return ScrollingCaptureRegion.pageCrop(selection: selection, matching: matching, windows: windows)
+        }
+        // Inside the window on both edges: the selection is the crop.
+        #expect(pageCrop(selection: CGRect(x: 600, y: 400, width: 500, height: 300))
+            == .init(rect: CGRect(x: 600, y: 400, width: 500, height: 300), trimsBottomChrome: false, trimsScrollBar: false))
+        // Down to the window's bottom (the window ends at 1112, its chrome 8 pt above that).
+        #expect(pageCrop(selection: CGRect(x: 600, y: 800, width: 500, height: 312))
+            == .init(rect: CGRect(x: 600, y: 800, width: 500, height: 304), trimsBottomChrome: true, trimsScrollBar: false))
+        // Out to the window's right edge (1400), past the 12 pt the scroll bar needs.
+        #expect(pageCrop(selection: CGRect(x: 600, y: 400, width: 800, height: 300))
+            == .init(rect: CGRect(x: 600, y: 400, width: 788, height: 300), trimsBottomChrome: false, trimsScrollBar: true))
+        // Past the window's right edge too: the crop ends at the bar's edge, not the selection's.
+        #expect(pageCrop(selection: CGRect(x: 600, y: 400, width: 900, height: 300))
+            == .init(rect: CGRect(x: 600, y: 400, width: 788, height: 300), trimsBottomChrome: false, trimsScrollBar: true))
+        // A window in front of the selection means no window to keep chrome out of.
+        let blocked = CGRect(x: 650, y: 450, width: 100, height: 100)
+        #expect(pageCrop(selection: selection, inFront: [blocked])
+            == .init(rect: selection, trimsBottomChrome: false, trimsScrollBar: false))
+        // A Dock over the window's bottom stops the frames above the chrome: nothing to trim.
+        let dock = CGRect(x: 300, y: 1040, width: 1100, height: 72)
+        #expect(pageCrop(selection: CGRect(x: 600, y: 700, width: 500, height: 400), inFront: [dock])
+            == .init(rect: CGRect(x: 600, y: 700, width: 500, height: 400), trimsBottomChrome: false, trimsScrollBar: false))
     }
 
     @Test("A window over most but not all of the display still counts")
