@@ -31,6 +31,9 @@ final class ScrollingCapturePresenter {
     /// ponytail: stops at 16,384 px, the GPU texture limit on Apple silicon:
     /// the editor isn't verified with taller images. Raise once it is.
     private static let maximumHeight = 16_384
+    /// Right-edge strip left out of matching, where the overlay scroll bar
+    /// appears while scrolling, when the crop doesn't stop short of it.
+    private static let scrollBarWidth: CGFloat = 20
     /// How long frames must keep being refused before the bar says so: a hover
     /// or a frame mid-scroll is refused briefly and needs nothing from the user.
     /// Corpus (28 pages, stream-timed user pages): the longest short run, a
@@ -191,7 +194,7 @@ final class ScrollingCapturePresenter {
             }
             guard let firstFrame = first, outcome == nil,
                   let firstFeed = ScrollingCaptureFeed(firstFrame: firstFrame.image, at: firstFrame.time, selection: output,
-                      ignoredTrailingColumns: 0) else { return nil }
+                      ignoredTrailingColumns: page.trimsScrollBar ? 0 : Int((Self.scrollBarWidth * scale).rounded())) else { return nil }
             feed = firstFeed
             firstTime = firstFrame.time
             lastFrameTime = 0
