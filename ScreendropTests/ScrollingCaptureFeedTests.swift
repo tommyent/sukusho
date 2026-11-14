@@ -162,17 +162,24 @@ private final class FeedFixtureBundle: NSObject {}
         #expect(try #require(await feed.makeImage()).height == 540)
         #expect(stream.drainDroppedFrames(after: 1.0, before: 3.0).map(\.time) == [2.5])
 
-        // A bridged frame between lastPlacedTime and frame.time that goes .upward stops immediately
-        // without feeding a second frame to trim.
+        // A bridged frame between lastPlacedTime and frame.time that moves upward is refused
+        // without mutating stitcher state, so a following real upward frame does not trim.
         stream.enqueue(.init(image: top, time: 2.2))
-        stream.enqueue(.init(image: top, time: 2.3))
         stream.enqueue(.init(image: far, time: 2.4))
         let veiledFar = try veiled(far)
         let upward = try #require(await ScrollingCaptureFeed.addWithBridge(
             frame: .init(image: veiledFar, time: 2.5), to: feed, stream: stream,
             lastPlacedTime: &lastPlacedTime, mayReplaceFirst: false, maximumHeight: 16_384))
         #expect(upward.update.placement == .skipped)
+        #expect(upward.update.height == 540)
         #expect(upward.time == 2.5)
+        #expect(try #require(await feed.makeImage()).height == 540)
+
+        let nextUpward = try #require(await ScrollingCaptureFeed.addWithBridge(
+            frame: .init(image: top, time: 2.6), to: feed, stream: stream,
+            lastPlacedTime: &lastPlacedTime, mayReplaceFirst: false, maximumHeight: 16_384))
+        #expect(nextUpward.update.placement == .upward(-180))
+        #expect(nextUpward.update.height == 540)
         #expect(try #require(await feed.makeImage()).height == 540)
     }
 }
