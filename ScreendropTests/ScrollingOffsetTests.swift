@@ -651,6 +651,33 @@ private final class OffsetFixtureBundle: NSObject {}
         }
     }
 
+    @Test("A sidebar pushed up ends its run near the push, not where its blank lines line up with older slices")
+    func pushedSidebarsBlankLinesDontEndItsRun() async throws {
+        // A contents column, lines every 24 rows, pinned for four steps, then pushed up 40 with the page.
+        // Its blank lines in the pushed frame match blank lines of slices appended while it was pinned.
+        func toc(_ shift: Int) -> (Int, Int) -> UInt8 {
+            { (y: Int, x: Int) -> UInt8 in
+                let r = y - 20 - shift
+                guard r >= 0, r % 24 < 14, y < 380 else { return 255 }
+                return UInt8(truncatingIfNeeded: (r / 24) * 41 + x * 9 + 7)
+            }
+        }
+        let none: (Int, Int) -> UInt8 = { (_: Int, _: Int) -> UInt8 in 255 }
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: sidebarFrame(top: 0, left: toc(0), right: none),
+                                                                  width: 96, height: 400, ignoredTrailingColumns: 0))
+        for top in stride(from: 40, through: 160, by: 40) {
+            #expect(await stitcher.place(sidebarFrame(top: top, left: toc(0), right: none), candidate: 40) == .appended(40))
+        }
+        #expect(await stitcher.place(sidebarFrame(top: 200, left: toc(-40), right: none), candidate: 40) == .appended(40))
+        let image = await stitcher.makeImage()
+        func sidebarPixels(_ rows: Range<Int>) -> Int {
+            rows.reduce(0) { count, y in count + (0..<24).filter { image[(y * 96 + $0) * 4] != 255 }.count }
+        }
+        // The slices appended while it was pinned stay under the run's plain colour; it shows again pushed.
+        #expect(sidebarPixels(380..<420) == 0)
+        #expect(sidebarPixels(460..<520) > 0)
+    }
+
     @Test("A pinned sidebar's rows stop at the band's bottom, so a sticky bar under it doesn't show mid-image")
     func pinnedRunsStopAtTheBandsBottom() async throws {
         // MDN's layout in small over a bar that stays at the bottom of every frame (rows 370-399, full

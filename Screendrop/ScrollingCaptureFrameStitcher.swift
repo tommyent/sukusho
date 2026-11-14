@@ -245,26 +245,36 @@ actor ScrollingCaptureFrameStitcher {
         return data
     }
 
+    /// What a run paints in each of its columns below its stored rows: the side's most common colour in its
+    /// frame, or the column's own where it is one colour down most of the frame (a divider, a border).
+    private func fill(of run: PinnedRun) -> [UInt32] {
+        let storedRows = run.frame.count / (run.stored.count * 4)
+        return run.frame.withUnsafeBytes { frame in
+            func mostCommon(_ counts: [UInt32: Int]) -> (colour: UInt32, count: Int) {
+                counts.max { ($0.value, $0.key) < ($1.value, $1.key) }.map { ($0.key, $0.value) } ?? (0, 0)
+            }
+            var side: [UInt32: Int] = [:]
+            let columns = run.columns.map { x in
+                var counts: [UInt32: Int] = [:]
+                for y in 0..<storedRows {
+                    counts[frame.loadUnaligned(fromByteOffset: (y * run.stored.count + x - run.stored.lowerBound) * 4, as: UInt32.self), default: 0] += 1
+                }
+                side.merge(counts, uniquingKeysWith: +)
+                return mostCommon(counts)
+            }
+            let background = mostCommon(side).colour
+            return columns.map { $0.count * 4 >= storedRows * 3 ? $0.colour : background }
+        }
+    }
+
     private func applyPinnedRuns(to out: UnsafeMutableRawBufferPointer, rows: Int) {
         for run in pinnedRuns where run.from < rows {
             let storedRows = run.frame.count / (run.stored.count * 4)
+            let fill = self.fill(of: run)
             run.frame.withUnsafeBytes { frame in
                 func stored(_ x: Int, _ y: Int) -> UInt32 {
                     frame.loadUnaligned(fromByteOffset: (y * run.stored.count + x - run.stored.lowerBound) * 4, as: UInt32.self)
                 }
-                func mostCommon(_ counts: [UInt32: Int]) -> (colour: UInt32, count: Int) {
-                    counts.max { ($0.value, $0.key) < ($1.value, $1.key) }.map { ($0.key, $0.value) } ?? (0, 0)
-                }
-                var side: [UInt32: Int] = [:]
-                let columns = run.columns.map { x in
-                    var counts: [UInt32: Int] = [:]
-                    for y in 0..<storedRows { counts[stored(x, y), default: 0] += 1 }
-                    side.merge(counts, uniquingKeysWith: +)
-                    return mostCommon(counts)
-                }
-                let background = mostCommon(side).colour
-                // A column that is one colour down most of the frame (a divider, a border) goes on in it.
-                let fill = columns.map { $0.count * 4 >= storedRows * 3 ? $0.colour : background }
                 for row in run.from..<min(run.end ?? rows, rows) {
                     let y = cut + row - run.start
                     for (i, x) in run.columns.enumerated() {
@@ -298,11 +308,13 @@ actor ScrollingCaptureFrameStitcher {
         /// The output row, from `start` on, where content moving with the page first shows in these columns:
         /// a row of the new frame that moved there, and that the rows already appended show too when it lands
         /// above this frame's slice (a footer appended while a redraw beside it kept the run). It can lie below
-        /// the slice: the run then covers the side down to it.
-        func entry(_ columns: Range<Int>, from start: Int) -> Int? {
+        /// the slice: the run then covers the side down to it. A row in the run's own `plain` colours says
+        /// nothing: the run paints it the same, and a sidebar's blank lines would line up with any others.
+        func entry(_ columns: Range<Int>, from start: Int, plain: [UInt8]) -> Int? {
             let top = row - (cut - k)
             return (max(0, start - top)..<(height - k)).first { y in
-                moved(y, columns) && (top + y >= row || line(appended, top + y - cut, columns) == line(last, y, columns))
+                moved(y, columns) && !line(last, y, columns).elementsEqual(plain)
+                    && (top + y >= row || line(appended, top + y - cut, columns) == line(last, y, columns))
             }.map { top + $0 }
         }
         /// The rows this frame appends show something in these columns, not one plain colour: only then does a
@@ -331,7 +343,9 @@ actor ScrollingCaptureFrameStitcher {
                 let dropped = isLeft ? kept.upperBound..<run.columns.upperBound : run.columns.lowerBound..<kept.lowerBound
                 let judged = dropped.clamped(to: 0..<usable)
                 guard !dropped.isEmpty, !stillPinned(judged) else { continue }
-                let end = max(run.from, entry(judged, from: run.from) ?? row)
+                let fill = self.fill(of: run)
+                let plain = judged.flatMap { x in withUnsafeBytes(of: fill[x - run.columns.lowerBound]) { Array($0) } }
+                let end = max(run.from, entry(judged, from: run.from, plain: plain) ?? row)
                 pinnedRuns[i].end = end
                 if !kept.isEmpty {
                     pinnedRuns.append(PinnedRun(isLeft: isLeft, columns: kept, start: run.start, from: end,
