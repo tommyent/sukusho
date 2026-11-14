@@ -90,13 +90,13 @@ actor ScrollingCaptureFrameStitcher {
 
     /// Where the frame went, and Vision's candidate against the reference
     /// (nil when it had none), for the frame dump and the bar's message.
-    func add(_ frame: [UInt8]) -> (placement: Placement, candidate: ScrollingCaptureOffsetEstimator.Candidate?) {
+    func add(_ frame: [UInt8], allowUpward: Bool = true) -> (placement: Placement, candidate: ScrollingCaptureOffsetEstimator.Candidate?) {
         guard frame.count == last.count else { lastWasUpward = false; return (.skipped, nil) }
         let candidate = ScrollingCaptureOffsetEstimator.candidate(from: last, to: frame,
             width: width, height: height, ignoredTrailingColumns: ignoredTrailingColumns)
         let wasUpward = lastWasUpward
         let placement = place(frame, candidate: candidate?.offset, alternatives: candidate?.alternatives ?? [],
-                              bands: candidate?.bands ?? [])
+                              bands: candidate?.bands ?? [], allowUpward: allowUpward)
         if placement == .skipped,
            let fallback = ScrollingCaptureOffsetVerifier.uniqueLineUpCandidate(from: last, to: frame, width: width,
                height: height, ignoredTrailingColumns: ignoredTrailingColumns),
@@ -105,7 +105,7 @@ actor ScrollingCaptureFrameStitcher {
                ignoredTrailingColumns: ignoredTrailingColumns),
            found.offset != 0, abs(found.offset - fallback) <= ScrollingCaptureOffsetVerifier.search {
             lastWasUpward = wasUpward
-            return (apply(found, to: frame), candidate)
+            return (apply(found, to: frame, allowUpward: allowUpward), candidate)
         }
         return (placement, candidate)
     }
@@ -120,7 +120,8 @@ actor ScrollingCaptureFrameStitcher {
     /// confirm it too), unless still side columns alone confirmed it: then the content between them
     /// moved, and the last step and each band's own shift are tried there. Of two shifts far apart that
     /// both verify, the one most of Vision's bands saw wins (`ScrollingCaptureOffsetVerifier`'s votes).
-    func place(_ frame: [UInt8], candidate: Int?, alternatives: [Int] = [], bands: [Int] = []) -> Placement {
+    func place(_ frame: [UInt8], candidate: Int?, alternatives: [Int] = [], bands: [Int] = [],
+               allowUpward: Bool = true) -> Placement {
         func verified(_ candidates: [Int]) -> ScrollingCaptureOffsetVerifier.Verified? {
             ScrollingCaptureOffsetVerifier.verifiedOffset(candidates: candidates, votes: bands, from: last, to: frame,
                 width: width, height: height, ignoredTrailingColumns: ignoredTrailingColumns)
@@ -139,12 +140,16 @@ actor ScrollingCaptureFrameStitcher {
             lastWasUpward = false
             return .skipped
         }
-        return apply(found, to: frame)
+        return apply(found, to: frame, allowUpward: allowUpward)
     }
 
-    private func apply(_ found: ScrollingCaptureOffsetVerifier.Verified, to frame: [UInt8]) -> Placement {
+    private func apply(_ found: ScrollingCaptureOffsetVerifier.Verified, to frame: [UInt8], allowUpward: Bool = true) -> Placement {
         let k = found.offset, rowBytes = width * 4
         if k < 0 {
+            guard allowUpward else {
+                lastWasUpward = false
+                return .skipped
+            }
             defer { lastWasUpward = true }
             guard lastWasUpward else { return .upward(k) }
             last = frame
