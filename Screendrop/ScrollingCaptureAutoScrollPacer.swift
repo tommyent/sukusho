@@ -40,13 +40,16 @@ nonisolated struct AutoScrollPacer: Equatable {
         case endOfPage
     }
 
-    /// No new frame for this long means the view has stopped moving. Longer
-    /// than the engine's 100 ms rest look, so its last placement is in.
-    static let settleTime: TimeInterval = 0.4
-    /// A step whose view keeps changing (a playing video) is judged by what
-    /// it stitched after this long.
-    static let stepTimeout: TimeInterval = 1.5
-    /// A step after which nothing on screen changed counts as unanswered.
+    /// No new frame for this long means the view has stopped moving.
+    static let settleTime: TimeInterval = 0.25
+    /// SCK idle/unchanged samples covering this long after a retry probe
+    /// (`stepsWithoutProgress > 1`) mean the view did not move in response to it.
+    static let idleResponseTime: TimeInterval = 0.375
+    /// First step whose view keeps changing (a playing video) is judged by
+    /// what it stitched after this long; subsequent probe steps tighten to `retryStepTimeout`.
+    static let stepTimeout: TimeInterval = 1.25
+    static let retryStepTimeout: TimeInterval = 0.625
+    /// Fallback when neither a frame nor an idle stream sample arrived after a step.
     static let responseTime: TimeInterval = 1
     /// Steps posted since the last stitched progress, the one in flight
     /// included, one at each of the region's points: the view stays within
@@ -79,16 +82,20 @@ nonisolated struct AutoScrollPacer: Equatable {
         startHeight = height
     }
 
-    /// Takes the stitched height and the display time of the newest frame
-    /// the engine has seen. On `.step` the caller posts the next step now.
-    mutating func update(height: Int, lastFrameTime: TimeInterval, now: TimeInterval) -> Action {
+    /// Takes the stitched height, the newest placed/changed frame time, and the
+    /// newest stream sample time (`.idle` and identical frames included).
+    mutating func update(height: Int, lastFrameTime: TimeInterval, lastSampleTime: TimeInterval = -.infinity, now: TimeInterval) -> Action {
         let stitched = height - startHeight
         guard lastFrameTime > postedAt else {
-            guard now - postedAt >= Self.responseTime else { return .wait }
+            let idleConfirmed = stepsWithoutProgress > 1
+                && lastSampleTime - postedAt >= Self.idleResponseTime
+                && now - postedAt >= Self.idleResponseTime
+            guard idleConfirmed || now - postedAt >= Self.responseTime else { return .wait }
             return noProgress(height: height, now: now)
         }
         if stitched >= stepPixels { return progress(height: height, now: now) }
-        guard now - lastFrameTime >= Self.settleTime || now - postedAt >= Self.stepTimeout else { return .wait }
+        let timeout = stepsWithoutProgress > 1 ? Self.retryStepTimeout : Self.stepTimeout
+        guard now - lastFrameTime >= Self.settleTime || now - postedAt >= timeout else { return .wait }
         return stitched > 0 ? progress(height: height, now: now) : noProgress(height: height, now: now)
     }
 

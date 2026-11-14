@@ -66,18 +66,20 @@ actor ScrollingCaptureFeed {
     /// or doesn't fit, takes the first frame's place while nothing is appended, and is nil too: the
     /// first can be stale (the selection's dimming caught mid-fade) and would refuse every frame
     /// after it. A frame that moved is placed as always (a page that scrolls itself).
-    func add(_ frame: CGImage, at time: TimeInterval, mayReplaceFirst: Bool = false) async -> Update? {
+    func add(_ frame: CGImage, at time: TimeInterval, mayReplaceFirst: Bool = false, allowUpward: Bool = true) async -> Update? {
         let cropped = CGSize(width: frame.width, height: frame.height) == frameSize ? Self.crop(frame, to: selection) : nil
         let pixels = cropped.flatMap { ScrollingCapturePixels.bytes(of: $0, in: colorSpace) }
         if !previousWasUpward, let pixels, let previous, ScrollingCaptureOffsetVerifier.sameView(pixels, previous,
                width: Int(selection.width), height: Int(selection.height), ignoredTrailingColumns: ignoredTrailingColumns) {
             return nil
         }
+        let oldPrevious = previous
         previous = pixels
         index += 1
         // A frame that can't be read goes to the stitcher as one that doesn't
         // fit, so it also breaks a run of upward frames.
-        let (placement, candidate) = await stitcher.add(pixels ?? [])
+        let (placement, candidate) = await stitcher.add(pixels ?? [], allowUpward: allowUpward)
+        if !allowUpward, placement == .skipped { previous = oldPrevious }
         if placement == .skipped || placement == .redrawn, mayReplaceFirst, let pixels, let cropped,
            await stitcher.stitchedHeight == cropped.height,
            let restarted = ScrollingCaptureFrameStitcher(firstFrame: pixels, width: cropped.width,
@@ -102,6 +104,66 @@ actor ScrollingCaptureFeed {
         return Update(placement: placement, height: await stitcher.stitchedHeight, keepsChanging: keepsChanging)
     }
 
+    /// Records when and why the session finished in the frame dump, if tracing is enabled.
+    func finishTrace(reason: String, at time: TimeInterval) async {
+        let height = await stitcher.stitchedHeight
+        dump?.writeFinish(reason: reason, at: time, height: height)
+    }
+
+    /// Adds `frame` to `feed`, bridging across any intermediate frames evicted from `stream`
+    /// strictly after `lastPlacedTime` and before `frame.time` when `frame` is skipped.
+    /// Stale frames (`<= lastPlacedTime`) are dropped, newer frames (`>= frame.time`) are kept,
+    /// and bridged frames pass `allowUpward: false` so an upward offset stays `.skipped`
+    /// without mutating stitcher or feed state.
+    @MainActor
+    static func addWithBridge(
+        frame: ScrollingCaptureStream.Frame,
+        to feed: ScrollingCaptureFeed,
+        stream: ScrollingCaptureStream,
+        lastPlacedTime: inout TimeInterval,
+        mayReplaceFirst: Bool,
+        maximumHeight: Int,
+        shouldContinue: () -> Bool = { true }
+    ) async -> (update: Update, time: TimeInterval)? {
+        guard var update = await feed.add(frame.image, at: frame.time, mayReplaceFirst: mayReplaceFirst) else {
+            return nil
+        }
+        if update.placement != .skipped {
+            lastPlacedTime = max(lastPlacedTime, frame.time)
+            stream.dropFrames(through: frame.time)
+            return (update, frame.time)
+        }
+        guard !mayReplaceFirst else { return (update, frame.time) }
+        let dropped = stream.drainDroppedFrames(after: lastPlacedTime, before: frame.time)
+        var bridged = false
+        var latestTime = frame.time
+        for mid in dropped {
+            guard shouldContinue() else { break }
+            guard let midUpdate = await feed.add(mid.image, at: mid.time, mayReplaceFirst: false, allowUpward: false) else { continue }
+            switch midUpdate.placement {
+            case .appended, .redrawn:
+                bridged = true
+                update = midUpdate
+                latestTime = mid.time
+                lastPlacedTime = max(lastPlacedTime, mid.time)
+                stream.dropFrames(through: mid.time)
+                if midUpdate.height >= maximumHeight { return (update, latestTime) }
+            case .upward, .trimmed, .restarted, .skipped:
+                continue
+            }
+        }
+        if bridged, update.height < maximumHeight,
+           let retried = await feed.add(frame.image, at: frame.time, mayReplaceFirst: false) {
+            update = retried
+            latestTime = frame.time
+            if retried.placement != .skipped {
+                lastPlacedTime = max(lastPlacedTime, frame.time)
+                stream.dropFrames(through: frame.time)
+            }
+        }
+        return (update, latestTime)
+    }
+
     /// The stitched capture; with `rowsBelow` (frame rows), the reference frame's rows there go on under
     /// it, over the selection's columns: the window below the selection at the end of the page.
     func makeImage(rowsBelow: Range<Int>? = nil) async -> CGImage? {
@@ -109,8 +171,8 @@ actor ScrollingCaptureFeed {
         let below = rowsBelow.flatMap { rows in
             referenceFrame.cropping(to: CGRect(x: Int(selection.minX), y: rows.lowerBound, width: width, height: rows.count))
         }.flatMap { ScrollingCapturePixels.bytes(of: $0, in: colorSpace) } ?? []
-        let pixels = await stitcher.makeImage(appending: below)
-        return ScrollingCapturePixels.image(pixels, width: width, height: pixels.count / (width * 4), colorSpace: colorSpace)
+        let data = await stitcher.makeImageData(appending: below)
+        return ScrollingCapturePixels.image(data: data, width: width, height: data.count / (width * 4), colorSpace: colorSpace)
     }
 
     /// The capture so far, no wider than `maxWidth` pixels, for the live preview beside the region.

@@ -164,6 +164,7 @@ private final class OffsetFixtureBundle: NSObject {}
         #expect(await stitcher.place(sidebarFrame(top: 40), candidate: 40) == .appended(40))
         #expect(await stitcher.place(sidebarFrame(top: 80), candidate: 40) == .appended(40))
         let image = await stitcher.makeImage()
+        #expect(await stitcher.makeImageData() == Data(image))
         #expect(image.count == 96 * 480 * 4)
         func pixel(_ pixels: [UInt8], _ y: Int, _ x: Int) -> UInt8 { pixels[(y * 96 + x) * 4] }
         let page = sidebarFrame(top: 0) + sidebarFrame(top: 400)
@@ -462,5 +463,99 @@ private final class OffsetFixtureBundle: NSObject {}
             width: last.width, height: last.height, ignoredTrailingColumns: 0)
         #expect(shifts.count == ScrollingCaptureOffsetEstimator.bands)
         #expect(ScrollingCaptureOffsetEstimator.consensus(shifts) == nil)
+    }
+
+    @Test("Sticky headers and footers are trimmed before Vision proposes an offset")
+    func stickyChromeDoesNotHijackVision() async throws {
+        let base = try frame(3), moved = try frame(4) // 600x400, true offset 180
+        let w = base.width, h = base.height, header = 70, footer = 50
+        func withStickyChrome(_ pixels: [UInt8]) -> [UInt8] {
+            var out = pixels
+            for y in 0..<header {
+                for x in 0..<w {
+                    let v: UInt8 = (y % 6 < 3 && x % 12 < 6) ? 30 : 210
+                    out.replaceSubrange(((y * w + x) * 4)..<((y * w + x) * 4 + 3), with: [v, v, v])
+                }
+            }
+            for y in (h - footer)..<h {
+                for x in 0..<w {
+                    let v: UInt8 = (y % 5 < 2 && x % 10 < 5) ? 50 : 220
+                    out.replaceSubrange(((y * w + x) * 4)..<((y * w + x) * 4 + 3), with: [v, v, v])
+                }
+            }
+            return out
+        }
+        let last = withStickyChrome(base.pixels), new = withStickyChrome(moved.pixels)
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: last, width: w, height: h, ignoredTrailingColumns: 0))
+        #expect(await stitcher.add(new).placement == .appended(180))
+    }
+
+    @Test("Unique-row line-up rescues rhythmic line-height pages when Vision misses, without placing non-overlapping jumps")
+    func uniqueLineUpRescuesMissedOverlap() async throws {
+        // Regular 24-row line rhythm (16 px text, 8 px gap) with unique per-line pixels:
+        // mimics prose/code where Vision can miss at uneven hand-scroll steps.
+        let w = 120, h = 400
+        func rhythmicFrame(top: Int) -> [UInt8] {
+            var px = [UInt8](repeating: 255, count: w * h * 4)
+            for y in 0..<h {
+                let row = top + y
+                guard row % 24 < 16 else { continue }
+                for x in 10..<(w - 10) where (x + (row / 24) * 5) % 4 < 3 {
+                    let v = UInt8(truncatingIfNeeded: row * 31 + (row / 256) * 53 + x * 13)
+                    px.replaceSubrange(((y * w + x) * 4)..<((y * w + x) * 4 + 3), with: [v, v, v])
+                }
+            }
+            return px
+        }
+        let f0 = rhythmicFrame(top: 0), f1 = rhythmicFrame(top: 220), far = rhythmicFrame(top: 900)
+        #expect(ScrollingCaptureOffsetVerifier.uniqueLineUpCandidate(from: f0, to: f1, width: w, height: h, ignoredTrailingColumns: 0) == 220)
+        #expect(ScrollingCaptureOffsetVerifier.uniqueLineUpCandidate(from: f0, to: far, width: w, height: h, ignoredTrailingColumns: 0) == nil)
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: f0, width: w, height: h, ignoredTrailingColumns: 0))
+        #expect(await stitcher.add(f1).placement == .appended(220))
+        #expect(await stitcher.add(far).placement == .skipped)
+    }
+
+    @Test("Unique-row fallback ignores shift 0 even with a sticky header broken at row 0 and a jump near cut")
+    func uniqueLineUpNeverPicksShiftZero() async throws {
+        let w = 120, h = 400 // cut = 300
+        func frame(top: Int, headerTick: Int) -> [UInt8] {
+            var px = [UInt8](repeating: 255, count: w * h * 4)
+            for y in 0..<h {
+                if y == 0 {
+                    // Changing top row defeats unmovedEdges so the header stays in the band.
+                    let v = UInt8(truncatingIfNeeded: headerTick * 73 + 11)
+                    for x in 0..<w { px.replaceSubrange(((y * w + x) * 4)..<((y * w + x) * 4 + 3), with: [v, v, v]) }
+                } else if y <= 20 {
+                    // 20 unique header rows in center columns (3 of 5 bands < consensusBands=4; share < 0.3)
+                    // so direct Vision verification returns nil and the fallback is exercised.
+                    for x in 30..<(w - 30) {
+                        let v = UInt8(truncatingIfNeeded: y * 41 + x * 17 + 5)
+                        px.replaceSubrange(((y * w + x) * 4)..<((y * w + x) * 4 + 3), with: [v, v, v])
+                    }
+                } else {
+                    let row = top + y
+                    for x in 10..<(w - 10) {
+                        let v: UInt8 = switch x {
+                        case 10: UInt8(truncatingIfNeeded: row)
+                        case 11: UInt8(truncatingIfNeeded: row >> 8)
+                        default: UInt8(truncatingIfNeeded: row * 31 + x * 13)
+                        }
+                        px.replaceSubrange(((y * w + x) * 4)..<((y * w + x) * 4 + 3), with: [v, v, v])
+                    }
+                }
+            }
+            return px
+        }
+        let last = frame(top: 0, headerTick: 0), jumped = frame(top: 295, headerTick: 1) // 5 rows overlap (< 8)
+        // Confirm Vision itself misses (does not verify 0) so the fallback path is exercised.
+        let est = ScrollingCaptureOffsetEstimator.candidate(from: last, to: jumped, width: w, height: h, ignoredTrailingColumns: 0)
+        if let est {
+            let direct = ScrollingCaptureOffsetVerifier.verifiedOffset(candidates: [est.offset] + est.alternatives,
+                votes: est.bands, from: last, to: jumped, width: w, height: h, ignoredTrailingColumns: 0)
+            #expect(direct == nil)
+        }
+        #expect(ScrollingCaptureOffsetVerifier.uniqueLineUpCandidate(from: last, to: jumped, width: w, height: h, ignoredTrailingColumns: 0) == nil)
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: last, width: w, height: h, ignoredTrailingColumns: 0))
+        #expect(await stitcher.add(jumped).placement == .skipped)
     }
 }

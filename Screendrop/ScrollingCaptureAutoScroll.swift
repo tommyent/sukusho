@@ -22,6 +22,8 @@ final class ScrollingCaptureAutoScroller {
         let height: Int
         /// The display time of the newest frame taken, on the stream's clock.
         let lastFrameTime: TimeInterval
+        /// The newest stream sample time (idle and identical frames included).
+        let lastSampleTime: TimeInterval
         /// The latest frame doesn't fit: no steps until one is placed.
         let isWaiting: Bool
         /// False once the height limit is reached and when the session has ended.
@@ -71,7 +73,8 @@ final class ScrollingCaptureAutoScroller {
         let flip = CGDisplayBounds(CGMainDisplayID()).height
         points = [region.midY, region.maxY - region.height / 8, region.minY + region.height / 8]
             .map { CGPoint(x: region.midX, y: flip - $0) }
-        let step = min(max((region.height * Self.stepFraction).rounded(), Self.stepRange.lowerBound), Self.stepRange.upperBound)
+        let maxConfirmable = max(8, (region.height * 0.5).rounded())
+        let step = min(max((region.height * Self.stepFraction).rounded(), Self.stepRange.lowerBound), Self.stepRange.upperBound, maxConfirmable)
         stepPoints = Int32(step)
         stepPixels = Int((step * scale).rounded())
         self.state = state
@@ -92,6 +95,7 @@ final class ScrollingCaptureAutoScroller {
         poller = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: Self.pollInterval)
+                guard !Task.isCancelled else { break }
                 self?.tick()
             }
         }
@@ -136,7 +140,7 @@ final class ScrollingCaptureAutoScroller {
             return post()
         }
         let action = pacer.update(height: current.height, lastFrameTime: current.lastFrameTime,
-                                  now: ScrollingCaptureSampleTiming.now())
+                                  lastSampleTime: current.lastSampleTime, now: ScrollingCaptureSampleTiming.now())
         self.pacer = pacer
         switch action {
         case .step: post()

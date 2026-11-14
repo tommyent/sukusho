@@ -41,6 +41,9 @@ final class ScrollingCapturePresenter {
     /// short runs shows, and 195 of 277 refused frames still do, all in runs
     /// of 1 s or more (x-manual 128 of 146).
     static let quietWait: TimeInterval = 1
+    /// When overlap is lost without an animation/hover (`!keepsChanging`), warn early
+    /// before the user scrolls several more screens past the last confirmed view.
+    static let jumpWait: TimeInterval = 0.25
 
     private(set) var isRunning = false
     private(set) var stitchedHeight = 0
@@ -66,6 +69,8 @@ final class ScrollingCapturePresenter {
     @ObservationIgnored private var outcome: Outcome?
     /// Auto-scroll finished the session at the end of the page.
     @ObservationIgnored private var reachedEndOfPage = false
+    @ObservationIgnored private var finishReason: String?
+    @ObservationIgnored private var outcomeContinuation: CheckedContinuation<Void, Never>?
     @ObservationIgnored private var isSelectingArea = false
     @ObservationIgnored private var isCapturing = false
     @ObservationIgnored private var panel: NSPanel?
@@ -80,6 +85,7 @@ final class ScrollingCapturePresenter {
     /// The display time of the newest frame placed or skipped, which
     /// auto-scroll waits for before each step.
     @ObservationIgnored private var lastFrameTime: TimeInterval = 0
+    @ObservationIgnored private var lastSampleTime: TimeInterval = 0
     /// The display time of the first frame refused since the last one placed.
     @ObservationIgnored private var waitingSince: TimeInterval = 0
     /// macOS shows the Accessibility prompt at most once, so it's asked for
@@ -99,6 +105,8 @@ final class ScrollingCapturePresenter {
         isRunning = true
         outcome = nil
         reachedEndOfPage = false
+        finishReason = nil
+        outcomeContinuation = nil
         defer { isRunning = false }
 
         guard ScreenRecordingManager.ensureScreenCapturePermission(),
@@ -162,11 +170,12 @@ final class ScrollingCapturePresenter {
         // Its monitors start before the stream; leaving by any path, a failed
         // start or Cancel included, removes them.
         autoScroller = ScrollingCaptureAutoScroller(region: rect, scale: scale, state: { [unowned self] in
-            .init(height: stitchedHeight, lastFrameTime: lastFrameTime, isWaiting: isWaiting,
-                  canContinue: outcome == nil && !hasReachedLimit)
+            .init(height: stitchedHeight, lastFrameTime: lastFrameTime, lastSampleTime: lastSampleTime,
+                  isWaiting: isWaiting, canContinue: outcome == nil && !hasReachedLimit)
         }, bar: { [weak self] in self?.panel?.frame }, onStop: { [weak self] in self?.isAutoScrolling = false },
            onEndOfPage: { [weak self] in
             self?.reachedEndOfPage = true
+            self?.finishReason = "endOfPage"
             self?.finish()
         })
         defer { endAutoScroll() }
@@ -185,6 +194,8 @@ final class ScrollingCapturePresenter {
                       ignoredTrailingColumns: Int((Self.scrollBarWidth * scale).rounded())) else { return nil }
             feed = firstFeed
             firstTime = firstFrame.time
+            lastFrameTime = 0
+            lastSampleTime = firstTime
             previewTime = firstTime
             preview = await feed.makePreview(maxWidth: ScrollingCapturePreview.pixelWidth)
         } catch {
@@ -205,10 +216,14 @@ final class ScrollingCapturePresenter {
         // stops the stream. Idle ticks say nothing moved, so there's nothing to
         // place, but a wait still grows.
         var sawInput = false
+        var lastPlacedTime = firstTime
         events: while let event = await events.next() {
-            guard outcome != .cancelled, !hasReachedLimit else { break }
+            guard outcome != .cancelled, !hasReachedLimit, !reachedEndOfPage else { break }
             guard case .frame(let frame) = event else {
-                if case .idle(let time) = event { updateShowsWaiting(at: time) }
+                if case .idle(let time) = event {
+                    lastSampleTime = max(lastSampleTime, time)
+                    updateShowsWaiting(at: time)
+                }
                 continue
             }
             guard frame.time <= cutoff ?? .infinity else { break events }
@@ -217,24 +232,46 @@ final class ScrollingCapturePresenter {
             // was shown before the answer, so it can't show a scroll the answer missed.
             if !sawInput { sawInput = isAutoScrolling || Self.lastInputTime() > firstTime }
             // A frame that repeats the one before is an idle tick: nothing on screen changed there.
-            guard let update = await feed.add(frame.image, at: frame.time, mayReplaceFirst: !sawInput) else {
+            guard let result = await ScrollingCaptureFeed.addWithBridge(
+                frame: frame,
+                to: feed,
+                stream: source,
+                lastPlacedTime: &lastPlacedTime,
+                mayReplaceFirst: !sawInput,
+                maximumHeight: Self.maximumHeight,
+                shouldContinue: { [weak self] in
+                    guard let self else { return false }
+                    return self.outcome != .cancelled && !self.hasReachedLimit && !self.reachedEndOfPage
+                }
+            ) else {
+                lastSampleTime = max(lastSampleTime, frame.time)
                 updateShowsWaiting(at: frame.time)
                 continue
             }
-            lastFrameTime = frame.time
-            if previewPanel != nil, frame.time - previewTime >= Self.previewInterval {
-                previewTime = frame.time
+            let update = result.update
+            let latestTime = result.time
+            lastFrameTime = latestTime
+            lastSampleTime = max(lastSampleTime, latestTime)
+            if previewPanel != nil, latestTime - previewTime >= Self.previewInterval {
+                previewTime = latestTime
                 preview = await feed.makePreview(maxWidth: ScrollingCapturePreview.pixelWidth)
             }
             // What will be saved: the output stops at the limit.
             stitchedHeight = min(update.height, Self.maximumHeight)
-            if update.placement == .skipped, !isWaiting { waitingSince = frame.time }
+            if update.placement == .skipped, !isWaiting { waitingSince = latestTime }
             isWaiting = update.placement == .skipped
-            updateShowsWaiting(at: frame.time)
             keepsChanging = update.keepsChanging
+            updateShowsWaiting(at: latestTime)
             hasReachedLimit = update.height >= Self.maximumHeight
             // Auto-scroll saves at the limit, as at the end of the page; by hand, the bar waits for Done.
-            if hasReachedLimit { isAutoScrolling ? finish() : source.stop() }
+            if hasReachedLimit {
+                if isAutoScrolling {
+                    finishReason = "heightLimit"
+                    finish()
+                } else {
+                    source.stop()
+                }
+            }
         }
         // The stream has ended (Done, Cancel, the height limit or an error):
         // nothing more can be captured, so nothing more may be scrolled.
@@ -242,9 +279,10 @@ final class ScrollingCapturePresenter {
 
         // ponytail: after a stream error the bar doesn't say capture stopped;
         // it waits for Done, which keeps what's captured, or Cancel.
-        while outcome == nil {
-            try? await Task.sleep(for: .milliseconds(100))
+        if outcome == nil {
+            await withCheckedContinuation { outcomeContinuation = $0 }
         }
+        await feed.finishTrace(reason: finishReason ?? "streamEnded", at: cutoff ?? ScrollingCaptureSampleTiming.now())
         // At the end of the page the window below the selection is kept too; Done by hand, or a
         // hand-back, may come before the page has ended.
         guard outcome != .cancelled, let image = await feed.makeImage(rowsBelow: reachedEndOfPage ? rowsBelow : nil)
@@ -267,7 +305,8 @@ final class ScrollingCapturePresenter {
 
     /// Set only on a change: idle ticks arrive at the frame rate.
     private func updateShowsWaiting(at time: TimeInterval) {
-        let shows = isWaiting && time - waitingSince >= Self.quietWait
+        let delay = keepsChanging ? Self.quietWait : Self.jumpWait
+        let shows = isWaiting && time - waitingSince >= delay
         if shows != showsWaiting { showsWaiting = shows }
     }
 
@@ -279,6 +318,9 @@ final class ScrollingCapturePresenter {
         if isCapturing {
             cutoff = cutoff ?? ScrollingCaptureSampleTiming.now()
             outcome = outcome ?? .done
+            finishReason = finishReason ?? "done"
+            outcomeContinuation?.resume()
+            outcomeContinuation = nil
             stream?.stop()
         } else {
             cancel()
@@ -289,6 +331,9 @@ final class ScrollingCapturePresenter {
         autoScroller?.stop()
         cutoff = cutoff ?? ScrollingCaptureSampleTiming.now()
         outcome = .cancelled
+        finishReason = finishReason ?? "cancelled"
+        outcomeContinuation?.resume()
+        outcomeContinuation = nil
         stream?.stop()
         if isSelectingArea {
             RecordingAreaSelectionPresenter.shared.cancel()

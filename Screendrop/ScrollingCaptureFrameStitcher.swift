@@ -90,12 +90,24 @@ actor ScrollingCaptureFrameStitcher {
 
     /// Where the frame went, and Vision's candidate against the reference
     /// (nil when it had none), for the frame dump and the bar's message.
-    func add(_ frame: [UInt8]) -> (placement: Placement, candidate: ScrollingCaptureOffsetEstimator.Candidate?) {
+    func add(_ frame: [UInt8], allowUpward: Bool = true) -> (placement: Placement, candidate: ScrollingCaptureOffsetEstimator.Candidate?) {
         guard frame.count == last.count else { lastWasUpward = false; return (.skipped, nil) }
         let candidate = ScrollingCaptureOffsetEstimator.candidate(from: last, to: frame,
             width: width, height: height, ignoredTrailingColumns: ignoredTrailingColumns)
-        return (place(frame, candidate: candidate?.offset, alternatives: candidate?.alternatives ?? [],
-                      bands: candidate?.bands ?? []), candidate)
+        let wasUpward = lastWasUpward
+        let placement = place(frame, candidate: candidate?.offset, alternatives: candidate?.alternatives ?? [],
+                              bands: candidate?.bands ?? [], allowUpward: allowUpward)
+        if placement == .skipped,
+           let fallback = ScrollingCaptureOffsetVerifier.uniqueLineUpCandidate(from: last, to: frame, width: width,
+               height: height, ignoredTrailingColumns: ignoredTrailingColumns),
+           let found = ScrollingCaptureOffsetVerifier.verifiedOffset(candidates: [fallback],
+               votes: candidate?.bands ?? [], from: last, to: frame, width: width, height: height,
+               ignoredTrailingColumns: ignoredTrailingColumns),
+           found.offset != 0, abs(found.offset - fallback) <= ScrollingCaptureOffsetVerifier.search {
+            lastWasUpward = wasUpward
+            return (apply(found, to: frame, allowUpward: allowUpward), candidate)
+        }
+        return (placement, candidate)
     }
 
     /// Places a frame against the reference at Vision's candidate.
@@ -108,7 +120,8 @@ actor ScrollingCaptureFrameStitcher {
     /// confirm it too), unless still side columns alone confirmed it: then the content between them
     /// moved, and the last step and each band's own shift are tried there. Of two shifts far apart that
     /// both verify, the one most of Vision's bands saw wins (`ScrollingCaptureOffsetVerifier`'s votes).
-    func place(_ frame: [UInt8], candidate: Int?, alternatives: [Int] = [], bands: [Int] = []) -> Placement {
+    func place(_ frame: [UInt8], candidate: Int?, alternatives: [Int] = [], bands: [Int] = [],
+               allowUpward: Bool = true) -> Placement {
         func verified(_ candidates: [Int]) -> ScrollingCaptureOffsetVerifier.Verified? {
             ScrollingCaptureOffsetVerifier.verifiedOffset(candidates: candidates, votes: bands, from: last, to: frame,
                 width: width, height: height, ignoredTrailingColumns: ignoredTrailingColumns)
@@ -127,8 +140,16 @@ actor ScrollingCaptureFrameStitcher {
             lastWasUpward = false
             return .skipped
         }
+        return apply(found, to: frame, allowUpward: allowUpward)
+    }
+
+    private func apply(_ found: ScrollingCaptureOffsetVerifier.Verified, to frame: [UInt8], allowUpward: Bool = true) -> Placement {
         let k = found.offset, rowBytes = width * 4
         if k < 0 {
+            guard allowUpward else {
+                lastWasUpward = false
+                return .skipped
+            }
             defer { lastWasUpward = true }
             guard lastWasUpward else { return .upward(k) }
             last = frame
@@ -194,37 +215,63 @@ actor ScrollingCaptureFrameStitcher {
     /// the last frame, with `pinnedRuns` applied.
     func makeImage(appending below: [UInt8] = []) -> [UInt8] {
         let split = cut * width * 4
-        var image = Array(first[..<split]) + appended + Array(last[split...]) + below
+        var image: [UInt8] = []
+        image.reserveCapacity(split + appended.count + (last.count - split) + below.count)
+        image.append(contentsOf: first[..<split])
+        image.append(contentsOf: appended)
+        image.append(contentsOf: last[split...])
+        image.append(contentsOf: below)
         let rows = image.count / (width * 4)
-        image.withUnsafeMutableBytes { out in
-            for run in pinnedRuns where run.from < rows {
-                run.frame.withUnsafeBytes { frame in
-                    func stored(_ x: Int, _ y: Int) -> UInt32 {
-                        frame.loadUnaligned(fromByteOffset: (y * run.stored.count + x - run.stored.lowerBound) * 4, as: UInt32.self)
-                    }
-                    func mostCommon(_ counts: [UInt32: Int]) -> (colour: UInt32, count: Int) {
-                        counts.max { ($0.value, $0.key) < ($1.value, $1.key) }.map { ($0.key, $0.value) } ?? (0, 0)
-                    }
-                    var side: [UInt32: Int] = [:]
-                    let columns = run.columns.map { x in
-                        var counts: [UInt32: Int] = [:]
-                        for y in 0..<height { counts[stored(x, y), default: 0] += 1 }
-                        side.merge(counts, uniquingKeysWith: +)
-                        return mostCommon(counts)
-                    }
-                    let background = mostCommon(side).colour
-                    // A column that is one colour down most of the frame (a divider, a border) goes on in it.
-                    let fill = columns.map { $0.count * 4 >= height * 3 ? $0.colour : background }
-                    for row in run.from..<min(run.end ?? rows, rows) {
-                        let y = cut + row - run.start
-                        for (i, x) in run.columns.enumerated() {
-                            out.storeBytes(of: y < height ? stored(x, y) : fill[i], toByteOffset: (row * width + x) * 4, as: UInt32.self)
-                        }
+        image.withUnsafeMutableBytes { applyPinnedRuns(to: $0, rows: rows) }
+        return image
+    }
+
+    /// Same pixels as `makeImage(appending:)`, built directly into `Data` so `CGDataProvider`
+    /// takes it without a second full-image copy.
+    func makeImageData(appending below: [UInt8] = []) -> Data {
+        let split = cut * width * 4
+        var data = Data()
+        data.reserveCapacity(split + appended.count + (last.count - split) + below.count)
+        if split > 0 {
+            first.withUnsafeBytes { data.append($0.baseAddress!.assumingMemoryBound(to: UInt8.self), count: split) }
+        }
+        data.append(contentsOf: appended)
+        if last.count > split {
+            last.withUnsafeBytes { data.append($0.baseAddress!.advanced(by: split).assumingMemoryBound(to: UInt8.self), count: last.count - split) }
+        }
+        data.append(contentsOf: below)
+        let rows = data.count / (width * 4)
+        data.withUnsafeMutableBytes { applyPinnedRuns(to: $0, rows: rows) }
+        return data
+    }
+
+    private func applyPinnedRuns(to out: UnsafeMutableRawBufferPointer, rows: Int) {
+        for run in pinnedRuns where run.from < rows {
+            run.frame.withUnsafeBytes { frame in
+                func stored(_ x: Int, _ y: Int) -> UInt32 {
+                    frame.loadUnaligned(fromByteOffset: (y * run.stored.count + x - run.stored.lowerBound) * 4, as: UInt32.self)
+                }
+                func mostCommon(_ counts: [UInt32: Int]) -> (colour: UInt32, count: Int) {
+                    counts.max { ($0.value, $0.key) < ($1.value, $1.key) }.map { ($0.key, $0.value) } ?? (0, 0)
+                }
+                var side: [UInt32: Int] = [:]
+                let columns = run.columns.map { x in
+                    var counts: [UInt32: Int] = [:]
+                    for y in 0..<height { counts[stored(x, y), default: 0] += 1 }
+                    side.merge(counts, uniquingKeysWith: +)
+                    return mostCommon(counts)
+                }
+                let background = mostCommon(side).colour
+                // A column that is one colour down most of the frame (a divider, a border) goes on in it.
+                let fill = columns.map { $0.count * 4 >= height * 3 ? $0.colour : background }
+                for row in run.from..<min(run.end ?? rows, rows) {
+                    let y = cut + row - run.start
+                    for (i, x) in run.columns.enumerated() {
+                        out.storeBytes(of: y < height ? stored(x, y) : fill[i], toByteOffset: (row * width + x) * 4, as: UInt32.self)
                     }
                 }
             }
         }
-        return image
     }
 
     /// Opens, narrows or ends each side's run for a frame appended at output row `row`, `offset` below

@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 nonisolated struct CaptureDragExport: Transferable, Sendable {
     let url: URL
     let isVideo: Bool
+    var isReady: Bool = true
 
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(exportedContentType: .movie) { item in
@@ -13,6 +14,6 @@ nonisolated struct CaptureDragExport: Transferable, Sendable {
         }
         .exportingCondition { $0.isVideo }
         ProxyRepresentation { $0.url }
-            .exportingCondition { !$0.isVideo }
+            .exportingCondition { !$0.isVideo && $0.isReady }
     }
 }

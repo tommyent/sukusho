@@ -61,9 +61,9 @@ import Testing
         var p = pacer()
         var now = 10.0
         var actions: [AutoScrollPacer.Action] = []
-        for _ in 0..<AutoScrollPacer.maximumStepsWithoutProgress {
+        for step in 0..<AutoScrollPacer.maximumStepsWithoutProgress {
             // A frame just now, so the view never settles; the step times out.
-            now += AutoScrollPacer.stepTimeout
+            now += step == 0 ? AutoScrollPacer.stepTimeout : AutoScrollPacer.retryStepTimeout
             actions.append(p.update(height: 1000, lastFrameTime: now - 0.01, now: now))
         }
         #expect(actions == Array(repeating: .stepElsewhere, count: AutoScrollPacer.maximumStepsWithoutProgress - 1) + [.endOfPage])
@@ -95,15 +95,34 @@ import Testing
     func recoversAfterUnstitched() {
         var p = pacer()
         var now = 10.0
-        for _ in 0..<(AutoScrollPacer.maximumStepsWithoutProgress - 1) {
-            now += AutoScrollPacer.stepTimeout
+        for step in 0..<(AutoScrollPacer.maximumStepsWithoutProgress - 1) {
+            now += step == 0 ? AutoScrollPacer.stepTimeout : AutoScrollPacer.retryStepTimeout
             #expect(p.update(height: 1000, lastFrameTime: now - 0.01, now: now) == .stepElsewhere)
         }
         now += 0.5
         #expect(p.update(height: 1100, lastFrameTime: now - 0.25, now: now) == .step)
-        for _ in 0..<(AutoScrollPacer.maximumStepsWithoutProgress - 1) {
-            now += AutoScrollPacer.stepTimeout
+        for step in 0..<(AutoScrollPacer.maximumStepsWithoutProgress - 1) {
+            now += step == 0 ? AutoScrollPacer.stepTimeout : AutoScrollPacer.retryStepTimeout
             #expect(p.update(height: 1100, lastFrameTime: now - 0.25, now: now) == .stepElsewhere)
         }
+    }
+
+    @Test("First unanswered step keeps the full response window; retry probes confirm faster from stream idle samples")
+    func idleSamplesConfirmEndOfPage() {
+        var p = pacer()
+        let t = 10.0
+        // First probe waits full responseTime even when stream idle samples arrive past 0.5 s.
+        #expect(p.update(height: 1000, lastFrameTime: 9, lastSampleTime: t + 0.5, now: t + 0.5) == .wait)
+        // Slow app responds at 0.55 s after the first step: keeps scrolling and does not end.
+        var slow = pacer()
+        #expect(slow.update(height: 1000, lastFrameTime: 9, lastSampleTime: t + 0.5, now: t + 0.5) == .wait)
+        #expect(slow.update(height: 1100, lastFrameTime: t + 0.55, lastSampleTime: t + 0.55, now: t + 0.56) == .step)
+        // First probe times out at responseTime (1.0 s), then two retry probes confirm at idleResponseTime (0.375 s each).
+        let t1 = t + AutoScrollPacer.responseTime
+        #expect(p.update(height: 1000, lastFrameTime: 9, lastSampleTime: t1, now: t1) == .stepElsewhere)
+        let t2 = t1 + AutoScrollPacer.idleResponseTime
+        #expect(p.update(height: 1000, lastFrameTime: 9, lastSampleTime: t2, now: t2) == .stepElsewhere)
+        let t3 = t2 + AutoScrollPacer.idleResponseTime
+        #expect(p.update(height: 1000, lastFrameTime: 9, lastSampleTime: t3, now: t3) == .endOfPage)
     }
 }
