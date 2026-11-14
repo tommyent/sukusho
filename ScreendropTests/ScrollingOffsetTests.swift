@@ -558,4 +558,40 @@ private final class OffsetFixtureBundle: NSObject {}
         let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: last, width: w, height: h, ignoredTrailingColumns: 0))
         #expect(await stitcher.add(jumped).placement == .skipped)
     }
+
+    @Test("A sticky header's still ends over blank margins open no pinned run, so the frame's bottom stays out")
+    func stickyHeaderEndsArentSidebars() async throws {
+        // A sticky header (rows 0-39): a logo at the left end and an icon at the right end that stay put,
+        // and a marker in the middle that moves every frame (a scrollspy), so the header is in the band.
+        // Below it the margins are blank. The frame that moves first has Chrome's link bubble at its
+        // bottom left, as the owner's capture 1 did.
+        func frame(_ top: Int, bubble: Bool = false) -> [UInt8] {
+            let page = { (row: Int, x: Int) -> UInt8 in
+                if row - top < 40 { return (x - 28) / 4 == (top / 40) % 10 ? 0 : 250 }
+                if row % 8 >= 6 { return 255 }
+                return UInt8(truncatingIfNeeded: row * 29 + x * 3 + (row / 256) * 101)
+            }
+            let left = { (y: Int, x: Int) -> UInt8 in
+                if y < 40 { return x < 20 ? UInt8(truncatingIfNeeded: y * 7 + x * 13) : 250 }
+                return bubble && y >= 380 ? 30 : 255
+            }
+            let right = { (y: Int, x: Int) -> UInt8 in
+                if y >= 40 { return 255 }
+                return x >= 8 ? UInt8(truncatingIfNeeded: y * 11 + x * 5 + 3) : 250
+            }
+            return sidebarFrame(top: top, page: page, left: left, right: right)
+        }
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: frame(0), width: 96, height: 400,
+                                                                  ignoredTrailingColumns: 0))
+        #expect(await stitcher.place(frame(40, bubble: true), candidate: 40) == .appended(40))
+        #expect(await stitcher.place(frame(80), candidate: 40) == .appended(40))
+        let image = await stitcher.makeImage()
+        #expect(image.count == 96 * 480 * 4)
+        // Below the header the margins are the page's: blank, with no bubble and no fill over them.
+        var marked = 0
+        for y in 40..<480 {
+            for x in 0..<96 where (x < 28 || x >= 68) && image[(y * 96 + x) * 4] != 255 { marked += 1 }
+        }
+        #expect(marked == 0)
+    }
 }

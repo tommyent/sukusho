@@ -291,6 +291,20 @@ actor ScrollingCaptureFrameStitcher {
             }
             return changed == 0 || moved * 2 < changed
         }
+        /// The rows this frame appends show something in these columns, not one plain colour: only then does a
+        /// still side repeat into every slice. A sticky header's ends (a logo, a search icon) sit far above the
+        /// cut, and the margins below them are blank, so they open no run.
+        func showsInSlice(_ all: Range<Int>) -> Bool {
+            // Not the strip left out of matching: the overlay scroll bar's thumb passes there.
+            let columns = all.clamped(to: 0..<usable)
+            guard !columns.isEmpty else { return false }
+            let colour = last.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: ((cut - k) * width + columns.lowerBound) * 4, as: UInt32.self) }
+            return last.withUnsafeBytes { pixels in
+                ((cut - k)..<cut).contains { y in
+                    columns.contains { pixels.loadUnaligned(fromByteOffset: (y * width + $0) * 4, as: UInt32.self) != colour }
+                }
+            }
+        }
         for (isLeft, pinned) in [(true, left), (false, right)] {
             let columns = isLeft ? 0..<pinned : (usable - pinned)..<(pinned > 0 ? width : usable - pinned)
             if let i = pinnedRuns.lastIndex(where: { $0.isLeft == isLeft && $0.end == nil }) {
@@ -305,7 +319,7 @@ actor ScrollingCaptureFrameStitcher {
                     pinnedRuns.append(PinnedRun(isLeft: isLeft, columns: kept, start: run.start, from: row,
                                                 stored: run.stored, frame: run.frame))
                 }
-            } else if !columns.isEmpty {
+            } else if !columns.isEmpty, showsInSlice(columns) {
                 // `last` matches the new frame there, so its rows from the cut down go on from the rows above.
                 let frame = (0..<height).flatMap { y in last[((y * width + columns.lowerBound) * 4)..<((y * width + columns.upperBound) * 4)] }
                 pinnedRuns.append(PinnedRun(isLeft: isLeft, columns: columns, start: row, from: row, stored: columns, frame: frame))
