@@ -145,6 +145,17 @@ private final class OffsetFixtureBundle: NSObject {}
         return pixels
     }
 
+    /// Exact captured rows for the 96x400 fixtures with 40-row accepted steps.
+    private func capturedRows(_ frames: [[UInt8]], last: [UInt8]? = nil) -> [UInt8] {
+        let rowBytes = 96 * 4, cut = ScrollingCaptureOffsetVerifier.cut(in: 0..<400)
+        var result = Array(frames[0][..<(cut * rowBytes)])
+        for frame in frames.dropFirst() {
+            result.append(contentsOf: frame[((cut - 40) * rowBytes)..<(cut * rowBytes)])
+        }
+        result.append(contentsOf: (last ?? frames[frames.count - 1])[(cut * rowBytes)...])
+        return result
+    }
+
     @Test("With a dense sidebar pinned each side, the content between verifies at its offset")
     func pinnedSidebarsLeftOut() {
         // No row matches whole at 40 across the sidebars; with them left out the page does.
@@ -156,25 +167,17 @@ private final class OffsetFixtureBundle: NSObject {}
             to: sidebarFrame(top: 40), width: 96, height: 400, ignoredTrailingColumns: 0) == .init(offset: 0))
     }
 
-    @Test("Pinned sidebars show once, from the first frame, then one plain colour; the page between is whole")
-    func pinnedSidebarsShowOnce() async throws {
-        let first = sidebarFrame(top: 0)
+    @Test("Pinned sidebars keep every captured row, including two repeated 40-row slices")
+    func pinnedSidebarsKeepCapturedRows() async throws {
+        let first = sidebarFrame(top: 0), second = sidebarFrame(top: 40), third = sidebarFrame(top: 80)
         let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: first, width: 96, height: 400,
                                                                   ignoredTrailingColumns: 0))
-        #expect(await stitcher.place(sidebarFrame(top: 40), candidate: 40) == .appended(40))
-        #expect(await stitcher.place(sidebarFrame(top: 80), candidate: 40) == .appended(40))
+        #expect(await stitcher.place(second, candidate: 40) == .appended(40))
+        #expect(await stitcher.place(third, candidate: 40) == .appended(40))
         let image = await stitcher.makeImage()
         #expect(await stitcher.makeImageData() == Data(image))
         #expect(image.count == 96 * 480 * 4)
-        func pixel(_ pixels: [UInt8], _ y: Int, _ x: Int) -> UInt8 { pixels[(y * 96 + x) * 4] }
-        let page = sidebarFrame(top: 0) + sidebarFrame(top: 400)
-        var wrong = 0
-        for y in 0..<480 {
-            for x in 28..<68 where pixel(image, y, x) != pixel(page, y, x) { wrong += 1 }
-            // The gap columns make the side's most common colour blank.
-            for x in Array(0..<28) + Array(68..<96) where pixel(image, y, x) != (y < 400 ? pixel(first, y, x) : 255) { wrong += 1 }
-        }
-        #expect(wrong == 0)
+        #expect(image == capturedRows([first, second, third]))
     }
 
     @Test("When only the pinned sidebars confirm 0, the last step is tried between them; at rest it isn't")
@@ -195,8 +198,8 @@ private final class OffsetFixtureBundle: NSObject {}
         #expect(await stitcher.place(sidebarFrame(top: 80, page: hover), candidate: 0) == .redrawn)
     }
 
-    @Test("A pinned sidebar redrawn in place stays filled; one that moves with the page shows again")
-    func pinnedRunsFollowTheSidebar() async throws {
+    @Test("Redrawn and pushed sidebars keep captured rows, even when sidebar slices repeat")
+    func sidebarsKeepCapturedRowsWhenRedrawnOrMoved() async throws {
         // A contents column on the left (lines every 20 rows, each its own) and no right sidebar.
         func toc(_ shift: Int) -> (Int, Int) -> UInt8 {
             { (y: Int, x: Int) -> UInt8 in
@@ -211,18 +214,25 @@ private final class OffsetFixtureBundle: NSObject {}
             rows.reduce(0) { count, y in count + (0..<24).filter { image[(y * 96 + $0) * 4] != 255 }.count }
         }
         // Redrawn in place: the current section turns bold and the lines below move down 10 rows.
-        let redrawn = try #require(ScrollingCaptureFrameStitcher(firstFrame: frame(0, left: toc(0)), width: 96, height: 400,
+        let first = frame(0, left: toc(0)), second = frame(40, left: toc(0))
+        let third = frame(80, left: toc(10)), fourth = frame(120, left: toc(10))
+        let redrawn = try #require(ScrollingCaptureFrameStitcher(firstFrame: first, width: 96, height: 400,
                                                                  ignoredTrailingColumns: 0))
-        #expect(await redrawn.place(frame(40, left: toc(0)), candidate: 40) == .appended(40))
-        #expect(await redrawn.place(frame(80, left: toc(10)), candidate: 40) == .appended(40))
-        #expect(await redrawn.place(frame(120, left: toc(10)), candidate: 40) == .appended(40))
-        #expect(sidebarPixels(await redrawn.makeImage(), rows: 400..<520) == 0)
+        #expect(await redrawn.place(second, candidate: 40) == .appended(40))
+        #expect(await redrawn.place(third, candidate: 40) == .appended(40))
+        #expect(await redrawn.place(fourth, candidate: 40) == .appended(40))
+        let redrawnImage = await redrawn.makeImage()
+        #expect(redrawnImage == capturedRows([first, second, third, fourth]))
+        #expect(sidebarPixels(redrawnImage, rows: 400..<520) > 0) // at most three 40-row captured slices repeat
         // Moved with the page (a footer pushing it up): the column's own pixels are kept from there.
-        let moved = try #require(ScrollingCaptureFrameStitcher(firstFrame: frame(0, left: toc(0)), width: 96, height: 400,
+        let pushed = frame(80, left: toc(-40))
+        let moved = try #require(ScrollingCaptureFrameStitcher(firstFrame: first, width: 96, height: 400,
                                                                ignoredTrailingColumns: 0))
-        #expect(await moved.place(frame(40, left: toc(0)), candidate: 40) == .appended(40))
-        #expect(await moved.place(frame(80, left: toc(-40)), candidate: 40) == .appended(40))
-        #expect(sidebarPixels(await moved.makeImage(), rows: 400..<480) > 0)
+        #expect(await moved.place(second, candidate: 40) == .appended(40))
+        #expect(await moved.place(pushed, candidate: 40) == .appended(40))
+        let movedImage = await moved.makeImage()
+        #expect(movedImage == capturedRows([first, second, pushed]))
+        #expect(sidebarPixels(movedImage, rows: 400..<480) > 0)
     }
 
     @Test("An inner scroller moving above the cut while the page stands still is refused")
@@ -559,8 +569,8 @@ private final class OffsetFixtureBundle: NSObject {}
         #expect(await stitcher.add(jumped).placement == .skipped)
     }
 
-    @Test("A sticky header's still ends over blank margins open no pinned run, so the frame's bottom stays out")
-    func stickyHeaderEndsArentSidebars() async throws {
+    @Test("A sticky header over blank margins does not copy a bottom link bubble into appended rows")
+    func stickyHeaderDoesNotCopyBottomBubble() async throws {
         // A sticky header (rows 0-39): a logo at the left end and an icon at the right end that stay put,
         // and a marker in the middle that moves every frame (a scrollspy), so the header is in the band.
         // Below it the margins are blank. The frame that moves first has Chrome's link bubble at its
@@ -595,8 +605,8 @@ private final class OffsetFixtureBundle: NSObject {}
         #expect(marked == 0)
     }
 
-    @Test("A full-width footer ends a mostly blank side's run where it comes in: level, never under the run's fill")
-    func footerEndsTheSideRunLevel() async throws {
+    @Test("A full-width footer remains level across captured side and middle rows")
+    func footerKeepsCapturedRowsLevel() async throws {
         // Text between columns 28 and 67 and blank margins, then from page row 600 a full-width footer: a dark
         // band with text lines between the margins.
         func page(_ row: Int, _ x: Int) -> UInt8 {
@@ -607,9 +617,8 @@ private final class OffsetFixtureBundle: NSObject {}
             guard (28..<68).contains(x), row % 8 < 6 else { return 255 }
             return UInt8(truncatingIfNeeded: row * 29 + x * 3 + (row / 256) * 101)
         }
-        // A sticky widget in the right margin (rows 250-309, columns 76-83) is in every slice, so the margin
-        // opens a run; the footer pushes it up. `thumb`: the overlay scroll thumb, fading, in the 8 trailing
-        // columns. `card`: a hover card over the right margin's top half, drawn anew each frame.
+        // A sticky widget is in the right margin. `thumb` is the overlay scroll thumb in the
+        // trailing columns; `card` is a hover card redrawn over the right margin.
         func frame(_ top: Int, thumb: Bool, card: Bool) -> [UInt8] {
             var pixels = [UInt8](repeating: 255, count: 96 * 400 * 4)
             let widget = min(250, 600 - top - 70)
@@ -628,9 +637,7 @@ private final class OffsetFixtureBundle: NSObject {}
             }
             return pixels
         }
-        // The thumb's changes kept the run as if the margin were redrawn in place, so it never ended (the
-        // owner's capture 1); the card's kept it while the footer's first rows were appended, so it ended
-        // late (capture 2).
+        // Both kinds of transient content occur beside the arriving footer.
         for (thumb, cards, trailing) in [(true, Set<Int>(), 8), (false, Set([280, 320]), 0)] {
             let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: frame(0, thumb: thumb, card: false),
                                                                       width: 96, height: 400, ignoredTrailingColumns: trailing))
@@ -639,8 +646,8 @@ private final class OffsetFixtureBundle: NSObject {}
             }
             let image = await stitcher.makeImage()
             #expect(image.count == 96 * 800 * 4)
-            // The footer starts on row 600 in every column, and no pixel of it is the run's fill. Not the
-            // trailing strip: the thumb is kept wherever it was appended (sd-g39).
+            // The footer starts on row 600 in every column. The trailing thumb strip is outside
+            // this assertion because its captured pixels are kept (sd-g39).
             let columns = 0..<(96 - trailing)
             #expect(columns.allSatisfy { image[(599 * 96 + $0) * 4] == 255 })
             var wrong = 0
@@ -651,8 +658,8 @@ private final class OffsetFixtureBundle: NSObject {}
         }
     }
 
-    @Test("A sidebar pushed up ends its run near the push, not where its blank lines line up with older slices")
-    func pushedSidebarsBlankLinesDontEndItsRun() async throws {
+    @Test("A pushed sidebar preserves captured rows through the push boundary")
+    func pushedSidebarKeepsCapturedRows() async throws {
         // A contents column, lines every 24 rows, pinned for four steps, then pushed up 40 with the page.
         // Its blank lines in the pushed frame match blank lines of slices appended while it was pinned.
         func toc(_ shift: Int) -> (Int, Int) -> UInt8 {
@@ -663,25 +670,28 @@ private final class OffsetFixtureBundle: NSObject {}
             }
         }
         let none: (Int, Int) -> UInt8 = { (_: Int, _: Int) -> UInt8 in 255 }
-        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: sidebarFrame(top: 0, left: toc(0), right: none),
-                                                                  width: 96, height: 400, ignoredTrailingColumns: 0))
-        for top in stride(from: 40, through: 160, by: 40) {
-            #expect(await stitcher.place(sidebarFrame(top: top, left: toc(0), right: none), candidate: 40) == .appended(40))
+        let frames = (0...5).map { step in
+            sidebarFrame(top: step * 40, left: toc(step == 5 ? -40 : 0), right: none)
         }
-        #expect(await stitcher.place(sidebarFrame(top: 200, left: toc(-40), right: none), candidate: 40) == .appended(40))
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: frames[0],
+                                                                  width: 96, height: 400, ignoredTrailingColumns: 0))
+        for next in frames.dropFirst() {
+            #expect(await stitcher.place(next, candidate: 40) == .appended(40))
+        }
         let image = await stitcher.makeImage()
         func sidebarPixels(_ rows: Range<Int>) -> Int {
             rows.reduce(0) { count, y in count + (0..<24).filter { image[(y * 96 + $0) * 4] != 255 }.count }
         }
-        // The slices appended while it was pinned stay under the run's plain colour; it shows again pushed.
-        #expect(sidebarPixels(380..<460) == 0)
+        #expect(image == capturedRows(frames))
+        // At most five captured 40-row slices can repeat; none is painted over at the push.
+        #expect(sidebarPixels(380..<460) > 0)
         #expect(sidebarPixels(460..<520) > 0)
     }
 
-    @Test("A pinned sidebar's rows stop at the band's bottom, so a sticky bar under it doesn't show mid-image")
-    func pinnedRunsStopAtTheBandsBottom() async throws {
-        // MDN's layout in small over a bar that stays at the bottom of every frame (rows 370-399, full
-        // width), a cookie banner. The run's rows from the cut down would put the bar mid-image at the sides.
+    @Test("Textured and solid bottom bars keep their captured rows beside sidebars")
+    func bottomBarsKeepCapturedRows() async throws {
+        // A bottom bar occupies the last 30 rows in every frame; the captured slices decide which
+        // rows appear in the output, including any sidebar content beside them.
         func frame(_ top: Int, solid: Bool) -> [UInt8] {
             var pixels = sidebarFrame(top: top)
             for y in 370..<400 {
@@ -693,34 +703,25 @@ private final class OffsetFixtureBundle: NSObject {}
             return pixels
         }
         for solid in [false, true] {
-            let first = frame(0, solid: solid)
+            let first = frame(0, solid: solid), second = frame(40, solid: solid), third = frame(80, solid: solid)
             let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: first, width: 96, height: 400,
                                                                       ignoredTrailingColumns: 0))
-            #expect(await stitcher.place(frame(40, solid: solid), candidate: 40) == .appended(40))
-            #expect(await stitcher.place(frame(80, solid: solid), candidate: 40) == .appended(40))
+            #expect(await stitcher.place(second, candidate: 40) == .appended(40))
+            #expect(await stitcher.place(third, candidate: 40) == .appended(40))
             let image = await stitcher.makeImage()
             #expect(image.count == 96 * 480 * 4)
-            var wrong = 0
-            for x in Array(0..<28) + Array(68..<96) {
-                for y in 300..<480 where image[(y * 96 + x) * 4] != (y < 370 ? first[(y * 96 + x) * 4] : 255) { wrong += 1 }
-            }
-            #expect(wrong == 0)
+            #expect(image == capturedRows([first, second, third]))
         }
-        // Coincident plain page rows at the bottom are kept as sidebar rows, not mistaken for a bar.
-        let plain = sidebarFrame(top: 0)
+        // Plain bottom rows still come from the captured frame, not a guessed bar or fill.
+        let plain = sidebarFrame(top: 0), next = sidebarFrame(top: 40)
         let noBar = try #require(ScrollingCaptureFrameStitcher(firstFrame: plain, width: 96, height: 400,
                                                                ignoredTrailingColumns: 0))
-        #expect(await noBar.place(sidebarFrame(top: 40), candidate: 40) == .appended(40))
-        let image = await noBar.makeImage()
-        for y in 398..<400 {
-            for x in Array(0..<28) + Array(68..<96) {
-                #expect(image[(y * 96 + x) * 4] == plain[(y * 96 + x) * 4])
-            }
-        }
+        #expect(await noBar.place(next, candidate: 40) == .appended(40))
+        #expect(await noBar.makeImage() == capturedRows([plain, next]))
     }
 
-    @Test("An open sidebar run never paints over footer rows added below the selection")
-    func openRunLeavesRowsBelow() async throws {
+    @Test("Footer rows added below the selection remain captured pixels")
+    func rowsBelowStayUntouched() async throws {
         let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: sidebarFrame(top: 0), width: 96,
                                                                   height: 400, ignoredTrailingColumns: 0))
         #expect(await stitcher.place(sidebarFrame(top: 40), candidate: 40) == .appended(40))
@@ -737,8 +738,8 @@ private final class OffsetFixtureBundle: NSObject {}
         #expect(wrong == 0)
     }
 
-    @Test("An open sidebar run ends where a full-width footer enters the held-back last-frame tail")
-    func openRunLeavesFinalFrameFooter() async throws {
+    @Test("A full-width footer in the held-back final-frame tail remains captured pixels")
+    func finalFrameFooterStaysUntouched() async throws {
         let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: sidebarFrame(top: 0), width: 96,
                                                                   height: 400, ignoredTrailingColumns: 0))
         #expect(await stitcher.place(sidebarFrame(top: 40), candidate: 40) == .appended(40))
@@ -760,7 +761,7 @@ private final class OffsetFixtureBundle: NSObject {}
         #expect(wrong == 0)
     }
 
-    @Test("Moving text below a stationary sidebar does not open a run that clips its line ends")
+    @Test("Moving text below a stationary sidebar keeps its captured line ends")
     func movingTextBelowSidebar() async throws {
         func text(_ row: Int, _ x: Int) -> UInt8 {
             guard (80..<84).contains(x), (310..<313).contains(row) || (350..<353).contains(row) else { return 255 }
@@ -783,5 +784,89 @@ private final class OffsetFixtureBundle: NSObject {}
             for x in 80..<84 where image[(y * 96 + x) * 4] != text(y, x) { wrong += 1 }
         }
         #expect(wrong == 0)
+    }
+
+    @Test("Every captured side pixel survives a footer gap, sparse footer, matching bar colour, or sidebar redraw",
+          arguments: ["bottom-gap", "sparse", "same-colour-bar", "sidebar-redraw"])
+    func capturedSideRowsSurvive(_ mode: String) async throws {
+        let width = 96, height = 400
+        func frame(_ top: Int) -> [UInt8] {
+            var pixels = [UInt8](repeating: 255, count: width * height * 4)
+            for y in 0..<height {
+                for x in 0..<width {
+                    let row = top + y
+                    let value: UInt8 = switch x {
+                    case 0..<24: UInt8(truncatingIfNeeded: y * 7 + x * 13)
+                    case 72..<96: UInt8(truncatingIfNeeded: y * 11 + (x - 72) * 5 + 3)
+                    case 28..<68: row % 8 < 6 ? UInt8(truncatingIfNeeded: row * 29 + x * 3 + (row / 256) * 101) : 255
+                    default: 255
+                    }
+                    let i = (y * width + x) * 4
+                    pixels[i] = value; pixels[i + 1] = value; pixels[i + 2] = value
+                }
+            }
+            if mode == "same-colour-bar" {
+                for y in Array(200..<201) + Array(370..<400) {
+                    for x in 0..<width {
+                        let i = (y * width + x) * 4
+                        pixels[i] = 42; pixels[i + 1] = 42; pixels[i + 2] = 42
+                    }
+                }
+            }
+            return pixels
+        }
+        let first = frame(0), second = frame(40), third = frame(80)
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: first, width: width, height: height,
+                                                                  ignoredTrailingColumns: 0))
+        #expect(await stitcher.place(second, candidate: 40) == .appended(40))
+        #expect(await stitcher.place(third, candidate: 40) == .appended(40))
+        var final = third
+        if mode != "same-colour-bar" {
+            for y in 350..<(mode == "bottom-gap" ? 399 : 400) {
+                for x in 0..<width where (mode != "sparse" || x % 4 == 0)
+                    && (mode != "sidebar-redraw" || x < 24 || x >= 72) {
+                    let i = (y * width + x) * 4
+                    final[i] = 30; final[i + 1] = 30; final[i + 2] = 30
+                }
+            }
+            #expect(await stitcher.place(final, candidate: 0) == .redrawn)
+        }
+        let expected = capturedRows([first, second, third], last: final)
+        let image = await stitcher.makeImage()
+        #expect(image == expected)
+        #expect(await stitcher.makeImageData() == Data(expected))
+    }
+
+    @Test("Repeated black text strokes never give a side run permission to erase captured text")
+    func repeatedBlackTextSurvives() async throws {
+        let width = 96, height = 400
+        func page(_ row: Int, _ x: Int) -> UInt8 {
+            if (80..<84).contains(x), (310..<313).contains(row) || (351..<354).contains(row) { return 0 }
+            if (28..<68).contains(x), row % 8 < 6 {
+                return UInt8(truncatingIfNeeded: row * 29 + x * 3 + (row / 256) * 101)
+            }
+            return 255
+        }
+        func frame(_ top: Int) -> [UInt8] {
+            var pixels = [UInt8](repeating: 255, count: width * height * 4)
+            for y in 0..<height {
+                for x in 0..<width {
+                    let value = (76..<96).contains(x) && y < 180
+                        ? UInt8(truncatingIfNeeded: y * 7 + x * 13) : page(top + y, x)
+                    let i = (y * width + x) * 4
+                    pixels[i] = value; pixels[i + 1] = value; pixels[i + 2] = value
+                }
+            }
+            return pixels
+        }
+        let first = frame(0), second = frame(40), third = frame(80)
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: first, width: width, height: height,
+                                                                  ignoredTrailingColumns: 0))
+        #expect(await stitcher.place(second, candidate: 40) == .appended(40))
+        #expect(await stitcher.place(third, candidate: 40) == .appended(40))
+        let expected = capturedRows([first, second, third])
+        let image = await stitcher.makeImage()
+        #expect(image == expected)
+        #expect(await stitcher.makeImageData() == Data(expected))
     }
 }
