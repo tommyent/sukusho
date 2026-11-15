@@ -114,6 +114,23 @@ import Testing
             == .init(rect: CGRect(x: 600, y: 700, width: 500, height: 400), trimsBottomChrome: false, trimsScrollBar: false))
     }
 
+    @Test("Bottom crop ends at the chrome boundary for selections just inside or past the window")
+    func pageCropNearBottomEdge() {
+        let display = CGRect(x: 0, y: 0, width: 1710, height: 1200)
+        let windows = [target]
+        for maxY in Array(1105...1111) + Array(1113...1120) {
+            let selection = CGRect(x: 600, y: 800, width: 500, height: CGFloat(maxY - 800))
+            let matching = ScrollingCaptureRegion.matching(selection: selection, display: display,
+                                                           frontToBackWindows: windows)
+            let crop = ScrollingCaptureRegion.pageCrop(selection: selection, matching: matching, windows: windows)
+            #expect(crop.rect.maxY == 1104)
+            for scale in [CGFloat(1), 2] {
+                #expect(ScrollingCaptureRegion.output(selection: crop.rect, matching: matching.rect,
+                                                      scale: scale).rows.count == Int(304 * scale))
+            }
+        }
+    }
+
     @Test("A window over most but not all of the display still counts")
     func almostWholeDisplay() {
         #expect(matching(inFront: [CGRect(x: 0, y: 30, width: 1710, height: 1082)])

@@ -116,7 +116,7 @@ nonisolated enum ScrollingCaptureRegion {
             let window = windows[target].frame
             // The corners are only in the frames when they reach the window's bottom themselves.
             if matching.rect.maxY >= window.maxY - 0.5, rect.maxY > window.maxY - windowBottomChrome {
-                let trim = max(0, min(windowBottomChrome, rect.height - 8))
+                let trim = max(0, min(rect.maxY - (window.maxY - windowBottomChrome), rect.height - 8))
                 rect.size.height -= trim
                 trimsBottomChrome = trim > 0
             }
