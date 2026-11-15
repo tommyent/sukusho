@@ -212,7 +212,7 @@ actor ScrollingCaptureFrameStitcher {
     }
 
     /// Packed BGRA, `stitchedHeight` rows, then `below`: more rows, the same width, that go on under
-    /// the last frame, with `pinnedRuns` applied.
+    /// the last frame. Pinned runs apply only to rows from captured frames.
     func makeImage(appending below: [UInt8] = []) -> [UInt8] {
         let split = cut * width * 4
         var image: [UInt8] = []
@@ -221,8 +221,7 @@ actor ScrollingCaptureFrameStitcher {
         image.append(contentsOf: appended)
         image.append(contentsOf: last[split...])
         image.append(contentsOf: below)
-        let rows = image.count / (width * 4)
-        image.withUnsafeMutableBytes { applyPinnedRuns(to: $0, rows: rows) }
+        image.withUnsafeMutableBytes { applyPinnedRuns(to: $0) }
         return image
     }
 
@@ -240,8 +239,7 @@ actor ScrollingCaptureFrameStitcher {
             last.withUnsafeBytes { data.append($0.baseAddress!.advanced(by: split).assumingMemoryBound(to: UInt8.self), count: last.count - split) }
         }
         data.append(contentsOf: below)
-        let rows = data.count / (width * 4)
-        data.withUnsafeMutableBytes { applyPinnedRuns(to: $0, rows: rows) }
+        data.withUnsafeMutableBytes { applyPinnedRuns(to: $0) }
         return data
     }
 
@@ -267,15 +265,45 @@ actor ScrollingCaptureFrameStitcher {
         }
     }
 
-    private func applyPinnedRuns(to out: UnsafeMutableRawBufferPointer, rows: Int) {
-        for run in pinnedRuns where run.from < rows {
+    private func applyPinnedRuns(to out: UnsafeMutableRawBufferPointer) {
+        let end = stitchedHeight
+        let tail = cut + appended.count / (width * 4)
+        for run in pinnedRuns where run.from < end {
             let storedRows = run.frame.count / (run.stored.count * 4)
             let fill = self.fill(of: run)
             run.frame.withUnsafeBytes { frame in
                 func stored(_ x: Int, _ y: Int) -> UInt32 {
                     frame.loadUnaligned(fromByteOffset: (y * run.stored.count + x - run.stored.lowerBound) * 4, as: UInt32.self)
                 }
-                for row in run.from..<min(run.end ?? rows, rows) {
+                var runEnd = min(run.end ?? end, end)
+                if run.end == nil {
+                    let judged = run.columns.clamped(to: 0..<ScrollingCaptureOffsetVerifier.hashedWidth(
+                        width: width, ignoredTrailingColumns: ignoredTrailingColumns))
+                    if !judged.isEmpty {
+                        var firstFooterRow = height
+                        // shortcut: infer a footer only when it replaces most of the side for eight
+                        // rows; use row provenance if sparse footers need support.
+                        self.last.withUnsafeBytes { last in
+                            self.first.withUnsafeBytes { first in
+                                for y in stride(from: height - 1, through: cut, by: -1) {
+                                    let changed = judged.reduce(0) { count, x in
+                                        let at = (y * width + x) * 4
+                                        let actual = last.loadUnaligned(fromByteOffset: at, as: UInt32.self)
+                                        let original = first.loadUnaligned(fromByteOffset: at, as: UInt32.self)
+                                        let pinned = y < storedRows ? stored(x, y) : fill[x - run.columns.lowerBound]
+                                        return count + (actual != original && actual != pinned ? 1 : 0)
+                                    }
+                                    guard changed * 4 >= judged.count * 3 else { break }
+                                    firstFooterRow = y
+                                }
+                            }
+                        }
+                        if height - firstFooterRow >= 8 {
+                            runEnd = min(runEnd, tail + firstFooterRow - cut)
+                        }
+                    }
+                }
+                for row in run.from..<max(run.from, runEnd) {
                     let y = cut + row - run.start
                     for (i, x) in run.columns.enumerated() {
                         out.storeBytes(of: y < storedRows ? stored(x, y) : fill[i], toByteOffset: (row * width + x) * 4, as: UInt32.self)
@@ -312,22 +340,30 @@ actor ScrollingCaptureFrameStitcher {
         /// nothing: the run paints it the same, and a sidebar's blank lines would line up with any others.
         func entry(_ columns: Range<Int>, from start: Int, plain: [UInt8]) -> Int? {
             let top = row - (cut - k)
+            // Above this slice, only a solid page band can end the run early; pushed sidebar
+            // text can line up with an older slice without entering the output here.
             return (max(0, start - top)..<(height - k)).first { y in
                 moved(y, columns) && !line(last, y, columns).elementsEqual(plain)
-                    && (top + y >= row || line(appended, top + y - cut, columns) == line(last, y, columns))
+                    && (top + y >= row || (line(appended, top + y - cut, columns) == line(last, y, columns)
+                        && line(last, y, columns).dropFirst(4).elementsEqual(line(last, y, columns).dropLast(4))))
             }.map { top + $0 }
         }
-        /// The rows this frame appends show something in these columns, not one plain colour: only then does a
-        /// still side repeat into every slice. A sticky header's ends (a logo, a search icon) sit far above the
-        /// cut, and the margins below them are blank, so they open no run.
+        /// The appended slice shows stationary content in these columns: only then can a pinned
+        /// sidebar repeat into every slice. Moving text in a blank side margin cannot open a run.
         func showsInSlice(_ all: Range<Int>) -> Bool {
             // Not the strip left out of matching: the overlay scroll bar's thumb passes there.
             let columns = all.clamped(to: 0..<usable)
             guard !columns.isEmpty else { return false }
             let colour = last.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: ((cut - k) * width + columns.lowerBound) * 4, as: UInt32.self) }
             return last.withUnsafeBytes { pixels in
-                ((cut - k)..<cut).contains { y in
-                    columns.contains { pixels.loadUnaligned(fromByteOffset: (y * width + $0) * 4, as: UInt32.self) != colour }
+                previous.withUnsafeBytes { previous in
+                    ((cut - k)..<cut).contains { y in
+                        columns.contains { x in
+                            let at = (y * width + x) * 4
+                            let pixel = pixels.loadUnaligned(fromByteOffset: at, as: UInt32.self)
+                            return pixel != colour && pixel == previous.loadUnaligned(fromByteOffset: at, as: UInt32.self)
+                        }
+                    }
                 }
             }
         }
@@ -359,10 +395,14 @@ actor ScrollingCaptureFrameStitcher {
                     line(last, $0, 0..<usable) == line(previous, $0, 0..<usable)
                 }.bottom
                 let between = left..<max(left, usable - right)
-                let bar = ((height - shared)..<height).contains { y in
+                let textured = ((height - shared)..<height).contains { y in
                     let pixels = line(last, y, between)
                     return !pixels.dropFirst(4).elementsEqual(pixels.dropLast(4))
                 }
+                let solid = shared >= 8 && line(last, height - shared, 0..<usable).dropFirst(4)
+                    .elementsEqual(line(last, height - shared, 0..<usable).dropLast(4))
+                    && !(0..<(height - shared)).contains { line(last, $0, between) == line(last, height - shared, between) }
+                let bar = textured || solid
                 let frame = (0..<(bar ? height - shared : height)).flatMap { line(last, $0, columns) }
                 pinnedRuns.append(PinnedRun(isLeft: isLeft, columns: columns, start: row, from: row, stored: columns, frame: frame))
             }

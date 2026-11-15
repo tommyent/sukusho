@@ -674,7 +674,7 @@ private final class OffsetFixtureBundle: NSObject {}
             rows.reduce(0) { count, y in count + (0..<24).filter { image[(y * 96 + $0) * 4] != 255 }.count }
         }
         // The slices appended while it was pinned stay under the run's plain colour; it shows again pushed.
-        #expect(sidebarPixels(380..<420) == 0)
+        #expect(sidebarPixels(380..<460) == 0)
         #expect(sidebarPixels(460..<520) > 0)
     }
 
@@ -682,27 +682,105 @@ private final class OffsetFixtureBundle: NSObject {}
     func pinnedRunsStopAtTheBandsBottom() async throws {
         // MDN's layout in small over a bar that stays at the bottom of every frame (rows 370-399, full
         // width), a cookie banner. The run's rows from the cut down would put the bar mid-image at the sides.
-        func frame(_ top: Int) -> [UInt8] {
+        func frame(_ top: Int, solid: Bool) -> [UInt8] {
             var pixels = sidebarFrame(top: top)
             for y in 370..<400 {
                 for x in 0..<96 {
-                    let value = UInt8(truncatingIfNeeded: x * 2 + y * 3 + 1)
+                    let value: UInt8 = solid ? 42 : UInt8(truncatingIfNeeded: x * 2 + y * 3 + 1)
                     pixels.replaceSubrange(((y * 96 + x) * 4)..<((y * 96 + x) * 4 + 3), with: [value, value, value])
                 }
             }
             return pixels
         }
-        let first = frame(0)
-        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: first, width: 96, height: 400,
-                                                                  ignoredTrailingColumns: 0))
+        for solid in [false, true] {
+            let first = frame(0, solid: solid)
+            let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: first, width: 96, height: 400,
+                                                                      ignoredTrailingColumns: 0))
+            #expect(await stitcher.place(frame(40, solid: solid), candidate: 40) == .appended(40))
+            #expect(await stitcher.place(frame(80, solid: solid), candidate: 40) == .appended(40))
+            let image = await stitcher.makeImage()
+            #expect(image.count == 96 * 480 * 4)
+            var wrong = 0
+            for x in Array(0..<28) + Array(68..<96) {
+                for y in 300..<480 where image[(y * 96 + x) * 4] != (y < 370 ? first[(y * 96 + x) * 4] : 255) { wrong += 1 }
+            }
+            #expect(wrong == 0)
+        }
+        // Coincident plain page rows at the bottom are kept as sidebar rows, not mistaken for a bar.
+        let plain = sidebarFrame(top: 0)
+        let noBar = try #require(ScrollingCaptureFrameStitcher(firstFrame: plain, width: 96, height: 400,
+                                                               ignoredTrailingColumns: 0))
+        #expect(await noBar.place(sidebarFrame(top: 40), candidate: 40) == .appended(40))
+        let image = await noBar.makeImage()
+        for y in 398..<400 {
+            for x in Array(0..<28) + Array(68..<96) {
+                #expect(image[(y * 96 + x) * 4] == plain[(y * 96 + x) * 4])
+            }
+        }
+    }
+
+    @Test("An open sidebar run never paints over footer rows added below the selection")
+    func openRunLeavesRowsBelow() async throws {
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: sidebarFrame(top: 0), width: 96,
+                                                                  height: 400, ignoredTrailingColumns: 0))
+        #expect(await stitcher.place(sidebarFrame(top: 40), candidate: 40) == .appended(40))
+        #expect(await stitcher.place(sidebarFrame(top: 80), candidate: 40) == .appended(40))
+        var footer = [UInt8](repeating: 30, count: 96 * 20 * 4)
+        for i in 0..<(96 * 20) { footer[i * 4 + 3] = 255 }
+        let image = await stitcher.makeImage(appending: footer)
+        #expect(await stitcher.makeImageData(appending: footer) == Data(image))
+        #expect(image.count == 96 * 500 * 4)
+        var wrong = 0
+        for y in 480..<500 {
+            for x in 0..<96 where image[(y * 96 + x) * 4] != 30 { wrong += 1 }
+        }
+        #expect(wrong == 0)
+    }
+
+    @Test("An open sidebar run ends where a full-width footer enters the held-back last-frame tail")
+    func openRunLeavesFinalFrameFooter() async throws {
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: sidebarFrame(top: 0), width: 96,
+                                                                  height: 400, ignoredTrailingColumns: 0))
+        #expect(await stitcher.place(sidebarFrame(top: 40), candidate: 40) == .appended(40))
+        #expect(await stitcher.place(sidebarFrame(top: 80), candidate: 40) == .appended(40))
+        var last = sidebarFrame(top: 80)
+        for y in 350..<400 {
+            for x in 0..<96 {
+                let i = (y * 96 + x) * 4
+                last[i] = 30; last[i + 1] = 30; last[i + 2] = 30
+            }
+        }
+        #expect(await stitcher.place(last, candidate: 0) == .redrawn)
+        let image = await stitcher.makeImage()
+        #expect(await stitcher.makeImageData() == Data(image))
+        var wrong = 0
+        for y in 430..<480 {
+            for x in 0..<96 where image[(y * 96 + x) * 4] != 30 { wrong += 1 }
+        }
+        #expect(wrong == 0)
+    }
+
+    @Test("Moving text below a stationary sidebar does not open a run that clips its line ends")
+    func movingTextBelowSidebar() async throws {
+        func text(_ row: Int, _ x: Int) -> UInt8 {
+            guard (80..<84).contains(x), (310..<313).contains(row) || (350..<353).contains(row) else { return 255 }
+            return UInt8(60 + (x - 80) * 11 + row % 3)
+        }
+        func frame(_ top: Int) -> [UInt8] {
+            let none: (Int, Int) -> UInt8 = { _, _ in 255 }
+            return sidebarFrame(top: top, left: none) { y, x in
+                if y < 180 { return UInt8(truncatingIfNeeded: y * 7 + x * 13) }
+                return text(top + y, x + 72)
+            }
+        }
+        let stitcher = try #require(ScrollingCaptureFrameStitcher(firstFrame: frame(0), width: 96,
+                                                                  height: 400, ignoredTrailingColumns: 0))
         #expect(await stitcher.place(frame(40), candidate: 40) == .appended(40))
         #expect(await stitcher.place(frame(80), candidate: 40) == .appended(40))
         let image = await stitcher.makeImage()
-        #expect(image.count == 96 * 480 * 4)
-        // The sidebars go on as in the first frame down to the bar, then in their plain colour.
         var wrong = 0
-        for x in Array(0..<28) + Array(68..<96) {
-            for y in 300..<480 where image[(y * 96 + x) * 4] != (y < 370 ? first[(y * 96 + x) * 4] : 255) { wrong += 1 }
+        for y in 300..<400 {
+            for x in 80..<84 where image[(y * 96 + x) * 4] != text(y, x) { wrong += 1 }
         }
         #expect(wrong == 0)
     }
