@@ -146,13 +146,13 @@ struct ClipboardInfo: View {
                 row("Name") { Text(ClipboardList.title(of: entry)) }
                 row("Edited") { Text(Self.when(entry.lastCopiedAt)) }
             } else {
-                if entry.sourceBundleID != nil {
+                if let source = model.appName(entry.sourceBundleID) {
                     row("Source") {
                         HStack(spacing: DS.Space.s) {
                             if let icon = model.appIcon(entry.sourceBundleID) {
                                 Image(nsImage: icon).resizable().frame(width: 16, height: 16)
                             }
-                            Text(model.appName(entry.sourceBundleID) ?? "")
+                            Text(source)
                             if entry.libraryPath != nil { badge("In Library", .blue) }
                             if entry.isRemote { badge("Another device", .gray) }
                         }

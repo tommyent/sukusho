@@ -67,13 +67,14 @@ final class ClipboardHistoryModel {
 
     // MARK: - Apps
 
+    /// Nil when the app isn't on this Mac; the Information block then leaves Source out, as Tinycast does.
     func appName(_ bundleID: String?) -> String? {
         guard let bundleID else { return nil }
-        if let name = appNames[bundleID] { return name }
+        if let name = appNames[bundleID] { return name.isEmpty ? nil : name }
         let name = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
-            .map { FileManager.default.displayName(atPath: $0.path).replacingOccurrences(of: ".app", with: "") } ?? bundleID
+            .map { FileManager.default.displayName(atPath: $0.path).replacingOccurrences(of: ".app", with: "") } ?? ""
         appNames[bundleID] = name
-        return name
+        return name.isEmpty ? nil : name
     }
 
     func appIcon(_ bundleID: String?) -> NSImage? {
