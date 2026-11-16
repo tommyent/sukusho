@@ -152,6 +152,11 @@ actor ClipboardHistoryStore {
                 [pinned ? date.timeIntervalSince1970 : nil, try nextChange(), id])
     }
 
+    /// A clip added to the Library: it shows as in the Library and isn't added twice.
+    func linkToLibrary(_ id: String, path: String) throws {
+        try run("UPDATE entries SET library_path = ?, change_seq = ? WHERE id = ?", [path, try nextChange(), id])
+    }
+
     /// Pasted or copied again from history: to the top, one more copy.
     func touch(_ id: String, at date: Date = .now) throws {
         try run("UPDATE entries SET last_copied_at = ?, times_copied = times_copied + 1, change_seq = ? WHERE id = ?",
@@ -190,7 +195,8 @@ actor ClipboardHistoryStore {
             }
         }
         try delete(ids: evicted)
-        let gone = try query("SELECT id, library_path FROM entries WHERE library_path IS NOT NULL", []) {
+        // Only references: a clip that was added to the Library keeps its own image.
+        let gone = try query("SELECT id, library_path FROM entries WHERE library_path IS NOT NULL AND blob IS NULL", []) {
             ($0.text(0) ?? "", $0.text(1) ?? "")
         }.filter { !FileManager.default.fileExists(atPath: $0.1) }.map(\.0)
         try delete(ids: gone)

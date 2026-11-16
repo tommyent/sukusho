@@ -300,6 +300,18 @@ struct ClipboardHistoryStoreTests {
         #expect(try await store.entries().map(\.title) == ["Kept"])
         #expect(try await store.totalBytes() == 4)
     }
+
+    @Test func aClipAddedToTheLibraryKeepsItsOwnImage() async throws {
+        let store = try store()
+        guard case .inserted(let id) = try await store.record(image(500), at: start) else { return }
+        let capture = directory.appendingPathComponent("added.png")
+        try Data([1]).write(to: capture)
+        try await store.linkToLibrary(id, path: capture.path)
+        #expect(try await store.entries().first?.libraryPath == capture.path)
+        try FileManager.default.removeItem(at: capture)
+        #expect(try await store.sweep(now: start, retention: nil, maxBytes: .max) == 0)
+        #expect(try await store.entries().first?.imageURL != nil)
+    }
 }
 
 @Suite

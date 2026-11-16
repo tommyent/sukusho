@@ -186,7 +186,8 @@ struct ClipboardLibraryInspector: View {
     @Bindable var model: ClipboardHistoryModel
 
     var body: some View {
-        if let entry = model.entry(model.librarySelection) {
+        // History's selection doesn't show on Snippets, nor the other way round.
+        if let entry = model.entry(model.librarySelection), (entry.kind == .snippet) == model.showsSnippets {
             ScrollView {
                 VStack(alignment: .leading, spacing: DS.Space.l) {
                     if entry.kind == .snippet {

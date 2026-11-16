@@ -179,7 +179,11 @@ final class ClipboardHistoryModel {
     func addToLibrary(_ entry: ClipboardEntry) {
         guard entry.kind == .image, entry.libraryPath == nil, let url = entry.imageURL else { return }
         let source = entry.sourceBundleID.map { CaptureSource(bundleIdentifier: $0, appName: appName($0) ?? $0) }
-        _ = ScreenshotHistoryStore.shared.importScreenshot(from: url, source: source)
+        let added = ScreenshotHistoryStore.shared.importScreenshot(from: url, source: source)
+        Task {
+            try? await store?.linkToLibrary(entry.id, path: added.path)
+            refresh()
+        }
         feedback.show("Added to the Library")
     }
 }
