@@ -59,6 +59,9 @@ final class ClipboardHistoryModel {
         ClipboardList.sections(entries, filter: filter, query: CaptureLibraryQuery(query), appName: appName)
     }
 
+    var historyCount: Int { entries.count { $0.kind != .snippet } }
+    var snippetCount: Int { entries.count { $0.kind == .snippet } }
+
     func entry(_ id: ClipboardEntry.ID?) -> ClipboardEntry? {
         id.flatMap { id in entries.first { $0.id == id } }
     }
@@ -90,6 +93,11 @@ final class ClipboardHistoryModel {
         case copy
         /// Text only, no formatting.
         case pastePlain
+        /// Text only, onto the clipboard.
+        case copyPlain
+
+        var isPlain: Bool { self == .pastePlain || self == .copyPlain }
+        var isCopy: Bool { self == .copy || self == .copyPlain }
     }
 
     /// Puts `entry` on the clipboard and, for a paste, types ⌘V into `target`.
@@ -97,14 +105,14 @@ final class ClipboardHistoryModel {
     func deliver(_ entry: ClipboardEntry, as delivery: Delivery, to target: NSRunningApplication?,
                  beforePaste: @escaping () -> Void = {}) {
         Task {
-            let richText = delivery == .pastePlain ? [:] : ((try? await store?.richText(for: entry.id)) ?? [:])
-            guard ClipboardWriter.write(entry, richText: richText, plain: delivery == .pastePlain) else {
+            let richText = delivery.isPlain ? [:] : ((try? await store?.richText(for: entry.id)) ?? [:])
+            guard ClipboardWriter.write(entry, richText: richText, plain: delivery.isPlain) else {
                 feedback.show("This entry's file is gone")
                 return
             }
             if let store { try? await store.touch(entry.id) }
             refresh()
-            guard delivery != .copy else {
+            guard !delivery.isCopy else {
                 feedback.show("Copied")
                 return
             }
