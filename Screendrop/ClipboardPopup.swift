@@ -1,0 +1,355 @@
+import AppKit
+import Carbon.HIToolbox
+import SwiftUI
+
+/// What the popup is showing: its search, type filter and selected entry.
+@MainActor
+@Observable
+final class ClipboardPopupState {
+    var query = ""
+    var filter: ClipboardFilter = .all
+    var selection: ClipboardEntry.ID?
+
+    var sections: [ClipboardList.Section] {
+        ClipboardHistoryModel.shared.sections(filter: filter, query: query)
+    }
+
+    var visibleEntries: [ClipboardEntry] { sections.flatMap(\.entries) }
+
+    var selected: ClipboardEntry? {
+        let entries = visibleEntries
+        return entries.first { $0.id == selection } ?? entries.first
+    }
+
+    func reset() {
+        query = ""
+        filter = .all
+        selection = nil
+    }
+
+    func move(by offset: Int) {
+        let entries = visibleEntries
+        guard !entries.isEmpty else { return }
+        let current = entries.firstIndex { $0.id == selected?.id } ?? 0
+        selection = entries[min(max(current + offset, 0), entries.count - 1)].id
+    }
+
+    /// ⌘1…⌘0: the pinned entries, in their order.
+    func pinned(_ number: Int) -> ClipboardEntry? {
+        let pinned = sections.first { $0.title == "Pinned" }?.entries ?? []
+        return pinned.indices.contains(number - 1) ? pinned[number - 1] : nil
+    }
+}
+
+/// The clipboard popup on its shortcut: a panel that takes the keyboard
+/// without bringing Sukusho forward, so the app in front stays the paste target.
+@MainActor
+final class ClipboardPopupPresenter {
+    static let shared = ClipboardPopupPresenter()
+    static let size = CGSize(width: 800, height: 520)
+
+    let state = ClipboardPopupState()
+    /// Where Paste goes: the app that was in front when the popup opened.
+    private(set) var target: NSRunningApplication?
+    private var panel: ClipboardPopupPanel?
+    private var keyMonitor: Any?
+
+    private init() {}
+
+    var isVisible: Bool { panel?.isVisible == true }
+
+    func toggle() {
+        isVisible ? close() : show()
+    }
+
+    func show() {
+        target = NSWorkspace.shared.frontmostApplication
+        state.reset()
+        ClipboardHistoryModel.shared.popupWillOpen()
+        let panel = panel ?? makePanel()
+        self.panel = panel
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+        if let visible = screen?.visibleFrame {
+            // A little above the middle, where Spotlight and launchers open.
+            panel.setFrameOrigin(NSPoint(x: visible.midX - Self.size.width / 2,
+                                         y: visible.minY + visible.height * 0.62 - Self.size.height / 2))
+        }
+        panel.makeKeyAndOrderFront(nil)
+        installKeyMonitor()
+    }
+
+    func close() {
+        panel?.orderOut(nil)
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
+    }
+
+    func deliver(_ entry: ClipboardEntry?, as delivery: ClipboardHistoryModel.Delivery) {
+        guard let entry else { return }
+        if delivery == .pastePlain, entry.kind == .image { return deliver(entry, as: .copy) }
+        ClipboardHistoryModel.shared.deliver(entry, as: delivery, to: target) { [weak self] in self?.close() }
+    }
+
+    private func makePanel() -> ClipboardPopupPanel {
+        let panel = ClipboardPopupPanel(size: Self.size)
+        panel.contentView = NSHostingView(rootView: ClipboardPopupView(state: state, presenter: self))
+        panel.onResign = { [weak self] in self?.close() }
+        PreviewWindowCaptureExclusion.shared.register(window: panel)
+        return panel
+    }
+
+    /// Keys reach the popup while its search field has the focus.
+    private func installKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, event.window === panel, handle(event) else { return event }
+            return nil
+        }
+    }
+
+    private func handle(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        switch (Int(event.keyCode), flags) {
+        case (kVK_UpArrow, []): state.move(by: -1)
+        case (kVK_DownArrow, []): state.move(by: 1)
+        case (kVK_Escape, []): close()
+        case (kVK_Return, []), (kVK_ANSI_KeypadEnter, []): deliver(state.selected, as: .paste)
+        case (kVK_Return, [.command]): deliver(state.selected, as: .copy)
+        case (kVK_Return, [.control, .command]): deliver(state.selected, as: .pastePlain)
+        case (kVK_ANSI_Period, [.command]): if let entry = state.selected { ClipboardHistoryModel.shared.togglePin(entry) }
+        case (kVK_ANSI_X, [.control]): if let entry = state.selected { ClipboardHistoryModel.shared.delete(entry) }
+        case (kVK_ANSI_K, [.command]): showActions()
+        default:
+            let digits = [kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3, kVK_ANSI_4, kVK_ANSI_5,
+                          kVK_ANSI_6, kVK_ANSI_7, kVK_ANSI_8, kVK_ANSI_9, kVK_ANSI_0]
+            guard flags == [.command], let index = digits.firstIndex(of: Int(event.keyCode)) else { return false }
+            deliver(state.pinned(index + 1), as: .paste)
+        }
+        return true
+    }
+
+    /// ⌘K: what can be done with the selected entry, with the keys that do it.
+    func showActions() {
+        guard let entry = state.selected, let view = panel?.contentView else { return }
+        let model = ClipboardHistoryModel.shared
+        let menu = NSMenu()
+        func add(_ title: String, _ key: String = "", _ modifiers: NSEvent.ModifierFlags = [], _ run: @escaping () -> Void) {
+            let item = NSMenuItem(title: title, action: #selector(ClipboardMenuAction.run), keyEquivalent: key)
+            item.keyEquivalentModifierMask = modifiers
+            let action = ClipboardMenuAction(run)
+            item.target = action
+            item.representedObject = action
+            menu.addItem(item)
+        }
+        add("Paste to \(target?.localizedName ?? "App")", "\r") { [weak self] in self?.deliver(entry, as: .paste) }
+        add("Copy to Clipboard", "\r", .command) { [weak self] in self?.deliver(entry, as: .copy) }
+        if entry.kind != .image {
+            add("Paste as Plain Text", "\r", [.control, .command]) { [weak self] in self?.deliver(entry, as: .pastePlain) }
+        }
+        menu.addItem(.separator())
+        add(entry.pinnedAt == nil ? "Pin Entry" : "Unpin Entry", ".", .command) { model.togglePin(entry) }
+        if entry.kind == .image, entry.libraryPath == nil { add("Add to Library") { model.addToLibrary(entry) } }
+        if entry.kind == .text { add("Save as Snippet") { model.saveAsSnippet(entry) } }
+        menu.addItem(.separator())
+        add("Delete Entry", "x", .control) { model.delete(entry) }
+        _ = menu.popUp(positioning: nil, at: NSPoint(x: Self.size.width - 270, y: 48), in: view)
+    }
+}
+
+/// Runs a closure for an NSMenuItem.
+final class ClipboardMenuAction: NSObject {
+    private let action: () -> Void
+    init(_ action: @escaping () -> Void) { self.action = action }
+    @objc func run() { action() }
+}
+
+/// Borderless and non-activating, yet able to hold the keyboard for the search field.
+final class ClipboardPopupPanel: NSPanel {
+    var onResign: (() -> Void)?
+
+    init(size: CGSize) {
+        super.init(contentRect: NSRect(origin: .zero, size: size),
+                   styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
+                   backing: .buffered, defer: false)
+        isFloatingPanel = true
+        level = .floating
+        hidesOnDeactivate = false
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient, .ignoresCycle]
+        backgroundColor = .clear
+        isOpaque = false
+        hasShadow = true
+        animationBehavior = .utilityWindow
+    }
+
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+
+    /// A click in another app, or another Sukusho window, closes it, as a menu would.
+    override func resignKey() {
+        super.resignKey()
+        onResign?()
+    }
+}
+
+struct ClipboardPopupView: View {
+    @Bindable var state: ClipboardPopupState
+    let presenter: ClipboardPopupPresenter
+    @State private var model = ClipboardHistoryModel.shared
+    @FocusState private var searchFocused: Bool
+
+    var body: some View {
+        let sections = state.sections
+        let selected = state.selected
+        VStack(spacing: 0) {
+            header
+            Divider()
+            HStack(spacing: 0) {
+                list(sections, selected: selected).frame(width: 300)
+                Divider()
+                detail(selected)
+            }
+            Divider()
+            footer(selected)
+        }
+        .frame(width: ClipboardPopupPresenter.size.width, height: ClipboardPopupPresenter.size.height)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22))
+        .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(0.18), lineWidth: 0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 22))
+        .onAppear { searchFocused = true }
+        .onChange(of: model.popupOpenings) { _, _ in searchFocused = true }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Clipboard history")
+    }
+
+    private var header: some View {
+        HStack(spacing: DS.Space.ml) {
+            Image(systemName: "magnifyingglass").font(.system(size: 17)).foregroundStyle(.secondary)
+            TextField(state.filter == .snippets ? "Search snippets…" : "Search clipboard…", text: $state.query)
+                .textFieldStyle(.plain)
+                .font(.system(size: 17))
+                .focused($searchFocused)
+                .onChange(of: state.query) { _, _ in state.selection = nil }
+            Menu {
+                Picker("Type", selection: $state.filter) {
+                    ForEach(ClipboardFilter.allCases) { filter in
+                        Label(filter.title, systemImage: filter.symbol).tag(filter)
+                    }
+                }
+                .pickerStyle(.inline)
+            } label: {
+                Label(state.filter.title, systemImage: "line.3.horizontal.decrease")
+            }
+            .menuStyle(.button)
+            .buttonStyle(.bordered)
+            .fixedSize()
+            .onChange(of: state.filter) { _, _ in state.selection = nil }
+        }
+        .padding(.horizontal, DS.Space.xl)
+        .frame(height: 52)
+    }
+
+    private func list(_ sections: [ClipboardList.Section], selected: ClipboardEntry?) -> some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 1) {
+                    if sections.isEmpty { emptyList }
+                    ForEach(sections) { section in
+                        Text(section.title)
+                            .font(DS.TypeScale.labelSemibold).foregroundStyle(.secondary)
+                            .padding(.horizontal, DS.Space.ml).padding(.top, DS.Space.ml).padding(.bottom, DS.Space.xs)
+                        ForEach(Array(section.entries.enumerated()), id: \.element.id) { index, entry in
+                            row(entry, isSelected: entry.id == selected?.id,
+                                pinNumber: section.title == "Pinned" && index < 10 ? (index + 1) % 10 : nil)
+                                .id(entry.id)
+                        }
+                    }
+                }
+                .padding(DS.Space.m)
+            }
+            .onChange(of: state.selection) { _, id in
+                if let id { proxy.scrollTo(id) }
+            }
+        }
+    }
+
+    private var emptyList: some View {
+        Text(!model.hasLoaded ? "Loading…" : !ScreendropPreferences.clipboardHistoryEnabled
+             ? "Clipboard history is off. Turn it on in Settings › Library."
+             : state.query.isEmpty ? "Nothing here yet. Copy something." : "No matches.")
+            .font(DS.TypeScale.body).foregroundStyle(.secondary)
+            .padding(DS.Space.ml)
+    }
+
+    private func row(_ entry: ClipboardEntry, isSelected: Bool, pinNumber: Int?) -> some View {
+        HStack(spacing: DS.Space.ml) {
+            ClipboardRowTile(entry: entry)
+            Text(ClipboardList.title(of: entry))
+                .font(ClipboardList.looksLikeCode(entry) ? .system(size: 12.5, design: .monospaced) : .system(size: 13.5))
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 0)
+            if let pinNumber { Text("⌘\(pinNumber)").font(DS.TypeScale.label).foregroundStyle(.tertiary) }
+        }
+        .padding(.horizontal, DS.Space.ml)
+        .frame(height: 36)
+        .background(isSelected ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear), in: RoundedRectangle(cornerRadius: 9))
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) { presenter.deliver(entry, as: .paste) }
+        .onTapGesture { state.selection = entry.id }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction(named: "Paste") { presenter.deliver(entry, as: .paste) }
+    }
+
+    @ViewBuilder
+    private func detail(_ entry: ClipboardEntry?) -> some View {
+        if let entry {
+            VStack(spacing: 0) {
+                ClipboardPreview(entry: entry).frame(maxWidth: .infinity, maxHeight: .infinity)
+                ClipboardInfo(entry: entry, model: model)
+                    .padding(.horizontal, DS.Space.xl).padding(.bottom, DS.Space.m)
+            }
+        } else {
+            Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func footer(_ entry: ClipboardEntry?) -> some View {
+        HStack(spacing: DS.Space.m) {
+            if let message = model.feedback.message {
+                Label(message, systemImage: "checkmark.circle").foregroundStyle(.secondary)
+            } else {
+                Text("⌘1–⌘0 pinned").foregroundStyle(.tertiary)
+            }
+            Spacer()
+            Button { presenter.deliver(entry, as: .paste) } label: {
+                HStack(spacing: DS.Space.s) {
+                    Text("Paste to \(presenter.target?.localizedName ?? "App")")
+                    KeyCap("↩")
+                }
+            }
+            .buttonStyle(.bordered)
+            .disabled(entry == nil)
+            Button { presenter.showActions() } label: {
+                HStack(spacing: DS.Space.s) { Text("Actions"); KeyCap("⌘"); KeyCap("K") }
+            }
+            .buttonStyle(.plain)
+            .disabled(entry == nil)
+        }
+        .font(.system(size: 12.5))
+        .padding(.horizontal, DS.Space.l)
+        .frame(height: 46)
+    }
+}
+
+/// A key's symbol in a small rounded cap.
+private struct KeyCap: View {
+    let symbol: String
+    init(_ symbol: String) { self.symbol = symbol }
+    var body: some View {
+        Text(symbol).font(.system(size: 11.5, weight: .medium)).foregroundStyle(.secondary)
+            .frame(minWidth: 20, minHeight: 20)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
+    }
+}

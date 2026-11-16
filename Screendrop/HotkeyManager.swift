@@ -50,6 +50,8 @@ final class HotkeyManager {
         var registeredShortcuts: Set<HotkeyShortcut> = []
         for action in CaptureHotkeyAction.allCases {
             guard let shortcut = CaptureHotkeyPreferences.shortcut(for: action) else { continue }
+            // An off feature mustn't take ⌃⌘V from other apps.
+            if action == .clipboardHistory, !ScreendropPreferences.clipboardHistoryEnabled { continue }
             guard registeredShortcuts.insert(shortcut).inserted else {
                 registrationErrors[action] = "\(shortcut.displayString) is already used by another action."
                 continue

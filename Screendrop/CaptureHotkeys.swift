@@ -162,6 +162,8 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
     case scrollingCapture
     /// Not a capture: brings the Library forward from any app.
     case library
+    /// Not a capture: the clipboard history popup, registered only while history is on.
+    case clipboardHistory
 
     var id: Self { self }
 
@@ -174,6 +176,7 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
         case .textCapture: 5
         case .scrollingCapture: 6
         case .library: 7
+        case .clipboardHistory: 8
         }
     }
 
@@ -186,6 +189,7 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
         case .textCapture: "Capture Text"
         case .scrollingCapture: "Scrolling Capture"
         case .library: "Show Library"
+        case .clipboardHistory: "Clipboard History"
         }
     }
 
@@ -210,6 +214,9 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
             HotkeyShortcut(modifiers: [.command, .shift], keyCode: Int(kVK_ANSI_4))
         case .library:
             HotkeyShortcut(modifiers: [.command, .shift], keyCode: Int(kVK_ANSI_L))
+        case .clipboardHistory:
+            // ⌃⌘V (owner, 2026-11-16): ⌥⌘V is Finder's move-here and Paste Style, ⇧⌘V Sublime's Paste and Indent.
+            HotkeyShortcut(modifiers: [.control, .command], keyCode: Int(kVK_ANSI_V))
         }
     }
 
@@ -229,6 +236,8 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
             ScreendropPreferences.scrollingCaptureHotkeyKey
         case .library:
             ScreendropPreferences.libraryHotkeyKey
+        case .clipboardHistory:
+            ScreendropPreferences.clipboardHistoryHotkeyKey
         }
     }
 
@@ -258,6 +267,8 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
             CaptureCoordinator.shared.captureScrolling()
         case .library:
             CaptureLibraryModel.shared.show()
+        case .clipboardHistory:
+            ClipboardPopupPresenter.shared.toggle()
         }
     }
 }

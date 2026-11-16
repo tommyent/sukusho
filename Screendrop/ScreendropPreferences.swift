@@ -25,6 +25,7 @@ enum ScreendropPreferences {
     static let textCaptureHotkeyKey = "captureHotkey.textCapture"
     static let scrollingCaptureHotkeyKey = "captureHotkey.scrollingCapture"
     static let libraryHotkeyKey = "captureHotkey.library"
+    static let clipboardHistoryHotkeyKey = "captureHotkey.clipboardHistory"
     static let screenRecordingHotkeyKey = "captureHotkey.screenRecording"
     static let playSoundsKey = "playSounds"
     static let showMenuBarIconKey = "showMenuBarIcon"
