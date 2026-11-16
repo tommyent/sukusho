@@ -264,42 +264,13 @@ private struct SnippetEditor: View {
 /// The Clipboard page while history is off: what turning it on involves, and the switch.
 struct ClipboardSetupPage: View {
     @AppStorage(ScreendropPreferences.clipboardHistoryEnabledKey) private var enabled = false
-    @State private var access = NSPasteboard.general.accessBehavior
-    @State private var canPaste = AXIsProcessTrusted()
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DS.Space.l) {
                 Text("Set Up Clipboard History").font(.system(size: 22, weight: .bold))
-                Text("Sukusho keeps the images, text, links and files you copy, on this Mac, and pastes them again from ⌃⌘V. Nothing is recorded until you turn it on.")
-                    .foregroundStyle(.secondary)
-                VStack(spacing: 0) {
-                    step(done: true, "Private items are skipped",
-                         "Concealed copies and anything from Keychain Access, Passwords or 1Password are never kept.")
-                    Divider()
-                    step(done: access == .alwaysAllow, "Clipboard access", accessDetail) {
-                        if access != .alwaysAllow {
-                            Button("Check Again") { access = NSPasteboard.general.accessBehavior }
-                        }
-                    }
-                    Divider()
-                    step(done: canPaste, "Paste into apps",
-                         canPaste ? "Allowed. Auto-scroll uses the same permission."
-                                  : "Optional. Without it, choosing an entry copies it and you press ⌘V yourself.") {
-                        if !canPaste {
-                            Button("Allow…") {
-                                // kAXTrustedCheckOptionPrompt's value, spelled out, as the scrolling bar does.
-                                _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
-                                canPaste = AXIsProcessTrusted()
-                            }
-                        }
-                    }
-                    Divider()
-                    step(done: false, "One history",
-                         "Spotlight and other clipboard managers can keep their own history. Turning theirs off keeps one copy of what you copy.")
-                }
-                .background(.background, in: RoundedRectangle(cornerRadius: DS.Radius.card))
-                .overlay(RoundedRectangle(cornerRadius: DS.Radius.card).strokeBorder(.separator, lineWidth: 0.5))
+                Text(ClipboardSetupSteps.intro).foregroundStyle(.secondary)
+                ClipboardSetupSteps()
                 HStack {
                     Button("Turn On Clipboard History") { enabled = true }
                         .buttonStyle(.borderedProminent).controlSize(.large)
@@ -311,8 +282,50 @@ struct ClipboardSetupPage: View {
             .padding(DS.Space.xxl * 1.5)
             .frame(maxWidth: .infinity)
         }
+    }
+}
+
+/// What turning history on involves, on the Library's setup page and in the sheet Settings shows
+/// when history is turned on there.
+struct ClipboardSetupSteps: View {
+    @State private var access = NSPasteboard.general.accessBehavior
+    @State private var canPaste = AXIsProcessTrusted()
+
+    static var intro: String {
+        let shortcut = CaptureHotkeyPreferences.shortcut(for: .clipboardHistory)?.displayTokens.joined() ?? "its shortcut"
+        return "Sukusho keeps the images, text, links and files you copy, on this Mac, and pastes them again from \(shortcut). Nothing is recorded until you turn it on."
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            step(done: true, "Private items are skipped",
+                 "Concealed copies and copies from password apps are never kept. Settings › Library lists the apps to ignore.")
+            Divider()
+            step(done: access == .alwaysAllow, "Clipboard access", accessDetail) {
+                if access != .alwaysAllow {
+                    Button("Check Again") { access = NSPasteboard.general.accessBehavior }
+                }
+            }
+            Divider()
+            step(done: canPaste, "Paste into apps",
+                 canPaste ? "Allowed. Auto-scroll uses the same permission."
+                          : "Optional. Without it, choosing an entry copies it and you press ⌘V yourself.") {
+                if !canPaste {
+                    Button("Allow…") {
+                        // kAXTrustedCheckOptionPrompt's value, spelled out, as the scrolling bar does.
+                        _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+                        canPaste = AXIsProcessTrusted()
+                    }
+                }
+            }
+            Divider()
+            step(done: false, "One history",
+                 "Spotlight and other clipboard managers can keep their own history. Turning theirs off keeps one copy of what you copy.")
+        }
+        .background(.background, in: RoundedRectangle(cornerRadius: DS.Radius.card))
+        .overlay(RoundedRectangle(cornerRadius: DS.Radius.card).strokeBorder(.separator, lineWidth: 0.5))
         .onAppear(perform: recheck)
-        // Back from System Settings with the permission granted, the page says so.
+        // Back from System Settings with the permission granted, the steps say so.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in recheck() }
     }
 

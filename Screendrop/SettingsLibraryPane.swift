@@ -16,6 +16,7 @@ struct LibrarySettingsPane: View {
     @AppStorage(ScreendropPreferences.clipboardRetentionDaysKey) private var clipboardRetentionDays = 30
     @State private var confirmingDeleteHistory = false
     @State private var ignoredApps = ScreendropPreferences.clipboardIgnoredApps
+    @State private var settingUpClipboard = false
 
     var body: some View {
         Form {
@@ -90,7 +91,9 @@ struct LibrarySettingsPane: View {
                 "Keep clipboard history",
                 detail: "Find and paste what you copied, from \(clipboardShortcut) or Clipboard in the Library. Kept on this Mac; concealed items and the apps below are skipped. Nothing is recorded while this is off."
             ).control { label in
-                Toggle(isOn: $clipboardEnabled) { label }
+                // Turning it on goes through the same steps as the Library's setup page.
+                Toggle(isOn: Binding(get: { clipboardEnabled },
+                                     set: { if $0 { settingUpClipboard = true } else { clipboardEnabled = false } })) { label }
             }
             .toggleStyle(.switch)
             Picker("Keep copies for", selection: $clipboardRetentionDays) {
@@ -113,6 +116,24 @@ struct LibrarySettingsPane: View {
                 Button("Delete History…") { confirmingDeleteHistory = true }.controlSize(.small)
             }
             .disabled(!clipboardEnabled)
+        }
+        .sheet(isPresented: $settingUpClipboard) {
+            VStack(alignment: .leading, spacing: DS.Space.l) {
+                Text("Set Up Clipboard History").font(.system(size: 17, weight: .bold))
+                Text(ClipboardSetupSteps.intro).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                ClipboardSetupSteps()
+                HStack {
+                    Spacer()
+                    Button("Cancel") { settingUpClipboard = false }.keyboardShortcut(.cancelAction)
+                    Button("Turn On") {
+                        clipboardEnabled = true
+                        settingUpClipboard = false
+                    }
+                    .keyboardShortcut(.defaultAction)
+                }
+            }
+            .padding(DS.Space.xl)
+            .frame(width: 540)
         }
         .confirmationDialog("Delete clipboard history?", isPresented: $confirmingDeleteHistory) {
             Button("Delete History", role: .destructive) { ClipboardHistoryModel.shared.deleteHistory() }
