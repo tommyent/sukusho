@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Settings › Library: what the Library reads from captures and names them with, and clipboard history.
 struct LibrarySettingsPane: View {
@@ -14,6 +15,7 @@ struct LibrarySettingsPane: View {
     // shortcut: 30 days is a provisional default the owner hasn't confirmed yet (0 keeps everything).
     @AppStorage(ScreendropPreferences.clipboardRetentionDaysKey) private var clipboardRetentionDays = 30
     @State private var confirmingDeleteHistory = false
+    @State private var ignoredApps = ScreendropPreferences.clipboardIgnoredApps
 
     var body: some View {
         Form {
@@ -86,7 +88,7 @@ struct LibrarySettingsPane: View {
         Section("Clipboard") {
             SettingsControlLabel(
                 "Keep clipboard history",
-                detail: "Find and paste what you copied, from \(clipboardShortcut) or Clipboard in the Library. Kept on this Mac; concealed items and password managers are skipped. Nothing is recorded while this is off."
+                detail: "Find and paste what you copied, from \(clipboardShortcut) or Clipboard in the Library. Kept on this Mac; concealed items and the apps below are skipped. Nothing is recorded while this is off."
             ).control { label in
                 Toggle(isOn: $clipboardEnabled) { label }
             }
@@ -99,6 +101,7 @@ struct LibrarySettingsPane: View {
                 Text("Forever").tag(0)
             }
             .disabled(!clipboardEnabled)
+            ignoredAppsRows
             HStack {
                 SettingsControlLabel("Shortcut", detail: "\(clipboardShortcut) opens the clipboard popup. Change it in Shortcuts.")
                 Spacer()
@@ -116,6 +119,51 @@ struct LibrarySettingsPane: View {
         } message: {
             Text("Every copy is removed from this Mac, pinned ones too. Snippets stay.")
         }
+    }
+
+    /// Copies made in these apps are never kept. Password apps are on the list until removed.
+    @ViewBuilder
+    private var ignoredAppsRows: some View {
+        HStack {
+            SettingsControlLabel("Ignore copies from", detail: "Nothing copied in these apps is kept.")
+            Spacer()
+            Button("Add App…", action: addIgnoredApps).controlSize(.small)
+        }
+        ForEach(ignoredApps, id: \.self) { bundleID in
+            HStack(spacing: 8) {
+                Image(nsImage: ClipboardHistoryModel.shared.appIcon(bundleID)
+                      ?? NSWorkspace.shared.icon(for: .applicationBundle))
+                    .resizable().frame(width: 18, height: 18)
+                Text(Self.ignoredAppName(bundleID))
+                Spacer()
+                Button("Remove", systemImage: "minus.circle") { setIgnoredApps(ignoredApps.filter { $0 != bundleID }) }
+                    .labelStyle(.iconOnly).buttonStyle(.borderless)
+                    .help("Keep copies from \(Self.ignoredAppName(bundleID)) again")
+            }
+            .padding(.leading, 12)
+        }
+    }
+
+    private static func ignoredAppName(_ bundleID: String) -> String {
+        // 1Password is on the default list whether or not this Mac has it.
+        ClipboardHistoryModel.shared.appName(bundleID) ?? (bundleID == "com.1password.1password" ? "1Password" : bundleID)
+    }
+
+    private func addIgnoredApps() {
+        let panel = NSOpenPanel()
+        panel.title = "Ignore Copies From"
+        panel.prompt = "Ignore"
+        panel.allowedContentTypes = [.applicationBundle]
+        panel.allowsMultipleSelection = true
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        guard panel.runModal() == .OK else { return }
+        let added = panel.urls.compactMap { Bundle(url: $0)?.bundleIdentifier }
+        setIgnoredApps(ignoredApps + added.filter { !ignoredApps.contains($0) })
+    }
+
+    private func setIgnoredApps(_ apps: [String]) {
+        ignoredApps = apps
+        ScreendropPreferences.clipboardIgnoredApps = apps
     }
 
     private var clipboardShortcut: String {

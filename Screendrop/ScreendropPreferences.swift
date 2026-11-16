@@ -89,8 +89,10 @@ enum ScreendropPreferences {
         return Int64(max(megabytes, 1)) * 1024 * 1024
     }
 
+    /// Bundle IDs whose copies are never kept; edited in Settings › Library.
     static var clipboardIgnoredApps: [String] {
-        UserDefaults.standard.stringArray(forKey: clipboardIgnoredAppsKey) ?? ClipboardCapturePolicy.defaultIgnoredApps
+        get { UserDefaults.standard.stringArray(forKey: clipboardIgnoredAppsKey) ?? ClipboardCapturePolicy.defaultIgnoredApps }
+        set { UserDefaults.standard.set(newValue, forKey: clipboardIgnoredAppsKey) }
     }
 
     /// Which Mac a clipboard entry came from, for sync later. Made once, kept.
