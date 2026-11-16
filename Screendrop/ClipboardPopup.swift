@@ -153,9 +153,12 @@ final class ClipboardPopupPresenter {
         if entry.kind == .text { add("Save as Snippet") { model.saveAsSnippet(entry) } }
         menu.addItem(.separator())
         add("Delete Entry", "x", .control) { model.delete(entry) }
-        // Above the Actions button; the hosting view counts y from the top.
-        let y = view.isFlipped ? Self.size.height - 48 : 48
-        _ = menu.popUp(positioning: nil, at: NSPoint(x: Self.size.width - 270, y: y), in: view)
+        // The point is the menu's top-left: put its bottom just above the 46 pt footer, its right edge
+        // under the Actions button's, so it opens upward inside the popup.
+        let top = 46 + 4 + menu.size.height
+        let point = NSPoint(x: view.bounds.width - menu.size.width - 12,
+                            y: view.isFlipped ? view.bounds.height - top : top)
+        _ = menu.popUp(positioning: nil, at: point, in: view)
     }
 }
 
