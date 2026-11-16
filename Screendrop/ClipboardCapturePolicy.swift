@@ -26,6 +26,9 @@ nonisolated enum ClipboardCapturePolicy {
     static let sourceType = "org.nspasteboard.source"
     /// Stamped on what Sukusho writes from history, so the monitor doesn't record it again.
     static let ownType = "com.tommyent.Sukusho.clipboard-history"
+    /// Other histories' own marks on their paste-backs (read in their source code): Tinycast's and
+    /// Maccy's. Their pastes aren't new copies, so Sukusho doesn't record or bump them.
+    static let otherHistoryTypes: Set<String> = ["com.tinycast.internal", "org.p0deje.Maccy"]
     /// Universal Clipboard's marker (community-documented, not Apple API).
     static let remoteType = "com.apple.is-remote-clipboard"
     static let fileURLType = "public.file-url"
@@ -46,6 +49,8 @@ nonisolated enum ClipboardCapturePolicy {
         case privateType(String), ignoredApp(String), nothingKept, tooLarge
         /// Sukusho put it there from history; that entry was already moved to the top.
         case ownWrite
+        /// Another clipboard history pasted one of its own entries.
+        case otherHistory(String)
     }
 
     enum Content: Equatable, Sendable {

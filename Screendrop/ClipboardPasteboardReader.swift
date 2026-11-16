@@ -51,6 +51,9 @@ nonisolated enum ClipboardPasteboardReader {
     ) -> (outcome: Outcome, types: [String]) {
         let types = pasteboard.types?.map(\.rawValue) ?? []
         if types.contains(ClipboardCapturePolicy.ownType) { return (.skipped(.ownWrite), types) }
+        if let other = types.first(where: ClipboardCapturePolicy.otherHistoryTypes.contains) {
+            return (.skipped(.otherHistory(other)), types)
+        }
         if let marker = ClipboardCapturePolicy.privateMarker(in: types) {
             return (.skipped(.privateType(marker)), types)
         }

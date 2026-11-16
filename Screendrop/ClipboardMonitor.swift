@@ -138,7 +138,7 @@ final class ClipboardMonitor {
                     logger.error("Clipboard history can't save a copy: \(String(describing: error), privacy: .public)")
                 }
             }
-        case .skipped(.ownWrite):
+        case .skipped(.ownWrite), .skipped(.otherHistory):
             break
         case .skipped:
             skippedCount += 1

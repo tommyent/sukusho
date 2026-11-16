@@ -1,6 +1,5 @@
 import AppKit
 import ApplicationServices
-import Carbon.HIToolbox
 import Observation
 import OSLog
 
@@ -181,69 +180,5 @@ final class ClipboardHistoryModel {
         let source = entry.sourceBundleID.map { CaptureSource(bundleIdentifier: $0, appName: appName($0) ?? $0) }
         _ = ScreenshotHistoryStore.shared.importScreenshot(from: url, source: source)
         feedback.show("Added to the Library")
-    }
-}
-
-/// Writes history entries back to the general pasteboard.
-@MainActor
-enum ClipboardWriter {
-    /// False when an image's file is gone.
-    static func write(_ entry: ClipboardEntry, richText: [String: Data], plain: Bool,
-                      to pasteboard: NSPasteboard = .general) -> Bool {
-        var items: [NSPasteboardItem] = []
-        switch entry.kind {
-        case .text, .snippet:
-            let item = NSPasteboardItem()
-            item.setString(entry.text ?? "", forType: .string)
-            if !plain { for (type, data) in richText { item.setData(data, forType: .init(type)) } }
-            items = [item]
-        case .files:
-            let paths = (entry.text ?? "").split(separator: "\n").map(String.init)
-            if plain {
-                let item = NSPasteboardItem()
-                item.setString(paths.joined(separator: "\n"), forType: .string)
-                items = [item]
-            } else {
-                items = paths.map { path in
-                    let item = NSPasteboardItem()
-                    item.setString(URL(fileURLWithPath: path).absoluteString, forType: .fileURL)
-                    item.setString((path as NSString).lastPathComponent, forType: .string)
-                    return item
-                }
-            }
-        case .image:
-            guard let url = entry.imageURL ?? entry.libraryPath.map({ URL(fileURLWithPath: $0) }),
-                  let data = try? Data(contentsOf: url) else { return false }
-            let item = NSPasteboardItem()
-            item.setData(data, forType: imageType(for: url))
-            items = [item]
-        }
-        guard let first = items.first else { return false }
-        // nspasteboard.org's source marker, and our own so the monitor doesn't record it again.
-        first.setString(Bundle.main.bundleIdentifier ?? "", forType: .init(ClipboardCapturePolicy.sourceType))
-        first.setData(Data(), forType: .init(ClipboardCapturePolicy.ownType))
-        pasteboard.clearContents()
-        return pasteboard.writeObjects(items)
-    }
-
-    private static func imageType(for url: URL) -> NSPasteboard.PasteboardType {
-        switch url.pathExtension.lowercased() {
-        case "jpg", "jpeg": .init("public.jpeg")
-        case "heic": .init("public.heic")
-        case "gif": .init("com.compuserve.gif")
-        case "tif", "tiff": .tiff
-        default: .png
-        }
-    }
-
-    /// ⌘V into whatever is in front. Needs Accessibility (PostEvent).
-    static func typeCommandV() {
-        // shortcut: kVK_ANSI_V is V's key on ANSI layouts; a Dvorak user's ⌘V lives elsewhere. Map through the layout if that comes up.
-        let source = CGEventSource(stateID: .combinedSessionState)
-        for isDown in [true, false] {
-            let event = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: isDown)
-            event?.flags = .maskCommand
-            event?.post(tap: .cghidEventTap)
-        }
     }
 }
