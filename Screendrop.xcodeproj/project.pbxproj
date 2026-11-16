@@ -122,6 +122,9 @@
 		AD5500000000000000000002 /* Screendrop/LegacyIdentityImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD5500000000000000000012 /* Screendrop/LegacyIdentityImport.swift */; };
 		AF5D00000000000000000001 /* Screendrop/CaptureLibraryText.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF5D00000000000000000002 /* Screendrop/CaptureLibraryText.swift */; };
 		AF5D00000000000000000003 /* Screendrop/CaptureSource.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF5D00000000000000000004 /* Screendrop/CaptureSource.swift */; };
+		C11B00000000000000000001 /* Screendrop/ClipboardCapturePolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C11B00000000000000000002 /* Screendrop/ClipboardCapturePolicy.swift */; };
+		C11B00000000000000000003 /* Screendrop/ClipboardPasteboardReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = C11B00000000000000000004 /* Screendrop/ClipboardPasteboardReader.swift */; };
+		C11B00000000000000000005 /* Screendrop/ClipboardHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C11B00000000000000000006 /* Screendrop/ClipboardHistoryStore.swift */; };
 		AA6200000000000000000001 /* Screendrop/ScreenshotHistoryMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA6200000000000000000011 /* Screendrop/ScreenshotHistoryMetadata.swift */; };
 		AA6200000000000000000002 /* Screendrop/AnnotationDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA6200000000000000000012 /* Screendrop/AnnotationDocument.swift */; };
 		AA6200000000000000000003 /* Screendrop/AnnotationBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA6200000000000000000013 /* Screendrop/AnnotationBackground.swift */; };
@@ -291,6 +294,9 @@
 		AD5500000000000000000012 /* Screendrop/LegacyIdentityImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/LegacyIdentityImport.swift; sourceTree = SOURCE_ROOT; };
 		AF5D00000000000000000002 /* Screendrop/CaptureLibraryText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/CaptureLibraryText.swift; sourceTree = SOURCE_ROOT; };
 		AF5D00000000000000000004 /* Screendrop/CaptureSource.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/CaptureSource.swift; sourceTree = SOURCE_ROOT; };
+		C11B00000000000000000002 /* Screendrop/ClipboardCapturePolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ClipboardCapturePolicy.swift; sourceTree = SOURCE_ROOT; };
+		C11B00000000000000000004 /* Screendrop/ClipboardPasteboardReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ClipboardPasteboardReader.swift; sourceTree = SOURCE_ROOT; };
+		C11B00000000000000000006 /* Screendrop/ClipboardHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ClipboardHistoryStore.swift; sourceTree = SOURCE_ROOT; };
 		AA6200000000000000000011 /* Screendrop/ScreenshotHistoryMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ScreenshotHistoryMetadata.swift; sourceTree = SOURCE_ROOT; };
 		AA6200000000000000000012 /* Screendrop/AnnotationDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AnnotationDocument.swift; sourceTree = SOURCE_ROOT; };
 		AA6200000000000000000013 /* Screendrop/AnnotationBackground.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AnnotationBackground.swift; sourceTree = SOURCE_ROOT; };
@@ -499,6 +505,9 @@
 				AD5500000000000000000012 /* Screendrop/LegacyIdentityImport.swift */,
 				AF5D00000000000000000002 /* Screendrop/CaptureLibraryText.swift */,
 				AF5D00000000000000000004 /* Screendrop/CaptureSource.swift */,
+				C11B00000000000000000002 /* Screendrop/ClipboardCapturePolicy.swift */,
+				C11B00000000000000000004 /* Screendrop/ClipboardPasteboardReader.swift */,
+				C11B00000000000000000006 /* Screendrop/ClipboardHistoryStore.swift */,
 				AB0C00000000000000000012 /* Screendrop/AgentAccessCore.swift */,
 				AB0C00000000000000000014 /* Screendrop/AgentAccessSocket.swift */,
 				AB0C00000000000000000016 /* Screendrop/AgentAccessTools.swift */,
@@ -766,6 +775,9 @@
 				AD5500000000000000000002 /* Screendrop/LegacyIdentityImport.swift in Sources */,
 				AF5D00000000000000000001 /* Screendrop/CaptureLibraryText.swift in Sources */,
 				AF5D00000000000000000003 /* Screendrop/CaptureSource.swift in Sources */,
+				C11B00000000000000000001 /* Screendrop/ClipboardCapturePolicy.swift in Sources */,
+				C11B00000000000000000003 /* Screendrop/ClipboardPasteboardReader.swift in Sources */,
+				C11B00000000000000000005 /* Screendrop/ClipboardHistoryStore.swift in Sources */,
 				AB0C00000000000000000011 /* Screendrop/AgentAccessCore.swift in Sources */,
 				AB0C00000000000000000013 /* Screendrop/AgentAccessSocket.swift in Sources */,
 				AB0C00000000000000000015 /* Screendrop/AgentAccessTools.swift in Sources */,
