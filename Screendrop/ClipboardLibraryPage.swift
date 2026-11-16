@@ -313,7 +313,14 @@ struct ClipboardSetupPage: View {
             .padding(DS.Space.xxl * 1.5)
             .frame(maxWidth: .infinity)
         }
-        .onAppear { canPaste = AXIsProcessTrusted() }
+        .onAppear(perform: recheck)
+        // Back from System Settings with the permission granted, the page says so.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in recheck() }
+    }
+
+    private func recheck() {
+        canPaste = AXIsProcessTrusted()
+        access = NSPasteboard.general.accessBehavior
     }
 
     private var accessDetail: String {
