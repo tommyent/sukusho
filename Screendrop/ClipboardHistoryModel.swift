@@ -178,7 +178,8 @@ final class ClipboardHistoryModel {
     /// A copied image becomes an ordinary capture, with its source app.
     func addToLibrary(_ entry: ClipboardEntry) {
         guard entry.kind == .image, entry.libraryPath == nil, let url = entry.imageURL else { return }
-        let source = entry.sourceBundleID.map { CaptureSource(bundleIdentifier: $0, appName: appName($0) ?? $0) }
+        // An app this Mac doesn't have stays unnamed rather than showing its bundle ID.
+        let source = appName(entry.sourceBundleID).map { CaptureSource(bundleIdentifier: entry.sourceBundleID, appName: $0) }
         let added = ScreenshotHistoryStore.shared.importScreenshot(from: url, source: source)
         Task {
             try? await store?.linkToLibrary(entry.id, path: added.path)
