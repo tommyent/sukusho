@@ -35,15 +35,15 @@ struct ClipboardCapturePolicyTests {
         #expect(decide(["com.example.private-type"]) == .skip(.nothingKept))
     }
 
-    @Test func textKinds() {
-        #expect(ClipboardCapturePolicy.textKind("#ff6363") == .color)
-        #expect(ClipboardCapturePolicy.textKind(" #FFF \n") == .color)
-        #expect(ClipboardCapturePolicy.textKind("#12345") == .text)
-        #expect(ClipboardCapturePolicy.textKind("https://nspasteboard.org/") == .link)
-        #expect(ClipboardCapturePolicy.textKind("slack://channel?team=T1") == .link)
-        #expect(ClipboardCapturePolicy.textKind("mailto:someone@example.com") == .link)
-        #expect(ClipboardCapturePolicy.textKind("require 'rubygems'") == .text)
-        #expect(ClipboardCapturePolicy.textKind("note: https://example.com") == .text)
+    @Test func textForms() {
+        #expect(ClipboardCapturePolicy.textForm("#ff6363") == .color(hex: "#FF6363"))
+        #expect(ClipboardCapturePolicy.textForm(" #FFF \n") == .color(hex: "#FFF"))
+        #expect(ClipboardCapturePolicy.textForm("#12345") == .plain)
+        #expect(ClipboardCapturePolicy.textForm("https://nspasteboard.org/") == .link)
+        #expect(ClipboardCapturePolicy.textForm("slack://channel?team=T1") == .link)
+        #expect(ClipboardCapturePolicy.textForm("mailto:someone@example.com") == .link)
+        #expect(ClipboardCapturePolicy.textForm("require 'rubygems'") == .plain)
+        #expect(ClipboardCapturePolicy.textForm("note: https://example.com") == .plain)
         #expect(ClipboardCapturePolicy.hexColor("#ff6363aa") == "#FF6363AA")
     }
 
@@ -109,11 +109,12 @@ struct ClipboardPasteboardReaderTests {
         }
     }
 
-    @Test func hexColourIsKeptNormalised() throws {
+    @Test func aHexColourIsKeptAsCopiedText() throws {
         withPasteboard([item(["public.utf8-plain-text": "#ff6363\n"])]) { pasteboard in
             guard case .captured(let capture) = read(pasteboard) else { Issue.record("not captured"); return }
-            #expect(capture.kind == .color)
-            #expect(capture.text == "#FF6363")
+            #expect(capture.kind == .text)
+            #expect(capture.text == "#ff6363\n")
+            #expect(ClipboardCapturePolicy.textForm(capture.text ?? "") == .color(hex: "#FF6363"))
         }
     }
 

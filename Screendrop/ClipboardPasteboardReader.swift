@@ -8,7 +8,7 @@ nonisolated struct ClipboardCapture: Sendable, Equatable {
     var kind: ClipboardEntryKind
     /// SHA-256 of the main content, for de-duplication.
     var hash: String
-    /// Text, link, a colour's hex, or a files copy's paths, one per line.
+    /// The text as copied (links and colours included), or a files copy's paths, one per line.
     var text: String?
     /// Bytes to keep; nil for a Sukusho capture, which stays in the Library.
     var image: Data?
@@ -82,7 +82,7 @@ nonisolated enum ClipboardPasteboardReader {
         guard let item = pasteboard.pasteboardItems?.first else { return nil }
         switch content {
         case .files:
-            let paths = (pasteboard.pasteboardItems ?? []).compactMap { item -> String? in
+            let paths = (pasteboard.pasteboardItems ?? []).prefix(ClipboardCapturePolicy.maxFiles).compactMap { item -> String? in
                 guard let raw = item.string(forType: .fileURL), let url = URL(string: raw) else { return nil }
                 // Finder hands out file reference URLs (file:///.file/id=…); resolve them to paths.
                 return ((url as NSURL).filePathURL ?? url).path
@@ -116,15 +116,13 @@ nonisolated enum ClipboardPasteboardReader {
             let string = item.string(forType: .string) ?? item.string(forType: .URL)
                 ?? (types.contains(ClipboardCapturePolicy.colorType) ? NSColor(from: pasteboard).flatMap(hex) : nil)
             guard let string, !string.isEmpty, string.utf8.count <= ClipboardCapturePolicy.maxTextBytes else { return nil }
-            let kind = ClipboardCapturePolicy.textKind(string)
-            let text = kind == .color ? ClipboardCapturePolicy.hexColor(string.trimmingCharacters(in: .whitespacesAndNewlines)) ?? string : string
             var richText: [String: Data] = [:]
             for type in ClipboardCapturePolicy.richTextTypes where types.contains(type) {
                 if let data = item.data(forType: .init(type)), data.count <= ClipboardCapturePolicy.maxRichTextBytes {
                     richText[type] = data
                 }
             }
-            return ClipboardCapture(kind: kind, hash: digest(Data(text.utf8)), text: text,
+            return ClipboardCapture(kind: .text, hash: digest(Data(string.utf8)), text: string,
                                     byteSize: string.utf8.count, richText: richText)
         }
     }

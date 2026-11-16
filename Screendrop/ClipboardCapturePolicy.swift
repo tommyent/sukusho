@@ -1,8 +1,15 @@
 import Foundation
 
-/// What a clipboard history entry holds.
+/// What a clipboard history entry holds: only what the pasteboard itself tells
+/// apart. Links and colours are read from the text when shown (`textForm`), so
+/// a better classifier never needs a database migration (Tinycast's rule too).
 nonisolated enum ClipboardEntryKind: String, Sendable, CaseIterable {
-    case image, text, link, color, files, snippet
+    case image, text, files, snippet
+}
+
+/// How a text entry is shown.
+nonisolated enum ClipboardTextForm: Equatable, Sendable {
+    case plain, link, color(hex: String)
 }
 
 /// Decides from the pasteboard's types and source alone whether a copy is
@@ -30,6 +37,8 @@ nonisolated enum ClipboardCapturePolicy {
     static let maxImagePixels = 200_000_000
     static let maxTextBytes = 2 * 1024 * 1024
     static let maxRichTextBytes = 5 * 1024 * 1024
+    /// A Finder select-all keeps its first 500 files, not ten thousand rows.
+    static let maxFiles = 500
 
     enum Skip: Equatable, Sendable {
         case privateType(String), ignoredApp(String), nothingKept, tooLarge
@@ -60,11 +69,11 @@ nonisolated enum ClipboardCapturePolicy {
     }
 
     /// Text that is a hex colour or a link is shown as one.
-    static func textKind(_ text: String) -> ClipboardEntryKind {
+    static func textForm(_ text: String) -> ClipboardTextForm {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if hexColor(trimmed) != nil { return .color }
+        if let hex = hexColor(trimmed) { return .color(hex: hex) }
         if isLink(trimmed) { return .link }
-        return .text
+        return .plain
     }
 
     /// "#ff6363" → "#FF6363"; also #RGB and #RRGGBBAA.
