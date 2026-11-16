@@ -17,6 +17,8 @@ final class ClipboardHistoryModel {
     var showsSnippets = false
     /// The Library page's selected entry.
     var librarySelection: ClipboardEntry.ID?
+    /// The Library page's type filter.
+    var libraryFilter: ClipboardFilter = .all
     /// Bumped each time the popup opens, so it starts from a clean search.
     private(set) var popupOpenings = 0
     let feedback = ActionFeedback(duration: ActionFeedback.textDuration)
@@ -56,6 +58,11 @@ final class ClipboardHistoryModel {
 
     func sections(filter: ClipboardFilter, query: String) -> [ClipboardList.Section] {
         ClipboardList.sections(entries, filter: filter, query: CaptureLibraryQuery(query), appName: appName)
+    }
+
+    /// What the Library's Clipboard page shows; the status bar counts the same.
+    func librarySections(query: String) -> [ClipboardList.Section] {
+        sections(filter: showsSnippets ? .snippets : libraryFilter, query: query)
     }
 
     var historyCount: Int { entries.count { $0.kind != .snippet } }

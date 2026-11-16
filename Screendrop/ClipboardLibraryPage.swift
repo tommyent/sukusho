@@ -5,7 +5,6 @@ import SwiftUI
 struct ClipboardLibraryPage: View {
     @Bindable var model: ClipboardHistoryModel
     @AppStorage(ScreendropPreferences.clipboardHistoryEnabledKey) private var enabled = false
-    @State private var filter: ClipboardFilter = .all
     @State private var library = CaptureLibraryModel.shared
 
     var body: some View {
@@ -14,8 +13,7 @@ struct ClipboardLibraryPage: View {
         } else if !model.hasLoaded {
             ProgressView("Loading Clipboard…").workspaceTextPlate().frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            let shown = model.showsSnippets ? .snippets : filter
-            let sections = model.sections(filter: shown, query: library.searchText)
+            let sections = model.librarySections(query: library.searchText)
             VStack(spacing: 0) {
                 if model.showsSnippets { snippetBar } else { filterBar }
                 if sections.isEmpty {
@@ -56,16 +54,16 @@ struct ClipboardLibraryPage: View {
     private var filterBar: some View {
         HStack(spacing: DS.Space.m) {
             ForEach(ClipboardFilter.allCases.filter { $0 != .snippets }) { item in
-                Button { filter = item } label: {
+                Button { model.libraryFilter = item } label: {
                     Label(item == .all ? "All" : item.title, systemImage: item.symbol)
                         .labelStyle(.titleAndIcon)
                         .font(.system(size: 12, weight: .medium))
                         .padding(.horizontal, DS.Space.ml).padding(.vertical, DS.Space.xs)
-                        .background(filter == item ? AnyShapeStyle(.tint.opacity(0.2)) : AnyShapeStyle(.quaternary),
+                        .background(model.libraryFilter == item ? AnyShapeStyle(.tint.opacity(0.2)) : AnyShapeStyle(.quaternary),
                                     in: Capsule())
                 }
                 .buttonStyle(.plain)
-                .accessibilityAddTraits(filter == item ? .isSelected : [])
+                .accessibilityAddTraits(model.libraryFilter == item ? .isSelected : [])
             }
             Spacer()
         }

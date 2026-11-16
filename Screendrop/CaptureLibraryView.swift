@@ -520,17 +520,22 @@ struct CaptureLibraryView: View {
                 Text("\(count) \(cloud.showsFiles || cloud.showsReceived ? (count == 1 ? "file" : "files") : count == 1 ? "upload" : "uploads")")
                 if !cloud.selection.isEmpty { Text("· \(cloud.selection.count) selected") }
                 if !cloud.deletingIDs.isEmpty { Text("· Deleting…") }
+            } else if clipboard.isShown {
+                if clipboardEnabled {
+                    let count = clipboard.librarySections(query: model.searchText).reduce(0) { $0 + $1.entries.count }
+                    Text("\(count) \(clipboard.showsSnippets ? (count == 1 ? "snippet" : "snippets") : count == 1 ? "copy" : "copies")")
+                }
             } else {
                 Text("\(model.visibleItems.count) \(model.visibleItems.count == 1 ? "capture" : "captures")")
                 if !model.selection.isEmpty { Text("· \(model.selection.count) selected") }
             }
             Spacer()
-            if comments.isShown ? comments.isLoading : likes.isShown ? likes.isLoading : cloud.isShown ? cloud.isLoading : model.isLoading {
+            if clipboard.isShown ? false : comments.isShown ? comments.isLoading : likes.isShown ? likes.isLoading : cloud.isShown ? cloud.isLoading : model.isLoading {
                 ProgressView().controlSize(.mini)
                     .help(comments.isShown ? "Refreshing comments" : likes.isShown ? "Refreshing likes"
                           : cloud.isShown ? "Refreshing uploads" : "Refreshing Library")
             }
-            if !comments.isShown, !likes.isShown {
+            if !comments.isShown, !likes.isShown, !clipboard.isShown {
                 // Capped where the 640 px thumbnails stay sharp on Retina.
                 Slider(value: $cardWidth, in: 140...320) {
                     EmptyView()
