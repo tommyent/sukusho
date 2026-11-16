@@ -31,7 +31,7 @@ nonisolated enum ScreendropIntentError: Error, CustomLocalizedStringResourceConv
     var localizedStringResource: LocalizedStringResource {
         switch self {
         case .captureCancelled:
-            "The screenshot was cancelled before it could be captured."
+            "The screenshot was canceled before it could be captured."
         case .noTextRecognized:
             "No text was recognized in the captured area."
         case .recordingAlreadyActive:

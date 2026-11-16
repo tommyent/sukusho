@@ -146,7 +146,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             case .writerFailed(let error):
                 error?.localizedDescription ?? "Writing the exported video failed."
             case .cancelled:
-                "Export cancelled."
+                "Export canceled."
             }
         }
     }

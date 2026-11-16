@@ -387,7 +387,7 @@ struct ClipboardListTests {
         #expect(ClipboardList.typeName(of: entry(.image, image: "a.jpg")) == "JPEG image")
         #expect(ClipboardList.typeName(of: entry(.image, image: "a.png")) == "PNG image")
         #expect(ClipboardList.typeName(of: entry(.text, "https://example.com")) == "Link")
-        #expect(ClipboardList.typeName(of: entry(.text, "#FFF")) == "Colour")
+        #expect(ClipboardList.typeName(of: entry(.text, "#FFF")) == "Color")
     }
 
     @Test func textFromTerminalsIsCode() {

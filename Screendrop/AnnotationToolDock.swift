@@ -56,7 +56,7 @@ struct AnnotationToolDock: View {
             AnnotationDockButton(
                 systemImage: "eyedropper",
                 title: "Pick Color",
-                help: "Pick a colour: click the image to copy its hex. Tab copies the colour under the pointer any time.",
+                help: "Pick a color: click the image to copy its hex. Tab copies the color under the pointer any time.",
                 isSelected: probe.isPicking
             ) {
                 probe.isPicking.toggle()

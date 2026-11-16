@@ -24,8 +24,8 @@ struct AnnotationStylePillButton: View {
         }
         .buttonStyle(.plain)
         .disabled(!isAvailable)
-        .help("Colour and size")
-        .accessibilityLabel("Colour and size, \(model.selectedSwatch.title)")
+        .help("Color and size")
+        .accessibilityLabel("Color and size, \(model.selectedSwatch.title)")
         .closesOnEditorEscape($isPresented)
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 8) {

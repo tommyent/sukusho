@@ -12,7 +12,7 @@ nonisolated enum ClipboardFilter: String, CaseIterable, Identifiable, Sendable {
         case .images: "Images"
         case .text: "Text"
         case .links: "Links"
-        case .colors: "Colours"
+        case .colors: "Colors"
         case .files: "Files"
         case .snippets: "Snippets"
         }
@@ -138,7 +138,7 @@ nonisolated enum ClipboardList {
         case .text:
             switch textForm(of: entry) {
             case .link: return "Link"
-            case .color: return "Colour"
+            case .color: return "Color"
             default: return "Text"
             }
         }

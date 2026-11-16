@@ -246,7 +246,7 @@ private struct WorkspaceWallpaperSettings: View {
                     .frame(width: 40, alignment: .trailing)
             }
         } label: {
-            SettingsControlLabel("Dim", detail: "Fades the wallpaper into the workspace grey so cards and canvases stand out, half as much again in dark mode.")
+            SettingsControlLabel("Dim", detail: "Fades the wallpaper into the workspace gray so cards and canvases stand out, half as much again in dark mode.")
         }
 
         SettingsControlLabel(
@@ -258,7 +258,7 @@ private struct WorkspaceWallpaperSettings: View {
         .toggleStyle(.switch)
 
         if reduceTransparency || contrast == .increased {
-            Text("Reduce Transparency or Increase Contrast is on in Accessibility settings, so the workspaces use the plain grey.")
+            Text("Reduce Transparency or Increase Contrast is on in Accessibility settings, so the workspaces use the plain gray.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
