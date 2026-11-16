@@ -24,6 +24,8 @@ nonisolated enum ClipboardCapturePolicy {
     /// The apps Tinycast ignores by default: Keychain Access, Passwords, 1Password.
     static let defaultIgnoredApps = ["com.apple.keychainaccess", "com.apple.Passwords", "com.1password.1password"]
     static let sourceType = "org.nspasteboard.source"
+    /// Stamped on what Sukusho writes from history, so the monitor doesn't record it again.
+    static let ownType = "com.tommyent.Sukusho.clipboard-history"
     /// Universal Clipboard's marker (community-documented, not Apple API).
     static let remoteType = "com.apple.is-remote-clipboard"
     static let fileURLType = "public.file-url"
@@ -42,6 +44,8 @@ nonisolated enum ClipboardCapturePolicy {
 
     enum Skip: Equatable, Sendable {
         case privateType(String), ignoredApp(String), nothingKept, tooLarge
+        /// Sukusho put it there from history; that entry was already moved to the top.
+        case ownWrite
     }
 
     enum Content: Equatable, Sendable {

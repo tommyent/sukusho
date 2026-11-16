@@ -280,4 +280,117 @@ struct ClipboardHistoryStoreTests {
         try await store().record(text("kept"), at: start)
         #expect(try await store().entries().map(\.text) == ["kept"])
     }
+
+    @Test func touchMovesAnEntryToTheTop() async throws {
+        let store = try store()
+        guard case .inserted(let older) = try await store.record(text("older"), at: start) else { return }
+        try await store.record(text("newer"), at: start + 1)
+        try await store.touch(older, at: start + 2)
+        let entries = try await store.entries()
+        #expect(entries.map(\.text) == ["older", "newer"])
+        #expect(entries[0].timesCopied == 2)
+    }
+
+    @Test func deletingHistoryKeepsSnippets() async throws {
+        let store = try store()
+        try await store.record(image(500), at: start)
+        try await store.record(text("gone"), at: start)
+        try await store.addSnippet(title: "Kept", text: "body", at: start)
+        try await store.deleteHistory()
+        #expect(try await store.entries().map(\.title) == ["Kept"])
+        #expect(try await store.totalBytes() == 4)
+    }
+}
+
+@Suite
+struct ClipboardListTests {
+    private var calendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        return calendar
+    }
+    private let now = Date(timeIntervalSince1970: 1_800_000_000) // a Friday, 08:00 UTC
+
+    private func entry(_ kind: ClipboardEntryKind = .text, _ text: String? = nil, title: String? = nil,
+                       ago: TimeInterval = 0, pinnedAgo: TimeInterval? = nil, source: String? = nil,
+                       size: (Int, Int) = (0, 0), image: String? = nil) -> ClipboardEntry {
+        ClipboardEntry(id: UUID().uuidString, kind: kind, text: text, title: title,
+                       imageURL: image.map { URL(fileURLWithPath: "/tmp/\($0)") }, libraryPath: nil, byteSize: 0,
+                       pixelWidth: size.0, pixelHeight: size.1, sourceBundleID: source, isRemote: false,
+                       firstCopiedAt: now - ago, lastCopiedAt: now - ago, timesCopied: 1,
+                       pinnedAt: pinnedAgo.map { now - $0 })
+    }
+
+    @Test func pinnedThenTodayYesterdayEarlier() {
+        let entries = [
+            entry(.text, "this morning", ago: 3600),
+            entry(.text, "yesterday", ago: 86_400),
+            entry(.text, "last week", ago: 7 * 86_400),
+            entry(.text, "pinned long ago", ago: 30 * 86_400, pinnedAgo: 60),
+            entry(.snippet, "body", title: "A snippet"),
+        ]
+        let sections = ClipboardList.sections(entries, filter: .all, query: CaptureLibraryQuery(""), now: now, calendar: calendar)
+        #expect(sections.map(\.title) == ["Pinned", "Today", "Yesterday", "Earlier"])
+        #expect(sections.map { $0.entries.map(\.text) } == [["pinned long ago"], ["this morning"], ["yesterday"], ["last week"]])
+    }
+
+    @Test func filtersByWhatTheTextIs() {
+        let entries = [entry(.text, "#ff6363"), entry(.text, "https://example.com"), entry(.text, "plain words"),
+                       entry(.image, size: (10, 10)), entry(.files, "/tmp/a.txt"), entry(.snippet, "s", title: "S")]
+        func shown(_ filter: ClipboardFilter) -> [ClipboardEntryKind] {
+            ClipboardList.sections(entries, filter: filter, query: CaptureLibraryQuery(""), now: now, calendar: calendar)
+                .flatMap(\.entries).map(\.kind)
+        }
+        #expect(shown(.all).count == 5)
+        #expect(shown(.colors) == [.text])
+        #expect(shown(.links) == [.text])
+        #expect(shown(.text) == [.text])
+        #expect(shown(.images) == [.image])
+        #expect(shown(.files) == [.files])
+        #expect(shown(.snippets) == [.snippet])
+    }
+
+    @Test func searchUsesTheLibrarysRules() {
+        let chrome = entry(.text, "release notes", source: "com.google.Chrome")
+        let rex = entry(.text, "release build", source: "com.superlogical.rex")
+        let names = ["com.google.Chrome": "Google Chrome", "com.superlogical.rex": "Rex"]
+        func found(_ query: String) -> [String?] {
+            ClipboardList.sections([chrome, rex], filter: .all, query: CaptureLibraryQuery(query),
+                                   appName: { $0.flatMap { names[$0] } }, now: now, calendar: calendar)
+                .flatMap(\.entries).map(\.text)
+        }
+        #expect(found("release").count == 2)
+        #expect(found("release app:chrome") == ["release notes"])
+        #expect(found("notes") == ["release notes"])
+        #expect(found("nothing like it").isEmpty)
+    }
+
+    @Test func titlesAndTypes() {
+        #expect(ClipboardList.title(of: entry(.image, size: (2880, 1800))) == "Image (2880×1800)")
+        #expect(ClipboardList.title(of: entry(.text, " #ff6363 ")) == "#FF6363")
+        #expect(ClipboardList.title(of: entry(.text, "\n\n  first line  \nsecond")) == "first line")
+        #expect(ClipboardList.title(of: entry(.files, "/a/one.png\n/b/two.txt")) == "one.png, two.txt")
+        #expect(ClipboardList.title(of: entry(.files, "/1\n/2\n/3\n/4")) == "4 files")
+        #expect(ClipboardList.title(of: entry(.snippet, "x", title: "")) == "Untitled Snippet")
+        #expect(ClipboardList.typeName(of: entry(.image, image: "a.jpg")) == "JPEG image")
+        #expect(ClipboardList.typeName(of: entry(.image, image: "a.png")) == "PNG image")
+        #expect(ClipboardList.typeName(of: entry(.text, "https://example.com")) == "Link")
+        #expect(ClipboardList.typeName(of: entry(.text, "#FFF")) == "Colour")
+    }
+}
+
+@Suite
+struct ClipboardOwnWriteTests {
+    @Test func historysOwnWritesAreNotRecordedAgain() {
+        let pasteboard = NSPasteboard(name: .init("SukushoClipboardTest-\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        let item = NSPasteboardItem()
+        item.setString("again", forType: .string)
+        item.setData(Data(), forType: .init(ClipboardCapturePolicy.ownType))
+        pasteboard.writeObjects([item])
+        let outcome = ClipboardPasteboardReader.read(pasteboard, changeCount: pasteboard.changeCount, frontmostBundleID: nil,
+                                                     ignoredApps: [], historyDirectory: URL(fileURLWithPath: "/tmp/History")).outcome
+        #expect(outcome == .skipped(.ownWrite))
+    }
 }

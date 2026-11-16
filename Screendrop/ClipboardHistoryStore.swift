@@ -152,6 +152,17 @@ actor ClipboardHistoryStore {
                 [pinned ? date.timeIntervalSince1970 : nil, try nextChange(), id])
     }
 
+    /// Pasted or copied again from history: to the top, one more copy.
+    func touch(_ id: String, at date: Date = .now) throws {
+        try run("UPDATE entries SET last_copied_at = ?, times_copied = times_copied + 1, change_seq = ? WHERE id = ?",
+                [date.timeIntervalSince1970, try nextChange(), id])
+    }
+
+    /// Everything but snippets, and the images kept for it.
+    func deleteHistory() throws {
+        try delete(ids: try query("SELECT id FROM entries WHERE kind != 'snippet'", []) { $0.text(0) ?? "" })
+    }
+
     func delete(_ id: String) throws {
         try delete(ids: [id])
     }
