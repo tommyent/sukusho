@@ -298,7 +298,7 @@ struct ClipboardSetupPage: View {
                     }
                     Divider()
                     step(done: false, "One history",
-                         "Spotlight, Tinycast and Raycast can keep their own clipboard history. Turning theirs off keeps one copy of what you copy.")
+                         "Spotlight and other clipboard managers can keep their own history. Turning theirs off keeps one copy of what you copy.")
                 }
                 .background(.background, in: RoundedRectangle(cornerRadius: DS.Radius.card))
                 .overlay(RoundedRectangle(cornerRadius: DS.Radius.card).strokeBorder(.separator, lineWidth: 0.5))

@@ -67,7 +67,7 @@ final class ClipboardHistoryModel {
 
     // MARK: - Apps
 
-    /// Nil when the app isn't on this Mac; the Information block then leaves Source out, as Tinycast does.
+    /// Nil when the app isn't on this Mac; the Information block then leaves Source out.
     func appName(_ bundleID: String?) -> String? {
         guard let bundleID else { return nil }
         if let name = appNames[bundleID] { return name.isEmpty ? nil : name }
