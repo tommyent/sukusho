@@ -5,11 +5,15 @@
 
 import SwiftUI
 
-/// Settings › Library: what the Library reads from captures and names them with.
+/// Settings › Library: what the Library reads from captures and names them with, and clipboard history.
 struct LibrarySettingsPane: View {
     @AppStorage(ScreendropPreferences.libraryReadsTextKey) private var libraryReadsText = true
     @AppStorage(ScreendropPreferences.libraryUsesIntelligenceKey) private var libraryUsesIntelligence = true
     @AppStorage(ScreendropPreferences.libraryInsightsIncludeExistingKey) private var insightsIncludeExisting = false
+    @AppStorage(ScreendropPreferences.clipboardHistoryEnabledKey) private var clipboardEnabled = false
+    // shortcut: 30 days is a provisional default the owner hasn't confirmed yet (0 keeps everything).
+    @AppStorage(ScreendropPreferences.clipboardRetentionDaysKey) private var clipboardRetentionDays = 30
+    @State private var confirmingDeleteHistory = false
 
     var body: some View {
         Form {
@@ -34,6 +38,7 @@ struct LibrarySettingsPane: View {
                     existingCapturesRow
                 }
             }
+            clipboardSection
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
@@ -75,6 +80,47 @@ struct LibrarySettingsPane: View {
     }
 
     private static let secondsPerCapture = 2.5
+
+    /// Clipboard history, off until turned on; its page sits in the Library sidebar.
+    private var clipboardSection: some View {
+        Section("Clipboard") {
+            SettingsControlLabel(
+                "Keep clipboard history",
+                detail: "Find and paste what you copied, from \(clipboardShortcut) or Clipboard in the Library. Kept on this Mac; concealed items and password managers are skipped. Nothing is recorded while this is off."
+            ).control { label in
+                Toggle(isOn: $clipboardEnabled) { label }
+            }
+            .toggleStyle(.switch)
+            Picker("Keep copies for", selection: $clipboardRetentionDays) {
+                Text("1 Day").tag(1)
+                Text("1 Week").tag(7)
+                Text("1 Month").tag(30)
+                Text("1 Year").tag(365)
+                Text("Forever").tag(0)
+            }
+            .disabled(!clipboardEnabled)
+            HStack {
+                SettingsControlLabel("Shortcut", detail: "\(clipboardShortcut) opens the clipboard popup. Change it in Shortcuts.")
+                Spacer()
+                Button("Change…") { SettingsWindowController.show(tab: .shortcuts) }.controlSize(.small)
+            }
+            HStack {
+                SettingsControlLabel("Delete history", detail: "Removes every copy from this Mac, pinned ones too. Snippets stay.")
+                Spacer()
+                Button("Delete History…") { confirmingDeleteHistory = true }.controlSize(.small)
+            }
+            .disabled(!clipboardEnabled)
+        }
+        .confirmationDialog("Delete clipboard history?", isPresented: $confirmingDeleteHistory) {
+            Button("Delete History", role: .destructive) { ClipboardHistoryModel.shared.deleteHistory() }
+        } message: {
+            Text("Every copy is removed from this Mac, pinned ones too. Snippets stay.")
+        }
+    }
+
+    private var clipboardShortcut: String {
+        CaptureHotkeyPreferences.shortcut(for: .clipboardHistory)?.displayTokens.joined() ?? "its shortcut"
+    }
 }
 
 /// Settings › Shortcuts: every system-wide shortcut in one place, captures first, images
