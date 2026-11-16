@@ -58,8 +58,47 @@ enum ScreendropPreferences {
     static let libraryUsesIntelligenceKey = "libraryUsesIntelligence"
     static let libraryInsightsIncludeExistingKey = "libraryInsightsIncludeExisting"
     private static let libraryInsightsSinceKey = "libraryInsightsSince"
+    static let clipboardHistoryEnabledKey = "clipboardHistoryEnabled"
+    static let clipboardRetentionDaysKey = "clipboardRetentionDays"
+    static let clipboardMaxStorageMBKey = "clipboardMaxStorageMB"
+    static let clipboardIgnoredAppsKey = "clipboardIgnoredApps"
+    private static let clipboardDeviceIDKey = "clipboardDeviceID"
+    /// Hidden: `defaults write <bundle id> ClipboardTrace -bool YES` logs each
+    /// copy's types, source and sizes, never its contents, to the unified log.
+    static let clipboardTraceKey = "ClipboardTrace"
 
     private static let defaultCompressionQuality = 0.8
+
+    /// Clipboard history is off until the user turns it on.
+    static var clipboardHistoryEnabled: Bool {
+        UserDefaults.standard.bool(forKey: clipboardHistoryEnabledKey)
+    }
+
+    /// shortcut: 1 month is a provisional default the owner hasn't confirmed yet; 0 keeps everything.
+    static var clipboardRetention: TimeInterval? {
+        let days = UserDefaults.standard.object(forKey: clipboardRetentionDaysKey) == nil
+            ? 30 : UserDefaults.standard.integer(forKey: clipboardRetentionDaysKey)
+        return days > 0 ? TimeInterval(days) * 86_400 : nil
+    }
+
+    /// shortcut: 2 GB is a provisional default the owner hasn't confirmed yet.
+    static var clipboardMaxStorageBytes: Int64 {
+        let megabytes = UserDefaults.standard.object(forKey: clipboardMaxStorageMBKey) == nil
+            ? 2048 : UserDefaults.standard.integer(forKey: clipboardMaxStorageMBKey)
+        return Int64(max(megabytes, 1)) * 1024 * 1024
+    }
+
+    static var clipboardIgnoredApps: [String] {
+        UserDefaults.standard.stringArray(forKey: clipboardIgnoredAppsKey) ?? ClipboardCapturePolicy.defaultIgnoredApps
+    }
+
+    /// Which Mac a clipboard entry came from, for sync later. Made once, kept.
+    static var clipboardDeviceID: String {
+        if let id = UserDefaults.standard.string(forKey: clipboardDeviceIDKey) { return id }
+        let id = UUID().uuidString
+        UserDefaults.standard.set(id, forKey: clipboardDeviceIDKey)
+        return id
+    }
 
     static var autoSave: Bool {
         UserDefaults.standard.bool(forKey: autoSaveKey)
