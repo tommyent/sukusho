@@ -67,6 +67,8 @@ final class ClipboardMonitor {
         RunLoop.main.add(sweep, forMode: .common)
         sweepTimer = sweep
         self.sweep()
+        ClipboardHistoryModel.shared.refresh()
+        HotkeyManager.shared.reloadHotkeys()
     }
 
     private func stop() {
@@ -79,6 +81,8 @@ final class ClipboardMonitor {
         isRunning = false
         isReading = false
         readToken += 1
+        ClipboardHistoryModel.shared.refresh()
+        HotkeyManager.shared.reloadHotkeys()
     }
 
     private func poll() {
@@ -130,7 +134,7 @@ final class ClipboardMonitor {
         case .captured(let capture):
             guard let store else { return }
             Task {
-                do { try await store.record(capture) } catch {
+                do { try await store.record(capture); ClipboardHistoryModel.shared.refresh() } catch {
                     logger.error("Clipboard history can't save a copy: \(String(describing: error), privacy: .public)")
                 }
             }

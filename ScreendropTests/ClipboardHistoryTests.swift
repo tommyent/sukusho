@@ -377,6 +377,12 @@ struct ClipboardListTests {
         #expect(ClipboardList.typeName(of: entry(.text, "https://example.com")) == "Link")
         #expect(ClipboardList.typeName(of: entry(.text, "#FFF")) == "Colour")
     }
+
+    @Test func textFromTerminalsIsCode() {
+        #expect(ClipboardList.looksLikeCode(entry(.text, "swift test", source: "com.superlogical.rex")))
+        #expect(!ClipboardList.looksLikeCode(entry(.text, "swift test", source: "com.google.Chrome")))
+        #expect(!ClipboardList.looksLikeCode(entry(.text, "https://example.com", source: "com.superlogical.rex")))
+    }
 }
 
 @Suite

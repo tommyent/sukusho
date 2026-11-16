@@ -114,6 +114,16 @@ nonisolated enum ClipboardList {
         }
     }
 
+    /// Terminals and code editors: their text shows in a monospaced face.
+    static let codeApps: Set<String> = [
+        "com.superlogical.rex", "com.mitchellh.ghostty", "com.apple.Terminal", "com.googlecode.iterm2",
+        "com.apple.dt.Xcode", "com.microsoft.VSCode", "com.sublimetext.4", "dev.zed.Zed",
+    ]
+
+    static func looksLikeCode(_ entry: ClipboardEntry) -> Bool {
+        textForm(of: entry) == .plain && entry.sourceBundleID.map(codeApps.contains) == true
+    }
+
     /// The Information block's "Content type".
     static func typeName(of entry: ClipboardEntry) -> String {
         switch entry.kind {
