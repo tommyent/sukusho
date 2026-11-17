@@ -308,18 +308,12 @@ struct CloudUploadOptionsPopover: View {
 /// says otherwise.
 struct CloudShareDefaultsSection: View {
     @AppStorage(CloudUploadPreferences.defaultExpiryKey) private var expiry = CloudExpiry.never
-    @AppStorage(ShakeToUpload.enabledKey) private var shakeToUpload = false
 
     var body: some View {
         Section {
             Picker("Default link expiry", selection: $expiry) {
                 ForEach(CloudExpiry.allCases) { Text($0.title).tag($0) }
             }
-            Toggle(isOn: $shakeToUpload) {
-                Text("Shake while dragging files to upload")
-                Text("Shake the pointer while you drag files from Finder or the Desktop, then drop them on the shelf that appears. Hold Option as you drop to skip Share Options.")
-            }
-            .onChange(of: shakeToUpload) { ShakeToUpload.shared.update() }
         } header: {
             Text("Sharing")
         } footer: {

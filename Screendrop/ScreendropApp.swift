@@ -188,6 +188,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         CaptureLibraryIndex.shared.start()
         FileRequestsModel.shared.start()
         ShakeToUpload.shared.update()
+        // Results the last session left for a paste or an upload: nothing needs them now.
+        try? FileManager.default.removeItem(at: ImageOptimizer.shared.outputDirectory)
         AgentAccess.shared.start()
         ClipboardMonitor.shared.update()
         // shortcut: a fixed 3 s lets the Library or an editor open first, so Sparkle's question on the second

@@ -2,11 +2,13 @@
 //  ShakeToUpload.swift
 //  Screendrop
 //
-//  Settings › Cloud › Shake while dragging files to upload. While files are
+//  Settings › General › Shake while dragging files. While files are
 //  dragged from another app, such as Finder or the Desktop, a shake of the
 //  pointer brings up a small shelf under it. Dropping the files there shares
 //  them as the Library's Files page does: Share Options first, unless the drop
-//  lands on Upload Now or Option is held, and the links are copied.
+//  lands on Upload Now or Option is held, and the links are copied. A drop on
+//  Optimize or WebP keeps the files on the shelf while they are made smaller
+//  (ShakeShelfOptimize.swift); they are shared, copied or saved from there.
 //
 
 import AppKit
@@ -20,13 +22,15 @@ final class ShakeToUpload {
     static let enabledKey = "shakeToUploadEnabled"
 
     enum Tile: CaseIterable {
-        case share, upload, gallery
+        case share, upload, gallery, optimize, webP
 
         var title: String {
             switch self {
             case .share: "Share…"
             case .upload: "Upload Now"
             case .gallery: "Gallery…"
+            case .optimize: "Optimize"
+            case .webP: "WebP"
             }
         }
 
@@ -35,6 +39,8 @@ final class ShakeToUpload {
             case .share: "square.and.arrow.up"
             case .upload: "icloud.and.arrow.up"
             case .gallery: "square.grid.2x2"
+            case .optimize: "arrow.down.right.and.arrow.up.left"
+            case .webP: "photo.badge.arrow.down"
             }
         }
 
@@ -43,9 +49,19 @@ final class ShakeToUpload {
             case .share: "Share with Share Options"
             case .upload: "Upload now with your saved Share Options"
             case .gallery: "Share as one gallery"
+            case .optimize: "Optimize, keeping each file's format"
+            case .webP: "Convert to WebP"
             }
         }
     }
+
+    /// What the shelf does with the files it holds, once they are optimized.
+    enum Finish {
+        case share, upload, gallery, copy, save(replacing: Bool), done
+    }
+
+    /// The files being optimized on the shelf, while it holds them.
+    private(set) var holding: ShelfOptimization?
 
     /// The tile a drag is over, for its highlight.
     private(set) var targeted: Tile?
@@ -103,22 +119,28 @@ final class ShakeToUpload {
 
     // MARK: - Shelf
 
+    /// The sharing tiles need Cloud set up and no upload still running; Optimize and WebP are always there.
+    private var offersCloud: Bool {
+        CloudUploader.shared.isConfigured && CloudLibraryModel.shared.fileUploads == nil
+    }
+
     private func showShelf() {
-        guard CloudUploader.shared.isConfigured else { return }
-        guard CloudLibraryModel.shared.fileUploads == nil else {
-            CaptureTextFeedbackPresenter.shared.showDone("Still Uploading", detail: "Shake again once the upload finishes.",
-                                                         symbol: "icloud.and.arrow.up", displayID: Self.display)
-            return
-        }
         let files = NSPasteboard(name: .drag).readObjects(forClasses: [NSURL.self],
                                                          options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
         guard !files.isEmpty else { return }
-        let tiles = Tile.allCases.filter {
-            $0 != .gallery || ShakeShelfFiles.canShareGallery(files, workerSupportsGalleries: CloudLibraryModel.shared.supportsGalleries)
+        let offersCloud = offersCloud
+        let tiles = Tile.allCases.filter { tile in
+            switch tile {
+            case .share, .upload: offersCloud
+            case .gallery: offersCloud && ShakeShelfFiles.canShareGallery(files, workerSupportsGalleries: CloudLibraryModel.shared.supportsGalleries)
+            case .optimize, .webP: true
+            }
         }
-        let view = ShakeShelfView(tiles: tiles, files: files)
+        let view = ShakeShelfView(tiles: tiles, files: files,
+                                  isUploading: CloudUploader.shared.isConfigured && CloudLibraryModel.shared.fileUploads != nil)
         let size = NSHostingController(rootView: view).sizeThatFits(in: CGSize(width: 2000, height: 2000))
-        // The first tile, Share…, opens under the pointer, so a drop right where the shake ended asks first.
+        // The first tile opens under the pointer: Share…, so a drop right where the shake ended asks first, or
+        // Optimize without Cloud.
         let pointer = Self.pointer
         let tileCenter = CGPoint(x: ShakeShelfView.margin + ShakeShelfView.inset + ShakeShelfView.tileSize.width / 2,
                                  y: ShakeShelfView.margin + ShakeShelfView.inset + ShakeShelfView.tileSize.height / 2)
@@ -174,10 +196,13 @@ final class ShakeToUpload {
         let files = CloudLibraryModel.regularFiles(urls)
         // As the Files page says it; the files go on without the folders.
         if files.count < urls.count {
-            CaptureTextFeedbackPresenter.shared.showDone("Folders Can’t Be Shared", detail: "Drop the files inside them instead.",
+            let optimizes = tile == .optimize || tile == .webP
+            CaptureTextFeedbackPresenter.shared.showDone(optimizes ? "Folders Are Left Out" : "Folders Can’t Be Shared",
+                                                         detail: "Drop the files inside them instead.",
                                                          symbol: "folder", displayID: Self.display)
         }
         guard !files.isEmpty else { return dismiss() }
+        if tile == .optimize || tile == .webP { return showHolding(files, format: tile == .webP ? .webP : .same) }
         let gallery = tile == .gallery
         if tile == .upload || NSEvent.modifierFlags.contains(.option) {
             start(files, gallery: gallery, options: .savedDefaults)
@@ -198,6 +223,101 @@ final class ShakeToUpload {
                                      near: top), display: true)
         // Key without activating Sukusho, so the title and password fields take typing.
         panel.makeKey()
+    }
+
+    // MARK: - Holding
+
+    private func showHolding(_ files: [URL], format: ShelfOptimization.Format) {
+        guard let panel else { return }
+        stopWatchingDrag()
+        showsShelf = false
+        targeted = nil
+        let model = ShelfOptimization(files: files, format: format)
+        holding = model
+        let offersCloud = offersCloud
+        let offersGallery = offersCloud
+            && ShakeShelfFiles.canShareGallery(files, workerSupportsGalleries: CloudLibraryModel.shared.supportsGalleries)
+        let view = ShakeShelfHolding(model: model, offersCloud: offersCloud, offersGallery: offersGallery) { [weak self] in
+            self?.finishHolding($0)
+        }
+        let size = NSHostingController(rootView: view).sizeThatFits(in: CGSize(width: 2000, height: 2000))
+        let top = CGPoint(x: panel.frame.midX, y: panel.frame.maxY)
+        install(view, in: panel)
+        panel.setFrame(Self.onScreen(CGRect(x: top.x - size.width / 2, y: top.y - size.height, width: size.width, height: size.height),
+                                     near: top), display: true)
+        // Key without activating Sukusho, so Esc and the buttons work while another app stays in front.
+        panel.makeKey()
+        AccessibilityNotification.Announcement("\(format == .same ? "Optimizing" : "Converting") "
+            + (files.count == 1 ? "1 file" : "\(files.count) files") + " on the Sukusho shelf.").post()
+    }
+
+    /// Esc on the list is Done; anywhere else it puts the shelf away.
+    func escape() {
+        if holding != nil { finishHolding(.done) } else { dismiss() }
+    }
+
+    func finishHolding(_ finish: Finish) {
+        guard let holding else { return }
+        holding.stop()
+        let files = holding.files
+        let toast = CaptureTextFeedbackPresenter.shared
+        switch finish {
+        case .share, .gallery:
+            // The results stay until the next launch: the upload reads them after the shelf is gone.
+            self.holding = nil
+            if case .gallery = finish { showOptions(files, gallery: true) } else { showOptions(files, gallery: false) }
+        case .upload:
+            self.holding = nil
+            start(files, gallery: false, options: .savedDefaults)
+        case .copy:
+            do {
+                try VideoFileActions.copyFilesToClipboard(from: files)
+                toast.showDone(files.count == 1 ? "File Copied" : "\(files.count) Files Copied",
+                               detail: files.count == 1 ? files[0].lastPathComponent : "Ready to paste", displayID: Self.display)
+            } catch {
+                toast.showDone("Couldn’t Copy", detail: error.localizedDescription, symbol: "exclamationmark.triangle", displayID: Self.display)
+            }
+            holding.discard()
+            dismiss()
+        case .save(let replacing):
+            save(holding, replacing: replacing)
+            holding.discard()
+            dismiss()
+        case .done:
+            holding.discard()
+            dismiss()
+        }
+    }
+
+    /// Writes each new file beside its original, as "name optimized.png" or "name.webp". With `replacing`,
+    /// the original goes to the Trash and the new file takes its name.
+    private func save(_ holding: ShelfOptimization, replacing: Bool) {
+        var saved: [URL] = []
+        var failure: String?
+        for row in holding.rows {
+            guard let result = row.result, result.outcome == .optimized || result.outcome == .converted else { continue }
+            let base = row.file.deletingPathExtension().lastPathComponent
+            let sameFormat = result.url.pathExtension.lowercased() == row.file.pathExtension.lowercased()
+            do {
+                if replacing { try FileManager.default.trashItem(at: row.file, resultingItemURL: nil) }
+                let name = (replacing || !sameFormat ? base : "\(base) optimized") + "." + result.url.pathExtension
+                let destination = ScreenshotFileNaming.uniqueURL(for: name, in: row.file.deletingLastPathComponent())
+                try FileManager.default.copyItem(at: result.url, to: destination)
+                saved.append(destination)
+            } catch {
+                failure = error.localizedDescription
+            }
+        }
+        let toast = CaptureTextFeedbackPresenter.shared
+        if let failure {
+            toast.showDone("Couldn’t Save", detail: failure, symbol: "exclamationmark.triangle", displayID: Self.display)
+        } else if saved.isEmpty {
+            toast.showDone("Nothing to Save", detail: "No file came out smaller.", symbol: "equal.circle", displayID: Self.display)
+        } else {
+            toast.showDone(saved.count == 1 ? "Saved" : "\(saved.count) Files Saved",
+                           detail: replacing ? "The originals are in the Trash." : "Beside the originals", displayID: Self.display)
+        }
+        if !saved.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(saved) }
     }
 
     func start(_ files: [URL], gallery: Bool, options: CloudUploadOptions) {
@@ -226,6 +346,8 @@ final class ShakeToUpload {
 
     func dismiss() {
         stopWatchingDrag()
+        holding?.stop()
+        holding = nil
         panel?.orderOut(nil)
         panel = nil
         showsShelf = false
@@ -273,6 +395,10 @@ final class ShakeToUpload {
 
 private final class ShakeShelfPanel: NSPanel {
     override var canBecomeKey: Bool { true }
+
+    override func cancelOperation(_ sender: Any?) {
+        ShakeToUpload.shared.escape()
+    }
 }
 
 /// One glass panel of drop tiles, with what's being dragged below them.
@@ -284,6 +410,8 @@ private struct ShakeShelfView: View {
 
     let tiles: [ShakeToUpload.Tile]
     let files: [URL]
+    /// Cloud is set up but busy, so the sharing tiles are left out this time.
+    var isUploading = false
     @State private var shelf = ShakeToUpload.shared
     @State private var appeared = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -313,7 +441,8 @@ private struct ShakeShelfView: View {
 
     private var caption: String {
         let what = files.count == 1 ? files[0].lastPathComponent : "\(files.count) files"
-        return "\(what) · ⌥ skips options"
+        if isUploading { return "\(what) · still uploading the last ones" }
+        return tiles.contains(.share) ? "\(what) · ⌥ skips options" : what
     }
 
     private func tile(_ tile: ShakeToUpload.Tile) -> some View {

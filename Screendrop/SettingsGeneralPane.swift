@@ -16,6 +16,7 @@ struct GeneralSettingsPane: View {
     private var includeAppWindowsInCaptures = false
     @AppStorage(WorkspaceBackground.styleKey) private var workspaceStyle = WorkspaceBackground.Style.dots
     @AppStorage(AppAppearance.key) private var appearance = AppAppearance.automatic
+    @AppStorage(ShakeToUpload.enabledKey) private var shakeShelf = false
     @State private var launchAtLoginStatus = LaunchAtLoginController.status
     @State private var launchAtLoginError: String?
 
@@ -93,6 +94,15 @@ struct GeneralSettingsPane: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+
+                SettingsControlLabel(
+                    "Shake while dragging files",
+                    detail: "Shake the pointer while you drag files from Finder or the Desktop, then drop them on the shelf that appears to optimize, convert or share them. Hold Option as you drop to skip Share Options."
+                ).control { label in
+                    Toggle(isOn: $shakeShelf) { label }
+                }
+                .toggleStyle(.switch)
+                .onChange(of: shakeShelf) { ShakeToUpload.shared.update() }
 
                 SettingsControlLabel(
                     "Play sounds",
