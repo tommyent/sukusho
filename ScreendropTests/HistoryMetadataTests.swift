@@ -201,4 +201,14 @@ struct HistoryMetadataTests {
         #expect(CaptureSavedMarks.rows(ofRecordingAt: "/Library/Sukusho/Recordings/a.sukushorec", in: rows) == [first, second])
         #expect(CaptureSavedMarks.rows(ofRecordingAt: "/Library/Sukusho/Recordings/c.sukushorec", in: rows).isEmpty)
     }
+
+    /// Astra M3: a share that finishes while another Library operation runs still saves what it shared; the user's
+    /// own Save waits for the operation, as every command does.
+    @Test func aCompletedShareSavesEvenWhileTheLibraryIsBusy() {
+        // Share started, then an export began, then the share's service reported it was done.
+        #expect(LibrarySaveRequest.completion.applies(whileBusy: true))
+        #expect(LibrarySaveRequest.completion.applies(whileBusy: false))
+        #expect(!LibrarySaveRequest.command.applies(whileBusy: true))
+        #expect(LibrarySaveRequest.command.applies(whileBusy: false))
+    }
 }

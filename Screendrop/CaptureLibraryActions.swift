@@ -50,7 +50,8 @@ extension CaptureLibraryModel {
                     urls.append(url)
                 }
                 // Saved once the chosen service says it shared them, not when the picker opens (Astra L5).
-                LibrarySharing.show(urls) { self.setSaved(true, items: selected) }
+                // A completion records a share that already happened, so it isn't dropped while another operation runs.
+                LibrarySharing.show(urls) { self.setSaved(true, items: selected, request: .completion) }
             }
         case .reveal:
             NSWorkspace.shared.activateFileViewerSelecting(selected.map(\.ownedURL))
@@ -170,8 +171,8 @@ extension CaptureLibraryModel {
 
     /// Saves the selected captures to Library › Saved (★), or takes them out. Recordings keep the flag in
     /// their own project, screenshots in the Library history, as tags do.
-    func setSaved(_ saved: Bool, items: [CaptureLibraryItem]? = nil) {
-        guard !isBusy else { return }
+    func setSaved(_ saved: Bool, items: [CaptureLibraryItem]? = nil, request: LibrarySaveRequest = .command) {
+        guard request.applies(whileBusy: isBusy) else { return }
         var historyIDs = Set<UUID>()
         for item in items ?? selectedItems {
             if let session = item.session {
