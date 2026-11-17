@@ -13,6 +13,9 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
     static let shared = QuickLookPreviewPresenter()
     
     private var previewURLs: [NSURL] = []
+    /// What Quick Look's title bar says for each file: the capture's Library title where it has one, rather than the
+    /// stored `screenshot_…` name (Fable #8).
+    private var previewTitles: [String?] = []
     private var preparationTask: Task<Void, Never>?
     /// Set when Quick Look itself tucked an expanded stack into its peek tab,
     /// so closing Quick Look expands only a stack it tucked. It records that
@@ -95,6 +98,7 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
         // Following the selection never reopens a panel that closed while a recording rendered.
         if keepingFocus, !Self.isShown { return }
         previewURLs = urls.map { $0 as NSURL }
+        previewTitles = urls.map(Self.libraryTitle)
         openedFromLibrary = !collapsingPreviewStack
         
         guard let panel = QLPreviewPanel.shared() else {
@@ -175,7 +179,30 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
     
     nonisolated func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
         MainActor.assumeIsolated {
-            previewURLs.indices.contains(index) ? previewURLs[index] : nil
+            guard previewURLs.indices.contains(index) else { return nil }
+            let url = previewURLs[index]
+            guard previewTitles.indices.contains(index), let title = previewTitles[index] else { return url }
+            return TitledPreviewItem(url: url as URL, title: title)
         }
+    }
+
+    /// The Library's title for a capture's file (its name, a model's title, its app and window, or the date), or nil
+    /// for a file that isn't a capture.
+    private static func libraryTitle(for url: URL) -> String? {
+        let path = url.standardizedFileURL.path
+        return CaptureLibraryModel.shared.items.first { item in
+            item.fileURL.standardizedFileURL.path == path || item.ownedURL.standardizedFileURL.path == path
+        }?.title
+    }
+}
+
+/// A file Quick Look shows under a title of its own.
+private final class TitledPreviewItem: NSObject, QLPreviewItem {
+    let previewItemURL: URL!
+    let previewItemTitle: String!
+
+    init(url: URL, title: String) {
+        previewItemURL = url
+        previewItemTitle = title
     }
 }
