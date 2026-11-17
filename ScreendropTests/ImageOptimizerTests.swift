@@ -740,6 +740,71 @@ private func isRunning(_ text: String) -> Bool {
                           "transparency gone")
     }
 
+    /// editor-opus M1: a result that has lost its color, on a real capture that is mostly neutral with small
+    /// colored parts. Its brightness and patterns are all there, so only a check of color can refuse it.
+    @Test func aResultThatLostItsColorIsRefused() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let capture = bench.folder.appending(path: "Library.png")
+        try FileManager.default.copyItem(at: try realCapture(), to: capture)
+
+        // Real results of it keep their color well enough at every quality offered.
+        for quality in [10, 30, 50, 80] {
+            for target in [ImageOptimizationTarget.jpeg(quality: quality), .webP(quality: quality)] {
+                let result = try await bench.optimizer.optimize(capture, to: target)
+                #expect(result.outcome == .converted, "\(target): \(result.outcome)")
+                result.discard()
+            }
+        }
+
+        // editor-opus's stand-in: the real MozJPEG, told to write a grayscale file.
+        let tools = try standInTools(where: "cjpeg", leaves: capture)
+        defer { try? FileManager.default.removeItem(at: tools) }
+        try FileManager.default.createSymbolicLink(at: tools.appending(path: "real-cjpeg"), withDestinationURL: Bench.tools.appending(path: "cjpeg"))
+        try Data("#!/bin/sh\nexec \"$(dirname \"$0\")/real-cjpeg\" -grayscale \"$@\"\n".utf8).write(to: tools.appending(path: "cjpeg"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tools.appending(path: "cjpeg").path)
+        for quality in [80, 30] {
+            let gray = try await ImageOptimizer(toolsDirectory: tools, outputDirectory: bench.output).optimize(capture, to: .jpeg(quality: quality))
+            guard case .failed(let reason) = gray.outcome else {
+                Issue.record("a grayscale JPEG at \(quality): \(gray.outcome)")
+                gray.discard()
+                continue
+            }
+            #expect(reason.contains("whole picture"), "\(reason)")
+            #expect(bench.leftovers.isEmpty)
+        }
+
+        // The same for WebP: the real encoder's result for the capture with every pixel turned to its gray.
+        let picture = try image(at: capture)
+        let context = try #require(CGContext(data: nil, width: picture.width, height: picture.height, bitsPerComponent: 8,
+                                             bytesPerRow: picture.width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                             bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+        context.draw(picture, in: CGRect(x: 0, y: 0, width: picture.width, height: picture.height))
+        let bytes = try #require(context.data).assumingMemoryBound(to: UInt8.self)
+        for at in stride(from: 0, to: picture.width * picture.height * 4, by: 4) {
+            let gray = UInt8((77 * Int(bytes[at]) + 150 * Int(bytes[at + 1]) + 29 * Int(bytes[at + 2])) >> 8)
+            bytes[at] = gray
+            bytes[at + 1] = gray
+            bytes[at + 2] = gray
+        }
+        let grayFile = try bench.file("made/Gray.png", try #require(context.makeImage()))
+        let made = try await bench.optimizer.optimize(grayFile, to: .webP(quality: 80))
+        try #require(made.outcome == .converted)
+        let standIn = bench.folder.appending(path: "standins/gray.webp")
+        try FileManager.default.createDirectory(at: standIn.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: made.url, to: standIn)
+        made.discard()
+        let webPTools = try standInTools(where: "cwebp", leaves: standIn)
+        defer { try? FileManager.default.removeItem(at: webPTools) }
+        let grayWebP = try await ImageOptimizer(toolsDirectory: webPTools, outputDirectory: bench.output).optimize(capture, to: .webP(quality: 80))
+        guard case .failed(let reason) = grayWebP.outcome else {
+            Issue.record("a grayscale WebP: \(grayWebP.outcome)")
+            return
+        }
+        #expect(reason.contains("whole picture"), "\(reason)")
+        #expect(bench.leftovers.isEmpty)
+    }
+
     /// Astra's second review: what a result was made from is the file's contents, not its size and date,
     /// and a file rewritten while the encoder runs gives no result at all.
     @Test func aResultNamesTheContentsItWasMadeFrom() async throws {

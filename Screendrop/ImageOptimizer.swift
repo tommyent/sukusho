@@ -645,14 +645,16 @@ nonisolated struct ImageOptimizer: Sendable {
     ///
     /// Lossy encoders blur and quantize, but at every quality the app offers they keep the mean of each
     /// 8 x 8 pixels closely (measured on real captures down to quality 10: within 22 of 255). So both pictures
-    /// are reduced to those means, and the result is refused when a block's brightness is far off, or when,
-    /// in any window of 4 x 4 blocks, the color has shifted, a pattern the source has there is gone or
+    /// are reduced to those means, and the result is refused when a block's brightness is far off; when a
+    /// 16 x 16 group of blocks that has color in the source has lost or changed most of it; or when, in any
+    /// window of 4 x 4 blocks, the average color is far off, a pattern the source has there is gone or
     /// replaced, or a pattern has appeared where the source is flat. Transparency must be exact: WebP's
     /// is stored without loss, and a JPEG is compared with the source on white (`onWhite`), as it was made.
     ///
     /// What it can't see: a one-pixel pattern turned to its average, which MozJPEG does to a checkerboard
-    /// legitimately; below quality 30, thin detail lost without moving a block's mean by 48; and anything in
-    /// a picture under 16 pixels a side that the blocks don't show.
+    /// legitimately; below quality 30, thin detail lost without moving a block's mean by 48; color so faint
+    /// or so small that no 16 x 16 group averages 20 of 255 of it; and anything in a picture under 16 pixels
+    /// a side that the blocks don't show.
     private static func keepsPicture(_ source: Data, _ result: Data, width: Int, height: Int, onWhite: Bool, quality: Int) -> Bool {
         guard width > 0, height > 0, source.count == width * height * 4, result.count == source.count else { return false }
         let block = 8, across = (width + block - 1) / block, down = (height + block - 1) / block
@@ -718,6 +720,35 @@ nonisolated struct ImageOptimizer: Sendable {
                 }
                 // The window's brightness (22) and each of its colors (55, for one-pixel red and blue stripes).
                 guard abs(s - r) / count <= 32, max(abs(shift.0), abs(shift.1), abs(shift.2)) / count <= 96 else { return false }
+                // Color, at the size both encoders store it: 16 x 16 pixels, four blocks. Where the source has
+                // color there, the result must not have lost or changed most of it. Real results lost 0.39 of
+                // it at the worst; a result gone gray has lost all of it.
+                for groupY in stride(from: windowY, to: min(windowY + window, down) - 1, by: 2) {
+                    for groupX in stride(from: windowX, to: min(windowX + window, across) - 1, by: 2) {
+                        guard (groupX + 2) * block <= width, (groupY + 2) * block <= height else { continue }
+                        var before = (0.0, 0.0, 0.0), after = (0.0, 0.0, 0.0)
+                        for blockY in groupY..<(groupY + 2) {
+                            for blockX in groupX..<(groupX + 2) {
+                                let index = (blockY * across + blockX) * 6
+                                before.0 += Double(means[index]) / 4
+                                before.1 += Double(means[index + 1]) / 4
+                                before.2 += Double(means[index + 2]) / 4
+                                after.0 += Double(means[index + 3]) / 4
+                                after.1 += Double(means[index + 4]) / 4
+                                after.2 += Double(means[index + 5]) / 4
+                            }
+                        }
+                        // The two color differences of YCbCr: zero for a gray.
+                        func chroma(_ color: (Double, Double, Double)) -> (Double, Double) {
+                            (-0.168736 * color.0 - 0.331264 * color.1 + 0.5 * color.2, 0.5 * color.0 - 0.418688 * color.1 - 0.081312 * color.2)
+                        }
+                        let colorBefore = chroma(before), colorAfter = chroma(after)
+                        let strength = (colorBefore.0 * colorBefore.0 + colorBefore.1 * colorBefore.1).squareRoot()
+                        let change = ((colorBefore.0 - colorAfter.0) * (colorBefore.0 - colorAfter.0)
+                            + (colorBefore.1 - colorAfter.1) * (colorBefore.1 - colorAfter.1)).squareRoot()
+                        guard strength < 20 || change <= 0.7 * strength else { return false }
+                    }
+                }
                 // A sliver at the edge is too few blocks to speak of a pattern.
                 guard count >= 8 else { continue }
                 let spread = max(0, ss / count - (s / count) * (s / count)).squareRoot()
