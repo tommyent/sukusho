@@ -309,7 +309,7 @@ private final class RecordingAreaSelectionView: NSView {
                 NSColor.black.withAlphaComponent(0.35).setStroke()
                 NSBezierPath(ovalIn: dot).stroke()
             }
-            drawBadge(sizeLabel(for: adjusting)) { self.badgeOrigin(for: adjusting, size: $0) }
+            drawBadge(sizeLabel(for: adjusting)) { self.badgeOrigin(for: adjusting, size: $0, clearOf: self.confirmBar?.frame) }
         } else if let selectionRect {
             drawHole(selectionRect, color: .white)
             if isScreenshot, let currentPoint {
@@ -376,6 +376,16 @@ private final class RecordingAreaSelectionView: NSView {
                 y: badgeRect.minY + padding.height
             )
         )
+    }
+
+    /// The size badge on the other side of the area from the Record bar, which used to cover it (VM check, 2026-11-17).
+    private func badgeOrigin(for rect: CGRect, size: CGSize, clearOf bar: CGRect?) -> CGPoint {
+        let origin = badgeOrigin(for: rect, size: size)
+        guard let bar, bar.intersects(CGRect(origin: origin, size: size)) else { return origin }
+        let other = CGPoint(x: origin.x, y: bar.midY < rect.midY ? rect.maxY + 8 : rect.minY - size.height - 8)
+        if bounds.contains(CGRect(origin: other, size: size)) { return other }
+        // No room outside either: inside the area's top-left corner.
+        return CGPoint(x: rect.minX + 8, y: rect.maxY - size.height - 8)
     }
 
     private func badgeOrigin(for rect: CGRect, size: CGSize) -> CGPoint {
