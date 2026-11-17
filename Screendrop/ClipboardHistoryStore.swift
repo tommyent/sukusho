@@ -21,6 +21,14 @@ nonisolated struct ClipboardEntry: Sendable, Equatable, Identifiable {
     let lastCopiedAt: Date
     let timesCopied: Int
     let pinnedAt: Date?
+    /// An image's text, read on this Mac as the Library reads captures'; nil until read.
+    var readText: String? = nil
+    /// Apple Intelligence's title, keywords and category for an image, as the Library has for captures.
+    var modelTitle: String? = nil
+    var keywords: [String] = []
+    var category: String? = nil
+    /// The model answered or declined, so it isn't asked again.
+    var isDescribed = false
 }
 
 /// Clipboard history on disk: one SQLite database for entries, and images as
@@ -81,7 +89,12 @@ actor ClipboardHistoryStore {
                 times_copied INTEGER NOT NULL DEFAULT 1,
                 pinned_at REAL,
                 origin_device TEXT NOT NULL,
-                change_seq INTEGER NOT NULL
+                change_seq INTEGER NOT NULL,
+                read_text TEXT,
+                model_title TEXT,
+                model_keywords TEXT,
+                model_category TEXT,
+                described INTEGER NOT NULL DEFAULT 0
             );
             CREATE UNIQUE INDEX IF NOT EXISTS entries_kind_hash ON entries(kind, hash) WHERE kind != 'snippet';
             CREATE INDEX IF NOT EXISTS entries_last_copied ON entries(last_copied_at);
@@ -92,6 +105,11 @@ actor ClipboardHistoryStore {
                 PRIMARY KEY (entry_id, type)
             );
             """)
+        // Histories from before the image descriptions get their columns; on a newer one each is a duplicate.
+        for column in ["read_text TEXT", "model_title TEXT", "model_keywords TEXT", "model_category TEXT",
+                       "described INTEGER NOT NULL DEFAULT 0"] {
+            try? Self.execute(handle, "ALTER TABLE entries ADD COLUMN \(column)")
+        }
     }
 
     deinit {
@@ -221,7 +239,8 @@ actor ClipboardHistoryStore {
     func entries(limit: Int = 500, offset: Int = 0) throws -> [ClipboardEntry] {
         try query("""
             SELECT id, kind, text, title, blob, library_path, byte_size, pixel_width, pixel_height, source_bundle_id,
-                is_remote, first_copied_at, last_copied_at, times_copied, pinned_at
+                is_remote, first_copied_at, last_copied_at, times_copied, pinned_at,
+                read_text, model_title, model_keywords, model_category, described
             FROM entries ORDER BY last_copied_at DESC LIMIT ? OFFSET ?
             """, [limit, offset]) { row in
             ClipboardEntry(
@@ -239,9 +258,27 @@ actor ClipboardHistoryStore {
                 firstCopiedAt: Date(timeIntervalSince1970: row.double(11)),
                 lastCopiedAt: Date(timeIntervalSince1970: row.double(12)),
                 timesCopied: row.int(13),
-                pinnedAt: row.isNull(14) ? nil : Date(timeIntervalSince1970: row.double(14))
+                pinnedAt: row.isNull(14) ? nil : Date(timeIntervalSince1970: row.double(14)),
+                readText: row.text(15),
+                modelTitle: row.text(16),
+                keywords: (row.text(17) ?? "").split(separator: "\n").map(String.init),
+                category: row.text(18),
+                isDescribed: row.int(19) != 0
             )
         }
+    }
+
+    /// The text read in an image; empty when it has none, so it isn't read again.
+    func setReadText(_ id: String, _ text: String) throws {
+        try run("UPDATE entries SET read_text = ?, change_seq = ? WHERE id = ?", [text, try nextChange(), id])
+    }
+
+    /// The model's answer for an image, or its refusal (no title), after which it isn't asked again.
+    func setDescription(_ id: String, title: String?, keywords: [String], category: String?) throws {
+        try run("""
+            UPDATE entries SET model_title = ?, model_keywords = ?, model_category = ?, described = 1, change_seq = ?
+            WHERE id = ?
+            """, [title, keywords.isEmpty ? nil : keywords.joined(separator: "\n"), category, try nextChange(), id])
     }
 
     func richText(for id: String) throws -> [String: Data] {

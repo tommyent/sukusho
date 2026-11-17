@@ -265,8 +265,8 @@ final class CaptureLibraryIndex {
         if insights != insightsPending { insightsPending = insights }
     }
 
-    /// Recording, Low Power Mode and a hot Mac all come before indexing.
-    private static func shouldPause() -> Bool {
+    /// Recording, Low Power Mode and a hot Mac all come before indexing (and the clipboard's descriptions).
+    static func shouldPause() -> Bool {
         Task.isCancelled
             || ScreenRecordingManager.shared.isActive
             || ProcessInfo.processInfo.isLowPowerModeEnabled

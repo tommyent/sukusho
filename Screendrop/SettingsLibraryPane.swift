@@ -16,7 +16,7 @@ struct LibrarySettingsPane: View {
             Section("Text and Titles") {
                 SettingsControlLabel(
                     "Read text in captures",
-                    detail: "Search finds captures by the words in them. Text is read on this Mac and never uploaded."
+                    detail: "Search finds captures and copied images by the words in them. Text is read on this Mac and never uploaded."
                 ).control { label in
                     Toggle(isOn: $libraryReadsText) { label }
                 }
@@ -25,7 +25,7 @@ struct LibrarySettingsPane: View {
                 if CaptureLibraryIndex.shared.modelAvailable {
                     SettingsControlLabel(
                         "Use Apple Intelligence for titles and tag suggestions",
-                        detail: "Names captures you haven't named and suggests tags, from the text read in them. Runs on this Mac and is never uploaded."
+                        detail: "Names captures you haven't named and copied images, and suggests tags, from the text read in them. Runs on this Mac and is never uploaded."
                     ).control { label in
                         Toggle(isOn: $libraryUsesIntelligence) { label }
                     }

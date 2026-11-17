@@ -3,6 +3,7 @@
 // store's de-duplication, retention and size cap.
 import AppKit
 import Foundation
+import SQLite3
 import Testing
 
 @Suite
@@ -373,6 +374,53 @@ struct ClipboardHistoryStoreTests {
         #expect(!FileManager.default.fileExists(atPath: freshURL.path))
     }
 
+    @Test func anImagesTextAndDescriptionAreKept() async throws {
+        guard case .inserted(let id) = try await store().record(image(500, width: 40, height: 30), at: start) else { return }
+        try await store().setReadText(id, "Build Failed\nAgentAccessServer.swift")
+        try await store().setDescription(id, title: "Xcode build failure in AgentAccessServer", keywords: ["Xcode", "AgentAccessServer"],
+                                         category: "Error")
+        let entry = try #require(try await store().entries().first)
+        #expect(entry.readText == "Build Failed\nAgentAccessServer.swift")
+        #expect(entry.modelTitle == "Xcode build failure in AgentAccessServer")
+        #expect(entry.keywords == ["Xcode", "AgentAccessServer"])
+        #expect(entry.category == "Error")
+        #expect(entry.isDescribed)
+    }
+
+    @Test func aDeclinedImageIsNotAskedAgain() async throws {
+        guard case .inserted(let id) = try await store().record(image(500), at: start) else { return }
+        #expect(try await store().entries().first?.isDescribed == false)
+        try await store().setDescription(id, title: nil, keywords: [], category: nil)
+        let entry = try #require(try await store().entries().first)
+        #expect(entry.isDescribed)
+        #expect(entry.modelTitle == nil)
+        #expect(entry.keywords.isEmpty)
+    }
+
+    /// The owner's Air has a history from build 32.261117.0036, before these columns: it opens and keeps its rows.
+    @Test func anOlderHistoryGainsTheNewColumns() async throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var db: OpaquePointer?
+        #expect(sqlite3_open(directory.appendingPathComponent("clipboard.sqlite").path, &db) == SQLITE_OK)
+        let old = """
+            CREATE TABLE entries (id TEXT PRIMARY KEY, kind TEXT NOT NULL, hash TEXT NOT NULL, text TEXT, title TEXT,
+                blob TEXT, library_path TEXT, byte_size INTEGER NOT NULL DEFAULT 0, stored_bytes INTEGER NOT NULL DEFAULT 0,
+                pixel_width INTEGER NOT NULL DEFAULT 0, pixel_height INTEGER NOT NULL DEFAULT 0, source_bundle_id TEXT,
+                is_remote INTEGER NOT NULL DEFAULT 0, first_copied_at REAL NOT NULL, last_copied_at REAL NOT NULL,
+                times_copied INTEGER NOT NULL DEFAULT 1, pinned_at REAL, origin_device TEXT NOT NULL, change_seq INTEGER NOT NULL);
+            INSERT INTO entries (id, kind, hash, text, first_copied_at, last_copied_at, origin_device, change_seq)
+                VALUES ('old', 'text', 'h', 'kept from before', 1800000000, 1800000000, 'air', 1);
+            """
+        #expect(sqlite3_exec(db, old, nil, nil, nil) == SQLITE_OK)
+        sqlite3_close(db)
+        let store = try store()
+        let entry = try #require(try await store.entries().first)
+        #expect(entry.text == "kept from before")
+        #expect(!entry.isDescribed)
+        try await store.setReadText("old", "")
+        #expect(try await store.entries().first?.readText == "")
+    }
+
     @Test func aClipAddedToTheLibraryKeepsItsOwnImage() async throws {
         let store = try store()
         guard case .inserted(let id) = try await store.record(image(500), at: start) else { return }
@@ -403,6 +451,20 @@ struct ClipboardListTests {
                        pixelWidth: size.0, pixelHeight: size.1, sourceBundleID: source, isRemote: false,
                        firstCopiedAt: now - ago, lastCopiedAt: now - ago, timesCopied: 1,
                        pinnedAt: pinnedAgo.map { now - $0 })
+    }
+
+    @Test func anImageIsNamedByTheModelAndFoundByItsText() {
+        var described = entry(.image, size: (1600, 1000))
+        described.modelTitle = "Xcode build failure in AgentAccessServer"
+        described.readText = "Build Failed\nCall can throw but is not marked"
+        described.keywords = ["Xcode"]
+        let plain = entry(.image, size: (359, 815))
+        #expect(ClipboardList.title(of: described) == "Xcode build failure in AgentAccessServer")
+        #expect(ClipboardList.title(of: plain) == "Image (359×815)")
+        let found = ClipboardList.sections([described, plain], filter: .all, query: CaptureLibraryQuery("not marked"), now: now,
+                                           calendar: calendar)
+        #expect(found.flatMap(\.entries).map(\.id) == [described.id])
+        #expect(ClipboardList.matches(described, query: CaptureLibraryQuery("xcode"), appName: nil))
     }
 
     @Test func pinnedThenTodayYesterdayEarlier() {

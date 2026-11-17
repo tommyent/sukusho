@@ -44,11 +44,32 @@ final class ClipboardHistoryModel {
             do {
                 let loaded = try await store.entries(limit: 3000)
                 guard !Task.isCancelled else { return }
-                entries = loaded
+                entries = presented(loaded)
+                ClipboardDescriber.shared.update(loaded, store: store)
             } catch {
                 logger.error("Clipboard history can't be read: \(String(describing: error), privacy: .public)")
             }
             hasLoaded = true
+        }
+    }
+
+    /// The names shown: the model's while its Settings switch is on (stored, and back when it's on again),
+    /// and for an image that is a Library capture, the name the Library gives it.
+    private func presented(_ loaded: [ClipboardEntry]) -> [ClipboardEntry] {
+        let usesModel = ScreendropPreferences.libraryUsesIntelligence
+        let captures = Dictionary(CaptureLibraryModel.shared.items.map { ($0.fileURL.standardizedFileURL.path, $0) },
+                                  uniquingKeysWith: { first, _ in first })
+        return loaded.map { entry in
+            var entry = entry
+            if !usesModel {
+                entry.modelTitle = nil
+                entry.keywords = []
+                entry.category = nil
+            }
+            if let path = entry.libraryPath, let capture = captures[URL(fileURLWithPath: path).standardizedFileURL.path] {
+                entry.modelTitle = capture.customName ?? capture.modelTitle
+            }
+            return entry
         }
     }
 

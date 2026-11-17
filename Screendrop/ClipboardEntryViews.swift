@@ -160,6 +160,10 @@ struct ClipboardInfo: View {
                     }
                 }
                 row("Content type") { Text(ClipboardList.typeName(of: entry)) }
+                if let category = entry.category { row("Category") { Text(category) } }
+                if !entry.keywords.isEmpty {
+                    row("Keywords") { Text(entry.keywords.joined(separator: ", ")).help(entry.keywords.joined(separator: ", ")) }
+                }
                 fileRows
                 if entry.kind == .image, entry.pixelWidth > 0 {
                     row("Dimensions") { Text("\(entry.pixelWidth) × \(entry.pixelHeight)") }

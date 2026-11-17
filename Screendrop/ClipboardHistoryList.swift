@@ -60,7 +60,9 @@ nonisolated enum ClipboardList {
     static func matches(_ entry: ClipboardEntry, query: CaptureLibraryQuery, appName: String?) -> Bool {
         guard !query.isEmpty else { return true }
         let source = entry.sourceBundleID.map { CaptureSource(bundleIdentifier: $0, appName: appName ?? $0) }
-        return query.matches(fields: [title(of: entry), entry.text ?? "", appName ?? ""], foldedText: nil, source: source)
+        return query.matches(fields: [title(of: entry), entry.text ?? "", appName ?? "", entry.readText ?? "",
+                                      entry.keywords.joined(separator: " "), entry.category ?? ""],
+                             foldedText: nil, source: source)
     }
 
     /// Pinned first, in the order they were pinned; then Today, Yesterday and
@@ -100,6 +102,8 @@ nonisolated enum ClipboardList {
     static func title(of entry: ClipboardEntry) -> String {
         switch entry.kind {
         case .image:
+            // The model's title, or the Library's name for a capture; plain without them.
+            if let title = entry.modelTitle, !title.isEmpty { return title }
             return entry.pixelWidth > 0 ? "Image (\(entry.pixelWidth)×\(entry.pixelHeight))" : "Image"
         case .files:
             let names = (entry.text ?? "").split(separator: "\n").map { ($0 as NSString).lastPathComponent }
