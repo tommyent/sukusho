@@ -663,6 +663,75 @@ private func isRunning(_ text: String) -> Bool {
                           "transparency gone")
     }
 
+    /// Astra's second review: what a result was made from is the file's contents, not its size and date,
+    /// and a file rewritten while the encoder runs gives no result at all.
+    @Test func aResultNamesTheContentsItWasMadeFrom() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let source = try bench.file("Page.png", Sample.screenshot(width: 320, height: 200, seed: 61))
+        let before = try #require(FileIdentity(source))
+        let result = try await bench.optimizer.optimize(source)
+        #expect(result.outcome == .optimized)
+        #expect(result.source == before)
+        // Nothing smaller, and a failure, name what was read as well: the Library marks a file on the first.
+        let again = try await bench.optimizer.optimize(result.url)
+        #expect(again.outcome == .alreadyOptimized)
+        #expect(again.source == FileIdentity(result.url))
+        let noTools = ImageOptimizer(toolsDirectory: bench.folder.appending(path: "none"), outputDirectory: bench.output)
+        let failed = try await noTools.optimize(source)
+        guard case .failed = failed.outcome else {
+            Issue.record("no encoders: \(failed.outcome)")
+            return
+        }
+        #expect(failed.source == before)
+
+        // One byte changed, the length and the date kept: no longer the contents the result names.
+        var bytes = try Data(contentsOf: source)
+        bytes[bytes.count - 20] ^= 1
+        try rewriteKeepingSizeAndDate(source, with: bytes)
+        #expect(FileIdentity(source) != result.source)
+        result.discard()
+
+        // An encoder run during which the source is rewritten: here with other bytes of the same picture
+        // (what the real encoder made of it) and the old date, so the pixels still match the result.
+        let other = try bench.file("Other.png", Sample.screenshot(width: 320, height: 200, seed: 62))
+        let smaller = try await bench.optimizer.optimize(other)
+        try #require(smaller.outcome == .optimized)
+        let kept = bench.folder.appending(path: "standins/smaller.png")
+        try FileManager.default.createDirectory(at: kept.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: smaller.url, to: kept)
+        smaller.discard()
+        let tools = FileManager.default.temporaryDirectory.appending(path: "SukushoRewrites-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tools, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tools) }
+        let script = """
+        #!/bin/sh
+        for source; do :; done
+        while [ $# -gt 0 ]; do
+          if [ "$1" = "--out" ]; then out="$2"; fi
+          shift
+        done
+        touch -r "$source" "$out.date"
+        cp "\(kept.path)" "$source"
+        touch -r "$out.date" "$source"
+        rm "$out.date"
+        cp "\(kept.path)" "$out"
+        """
+        try Data(script.utf8).write(to: tools.appending(path: "oxipng"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tools.appending(path: "oxipng").path)
+        let read = try #require(FileIdentity(other))
+        let late = try await ImageOptimizer(toolsDirectory: tools, outputDirectory: bench.output).optimize(other)
+        guard case .failed(let reason) = late.outcome else {
+            Issue.record("a source rewritten under the encoder: \(late.outcome)")
+            return
+        }
+        #expect(reason.contains("changed"))
+        #expect(late.url == other)
+        #expect(late.source == read)
+        #expect(FileIdentity(other) == FileIdentity(kept))   // the rewrite did happen
+        #expect(bench.leftovers.isEmpty)
+    }
+
     @Test func anOutputFolderThatCannotBeWrittenFallsBackToTheOriginal() async throws {
         let bench = try Bench()
         defer { bench.remove() }

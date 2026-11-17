@@ -3,6 +3,23 @@
 import Foundation
 import Testing
 
+/// Other contents of the same length written into `url`, with its modification date put back to the
+/// nanosecond, as a careful tool leaves a file: nothing but the contents tells the two apart.
+func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
+    var before = stat()
+    try #require(stat(url.path, &before) == 0)
+    try #require(Int(before.st_size) == data.count)
+    let handle = try FileHandle(forWritingTo: url)
+    try handle.write(contentsOf: data)
+    try handle.close()
+    var times = [before.st_atimespec, before.st_mtimespec]
+    try #require(utimensat(AT_FDCWD, url.path, &times, 0) == 0)
+    var after = stat()
+    try #require(stat(url.path, &after) == 0)
+    try #require(after.st_size == before.st_size && after.st_mtimespec.tv_sec == before.st_mtimespec.tv_sec
+        && after.st_mtimespec.tv_nsec == before.st_mtimespec.tv_nsec)
+}
+
 @Suite struct ShelfFileSaveTests {
     private struct Desk {
         let folder = FileManager.default.temporaryDirectory.appending(path: "SukushoShelfSave-\(UUID().uuidString)")
@@ -95,6 +112,16 @@ import Testing
         try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: 5)], ofItemAtPath: same.path)
         #expect(ShelfFileSave.save(result, of: same, identity: before, replacing: true, retire: desk.retire) == .changed)
         #expect(desk.text(same) == "54321")
+
+        // Astra's second review: the same length with the old date put back. Only the contents tell.
+        let quiet = try desk.file("quiet.png", "12345")
+        let quietBefore = FileIdentity(quiet)
+        try rewriteKeepingSizeAndDate(quiet, with: Data("54321".utf8))
+        for replacing in [true, false] {
+            #expect(ShelfFileSave.save(result, of: quiet, identity: quietBefore, replacing: replacing, retire: desk.retire) == .changed)
+        }
+        #expect(desk.text(quiet) == "54321")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: desk.trash.path).isEmpty)
     }
 
     /// Astra OR2: the original must not be gone when the new file can't be put in place.

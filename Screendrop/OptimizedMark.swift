@@ -3,7 +3,6 @@
 //  Screendrop
 //
 
-import CryptoKit
 import Foundation
 
 /// Remembers, on the file itself, that it was optimized and the size it had before. An edit replaces the
@@ -75,8 +74,5 @@ nonisolated enum OptimizedMark {
         return (size, modified.timeIntervalSince1970.bitPattern)
     }
 
-    private static func digest(of url: URL) -> String? {
-        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return nil }
-        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-    }
+    private static func digest(of url: URL) -> String? { FileIdentity(url)?.digest }
 }

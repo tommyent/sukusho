@@ -11,21 +11,6 @@
 
 import Foundation
 
-/// What a file was when it was read: enough to tell that it has been changed since.
-nonisolated struct FileIdentity: Equatable, Sendable {
-    let size: Int64
-    let modified: Date
-
-    /// Asked of the file system each time: a URL keeps the values it has read.
-    init?(_ url: URL) {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
-              let size = (attributes[.size] as? NSNumber)?.int64Value,
-              let modified = attributes[.modificationDate] as? Date else { return nil }
-        self.size = size
-        self.modified = modified
-    }
-}
-
 nonisolated enum ShelfFileSave {
     enum Outcome: Equatable {
         case saved(URL)
@@ -35,8 +20,9 @@ nonisolated enum ShelfFileSave {
     }
 
     /// Writes `result` beside `original` ("name optimized.png", or "name.webp" for another format), or with
-    /// `replacing` in its place. `retire` takes the original out of the way and says where it went, so it
-    /// can be put back: the Trash, outside tests.
+    /// `replacing` in its place. `identity` is the contents the result was made from
+    /// (`ImageOptimizationResult.source`): the original must still hold exactly those. `retire` takes the
+    /// original out of the way and says where it went, so it can be put back: the Trash, outside tests.
     static func save(_ result: URL, of original: URL, identity: FileIdentity?, replacing: Bool,
                      retire: (URL) throws -> URL = moveToTrash) -> Outcome {
         guard let identity, identity == FileIdentity(original) else { return .changed }
@@ -52,9 +38,11 @@ nonisolated enum ShelfFileSave {
         do {
             try files.createDirectory(at: staging, withIntermediateDirectories: false)
             try files.copyItem(at: result, to: staged)
-            guard FileIdentity(staged)?.size == FileIdentity(result)?.size else {
+            guard let written = FileIdentity(staged), written == FileIdentity(result) else {
                 return .failed("The file couldn't be written completely.")
             }
+            // Asked again now that the new file is ready: the last moment before anything moves.
+            guard identity == FileIdentity(original) else { return .changed }
 
             if replacing, sameFormat {
                 // The original goes to the Trash only now, and comes back if the new file can't take its place.

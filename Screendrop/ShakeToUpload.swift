@@ -303,7 +303,7 @@ final class ShakeToUpload {
         var failure: String?
         for row in holding.rows {
             guard let result = row.result, result.outcome == .optimized || result.outcome == .converted else { continue }
-            switch ShelfFileSave.save(result.url, of: row.file, identity: row.identity, replacing: replacing) {
+            switch ShelfFileSave.save(result.url, of: row.file, identity: result.source, replacing: replacing) {
             case .saved(let file): saved.append(file)
             case .changed: changed += 1
             case .failed(let reason): failure = reason

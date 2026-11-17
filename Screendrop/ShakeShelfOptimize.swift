@@ -39,13 +39,11 @@ final class ShelfOptimization {
         let file: URL
         let bytes: Int64
         var result: ImageOptimizationResult?
-        /// What the file was when the optimizer read it.
-        var identity: FileIdentity?
 
-        /// The result, while the file it was made from hasn't been changed since: the shelf can sit for a
-        /// while, and an older result must not stand in for a newer file.
+        /// The result, while the file still holds the contents it was made from: the shelf can sit for a
+        /// while, and an older result must not stand in for a newer file. Reads the file.
         var currentResult: ImageOptimizationResult? {
-            guard let result, let identity, identity == FileIdentity(file) else { return nil }
+            guard let result, let source = result.source, source == FileIdentity(file) else { return nil }
             return result
         }
     }
@@ -97,14 +95,12 @@ final class ShelfOptimization {
         // One file at a time: each encoder already uses every core.
         task = Task { [weak self, optimizer] in
             while let file = self?.rows.first(where: { $0.result == nil })?.file {
-                let identity = FileIdentity(file)
                 guard let result = try? await optimizer.optimize(file, to: target, effort: effort) else { return }
                 // Stopped, or run again in another format, while this one was finishing.
                 guard !Task.isCancelled, let self, let index = self.rows.firstIndex(where: { $0.file == file && $0.result == nil }) else {
                     result.discard()
                     return
                 }
-                self.rows[index].identity = identity
                 self.rows[index].result = result
             }
             self?.isWorking = false

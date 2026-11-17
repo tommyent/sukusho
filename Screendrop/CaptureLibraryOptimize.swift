@@ -22,19 +22,20 @@ enum CaptureOptimizer {
 
     /// Replaces a capture's stored image with a smaller file that decodes to the same pixels. The capture is
     /// left alone when its editor is open, or when it changed while the encoder ran. `whileEditing` is for an
-    /// editor that has sat idle: the file's date still catches a save that lands meanwhile.
+    /// editor that has sat idle: a save that lands meanwhile changes the file's contents, which is what is checked.
     static func optimizeInPlace(_ url: URL, effort: ImageOptimizationEffort, whileEditing: Bool = false) async -> Outcome {
         guard whileEditing || !CaptureLibraryOpenEditors.isEditing(url) else {
             return .failed("Close the capture's editor before optimizing it.")
         }
         guard !OptimizedMark.isCurrent(url) else { return .alreadyOptimized }
-        // What the file is now. Either outcome below marks or replaces it only if it is still this.
-        let stamp = FileIdentity(url)
-        func unchanged() -> Bool {
-            stamp != nil && FileIdentity(url) == stamp && (whileEditing || !CaptureLibraryOpenEditors.isEditing(url))
-        }
         guard let result = try? await ImageOptimizer.shared.optimize(url, effort: effort) else { return .failed("Optimizing was stopped.") }
         defer { result.discard() }
+        // Either outcome below replaces or marks the capture only while it still holds the contents the
+        // encoder read, by their hash: a save can keep a file's size and date.
+        func unchanged() -> Bool {
+            guard let source = result.source, source == FileIdentity(url) else { return false }
+            return whileEditing || !CaptureLibraryOpenEditors.isEditing(url)
+        }
         switch result.outcome {
         case .optimized:
             guard unchanged() else { return .failed("The capture changed while it was being optimized.") }

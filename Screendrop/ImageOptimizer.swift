@@ -12,6 +12,7 @@
 
 import Accelerate
 import CoreGraphics
+import CryptoKit
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
@@ -51,6 +52,10 @@ nonisolated struct ImageOptimizationResult: Sendable {
     let resultByteCount: Int64
     /// The folder made for this result, nil when `url` is the caller's own file.
     fileprivate let ownedFolder: URL?
+    /// The contents the result was made from: the source hashed before the encoder started, and found the
+    /// same once it was done. A caller that goes on to replace or mark the source asks `FileIdentity` again
+    /// right before it does. Nil only for a file handed back unread (`original`).
+    var source: FileIdentity?
 
     /// Deletes the result's file once it has been used. The caller's original is never touched.
     func discard() {
@@ -74,6 +79,17 @@ nonisolated struct ImageOptimizationResult: Sendable {
         let before = ByteCountFormatter.string(fromByteCount: originalByteCount, countStyle: .file)
         let after = ByteCountFormatter.string(fromByteCount: resultByteCount, countStyle: .file)
         return "\(before) → \(after) · \(Self.saving(from: originalByteCount, to: resultByteCount))"
+    }
+}
+
+/// A file's contents, as their SHA-256. Size and date don't tell one file from another: a rewrite can keep
+/// both. Reads the whole file each time it is made.
+nonisolated struct FileIdentity: Equatable, Sendable {
+    let digest: String
+
+    init?(_ url: URL) {
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return nil }
+        digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 }
 
@@ -133,15 +149,22 @@ nonisolated struct ImageOptimizer: Sendable {
                           timeLimit: Duration?, sourceFolder: URL?) async throws -> ImageOptimizationResult {
         try Task.checkCancellation()
         let originalBytes = Self.byteCount(source) ?? 0
+        // What the encoder is about to read.
+        let identity = FileIdentity(source)
         @Sendable func original(_ outcome: ImageOptimizationResult.Outcome) -> ImageOptimizationResult {
             ImageOptimizationResult(url: source, outcome: outcome, originalByteCount: originalBytes,
-                                    resultByteCount: originalBytes, ownedFolder: sourceFolder)
+                                    resultByteCount: originalBytes, ownedFolder: sourceFolder, source: identity)
         }
         @Sendable func finished() async throws -> ImageOptimizationResult {
             do {
-                guard let output = try await produce(from: source, target: target, effort: effort) else {
-                    return original(.alreadyOptimized)
+                let made = try await produce(from: source, target: target, effort: effort)
+                // Still the same contents now that the encoder is done: only then was the result, or the
+                // finding that nothing is smaller, made from the file `identity` names.
+                guard let identity, identity == FileIdentity(source) else {
+                    if let made { try? FileManager.default.removeItem(at: made.deletingLastPathComponent()) }
+                    return original(.failed("The file changed while it was being optimized, so it is left as it is."))
                 }
+                guard let output = made else { return original(.alreadyOptimized) }
                 let bytes = Self.byteCount(output) ?? 0
                 if target == .lossless, bytes >= originalBytes {
                     try? FileManager.default.removeItem(at: output.deletingLastPathComponent())
@@ -151,7 +174,7 @@ nonisolated struct ImageOptimizer: Sendable {
                 if let sourceFolder { try? FileManager.default.removeItem(at: sourceFolder) }
                 return ImageOptimizationResult(url: output, outcome: target == .lossless ? .optimized : .converted,
                                                originalByteCount: originalBytes, resultByteCount: bytes,
-                                               ownedFolder: output.deletingLastPathComponent())
+                                               ownedFolder: output.deletingLastPathComponent(), source: identity)
             } catch let failure as Failure {
                 return original(.failed(failure.message))
             } catch is CancellationError {
