@@ -307,6 +307,8 @@ struct ClipboardCard: View {
                     .font(ClipboardList.looksLikeCode(entry) ? .system(size: 11.5, design: .monospaced) : .system(size: 12))
                     .lineLimit(6)
                     .padding(DS.Space.l)
+                    // Room for the kind word in the bottom corner, so it never sits over the last line (Astra R2).
+                    .padding(.bottom, ClipboardList.kindWord(of: entry) == nil ? 0 : 8)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .background(.background)
             }

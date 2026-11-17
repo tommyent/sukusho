@@ -149,17 +149,31 @@ nonisolated enum ClipboardList {
         textForm(of: entry) == .plain && (entry.sourceBundleID.map(codeApps.contains) == true || isCodeLike(entry.text ?? ""))
     }
 
-    /// At least half the lines open with a lowercase keyword, or end in a brace or a semicolon. Prose capitalizes
-    /// its first word and rarely ends a line in either.
+    /// At least half the lines carry code's own syntax. A keyword or a closing semicolon alone isn't enough: "let me know
+    /// tomorrow", "return home before dinner" and "Please send the revised draft;" are prose (Astra R2).
     static func isCodeLike(_ text: String) -> Bool {
         let lines = text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         guard !lines.isEmpty else { return false }
-        let keywords = ["func ", "def ", "class ", "struct ", "enum ", "import ", "return ", "const ", "let ", "var ", "fn ",
-                        "#include", "public ", "private ", "if (", "for (", "while (", "function "]
-        let code = lines.filter { line in
-            keywords.contains { line.hasPrefix($0) } || line.hasSuffix("{") || line.hasSuffix(";") || line == "}"
-        }
-        return code.count * 2 >= max(lines.count, 2)
+        return lines.filter(isCodeLine).count * 2 >= lines.count
+    }
+
+    private static let codeKeywords = ["func ", "def ", "class ", "struct ", "enum ", "import ", "return ", "const ", "let ",
+                                       "var ", "fn ", "#include", "public ", "private ", "if ", "for ", "while ", "function "]
+
+    /// One line of code: a lone brace; an arrow, a comparison or another operator prose doesn't use; a keyword or a line
+    /// end with brackets, an assignment or a brace near it; an assignment to a name; or a call. A line that starts like a
+    /// sentence (a capital, then lowercase) needs one of the operators.
+    static func isCodeLine(_ line: String) -> Bool {
+        if ["{", "}", "};", "})", "]"].contains(line) { return true }
+        let operators = ["->", "=>", "==", "!=", "&&", "||", "::", "+=", "-="]
+        if operators.contains(where: line.contains) { return true }
+        let first = line.prefix(2)
+        if first.first?.isUppercase == true, first.last?.isLowercase == true { return false }
+        let syntax = line.contains { "(){}[]=".contains($0) }
+        if codeKeywords.contains(where: line.hasPrefix) { return syntax }
+        if line.hasSuffix("{") || line.hasSuffix(";") || line.hasSuffix(")") { return syntax }
+        return line.range(of: #"^[A-Za-z_$][\w.$]*(\[[^\]]*\])?\s*=\s*\S"#, options: .regularExpression) != nil
+            || line.range(of: #"^[A-Za-z_$][\w.$]*\([^)]*\);?$"#, options: .regularExpression) != nil
     }
 
     /// A card's title line, or nil where the card's face already shows the text, so it isn't said twice (Fable #3).

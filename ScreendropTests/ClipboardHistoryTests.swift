@@ -980,6 +980,18 @@ struct ClipboardCardTextTests {
         #expect(ClipboardList.isCodeLike("func tailPath(radius r: CGFloat, tip d: CGFloat) -> CGPath {"))
         #expect(ClipboardList.kindWord(of: text(swift, from: "com.tommyent.Sukusho.dev")) == "code")
         #expect(!ClipboardList.isCodeLike("Meeting moved to 3pm"))
+        // Astra R2: prose that starts with a keyword or ends in a semicolon isn't code.
+        for prose in ["Please send the revised draft;", "return home before dinner", "let me know tomorrow",
+                      "Meet me at the cafe (downtown).", "Let me know (by Friday).", "for the record, it was fine",
+                      "if you can, call me", "Meeting moved to 3pm; bring the notes.",
+                      "Thanks for the update.\nlet me know when it ships;\nreturn the forms by Friday"] {
+            #expect(!ClipboardList.isCodeLike(prose), "\(prose)")
+        }
+        for code in ["let total = items.count", "const f = (a) => a + 1;", "console.log(total);", "return x == y",
+                     "def greet(name):\n    print(name)", "if (ready) {\n  start();\n}", "x = 5",
+                     "import Foundation\nlet url = URL(fileURLWithPath: path)", "Foo::bar()"] {
+            #expect(ClipboardList.isCodeLike(code), "\(code)")
+        }
         #expect(!ClipboardList.isCodeLike("Let me know if the fix works.\nThanks!"))
         #expect(!ClipboardList.isCodeLike("hello@example.com"))
         // From a code app, any plain text counts, as before.
