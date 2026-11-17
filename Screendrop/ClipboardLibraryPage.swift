@@ -73,6 +73,11 @@ struct ClipboardLibraryPage: View {
                     }
                 }
             }
+            // A filter or search that hides the selected entry clears it, so the inspector never shows, or
+            // acts on, an entry the page doesn't (Astra, 2026-11-16).
+            .onChange(of: sections.flatMap { $0.entries.map(\.id) }) { _, shown in
+                if let selection = model.librarySelection, !shown.contains(selection) { model.librarySelection = nil }
+            }
         }
     }
 
