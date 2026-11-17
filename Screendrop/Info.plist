@@ -27,6 +27,8 @@
 	<false/>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>Sukusho needs screen recording permission to capture screenshots.</string>
+	<key>SukushoGitCommit</key>
+	<string>$(SUKUSHO_GIT_COMMIT)</string>
 	<key>SUFeedURL</key>
 	<string>https://tommyent.github.io/sukusho/appcast.xml</string>
 	<key>SUPublicEDKey</key>

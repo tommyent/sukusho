@@ -18,6 +18,8 @@ xcodebuild build -project Screendrop.xcodeproj -scheme Screendrop \
   DEVELOPMENT_TEAM=YOUR_TEAM_ID -allowProvisioningUpdates
 ```
 
+To tell Debug builds apart, add `SUKUSHO_GIT_COMMIT=$(git rev-parse --short HEAD)` to the command: Settings › About and the copied version line then name the commit, as in “1.2.0 (32, d761462)”. Release builds never show it.
+
 The `Screendrop` scheme builds `Sukusho.app` (`com.tommyent.Sukusho`). The `Screendrop Dev` scheme with the `Debug Dev` configuration builds `Sukusho Dev.app` (`com.tommyent.Sukusho.dev`), which keeps its own data folder and keychain item, apart from Sukusho's. The Xcode target, schemes and Swift module keep the name Screendrop.
 
 Run the test suite:

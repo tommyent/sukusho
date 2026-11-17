@@ -17,6 +17,12 @@ nonisolated enum AppVersion {
     static func display(info: [String: Any]) -> String {
         let version = info["CFBundleShortVersionString"] as? String ?? "0.0"
         guard let build = info["CFBundleVersion"] as? String else { return "Version \(version)" }
+        #if DEBUG
+        // Dev builds all say "(32)": the commit, from `SUKUSHO_GIT_COMMIT=<hash>` at build time, tells them apart.
+        if let commit = info["SukushoGitCommit"] as? String, !commit.isEmpty {
+            return "Version \(version) (\(build), \(commit))"
+        }
+        #endif
         return "Version \(version) (\(build))"
     }
 
