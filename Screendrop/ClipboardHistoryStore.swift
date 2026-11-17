@@ -178,16 +178,21 @@ actor ClipboardHistoryStore {
     }
 
     /// Puts `capture` on the card `id` as its newest version, for an image Sukusho made smaller itself: the same
-    /// picture, so history gains no entry. The card keeps its place.
-    func stack(_ capture: ClipboardCapture, on id: String) throws {
+    /// picture, so history gains no entry. The card keeps its place. False, with nothing changed, when another
+    /// card already holds exactly that content: two cards can't hold one content.
+    @discardableResult
+    func stack(_ capture: ClipboardCapture, on id: String) throws -> Bool {
         try transaction {
+            let elsewhere = try query("SELECT id FROM entries WHERE kind = 'image' AND hash = ? AND id != ?", [capture.hash, id]) { $0.text(0) }
+            guard elsewhere.isEmpty else { return false }
             let rows = try query("SELECT hash, blob, library_path, last_copied_at FROM entries WHERE id = ? AND kind = 'image'", [id]) { row in
                 (hash: row.text(0) ?? "", blob: row.text(1), libraryPath: row.text(2), copiedAt: row.double(3))
             }
-            guard let current = rows.first, current.hash != capture.hash else { return }
+            guard let current = rows.first, current.hash != capture.hash else { return true }
             let blob = try writeBlob(of: capture)
             try stack(capture, blob: blob, on: (id, current.hash, current.blob == nil ? current.libraryPath : nil),
                       at: Date(timeIntervalSince1970: current.copiedAt))
+            return true
         }
     }
 

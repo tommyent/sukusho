@@ -230,6 +230,14 @@ struct ClipboardHistoryStoreTests {
         #expect(card.earlierVersions.first?.byteSize == 400)
         #expect(card.lastCopiedAt == start)
         #expect(entries.first?.id != id)   // the text copied later is still on top
+
+        // Content another card already holds can't be stacked: nothing changes, and the caller is told.
+        let held = image(300, width: 4, height: 4)
+        _ = try await store.record(held, at: start + 20)
+        #expect(try await store.stack(held, on: id) == false)
+        let after = try await store.entries()
+        #expect(after.count == 3)
+        #expect(after.first { $0.id == id }?.hash == smaller.hash)
     }
 
     @Test func copyingAgainBumpsTheSameEntry() async throws {

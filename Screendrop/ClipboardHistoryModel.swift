@@ -178,7 +178,9 @@ final class ClipboardHistoryModel {
                 capture.byteSize = data.count
                 capture.sourceBundleID = entry.sourceBundleID
                 do {
-                    try await store?.stack(capture, on: entry.id)
+                    guard try await store?.stack(capture, on: entry.id) != false else {
+                        return feedback.show("An optimized copy of this image is already in the history.")
+                    }
                     refresh()
                     feedback.show("Optimized · \(result.sizeSummary)")
                 } catch {
