@@ -303,6 +303,8 @@ private struct RecordingBarView: View {
     private var bar: some View {
         Group {
             switch presenter.mode {
+            case .picker where CaptureCountdownPresenter.shared.isCountingDownToRecord:
+                RecordingCountdownControls()
             case .picker:
                 RecordingPickerControls()
             case .recording:
@@ -326,8 +328,7 @@ private struct RecordingBarView: View {
         .background(alignment: .bottom) {
             if presenter.mode == .picker && includeAppWindowsInCaptures {
                 visibilityBanner
-                    .padding(.horizontal, BarMetrics.visibilityBannerInset)
-                    .offset(y: BarMetrics.visibilityBannerHeight - BarMetrics.visibilityBannerOverlap)
+                    .offset(y: BarMetrics.visibilityBannerHeight + BarMetrics.visibilityBannerGap)
             }
         }
         .coordinateSpace(.named(BarCoordinateSpace.bar))
@@ -340,29 +341,31 @@ private struct RecordingBarView: View {
         }
     }
 
+    /// Amber is caution: Sukusho's own windows will be in this recording. The switch turns that
+    /// off without opening Settings.
     private var visibilityBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(Color(nsColor: .systemOrange))
+                .foregroundStyle(BarMetrics.caution)
                 .accessibilityHidden(true)
             Text("Sukusho windows will be captured")
                 .foregroundStyle(BarMetrics.activeTint)
-            Spacer(minLength: 8)
             Toggle("Include Sukusho windows in captures", isOn: $includeAppWindowsInCaptures)
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.mini)
-                .accessibilityHint("Turn off to hide Sukusho windows from screenshots and recordings")
+                .tint(BarMetrics.caution)
+                .accessibilityHint("Turn off to hide Sukusho windows from Sukusho's screenshots and recordings")
         }
-        .font(.system(size: 11, weight: .medium))
-        .padding(.horizontal, 12)
-        .padding(.top, BarMetrics.visibilityBannerOverlap)
-        .frame(maxWidth: .infinity)
+        .font(.system(size: 12, weight: .semibold))
+        .padding(.leading, 12)
+        .padding(.trailing, 8)
         .frame(height: BarMetrics.visibilityBannerHeight)
-        .glassEffect(.regular, in: visibilityBannerShape)
+        .fixedSize()
+        .background(Capsule().fill(BarMetrics.caution.opacity(0.2)))
+        .glassEffect(.regular, in: Capsule())
         .overlay {
-            visibilityBannerShape
-                .strokeBorder(BarMetrics.edge, lineWidth: 0.5)
+            Capsule().strokeBorder(BarMetrics.caution.opacity(0.5), lineWidth: 1)
         }
         .onGeometryChange(for: CGRect.self) {
             $0.frame(in: .named(BarCoordinateSpace.panel))
@@ -371,23 +374,16 @@ private struct RecordingBarView: View {
         }
     }
 
-    private var visibilityBannerShape: UnevenRoundedRectangle {
-        UnevenRoundedRectangle(
-            topLeadingRadius: 0,
-            bottomLeadingRadius: 12,
-            bottomTrailingRadius: 12,
-            topTrailingRadius: 0,
-            style: .continuous
-        )
-    }
-
     /// Positioned off the hovered control's measured frame rather than a
     /// hardcoded index, so it keeps tracking when the bar's contents change -
     /// a mode swap, or the display picker becoming a menu on a second monitor.
     private var tooltipLayer: some View {
         GeometryReader { _ in
             if let target = tooltip.visible {
-                BarTooltipPill(text: target.text)
+                // Bottom-aligned in the tallest pill's room, so a one-line name sits as close
+                // to the bar as a two-line one.
+                BarTooltipPill(hover: target.hover)
+                    .frame(height: BarTooltip.pillHeight, alignment: .bottom)
                     .position(
                         x: target.frame.midX,
                         y: -(BarTooltip.gap + BarTooltip.pillHeight / 2)
@@ -399,7 +395,7 @@ private struct RecordingBarView: View {
         // the bar glides the pill from control to control rather than
         // cross-fading it in place.
         .animation(.easeOut(duration: 0.12), value: tooltip.visible?.id)
-        .animation(.easeOut(duration: 0.12), value: tooltip.visible?.text)
+        .animation(.easeOut(duration: 0.12), value: tooltip.visible?.hover)
     }
 
     private var barShape: RoundedRectangle {

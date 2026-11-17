@@ -78,6 +78,13 @@ private enum ScreenRecordingFinishAction: Equatable {
 }
 
 /// Capture choices resolved from preferences at start.
+/// What a take records besides the screen.
+nonisolated struct RecordingTakeInputs: Equatable, Sendable {
+    var camera = false
+    var microphone = false
+    var systemAudio = false
+}
+
 nonisolated struct ScreenRecordingCaptureOptions: Sendable {
     var capturesSystemAudio = false
     var cleanDesktop = true
@@ -117,6 +124,8 @@ final class ScreenRecordingManager {
     private(set) var microphoneLevel: Double?
     /// True for a moment after the microphone clips, so the meter turns red.
     private(set) var isMicrophoneClipping = false
+    /// What the take records besides the screen, for the bar's chips while it runs.
+    private(set) var takeInputs = RecordingTakeInputs()
     private var microphoneClippedAt: Date?
 
     private let capture = ScreenRecordingCapture()
@@ -323,6 +332,11 @@ final class ScreenRecordingManager {
                 pauseIntervals = []
                 elapsedTime = 0
                 microphoneLevel = options.microphoneDeviceID == nil ? nil : 0
+                takeInputs = RecordingTakeInputs(
+                    camera: cameraStarted,
+                    microphone: options.microphoneDeviceID != nil,
+                    systemAudio: options.capturesSystemAudio
+                )
                 state = .recording
                 beginActivity()
                 startTimer()
@@ -809,6 +823,7 @@ final class ScreenRecordingManager {
         pausedAt = nil
         accumulatedPauseDuration = 0
         microphoneLevel = nil
+        takeInputs = RecordingTakeInputs()
         isMicrophoneClipping = false
         microphoneClippedAt = nil
         finishAction = .preview

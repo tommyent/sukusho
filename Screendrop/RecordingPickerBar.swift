@@ -34,6 +34,8 @@ struct RecordingPickerControls: View {
     @AppStorage(ScreendropPreferences.recordingStartDelaySecondsKey) private var startDelaySeconds = 0
     @AppStorage(ScreendropPreferences.recordingTeleprompterEnabledKey) private var teleprompterEnabled = false
 
+    @Environment(BarTooltipModel.self) private var tooltip: BarTooltipModel?
+
     private static let timerOptions = [0, 1, 3, 5]
 
     var body: some View {
@@ -42,7 +44,7 @@ struct RecordingPickerControls: View {
             windowSource.disabled(CaptureCountdownPresenter.shared.isRunning || sources.isLoading)
             BarActionButton(
                 id: .area,
-                title: "Drag to select a region",
+                hover: BarHover("Record an area", "Drag to select the region"),
                 systemImage: "rectangle.dashed",
                 accessibility: "Area - drag to select the region to record"
             ) {
@@ -53,77 +55,87 @@ struct RecordingPickerControls: View {
 
             BarDivider()
 
-            inputToggle(
-                id: .camera,
-                title: cameraID.isEmpty ? "Camera off" : "Camera on",
-                isOn: !cameraID.isEmpty,
-                onIcon: "video.fill",
-                offIcon: "video.slash",
-                accessibility: cameraAccessibilityLabel
-            ) {
-                toggleCamera()
-            }
-            .contextMenu {
-                cameraDeviceMenu
-            }
+            cameraToggle
 
             microphonePicker
 
-            inputToggle(
-                id: .systemAudio,
-                title: systemAudio ? "System audio on" : "System audio off",
-                isOn: systemAudio,
-                onIcon: "speaker.wave.2.fill",
-                offIcon: "speaker.slash",
-                accessibility: systemAudio
-                    ? "System audio on - click to stop capturing what you hear"
-                    : "System audio off - click to capture what you hear"
-            ) {
+            Button {
+                tooltipDismiss()
                 systemAudio.toggle()
+            } label: {
+                BarToggleLabel(
+                    id: .systemAudio,
+                    state: systemAudio ? .on : .off,
+                    hover: BarHoverText.systemAudio(isOn: systemAudio),
+                    offSymbol: "speaker.slash",
+                    onSymbol: "speaker.wave.2.fill",
+                    look: .input(BarMetrics.systemAudioOn)
+                ) {
+                    BarAudioGlyph()
+                }
             }
+            .buttonStyle(BarButtonStyle())
+            .accessibilityLabel(systemAudio
+                ? "System audio on - click to stop capturing what you hear"
+                : "System audio off - click to capture what you hear")
 
-            inputToggle(
-                id: .teleprompter,
-                title: teleprompterEnabled ? "Teleprompter on" : "Teleprompter off",
-                isOn: teleprompterEnabled,
-                onIcon: "text.pad.header",
-                offIcon: "text.pad.header",
-                accessibility: teleprompterEnabled
-                    ? "Teleprompter on - click to edit the script"
-                    : "Teleprompter off - click to write a script"
-            ) {
+            Button {
+                tooltipDismiss()
                 TeleprompterComposerPresenter.shared.toggle()
+            } label: {
+                BarToggleLabel(
+                    id: .teleprompter,
+                    state: teleprompterEnabled ? .on : .off,
+                    hover: BarHoverText.teleprompter(isOn: teleprompterEnabled),
+                    offSymbol: "text.pad.header",
+                    onSymbol: "text.pad.header",
+                    look: .helper
+                )
             }
+            .buttonStyle(BarButtonStyle())
+            .accessibilityLabel(teleprompterEnabled
+                ? "Teleprompter on - click to edit the script"
+                : "Teleprompter off - click to write a script")
 
             timerMenu
 
-            // A bug report shows the whole desktop, so Clean desktop reads off while it's on.
-            let cleans = cleanDesktop && !bugReport
-            Toggle(isOn: $cleanDesktop) {
-                BarActionLabel(
+            // A bug report shows the whole desktop, so Clean desktop can't be on while it is.
+            let cleanState: BarToggleState = bugReport ? .unavailable(.ruledOut) : cleanDesktop ? .on : .off
+            Button {
+                tooltipDismiss()
+                if !bugReport { cleanDesktop.toggle() }
+            } label: {
+                BarToggleLabel(
                     id: .cleanDesktop,
-                    title: cleans ? "Clean desktop on" : "Clean desktop off",
-                    systemImage: cleans ? "sparkles" : "desktopcomputer",
-                    tint: cleans ? BarMetrics.activeTint : BarMetrics.inactiveTint
+                    state: cleanState,
+                    hover: BarHoverText.cleanDesktop(cleanState),
+                    offSymbol: "sparkles",
+                    onSymbol: "sparkles",
+                    look: .helper
                 )
             }
-            .toggleStyle(.button)
             .buttonStyle(BarButtonStyle())
             .accessibilityLabel("Clean desktop")
+            .accessibilityValue(cleanState.isOn ? "On" : "Off")
             .accessibilityHint("Leaves desktop icons, the menu bar, Dock and notification banners out of screen and area recordings. Your desktop stays unchanged.")
-            .disabled(CaptureCountdownPresenter.shared.isRunning || bugReport)
+            .disabled(CaptureCountdownPresenter.shared.isRunning)
 
-            Toggle(isOn: $bugReport) {
-                BarActionLabel(
+            Button {
+                tooltipDismiss()
+                bugReport.toggle()
+            } label: {
+                BarToggleLabel(
                     id: .bugReport,
-                    title: bugReport ? "Bug report on" : "Bug report off",
-                    systemImage: bugReport ? "ladybug.fill" : "ladybug",
-                    tint: bugReport ? BarMetrics.activeTint : BarMetrics.inactiveTint
+                    state: bugReport ? .on : .off,
+                    hover: BarHoverText.bugReport(isOn: bugReport),
+                    offSymbol: "ladybug",
+                    onSymbol: "ladybug.fill",
+                    look: .helper
                 )
             }
-            .toggleStyle(.button)
             .buttonStyle(BarButtonStyle())
             .accessibilityLabel("Bug report")
+            .accessibilityValue(bugReport ? "On" : "Off")
             .accessibilityHint("Stop writes a bug report, with a prompt for your coding agent, instead of opening Studio, and the recording keeps the menu bar, notification banners and Sukusho's own windows.")
             .disabled(CaptureCountdownPresenter.shared.isRunning)
             // A bug in Sukusho needs its windows: Bug report turns them on, with the usual banner and its
@@ -140,24 +152,29 @@ struct RecordingPickerControls: View {
             }
 
             if bugReport {
-                Toggle(isOn: $appLogs) {
-                    BarActionLabel(
+                Button {
+                    tooltipDismiss()
+                    appLogs.toggle()
+                } label: {
+                    BarToggleLabel(
                         id: .appLogs,
-                        title: appLogs ? "App logs on" : "App logs off",
-                        systemImage: appLogs ? "doc.plaintext.fill" : "doc.plaintext",
-                        tint: appLogs ? BarMetrics.activeTint : BarMetrics.inactiveTint
+                        state: appLogs ? .on : .off,
+                        hover: BarHoverText.appLogs(isOn: appLogs),
+                        offSymbol: "doc.plaintext",
+                        onSymbol: "doc.plaintext.fill",
+                        look: .helper
                     )
                 }
-                .toggleStyle(.button)
                 .buttonStyle(BarButtonStyle())
                 .accessibilityLabel("Include app logs")
+                .accessibilityValue(appLogs ? "On" : "Off")
                 .accessibilityHint("Adds the recorded app's own log to this take's bug report. You see what was captured before it's saved, and it turns off after the take.")
                 .disabled(CaptureCountdownPresenter.shared.isRunning)
             }
 
             BarActionButton(
                 id: .close,
-                title: "Close",
+                hover: BarHover("Close", "Esc"),
                 systemImage: "xmark",
                 accessibility: "Close the recorder - Esc"
             ) {
@@ -195,7 +212,7 @@ struct RecordingPickerControls: View {
                     }
                 }
             } label: {
-                BarActionLabel(id: .display, title: "Recording sources unavailable - click to retry",
+                BarActionLabel(id: .display, hover: BarHover("Recording sources unavailable", "Click to retry"),
                                systemImage: "exclamationmark.triangle")
             }
             .menuStyle(.button)
@@ -214,7 +231,7 @@ struct RecordingPickerControls: View {
             } label: {
                 BarActionLabel(
                     id: .display,
-                    title: "Pick a screen to record",
+                    hover: BarHover("Record a screen", "Click to pick one"),
                     systemImage: "menubar.rectangle"
                 )
             }
@@ -225,7 +242,7 @@ struct RecordingPickerControls: View {
         } else {
             BarActionButton(
                 id: .display,
-                title: "Record the whole screen",
+                hover: BarHover("Record the whole screen", "Click to start"),
                 systemImage: "menubar.rectangle",
                 accessibility: "Display - record the whole screen"
             ) {
@@ -262,7 +279,7 @@ struct RecordingPickerControls: View {
         } label: {
             BarActionLabel(
                 id: .window,
-                title: "Pick an app window",
+                hover: BarHover("Record a window", "Click to pick one"),
                 systemImage: "macwindow"
             )
         }
@@ -310,35 +327,58 @@ struct RecordingPickerControls: View {
         }
     }
 
-    private var cameraAccessibilityLabel: String {
-        guard !cameraID.isEmpty else {
-            return "Camera off - click to record your camera, right-click to pick one"
-        }
-        guard let camera = RecordingDeviceCatalog.cameras().first(where: { $0.uniqueID == cameraID }) else {
-            return "Camera unavailable - right-click to choose another camera"
-        }
-        return "Camera on - \(camera.localizedName), right-click to switch"
+    private var cameraState: BarToggleState {
+        BarInputRules.state(
+            isSelected: !cameraID.isEmpty,
+            selectedIsConnected: RecordingDeviceCatalog.camera(withID: cameraID) != nil,
+            hasDevices: !RecordingDeviceCatalog.cameras().isEmpty,
+            isBlocked: RecordingInputAuthorization.isBlocked(.camera)
+        )
     }
 
-    /// The pill only has room for the state, so an attached-but-missing
-    /// device is worth calling out there - it's the one case where the icon
-    /// alone is misleading.
-    private var microphoneTooltip: String {
-        guard !microphoneID.isEmpty else { return "Microphone off" }
-        guard RecordingDeviceCatalog.microphone(withID: microphoneID) != nil else {
-            return "Microphone unavailable"
-        }
-        return "Microphone on"
+    private var microphoneState: BarToggleState {
+        BarInputRules.state(
+            isSelected: !microphoneID.isEmpty,
+            selectedIsConnected: RecordingDeviceCatalog.microphone(withID: microphoneID) != nil,
+            hasDevices: !RecordingDeviceCatalog.microphones().isEmpty,
+            isBlocked: RecordingInputAuthorization.isBlocked(.microphone)
+        )
     }
 
-    private var microphoneAccessibilityLabel: String {
-        guard !microphoneID.isEmpty else {
-            return "Microphone off - click to choose an input"
+    /// Click turns it on or off; right-click picks which camera. Blocked, a click opens the
+    /// privacy pane; with no camera at all it does nothing but say so on hover.
+    private var cameraToggle: some View {
+        let state = cameraState
+        let device = RecordingDeviceCatalog.camera(withID: cameraID)?.localizedName
+        return Button {
+            tooltipDismiss()
+            switch state {
+            case .unavailable(.blocked): RecordingInputAuthorization.openSettings(for: .camera)
+            case .unavailable(.noDevice): NSSound.beep()
+            default: toggleCamera()
+            }
+        } label: {
+            BarToggleLabel(
+                id: .camera,
+                state: state,
+                hover: BarHoverText.camera(state, device: device),
+                offSymbol: "video.slash",
+                onSymbol: "video.fill",
+                look: .input(BarMetrics.cameraOn)
+            ) {
+                BarCameraThumbnail()
+            }
         }
-        guard let microphone = RecordingDeviceCatalog.microphone(withID: microphoneID) else {
-            return "Microphone unavailable - choose another input"
+        .buttonStyle(BarButtonStyle())
+        .accessibilityLabel(BarHoverText.camera(state, device: device).title)
+        .accessibilityHint(BarHoverText.camera(state, device: device).detail ?? "")
+        .contextMenu {
+            cameraDeviceMenu
         }
-        return "Microphone on - \(microphone.localizedName)"
+    }
+
+    private func tooltipDismiss() {
+        tooltip?.dismiss()
     }
 
     @ViewBuilder
@@ -361,38 +401,60 @@ struct RecordingPickerControls: View {
         }
     }
 
+    /// A menu of microphones, as before; blocked, a click opens the privacy pane instead.
+    @ViewBuilder
     private var microphonePicker: some View {
-        Menu {
-            Button {
-                microphoneID = ""
-            } label: {
-                menuSelectionLabel("Off", isSelected: microphoneID.isEmpty)
-            }
-
-            Divider()
-
-            ForEach(RecordingDeviceCatalog.microphones(), id: \.uniqueID) { device in
-                Button {
-                    selectMicrophone(device.uniqueID)
-                } label: {
-                    menuSelectionLabel(
-                        device.localizedName,
-                        isSelected: microphoneID == device.uniqueID
-                    )
-                }
-            }
-        } label: {
-            BarActionLabel(
-                id: .microphone,
-                title: microphoneTooltip,
-                systemImage: microphoneID.isEmpty ? "mic.slash" : "mic.fill",
-                tint: microphoneID.isEmpty ? BarMetrics.inactiveTint : BarMetrics.activeTint
-            )
+        let state = microphoneState
+        let hover = BarHoverText.microphone(state, device: RecordingDeviceCatalog.microphone(withID: microphoneID)?.localizedName)
+        let label = BarToggleLabel(
+            id: .microphone,
+            state: state,
+            hover: hover,
+            offSymbol: "mic.slash",
+            onSymbol: "mic.fill",
+            look: .input(BarMetrics.microphoneOn)
+        ) {
+            BarAudioGlyph()
         }
-        .menuStyle(.button)
-        .buttonStyle(BarButtonStyle())
-        .menuIndicator(.hidden)
-        .accessibilityLabel(microphoneAccessibilityLabel)
+        if state == .unavailable(.blocked) {
+            Button {
+                tooltipDismiss()
+                RecordingInputAuthorization.openSettings(for: .microphone)
+            } label: {
+                label
+            }
+            .buttonStyle(BarButtonStyle())
+            .accessibilityLabel(hover.title)
+            .accessibilityHint(hover.detail ?? "")
+        } else {
+            Menu {
+                Button {
+                    microphoneID = ""
+                } label: {
+                    menuSelectionLabel("Off", isSelected: microphoneID.isEmpty)
+                }
+
+                Divider()
+
+                ForEach(RecordingDeviceCatalog.microphones(), id: \.uniqueID) { device in
+                    Button {
+                        selectMicrophone(device.uniqueID)
+                    } label: {
+                        menuSelectionLabel(
+                            device.localizedName,
+                            isSelected: microphoneID == device.uniqueID
+                        )
+                    }
+                }
+            } label: {
+                label
+            }
+            .menuStyle(.button)
+            .buttonStyle(BarButtonStyle())
+            .menuIndicator(.hidden)
+            .accessibilityLabel(hover.title)
+            .accessibilityHint(hover.detail ?? "")
+        }
     }
 
     /// Replaces the old gear button that opened Settings: a self-contained
@@ -408,12 +470,17 @@ struct RecordingPickerControls: View {
                 }
             }
         } label: {
-            BarActionLabel(
+            BarToggleLabel(
                 id: .timer,
-                title: timerTooltip,
-                systemImage: "timer",
-                tint: startDelaySeconds == 0 ? BarMetrics.inactiveTint : BarMetrics.activeTint
-            )
+                state: startDelaySeconds == 0 ? .off : .on,
+                hover: BarHoverText.timer(seconds: startDelaySeconds),
+                offSymbol: "timer",
+                onSymbol: "timer",
+                look: .helper
+            ) {
+                Text("\(startDelaySeconds)s")
+                    .font(.system(size: 12, weight: .semibold).monospacedDigit())
+            }
         }
         .menuStyle(.button)
         .buttonStyle(BarButtonStyle())
@@ -423,10 +490,6 @@ struct RecordingPickerControls: View {
 
     private func timerLabel(_ seconds: Int) -> String {
         seconds == 0 ? "None" : "\(seconds) second\(seconds == 1 ? "" : "s")"
-    }
-
-    private var timerTooltip: String {
-        startDelaySeconds == 0 ? "Timer off" : "Timer \(startDelaySeconds)s"
     }
 
     private var timerAccessibilityLabel: String {
@@ -476,27 +539,88 @@ struct RecordingPickerControls: View {
             microphoneID = await RecordingInputAuthorization.ensureAccess(for: .microphone) ? deviceID : ""
         }
     }
+}
 
-    // MARK: Pieces
+// MARK: - Countdown
 
-    /// An input toggle is the same control as a source button - the "off"
-    /// state is carried by dimming the tint, not by shrinking the target.
-    private func inputToggle(
-        id: BarTooltipID,
-        title: String,
-        isOn: Bool,
-        onIcon: String,
-        offIcon: String,
-        accessibility: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        BarActionButton(
-            id: id,
-            title: title,
-            systemImage: isOn ? onIcon : offIcon,
-            tint: isOn ? BarMetrics.activeTint : BarMetrics.inactiveTint,
-            accessibility: accessibility,
-            action: action
-        )
+/// The bar while a timer counts down to a recording: the seconds left in red, what the take will
+/// record as the same filled chips, and Cancel. The large number in the middle of the screen
+/// stays as it was.
+struct RecordingCountdownControls: View {
+    @State private var countdown = CaptureCountdownPresenter.shared
+    @AppStorage(ScreendropPreferences.recordingCameraDeviceIDKey) private var cameraID = ""
+    @AppStorage(ScreendropPreferences.recordingMicrophoneDeviceIDKey) private var microphoneID = ""
+    @AppStorage(ScreendropPreferences.recordingSystemAudioKey) private var systemAudio = false
+
+    var body: some View {
+        HStack(spacing: BarMetrics.itemSpacing) {
+            Text("\(countdown.remaining)")
+                .font(.system(size: 17, weight: .bold, design: .rounded).monospacedDigit())
+                .foregroundStyle(.white)
+                .frame(width: BarMetrics.chipHeight + 4, height: BarMetrics.chipHeight + 4)
+                .background(Circle().fill(BarMetrics.recordTint))
+                .contentTransition(.numericText(countsDown: true))
+                .animation(.snappy, value: countdown.remaining)
+                .padding(.leading, 4)
+                .accessibilityLabel("Recording starts in \(countdown.remaining)")
+
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Get ready")
+                    .font(.system(size: 13, weight: .semibold))
+                Text(hasInputs ? "Recording with" : "Recording the screen")
+                    .font(.system(size: 11))
+                    .opacity(0.7)
+            }
+            .foregroundStyle(BarMetrics.activeTint)
+            .padding(.horizontal, 6)
+            .fixedSize()
+
+            if !cameraID.isEmpty {
+                BarToggleLabel(id: .camera, state: .on, hover: BarHover("Camera will record"),
+                               offSymbol: "video.fill", onSymbol: "video.fill", look: .input(BarMetrics.cameraOn)) {
+                    BarCameraThumbnail()
+                }
+            }
+            if !microphoneID.isEmpty {
+                BarToggleLabel(id: .microphone, state: .on, hover: BarHover("Microphone will record"),
+                               offSymbol: "mic.fill", onSymbol: "mic.fill", look: .input(BarMetrics.microphoneOn)) {
+                    BarAudioGlyph()
+                }
+            }
+            if systemAudio {
+                BarToggleLabel(id: .systemAudio, state: .on, hover: BarHover("System audio will record"),
+                               offSymbol: "speaker.wave.2.fill", onSymbol: "speaker.wave.2.fill",
+                               look: .input(BarMetrics.systemAudioOn)) {
+                    BarAudioGlyph()
+                }
+            }
+
+            Button {
+                countdown.cancel()
+            } label: {
+                HStack(spacing: 6) {
+                    Text("Cancel")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("esc")
+                        .font(.system(size: 10, weight: .medium))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(BarMetrics.activeTint.opacity(0.12)))
+                }
+                .foregroundStyle(BarMetrics.activeTint)
+                .padding(.horizontal, 12)
+                .frame(height: BarMetrics.chipHeight + 2)
+                .background(Capsule().fill(BarMetrics.activeTint.opacity(0.08)))
+                .contentShape(Capsule())
+            }
+            .buttonStyle(BarButtonStyle())
+            .padding(.leading, 12)
+            .padding(.trailing, 4)
+            .accessibilityLabel("Cancel countdown")
+        }
+    }
+
+    private var hasInputs: Bool {
+        !cameraID.isEmpty || !microphoneID.isEmpty || systemAudio
     }
 }

@@ -26,12 +26,12 @@ enum BarMetrics {
     /// exactly this much so the bar itself doesn't move.
     static let shadowSlack: CGFloat = 28
 
-    /// The reminder tucks behind the bar while keeping its controls below it.
-    static let visibilityBannerHeight: CGFloat = 36
-    static let visibilityBannerOverlap: CGFloat = 8
-    static let visibilityBannerInset: CGFloat = 14
+    /// The "Sukusho windows will be captured" strip: an amber pill just under the bar
+    /// (direction B's mockup).
+    static let visibilityBannerHeight: CGFloat = 30
+    static let visibilityBannerGap: CGFloat = 8
     static var bottomSlack: CGFloat {
-        shadowSlack + visibilityBannerHeight - visibilityBannerOverlap
+        shadowSlack + visibilityBannerHeight + visibilityBannerGap
     }
 
     /// The panel is a fixed size that both modes sit centred inside, so
@@ -59,8 +59,24 @@ enum BarMetrics {
     /// brightness - grey in light mode, white in dark, and faint in both.
     static let edge = Color(nsColor: .labelColor).opacity(0.12)
     /// Stop and the recording dot. The system red so it stays legible
-    /// whichever variant the glass is in.
+    /// whichever variant the glass is in. Red means recording and nothing else.
     static let recordTint = Color(nsColor: .systemRed)
+
+    // Direction B, "Lit when on" (owner 2026-11-17): available controls are dark grey (the label
+    // colour above), light grey is only for a control that can't be used, and colour says on.
+    /// A control that can't be used: no device, blocked, or ruled out by another setting.
+    static let unavailableTint = Color(nsColor: .labelColor).opacity(0.3)
+    /// The inputs fill with the colours macOS's own menu-bar dots use while they're in use.
+    static let cameraOn = Color(red: 0x1C / 255, green: 0x9C / 255, blue: 0x47 / 255)
+    static let microphoneOn = Color(red: 0xCF / 255, green: 0x67 / 255, blue: 0x00 / 255)
+    static let systemAudioOn = Color(red: 0xA0 / 255, green: 0x5C / 255, blue: 0xE0 / 255)
+    /// A helper that's on (teleprompter, timer, Clean desktop, Bug report): a quieter blue, so what
+    /// goes into the recording stands out from what only helps.
+    static let helperOn = Color(nsColor: .systemBlue)
+    /// Caution: the capture strip, a blocked input, paused.
+    static let caution = Color(nsColor: .systemOrange)
+    /// The filled capsule an input that's on draws behind its icon and proof.
+    static let chipHeight: CGFloat = 30
 
     /// The puck that appears behind an icon on hover. Faint enough to read as
     /// the pointer resting on a target rather than as a second control state -
@@ -80,7 +96,9 @@ enum BarMetrics {
 /// you're meant to scan and dismiss; these show in a fraction of that and,
 /// once one has appeared, follow the pointer across the bar instantly.
 enum BarTooltip {
-    static let pillHeight: CGFloat = 24
+    /// Room for the two-line name (what it is and its state, then what a click does); a
+    /// one-line pill sits at the bottom of it.
+    static let pillHeight: CGFloat = 40
     /// Space between the top of the bar and the bottom of the pill.
     static let gap: CGFloat = 8
     /// Transparent slack the panel reserves above the bar for the pill and
@@ -120,7 +138,7 @@ enum BarTooltipID: String {
 
 struct BarTooltipTarget: Equatable {
     var id: BarTooltipID
-    var text: String
+    var hover: BarHover
     var frame: CGRect
 }
 
@@ -134,19 +152,19 @@ final class BarTooltipModel {
     private var showTask: Task<Void, Never>?
     private var coolTask: Task<Void, Never>?
 
-    func hover(id: BarTooltipID, text: String, frame: CGRect) {
+    func hover(id: BarTooltipID, hover: BarHover, frame: CGRect) {
         hovered = id
         showTask?.cancel()
         coolTask?.cancel()
 
         guard !isWarm else {
-            visible = BarTooltipTarget(id: id, text: text, frame: frame)
+            visible = BarTooltipTarget(id: id, hover: hover, frame: frame)
             return
         }
         showTask = Task {
             try? await Task.sleep(for: BarTooltip.showDelay)
             guard !Task.isCancelled, hovered == id else { return }
-            visible = BarTooltipTarget(id: id, text: text, frame: frame)
+            visible = BarTooltipTarget(id: id, hover: hover, frame: frame)
             isWarm = true
         }
     }
@@ -179,21 +197,28 @@ final class BarTooltipModel {
 }
 
 struct BarTooltipPill: View {
-    let text: String
+    let hover: BarHover
 
     private var shape: RoundedRectangle {
         RoundedRectangle(cornerRadius: 8, style: .continuous)
     }
 
     var body: some View {
-        Text(text)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(BarMetrics.activeTint)
-            .lineLimit(1)
-            .fixedSize()
-            .padding(.horizontal, 9)
-            .frame(height: BarTooltip.pillHeight)
-            .glassEffect(.regular, in: shape)
+        VStack(alignment: .leading, spacing: 1) {
+            Text(hover.title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(BarMetrics.activeTint)
+            if let detail = hover.detail {
+                Text(detail)
+                    .font(.system(size: 11))
+                    .foregroundStyle(BarMetrics.activeTint.opacity(0.75))
+            }
+        }
+        .lineLimit(1)
+        .fixedSize()
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .glassEffect(.regular, in: shape)
             .overlay {
                 shape.strokeBorder(BarMetrics.edge, lineWidth: 0.5)
             }
@@ -203,19 +228,18 @@ struct BarTooltipPill: View {
 
 // MARK: - Controls
 
-/// The bar's only control shape: an icon sized for a comfortable pointer
-/// target rather than for the glyph. Used bare as a `Menu` label and wrapped
-/// by `BarActionButton` everywhere else.
+/// Hover for every bar control - the puck, the pointing hand and the tooltip - around whatever the
+/// control draws: an icon (`BarActionLabel`) or a toggle's filled capsule (`BarToggleLabel`).
 ///
-/// It owns the hover puck and the tooltip because every control in the bar is
-/// one of these - including the ones that are only a `Menu`'s label, which a
-/// wrapper around the button couldn't reach.
-struct BarActionLabel: View {
+/// It owns the hover because every control in the bar is one of these - including the ones that
+/// are only a `Menu`'s label, which a wrapper around the button couldn't reach. Controls that
+/// can't be used stay hoverable, so they can say why.
+struct BarControlChrome<Content: View>: View {
     let id: BarTooltipID
-    /// What the tooltip says. Short - the long form goes on `accessibility`.
-    let title: String
-    let systemImage: String
-    var tint: Color = BarMetrics.activeTint
+    let hover: BarHover
+    /// The faint puck behind an icon; a filled capsule is its own target and draws none.
+    var showsPuck = true
+    @ViewBuilder let content: () -> Content
 
     @Environment(\.isEnabled) private var isEnabled
     @Environment(BarTooltipModel.self) private var tooltip: BarTooltipModel?
@@ -223,10 +247,8 @@ struct BarActionLabel: View {
     @State private var frame: CGRect = .zero
 
     var body: some View {
-        Image(systemName: systemImage)
-            .font(.system(size: 17, weight: .regular))
-            .foregroundStyle(tint.opacity(isEnabled ? 1 : 0.3))
-            .frame(width: BarMetrics.controlSize, height: BarMetrics.controlSize)
+        content()
+            .frame(minWidth: BarMetrics.controlSize, minHeight: BarMetrics.controlSize)
             // As a background so the puck never takes part in layout - it's
             // wider than the icon and would otherwise spread the bar.
             .background {
@@ -236,7 +258,7 @@ struct BarActionLabel: View {
                         width: BarMetrics.hoverDiameter,
                         height: BarMetrics.hoverDiameter
                     )
-                    .opacity(isHovering ? 1 : 0)
+                    .opacity(isHovering && showsPuck ? 1 : 0)
             }
             .animation(.easeOut(duration: 0.12), value: isHovering)
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -257,11 +279,11 @@ struct BarActionLabel: View {
             .background {
                 BarControlHover(isEnabled: isEnabled, onChange: setHovering)
             }
-            .onChange(of: title) { _, title in
+            .onChange(of: hover) { _, hover in
                 // Pause becomes Resume under a pointer that never moved; the
                 // pill it's showing has to follow.
                 guard isHovering else { return }
-                tooltip?.hover(id: id, text: title, frame: frame)
+                tooltip?.hover(id: id, hover: hover, frame: frame)
             }
             .onDisappear {
                 // A mode morph swaps the controls out from under a pointer
@@ -274,9 +296,35 @@ struct BarActionLabel: View {
         guard hovering != isHovering else { return }
         isHovering = hovering
         if hovering {
-            tooltip?.hover(id: id, text: title, frame: frame)
+            tooltip?.hover(id: id, hover: hover, frame: frame)
         } else {
             tooltip?.endHover(id: id)
+        }
+    }
+}
+
+/// The bar's plain control: an icon sized for a comfortable pointer target rather than for the
+/// glyph. Used bare as a `Menu` label and wrapped by `BarActionButton` everywhere else.
+struct BarActionLabel: View {
+    let id: BarTooltipID
+    /// What the tooltip says: the name, then what a click does. The long form goes on
+    /// `accessibility`.
+    let hover: BarHover
+    let systemImage: String
+    var tint: Color = BarMetrics.activeTint
+    /// A filled circle behind a white glyph, for the one action a state leads to (Resume).
+    var filled: Color? = nil
+
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        BarControlChrome(id: id, hover: hover, showsPuck: filled == nil) {
+            Image(systemName: systemImage)
+                .font(.system(size: filled == nil ? 17 : 14, weight: filled == nil ? .regular : .bold))
+                .foregroundStyle(filled != nil ? .white : isEnabled ? tint : BarMetrics.unavailableTint)
+                .frame(width: BarMetrics.chipHeight + 2, height: BarMetrics.chipHeight + 2)
+                .background { if let filled { Circle().fill(filled) } }
+                .frame(width: BarMetrics.controlSize, height: BarMetrics.controlSize)
         }
     }
 }
@@ -297,9 +345,10 @@ struct BarButtonStyle: ButtonStyle {
 
 struct BarActionButton: View {
     let id: BarTooltipID
-    let title: String
+    let hover: BarHover
     let systemImage: String
     var tint: Color = BarMetrics.activeTint
+    var filled: Color? = nil
     /// Only worth setting where the tooltip leaves something out - the device
     /// a control is bound to, what a destructive action destroys.
     var accessibility: String?
@@ -312,10 +361,10 @@ struct BarActionButton: View {
             tooltip?.dismiss()
             action()
         } label: {
-            BarActionLabel(id: id, title: title, systemImage: systemImage, tint: tint)
+            BarActionLabel(id: id, hover: hover, systemImage: systemImage, tint: tint, filled: filled)
         }
         .buttonStyle(BarButtonStyle())
-        .accessibilityLabel(accessibility ?? title)
+        .accessibilityLabel(accessibility ?? hover.title)
     }
 }
 

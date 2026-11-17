@@ -198,6 +198,12 @@ final class CameraRecordingManager {
         return task
     }
 
+    /// Another view of the camera session, for the recording bar's thumbnail. Black until the
+    /// session runs (the picker warms it when the camera is on).
+    func makeThumbnailLayer() -> AVCaptureVideoPreviewLayer {
+        engine.makePreviewLayer()
+    }
+
     private func showPreview(displayID: CGDirectDisplayID?) {
         // Already showing in the right place: the session (and its exposure)
         // is untouched, so recreating the panel here would only cost a
