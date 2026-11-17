@@ -119,7 +119,7 @@ nonisolated enum ClipboardList {
         case .image:
             // The model's title, or the Library's name for a capture; plain without them.
             if let title = entry.modelTitle, !title.isEmpty { return title }
-            return entry.pixelWidth > 0 ? "Image (\(entry.pixelWidth)×\(entry.pixelHeight))" : "Image"
+            return entry.pixelWidth > 0 ? "Image (\(entry.pixelWidth) × \(entry.pixelHeight))" : "Image"
         case .files:
             let names = (entry.text ?? "").split(separator: "\n").map { ($0 as NSString).lastPathComponent }
             return names.count > 3 ? "\(names.count) files" : names.joined(separator: ", ")

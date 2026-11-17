@@ -351,7 +351,7 @@ private final class RecordingAreaSelectionView: NSView {
     private func sizeLabel(for rect: CGRect) -> String {
         let pixelWidth = Int((rect.width * pixelScale.width).rounded())
         let pixelHeight = Int((rect.height * pixelScale.height).rounded())
-        return "\(pixelWidth) x \(pixelHeight)"
+        return "\(pixelWidth) × \(pixelHeight)"
     }
 
     /// `origin` places the badge given its size, or returns nil to leave it out.

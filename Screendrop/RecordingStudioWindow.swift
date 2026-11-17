@@ -264,7 +264,7 @@ private struct RecordingStudioContent: View {
         let total = Int(model.duration.rounded())
         let clock = String(format: "%d:%02d", total / 60, total % 60)
         let size = model.videoSize
-        return [model.saveStatus, "\(clock) · \(Int(size.width))×\(Int(size.height))"]
+        return [model.saveStatus, "\(clock) · \(Int(size.width)) × \(Int(size.height))"]
             .filter { !$0.isEmpty }
             .joined(separator: " · ")
     }

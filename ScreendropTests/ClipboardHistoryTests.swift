@@ -740,7 +740,7 @@ struct ClipboardListTests {
         described.keywords = ["Xcode"]
         let plain = entry(.image, size: (359, 815))
         #expect(ClipboardList.title(of: described) == "Xcode build failure in AgentAccessServer")
-        #expect(ClipboardList.title(of: plain) == "Image (359×815)")
+        #expect(ClipboardList.title(of: plain) == "Image (359 × 815)")
         let found = ClipboardList.sections([described, plain], filter: .all, query: CaptureLibraryQuery("not marked"), now: now,
                                            calendar: calendar)
         #expect(found.flatMap(\.entries).map(\.id) == [described.id])
@@ -792,7 +792,7 @@ struct ClipboardListTests {
     }
 
     @Test func titlesAndTypes() {
-        #expect(ClipboardList.title(of: entry(.image, size: (2880, 1800))) == "Image (2880×1800)")
+        #expect(ClipboardList.title(of: entry(.image, size: (2880, 1800))) == "Image (2880 × 1800)")
         #expect(ClipboardList.title(of: entry(.text, " #ff6363 ")) == "#FF6363")
         #expect(ClipboardList.title(of: entry(.text, "\n\n  first line  \nsecond")) == "first line")
         #expect(ClipboardList.title(of: entry(.files, "/a/one.png\n/b/two.txt")) == "one.png, two.txt")
