@@ -113,7 +113,9 @@ struct CaptureLibraryInspector: View {
                     .help(item.ownedURL.lastPathComponent)
                 detailRow("Dimensions", value: item.dimensions)
                 if item.isVideo { detailRow("Duration", value: item.durationText) }
-                detailRow("Size on disk", value: sizeText)
+                // An optimized capture keeps its saving here: "1.1 MB ↓18%".
+                detailRow("Size on disk", value: OptimizedMark.saving(of: item.fileURL).map { "\(sizeText) \($0.percent)" } ?? sizeText)
+                    .help(OptimizedMark.saving(of: item.fileURL).map { "Optimized from \($0.original)" } ?? "")
                 detailRow("Created", value: item.createdAt.formatted(date: .abbreviated, time: .shortened))
                 detailRow("Modified", value: item.modifiedAt.formatted(date: .abbreviated, time: .shortened))
                 if let source = item.source {

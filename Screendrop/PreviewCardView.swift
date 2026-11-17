@@ -14,6 +14,8 @@ struct PreviewCardView: View {
     /// A recording being flattened into a shareable file before Save/Copy.
     let isPreparing: Bool
     let compressionResult: ScreenshotCompressionResult?
+    /// "↓32%" while the card says that the clipboard now holds the optimized copy of its capture.
+    var optimizedNote: String?
     var slideDirection: CGFloat = 1
     /// Suppresses the hover action overlay while the whole stack is animating
     /// in or out (collapsing to / expanding from the peek tab), so actions don't
@@ -61,6 +63,11 @@ struct PreviewCardView: View {
             .overlay {
                 if showOverlay {
                     hoveredContent
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if let optimizedNote, !showOverlay {
+                    optimizedNoteBadge(optimizedNote)
                 }
             }
             .clipShape(.rect(cornerRadius: cornerRadius))
@@ -339,6 +346,21 @@ struct PreviewCardView: View {
                 .monospacedDigit()
                 .foregroundStyle(.white.opacity(0.78))
         }
+    }
+
+    /// The quiet word that the copy made after the capture has been swapped for the optimized one. No toast and
+    /// no sound; this view is the whole indicator, so it is the one place to make it louder or take it out.
+    private func optimizedNoteBadge(_ saving: String) -> some View {
+        Text("Optimized · \(saving)")
+            .font(.system(size: 11, weight: .semibold))
+            .monospacedDigit()
+            .foregroundStyle(.white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(.black.opacity(0.55), in: Capsule())
+            .padding(.bottom, 8)
+            .transition(.opacity)
+            .accessibilityLabel("The clipboard has the optimized copy, \(saving)")
     }
 
     private var videoPlayIndicator: some View {

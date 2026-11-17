@@ -24,18 +24,28 @@ extension CaptureLibraryModel {
         case .rename:
             guard selected.count == 1, let item = selected.first else { return }
             beginRename(item, at: .card)
-        case .copy:
+        case .copy, .copyOriginal:
             run("Copying \(selected.count == 1 ? "capture" : "captures")…") {
                 StudioProjectRegistry.shared.flushDrafts()
                 if selected.count == 1, let item = selected.first, !item.isVideo {
-                    try await ScreenshotFileActions.copyImageToClipboard(from: item.fileURL)
+                    let original = action == .copyOriginal
+                    let saving = try await ScreenshotFileActions.copyImageToClipboard(from: item.fileURL, original: original)
+                    self.actionFeedback.show(original ? "Copied Original" : saving.map { "Copied · \($0)" } ?? "Copied")
+                    return
                 } else {
-                    var urls: [URL] = []
-                    for item in selected {
-                        let url = item.isVideo ? try await RecordingDeliverable.resolve(for: item.fileURL) : item.fileURL
-                        urls.append(url)
-                    }
-                    try VideoFileActions.copyFilesToClipboard(from: urls)
+                    // Several captures go to the clipboard as files, in one write. Screenshots are optimized
+                    // first, as a single one is; ⇧⌘C copies them as they are. Recordings go as rendered.
+                    // Getting them ready takes a while, so the write follows the single copy's rule: it doesn't
+                    // happen when something newer reached the clipboard meanwhile, from here or another app.
+                    let optimizes = action == .copy && OptimizePreferences.whenCopying
+                    let recordings = Set(selected.filter(\.isVideo).map(\.fileURL))
+                    let copied = try await OptimizedImageCopy.shared.copyAll(selected.map(\.fileURL), ready: { url in
+                        if recordings.contains(url) { return .original(try await RecordingDeliverable.resolve(for: url)) }
+                        return optimizes ? try await ScreenshotFileActions.optimizedForCopy(url) : .original(url)
+                    }, write: { try VideoFileActions.copyFilesToClipboard(from: $0) })
+                    // Nothing was copied, so nothing is said.
+                    guard let copied else { return }
+                    copied.forEach { $0.discard() }   // the clipboard has its own copies of the files
                 }
                 self.actionFeedback.show(selected.count == 1 ? "Copied" : "\(selected.count) Captures Copied")
             }
@@ -213,6 +223,7 @@ extension CaptureLibraryModel {
             items.insert(LibraryMenuItem(title: "Revert to Original…", isEnabled: !isBusy) { self.requestRevert(item) }, at: rename + 1)
         }
         let trash = items.removeLast()
+        items += optimizeMenuItems()
         let saved = !selectedItems.isEmpty && selectedItems.allSatisfy(\.isSaved)
         items.append(LibraryMenuItem(title: saved ? "Remove from Saved" : "Save", isEnabled: count > 0 && !isBusy,
                                      startsGroup: true) { self.setSaved(!saved) })
@@ -475,7 +486,7 @@ extension CaptureLibraryModel {
         }
     }
 
-    private func run(_ title: String, operation: @escaping @MainActor () async throws -> Void) {
+    func run(_ title: String, operation: @escaping @MainActor () async throws -> Void) {
         guard !isBusy else { return }
         operationTitle = title
         Task {
@@ -533,6 +544,8 @@ enum CaptureLibraryOpenEditors {
         let key = url.standardizedFileURL
         let count = (urls[key] ?? 0) - 1
         if count <= 0 { urls.removeValue(forKey: key) } else { urls[key] = count }
+        // The last editor on this capture closed: its image can be optimized now.
+        if count <= 0 { CaptureOptimizer.editingChanged(key, closed: true) }
     }
     static func contains(_ url: URL) -> Bool {
         let path = url.standardizedFileURL.path

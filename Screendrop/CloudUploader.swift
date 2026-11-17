@@ -105,6 +105,12 @@ final class CloudUploader: NSObject {
                     for: RecordingSession(directoryURL: sessionDirectory)
                 )
             }
+            // Settings › Optimize › Optimize before sharing to Cloud: a screenshot goes up as a smaller file with
+            // the same pixels, and the capture on disk is not touched. Inside this task, which is registered
+            // before it can suspend, so stopping the upload also stops the optimizer.
+            let optimized = asFile || replacingUploadID != nil ? nil : await CaptureOptimizer.forCloud(fileURL)
+            defer { optimized?.discard() }
+            if let optimized { fileURL = optimized.url }
             try Task.checkCancellation()
 
             let fileName = fileURL.lastPathComponent

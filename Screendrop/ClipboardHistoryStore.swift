@@ -158,25 +158,7 @@ actor ClipboardHistoryStore {
             }
             let blob = try writeBlob(of: capture)
             if let rewritten = try rewrittenEntry(by: capture, at: date) {
-                // The card's current version, with its own hash, image and Library link, becomes an earlier one; the
-                // new copy is the newest, shown and pasted. The card keeps its source and first copy time.
-                try run("""
-                    INSERT OR IGNORE INTO versions (entry_id, hash, blob, library_path, byte_size, stored_bytes, copied_at)
-                    SELECT id, hash, blob, library_path, byte_size, stored_bytes, last_copied_at FROM entries WHERE id = ?
-                    """, [rewritten.id])
-                // A kept Original owns its bytes: a capture file can be edited or trashed later (Astra L1).
-                if let owned = try snapshot(rewritten.libraryPath, hash: rewritten.hash) {
-                    try run("UPDATE versions SET blob = ?, stored_bytes = ? WHERE entry_id = ? AND hash = ?",
-                            [owned.blob, owned.bytes, rewritten.id, rewritten.hash])
-                }
-                // What was read or said about the earlier image is cleared, so the newest is read and described
-                // afresh (Astra L3); late answers for the earlier image are kept out by their hash guard.
-                try run("""
-                    UPDATE entries SET hash = ?, blob = ?, library_path = ?, byte_size = ?, stored_bytes = ?,
-                        last_copied_at = ?, change_seq = ?, read_text = NULL, model_title = NULL, model_keywords = NULL,
-                        model_category = NULL, described = 0 WHERE id = ?
-                    """, [capture.hash, blob, capture.libraryPath, capture.byteSize, capture.storedBytes,
-                          date.timeIntervalSince1970, try nextChange(), rewritten.id])
+                try stack(capture, blob: blob, on: rewritten, at: date)
                 return .stacked(rewritten.id)
             }
             let id = UUID().uuidString
@@ -193,6 +175,48 @@ actor ClipboardHistoryStore {
             }
             return .inserted(id)
         }
+    }
+
+    /// Puts `capture` on the card `id` as its newest version, for an image Sukusho made smaller itself: the same
+    /// picture, so history gains no entry. The card keeps its place. False, with nothing changed, when another
+    /// card already holds exactly that content: two cards can't hold one content.
+    @discardableResult
+    func stack(_ capture: ClipboardCapture, on id: String) throws -> Bool {
+        try transaction {
+            let elsewhere = try query("SELECT id FROM entries WHERE kind = 'image' AND hash = ? AND id != ?", [capture.hash, id]) { $0.text(0) }
+            guard elsewhere.isEmpty else { return false }
+            let rows = try query("SELECT hash, blob, library_path, last_copied_at FROM entries WHERE id = ? AND kind = 'image'", [id]) { row in
+                (hash: row.text(0) ?? "", blob: row.text(1), libraryPath: row.text(2), copiedAt: row.double(3))
+            }
+            guard let current = rows.first, current.hash != capture.hash else { return true }
+            let blob = try writeBlob(of: capture)
+            try stack(capture, blob: blob, on: (id, current.hash, current.blob == nil ? current.libraryPath : nil),
+                      at: Date(timeIntervalSince1970: current.copiedAt))
+            return true
+        }
+    }
+
+    private func stack(_ capture: ClipboardCapture, blob: String?, on rewritten: (id: String, hash: String, libraryPath: String?),
+                       at date: Date) throws {
+        // The card's current version, with its own hash, image and Library link, becomes an earlier one; the
+        // new copy is the newest, shown and pasted. The card keeps its source and first copy time.
+        try run("""
+            INSERT OR IGNORE INTO versions (entry_id, hash, blob, library_path, byte_size, stored_bytes, copied_at)
+            SELECT id, hash, blob, library_path, byte_size, stored_bytes, last_copied_at FROM entries WHERE id = ?
+            """, [rewritten.id])
+        // A kept Original owns its bytes: a capture file can be edited or trashed later (Astra L1).
+        if let owned = try snapshot(rewritten.libraryPath, hash: rewritten.hash) {
+            try run("UPDATE versions SET blob = ?, stored_bytes = ? WHERE entry_id = ? AND hash = ?",
+                    [owned.blob, owned.bytes, rewritten.id, rewritten.hash])
+        }
+        // What was read or said about the earlier image is cleared, so the newest is read and described
+        // afresh (Astra L3); late answers for the earlier image are kept out by their hash guard.
+        try run("""
+            UPDATE entries SET hash = ?, blob = ?, library_path = ?, byte_size = ?, stored_bytes = ?,
+                last_copied_at = ?, change_seq = ?, read_text = NULL, model_title = NULL, model_keywords = NULL,
+                model_category = NULL, described = 0 WHERE id = ?
+            """, [capture.hash, blob, capture.libraryPath, capture.byteSize, capture.storedBytes,
+                  date.timeIntervalSince1970, try nextChange(), rewritten.id])
     }
 
     /// A saved text snippet. Snippets never expire and are never de-duplicated.
@@ -286,8 +310,11 @@ actor ClipboardHistoryStore {
 
     /// Newest first, each with its earlier versions.
     func entries(limit: Int = 500, offset: Int = 0) throws -> [ClipboardEntry] {
+        // Versions come newest first, in the order they were set aside (the table's row order), not by their
+        // copy times: Optimize keeps a card's copy time, so those can all be equal, and the last one must be
+        // the original.
         let versions = Dictionary(grouping: try query("""
-            SELECT entry_id, hash, blob, library_path, byte_size, copied_at FROM versions ORDER BY copied_at DESC
+            SELECT entry_id, hash, blob, library_path, byte_size, copied_at FROM versions ORDER BY rowid DESC
             """, []) { row in
             (row.text(0) ?? "", ClipboardEntryVersion(hash: row.text(1) ?? "", imageURL: row.text(2).map { blobs.appendingPathComponent($0) },
                                                        libraryPath: row.text(3), byteSize: row.int(4),

@@ -162,6 +162,60 @@ final class ClipboardHistoryModel {
         }
     }
 
+    /// Makes an image clip smaller without changing a pixel. The smaller file becomes the card's newest version
+    /// and the original stays behind it, so history gains no entry.
+    func optimize(_ entry: ClipboardEntry) {
+        guard entry.kind == .image, let url = entry.imageURL ?? entry.libraryPath.map({ URL(fileURLWithPath: $0) }) else { return }
+        Task {
+            guard let result = try? await ImageOptimizer.shared.optimize(url, effort: OptimizePreferences.effort) else { return }
+            defer { result.discard() }
+            switch result.outcome {
+            case .optimized:
+                guard let data = try? Data(contentsOf: result.url) else { return say("Couldn’t optimize this image.") }
+                var capture = ClipboardCapture(kind: .image, hash: ClipboardPasteboardReader.digest(data))
+                capture.image = data
+                capture.imageExtension = result.url.pathExtension
+                capture.pixelWidth = entry.pixelWidth
+                capture.pixelHeight = entry.pixelHeight
+                capture.byteSize = data.count
+                capture.sourceBundleID = entry.sourceBundleID
+                do {
+                    guard try await store?.stack(capture, on: entry.id) != false else {
+                        return say("An optimized copy of this image is already in the history.")
+                    }
+                    refresh()
+                    say("Optimized · \(result.sizeSummary)")
+                } catch {
+                    say("Couldn’t optimize this image.")
+                }
+            case .failed(let reason):
+                say("Couldn’t optimize. \(reason)")
+            case .alreadyOptimized, .converted, .timedOut:
+                say("Already Optimized")
+            }
+        }
+    }
+
+    /// Says it where it is seen: the Clipboard page shows its own messages only in the inspector, which is
+    /// empty when a clip is optimized from its right-click menu, so the Library's status bar says it too.
+    private func say(_ message: String) {
+        feedback.show(message)
+        CaptureLibraryModel.shared.actionFeedback.show(message)
+    }
+
+    /// Convert to WebP… and Convert to JPEG…: the Library's sheet, on this clip's image as the card shows it.
+    func convert(_ entry: ClipboardEntry, to format: ImageConversion.Format) {
+        guard entry.kind == .image, let url = entry.imageURL ?? entry.libraryPath.map({ URL(fileURLWithPath: $0) }) else { return }
+        let name = entry.libraryPath.map { URL(fileURLWithPath: $0).deletingPathExtension().lastPathComponent } ?? "Copied Image"
+        CaptureLibraryModel.shared.pendingConversion = ImageConversion(
+            format: format, files: [(url, name)], subtitle: "\(entry.pixelWidth) × \(entry.pixelHeight) image")
+    }
+
+    /// The clip as it was first copied: its oldest version, when it was optimized or rewritten since.
+    func original(_ entry: ClipboardEntry) -> ClipboardEntry {
+        entry.earlierVersions.last.map { self.entry(entry, at: $0) } ?? entry
+    }
+
     /// The card as it was at an earlier version: that version's image and Library link, for Copy and Quick Look.
     func entry(_ entry: ClipboardEntry, at version: ClipboardEntryVersion) -> ClipboardEntry {
         var earlier = entry

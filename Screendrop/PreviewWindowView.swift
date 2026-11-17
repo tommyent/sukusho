@@ -176,6 +176,7 @@ struct PreviewWindowView: View {
                     isCompressing: previewStack.compressingItemIDs.contains(item.id),
                     isPreparing: previewStack.preparingItemIDs.contains(item.id),
                     compressionResult: previewStack.compressionResultBadges[item.id],
+                    optimizedNote: previewStack.optimizedNotes[item.id],
                     slideDirection: slideDirection,
                     suppressHoverActions: isOverlayTransitioning,
                     onHoverChanged: { isHovered in
@@ -188,7 +189,8 @@ struct PreviewWindowView: View {
                         previewStack.deleteScreenshot(id: item.id)
                     },
                     onCopy: {
-                        previewStack.copyToClipboard(id: item.id)
+                        // Shift-click copies the capture as it is, as ⇧⌘C does elsewhere: the card takes no key commands of its own.
+                        previewStack.copyToClipboard(id: item.id, original: NSEvent.modifierFlags.contains(.shift))
                     },
                     onSave: {
                         previewStack.save(id: item.id)

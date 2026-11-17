@@ -148,7 +148,7 @@ final class CommentsLibraryModel {
     func perform(_ action: CaptureLibraryAction) {
         switch action {
         case .edit: if let comment = selectedComments.first { open(comment) }
-        case .copy: copyText(selectedComments)
+        case .copy, .copyOriginal: copyText(selectedComments)
         case .trash: pendingDelete = selectedComments
         case .preview, .rename, .export, .share, .reveal: break
         }

@@ -68,7 +68,7 @@ if [[ -d "$FW/Versions/B/XPCServices" ]]; then
     $SIGN "$FW/Versions/B/XPCServices/Installer.xpc"
     $SIGN --preserve-metadata=entitlements "$FW/Versions/B/XPCServices/Downloader.xpc"
 fi
-for code in "$FW/Versions/B/Autoupdate" "$FW/Versions/B/Updater.app" "$FW" "$APP/Contents/Helpers/sukusho-mcp"; do
+for code in "$FW/Versions/B/Autoupdate" "$FW/Versions/B/Updater.app" "$FW" "$APP"/Contents/Helpers/*(.); do   # the MCP helper and the image optimizers
     $SIGN "$code"
 done
 $SIGN --entitlements Screendrop/Screendrop.entitlements "$APP"
@@ -85,6 +85,12 @@ ENTITLEMENTS="$(codesign -d --entitlements - --xml "$APP" 2>/dev/null)"
 EXE="$APP/Contents/MacOS/Sukusho"
 (( $(nm "$EXE" | grep -c __profc_ || true) == 0 )) || fail "the executable carries code-coverage counters"
 ARCHS="$(lipo -archs "$EXE")"
+# A helper without one of the app's architectures would be missing on those Macs: optimizing would quietly fall back.
+for helper in "$APP"/Contents/Helpers/*(.); do
+    for arch in ${=ARCHS}; do
+        [[ " $(lipo -archs "$helper") " == *" $arch "* ]] || fail "${helper:t} has no $arch slice, which the app has ($ARCHS)"
+    done
+done
 if [[ -n "${PERSONAL:-}" ]]; then
     print -r -- "personal build $VERSION ($BUILD), $ARCHS, Developer ID signed, not notarized: $APP"
     exit 0

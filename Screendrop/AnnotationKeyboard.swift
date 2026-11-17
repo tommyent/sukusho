@@ -11,6 +11,8 @@ struct AnnotationKeyCommandHandler: NSViewRepresentable {
     let onDelete: () -> Void
     let onSave: () -> Void
     let onCopy: () -> Void
+    /// ⇧⌘C: the image as it is, not optimized.
+    var onCopyOriginal: (() -> Void)? = nil
     let onUndo: () -> Void
     let onRedo: () -> Void
     let onSelectAll: () -> Void
@@ -56,6 +58,7 @@ struct AnnotationKeyCommandHandler: NSViewRepresentable {
         view.onDelete = onDelete
         view.onSave = onSave
         view.onCopy = onCopy
+        view.onCopyOriginal = onCopyOriginal
         view.onUndo = onUndo
         view.onRedo = onRedo
         view.onSelectAll = onSelectAll
@@ -82,6 +85,7 @@ final class AnnotationKeyCommandHandlerView: NSView {
     var onDelete: (() -> Void)?
     var onSave: (() -> Void)?
     var onCopy: (() -> Void)?
+    var onCopyOriginal: (() -> Void)?
     var onUndo: (() -> Void)?
     var onRedo: (() -> Void)?
     var onSelectAll: (() -> Void)?
@@ -233,6 +237,11 @@ final class AnnotationKeyCommandHandlerView: NSView {
                 return nil
             }
 
+            if Self.isCopyOriginal(event), let onCopyOriginal = self.onCopyOriginal {
+                onCopyOriginal()
+                return nil
+            }
+
             if Self.isPaste(event), self.onPaste?() == true {
                 return nil
             }
@@ -374,6 +383,11 @@ final class AnnotationKeyCommandHandlerView: NSView {
     private static func isCopy(_ event: NSEvent) -> Bool {
         event.modifierFlags.contains(.command)
             && event.modifierFlags.intersection([.shift, .option, .control]).isEmpty
+            && event.charactersIgnoringModifiers?.lowercased() == "c"
+    }
+
+    private static func isCopyOriginal(_ event: NSEvent) -> Bool {
+        event.modifierFlags.intersection([.command, .shift, .option, .control]) == [.command, .shift]
             && event.charactersIgnoringModifiers?.lowercased() == "c"
     }
 

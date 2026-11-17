@@ -6,6 +6,8 @@ enum CaptureLibraryAction: String {
     case edit = "Edit"
     case rename = "Rename"
     case copy = "Copy"
+    /// ⇧⌘C: the capture as it is, not optimized. A key command only, in no menu.
+    case copyOriginal = "Copy Original"
     case export = "Export…"
     case share = "Share…"
     case reveal = "Reveal in Finder"
@@ -308,6 +310,7 @@ final class LibraryCollectionView: NSCollectionView {
         pendingRename = nil
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if flags.contains(.command), event.charactersIgnoringModifiers == "c" { command?(.copy); return }
+        if flags.contains([.command, .shift]), event.charactersIgnoringModifiers?.lowercased() == "c" { command?(.copyOriginal); return }
         if flags.contains(.command), event.keyCode == 51 { command?(.trash); return }
         if !flags.contains(.command), !flags.contains(.control), !flags.contains(.option) {
             if event.keyCode == 49 { command?(.preview); return }

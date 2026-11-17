@@ -167,6 +167,8 @@ final class ClipboardPopupPresenter {
         case (kVK_Escape, []): close()
         case (kVK_Return, []), (kVK_ANSI_KeypadEnter, []): deliver(state.selected, as: .paste)
         case (kVK_Return, [.command]): deliver(state.selected, as: .copy)
+        // ⇧⌘C: the clip as it was first copied, before it was optimized.
+        case (kVK_ANSI_C, [.command, .shift]): deliver(state.selected.map(ClipboardHistoryModel.shared.original), as: .copy)
         case (kVK_Return, [.control, .command]): deliver(state.selected, as: .pastePlain)
         case (kVK_ANSI_Period, [.command]): if let entry = state.selected { ClipboardHistoryModel.shared.toggleSaved(entry) }
         case (kVK_ANSI_X, [.control]): if let entry = state.selected { ClipboardHistoryModel.shared.delete(entry) }

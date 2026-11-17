@@ -30,6 +30,6 @@ xcodebuild test -project Screendrop.xcodeproj -scheme "Screendrop Dev" \
   DEVELOPMENT_TEAM=YOUR_TEAM_ID -allowProvisioningUpdates
 ```
 
-The tests use Swift Testing, need no app host, and never touch your captures or settings; see [ScreendropTests/README.md](../ScreendropTests/README.md). Xcode resolves the package dependencies: DockProgress, Sparkle for updates, and the MCP Swift SDK for the agent helper. [Editor performance](editor-performance.md) and [export performance](export-performance.md) describe the standalone checks and benchmarks.
+The tests use Swift Testing, need no app host, and never touch your captures or settings; see [ScreendropTests/README.md](../ScreendropTests/README.md). Xcode resolves the package dependencies: DockProgress, Sparkle for updates, and the MCP Swift SDK for the agent helper. The image optimizers (oxipng, cwebp, webpmux, cjpeg, jpegtran) are checked in, already built, in `Vendor/optimizers`, and the build copies them into the app; `scripts/build-optimizers.sh` rebuilds them from pinned source with cargo and cmake when a version changes. [Editor performance](editor-performance.md) and [export performance](export-performance.md) describe the standalone checks and benchmarks.
 
 If Screendrop was installed before, Sukusho brings over its captures, recordings, settings and Cloud token once, the first time it opens. Screendrop's own copy is left unchanged.

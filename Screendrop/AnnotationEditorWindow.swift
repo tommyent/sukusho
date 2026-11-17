@@ -158,6 +158,7 @@ struct AnnotationEditorWindow: View {
                 onCopy: {
                     if !model.copySelectedAnnotations() { copyAndFinishEditing() }
                 },
+                onCopyOriginal: { copyAndFinishEditing(original: true) },
                 onUndo: model.undo,
                 onRedo: model.redo,
                 onSelectAll: model.selectAllAnnotations,
@@ -578,7 +579,7 @@ struct AnnotationEditorWindow: View {
     /// Cmd-C without a selection: saves and closes, then puts the finished image - annotations
     /// included - on the clipboard whatever the auto-copy setting, for a
     /// capture, mark up, paste loop that never touches the mouse.
-    private func copyAndFinishEditing() {
+    private func copyAndFinishEditing(original: Bool = false) {
         clearInspectorFocus()
         guard let sourceURL = model.sourceURL else {
             model.releaseEditorResources()
@@ -599,9 +600,10 @@ struct AnnotationEditorWindow: View {
                     )
                 }
                 // No result means nothing was drawn: the original is the image.
-                try await ScreenshotFileActions.copyImageToClipboard(from: resultURL ?? sourceURL)
+                let saving = try await ScreenshotFileActions.copyImageToClipboard(from: resultURL ?? sourceURL, original: original)
                 // The window usually closes, so a toast says the image went to the clipboard.
-                CaptureTextFeedbackPresenter.shared.showDone("Copied", detail: "The marked-up screenshot is on the clipboard.",
+                CaptureTextFeedbackPresenter.shared.showDone(original ? "Copied Original" : "Copied",
+                                                             detail: saving ?? "The marked-up screenshot is on the clipboard.",
                                                              displayID: ActiveDisplayResolver.activeDisplayID())
                 guard !model.hasUnsavedChanges else {
                     isFinishing = false

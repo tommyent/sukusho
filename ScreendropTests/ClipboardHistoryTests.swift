@@ -210,6 +210,46 @@ struct ClipboardHistoryStoreTests {
         return capture
     }
 
+    /// Optimize on a clip: the smaller file goes on top of the same card, which keeps its place in history.
+    @Test func anOptimizedVersionStacksOnItsOwnCard() async throws {
+        let store = try store()
+        guard case .inserted(let id) = try await store.record(image(400, width: 4, height: 4), at: start) else {
+            Issue.record("not inserted")
+            return
+        }
+        _ = try await store.record(text("newer"), at: start + 10)
+        let smaller = image(200, width: 4, height: 4)
+        try await store.stack(smaller, on: id)
+        try await store.stack(smaller, on: id)   // the same version again changes nothing
+        let entries = try await store.entries()
+        #expect(entries.count == 2)
+        let card = try #require(entries.first { $0.id == id })
+        #expect(card.hash == smaller.hash)
+        #expect(card.byteSize == 200)
+        #expect(card.earlierVersions.count == 1)
+        #expect(card.earlierVersions.first?.byteSize == 400)
+        #expect(card.lastCopiedAt == start)
+        #expect(entries.first?.id != id)   // the text copied later is still on top
+
+        // Astra OR4: optimized a second time, at another effort. The versions keep the order they were made
+        // in although the card's copy time never moved, so the original is still the last one.
+        let smallest = image(150, width: 4, height: 4)
+        #expect(try await store.stack(smallest, on: id))
+        let twice = try #require(try await store.entries().first { $0.id == id })
+        #expect(twice.hash == smallest.hash)
+        #expect(twice.earlierVersions.map(\.byteSize) == [200, 400])
+        #expect(twice.earlierVersions.last?.byteSize == 400)
+        #expect(twice.lastCopiedAt == start)
+
+        // Content another card already holds can't be stacked: nothing changes, and the caller is told.
+        let held = image(300, width: 4, height: 4)
+        _ = try await store.record(held, at: start + 20)
+        #expect(try await store.stack(held, on: id) == false)
+        let after = try await store.entries()
+        #expect(after.count == 3)
+        #expect(after.first { $0.id == id }?.hash == smallest.hash)
+    }
+
     @Test func copyingAgainBumpsTheSameEntry() async throws {
         let store = try store()
         let first = try await store.record(text("same"), at: start)

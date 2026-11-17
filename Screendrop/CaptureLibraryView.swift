@@ -313,6 +313,9 @@ struct CaptureLibraryView: View {
                 Text("The local files and their edits will move to Trash. Exported copies and cloud links will remain available.")
             }
         }
+        .sheet(item: $model.pendingConversion) { conversion in
+            ImageConversionSheet(conversion: conversion) { model.actionFeedback.show($0) }
+        }
         .sheet(item: $model.pendingCloudUpload) { item in
             // The card's own name: yours, else Apple Intelligence's, else the date; never the file name.
             CloudUploadOptionsPopover(suggestedTitle: item.title,

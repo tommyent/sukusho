@@ -284,6 +284,7 @@ final class ScreenshotHistoryStore {
             )
             items.insert(item, at: 0)
             saveMetadata()
+            CaptureOptimizer.optimizeNewCapture(destinationURL)
             return destinationURL
         } catch {
             print("Failed to import screenshot into history: \(error)")
@@ -445,6 +446,10 @@ final class ScreenshotHistoryStore {
             items[index].hasEdits = true
             saveMetadata()
         }
+        // A new render is in the file, which keeps its extended attributes: the note about the old one goes.
+        OptimizedMark.clear(displayURL)
+        // The rendered image is optimized once the editing is over, not on each save.
+        CaptureOptimizer.editingChanged(displayURL, closed: !CaptureLibraryOpenEditors.isEditing(displayURL))
         return displayURL
     }
 
@@ -491,6 +496,7 @@ final class ScreenshotHistoryStore {
             replacements: [(restored, displayURL)],
             removing: [baseDestination, documentURL]
         )
+        OptimizedMark.clear(displayURL)
         if let index = items.firstIndex(where: { $0.fileName == displayURL.lastPathComponent }) {
             let imageSize = ScreenshotImageLoader.imageSize(at: displayURL) ?? .zero
             items[index].updatedAt = Date()

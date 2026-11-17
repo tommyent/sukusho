@@ -417,22 +417,11 @@ enum ScreenshotExportFormat: String, CaseIterable, Identifiable {
 }
 
 enum ScreenshotFileActions {
-    static func copyImageToClipboard(from url: URL) async throws {
-        let contentType = UTType(filenameExtension: url.pathExtension)
-        let dataType: NSPasteboard.PasteboardType = if contentType?.conforms(to: .jpeg) == true {
-            NSPasteboard.PasteboardType(UTType.jpeg.identifier)
-        } else {
-            .png
-        }
-
-        try await copyImageToClipboard(from: url, dataType: dataType)
-    }
-
     static func copyPNGToClipboard(from url: URL) async throws {
         try await copyImageToClipboard(from: url, dataType: .png)
     }
 
-    private static func copyImageToClipboard(from url: URL, dataType: NSPasteboard.PasteboardType) async throws {
+    static func copyImageToClipboard(from url: URL, dataType: NSPasteboard.PasteboardType) async throws {
         let item = try await ScreenshotClipboardImage.item(from: url, dataType: dataType, includeTIFF: ScreendropPreferences.copyTIFF)
         let pasteboard = NSPasteboard.general
         // Publication stays on MainActor, without suspension between clear and

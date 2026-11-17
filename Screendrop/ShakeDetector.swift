@@ -3,11 +3,12 @@
 //  Screendrop
 //
 //  Shake to upload: tells a shake of the pointer from an ordinary drag, from
-//  its horizontal positions alone, and says which files a shelf may share as
-//  a gallery. Apart from the app, so both can be tested without events,
-//  pasteboards or a Worker.
+//  its horizontal positions alone, says which files a shelf may share as a
+//  gallery, and reads the files a drag carries. Apart from the app, so all
+//  three can be tested without events, the drag pasteboard or a Worker.
 //
 
+import AppKit
 import CoreGraphics
 import Foundation
 import ImageIO
@@ -76,6 +77,12 @@ nonisolated struct ShakeDetector: Sendable {
 }
 
 nonisolated enum ShakeShelfFiles {
+    /// The files a drag carries, in its order; anything on the pasteboard that isn't a file is left out.
+    /// A drop reads them from the drop's own pasteboard, inside the drop.
+    static func fileURLs(on pasteboard: NSPasteboard) -> [URL] {
+        pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+    }
+
     /// Several images, all of a kind Image I/O reads, can go up as one gallery when
     /// the Worker has galleries; a gallery's images need a thumbnail each.
     static func canShareGallery(_ files: [URL], workerSupportsGalleries: Bool) -> Bool {
