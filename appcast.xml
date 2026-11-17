@@ -3,6 +3,82 @@
     <channel>
         <title>Sukusho</title>
         <item>
+            <title>1.3.0 beta 1</title>
+            <pubDate>Tue, 17 Nov 2026 16:13:49 -0500</pubDate>
+            <link>https://tommyent.github.io/sukusho/</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/tommyent/sukusho/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:channel>beta</sparkle:channel>
+            <sparkle:version>32.261117.2109</sparkle:version>
+            <sparkle:shortVersionString>1.3.0 beta 1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# Sukusho 1.3.0 beta 1
+
+The first beta of Sukusho 1.3.0: clipboard history, image optimizing, a new recording bar, and Sukusho on macOS 26. Open the DMG and drag Sukusho to Applications.
+
+Tested on macOS 26.5.1 and 27.2.1.
+
+**Getting later betas:** 1.2.0 has no beta switch, so this beta comes only as a download. Once it's installed, Sukusho offers you the next betas by itself: **Settings › About › Get beta updates** starts on in a beta. Turn it off to be offered only regular releases.
+
+## New since 1.2.0
+
+### Clipboard history and the Library
+- **Clipboard history** keeps what you copy: text, links, colors, images and files. It's off until you turn it on in **Settings › Clipboard**, which walks you through setup and lets you choose apps whose copies are ignored. Copies that apps mark as private or temporary are never kept.
+- **⌃⌘V** opens a popup to search your history and paste. **⌘1** to **⌘0** paste your saved clips, and **Actions** (⌘K) has the rest. Clipboard History is also in the menu bar menu.
+- The Library has a **Clipboard** section, with **History** and **Snippets**, in a grid or a list. Images get a title and keywords, read on your Mac, and can be opened in the editor, optimized or converted.
+- When another app, or Sukusho's own Optimize, puts a smaller copy of an image back on the clipboard, it becomes the newest version of the same card, and the original is kept beside it.
+- **Save (★)** keeps a capture or a clip in **Library › Saved**, out of reach of the history's clean-up. Captures you named, tagged or shared before are saved for you.
+- Captures are titled by app and window, and Quick Look follows your selection.
+- Settings has new **Shortcuts**, **Library** and **Clipboard** panes. **Show Library** has a shortcut that works anywhere.
+- New default shortcuts: **Screen Recording** is **⇧⌘5** and **Capture Text** **⇧⌘O**. A shortcut you set yourself stays as it is; only the ones you never changed follow the new defaults. **Settings › Shortcuts** lists them in order: ⇧⌘1 to ⇧⌘5, then O, L and V.
+- **⇧⌘3**, **⇧⌘4** and **⇧⌘5** are also macOS's screenshot shortcuts. Sukusho says so once at launch and in **Settings › Shortcuts**, with two ways out. **Use Other Keys** moves them to **⌥⇧⌘3**, **⌥⇧⌘4** and **⌥⇧⌘5**, or to **⌃⌥⌘** with the same number when those are taken, and shows them in Settings to change if you like; a shortcut with no free key stays as it is. **Open Keyboard Shortcuts…** opens macOS's Keyboard settings, where **Keyboard Shortcuts… › Screenshots** turns macOS's off so Sukusho keeps the keys.
+- Library cards have a new look: the picture sits as a raised chip on the card, with the title and date below it, and each capture shows the icon of the app it came from.
+
+### Screenshots and the editor
+- **Area screenshots** use Sukusho's own picker: hold **Shift** to snap to a box on screen, or **Option** for a loupe.
+- Preview cards close after 10 seconds by default, overlap instead of piling up, and stay while the pointer is over any of them.
+- **Text** is sized by its handles, with a size badge and snapping. New text gets a light halo so it reads over busy screenshots, and **⌘⌥+** and **⌘⌥−** resize it.
+- Tool options sit in one place at the top of the inspector, under the tool's name. **Crop** takes over the inspector while you crop.
+- **Numbered circles** can have a short tail. The magnifier comes in circle, rectangle and rounded-square shapes.
+- A drawing tool stays selected after each annotation; **Escape** returns to Select.
+- A **Transparent** background keeps padding, corners and shadow.
+- **Scrolling Capture** shows a live preview strip, **Space** starts and pauses auto-scroll, and pinned sidebars and window edges stitch more cleanly.
+
+### Recording bar and Studio
+- The recording bar has a new look: what's on is lit, the countdown shows in the bar, red means recording and amber means paused. The microphone and system-audio chips show their levels during a take.
+- **Area recordings** wait for **Record**, so you can move and resize the area first.
+- Recordings start with no background, as screenshots do, and are captured at even sizes.
+- Studio's inspector works like the image editor's: sections are switches or always open, and what isn't available says what unlocks it.
+- Export doesn't offer **Include audio** for a recording with no sound.
+- Videos are saved to **~/Movies/Sukusho**; images stay in Pictures.
+
+### Capture Text
+- Lines the screen wrapped are joined into paragraphs, with hyphens kept. Turn on **Settings › Screenshots › Keep line breaks in Capture Text** to keep every line.
+- Tables and lists keep their shape, and text captured on a non-Retina screen is read at twice its size.
+- Capture Text uses Sukusho's area picker, and says what it copied.
+
+### Image optimizing and the shelf
+- **Optimize** makes screenshots smaller without changing a pixel, using oxipng, libwebp and MozJPEG, included in the app. **Convert to WebP…** and **Convert to JPEG…** make a smaller copy in another format.
+- In **Settings › Optimize**, new captures are optimized in the background, copies are optimized as they're made, and shares to Cloud are optimized before upload. **⇧⌘C** copies the original.
+- The copy made right after a capture doesn't wait: the original goes on the clipboard at once, and the smaller copy takes its place when it's ready.
+- **The shelf:** shake the pointer while dragging files from Finder or the Desktop, then drop them on the shelf to optimize, convert or share them.
+
+### Privacy of Sukusho's windows
+- **Settings › General › Include Sukusho windows in captures** decides whether preview cards, the recording bar, editors and Studio appear in Sukusho's own screenshots and recordings. Other apps and screen sharing see them either way.
+- The clipboard popup is always left out of Sukusho's own captures, including a recording that's already running, and Sukusho asks macOS to hide it from other apps too.
+- Pinned screenshots follow the same setting.
+
+### Updates
+- **Settings › About › Get beta updates** offers betas as well as every regular release. It starts on in a beta and off in a regular release, and your own choice always stays.
+
+### macOS 26
+- Sukusho now opens on macOS 26. A notice at launch says some features may be missing there; **Don't show again** hides it for that macOS version.
+
+## Fixes
+- Screenshots say so when Sukusho isn't allowed to record the screen.
+]]></description>
+            <enclosure url="https://github.com/tommyent/sukusho/releases/download/v1.3.0-beta.1/Sukusho-1.3.0-beta.1.dmg" length="21677394" type="application/octet-stream" sparkle:edSignature="Y1gzvWLaV+gPGzqshJcGHAMZzClkUMHK2R/oprhZv7XoF+ET1Kt5PD3GBU1mtV3bETQkb4S7ZNVyLHpTCTOSAw=="/>
+        </item>
+        <item>
             <title>1.2.0</title>
             <pubDate>Mon, 09 Nov 2026 13:45:00 -0500</pubDate>
             <link>https://tommyent.github.io/sukusho/</link>
