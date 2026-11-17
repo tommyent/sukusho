@@ -3406,13 +3406,6 @@ private struct StudioInspector: View {
                 InspectorSection(
                     "Background",
                     accessory: {
-                        if !usesDefaultLayout {
-                            InspectorResetButton(help: "Reset padding, corners and shadow") {
-                                model.style.padding = 0.06
-                                model.style.cornerRadius = 0.02
-                                model.style.shadow = 0.45
-                            }
-                        }
                         if model.style.background != .none {
                             InspectorClearButton(help: "Remove background") {
                                 model.style.background = .none
@@ -3421,6 +3414,22 @@ private struct StudioInspector: View {
                     }
                 ) {
                     backgroundControls
+                }
+
+                // The video's own edge, a heading of its own as the image editor's Screenshot is.
+                InspectorSection(
+                    "Video",
+                    accessory: {
+                        if !usesDefaultLayout {
+                            InspectorResetButton(help: "Reset padding, corners and shadow") {
+                                model.style.padding = 0.06
+                                model.style.cornerRadius = 0.02
+                                model.style.shadow = 0.45
+                            }
+                        }
+                    }
+                ) {
+                    videoControls
                 }
 
                 InspectorGroupBreak()
@@ -3604,8 +3613,7 @@ private struct StudioInspector: View {
     // MARK: Background
 
     /// The fill as one row whose picker previews a fill on the video while
-    /// the pointer rests on it, then the canvas shape, then how the video
-    /// sits on the background.
+    /// the pointer rests on it, then the canvas shape.
     private var backgroundControls: some View {
         VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
             InspectorBackgroundRow(
@@ -3642,9 +3650,12 @@ private struct StudioInspector: View {
                 )
             }
 
-            // Padding, corners and shadow shape the video on the background.
-            InspectorGroupLabel("Video")
+        }
+    }
 
+    /// Padding, corners and shadow shape the video on the background.
+    private var videoControls: some View {
+        VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
             InspectorFieldPair {
                 InspectorSlider(
                     "Padding",
