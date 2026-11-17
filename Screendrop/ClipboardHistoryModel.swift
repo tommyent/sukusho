@@ -279,7 +279,9 @@ final class ClipboardHistoryModel {
     /// A copied image becomes an ordinary capture, with its source app. Returns the capture's file.
     @discardableResult
     func addToLibrary(_ entry: ClipboardEntry, announcing: Bool = true) -> URL? {
-        guard entry.kind == .image, entry.libraryPath == nil, let url = entry.imageURL else { return nil }
+        // A copy whose capture was deleted from the Library can be added again from the image history kept.
+        let isInLibrary = entry.libraryPath.map { FileManager.default.fileExists(atPath: $0) } ?? false
+        guard entry.kind == .image, !isInLibrary, let url = entry.imageURL else { return nil }
         // An app this Mac doesn't have stays unnamed rather than showing its bundle ID.
         let source = appName(entry.sourceBundleID).map { CaptureSource(bundleIdentifier: entry.sourceBundleID, appName: $0) }
         let added = ScreenshotHistoryStore.shared.importScreenshot(from: url, source: source)
@@ -298,7 +300,8 @@ final class ClipboardHistoryModel {
         let capture = entry.libraryPath.map { URL(fileURLWithPath: $0) }
             .flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
             ?? addToLibrary(entry, announcing: false)
-        guard let capture else { return }
+        // Only a copy that was nothing but a link to a capture since deleted has nothing left to open.
+        guard let capture else { return feedback.show("This image's capture is no longer in the Library.") }
         QuickLookPreviewPresenter.dismiss()
         PreviewPanelPresenter.shared.onAnnotate?(capture)
     }
