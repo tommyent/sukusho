@@ -1218,7 +1218,7 @@ private func isRunning(_ text: String) -> Bool {
         let (release, doRelease) = AsyncStream<Void>.makeStream()
         let original = try item(source)
         let swap = Task {
-            try await copier.copyThenSwap(original, to: board) {
+            try await copier.copyThenSwap(to: board, first: { original }) {
                 didStart.yield()
                 for await _ in release { break }
                 guard let result = try? await optimizer.optimize(source), result.outcome == .optimized else { return nil }
@@ -1257,7 +1257,7 @@ private func isRunning(_ text: String) -> Bool {
             let (release, doRelease) = AsyncStream<Void>.makeStream()
             let original = try item(source)
             let late = Task {
-                try await copier.copyThenSwap(original, to: board) {
+                try await copier.copyThenSwap(to: board, first: { original }) {
                     didStart.yield()
                     for await _ in release { break }
                     guard let result = try? await optimizer.optimize(source), result.outcome == .optimized else { return nil }
@@ -1309,13 +1309,92 @@ private func isRunning(_ text: String) -> Bool {
             let count = board.changeCount
             let noTools = ImageOptimizer(toolsDirectory: bench.folder.appending(path: "nothing-here"), outputDirectory: bench.output)
             let original = try item(source)
-            let swapped = try await copier.copyThenSwap(original, to: board) {
+            let swapped = try await copier.copyThenSwap(to: board, first: { original }) {
                 guard let result = try? await noTools.optimize(source), result.outcome == .optimized else { return nil }
                 return try? item(result.url)
             }
             #expect(!swapped)
             #expect(board.data(forType: .png) == (try Data(contentsOf: source)))
             #expect(board.changeCount == count + 1)
+        }
+        #expect(bench.leftovers.isEmpty)
+    }
+
+    /// Sol OS3-1: reading the original takes time too. A copy made while it is being read is newer than the
+    /// capture's, and the capture's first write must not land on it.
+    @Test func theCopyAfterACaptureNeverWritesOverACopyMadeWhileItWasBeingRead() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let source = try bench.file("Capture.png", Sample.screenshot(width: 320, height: 200, seed: 42))
+        let quick = try bench.file("Quick.png", Sample.screenshot(width: 320, height: 200, seed: 43))
+        let optimizer = bench.optimizer
+        let copier = OptimizedImageCopy()
+        final class Calls { var smaller = 0 }
+        let calls = Calls()
+        /// A copy after a capture whose original is read only once `meanwhile` has run.
+        func copy(on board: NSPasteboard, meanwhile: () async throws -> Void) async throws -> Bool {
+            let (started, didStart) = AsyncStream<Void>.makeStream()
+            let (release, doRelease) = AsyncStream<Void>.makeStream()
+            let original = try item(source)
+            let late = Task {
+                try await copier.copyThenSwap(to: board, first: {
+                    didStart.yield()
+                    for await _ in release { break }
+                    return original
+                }, smaller: {
+                    calls.smaller += 1
+                    return nil
+                })
+            }
+            for await _ in started { break }
+            try await meanwhile()
+            doRelease.yield()
+            return try await late.value
+        }
+
+        // Copied in another app while the capture's original was being read.
+        do {
+            let board = pasteboard()
+            defer { board.releaseGlobally() }
+            var count = 0
+            let swapped = try await copy(on: board) {
+                board.clearContents()
+                board.setString("copied elsewhere", forType: .string)
+                count = board.changeCount
+            }
+            #expect(!swapped)
+            #expect(board.string(forType: .string) == "copied elsewhere")
+            #expect(board.changeCount == count)
+        }
+
+        // Copied in Sukusho meanwhile.
+        do {
+            let board = pasteboard()
+            defer { board.releaseGlobally() }
+            var newer: ImageOptimizationResult?
+            var count = 0
+            let swapped = try await copy(on: board) {
+                newer = try await copier.copy(quick, to: board, optimize: { try await optimizer.optimize($0) }, item: item)
+                count = board.changeCount
+            }
+            #expect(!swapped)
+            #expect(board.data(forType: .png) == (try Data(contentsOf: try #require(newer).url)))
+            #expect(board.changeCount == count)
+            newer?.discard()
+        }
+        // Overtaken before its first write, the copy asks for no smaller file either.
+        #expect(calls.smaller == 0)
+
+        // Nothing copied meanwhile: the original is written as before.
+        do {
+            let board = pasteboard()
+            defer { board.releaseGlobally() }
+            let count = board.changeCount
+            let swapped = try await copy(on: board) {}
+            #expect(!swapped)
+            #expect(board.data(forType: .png) == (try Data(contentsOf: source)))
+            #expect(board.changeCount == count + 1)
+            #expect(calls.smaller == 1)
         }
         #expect(bench.leftovers.isEmpty)
     }

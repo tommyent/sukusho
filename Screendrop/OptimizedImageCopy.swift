@@ -53,23 +53,27 @@ final class OptimizedImageCopy {
         return result
     }
 
-    /// The copy right after a capture, which nobody should wait for: `first` goes on the pasteboard now,
-    /// and the item `smaller` makes, if it makes one, takes its place when it is ready. It does so only
-    /// while the pasteboard still holds this very write: a later copy from here, or anything copied in
-    /// another app meanwhile, stays. Returns whether the swap happened; `smaller` giving nil (nothing
-    /// smaller came out, or the optimizer failed) leaves the original there.
-    func copyThenSwap(_ first: NSPasteboardItem, to pasteboard: NSPasteboard = .general,
+    /// The copy right after a capture, which nobody should wait for: the item `first` makes goes on the
+    /// pasteboard as soon as it is read, and the item `smaller` makes, if it makes one, takes its place
+    /// when it is ready. This copy takes its turn before it reads anything, so neither write ever lands
+    /// on something newer: a later copy from here, or anything copied in another app, while the original
+    /// is being read or while it is being optimized, stays. Returns whether the swap happened; `smaller`
+    /// giving nil (nothing smaller came out, or the optimizer failed) leaves the original there.
+    func copyThenSwap(to pasteboard: NSPasteboard = .general, first: () async throws -> NSPasteboardItem,
                       smaller: () async -> NSPasteboardItem?) async throws -> Bool {
         latest += 1
         let mine = latest
-        // A copy that was still optimizing is overtaken by this write.
+        let countAtStart = pasteboard.changeCount
+        // A copy that was still optimizing is overtaken by this one.
         cancelInFlight?()
         cancelInFlight = nil
+        let original = try await first()
+        // No suspension between each check and its write, as in `copy`.
+        guard mine == latest, pasteboard.changeCount == countAtStart else { return false }
         pasteboard.clearContents()
-        guard pasteboard.writeObjects([first]) else { throw CocoaError(.fileWriteUnknown) }
+        guard pasteboard.writeObjects([original]) else { throw CocoaError(.fileWriteUnknown) }
         let countAfterWrite = pasteboard.changeCount
         guard let item = await smaller() else { return false }
-        // No suspension between this check and the write, as in `copy`.
         guard mine == latest, pasteboard.changeCount == countAfterWrite else { return false }
         pasteboard.clearContents()
         guard pasteboard.writeObjects([item]) else { throw CocoaError(.fileWriteUnknown) }

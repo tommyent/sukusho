@@ -51,7 +51,9 @@ extension ScreenshotFileActions {
         var saving: String?
         // A file made only for this copy: kept while the clipboard names it, as every optimized copy's is.
         var made: ImageOptimizationResult?
-        let swapped = try await OptimizedImageCopy.shared.copyThenSwap(try await clipboardItem(for: url)) {
+        // The original is read inside the copy's turn, not before it: reading takes time, and a copy made
+        // meanwhile must not be written over.
+        let swapped = try await OptimizedImageCopy.shared.copyThenSwap(first: { try await clipboardItem(for: url) }) {
             guard let smaller = await CaptureOptimizer.smallerForFirstCopy(url) else { return nil }
             made = smaller.result
             guard let item = try? await clipboardItem(for: smaller.file) else { return nil }
