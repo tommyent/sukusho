@@ -1006,7 +1006,8 @@ struct LibraryGridMetricsTests {
         let single = LibraryGridMetrics(width: 612, cardWidth: 320)
         #expect(single.columns == 1 && single.lineSpacing == LibraryGridMetrics.minimumGap(for: 320))
         #expect(large.cardHeight == LibraryGridMetrics.pictureInset + large.pictureHeight + LibraryGridMetrics.captionHeight)
-        #expect(large.pictureHeight == ((320 - 16) * 0.625).rounded(.down))
+        #expect(large.cardHeight == (320 * 0.625).rounded(.down) + 62)
+        #expect(large.pictureHeight == large.cardHeight - 6 - 50)
     }
 }
 

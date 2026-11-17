@@ -28,6 +28,7 @@ final class ClipboardHistoryModel {
 
     @ObservationIgnored private var appNames: [String: String] = [:]
     @ObservationIgnored private var appIcons: [String: NSImage] = [:]
+    @ObservationIgnored private var appIconLightness: [String: Bool] = [:]
     @ObservationIgnored private var loading: Task<Void, Never>?
     @ObservationIgnored private let logger = Logger(subsystem: "com.tommyent.Sukusho", category: "Clipboard")
 
@@ -111,11 +112,24 @@ final class ClipboardHistoryModel {
     }
 
     func appIcon(_ bundleID: String?) -> NSImage? {
-        guard let bundleID, let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
+        guard let bundleID else { return nil }
+        // Cached first: every Library card asks, as it scrolls in.
         if let icon = appIcons[bundleID] { return icon }
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
         let icon = NSWorkspace.shared.icon(forFile: url.path)
         appIcons[bundleID] = icon
         return icon
+    }
+
+    /// Whether an app's icon is light enough to need its ring on a Library card (`IconLightness`), measured once.
+    func appIconIsLight(_ bundleID: String?) -> Bool {
+        guard let bundleID else { return false }
+        if let known = appIconLightness[bundleID] { return known }
+        var rect = NSRect(x: 0, y: 0, width: 32, height: 32)
+        guard let image = appIcon(bundleID)?.cgImage(forProposedRect: &rect, context: nil, hints: nil) else { return false }
+        let light = IconLightness.isLight(image)
+        appIconLightness[bundleID] = light
+        return light
     }
 
     // MARK: - Actions

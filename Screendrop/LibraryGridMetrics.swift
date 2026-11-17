@@ -18,8 +18,9 @@ nonisolated struct LibraryGridMetrics: Equatable, Sendable {
 
     /// The narrowest margin at either side, and above and below the grid.
     static let edgeMargin: CGFloat = 24
-    /// The picture's inset inside its card, so it floats on the card's surface as in Finder.
-    static let pictureInset: CGFloat = 8
+    /// The picture's inset inside its card, the same at the sides and the top, so it sits on the card as a chip
+    /// (owner's pick, 2026-11-17). The caption lines up with it.
+    static let pictureInset: CGFloat = 6
     /// The caption below the picture: a name and a small detail line, with their padding.
     static let captionHeight: CGFloat = 50
 
@@ -43,8 +44,9 @@ nonisolated struct LibraryGridMetrics: Equatable, Sendable {
         rightInset = max(edge, width - rowWidth - leftInset - 0.5)
     }
 
-    /// The picture's height inside a card: 16:10 of the card's inner width.
-    var pictureHeight: CGFloat { floor((cellWidth - 2 * Self.pictureInset) * 0.625) }
-    /// A whole card: inset, picture, caption.
-    var cardHeight: CGFloat { Self.pictureInset + pictureHeight + Self.captionHeight }
+    /// A whole card: as tall as before the picture was inset (a 16:10 picture over a 62 pt caption), so the chip
+    /// takes the room above the caption.
+    var cardHeight: CGFloat { floor(cellWidth * 0.625) + 62 }
+    /// The picture's height inside a card: what the inset and the caption leave.
+    var pictureHeight: CGFloat { cardHeight - Self.pictureInset - Self.captionHeight }
 }

@@ -423,14 +423,14 @@ struct LibraryCellContent: View {
     var body: some View {
         Group {
             if let item {
-                // Finder-like: the picture floats inside the card with room around it, the caption centred below.
-                VStack(spacing: 8) {
+                // The picture as a chip on the card, the caption under it on two lines, lined up with its left edge.
+                VStack(alignment: .leading, spacing: 8) {
                     thumbnail(item)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .padding([.top, .horizontal], LibraryGridMetrics.pictureInset)
                     labels(item)
-                        .padding(.horizontal, 10)
-                        .padding(.bottom, 9)
+                        .padding(.horizontal, LibraryGridMetrics.pictureInset)
+                        .padding(.bottom, 10)
                 }
                 .background(
                     Color.primary.opacity(selected ? 0.075 : isHovering ? 0.035 : 0.012),
@@ -495,41 +495,45 @@ struct LibraryCellContent: View {
     }
 
     private func labels(_ item: CaptureLibraryItem) -> some View {
-        titleAndSubtitle(item)
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, item.session != nil ? 22 : 0)
-            .overlay(alignment: .trailing) {
-                if item.session != nil {
-                    // A reused cell must not animate the last capture's circle into this one.
-                    AgentPromptCardMark(item: item).id(item.id)
-                }
+        HStack(spacing: 6) {
+            titleAndSubtitle(item)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if item.session != nil {
+                // A reused cell must not animate the last capture's circle into this one.
+                AgentPromptCardMark(item: item).id(item.id)
             }
+        }
     }
 
     private func titleAndSubtitle(_ item: CaptureLibraryItem) -> some View {
-        VStack(alignment: .center, spacing: 3) {
+        VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 5) {
                 if isRenaming(item) {
                     CaptureNameField(id: item.id, location: .card, font: .system(size: 13, weight: .medium), placeholder: item.automaticTitle)
                 } else {
                     // Cut at the end, so the app's name in "Finder: Sukusho Dev" stays whole (Fable 15 #4).
                     Text(item.title).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.tail)
+                        .libraryRaisedText()
                         .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.cellSpace)) } action: { onTitleFrame($0) }
                 }
                 if item.hasDraft { Image(systemName: "circle.fill").font(.system(size: 6)).foregroundStyle(.orange) }
             }
             HStack(spacing: 4) {
-                Text(item.subtitle).lineLimit(1)
+                // The app the capture came from, as clipboard cards show it (owner, 2026-11-17).
+                if let icon = ClipboardHistoryModel.shared.appIcon(item.source?.bundleIdentifier) {
+                    Image(nsImage: icon).resizable().frame(width: 13, height: 13)
+                        .libraryRaisedIcon(ringed: ClipboardHistoryModel.shared.appIconIsLight(item.source?.bundleIdentifier))
+                }
+                Text(item.subtitle).lineLimit(1).libraryRaisedText()
                 if item.isSaved { Image(systemName: "star.fill").font(.system(size: 8)).foregroundStyle(.yellow) }
             }
-            .font(.system(size: 10.5)).foregroundStyle(.secondary)
+            .font(.caption).foregroundStyle(.secondary)
         }
     }
 
     private func thumbnail(_ item: CaptureLibraryItem) -> some View {
         CaptureLibraryThumbnail(item: item, showsTopOfTall: true)
-            .clipShape(libraryCardPictureShape)
-            .overlay { libraryCardPictureShape.strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5) }
+            .libraryCardChip()
             .overlay(alignment: .topLeading) {
                 if let tag = item.tags.first(where: { CaptureTagStyles.shared.color(for: $0) != nil }) ?? item.tags.first {
                     // One small badge rather than a mark per tag, so small
@@ -760,9 +764,80 @@ extension View {
 /// square where it meets the title. Used by upload cards.
 let libraryCardImageShape = UnevenRoundedRectangle(topLeadingRadius: DS.Radius.card, topTrailingRadius: DS.Radius.card, style: .continuous)
 
-/// A picture inset in its card (`LibraryGridMetrics.pictureInset`), rounded on every corner so it floats on the
-/// card's surface, as Finder shows a thumbnail. Shared by capture and clipboard cards.
+/// A picture inset in its card (`LibraryGridMetrics.pictureInset`) as a chip, its corners concentric with the
+/// card's. Shared by capture and clipboard cards.
 let libraryCardPictureShape = RoundedRectangle(cornerRadius: max(4, DS.Radius.card - LibraryGridMetrics.pictureInset), style: .continuous)
+
+extension View {
+    /// A card's picture as a raised chip (owner's pick A, 2026-11-17): light along the top edge, a shade along the
+    /// bottom, lifted off the card. The edge is gradients and strokes over the picture; only a plain shape behind it
+    /// casts the lift's shadow, so no card renders its picture offscreen.
+    func libraryCardChip() -> some View { modifier(LibraryCardChip()) }
+
+    /// Caption text pressed up from the card: a faint shade one point under the letters (owner's pick, subtle).
+    func libraryRaisedText() -> some View { modifier(LibraryRaisedText()) }
+
+    /// A caption's app icon with the picture's raised edge: a shade under its own shape, a light edge on top. A light
+    /// icon (`IconLightness`) also gets a hairline ring around its shape, or a white one vanishes on a light card.
+    func libraryRaisedIcon(ringed: Bool = false) -> some View { modifier(LibraryRaisedIcon(ringed: ringed)) }
+}
+
+private struct LibraryCardChip: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        let dark = colorScheme == .dark
+        content
+            .clipShape(libraryCardPictureShape)
+            .overlay {
+                ZStack {
+                    LinearGradient(stops: [.init(color: .white.opacity(0.22), location: 0), .init(color: .white.opacity(0), location: 0.16),
+                                           .init(color: .black.opacity(0), location: 0.84), .init(color: .black.opacity(0.12), location: 1)],
+                                   startPoint: .top, endPoint: .bottom)
+                        .clipShape(libraryCardPictureShape)
+                    libraryCardPictureShape.strokeBorder(
+                        LinearGradient(stops: [.init(color: .white.opacity(dark ? 0.35 : 0.75), location: 0),
+                                               .init(color: .white.opacity(dark ? 0.12 : 0.25), location: 0.06),
+                                               .init(color: .black.opacity(dark ? 0.25 : 0.10), location: 0.94),
+                                               .init(color: .black.opacity(dark ? 0.45 : 0.22), location: 1)],
+                                       startPoint: .top, endPoint: .bottom),
+                        lineWidth: 1.5)
+                    libraryCardPictureShape.strokeBorder(dark ? Color.white.opacity(0.10) : Color.black.opacity(0.20), lineWidth: 0.5)
+                }
+                .allowsHitTesting(false)
+            }
+            .background {
+                // The card's own colour, so a transparent picture still shows the card through it.
+                libraryCardPictureShape.fill(WorkspaceChrome.background)
+                    .shadow(color: .black.opacity(dark ? 0.55 : 0.20), radius: 0.75, y: 1)
+                    .shadow(color: .black.opacity(dark ? 0.40 : 0.12), radius: 3, y: 3)
+            }
+    }
+}
+
+private struct LibraryRaisedText: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        colorScheme == .dark
+            ? content.shadow(color: .black.opacity(0.55), radius: 0.5, y: 1)
+            : content.shadow(color: .black.opacity(0.16), radius: 0.25, y: 1)
+    }
+}
+
+private struct LibraryRaisedIcon: ViewModifier {
+    let ringed: Bool
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        let dark = colorScheme == .dark
+        content
+            // The ring: a shadow with no offset and almost no blur traces the icon's own outline.
+            .shadow(color: .black.opacity(ringed ? (dark ? 0.6 : 0.45) : 0), radius: 0.35)
+            .shadow(color: .black.opacity(dark ? 0.85 : 0.42), radius: 0.25, y: 0.6)
+            .shadow(color: .white.opacity(dark ? 0.30 : 0.85), radius: 0, y: -0.4)
+    }
+}
 
 /// A Library card's border: a 2 pt accent ring when selected, grey while
 /// the window isn't key, as Finder does; a hairline otherwise (design pass

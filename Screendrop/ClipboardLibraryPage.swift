@@ -203,8 +203,8 @@ struct ClipboardCard: View {
     @State private var isHovering = false
     @Environment(\.displayScale) private var displayScale
 
-    /// Built like a capture card (LibraryCellContent): a solid backing in the chrome color, the image edge to
-    /// edge at the top, the same border and selection ring. Without the backing, the workspace wallpaper
+    /// Built like a capture card (LibraryCellContent): a solid backing in the chrome color, the picture as a raised
+    /// chip, the same border and selection ring. Without the backing, the workspace wallpaper
     /// showed through the cards (owner, 2026-11-16).
     /// The title line, and the gap under it: a card without one gives the room to its face, so every card in a row
     /// is as tall as the others.
@@ -212,8 +212,8 @@ struct ClipboardCard: View {
 
     var body: some View {
         let title = ClipboardList.cardTitle(of: entry)
-        // Finder-like, as capture cards: the picture floats inside the card, the caption centred below.
-        VStack(spacing: 8) {
+        // As capture cards: the picture as a chip on the card, the caption under it, lined up with its left edge.
+        VStack(alignment: .leading, spacing: 8) {
             face
                 .frame(maxWidth: .infinity)
                 .frame(height: faceHeight + (title == nil ? Self.titleRow : 0))
@@ -222,8 +222,7 @@ struct ClipboardCard: View {
                         Text(word).font(.system(size: 10)).foregroundStyle(.tertiary).padding(.horizontal, 8).padding(.vertical, 6)
                     }
                 }
-                .clipShape(libraryCardPictureShape)
-                .overlay { libraryCardPictureShape.strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5) }
+                .libraryCardChip()
                 .overlay(alignment: .topTrailing) {
                     // A re-encode another app put back (such as Clop's) stacked on this card; the inspector has the rest.
                     if !entry.earlierVersions.isEmpty {
@@ -232,27 +231,30 @@ struct ClipboardCard: View {
                     }
                 }
                 .padding([.top, .horizontal], LibraryGridMetrics.pictureInset)
-            VStack(spacing: 3) {
-                if let title { Text(title).font(.system(size: 13, weight: .medium)).lineLimit(1).frame(height: 16) }
+            VStack(alignment: .leading, spacing: 3) {
+                if let title { Text(title).font(.system(size: 13, weight: .medium)).lineLimit(1).libraryRaisedText().frame(height: 16) }
                 // The time first: it's what differs between cards, so a narrow card cuts the app rather than the time.
                 HStack(spacing: 3) {
-                    if entry.kind != .snippet { Text(ClipboardInfo.shortWhen(entry.lastCopiedAt)).layoutPriority(1) }
+                    if entry.kind != .snippet { Text(ClipboardInfo.shortWhen(entry.lastCopiedAt)).layoutPriority(1).libraryRaisedText() }
                     // The one mark that the picture is also a capture, on the caption line (Fable #5).
                     if entry.libraryPath != nil {
-                        Text("·")
-                        Text("In Captures").foregroundStyle(.tint).layoutPriority(1)
+                        Text("·").libraryRaisedText()
+                        Text("In Captures").foregroundStyle(.tint).layoutPriority(1).libraryRaisedText()
                     }
                     if let app = model.appName(entry.sourceBundleID) {
-                        if entry.kind != .snippet { Text("·") }
-                        if let icon = model.appIcon(entry.sourceBundleID) { Image(nsImage: icon).resizable().frame(width: 12, height: 12) }
-                        Text(app).truncationMode(.tail)
+                        if entry.kind != .snippet { Text("·").libraryRaisedText() }
+                        if let icon = model.appIcon(entry.sourceBundleID) {
+                            Image(nsImage: icon).resizable().frame(width: 13, height: 13)
+                                .libraryRaisedIcon(ringed: model.appIconIsLight(entry.sourceBundleID))
+                        }
+                        Text(app).truncationMode(.tail).libraryRaisedText()
                     }
                     if entry.pinnedAt != nil { Image(systemName: "star.fill").font(.system(size: 8)).foregroundStyle(.yellow) }
                 }
-                .font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
+                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 10).padding(.bottom, 9)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, LibraryGridMetrics.pictureInset).padding(.bottom, 10)
         }
         .background(Color.primary.opacity(isSelected ? 0.075 : isHovering ? 0.035 : 0.012),
                     in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
