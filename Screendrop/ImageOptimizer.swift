@@ -102,6 +102,11 @@ nonisolated struct ImageOptimizer: Sendable {
     /// The most pixels an image may have: whole bitmaps are held in memory to convert an image and to check a
     /// result, two of them at once. Larger images are left as they are.
     var pixelBudget = 100_000_000
+    /// The most memory those bitmaps may take, in bytes. Checking a result holds up to five at once: both
+    /// decoded images, and three copies of their pixels on the way to comparing them. A bitmap is four
+    /// channels of 8 bits, or of 16 for a deeper image, so 100 million pixels at 8 bits just fit and a
+    /// 16-bit image may have half as many.
+    var memoryBudget = 2_000_000_000
 
     static let shared = ImageOptimizer(
         toolsDirectory: Bundle.main.bundleURL.appending(path: "Contents/Helpers"),
@@ -207,7 +212,9 @@ nonisolated struct ImageOptimizer: Sendable {
             throw Failure("The file isn't an image Sukusho can read.")
         }
         // Read from the file's header: nothing is decoded and no encoder runs for an image over the budget.
-        guard Int(size.width) * Int(size.height) <= pixelBudget else {
+        let pixels = Int(size.width) * Int(size.height)
+        let depth = ((CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [CFString: Any])?[kCGImagePropertyDepth] as? NSNumber)?.intValue ?? 8
+        guard pixels <= pixelBudget, pixels * (depth > 8 ? 8 : 4) * 5 <= memoryBudget else {
             throw Failure("The image is too large to optimize, so the original is used.")
         }
         let type = (CGImageSourceGetType(imageSource) as String?).flatMap { UTType($0) }

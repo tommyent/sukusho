@@ -460,6 +460,17 @@ private func isRunning(_ text: String) -> Bool {
         }
         optimizer.pixelBudget = 64 * 40
         #expect(try await optimizer.optimize(source).outcome != .failed("The image is too large to optimize, so the original is used."))
+
+        // The memory its bitmaps would take counts as well: five of them, and twice the bytes for a 16-bit image.
+        let tooLarge = ImageOptimizationResult.Outcome.failed("The image is too large to optimize, so the original is used.")
+        let deep = try bench.file("Deep.png", Sample.screenshot(width: 64, height: 40, seed: 31, bits: 16))
+        optimizer.memoryBudget = 64 * 40 * 4 * 5
+        #expect(try await optimizer.optimize(source).outcome != tooLarge)
+        #expect(try await optimizer.optimize(deep).outcome == tooLarge)
+        optimizer.memoryBudget = 64 * 40 * 8 * 5
+        #expect(try await optimizer.optimize(deep).outcome != tooLarge)
+        optimizer.memoryBudget = 64 * 40 * 4 * 5 - 1
+        #expect(try await optimizer.optimize(source).outcome == tooLarge)
     }
 
     /// Astra OR3: an encoder that exits cleanly with another picture of the same size, or with a file ImageIO
