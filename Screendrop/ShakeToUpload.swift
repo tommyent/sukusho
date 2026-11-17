@@ -13,7 +13,21 @@
 
 import AppKit
 import Carbon.HIToolbox
+import os
 import SwiftUI
+
+#if DEBUG
+private let shelfLog = Logger(subsystem: "com.tommyent.Sukusho.shelf", category: "drag")
+#endif
+
+/// Debug builds say what the shelf's window and its drop view are told, for a Mac where a drop goes wrong:
+/// `log stream --info --debug --predicate 'subsystem == "com.tommyent.Sukusho.shelf"'`. Release builds say nothing.
+private func shelfNote(_ message: @autoclosure () -> String) {
+    #if DEBUG
+    let text = message()
+    shelfLog.notice("\(text, privacy: .public)")
+    #endif
+}
 
 @MainActor
 @Observable
@@ -167,26 +181,67 @@ final class ShakeToUpload {
         let view = ShakeShelfView(tiles: tiles, files: files,
                                   isUploading: CloudUploader.shared.isConfigured && CloudLibraryModel.shared.fileUploads != nil)
         let size = NSHostingController(rootView: view).sizeThatFits(in: CGSize(width: 2000, height: 2000))
-        // The first tile opens under the pointer: Share…, so a drop right where the shake ended asks first, or
-        // Optimize without Cloud.
+        // The first tile is Share…, so a drop right where the shake ended asks first, or Optimize without Cloud.
+        // On macOS 27 it opens under the pointer. On macOS 26 a window that appears under a drag already
+        // inside it was never told of the drag (the test Mac, 26.5.1: no tile reacted and no drop arrived,
+        // while the same drag dropped into TextEdit). So there the whole window, its clear margin included,
+        // opens a few points below the pointer, tiles first, and the drag enters it. Not yet seen to be the
+        // cure: the Debug log will say.
         let pointer = Self.pointer
+        var gap: CGFloat = 0
+        if #unavailable(macOS 27) { gap = 6 }
+        var style: NSWindow.StyleMask = [.borderless, .nonactivatingPanel]
+        var level = NSWindow.Level.statusBar
+        var opensAtCenter = false
+        #if DEBUG
+        // For finding out on a Mac where the drop fails, each with `defaults write <bundle id> …` and a relaunch:
+        // shelfGap -float 0 (under the pointer) or any distance; shelfOpensAtCenter -bool YES (a fixed place, so
+        // a straight drag enters from outside); shelfLevel -string normal|floating|statusBar;
+        // shelfActivating -bool YES (an ordinary panel, not a non-activating one).
+        let defaults = UserDefaults.standard
+        if let value = defaults.object(forKey: "shelfGap") as? Double { gap = value }
+        opensAtCenter = defaults.bool(forKey: "shelfOpensAtCenter")
+        if defaults.bool(forKey: "shelfActivating") { style = [.borderless] }
+        switch defaults.string(forKey: "shelfLevel") {
+        case "normal": level = .normal
+        case "floating": level = .floating
+        default: break
+        }
+        #endif
         let tileCenter = CGPoint(x: ShakeShelfView.margin + ShakeShelfView.inset + ShakeShelfView.tileSize.width / 2,
                                  y: ShakeShelfView.margin + ShakeShelfView.inset + ShakeShelfView.tileSize.height / 2)
-        let frame = Self.onScreen(CGRect(x: pointer.x - tileCenter.x, y: pointer.y - (size.height - tileCenter.y),
-                                         width: size.width, height: size.height), near: pointer)
-        let panel = ShakeShelfPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        var origin = CGPoint(x: pointer.x - tileCenter.x, y: pointer.y - (size.height - tileCenter.y))
+        let screen = (NSScreen.screens.first { $0.frame.contains(pointer) } ?? NSScreen.main)?.visibleFrame
+        if opensAtCenter, let screen {
+            origin = CGPoint(x: screen.midX - size.width / 2, y: screen.midY - size.height / 2)
+        } else if gap > 0 {
+            // The window's own edge is `gap` from the pointer, so the pointer starts outside it. Below the
+            // pointer, where the tiles come first; above it when there is no room below.
+            let below = pointer.y - gap - size.height
+            origin.y = below >= (screen?.minY ?? below) ? below : pointer.y + gap
+        }
+        let frame = Self.onScreen(CGRect(origin: origin, size: size), near: pointer)
+        let panel = ShakeShelfPanel(contentRect: frame, styleMask: style, backing: .buffered, defer: false)
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
-        panel.level = .statusBar
+        panel.level = level
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
         PreviewWindowCaptureExclusion.shared.register(window: panel)
-        install(view, in: panel)
+        shelfNote("panel made: frame \(NSStringFromRect(frame)), pointer \(NSStringFromPoint(pointer)), gap \(gap), center \(opensAtCenter), "
+            + "style \(style.rawValue), level \(level.rawValue), macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
+        // The drop view is in place, registered and laid out, before the panel is on screen.
+        install(view, in: panel, takesDrops: true)
+        panel.contentView?.layoutSubtreeIfNeeded()
         panel.orderFrontRegardless()
         self.panel = panel
         showsShelf = true
+        let tileNames = tiles.map(\.title).joined(separator: ", ")
+        shelfNote("panel shown: visible \(panel.isVisible), frame \(NSStringFromRect(panel.frame)), level \(panel.level.rawValue), "
+            + "ignoresMouseEvents \(panel.ignoresMouseEvents), on active space \(panel.isOnActiveSpace), key \(panel.isKeyWindow), "
+            + "app active \(NSApp.isActive), policy \(NSApp.activationPolicy().rawValue), tiles \(tileNames)")
 
         // Often enough to catch a tap of Esc.
         let timer = Timer(timeInterval: 0.03, repeats: true) { _ in
@@ -204,22 +259,33 @@ final class ShakeToUpload {
         guard showsShelf, let panel else { return }
         // Read, not taken, so Esc still cancels the drag as it always does. Needs no permission (seen in the test VM),
         // where a hot key would keep the drag going and a release would then drop the files wherever the pointer is.
-        if CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(kVK_Escape)) { return dismiss() }
+        if CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(kVK_Escape)) {
+            shelfNote("put away: Esc")
+            return dismiss()
+        }
         guard NSEvent.pressedMouseButtons & 1 == 0 else {
             releasedAt = nil
             return
         }
+        if releasedAt == nil {
+            shelfNote("button released at \(NSStringFromPoint(Self.pointer)), inside the panel \(panel.frame.contains(Self.pointer))")
+        }
         let released = releasedAt ?? .now
         releasedAt = released
         let wait: TimeInterval = panel.frame.contains(Self.pointer) ? 2 : 0.3
-        if Date.now.timeIntervalSince(released) > wait { dismiss() }
+        if Date.now.timeIntervalSince(released) > wait {
+            shelfNote("put away: no drop arrived within \(wait) s of the release")
+            dismiss()
+        }
     }
 
-    func setTargeted(_ tile: Tile, _ isTargeted: Bool) {
-        if isTargeted { targeted = tile } else if targeted == tile { targeted = nil }
+    /// The tile the drag is over, or nil for none.
+    func setTargeted(_ tile: Tile?) {
+        if targeted != tile { targeted = tile }
     }
 
     func drop(_ urls: [URL], on tile: Tile) {
+        shelfNote("drop handed on: \(urls.count) files on \(tile.title), shelf showing \(showsShelf)")
         guard showsShelf else { return }
         let files = CloudLibraryModel.regularFiles(urls)
         // As the Files page says it; the files go on without the folders.
@@ -413,11 +479,26 @@ final class ShakeToUpload {
         releasedAt = nil
     }
 
-    private func install(_ view: some View, in panel: NSPanel) {
+    /// `takesDrops` is for the tiles: the drop view lies over them.
+    private func install(_ view: some View, in panel: NSPanel, takesDrops: Bool = false) {
         let host = NSHostingView(rootView: view)
         // The panel sets the size and the hosting view follows, as the capture bars do.
         host.sizingOptions = []
-        panel.contentView = host
+        guard takesDrops else {
+            panel.contentView = host
+            return
+        }
+        let container = NSView(frame: CGRect(origin: .zero, size: panel.frame.size))
+        let drops = ShelfDropView(frame: container.bounds)
+        for view in [host, drops] {
+            view.frame = container.bounds
+            view.autoresizingMask = [.width, .height]
+            container.addSubview(view)
+        }
+        drops.registerForDraggedTypes([.fileURL])
+        let types = drops.registeredDraggedTypes.map(\.rawValue).joined(separator: ", ")
+        shelfNote("drop view registered for \(types), frame \(NSStringFromRect(drops.frame))")
+        panel.contentView = container
     }
 
     /// The Library's alert says what failed; a cancel from the Files page's Stop says nothing.
@@ -512,65 +593,100 @@ private struct ShakeShelfView: View {
         .background(isTargeted ? Palette.accent : Palette.selectedFill,
                     in: RoundedRectangle(cornerRadius: DS.Radius.panel - Self.inset, style: .continuous))
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: isTargeted)
-        .overlay(ShelfDropTarget(tile: tile))
+        .overlay(ShelfTileMarker(tile: tile))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(tile.spokenTitle)
         .accessibilityHint("Drop the dragged files here")
     }
 }
 
-/// A tile as a drop target, in AppKit. SwiftUI's `dropDestination(for: URL.self)` was here until the owner's
-/// first try by hand, on macOS 26.5.1: the shelf opened, the drop reached its window, and the tile's action
-/// was never called (from that Mac's log). An `NSDraggingDestination` is asked directly, and reads the files
-/// from the drop's own pasteboard inside the drop.
-private struct ShelfDropTarget: NSViewRepresentable {
+/// Says where a tile is, for the drop view: a bare AppKit view over the tile that takes no events itself.
+private struct ShelfTileMarker: NSViewRepresentable {
     let tile: ShakeToUpload.Tile
 
-    func makeNSView(context: Context) -> TargetView {
-        let view = TargetView()
+    func makeNSView(context: Context) -> MarkerView {
+        let view = MarkerView()
         view.tile = tile
-        view.registerForDraggedTypes([.fileURL])
         return view
     }
 
-    func updateNSView(_ view: TargetView, context: Context) {
+    func updateNSView(_ view: MarkerView, context: Context) {
         view.tile = tile
     }
 
-    final class TargetView: NSView {
+    final class MarkerView: NSView {
         var tile = ShakeToUpload.Tile.optimize
 
-        override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-            ShakeToUpload.shared.setTargeted(tile, true)
-            return operation(for: sender)
-        }
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-        override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-            operation(for: sender)
+        /// Every marker under `view`, wherever SwiftUI put it.
+        static func all(under view: NSView) -> [MarkerView] {
+            view.subviews.flatMap { ($0 as? MarkerView).map { [$0] } ?? all(under: $0) }
         }
+    }
+}
 
-        override func draggingExited(_ sender: NSDraggingInfo?) {
-            ShakeToUpload.shared.setTargeted(tile, false)
-        }
+/// The shelf's drop target: one AppKit view over all the tiles, registered for file drags before the panel is
+/// on screen. SwiftUI's `dropDestination(for: URL.self)` was on each tile until the owner's first try by hand,
+/// on macOS 26.5.1, where its action was never called; a dragging destination made by each tile as SwiftUI
+/// laid it out worked on macOS 27 and still got no drag on 26. This view finds the tile under the drag from
+/// the tiles' markers, and reads the files from the drop's own pasteboard inside the drop.
+private final class ShelfDropView: NSView {
+    private var lastTile: ShakeToUpload.Tile?
 
-        override func draggingEnded(_ sender: NSDraggingInfo) {
-            ShakeToUpload.shared.setTargeted(tile, false)
-        }
+    private func tile(for sender: NSDraggingInfo) -> ShakeToUpload.Tile? {
+        guard let root = superview else { return nil }
+        let point = convert(sender.draggingLocation, from: nil)
+        return ShelfTileMarker.MarkerView.all(under: root).first { $0.convert($0.bounds, to: self).contains(point) }?.tile
+    }
 
-        override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-            let files = ShakeShelfFiles.fileURLs(on: sender.draggingPasteboard)
-            guard !files.isEmpty else { return false }
-            let tile = tile
-            // Once the drop is over: the shelf swaps its content and moves its window, which is not for the
-            // middle of a drag session.
-            DispatchQueue.main.async { ShakeToUpload.shared.drop(files, on: tile) }
-            return true
+    /// The files stay where they are, so a copy where the source allows one; nothing between the tiles.
+    private func follow(_ sender: NSDraggingInfo, _ what: String) -> NSDragOperation {
+        let tile = tile(for: sender)
+        if what != "updated" || tile != lastTile {
+            shelfNote("drag \(what): at \(NSStringFromPoint(convert(sender.draggingLocation, from: nil))), tile \(tile?.title ?? "none"), "
+                + "source allows \(sender.draggingSourceOperationMask.rawValue), markers \(ShelfTileMarker.MarkerView.all(under: superview ?? self).count)")
         }
+        lastTile = tile
+        ShakeToUpload.shared.setTargeted(tile)
+        guard tile != nil else { return [] }
+        return sender.draggingSourceOperationMask.contains(.copy) ? .copy : .generic
+    }
 
-        /// The files stay where they are, so a copy where the source allows one.
-        private func operation(for sender: NSDraggingInfo) -> NSDragOperation {
-            sender.draggingSourceOperationMask.contains(.copy) ? .copy : .generic
-        }
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        follow(sender, "entered")
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        follow(sender, "updated")
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        shelfNote("drag exited")
+        lastTile = nil
+        ShakeToUpload.shared.setTargeted(nil)
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        shelfNote("drag ended")
+        ShakeToUpload.shared.setTargeted(nil)
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let tile = tile(for: sender)
+        shelfNote("prepare for drop: tile \(tile?.title ?? "none")")
+        return tile != nil
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let files = ShakeShelfFiles.fileURLs(on: sender.draggingPasteboard)
+        let tile = tile(for: sender)
+        shelfNote("perform drop: tile \(tile?.title ?? "none"), \(files.count) files")
+        guard let tile, !files.isEmpty else { return false }
+        // Once the drop is over: the shelf swaps its content and moves its window, which is not for the
+        // middle of a drag session.
+        DispatchQueue.main.async { ShakeToUpload.shared.drop(files, on: tile) }
+        return true
     }
 }
 
