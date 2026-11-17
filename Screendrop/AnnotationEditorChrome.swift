@@ -59,7 +59,7 @@ struct CropResolutionBadge: View {
 
     var body: some View {
         VStack(spacing: 1) {
-            Text("\(Int(size.width)) × \(Int(size.height)) px")
+            Text(verbatim: "\(Int(size.width)) × \(Int(size.height)) px")
                 .font(.system(size: 12, weight: .medium))
                 .monospacedDigit()
             Text("Press Return to crop")

@@ -24,8 +24,8 @@ nonisolated struct CloudUsage: Decodable, Equatable, Sendable {
 
     /// "1.2 GB of 5 GB used".
     static func summary(bytes: Int64, threshold: Int64, complete: Bool) -> String {
-        let used = bytes.formatted(.byteCount(style: .file))
-        let limit = threshold.formatted(.byteCount(style: .file))
+        let used = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+        let limit = ByteCountFormatter.string(fromByteCount: threshold, countStyle: .file)
         return complete ? "\(used) of \(limit) used" : "At least \(used) of \(limit) used"
     }
 

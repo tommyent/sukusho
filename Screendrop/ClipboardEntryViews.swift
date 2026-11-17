@@ -165,7 +165,8 @@ struct ClipboardInfo: View {
                 }
                 fileRows
                 if entry.kind == .image, entry.pixelWidth > 0 {
-                    row("Dimensions") { Text("\(entry.pixelWidth) × \(entry.pixelHeight)") }
+                    // Verbatim: a localized Text groups the digits ("1,920 × 1,080"), unlike the capture inspector (Fable 15).
+                    row("Dimensions") { Text(verbatim: "\(entry.pixelWidth) × \(entry.pixelHeight)") }
                 }
                 switch ClipboardList.textForm(of: entry) {
                 case .link: if let host = URL(string: entry.text ?? "")?.host() { row("Domain") { Text(host) } }
@@ -173,7 +174,7 @@ struct ClipboardInfo: View {
                 case .plain: textRows
                 case nil: EmptyView()
                 }
-                row("Size") { Text(entry.shownByteSize.formatted(.byteCount(style: .file))) }
+                row("Size") { Text(ByteCountFormatter.string(fromByteCount: Int64(entry.shownByteSize), countStyle: .file)) }
                 row("Times copied") { Text(entry.timesCopied, format: .number) }
                 row("First copied") { Text(Self.when(entry.firstCopiedAt)) }
                 if entry.lastCopiedAt != entry.firstCopiedAt { row("Last copied") { Text(Self.when(entry.lastCopiedAt)) } }
