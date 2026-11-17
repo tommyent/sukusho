@@ -168,16 +168,27 @@ nonisolated enum RecordingVoiceIsolation {
             componentManufacturer: kAudioUnitManufacturer_Apple, componentFlags: 0, componentFlagsMask: 0))
         engine.attach(player)
         engine.attach(effect)
-        try engine.connectNode(player, to: effect, format: format)
-        try engine.connectNode(effect, to: engine.mainMixerNode, format: format)
-        try engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
-        try effect.withAudioUnit { audioUnit in
+        func isolateVoice(_ audioUnit: AudioUnit) throws {
             guard AudioUnitSetParameter(audioUnit, kAUSoundIsolationParam_WetDryMixPercent,
                                         kAudioUnitScope_Global, 0, 100, 0) == noErr,
                   AudioUnitSetParameter(audioUnit, kAUSoundIsolationParam_SoundToIsolate,
                                         kAudioUnitScope_Global, 0, Float(kAUSoundIsolationSoundType_HighQualityVoice), 0) == noErr else {
                 throw IsolationError.renderFailed
             }
+        }
+        // macOS 27's throwing calls; macOS 26 has the older ones that do the same.
+        if #available(macOS 27, *) {
+            try engine.connectNode(player, to: effect, format: format)
+            try engine.connectNode(effect, to: engine.mainMixerNode, format: format)
+        } else {
+            engine.connect(player, to: effect, format: format)
+            engine.connect(effect, to: engine.mainMixerNode, format: format)
+        }
+        try engine.enableManualRenderingMode(.offline, format: format, maximumFrameCount: 4096)
+        if #available(macOS 27, *) {
+            try effect.withAudioUnit(isolateVoice)
+        } else {
+            try isolateVoice(effect.audioUnit)
         }
         // Flush the unit's unreported delay so the final spoken samples survive the shift.
         let tail = try buffer(format, capacity: AVAudioFrameCount(maximumLag))
@@ -187,7 +198,11 @@ nonisolated enum RecordingVoiceIsolation {
         player.scheduleBuffer(tail)
         try engine.start()
         defer { engine.stop() }
-        try player.playAudio()
+        if #available(macOS 27, *) {
+            try player.playAudio()
+        } else {
+            player.play()
+        }
         let chunk = try buffer(format)
         let total = input.length + AVAudioFramePosition(maximumLag)
         var written: AVAudioFramePosition = 0

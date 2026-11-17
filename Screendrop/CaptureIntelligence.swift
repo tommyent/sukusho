@@ -44,7 +44,7 @@ nonisolated enum CaptureIntelligence {
     static func describe(paragraphs: [String], transcript: String?, source: CaptureSource?, isVideo: Bool,
                          image: CGImage?) async -> Outcome {
         let prompt = prompt(paragraphs: paragraphs, transcript: transcript, source: source, isVideo: isVideo)
-        let seen = SystemLanguageModel.default.capabilities.contains(.vision) ? image : nil
+        let seen = canSee ? image : nil
         let lines = paragraphs + [source?.windowTitle, transcript].compactMap { $0 }
         do {
             return .insight(insight(from: try await respond(prompt, image: seen), lines: lines, source: source))
@@ -56,12 +56,26 @@ nonisolated enum CaptureIntelligence {
         }
     }
 
+    /// Whether the model takes the image too: macOS 27's model can see, 26's reads the text only.
+    private static var canSee: Bool {
+        guard #available(macOS 27, *) else { return false }
+        return SystemLanguageModel.default.capabilities.contains(.vision)
+    }
+
     /// A refusal, a guardrail or an answer that doesn't fit is final for this
     /// prompt version, so the capture isn't asked again in a loop; a busy or
     /// still-downloading model is asked again next launch.
     static func outcome(for error: any Error) -> Outcome {
+        if error is CancellationError { return .later }
+        if #available(macOS 27, *), let outcome = currentOutcome(error) { return outcome }
+        return legacyOutcome(error) ?? .insight(CaptureInsight(declined: true))
+    }
+
+    /// The errors macOS 27's framework throws.
+    @available(macOS 27, *)
+    private static func currentOutcome(_ error: any Error) -> Outcome? {
         switch error {
-        case is CancellationError, is SystemLanguageModel.Error, is LanguageModelSession.Error:
+        case is SystemLanguageModel.Error, is LanguageModelSession.Error:
             return .later
         case let error as LanguageModelError:
             switch error {
@@ -69,12 +83,12 @@ nonisolated enum CaptureIntelligence {
             default: return .insight(CaptureInsight(declined: true))
             }
         default:
-            return legacyOutcome(error) ?? .insight(CaptureInsight(declined: true))
+            return nil
         }
     }
 
-    /// The type the framework threw before macOS 27, deprecated but still
-    /// declared: split the same way, in case it's still thrown.
+    /// The type the framework throws on macOS 26, deprecated on 27 but still
+    /// declared: split the same way.
     @diagnose(DeprecatedDeclaration, as: ignored)
     private static func legacyOutcome(_ error: any Error) -> Outcome? {
         guard let error = error as? LanguageModelSession.GenerationError else { return nil }
@@ -86,7 +100,7 @@ nonisolated enum CaptureIntelligence {
 
     @diagnose(DeprecatedDeclaration, as: ignored)
     private static func isContextOverflow(_ error: any Error) -> Bool {
-        if case .contextSizeExceeded = error as? LanguageModelError { return true }
+        if #available(macOS 27, *), case .contextSizeExceeded = error as? LanguageModelError { return true }
         if case .exceededContextWindowSize = error as? LanguageModelSession.GenerationError { return true }
         return false
     }
@@ -117,7 +131,7 @@ nonisolated enum CaptureIntelligence {
     private static func respond(_ prompt: String, image: CGImage?) async throws -> Answer {
         let session = LanguageModelSession(instructions: instructions)
         let options = GenerationOptions(temperature: 0.2)
-        if let image {
+        if #available(macOS 27, *), let image {
             return try await session.respond(generating: Answer.self, options: options) {
                 prompt
                 Attachment(image).label("The capture")

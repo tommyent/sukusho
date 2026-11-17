@@ -16,7 +16,11 @@ nonisolated struct SystemTextModel: OnDeviceTextModel {
     var contextSize: Int { SystemLanguageModel.default.contextSize }
 
     func tokenCount(_ text: String) async throws -> Int {
-        try await SystemLanguageModel.default.tokenCount(for: text)
+        if #available(macOS 26.4, *) {
+            return try await SystemLanguageModel.default.tokenCount(for: text)
+        }
+        // shortcut: before macOS 26.4 there is no counter, so a token is taken as three bytes (English runs nearer four), erring towards smaller chunks; drop when 26.4 is the floor.
+        return text.utf8.count / 3 + 1
     }
 
     /// One fresh session per prompt, so one recording never colours the next.
@@ -50,11 +54,29 @@ nonisolated enum OnDeviceText {
 
     /// What a failed request says; it never blocks anything else.
     static func message(for error: any Error) -> String {
-        switch error as? LanguageModelError {
-        case .rateLimited, .timeout: "Apple Intelligence is busy. Try again in a moment."
-        case .guardrailViolation, .refusal: "Apple Intelligence declined to write this."
-        case .unsupportedLanguageOrLocale: "Apple Intelligence doesn’t support this language yet."
-        default: "Apple Intelligence couldn’t write this: \(error.localizedDescription)"
+        if #available(macOS 27, *) {
+            switch error as? LanguageModelError {
+            case .rateLimited, .timeout: return busy
+            case .guardrailViolation, .refusal: return declined
+            case .unsupportedLanguageOrLocale: return unsupported
+            default: break
+            }
+        }
+        return legacyMessage(for: error) ?? "Apple Intelligence couldn’t write this: \(error.localizedDescription)"
+    }
+
+    private static let busy = "Apple Intelligence is busy. Try again in a moment."
+    private static let declined = "Apple Intelligence declined to write this."
+    private static let unsupported = "Apple Intelligence doesn’t support this language yet."
+
+    /// The error macOS 26's framework throws, deprecated on 27.
+    @diagnose(DeprecatedDeclaration, as: ignored)
+    private static func legacyMessage(for error: any Error) -> String? {
+        switch error as? LanguageModelSession.GenerationError {
+        case .rateLimited, .concurrentRequests: busy
+        case .guardrailViolation, .refusal: declined
+        case .unsupportedLanguageOrLocale: unsupported
+        default: nil
         }
     }
 
