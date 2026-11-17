@@ -19,10 +19,10 @@ struct AnnotationTextStyleControls: View {
                     .frame(minWidth: 0, maxWidth: .infinity)
 
                 InspectorSegmented(
-                    options: TextBoxStyle.allCases,
-                    isSelected: { $0 == model.selectedTextBoxStyle },
-                    onTap: { model.selectedTextBoxStyle = $0 },
-                    label: { TextBoxStyleIcon(style: $0) },
+                    options: TextBackdrop.allCases,
+                    isSelected: { $0 == model.selectedTextBackdrop },
+                    onTap: { model.selectedTextBackdrop = $0 },
+                    label: { TextBackdropIcon(backdrop: $0) },
                     name: { $0.title }
                 )
                 .frame(maxWidth: .infinity)
@@ -128,25 +128,42 @@ struct AnnotationTextStyleControls: View {
 
 }
 
-extension TextBoxStyle {
+/// What sets a label off from the screenshot: nothing, a light halo around the glyphs (new text's
+/// default, Fable #10), or a box in the text's color.
+enum TextBackdrop: CaseIterable, Hashable {
+    case plain
+    case halo
+    case box
+
     var title: String {
         switch self {
         case .plain: "Plain text"
+        case .halo: "Text with a halo"
         case .box: "Text on a box"
         }
     }
 }
 
-/// A "T" on its own, or knocked out of a filled square, in the segment's own colour so it follows
-/// the selected and hover states like the other segments.
-struct TextBoxStyleIcon: View {
-    let style: TextBoxStyle
+/// A "T" on its own, outlined, or knocked out of a filled square, in the segment's own colour so
+/// it follows the selected and hover states like the other segments.
+struct TextBackdropIcon: View {
+    let backdrop: TextBackdrop
 
     var body: some View {
-        switch style {
+        switch backdrop {
         case .plain:
             Text("T")
                 .font(.system(size: 12, weight: .bold))
+        case .halo:
+            ZStack {
+                ForEach(0..<4, id: \.self) { side in
+                    Text("T")
+                        .offset(x: [-1, 1, 0, 0][side], y: [0, 0, -1, 1][side])
+                        .opacity(0.35)
+                }
+                Text("T")
+            }
+            .font(.system(size: 12, weight: .bold))
         case .box:
             RoundedRectangle(cornerRadius: 3, style: .continuous)
                 .frame(width: 14, height: 14)

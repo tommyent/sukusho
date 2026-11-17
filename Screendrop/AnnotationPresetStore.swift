@@ -52,6 +52,8 @@ struct AnnotationStylePreset: Codable, Equatable {
     var handDrawn: Bool?
     var highlighterSwatch: CodableSwatch?
     var highlighterStrokeWidth: Double?
+    /// Missing means on: new text gets a halo by default (Fable #10).
+    var textHalo: Bool?
 
     static let defaultHighlighterSwatch = AnnotationSwatch(
         "yellow", title: "Yellow", red: AnnotationSwatch.yellow.red,

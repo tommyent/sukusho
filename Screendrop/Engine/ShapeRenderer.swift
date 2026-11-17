@@ -85,8 +85,17 @@ enum AnnoShapeRenderer {
                 stroke: nil
             ))
         }
+        let glyphs = TextMeasure.glyphPath(props)
+        if props.hasHalo {
+            elements.append(RenderElement(
+                content: .path(TextMeasure.haloPath(props, glyphs: glyphs)),
+                fill: TextMeasure.haloColor(props),
+                stroke: nil,
+                usesEvenOddFill: false
+            ))
+        }
         elements.append(RenderElement(
-            content: .glyphs(TextMeasure.glyphPath(props)),
+            content: .glyphs(glyphs),
             fill: TextMeasure.ink(props).nsColor,
             stroke: nil,
             // Non-zero, not even-odd. OpenType contours are wound so that counters (the hole in an

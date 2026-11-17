@@ -495,6 +495,42 @@ struct TextLabelTests {
         #expect(TextMeasure.font(props).italicAngle == 0)
     }
 
+    /// New plain text gets a light halo under its glyphs (Fable #10): white behind red, black behind
+    /// yellow, none on a box, and none for text saved before halos, which decodes as before.
+    @Test func newTextGetsAHaloByDefault() throws {
+        let editor = AnnoEditor()
+        editor.createText(at: Vec(100, 100))
+        let created = try #require(editor.document.shapes.last?.textProps)
+        #expect(created.halo == true && created.hasHalo)
+        editor.currentTextHalo = false
+        editor.createText(at: Vec(300, 300))
+        #expect(editor.document.shapes.last?.textProps?.halo == nil)
+
+        func elements(_ props: TextProps) -> [RenderElement] {
+            let shape = AnnoShape(x: 0, y: 0, kind: .text(props))
+            let document = AnnoDocument(); document.add(shape)
+            return AnnoShapeRenderer.elements(for: shape, in: document)
+        }
+        var props = TextProps(text: "Readable", fontSize: 48)
+        #expect(elements(props).count == 1)
+        props.halo = true
+        let haloed = elements(props)
+        #expect(haloed.count == 2)
+        guard case let .path(halo) = haloed[0].content, case let .glyphs(glyphs) = haloed[1].content else {
+            Issue.record("The halo isn't under the glyphs"); return
+        }
+        #expect(halo.boundingBoxOfPath.insetBy(dx: 3.8, dy: 3.8).contains(glyphs.boundingBoxOfPath))
+        #expect(haloed[0].fill == TextMeasure.haloColor(props) && TextMeasure.haloColor(props).whiteComponent > 0.9)
+        props.swatch = .yellow
+        #expect((TextMeasure.haloColor(props).usingColorSpace(.deviceGray)?.whiteComponent ?? 1) < 0.1)
+        props.boxStyle = .box
+        #expect(!props.hasHalo && elements(props).count == 2, "box and glyphs, no halo")
+
+        let old = try JSONEncoder().encode(TextProps(text: "An old label"))
+        #expect(!String(decoding: old, as: UTF8.self).contains("halo"))
+        #expect(try JSONDecoder().decode(TextProps.self, from: old).halo == nil)
+    }
+
     /// The tail turns with its label: half a turn puts the tip, its handle and its click target
     /// on the other side of the origin.
     @Test func rotationCarriesTheTail() throws {

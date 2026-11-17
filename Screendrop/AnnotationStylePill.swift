@@ -42,14 +42,14 @@ struct AnnotationStylePillButton: View {
                     // Text is sized by its handles on the canvas, not here (sd-g18y).
                     if model.isTextStyleAvailable {
                         InspectorSegmented(
-                            options: TextBoxStyle.allCases,
-                            isSelected: { $0 == model.selectedTextBoxStyle },
-                            onTap: { model.selectedTextBoxStyle = $0 },
-                            label: { TextBoxStyleIcon(style: $0) },
+                            options: TextBackdrop.allCases,
+                            isSelected: { $0 == model.selectedTextBackdrop },
+                            onTap: { model.selectedTextBackdrop = $0 },
+                            label: { TextBackdropIcon(backdrop: $0) },
                             height: InspectorMetrics.controlHeight,
                             name: { $0.title }
                         )
-                        .frame(width: 64)
+                        .frame(width: 96)
                     } else if model.isStrokeStyleAvailable {
                         TaperedSlider(
                             title: "Line width",

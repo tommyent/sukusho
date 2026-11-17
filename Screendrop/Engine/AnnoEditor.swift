@@ -154,6 +154,8 @@ final class AnnoEditor {
     var currentTextIsUnderline = false
     var currentTextAlign: TextAlign = .start
     var currentTextBoxStyle: TextBoxStyle = .plain
+    /// New plain text gets a halo unless it was turned off (Fable #10).
+    var currentTextHalo = true
     var currentArrowheadStart: Arrowhead = .none
     var currentArrowheadEnd: Arrowhead = .arrow
 

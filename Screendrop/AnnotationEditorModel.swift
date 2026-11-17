@@ -140,6 +140,8 @@ final class AnnotationEditorModel {
     var textIsUnderline = false
     var textAlignment: NSTextAlignment = .left
     var textBoxStyle: TextBoxStyle = .plain
+    /// New plain text gets a light halo, so it reads over a busy screenshot (Fable #10).
+    var textHalo = true
 
     private var history: [EditSnapshot] = []
     /// The state this window opened on, for Revert To › Last Opened. Kept
@@ -965,6 +967,7 @@ final class AnnotationEditorModel {
                  (textIsItalic, textIsUnderline, textAlignment, textBoxStyle))
             }
             let before = style()
+            let haloBefore = textHalo
             textFontFamily = props.fontFamily
             textFontFace = props.fontFace
             textFontSize = CGFloat(props.fontSize)
@@ -973,6 +976,7 @@ final class AnnotationEditorModel {
             textIsUnderline = props.isUnderline
             textAlignment = props.align.nsTextAlignment
             textBoxStyle = props.boxStyle ?? .plain
+            if !props.hasBox { textHalo = props.halo == true }
             engine.currentFontFamily = textFontFamily
             engine.currentFontFace = textFontFace
             engine.currentTextFontSize = props.fontSize
@@ -981,8 +985,9 @@ final class AnnotationEditorModel {
             engine.currentTextIsUnderline = textIsUnderline
             engine.currentTextAlign = props.align
             engine.currentTextBoxStyle = textBoxStyle
+            engine.currentTextHalo = textHalo
             let after = style()
-            if before.0 != after.0 || before.1 != after.1 { saveAnnotationPreset() }
+            if before.0 != after.0 || before.1 != after.1 || haloBefore != textHalo { saveAnnotationPreset() }
         }
         rememberDrawingStyle()
         syncArmedDrawingStyle()
@@ -1158,6 +1163,7 @@ final class AnnotationEditorModel {
         textIsUnderline = preset.textIsUnderline
         textAlignment = preset.textAlignment
         textBoxStyle = preset.textBoxStyle
+        textHalo = preset.textHalo ?? true
 
         engine.tool = selectedTool
         engine.currentSwatch = selectedSwatch
@@ -1173,6 +1179,7 @@ final class AnnotationEditorModel {
         engine.currentTextIsUnderline = textIsUnderline
         engine.currentTextAlign = TextAlign(textAlignment)
         engine.currentTextBoxStyle = textBoxStyle
+        engine.currentTextHalo = textHalo
     }
 
     private func rememberDrawingStyle() {
@@ -1209,7 +1216,8 @@ final class AnnotationEditorModel {
             geoFillRawValue: geoFill.rawValue,
             handDrawn: handDrawn,
             highlighterSwatch: CodableSwatch(swatch: highlighterStyle.swatch),
-            highlighterStrokeWidth: Double(highlighterStyle.width)
+            highlighterStrokeWidth: Double(highlighterStyle.width),
+            textHalo: textHalo
         )
         AnnotationPresetStore.save(preset)
         syncArmedDrawingStyle()
