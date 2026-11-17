@@ -57,6 +57,15 @@ struct ScreenshotHistoryMetadata<Row: Codable> {
 /// Saved rewrite history.json with only the keys they know, which dropped a `librarySavedAt` kept in the rows (VM,
 /// 2026-11-16); this file is one they never open.
 nonisolated enum CaptureSavedMarks {
+    /// Captures named, tagged or shared before Saved existed, marked once (owner, 2026-11-17: "yes, once on update"),
+    /// dated by their last change. Marks already there are kept as they are.
+    static func retroSaved(_ rows: [(id: UUID, isNamedTaggedOrShared: Bool, updatedAt: Date)],
+                           into marks: [UUID: Date]) -> [UUID: Date] {
+        var marks = marks
+        for row in rows where row.isNamedTaggedOrShared && marks[row.id] == nil { marks[row.id] = row.updatedAt }
+        return marks
+    }
+
     /// The History rows that belong to a recording's package, whichever way their paths are written.
     static func rows(ofRecordingAt path: String, in rows: [(id: UUID, sessionPath: String?)]) -> Set<UUID> {
         let target = URL(fileURLWithPath: path).standardizedFileURL.path

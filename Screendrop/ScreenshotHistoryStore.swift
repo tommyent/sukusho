@@ -199,6 +199,40 @@ final class ScreenshotHistoryStore {
 
     private init() {
         load()
+        retroSaveOnce()
+    }
+
+    /// Set once captures named, tagged or shared before Saved have been marked, so it happens once.
+    static let retroSaveDoneKey = "libraryRetroSave.v1"
+
+    /// The owner's one-time retro-save, at the first launch of a build with Saved. It waits for a launch where History
+    /// and the marks file are fully readable, and counts as done only once the marks are on disk.
+    private func retroSaveOnce() {
+        guard !UserDefaults.standard.bool(forKey: Self.retroSaveDoneKey), isFullyLoaded,
+              files.marks.state != .unreadable else { return }
+        let rows = items.map { item -> (id: UUID, isNamedTaggedOrShared: Bool, updatedAt: Date) in
+            // A recording keeps its name and tags in its own project.
+            let project = item.recordingSession?.loadProjectMetadata()
+            let named = item.displayName != nil || project?.displayName?.isEmpty == false
+            let tagged = !item.tags.isEmpty || project?.tags?.isEmpty == false
+            return (item.id, named || tagged || item.cloudURL != nil, item.updatedAt)
+        }
+        let current = Dictionary(items.compactMap { item in item.librarySavedAt.map { (item.id, $0) } }, uniquingKeysWith: max)
+        let marks = CaptureSavedMarks.retroSaved(rows, into: current)
+        guard marks != current else {
+            UserDefaults.standard.set(true, forKey: Self.retroSaveDoneKey)
+            return
+        }
+        let before = items
+        for index in items.indices { items[index].librarySavedAt = marks[items[index].id] }
+        do {
+            guard try files.save(items) else { throw CocoaError(.fileWriteUnknown) }
+            UserDefaults.standard.set(true, forKey: Self.retroSaveDoneKey)
+        } catch {
+            items = before
+            print("Retro-save of named, tagged and shared captures failed; it'll be tried at the next launch: \(error)")
+        }
+        savedMarksProblem = files.problem
     }
 
     @discardableResult
