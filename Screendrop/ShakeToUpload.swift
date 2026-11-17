@@ -90,6 +90,27 @@ final class ShakeToUpload {
             // A scripted pointer in a test VM can't shake inside the real half second. For a live check:
             // defaults write <bundle id> shakeTestWindow -float 8, then relaunch. Debug builds only.
             if let seconds = UserDefaults.standard.object(forKey: "shakeTestWindow") as? Double { detector.window = seconds }
+            // A scripted pointer can't shake at all (seen in the test VM). For a live check of the drop:
+            // defaults write <bundle id> shelfOpensOnFileDrag -bool YES, then relaunch. The shelf then opens
+            // as soon as files are dragged anywhere, without a shake. Debug builds only.
+            if UserDefaults.standard.bool(forKey: "shelfOpensOnFileDrag") {
+                var dragCount = NSPasteboard(name: .drag).changeCount
+                let timer = Timer(timeInterval: 0.1, repeats: true) { _ in
+                    MainActor.assumeIsolated {
+                        let pasteboard = NSPasteboard(name: .drag)
+                        guard NSEvent.pressedMouseButtons & 1 != 0 else {
+                            dragCount = pasteboard.changeCount
+                            return
+                        }
+                        // A drag empties its pasteboard first and fills it a moment later: wait for the files.
+                        guard pasteboard.changeCount != dragCount, ShakeToUpload.shared.panel == nil,
+                              pasteboard.types?.contains(.fileURL) == true else { return }
+                        dragCount = pasteboard.changeCount
+                        ShakeToUpload.shared.showShelf()
+                    }
+                }
+                RunLoop.main.add(timer, forMode: .common)
+            }
             #endif
             // Copies of other apps' mouse events; macOS asks no permission for these.
             monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged]) { event in
@@ -117,8 +138,9 @@ final class ShakeToUpload {
         }
         guard panel == nil else { return }
         // A drag writes the drag pasteboard as it begins; until then this is a plain drag, or not yet one.
-        if pressDragsFiles == nil, pasteboard.changeCount != dragCountAtPress {
-            pressDragsFiles = pasteboard.types?.contains(.fileURL) == true
+        // It is emptied first and filled a moment later (seen in the test VM's log), so an empty one decides nothing.
+        if pressDragsFiles == nil, pasteboard.changeCount != dragCountAtPress, let types = pasteboard.types, !types.isEmpty {
+            pressDragsFiles = types.contains(.fileURL)
         }
         guard pressDragsFiles == true, detector.add(x: x, time: time) else { return }
         showShelf()
@@ -132,8 +154,9 @@ final class ShakeToUpload {
     }
 
     private func showShelf() {
-        let files = NSPasteboard(name: .drag).readObjects(forClasses: [NSURL.self],
-                                                         options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        // Read here only to say what is being dragged and which tiles fit it. What gets worked on is read
+        // again from the drop itself (ShelfDropTarget).
+        let files = ShakeShelfFiles.fileURLs(on: NSPasteboard(name: .drag))
         guard !files.isEmpty else { return }
         let offersCloud = offersCloud
         let tiles = Tile.allCases.filter { tile in
@@ -490,15 +513,65 @@ private struct ShakeShelfView: View {
         .background(isTargeted ? Palette.accent : Palette.selectedFill,
                     in: RoundedRectangle(cornerRadius: DS.Radius.panel - Self.inset, style: .continuous))
         .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: isTargeted)
-        .dropDestination(for: URL.self) { urls, _ in
-            shelf.drop(urls, on: tile)
-            return true
-        } isTargeted: {
-            shelf.setTargeted(tile, $0)
-        }
+        .overlay(ShelfDropTarget(tile: tile))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(tile.spokenTitle)
         .accessibilityHint("Drop the dragged files here")
+    }
+}
+
+/// A tile as a drop target, in AppKit. SwiftUI's `dropDestination(for: URL.self)` was here until the owner's
+/// first try by hand, on macOS 26.5.1: the shelf opened, the drop reached its window, and the tile's action
+/// was never called (from that Mac's log). An `NSDraggingDestination` is asked directly, and reads the files
+/// from the drop's own pasteboard inside the drop.
+private struct ShelfDropTarget: NSViewRepresentable {
+    let tile: ShakeToUpload.Tile
+
+    func makeNSView(context: Context) -> TargetView {
+        let view = TargetView()
+        view.tile = tile
+        view.registerForDraggedTypes([.fileURL])
+        return view
+    }
+
+    func updateNSView(_ view: TargetView, context: Context) {
+        view.tile = tile
+    }
+
+    final class TargetView: NSView {
+        var tile = ShakeToUpload.Tile.optimize
+
+        override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+            ShakeToUpload.shared.setTargeted(tile, true)
+            return operation(for: sender)
+        }
+
+        override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+            operation(for: sender)
+        }
+
+        override func draggingExited(_ sender: NSDraggingInfo?) {
+            ShakeToUpload.shared.setTargeted(tile, false)
+        }
+
+        override func draggingEnded(_ sender: NSDraggingInfo) {
+            ShakeToUpload.shared.setTargeted(tile, false)
+        }
+
+        override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+            let files = ShakeShelfFiles.fileURLs(on: sender.draggingPasteboard)
+            guard !files.isEmpty else { return false }
+            let tile = tile
+            // Once the drop is over: the shelf swaps its content and moves its window, which is not for the
+            // middle of a drag session.
+            DispatchQueue.main.async { ShakeToUpload.shared.drop(files, on: tile) }
+            return true
+        }
+
+        /// The files stay where they are, so a copy where the source allows one.
+        private func operation(for sender: NSDraggingInfo) -> NSDragOperation {
+            sender.draggingSourceOperationMask.contains(.copy) ? .copy : .generic
+        }
     }
 }
 

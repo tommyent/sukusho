@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import Testing
@@ -100,5 +101,22 @@ struct ShakeDetectorTests {
         #expect(!ShakeShelfFiles.canShareGallery(noExtension, workerSupportsGalleries: true))
         let tooMany = (0...CloudGalleryAPI.maxImages).map { URL(fileURLWithPath: "/tmp/\($0).png") }
         #expect(!ShakeShelfFiles.canShareGallery(tooMany, workerSupportsGalleries: true))
+    }
+
+    /// What a tile reads from a drop: the files, in the drag's order, and nothing that isn't a file.
+    @Test func aDropGivesItsFilesInOrderAndNothingElse() {
+        let board = NSPasteboard(name: .init("SukushoShelfTest-\(UUID().uuidString)"))
+        defer { board.releaseGlobally() }
+        #expect(ShakeShelfFiles.fileURLs(on: board).isEmpty)
+
+        let files = ["one.png", "two with space.jpg", "three.pdf"].map { URL(fileURLWithPath: "/tmp/SukushoShelfTest/\($0)") }
+        board.clearContents()
+        #expect(board.writeObjects(files.map { $0 as NSURL } + [NSURL(string: "https://example.com/page")!, "some text" as NSString]))
+        #expect(ShakeShelfFiles.fileURLs(on: board).map(\.path) == files.map(\.path))
+
+        // Text and a web address alone are no files.
+        board.clearContents()
+        #expect(board.writeObjects([NSURL(string: "https://example.com/page")!, "some text" as NSString]))
+        #expect(ShakeShelfFiles.fileURLs(on: board).isEmpty)
     }
 }
