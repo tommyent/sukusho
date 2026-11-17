@@ -261,8 +261,12 @@ enum ScreendropPreferences {
     }
 
     /// Seconds before the preview overlay auto-dismisses. 0 means never.
+    /// 10 s unless set (Fable #2: cards stayed five minutes and piled up the edge). Hovering, dragging and opening a
+    /// card keep it; a user's own choice, Never (0) included, stands.
+    static let previewAutoCloseDefault = 10
     static var previewAutoCloseSeconds: Int {
-        max(0, UserDefaults.standard.integer(forKey: previewAutoCloseSecondsKey))
+        guard UserDefaults.standard.object(forKey: previewAutoCloseSecondsKey) != nil else { return previewAutoCloseDefault }
+        return max(0, UserDefaults.standard.integer(forKey: previewAutoCloseSecondsKey))
     }
 
     /// Whether dragging a preview card out dismisses it. Defaults to on.
