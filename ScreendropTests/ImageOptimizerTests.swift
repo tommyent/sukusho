@@ -549,10 +549,11 @@ private func isRunning(_ text: String) -> Bool {
             let tools = try standInTools(where: "oxipng", leaves: standIn)
             defer { try? FileManager.default.removeItem(at: tools) }
             let result = try await ImageOptimizer(toolsDirectory: tools, outputDirectory: bench.output).optimize(transparent)
-            guard case .failed = result.outcome else {
+            guard case .failed(let reason) = result.outcome else {
                 Issue.record("\(standIn.lastPathComponent): \(result.outcome)")
                 continue
             }
+            #expect(reason.contains("didn't come out right"), "\(standIn.lastPathComponent): \(reason)")
             #expect(result.url == transparent)
             #expect(try Data(contentsOf: transparent) == whole)
             #expect(bench.leftovers.isEmpty)
@@ -615,11 +616,13 @@ private func isRunning(_ text: String) -> Bool {
             let tools = try standInTools(where: tool, leaves: standIn)
             defer { try? FileManager.default.removeItem(at: tools) }
             let result = try await ImageOptimizer(toolsDirectory: tools, outputDirectory: bench.output).optimize(source, to: target)
-            guard case .failed = result.outcome else {
+            guard case .failed(let reason) = result.outcome else {
                 Issue.record("\(what) as \(target): \(result.outcome)")
                 result.discard()
                 return
             }
+            // Refused for what it shows: each stand-in is a whole file that the real MozJPEG reads back.
+            #expect(reason.contains("whole picture"), "\(what) as \(target): \(reason)")
             #expect(result.url == source)
             #expect(bench.leftovers.isEmpty, "\(what): \(bench.leftovers)")
         }
