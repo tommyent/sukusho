@@ -98,4 +98,15 @@ struct HistoryMetadataTests {
             #expect(marks == [saved: savedAt, legacy: legacyAt])
         }
     }
+
+    /// Naming or tagging a recording marks its History rows, found by package path however it's written.
+    @Test func aRecordingsRowsAreFoundByItsPackage() {
+        let first = UUID(), second = UUID(), other = UUID(), screenshot = UUID()
+        let rows: [(id: UUID, sessionPath: String?)] = [(first, "/Library/Sukusho/Recordings/a.sukushorec"),
+                                                        (second, "/Library/Sukusho/Recordings/./a.sukushorec/"),
+                                                        (other, "/Library/Sukusho/Recordings/b.sukushorec"),
+                                                        (screenshot, nil)]
+        #expect(CaptureSavedMarks.rows(ofRecordingAt: "/Library/Sukusho/Recordings/a.sukushorec", in: rows) == [first, second])
+        #expect(CaptureSavedMarks.rows(ofRecordingAt: "/Library/Sukusho/Recordings/c.sukushorec", in: rows).isEmpty)
+    }
 }

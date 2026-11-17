@@ -524,6 +524,13 @@ final class ScreenshotHistoryStore {
     }
 
     /// Saves the items to Library › Saved, or takes them out. Leaves `updatedAt` alone, as tagging does.
+    /// Marks a recording's History rows saved, so the marks file covers it too: its project.json mark alone can be
+    /// dropped by an older Studio re-saving the project. For naming and tagging, which write only the project.
+    func markRecordingSaved(_ session: RecordingSession) {
+        setLibrarySaved(true, ids: CaptureSavedMarks.rows(ofRecordingAt: session.directoryURL.path,
+                                                          in: items.map { ($0.id, $0.recordingSessionPath) }))
+    }
+
     func setLibrarySaved(_ saved: Bool, ids: Set<UUID>) {
         guard !ids.isEmpty else { return }
         for index in items.indices where ids.contains(items[index].id) {

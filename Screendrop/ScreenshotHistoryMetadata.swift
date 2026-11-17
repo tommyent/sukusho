@@ -71,6 +71,12 @@ nonisolated enum CaptureSavedMarks {
         try data.write(to: url, options: .atomic)
     }
 
+    /// The History rows that belong to a recording's package, whichever way their paths are written.
+    static func rows(ofRecordingAt path: String, in rows: [(id: UUID, sessionPath: String?)]) -> Set<UUID> {
+        let target = URL(fileURLWithPath: path).standardizedFileURL.path
+        return Set(rows.filter { $0.sessionPath.map { URL(fileURLWithPath: $0).standardizedFileURL.path } == target }.map(\.id))
+    }
+
     /// The file's marks, plus any a row still carries from when they lived in history.json and the file doesn't have.
     static func merged(file: [UUID: Date]?, rows: [(id: UUID, savedAt: Date?)]) -> [UUID: Date] {
         var marks = file ?? [:]

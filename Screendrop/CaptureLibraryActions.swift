@@ -76,6 +76,7 @@ extension CaptureLibraryModel {
                     metadata.tags = tags.isEmpty ? nil : tags
                     if applied, metadata.librarySavedAt == nil { metadata.librarySavedAt = Date() }
                 }
+                if applied { ScreenshotHistoryStore.shared.markRecordingSaved(session) }
             } else {
                 historyIDs.formUnion(item.historyIDs)
             }
