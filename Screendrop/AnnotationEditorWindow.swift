@@ -200,6 +200,9 @@ struct AnnotationEditorWindow: View {
                 )
                 .disabled(model.isBlockingCommit)
             }
+            // Below this the inspector folds away and the window can go down to the canvas's
+            // own minimum; it was stuck at 1040 pt with the inspector (Fable #7).
+            .inspectorAutoFold(isPresented: $isInspectorPresented, below: 1000)
             .environment(probe)
     }
 
@@ -334,7 +337,8 @@ struct AnnotationEditorWindow: View {
                     .controlSize(.large)
             }
         }
-        .frame(minWidth: 760, minHeight: 580)
+        // The tool dock is about 686 pt wide; the canvas keeps it clear of the edges.
+        .frame(minWidth: 712, minHeight: 580)
         .clipped()
         .overlay(alignment: .top) {
             if model.previewImage != nil, model.imageSize != .zero {

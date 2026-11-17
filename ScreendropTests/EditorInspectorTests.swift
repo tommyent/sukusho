@@ -84,6 +84,40 @@ struct EditorInspectorTests {
         #expect(AnnotationTool.freehand.helpText == "Freehand")
     }
 
+    /// The inspector folds once as the window is dragged past the point, stays folded until there
+    /// is room again plus a margin, and a window that opens narrow starts folded (Fable #7).
+    @Test static func inspectorFoldsBelowTheWidthAndComesBack() {
+        var state = InspectorFoldState()
+        var shown = true
+        func resize(_ width: CGFloat) {
+            let next = state.resized(to: width, foldBelow: 1000, isPresented: shown)
+            state = next.state
+            shown = next.isPresented
+        }
+        resize(1100); #expect(shown && !state.isFolded)
+        resize(990); #expect(!shown && state.isFolded)
+        resize(800); #expect(!shown)
+        resize(1020); #expect(!shown, "not back until the margin")
+        resize(1040); #expect(shown && !state.isFolded)
+
+        // Hidden by hand, it stays hidden however wide the window gets.
+        shown = false
+        resize(990); resize(1200)
+        #expect(!shown)
+
+        // Shown by hand while narrow (the view clears the fold), it isn't folded again until the
+        // window has been wide and is dragged narrow once more.
+        state = InspectorFoldState(width: 800, isFolded: false)
+        shown = true
+        resize(820); #expect(shown)
+        resize(1100); resize(950); #expect(!shown)
+
+        var narrow = InspectorFoldState()
+        let opened = narrow.resized(to: 900, foldBelow: 1000, isPresented: true)
+        narrow = opened.state
+        #expect(!opened.isPresented && narrow.isFolded)
+    }
+
     /// A capture saved with a camera tilt opens with the switch on.
     @Test static func aSavedTiltOpensWithTheSwitchOn() {
         var settings = AnnotationBackgroundSettings()

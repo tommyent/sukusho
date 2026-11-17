@@ -280,7 +280,10 @@ struct CaptureLibraryView: View {
         .toolbar { toolbar }
         .focusedSceneValue(\.captureLibraryCardWidth, $cardWidth)
         .background { refreshShortcut }
-        .frame(minWidth: 860, minHeight: 540)
+        // 860 pt holds the sidebar, the grid and the inspector; below 900 the inspector folds
+        // away on its own, and without it the window goes down to 620 (Fable #7).
+        .frame(minWidth: inspectorVisible ? 860 : 620, minHeight: 540)
+        .inspectorAutoFold(isPresented: $inspectorVisible, below: 900)
         .onAppear {
             AppActivationPolicy.enter()
             model.sortOrder = savedSort
