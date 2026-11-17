@@ -74,7 +74,7 @@ nonisolated enum ClipboardList {
                              foldedText: nil, source: source)
     }
 
-    /// Pinned first, in the order they were pinned; then Today, Yesterday and
+    /// Saved first, in the order they were saved; then Today, Yesterday and
     /// Earlier, newest first. Snippets have their own list; `includesSnippets` adds the ones that match
     /// to All, after the copies, for a search that covers everything (the popup's All Types).
     static func sections(
@@ -89,7 +89,7 @@ nonisolated enum ClipboardList {
         let shown = entries.filter { matches($0, filter: filter) && matches($0, query: query, appName: appName($0.sourceBundleID)) }
         let pinned = shown.filter { $0.pinnedAt != nil }.sorted { $0.pinnedAt! > $1.pinnedAt! }
         let rest = shown.filter { $0.pinnedAt == nil }.sorted { $0.lastCopiedAt > $1.lastCopiedAt }
-        var sections = pinned.isEmpty ? [] : [Section(title: "Pinned", entries: pinned)]
+        var sections = pinned.isEmpty ? [] : [Section(title: "Saved", entries: pinned)]
         if filter == .snippets {
             if !rest.isEmpty { sections.append(Section(title: "Snippets", entries: rest.sorted { title(of: $0) < title(of: $1) })) }
             return sections

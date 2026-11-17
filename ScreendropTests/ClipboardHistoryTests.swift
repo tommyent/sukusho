@@ -298,14 +298,17 @@ struct ClipboardHistoryStoreTests {
         #expect(entries[0].timesCopied == 2)
     }
 
-    @Test func deletingHistoryKeepsSnippets() async throws {
+    /// Saved copies (★) and snippets belong to the Library: Delete History leaves them.
+    @Test func deletingHistoryKeepsSavedCopiesAndSnippets() async throws {
         let store = try store()
         try await store.record(image(500), at: start)
         try await store.record(text("gone"), at: start)
+        guard case .inserted(let saved) = try await store.record(text("saved"), at: start) else { return }
+        try await store.setPinned(saved, true)
         try await store.addSnippet(title: "Kept", text: "body", at: start)
         try await store.deleteHistory()
-        #expect(try await store.entries().map(\.title) == ["Kept"])
-        #expect(try await store.totalBytes() == 4)
+        #expect(Set(try await store.entries().compactMap(\.text)) == ["saved", "body"])
+        #expect(try await store.totalBytes() == 9)
     }
 
     /// A screenshot-like PNG: a light page with dark lines of "text" whose lengths come from `seed`, and a
@@ -606,7 +609,7 @@ struct ClipboardListTests {
             entry(.snippet, "body", title: "A snippet"),
         ]
         let sections = ClipboardList.sections(entries, filter: .all, query: CaptureLibraryQuery(""), now: now, calendar: calendar)
-        #expect(sections.map(\.title) == ["Pinned", "Today", "Yesterday", "Earlier"])
+        #expect(sections.map(\.title) == ["Saved", "Today", "Yesterday", "Earlier"])
         #expect(sections.map { $0.entries.map(\.text) } == [["pinned long ago"], ["this morning"], ["yesterday"], ["last week"]])
     }
 

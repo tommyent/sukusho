@@ -159,7 +159,9 @@ final class ClipboardHistoryModel {
         }
     }
 
-    func togglePin(_ entry: ClipboardEntry) {
+    /// Save (★) keeps a copy in Library › Saved, never aged out or swept, and out of Delete History. It's the
+    /// store's pinned flag, so clips pinned before option A are saved (sd-ogtp.1.1).
+    func toggleSaved(_ entry: ClipboardEntry) {
         Task {
             try? await store?.setPinned(entry.id, entry.pinnedAt == nil)
             refresh()

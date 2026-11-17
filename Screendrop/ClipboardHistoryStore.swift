@@ -20,6 +20,7 @@ nonisolated struct ClipboardEntry: Sendable, Equatable, Identifiable {
     let firstCopiedAt: Date
     let lastCopiedAt: Date
     let timesCopied: Int
+    /// When the copy was saved (★, Library › Saved); stored as pinned_at, the name it had before option A.
     let pinnedAt: Date?
     /// An image's text, read on this Mac as the Library reads captures'; nil until read.
     var readText: String? = nil
@@ -196,8 +197,9 @@ actor ClipboardHistoryStore {
     }
 
     /// Everything but snippets, and the images kept for it.
+    /// Every copy but the saved ones (pinned_at) and snippets, which belong to the Library.
     func deleteHistory() throws {
-        try delete(ids: try query("SELECT id FROM entries WHERE kind != 'snippet'", []) { $0.text(0) ?? "" })
+        try delete(ids: try query("SELECT id FROM entries WHERE kind != 'snippet' AND pinned_at IS NULL", []) { $0.text(0) ?? "" })
     }
 
     func delete(_ id: String) throws {

@@ -35,9 +35,9 @@ final class ClipboardPopupState {
         selection = entries[min(max(current + offset, 0), entries.count - 1)].id
     }
 
-    /// ⌘1…⌘0: the pinned entries, in their order.
+    /// ⌘1…⌘0: the saved entries, in their order.
     func pinned(_ number: Int) -> ClipboardEntry? {
-        let pinned = sections.first { $0.title == "Pinned" }?.entries ?? []
+        let pinned = sections.first { $0.title == "Saved" }?.entries ?? []
         return pinned.indices.contains(number - 1) ? pinned[number - 1] : nil
     }
 }
@@ -142,7 +142,7 @@ final class ClipboardPopupPresenter {
         case (kVK_Return, []), (kVK_ANSI_KeypadEnter, []): deliver(state.selected, as: .paste)
         case (kVK_Return, [.command]): deliver(state.selected, as: .copy)
         case (kVK_Return, [.control, .command]): deliver(state.selected, as: .pastePlain)
-        case (kVK_ANSI_Period, [.command]): if let entry = state.selected { ClipboardHistoryModel.shared.togglePin(entry) }
+        case (kVK_ANSI_Period, [.command]): if let entry = state.selected { ClipboardHistoryModel.shared.toggleSaved(entry) }
         case (kVK_ANSI_X, [.control]): if let entry = state.selected { ClipboardHistoryModel.shared.delete(entry) }
         case (kVK_ANSI_K, [.command]): showActions()
         default:
@@ -173,8 +173,7 @@ final class ClipboardPopupPresenter {
             add("Paste as Plain Text", "\r", [.control, .command]) { [weak self] in self?.deliver(entry, as: .pastePlain) }
         }
         menu.addItem(.separator())
-        add(entry.pinnedAt == nil ? "Pin Entry" : "Unpin Entry", ".", .command) { model.togglePin(entry) }
-        if entry.kind == .image, entry.libraryPath == nil { add("Add to Library") { model.addToLibrary(entry) } }
+        add(entry.pinnedAt == nil ? "Save" : "Remove from Saved", ".", .command) { model.toggleSaved(entry) }
         if entry.kind == .image { add("Open in Editor") { [weak self] in self?.close(); model.openInEditor(entry) } }
         if entry.kind == .text { add("Save as Snippet") { model.saveAsSnippet(entry) } }
         menu.addItem(.separator())
@@ -291,7 +290,7 @@ struct ClipboardPopupView: View {
                             .padding(.horizontal, DS.Space.ml).padding(.top, DS.Space.ml).padding(.bottom, DS.Space.xs)
                         ForEach(Array(section.entries.enumerated()), id: \.element.id) { index, entry in
                             row(entry, isSelected: entry.id == selected?.id,
-                                pinNumber: section.title == "Pinned" && index < 10 ? (index + 1) % 10 : nil)
+                                pinNumber: section.title == "Saved" && index < 10 ? (index + 1) % 10 : nil)
                                 .id(entry.id)
                         }
                     }
@@ -351,7 +350,7 @@ struct ClipboardPopupView: View {
             if let message = model.feedback.message {
                 Label(message, systemImage: "checkmark.circle").foregroundStyle(.secondary)
             } else {
-                Text("⌘1–⌘0 pinned").foregroundStyle(.tertiary)
+                Text("⌘1–⌘0 saved").foregroundStyle(.tertiary)
             }
             Spacer()
             Button { presenter.deliver(entry, as: .paste) } label: {

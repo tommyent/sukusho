@@ -173,7 +173,7 @@ private struct ClipboardCard: View {
                 .clipShape(libraryCardPictureShape)
                 .overlay { libraryCardPictureShape.strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5) }
                 .overlay(alignment: .bottomLeading) {
-                    if entry.libraryPath != nil { Text("In Library").cardPill().padding(6) }
+                    if entry.libraryPath != nil { Text("In Captures").cardPill().padding(6) }
                 }
                 .padding([.top, .horizontal], LibraryGridMetrics.pictureInset)
             VStack(spacing: 3) {
@@ -182,7 +182,7 @@ private struct ClipboardCard: View {
                     if let icon = model.appIcon(entry.sourceBundleID) { Image(nsImage: icon).resizable().frame(width: 12, height: 12) }
                     Text([model.appName(entry.sourceBundleID), entry.kind == .snippet ? nil : ClipboardInfo.when(entry.lastCopiedAt)]
                         .compactMap { $0 }.joined(separator: " · "))
-                    if entry.pinnedAt != nil { Image(systemName: "pin.fill").font(.system(size: 8)) }
+                    if entry.pinnedAt != nil { Image(systemName: "star.fill").font(.system(size: 8)).foregroundStyle(.yellow) }
                 }
                 .font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
             }
@@ -263,8 +263,7 @@ struct ClipboardEntryMenu: View {
         if entry.kind == .image { Button("Open in Editor") { model.openInEditor(entry) } }
         if entry.kind == .text { Button("Copy as Plain Text") { model.deliver(entry, as: .copyPlain, to: nil) } }
         Divider()
-        Button(entry.pinnedAt == nil ? "Pin" : "Unpin") { model.togglePin(entry) }
-        if entry.kind == .image, entry.libraryPath == nil { Button("Add to Library") { model.addToLibrary(entry) } }
+        Button(entry.pinnedAt == nil ? "Save" : "Remove from Saved") { model.toggleSaved(entry) }
         if entry.kind == .text { Button("Save as Snippet") { model.saveAsSnippet(entry) } }
         Divider()
         Button("Delete", role: .destructive) { model.delete(entry) }
@@ -290,10 +289,10 @@ struct ClipboardLibraryInspector: View {
                             .help("Quick Look")
                         HStack {
                             Button("Copy") { model.deliver(entry, as: .copy, to: nil) }.buttonStyle(.borderedProminent)
-                            Button(entry.pinnedAt == nil ? "Pin" : "Unpin") { model.togglePin(entry) }
-                            if entry.kind == .image, entry.libraryPath == nil {
-                                Button("Add to Library") { model.addToLibrary(entry) }
+                            Button(entry.pinnedAt == nil ? "Save" : "Saved", systemImage: entry.pinnedAt == nil ? "star" : "star.fill") {
+                                model.toggleSaved(entry)
                             }
+                            .help(entry.pinnedAt == nil ? "Keep it in Library › Saved" : "Remove from Saved")
                             if entry.kind == .image { Button("Edit") { model.openInEditor(entry) }.help("Open in the editor") }
                         }
                         .controlSize(.small)
@@ -332,7 +331,6 @@ private struct SnippetEditor: View {
                 .overlay(RoundedRectangle(cornerRadius: DS.Radius.m).strokeBorder(.separator, lineWidth: 0.5))
             HStack {
                 Button("Copy") { model.deliver(entry, as: .copy, to: nil) }.buttonStyle(.borderedProminent)
-                Button(entry.pinnedAt == nil ? "Pin" : "Unpin") { model.togglePin(entry) }
                 Spacer()
                 Button("Delete", role: .destructive) { model.delete(entry) }
             }

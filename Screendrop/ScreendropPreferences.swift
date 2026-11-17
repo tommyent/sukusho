@@ -75,10 +75,11 @@ enum ScreendropPreferences {
         UserDefaults.standard.bool(forKey: clipboardHistoryEnabledKey)
     }
 
-    /// shortcut: 1 month is a provisional default the owner hasn't confirmed yet; 0 keeps everything.
+    /// Nil keeps everything. Option A (owner, 2026-11-16): copies age out only through this setting, off by
+    /// default; saved copies never do.
     static var clipboardRetention: TimeInterval? {
         let days = UserDefaults.standard.object(forKey: clipboardRetentionDaysKey) == nil
-            ? 30 : UserDefaults.standard.integer(forKey: clipboardRetentionDaysKey)
+            ? 0 : UserDefaults.standard.integer(forKey: clipboardRetentionDaysKey)
         return days > 0 ? TimeInterval(days) * 86_400 : nil
     }
 

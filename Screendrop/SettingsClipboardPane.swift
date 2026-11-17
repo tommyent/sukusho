@@ -10,8 +10,8 @@ import UniformTypeIdentifiers
 /// as a section at the foot of Settings › Library, the owner looked for it and didn't find it (2026-11-16).
 struct ClipboardSettingsPane: View {
     @AppStorage(ScreendropPreferences.clipboardHistoryEnabledKey) private var clipboardEnabled = false
-    // shortcut: 30 days is a provisional default the owner hasn't confirmed yet (0 keeps everything).
-    @AppStorage(ScreendropPreferences.clipboardRetentionDaysKey) private var clipboardRetentionDays = 30
+    // Option A: copies age out only when the user picks a period; 0 (Forever) keeps everything.
+    @AppStorage(ScreendropPreferences.clipboardRetentionDaysKey) private var clipboardRetentionDays = 0
     @State private var confirmingDeleteHistory = false
     @State private var ignoredApps = ScreendropPreferences.clipboardIgnoredApps
     @State private var settingUpClipboard = false
@@ -42,7 +42,7 @@ struct ClipboardSettingsPane: View {
                     Button("Change…") { SettingsWindowController.show(tab: .shortcuts) }.controlSize(.small)
                 }
                 HStack {
-                    SettingsControlLabel("Delete history", detail: "Removes every copy from this Mac, pinned ones too. Snippets stay.")
+                    SettingsControlLabel("Delete history", detail: "Removes every copy from this Mac but the saved ones. Saved copies and snippets stay.")
                     Spacer()
                     Button("Delete History…") { confirmingDeleteHistory = true }.controlSize(.small)
                 }
@@ -76,7 +76,7 @@ struct ClipboardSettingsPane: View {
         .confirmationDialog("Delete clipboard history?", isPresented: $confirmingDeleteHistory) {
             Button("Delete History", role: .destructive) { ClipboardHistoryModel.shared.deleteHistory() }
         } message: {
-            Text("Every copy is removed from this Mac, pinned ones too. Snippets stay.")
+            Text("Every copy is removed from this Mac but the saved ones. Saved copies and snippets stay.")
         }
     }
 
