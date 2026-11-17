@@ -4308,8 +4308,7 @@ private struct StudioInspector: View {
             }
 
             if model.canIsolateVoice {
-                Toggle("Isolate voice", isOn: $model.isolateVoice)
-                    .toggleStyle(.switch)
+                InspectorToggleRow("Isolate voice", isOn: $model.isolateVoice)
                     .disabled(model.hasReplacementAudio)
                     .help("Reduce background noise in the source microphone track")
                 if let progress = model.voiceIsolationProgress {

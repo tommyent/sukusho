@@ -59,11 +59,9 @@ struct StudioBackgroundMusicControls: View {
             VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
                 InspectorSlider("Music volume", value: $model.musicVolume, range: 0...1, format: .percent(),
                     onEditingChanged: model.setMusicSliderEditing)
-                Toggle("Loop to fit", isOn: $model.musicLoops)
-                    .toggleStyle(.switch)
+                InspectorToggleRow("Loop to fit", isOn: $model.musicLoops)
                     .help("Repeats from the chosen start point to the end of the track")
-                Toggle("Lower under voice", isOn: $model.musicDucks)
-                    .toggleStyle(.switch)
+                InspectorToggleRow("Lower under voice", isOn: $model.musicDucks)
                     .disabled(!model.canIsolateVoice)
                     .help("Dips the music while the recorded microphone has speech")
                 if !model.canIsolateVoice { InspectorHint("No microphone track to follow for ducking.") }
