@@ -7,7 +7,8 @@ import AppKit
 import SwiftUI
 
 struct SettingsAboutPane: View {
-    @AppStorage(UpdateChannels.betaKey) private var getsBetaUpdates = false
+    // Shown as Sparkle reads it: on in a beta build until the person chooses; the default is never stored.
+    @AppStorage(UpdateChannels.betaKey) private var getsBetaUpdates = UpdateChannels.getsBetas()
 
     var body: some View {
         Form {
