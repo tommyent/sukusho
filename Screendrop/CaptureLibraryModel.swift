@@ -199,6 +199,8 @@ final class CaptureLibraryModel {
     var pendingTrash: [CaptureLibraryItem] = []
     /// A capture waiting on the Share to Cloud options sheet.
     var pendingCloudUpload: CaptureLibraryItem?
+    /// The captures behind an open Convert to WebP… or Convert to JPEG… sheet.
+    var pendingConversion: ImageConversion?
     /// Images waiting on the Share to Cloud options sheet, to share as one gallery.
     var pendingGallery: [CaptureLibraryItem] = []
     /// A shared capture waiting on the Delete from Cloud confirmation.

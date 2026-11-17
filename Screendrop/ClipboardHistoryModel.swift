@@ -160,6 +160,46 @@ final class ClipboardHistoryModel {
         }
     }
 
+    /// Makes an image clip smaller without changing a pixel. The smaller file becomes the card's newest version
+    /// and the original stays behind it, so history gains no entry.
+    func optimize(_ entry: ClipboardEntry) {
+        guard entry.kind == .image, let url = entry.imageURL ?? entry.libraryPath.map({ URL(fileURLWithPath: $0) }) else { return }
+        Task {
+            guard let result = try? await ImageOptimizer.shared.optimize(url, effort: OptimizePreferences.effort) else { return }
+            defer { result.discard() }
+            switch result.outcome {
+            case .optimized:
+                guard let data = try? Data(contentsOf: result.url) else { return feedback.show("Couldn’t optimize this image.") }
+                var capture = ClipboardCapture(kind: .image, hash: ClipboardPasteboardReader.digest(data))
+                capture.image = data
+                capture.imageExtension = result.url.pathExtension
+                capture.pixelWidth = entry.pixelWidth
+                capture.pixelHeight = entry.pixelHeight
+                capture.byteSize = data.count
+                capture.sourceBundleID = entry.sourceBundleID
+                do {
+                    try await store?.stack(capture, on: entry.id)
+                    refresh()
+                    feedback.show("Optimized · \(result.sizeSummary)")
+                } catch {
+                    feedback.show("Couldn’t optimize this image.")
+                }
+            case .failed(let reason):
+                feedback.show("Couldn’t optimize. \(reason)")
+            case .alreadyOptimized, .converted, .timedOut:
+                feedback.show("Already Optimized")
+            }
+        }
+    }
+
+    /// Convert to WebP…: the Library's sheet, on this clip's image.
+    func convertToWebP(_ entry: ClipboardEntry) {
+        guard entry.kind == .image, let url = entry.imageURL ?? entry.libraryPath.map({ URL(fileURLWithPath: $0) }) else { return }
+        let name = entry.libraryPath.map { URL(fileURLWithPath: $0).deletingPathExtension().lastPathComponent } ?? "Copied Image"
+        CaptureLibraryModel.shared.pendingConversion = ImageConversion(
+            format: .webP, files: [(url, name)], subtitle: "\(entry.pixelWidth) × \(entry.pixelHeight) image")
+    }
+
     /// The clip as it was first copied: its oldest version, when it was optimized or rewritten since.
     func original(_ entry: ClipboardEntry) -> ClipboardEntry {
         entry.earlierVersions.last.map { self.entry(entry, at: $0) } ?? entry

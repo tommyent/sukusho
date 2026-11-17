@@ -216,6 +216,7 @@ extension CaptureLibraryModel {
             items.insert(LibraryMenuItem(title: "Revert to Original…", isEnabled: !isBusy) { self.requestRevert(item) }, at: rename + 1)
         }
         let trash = items.removeLast()
+        items += optimizeMenuItems()
         let saved = !selectedItems.isEmpty && selectedItems.allSatisfy(\.isSaved)
         items.append(LibraryMenuItem(title: saved ? "Remove from Saved" : "Save", isEnabled: count > 0 && !isBusy,
                                      startsGroup: true) { self.setSaved(!saved) })

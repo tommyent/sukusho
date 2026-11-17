@@ -269,6 +269,11 @@ struct ClipboardEntryMenu: View {
         Button("Quick Look") { model.quickLook(entry) }
         if entry.kind == .image { Button("Open in Editor") { model.openInEditor(entry) } }
         if entry.kind == .text { Button("Copy as Plain Text") { model.deliver(entry, as: .copyPlain, to: nil) } }
+        if entry.kind == .image {
+            Divider()
+            Button("Optimize") { model.optimize(entry) }
+            Button("Convert to WebP…") { model.convertToWebP(entry) }
+        }
         Divider()
         Button(entry.pinnedAt == nil ? "Save" : "Remove from Saved") { model.toggleSaved(entry) }
         if entry.kind == .text { Button("Save as Snippet") { model.saveAsSnippet(entry) } }

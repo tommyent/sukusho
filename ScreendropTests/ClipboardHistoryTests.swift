@@ -210,6 +210,28 @@ struct ClipboardHistoryStoreTests {
         return capture
     }
 
+    /// Optimize on a clip: the smaller file goes on top of the same card, which keeps its place in history.
+    @Test func anOptimizedVersionStacksOnItsOwnCard() async throws {
+        let store = try store()
+        guard case .inserted(let id) = try await store.record(image(400, width: 4, height: 4), at: start) else {
+            Issue.record("not inserted")
+            return
+        }
+        _ = try await store.record(text("newer"), at: start + 10)
+        let smaller = image(200, width: 4, height: 4)
+        try await store.stack(smaller, on: id)
+        try await store.stack(smaller, on: id)   // the same version again changes nothing
+        let entries = try await store.entries()
+        #expect(entries.count == 2)
+        let card = try #require(entries.first { $0.id == id })
+        #expect(card.hash == smaller.hash)
+        #expect(card.byteSize == 200)
+        #expect(card.earlierVersions.count == 1)
+        #expect(card.earlierVersions.first?.byteSize == 400)
+        #expect(card.lastCopiedAt == start)
+        #expect(entries.first?.id != id)   // the text copied later is still on top
+    }
+
     @Test func copyingAgainBumpsTheSameEntry() async throws {
         let store = try store()
         let first = try await store.record(text("same"), at: start)
