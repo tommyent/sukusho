@@ -37,7 +37,8 @@ struct AnnotationEditorWindow: View {
         mainContent
             .disabled(model.isBlockingCommit)
             .allowsHitTesting(!model.isBlockingCommit)
-            .modifier(CaptureLibraryEditorRegistration(url: url))
+            // The capture an outside file became on its first save, so the Library can't trash it under the editor.
+            .modifier(CaptureLibraryEditorRegistration(url: model.sourceURL ?? url))
             .navigationTitle(windowTitle)
             .navigationSubtitle(model.saveStatus)
             .toolbar(removing: .title)
@@ -64,6 +65,9 @@ struct AnnotationEditorWindow: View {
                 }
                 // Bare icons, as in the Library and the Studio: no glass capsule.
                 .sharedBackgroundVisibility(.hidden)
+            }
+            .onChange(of: model.sourceURL) { _, new in
+                if let new, historyID == nil { historyID = ScreenshotHistoryStore.shared.item(for: new)?.id }
             }
             .task(id: url) {
                 historyID = url.flatMap { ScreenshotHistoryStore.shared.item(for: $0)?.id }
