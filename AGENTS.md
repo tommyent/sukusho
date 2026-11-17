@@ -79,8 +79,8 @@ A beta is a release only copies with **Settings › About › Get beta updates**
 
 1. Set `MARKETING_VERSION` to the version the beta leads to (1.3.0) and write its notes in `docs/releases/1.3.0-beta.1.md`.
 2. `BETA=1 scripts/release.sh` (`BETA=2` for the next). The app shows "1.3.0 beta 1"; the DMG, notes and tag are named `1.3.0-beta.1`. Sparkle orders releases by build number, so the name plays no part in which is newer. The script adds the beta's item to the feed on the local `gh-pages` branch, through `scripts/appcast.sh`, and stops unless that item is on the beta channel, every published item is still there, and at least one stable item remains.
-3. Publish the DMG on GitHub as a pre-release, so it never becomes "Latest": `gh release create v1.3.0-beta.1 --prerelease --title "Sukusho 1.3.0 beta 1" --notes-file docs/releases/1.3.0-beta.1.md <the DMG> <its .sha256>`.
-4. `scripts/site.sh <the release folder>` commits only the appcast for a beta. The page keeps the stable download and doesn't mention the beta. Push `gh-pages` once the GitHub release is up.
+3. Put the DMG on GitHub as a draft pre-release, so it never becomes "Latest": `gh release create v1.3.0-beta.1 --draft --prerelease --title "Sukusho 1.3.0 beta 1" --notes-file docs/releases/1.3.0-beta.1.md <the DMG> <its .sha256>`. Download the draft's own files, install and launch them on a clean Mac, and try what changed; then publish with `gh release edit v1.3.0-beta.1 --draft=false`.
+4. `scripts/site.sh <the release folder>` commits only the appcast for a beta. The page keeps the stable download and doesn't mention the beta. Push `gh-pages` once the GitHub release is published, since the appcast points beta copies at its DMG.
 
 The stable release that follows (`scripts/release.sh` without `BETA`) writes a feed with that release alone, which every copy takes, beta or not. `scripts/check-appcast.sh <Sparkle's bin folder>` dry-runs both kinds of feed with a stand-in app and a throwaway key, without the Keychain or a release.
 
