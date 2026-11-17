@@ -521,7 +521,8 @@ struct LibraryCellContent: View {
             HStack(spacing: 4) {
                 // The app the capture came from, as clipboard cards show it (owner, 2026-11-17).
                 if let icon = ClipboardHistoryModel.shared.appIcon(item.source?.bundleIdentifier) {
-                    Image(nsImage: icon).resizable().frame(width: 13, height: 13).libraryRaisedIcon()
+                    Image(nsImage: icon).resizable().frame(width: 13, height: 13)
+                        .libraryRaisedIcon(ringed: ClipboardHistoryModel.shared.appIconIsLight(item.source?.bundleIdentifier))
                 }
                 Text(item.subtitle).lineLimit(1).libraryRaisedText()
                 if item.isSaved { Image(systemName: "star.fill").font(.system(size: 8)).foregroundStyle(.yellow) }
@@ -776,8 +777,9 @@ extension View {
     /// Caption text pressed up from the card: a faint shade one point under the letters (owner's pick, subtle).
     func libraryRaisedText() -> some View { modifier(LibraryRaisedText()) }
 
-    /// A caption's app icon with the picture's raised edge: a shade under its own shape, a light edge on top.
-    func libraryRaisedIcon() -> some View { modifier(LibraryRaisedIcon()) }
+    /// A caption's app icon with the picture's raised edge: a shade under its own shape, a light edge on top. A light
+    /// icon (`IconLightness`) also gets a hairline ring around its shape, or a white one vanishes on a light card.
+    func libraryRaisedIcon(ringed: Bool = false) -> some View { modifier(LibraryRaisedIcon(ringed: ringed)) }
 }
 
 private struct LibraryCardChip: ViewModifier {
@@ -824,11 +826,14 @@ private struct LibraryRaisedText: ViewModifier {
 }
 
 private struct LibraryRaisedIcon: ViewModifier {
+    let ringed: Bool
     @Environment(\.colorScheme) private var colorScheme
 
     func body(content: Content) -> some View {
         let dark = colorScheme == .dark
         content
+            // The ring: a shadow with no offset and almost no blur traces the icon's own outline.
+            .shadow(color: .black.opacity(ringed ? (dark ? 0.6 : 0.45) : 0), radius: 0.35)
             .shadow(color: .black.opacity(dark ? 0.85 : 0.42), radius: 0.25, y: 0.6)
             .shadow(color: .white.opacity(dark ? 0.30 : 0.85), radius: 0, y: -0.4)
     }

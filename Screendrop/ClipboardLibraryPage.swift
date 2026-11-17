@@ -244,7 +244,8 @@ struct ClipboardCard: View {
                     if let app = model.appName(entry.sourceBundleID) {
                         if entry.kind != .snippet { Text("·").libraryRaisedText() }
                         if let icon = model.appIcon(entry.sourceBundleID) {
-                            Image(nsImage: icon).resizable().frame(width: 13, height: 13).libraryRaisedIcon()
+                            Image(nsImage: icon).resizable().frame(width: 13, height: 13)
+                                .libraryRaisedIcon(ringed: model.appIconIsLight(entry.sourceBundleID))
                         }
                         Text(app).truncationMode(.tail).libraryRaisedText()
                     }
