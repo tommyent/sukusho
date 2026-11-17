@@ -185,6 +185,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UNUserNotificationCenter.current().delegate = RecordingExportNotificationDelegate.shared
         // Before the Library opens, so it doesn't appear in the other appearance first.
         AppAppearance.apply()
+        // No window here uses tabs, so View has no "Show Tab Bar" or "Show All Tabs" (Fable 15).
+        NSWindow.allowsAutomaticWindowTabbing = false
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
