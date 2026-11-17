@@ -378,6 +378,8 @@ final class ScreenshotHistoryStore {
             items[index].hasEdits = true
             saveMetadata()
         }
+        // The rendered image is optimized once the editing is over, not on each save.
+        CaptureOptimizer.editingChanged(displayURL, closed: !CaptureLibraryOpenEditors.isEditing(displayURL))
         return displayURL
     }
 

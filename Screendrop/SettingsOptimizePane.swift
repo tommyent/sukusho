@@ -76,7 +76,7 @@ struct OptimizeSettingsPane: View {
             Section("Captures") {
                 SettingsControlLabel(
                     "Optimize new captures",
-                    detail: "Makes each screenshot smaller in the background right after it's taken, without changing a pixel."
+                    detail: "Makes each screenshot smaller in the background right after it's taken, and again once you finish editing it, without changing a pixel."
                 ).control { label in
                     Toggle(isOn: $newCaptures) { label }
                 }

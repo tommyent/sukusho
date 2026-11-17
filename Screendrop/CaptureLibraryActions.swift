@@ -537,6 +537,8 @@ enum CaptureLibraryOpenEditors {
         let key = url.standardizedFileURL
         let count = (urls[key] ?? 0) - 1
         if count <= 0 { urls.removeValue(forKey: key) } else { urls[key] = count }
+        // The last editor on this capture closed: its image can be optimized now.
+        if count <= 0 { CaptureOptimizer.editingChanged(key, closed: true) }
     }
     static func contains(_ url: URL) -> Bool {
         let path = url.standardizedFileURL.path

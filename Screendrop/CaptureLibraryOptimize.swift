@@ -46,9 +46,12 @@ enum CaptureOptimizer {
     }
 
     /// Replaces a capture's stored image with a smaller file that decodes to the same pixels. The capture is
-    /// left alone when its editor is open, or when it changed while the encoder ran.
-    static func optimizeInPlace(_ url: URL, effort: ImageOptimizationEffort) async -> Outcome {
-        guard !CaptureLibraryOpenEditors.isEditing(url) else { return .failed("Close the capture's editor before optimizing it.") }
+    /// left alone when its editor is open, or when it changed while the encoder ran. `whileEditing` is for an
+    /// editor that has sat idle: the file's date still catches a save that lands meanwhile.
+    static func optimizeInPlace(_ url: URL, effort: ImageOptimizationEffort, whileEditing: Bool = false) async -> Outcome {
+        guard whileEditing || !CaptureLibraryOpenEditors.isEditing(url) else {
+            return .failed("Close the capture's editor before optimizing it.")
+        }
         guard OptimizedMark.saving(of: url) == nil else { return .alreadyOptimized }
         let stamp = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
         guard let result = try? await ImageOptimizer.shared.optimize(url, effort: effort) else { return .failed("Optimizing was stopped.") }
@@ -56,7 +59,9 @@ enum CaptureOptimizer {
         switch result.outcome {
         case .optimized:
             let now = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
-            guard now == stamp, !CaptureLibraryOpenEditors.isEditing(url) else { return .failed("The capture changed while it was being optimized.") }
+            guard now == stamp, whileEditing || !CaptureLibraryOpenEditors.isEditing(url) else {
+                return .failed("The capture changed while it was being optimized.")
+            }
             do {
                 try ScreenshotEditFileTransaction.apply(replacements: [(result.url, url)])
             } catch {
@@ -82,6 +87,30 @@ enum CaptureOptimizer {
             return nil
         }
         return result
+    }
+
+    /// How long an open editor must go without a save before its capture is optimized under it.
+    static let editingIdle: Duration = .seconds(60)
+    private static var afterEditing: [URL: Task<Void, Never>] = [:]
+
+    /// An edited capture is optimized once its editing is over, never on each save: two seconds after its
+    /// editor closes, or `editingIdle` after the last save while the editor stays open. Every save and the
+    /// close call this, and each call replaces the wait before it. A capture that was only opened and closed
+    /// is optimized the same way, since the background pass skipped it while its editor was up.
+    static func editingChanged(_ url: URL, closed: Bool) {
+        let key = url.standardizedFileURL
+        afterEditing[key]?.cancel()
+        afterEditing[key] = nil
+        guard OptimizePreferences.newCaptures, ScreenshotHistoryStore.shared.isHistoryURL(key),
+              ["png", "jpg", "jpeg"].contains(key.pathExtension.lowercased()) else { return }
+        afterEditing[key] = Task(priority: .utility) {
+            try? await Task.sleep(for: closed ? .seconds(2) : editingIdle)
+            guard !Task.isCancelled else { return }
+            afterEditing[key] = nil
+            if case .optimized = await optimizeInPlace(key, effort: OptimizePreferences.quietEffort, whileEditing: !closed) {
+                CaptureLibraryModel.shared.refresh()
+            }
+        }
     }
 
     /// Settings › Optimize › Optimize new captures: quietly, right after a screenshot reaches the Library.
