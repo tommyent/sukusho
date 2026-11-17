@@ -1,3 +1,4 @@
+import CoreGraphics
 import Testing
 
 /// Owner, 2026-11-17: Capture Text joins lines that wrapped mid-sentence into paragraphs, and keeps every other break.
@@ -62,6 +63,18 @@ struct CaptureTextParagraphsTests {
         #expect(CaptureTextParagraphs.reflowed("the display. [2] It is") == "the display. It is")
         // A bracket that isn't a footnote mark stays.
         #expect(CaptureTextParagraphs.reflowed("array [2] of items") == "array [2] of items")
+    }
+
+    /// Fable live check C: 10 pt text captured at 1× lost "Uses"; read at 2× it didn't.
+    @Test func aOneXCaptureIsReadAtTwoX() throws {
+        let context = try #require(CGContext(data: nil, width: 120, height: 40, bitsPerComponent: 8, bytesPerRow: 0,
+                                             space: CGColorSpaceCreateDeviceRGB(),
+                                             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        let image = try #require(context.makeImage())
+        let oneX = CapturedDocumentText.readable(image, pixelsPerPoint: 1)
+        #expect(oneX.width == 240 && oneX.height == 80)
+        #expect(CapturedDocumentText.readable(image, pixelsPerPoint: 2).width == 120)
+        #expect(CapturedDocumentText.readable(image, pixelsPerPoint: 1.5).width == 120)
     }
 
     @Test func theMessageNamesTheFirstWords() {

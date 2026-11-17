@@ -4,6 +4,7 @@
 //
 
 import CoreGraphics
+import CoreImage
 import Foundation
 import Vision
 
@@ -83,6 +84,20 @@ nonisolated enum CapturedDocumentText {
 
     /// The blocks of `image` when it holds a table or a list; nil otherwise, and when Vision
     /// fails, so plain text keeps going through `ImageTextRecognizer` exactly as before.
+    /// The image Vision reads best: a capture under 1.5 pixels per point (a 1× display) scaled to 2. At 1×, 10 pt text
+    /// lost whole words ("Uses") and misread others, and the same capture scaled up read cleanly (Fable live check C,
+    /// 2026-11-17). Anything sharper, or an image that can't be scaled, is returned as it is.
+    static func readable(_ image: CGImage, pixelsPerPoint: CGFloat) -> CGImage {
+        guard pixelsPerPoint > 0, pixelsPerPoint < 1.5 else { return image }
+        let filter = CIFilter(name: "CILanczosScaleTransform")
+        filter?.setValue(CIImage(cgImage: image), forKey: kCIInputImageKey)
+        filter?.setValue(2 / pixelsPerPoint, forKey: kCIInputScaleKey)
+        filter?.setValue(1.0, forKey: kCIInputAspectRatioKey)
+        guard let output = filter?.outputImage,
+              let scaled = CIContext().createCGImage(output, from: output.extent.integral) else { return image }
+        return scaled
+    }
+
     static func structuredBlocks(in image: CGImage) async -> [CapturedTextBlock]? {
         guard let document = try? await RecognizeDocumentsRequest().perform(on: image).first?.document,
               !document.tables.isEmpty || !document.lists.isEmpty else { return nil }

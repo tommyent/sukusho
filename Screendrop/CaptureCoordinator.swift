@@ -187,11 +187,13 @@ final class CaptureCoordinator {
         ImageTextWarmUp.shared.start()
         let delay = ScreendropPreferences.captureDelaySeconds
         var captured: URL?
+        var area: CGRect?
         if ScreendropPreferences.areaCaptureUsesSystemPicker {
             captured = await ScreenshotManager.shared.captureArea(delaySeconds: delay)
         } else {
             let windows = CaptureSourceProbe(tracksPointer: false).windows.map(\.bounds)
             if let rect = await RecordingAreaSelectionPresenter.shared.selectScreenshotArea(windows: windows) {
+                area = rect
                 captured = await ScreenshotManager.shared.captureArea(rect, delaySeconds: delay)
             }
         }
@@ -205,7 +207,13 @@ final class CaptureCoordinator {
         CaptureTextFeedbackPresenter.shared.showReading(displayID: displayID)
         // A table or a list keeps its shape; anything else is read line by line, as always.
         var blocks: [CapturedTextBlock]?
-        if let image = ScreenshotImageLoader.uprightImage(at: url) { blocks = await CapturedDocumentText.structuredBlocks(in: image) }
+        // Pixels per point of the drawn area, so text captured at 1× is read at 2×. Unknown behind the system picker.
+        var pixelsPerPoint: CGFloat?
+        if let image = ScreenshotImageLoader.uprightImage(at: url) {
+            if let area, area.width > 0 { pixelsPerPoint = CGFloat(image.width) / area.width }
+            let readable = pixelsPerPoint.map { CapturedDocumentText.readable(image, pixelsPerPoint: $0) } ?? image
+            blocks = await CapturedDocumentText.structuredBlocks(in: readable)
+        }
         // Paragraphs rather than the screen's lines, unless the user keeps them (Settings › Screenshots).
         let keepsLines = ScreendropPreferences.captureTextKeepsLineBreaks
         if !keepsLines { blocks = blocks.map(CaptureTextParagraphs.reflowed) }
@@ -213,7 +221,7 @@ final class CaptureCoordinator {
         if let blocks {
             text = CapturedDocumentText.plainText(blocks)
         } else {
-            let read = await ImageTextRecognizer.recognizeText(at: url)
+            let read = await ImageTextRecognizer.recognizeText(at: url, pixelsPerPoint: pixelsPerPoint)
             text = keepsLines ? read : CaptureTextParagraphs.reflowed(read)
         }
 

@@ -14,14 +14,16 @@ enum ImageTextRecognizer {
     /// Recognises text in the image at `url`, returning the recognised lines
     /// joined by newlines in reading order. Returns an empty string when
     /// nothing is found.
-    static func recognizeText(at url: URL) async -> String {
+    /// `pixelsPerPoint`, when known, lets a 1× capture be read at 2× (`CapturedDocumentText.readable`).
+    static func recognizeText(at url: URL, pixelsPerPoint: CGFloat? = nil) async -> String {
         await ImageTextWarmUp.shared.waitUntilReady()
         return await withCheckedContinuation { (continuation: CheckedContinuation<String, Never>) in
             DispatchQueue.global(qos: .userInitiated).async {
-                guard let cgImage = ScreenshotImageLoader.uprightImage(at: url) else {
+                guard let upright = ScreenshotImageLoader.uprightImage(at: url) else {
                     continuation.resume(returning: "")
                     return
                 }
+                let cgImage = pixelsPerPoint.map { CapturedDocumentText.readable(upright, pixelsPerPoint: $0) } ?? upright
 
                 let request = VNRecognizeTextRequest()
                 request.recognitionLevel = .accurate
