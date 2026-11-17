@@ -92,13 +92,22 @@ struct ClipboardLibraryPage: View {
         }
     }
 
+    /// Whole chips on one line; when the window is too narrow for all six, the row scrolls sideways
+    /// rather than breaking their names mid-word (Astra, 2026-11-16).
     private var filterBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) { filterChips }
+            .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+    }
+
+    private var filterChips: some View {
         HStack(spacing: DS.Space.m) {
             ForEach(ClipboardFilter.allCases.filter { $0 != .snippets }) { item in
                 Button { model.libraryFilter = item } label: {
                     Label(item == .all ? "All" : item.title, systemImage: item.symbol)
                         .labelStyle(.titleAndIcon)
                         .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                        .fixedSize()
                         .padding(.horizontal, DS.Space.ml).padding(.vertical, DS.Space.xs)
                         .background(model.libraryFilter == item ? AnyShapeStyle(.tint.opacity(0.2)) : AnyShapeStyle(.quaternary),
                                     in: Capsule())
@@ -106,7 +115,6 @@ struct ClipboardLibraryPage: View {
                 .buttonStyle(.plain)
                 .accessibilityAddTraits(model.libraryFilter == item ? .isSelected : [])
             }
-            Spacer()
         }
     }
 
