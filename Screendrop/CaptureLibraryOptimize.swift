@@ -12,31 +12,6 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Remembers, on the file itself, the size it had before it was optimized. The note goes when the file is
-/// replaced by an edit, so it never describes other content.
-nonisolated enum OptimizedMark {
-    private static let name = "com.tommyent.sukusho.optimized-from"
-
-    static func set(_ originalBytes: Int64, on url: URL) {
-        let text = String(originalBytes)
-        _ = text.withCString { setxattr(url.path, name, $0, strlen($0), 0, 0) }
-    }
-
-    static func originalBytes(of url: URL) -> Int64? {
-        var buffer = [CChar](repeating: 0, count: 32)
-        guard getxattr(url.path, name, &buffer, buffer.count - 1, 0, 0) > 0 else { return nil }
-        return Int64(String(cString: buffer))
-    }
-
-    /// "↓18%" for a file that is still the optimized one, with the size it came from.
-    static func saving(of url: URL) -> (percent: String, original: String)? {
-        guard let original = originalBytes(of: url), original > 0,
-              let now = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize, Int64(now) < original else { return nil }
-        return (ImageOptimizationResult.saving(from: original, to: Int64(now)),
-                ByteCountFormatter.string(fromByteCount: original, countStyle: .file))
-    }
-}
-
 @MainActor
 enum CaptureOptimizer {
     enum Outcome {
@@ -52,14 +27,15 @@ enum CaptureOptimizer {
         guard whileEditing || !CaptureLibraryOpenEditors.isEditing(url) else {
             return .failed("Close the capture's editor before optimizing it.")
         }
-        guard OptimizedMark.saving(of: url) == nil else { return .alreadyOptimized }
-        let stamp = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        guard !OptimizedMark.isCurrent(url) else { return .alreadyOptimized }
+        // From the file system, not the URL, which keeps the dates it has read.
+        func modified() -> Date? { try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date }
+        let stamp = modified()
         guard let result = try? await ImageOptimizer.shared.optimize(url, effort: effort) else { return .failed("Optimizing was stopped.") }
         defer { result.discard() }
         switch result.outcome {
         case .optimized:
-            let now = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
-            guard now == stamp, whileEditing || !CaptureLibraryOpenEditors.isEditing(url) else {
+            guard modified() == stamp, whileEditing || !CaptureLibraryOpenEditors.isEditing(url) else {
                 return .failed("The capture changed while it was being optimized.")
             }
             do {
@@ -69,7 +45,11 @@ enum CaptureOptimizer {
             }
             OptimizedMark.set(result.originalByteCount, on: url)
             return .optimized(result)
-        case .alreadyOptimized, .converted, .timedOut:
+        case .alreadyOptimized:
+            // Nothing smaller came out: remembered, so the next pass doesn't run the encoder again.
+            OptimizedMark.set(result.originalByteCount, on: url)
+            return .alreadyOptimized
+        case .converted, .timedOut:
             return .alreadyOptimized
         case .failed(let reason):
             return .failed(reason)
@@ -80,7 +60,7 @@ enum CaptureOptimizer {
     /// the capture as it is (switched off, not a PNG or JPEG, already optimized, or nothing smaller came out).
     static func forCloud(_ url: URL) async -> ImageOptimizationResult? {
         guard OptimizePreferences.beforeCloud, ["png", "jpg", "jpeg"].contains(url.pathExtension.lowercased()),
-              OptimizedMark.saving(of: url) == nil,
+              !OptimizedMark.isCurrent(url),
               let result = try? await ImageOptimizer.shared.optimize(url, effort: OptimizePreferences.quietEffort) else { return nil }
         guard result.outcome == .optimized else {
             result.discard()

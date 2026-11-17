@@ -420,8 +420,9 @@ nonisolated struct ImageOptimizer: Sendable {
         return orientation(source) >= 5 ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
     }
 
+    /// Asked of the file system each time: a URL keeps the sizes it has read.
     private static func byteCount(_ url: URL) -> Int64? {
-        (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init)
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value
     }
 
     /// Why it failed, without the name of a working file nobody has heard of.
