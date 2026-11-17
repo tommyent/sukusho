@@ -529,16 +529,30 @@ final class ScreenshotHistoryStore {
     /// Marks a recording's History rows saved, so the marks file covers it too: its project.json mark alone can be
     /// dropped by an older Studio re-saving the project. For naming and tagging, which write only the project.
     func markRecordingSaved(_ session: RecordingSession) {
-        setLibrarySaved(true, ids: CaptureSavedMarks.rows(ofRecordingAt: session.directoryURL.path,
-                                                          in: items.map { ($0.id, $0.recordingSessionPath) }))
+        // The project keeps its own mark; a failure here shows on the Saved page.
+        try? setLibrarySaved(true, ids: CaptureSavedMarks.rows(ofRecordingAt: session.directoryURL.path,
+                                                               in: items.map { ($0.id, $0.recordingSessionPath) }))
     }
 
-    func setLibrarySaved(_ saved: Bool, ids: Set<UUID>) {
+    /// Throws, and leaves the marks as they were, when they couldn't be kept on disk: a Save that didn't stick isn't
+    /// shown as saved (Astra M2).
+    func setLibrarySaved(_ saved: Bool, ids: Set<UUID>) throws {
         guard !ids.isEmpty else { return }
+        let before = items
         for index in items.indices where ids.contains(items[index].id) {
             items[index].librarySavedAt = saved ? (items[index].librarySavedAt ?? Date()) : nil
         }
-        saveMetadata()
+        do {
+            guard try files.save(items) else {
+                throw NSError(domain: "Sukusho.SavedMarks", code: 2, userInfo: [
+                    NSLocalizedDescriptionKey: files.problem ?? "Saved marks couldn't be written."])
+            }
+            savedMarksProblem = files.problem
+        } catch {
+            items = before
+            savedMarksProblem = files.problem ?? error.localizedDescription
+            throw error
+        }
     }
 
     /// Adds `tag` to the items, or removes it, ignoring case. Leaves

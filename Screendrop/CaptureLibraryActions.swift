@@ -180,7 +180,12 @@ extension CaptureLibraryModel {
             // A recording shared before its project could be saved carries the flag on its History row too.
             historyIDs.formUnion(item.historyIDs)
         }
-        ScreenshotHistoryStore.shared.setLibrarySaved(saved, ids: historyIDs)
+        do {
+            try ScreenshotHistoryStore.shared.setLibrarySaved(saved, ids: historyIDs)
+        } catch {
+            errorMessage = (saved ? "The capture couldn't be saved. " : "The capture couldn't be removed from Saved. ")
+                + error.localizedDescription
+        }
         refresh()
     }
 

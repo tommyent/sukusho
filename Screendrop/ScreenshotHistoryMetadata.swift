@@ -150,22 +150,60 @@ struct MarkedHistory<Row: SavedMarkRow> {
         marks = SavedMarksFile(url: marksURL)
     }
 
+    /// History still holds marks from before the marks file that the file hasn't durably taken yet. Until it has,
+    /// History isn't rewritten, since that drops them (Astra M2).
+    private(set) var historyHoldsMarks = false
+    private var writeProblem: String?
+
     /// What the Library should show about the files, if anything.
-    var problem: String? { marks.problem }
+    var problem: String? { marks.problem ?? writeProblem }
 
     /// The rows with their marks. Marks still in History from before the marks file move into it.
     mutating func load() -> [Row] {
         var rows = history.load(from: historyURL)
         let fileMarks = marks.load()
         let merged = CaptureSavedMarks.merged(file: fileMarks, rows: rows.map { ($0.id, $0.librarySavedAt) })
-        if merged != fileMarks, marks.state != .unreadable { try? marks.write(merged) }
+        historyHoldsMarks = rows.contains { $0.librarySavedAt != nil }
+        writeProblem = nil
+        if merged != fileMarks {
+            do {
+                try marks.write(merged)
+                historyHoldsMarks = false
+            } catch {
+                writeProblem = Self.problem(error)
+            }
+        } else if marks.state != .unreadable {
+            historyHoldsMarks = false
+        }
         for index in rows.indices { rows[index].librarySavedAt = merged[rows[index].id] }
         return rows
     }
 
-    mutating func save(_ rows: [Row]) throws {
+    /// Writes the marks first, then History. Returns false when History was written but the marks couldn't be, so a
+    /// mark just changed isn't kept. Throws, writing nothing, when History couldn't be fully read; and, leaving
+    /// History as it is, when the marks couldn't be written while History still holds marks from before.
+    @discardableResult
+    mutating func save(_ rows: [Row]) throws -> Bool {
+        // A History that couldn't be fully read holds rows `rows` doesn't, whose marks must stay: nothing is written.
+        guard !history.isReadOnly else {
+            try history.save(rows, to: historyURL)
+            return false
+        }
+        var marksKept = true
+        do {
+            try marks.write(Dictionary(rows.compactMap { row in row.librarySavedAt.map { (row.id, $0) } }, uniquingKeysWith: max))
+            historyHoldsMarks = false
+            writeProblem = nil
+        } catch {
+            writeProblem = Self.problem(error)
+            if historyHoldsMarks { throw error }
+            marksKept = false
+        }
         try history.save(rows, to: historyURL)
-        // Only after History saved: a History that couldn't be fully read holds rows `rows` doesn't, whose marks must stay.
-        try marks.write(Dictionary(rows.compactMap { row in row.librarySavedAt.map { (row.id, $0) } }, uniquingKeysWith: max))
+        return marksKept
+    }
+
+    private static func problem(_ error: any Error) -> String {
+        "Saved marks couldn't be written (\(error.localizedDescription)). Saved changes aren't kept until that's fixed."
     }
 }

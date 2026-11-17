@@ -152,6 +152,45 @@ struct HistoryMetadataTests {
         }
     }
 
+    /// Astra M2: a migration whose marks file couldn't be written was followed by a History save that dropped the legacy
+    /// mark, so it was in neither file. Now History isn't rewritten until the marks file durably holds the mark.
+    @Test func aFailedMigrationKeepsTheMarkInHistory() throws {
+        try markedFiles { url, marksURL in
+            // Something in the way of the marks file, as in Astra's fault injection.
+            try FileManager.default.createDirectory(at: marksURL, withIntermediateDirectories: false)
+            var files = MarkedHistory<MarkedRow>(historyURL: url, marksURL: marksURL)
+            let rows = files.load()
+            #expect(marks(rows)[legacy] == legacyAt && files.historyHoldsMarks && files.problem != nil)
+            let history = try Data(contentsOf: url)
+            #expect(throws: (any Error).self) { try files.save(rows) }
+            #expect(try Data(contentsOf: url) == history)
+            try FileManager.default.removeItem(at: marksURL)
+            var reopened = MarkedHistory<MarkedRow>(historyURL: url, marksURL: marksURL)
+            #expect(marks(reopened.load())[legacy] == legacyAt)
+            #expect(!reopened.historyHoldsMarks)
+            var file = SavedMarksFile(url: marksURL)
+            #expect(file.load()[legacy] == legacyAt)
+        }
+    }
+
+    /// A mark that couldn't be written is reported to the caller rather than shown as kept. History, which holds no
+    /// marks of its own any more, is still saved, so new captures aren't held up.
+    @Test func aMarkThatCouldntBeWrittenIsReported() throws {
+        try withIndex { url in
+            let marksURL = url.deletingLastPathComponent().appendingPathComponent("library-saved.json")
+            try JSONEncoder().encode([MarkedRow(id: saved, name: "saved"), MarkedRow(id: plain, name: "plain")]).write(to: url)
+            var files = MarkedHistory<MarkedRow>(historyURL: url, marksURL: marksURL)
+            var rows = files.load()
+            #expect(files.marks.state == .missing && !files.historyHoldsMarks)
+            try FileManager.default.createDirectory(at: marksURL, withIntermediateDirectories: false)
+            rows[0].librarySavedAt = savedAt
+            rows.append(MarkedRow(id: UUID(), name: "new capture"))
+            #expect(try files.save(rows) == false)
+            #expect(files.problem != nil)
+            #expect(try JSONDecoder().decode([MarkedRow].self, from: Data(contentsOf: url)).count == 3)
+        }
+    }
+
     /// Naming or tagging a recording marks its History rows, found by package path however it's written.
     @Test func aRecordingsRowsAreFoundByItsPackage() {
         let first = UUID(), second = UUID(), other = UUID(), screenshot = UUID()
