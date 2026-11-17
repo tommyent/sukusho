@@ -96,10 +96,23 @@ nonisolated enum ClipboardCapturePolicy {
         guard let open = lower.firstIndex(of: "("), lower.hasSuffix(")") else { return nil }
         let name = String(lower[..<open])
         guard ["rgb", "rgba", "hsl", "hsla"].contains(name) else { return nil }
-        let tokens = lower[lower.index(after: open)..<lower.index(before: lower.endIndex)]
-            .split(whereSeparator: { $0 == "," || $0 == "/" || $0.isWhitespace })
-            .map(String.init)
-        guard tokens.count == 3 || tokens.count == 4 else { return nil }
+        // The two forms CSS writes: "a, b, c[, alpha]", or "a b c[ / alpha]". Nothing left empty, no slashes between
+        // the channels (Astra R1: "rgb(1,,2,3)" and "rgb(1/2/3)" were taken as colors).
+        let inner = String(lower[lower.index(after: open)..<lower.index(before: lower.endIndex)])
+        var tokens: [String]
+        if inner.contains(",") {
+            guard !inner.contains("/") else { return nil }
+            tokens = inner.split(separator: ",", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
+        } else {
+            let parts = inner.split(separator: "/", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
+            guard parts.count <= 2 else { return nil }
+            tokens = parts[0].split(whereSeparator: \.isWhitespace).map(String.init)
+            guard tokens.count == 3 else { return nil }
+            if parts.count == 2 { tokens.append(parts[1]) }
+        }
+        guard tokens.count == 3 || tokens.count == 4, tokens.allSatisfy({ !$0.isEmpty && !$0.contains(where: \.isWhitespace) }) else {
+            return nil
+        }
         func number(_ token: String, percentOf full: Double, suffix: String = "") -> Double? {
             var token = token
             if !suffix.isEmpty, token.hasSuffix(suffix) { token.removeLast(suffix.count) }
@@ -114,12 +127,16 @@ nonisolated enum ClipboardCapturePolicy {
             guard channels.count == 3, channels.allSatisfy({ (0...255).contains($0) }) else { return nil }
             rgb = channels.map { $0 / 255 }
         } else {
-            guard let hue = number(tokens[0], percentOf: 360, suffix: "deg"), tokens[1].hasSuffix("%"), tokens[2].hasSuffix("%"),
+            // A hue is degrees, never a percentage.
+            guard !tokens[0].hasSuffix("%"), let degrees = number(tokens[0], percentOf: 360, suffix: "deg"),
+                  tokens[1].hasSuffix("%"), tokens[2].hasSuffix("%"),
                   let saturation = number(tokens[1], percentOf: 1), let lightness = number(tokens[2], percentOf: 1),
                   (0...1).contains(saturation), (0...1).contains(lightness) else { return nil }
+            // Into [0, 360), as CSS Color 4 does: -120° is 240° (Astra R1: it showed magenta, not blue).
+            let hue = (degrees.truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360)
             // CSS Color 4's hsl-to-rgb.
             func channel(_ n: Double) -> Double {
-                let k = (n + hue.truncatingRemainder(dividingBy: 360) / 30).truncatingRemainder(dividingBy: 12)
+                let k = (n + hue / 30).truncatingRemainder(dividingBy: 12)
                 let a = saturation * min(lightness, 1 - lightness)
                 return lightness - a * max(-1, min(k - 3, 9 - k, 1))
             }

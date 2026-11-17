@@ -996,7 +996,12 @@ struct ClipboardCardTextTests {
         #expect(ClipboardCapturePolicy.functionalColor("hsl(120deg 100% 25%)") == "#008000")
         #expect(ClipboardCapturePolicy.functionalColor("hsl(210, 80%, 55%)") == "#308CE8")
         #expect(ClipboardCapturePolicy.functionalColor("hsla(240, 100%, 50%, 0.25)") == "#0000FF40")
-        for text in ["rgb(300, 0, 0)", "rgb(1, 2)", "hsl(0, 100, 50)", "rgb(a, b, c)", "rgbx(1, 2, 3)", "rgb(1, 2, 3", "call(rgb(1, 2, 3))"] {
+        // Negative hues wrap, as CSS Color 4 does (Astra R1): -120° is blue, -240° is green.
+        #expect(ClipboardCapturePolicy.functionalColor("hsl(-120 100% 50%)") == "#0000FF")
+        #expect(ClipboardCapturePolicy.functionalColor("hsl(-240, 100%, 50%)") == "#00FF00")
+        #expect(ClipboardCapturePolicy.functionalColor("hsl(480deg 100% 50%)") == "#00FF00")
+        for text in ["rgb(300, 0, 0)", "rgb(1, 2)", "hsl(0, 100, 50)", "rgb(a, b, c)", "rgbx(1, 2, 3)", "rgb(1, 2, 3", "call(rgb(1, 2, 3))",
+                     "rgb(1,,2,3)", "rgb(1/2/3)", "hsl(50% 100% 50%)", "rgb(1, 2, 3 / 0.5)", "rgb(1 2 3 / 0.5 / 1)", "rgb(1 2 / 3)"] {
             #expect(ClipboardCapturePolicy.functionalColor(text) == nil, "\(text)")
         }
         if case .color(let hex) = ClipboardCapturePolicy.textForm("  rgb(10, 132, 255) ") { #expect(hex == "#0A84FF") } else {
