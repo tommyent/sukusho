@@ -325,23 +325,9 @@ struct RecordingPickerControls: View {
         }
     }
 
-    private var cameraState: BarToggleState {
-        BarInputRules.state(
-            isSelected: !cameraID.isEmpty,
-            selectedIsConnected: RecordingDeviceCatalog.camera(withID: cameraID) != nil,
-            hasDevices: !RecordingDeviceCatalog.cameras().isEmpty,
-            isBlocked: RecordingInputAuthorization.isBlocked(.camera)
-        )
-    }
+    private var cameraState: BarToggleState { RecordingBarInputs.camera(cameraID) }
 
-    private var microphoneState: BarToggleState {
-        BarInputRules.state(
-            isSelected: !microphoneID.isEmpty,
-            selectedIsConnected: RecordingDeviceCatalog.microphone(withID: microphoneID) != nil,
-            hasDevices: !RecordingDeviceCatalog.microphones().isEmpty,
-            isBlocked: RecordingInputAuthorization.isBlocked(.microphone)
-        )
-    }
+    private var microphoneState: BarToggleState { RecordingBarInputs.microphone(microphoneID) }
 
     /// Click turns it on or off; right-click picks which camera. Blocked, a click opens the
     /// privacy pane; with no camera at all it does nothing but say so on hover.
@@ -537,6 +523,30 @@ struct RecordingPickerControls: View {
     }
 }
 
+// MARK: - Inputs
+
+/// The camera's and microphone's states from the saved choice and what is connected and allowed
+/// now, for the picker and the countdown alike, so the two never disagree (Astra SB1).
+enum RecordingBarInputs {
+    static func camera(_ id: String) -> BarToggleState {
+        BarInputRules.state(
+            isSelected: !id.isEmpty,
+            selectedIsConnected: RecordingDeviceCatalog.camera(withID: id) != nil,
+            hasDevices: !RecordingDeviceCatalog.cameras().isEmpty,
+            isBlocked: RecordingInputAuthorization.isBlocked(.camera)
+        )
+    }
+
+    static func microphone(_ id: String) -> BarToggleState {
+        BarInputRules.state(
+            isSelected: !id.isEmpty,
+            selectedIsConnected: RecordingDeviceCatalog.microphone(withID: id) != nil,
+            hasDevices: !RecordingDeviceCatalog.microphones().isEmpty,
+            isBlocked: RecordingInputAuthorization.isBlocked(.microphone)
+        )
+    }
+}
+
 // MARK: - Countdown
 
 /// The bar while a timer counts down to a recording: the seconds left in red, what the take will
@@ -549,6 +559,11 @@ struct RecordingCountdownControls: View {
     @AppStorage(ScreendropPreferences.recordingSystemAudioKey) private var systemAudio = false
 
     var body: some View {
+        let inputs = BarCountdownInputs(
+            camera: RecordingBarInputs.camera(cameraID),
+            microphone: RecordingBarInputs.microphone(microphoneID),
+            systemAudio: systemAudio
+        )
         HStack(spacing: BarMetrics.itemSpacing) {
             Text("\(countdown.remaining)")
                 .font(.system(size: 17, weight: .bold, design: .rounded).monospacedDigit())
@@ -563,7 +578,7 @@ struct RecordingCountdownControls: View {
             VStack(alignment: .leading, spacing: 0) {
                 Text("Get ready")
                     .font(.system(size: 13, weight: .semibold))
-                Text(hasInputs ? "Recording with" : "Recording the screen")
+                Text(inputs.isEmpty ? "Recording the screen" : "Recording with")
                     .font(.system(size: 11))
                     .opacity(0.7)
             }
@@ -571,17 +586,17 @@ struct RecordingCountdownControls: View {
             .padding(.horizontal, 6)
             .fixedSize()
 
-            if !cameraID.isEmpty {
+            if inputs.camera {
                 BarToggleLabel(id: .camera, state: .on, hover: BarHover("Camera will record"),
                                offSymbol: "video.fill", onSymbol: "video.fill", look: .input(BarMetrics.cameraOn)) {
                     BarCameraThumbnail()
                 }
             }
-            if !microphoneID.isEmpty {
+            if inputs.microphone {
                 BarToggleLabel(id: .microphone, state: .on, hover: BarHover("Microphone will record"),
                                offSymbol: "mic.fill", onSymbol: "mic.fill", look: .input(BarMetrics.microphoneOn))
             }
-            if systemAudio {
+            if inputs.systemAudio {
                 BarToggleLabel(id: .systemAudio, state: .on, hover: BarHover("System audio will record"),
                                offSymbol: "speaker.wave.2.fill", onSymbol: "speaker.wave.2.fill",
                                look: .input(BarMetrics.systemAudioOn))
@@ -610,9 +625,5 @@ struct RecordingCountdownControls: View {
             .padding(.trailing, 4)
             .accessibilityLabel("Cancel countdown")
         }
-    }
-
-    private var hasInputs: Bool {
-        !cameraID.isEmpty || !microphoneID.isEmpty || systemAudio
     }
 }

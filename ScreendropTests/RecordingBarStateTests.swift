@@ -16,6 +16,21 @@ struct RecordingBarStateTests {
         #expect(state(selected: true).isOn && !state(blocked: true).isOn)
     }
 
+    /// The countdown lists only what will record: a saved microphone or camera that is missing or
+    /// blocked shows as unavailable in the picker and isn't promised in the countdown (Astra SB1).
+    @Test func theCountdownListsOnlyWhatWillRecord() {
+        let missing = BarInputRules.state(isSelected: true, selectedIsConnected: false, hasDevices: false, isBlocked: false)
+        let unplugged = BarInputRules.state(isSelected: true, selectedIsConnected: false, hasDevices: true, isBlocked: false)
+        let blocked = BarInputRules.state(isSelected: true, selectedIsConnected: true, hasDevices: true, isBlocked: true)
+        let on = BarInputRules.state(isSelected: true, selectedIsConnected: true, hasDevices: true, isBlocked: false)
+
+        let none = BarCountdownInputs(camera: missing, microphone: unplugged, systemAudio: false)
+        #expect(!none.camera && !none.microphone && none.isEmpty)
+        let blockedMic = BarCountdownInputs(camera: on, microphone: blocked, systemAudio: true)
+        #expect(blockedMic.camera && !blockedMic.microphone && blockedMic.systemAudio && !blockedMic.isEmpty)
+        #expect(BarCountdownInputs(camera: .off, microphone: on, systemAudio: false).microphone)
+    }
+
     @Test func theHoverNamesTheStateThenTheClickOrTheValue() {
         #expect(BarHoverText.microphone(.on, device: "MacBook Pro Microphone")
             == BarHover("Microphone is on", "MacBook Pro Microphone · click to change or turn off"))

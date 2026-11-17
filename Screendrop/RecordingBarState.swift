@@ -53,6 +53,22 @@ nonisolated enum BarInputRules {
     }
 }
 
+/// What the countdown lists under "Recording with": only the inputs that are on, never a saved
+/// choice that is missing or blocked, which the picker already shows as unavailable (Astra SB1).
+nonisolated struct BarCountdownInputs: Equatable {
+    var camera: Bool
+    var microphone: Bool
+    var systemAudio: Bool
+
+    init(camera: BarToggleState, microphone: BarToggleState, systemAudio: Bool) {
+        self.camera = camera.isOn
+        self.microphone = microphone.isOn
+        self.systemAudio = systemAudio
+    }
+
+    var isEmpty: Bool { !camera && !microphone && !systemAudio }
+}
+
 nonisolated enum BarHoverText {
     static func camera(_ state: BarToggleState, device: String?) -> BarHover {
         switch state {
