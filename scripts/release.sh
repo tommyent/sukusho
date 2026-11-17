@@ -8,6 +8,8 @@
 # com.tommyent.Sukusho, and the release notes in docs/releases/<version>.md (MARKETING_VERSION in the project).
 # The build number is 32.YYMMDD.HHMM in UTC, which Sparkle compares and which only ever grows.
 # scripts/site.sh then puts the appcast on the gh-pages branch.
+# BETA=<n> makes beta n of that version: the app shows "1.3.0 beta 1", its files, notes and tag are named
+# 1.3.0-beta.1, and its appcast item joins the published feed on Sparkle's "beta" channel, beside the stable items.
 # PERSONAL=1 stops after the signature checks: the same Developer ID signature for the owner's own Macs, with no
 # release notes, notarization, DMG or appcast, in ../builds/personal-<version>.*. Signed like a release, such a
 # build keeps the privacy permissions a release was granted; a development-signed one loses them.
@@ -33,6 +35,14 @@ TEAM="${${DEVELOPER_ID##*\(}%\)}"
 VERSIONS=("${(@f)$(sed -n 's/.*MARKETING_VERSION = \(.*\);/\1/p' Screendrop.xcodeproj/project.pbxproj | sort -u)}")
 (( ${#VERSIONS} == 1 )) || fail "the configurations disagree on MARKETING_VERSION: ${VERSIONS[*]}"
 VERSION="${VERSIONS[1]}"
+SHOWN="$VERSION"   # what the app and the update window call it
+if [[ -n "${BETA:-}" ]]; then
+    [[ "$BETA" == <1-> ]] || fail "BETA is the beta's number: BETA=1 for the first beta of $VERSION"
+    [[ -z "${PERSONAL:-}" ]] || fail "BETA and PERSONAL don't go together"
+    git rev-parse -q --verify gh-pages >/dev/null || fail "a beta is added to the feed on the local gh-pages branch, which is missing"
+    SHOWN="$VERSION beta $BETA"
+    VERSION="$VERSION-beta.$BETA"   # in file names, links and the tag
+fi
 NOTES="docs/releases/$VERSION.md"
 [[ -n "${PERSONAL:-}" || -s "$NOTES" ]] || fail "write the release notes first: $NOTES"
 BUILD="32.$(date -u +%y%m%d.%H%M)"
@@ -44,7 +54,7 @@ print -r -- "release: $VERSION ($BUILD) into $OUT"
 xcodebuild clean build -project Screendrop.xcodeproj -scheme Screendrop -configuration Release \
     -destination "generic/platform=macOS" -derivedDataPath "$DD" -onlyUsePackageVersionsFromResolvedFile \
     DEVELOPMENT_TEAM="$TEAM" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="$DEVELOPER_ID" PROVISIONING_PROFILE_SPECIFIER= \
-    OTHER_CODE_SIGN_FLAGS=--timestamp CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO CURRENT_PROJECT_VERSION="$BUILD" \
+    OTHER_CODE_SIGN_FLAGS=--timestamp CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO CURRENT_PROJECT_VERSION="$BUILD" MARKETING_VERSION="$SHOWN" \
     STRIP_INSTALLED_PRODUCT=YES DEPLOYMENT_POSTPROCESSING=YES CLANG_COVERAGE_MAPPING=NO CLANG_COVERAGE_MAPPING_LINKER_ARGS=NO \
     > "$OUT/build.log" 2>&1 || fail "build failed, see $OUT/build.log"
 SPARKLE_BIN="$DD/SourcePackages/artifacts/sparkle/Sparkle/bin"   # this build's own copy, never another folder's
@@ -54,8 +64,8 @@ ditto "$DD/Build/Products/Release/Sukusho.app" "$APP"
 PLIST="$APP/Contents/Info.plist"
 plist() { /usr/libexec/PlistBuddy -c "Print :$1" "$PLIST" }
 [[ "$(plist CFBundleIdentifier)" == "$BUNDLE_ID" ]] || fail "bundle ID is $(plist CFBundleIdentifier)"
-[[ "$(plist CFBundleShortVersionString)" == "$VERSION" && "$(plist CFBundleVersion)" == "$BUILD" ]] \
-    || fail "the app says $(plist CFBundleShortVersionString) ($(plist CFBundleVersion)), expected $VERSION ($BUILD)"
+[[ "$(plist CFBundleShortVersionString)" == "$SHOWN" && "$(plist CFBundleVersion)" == "$BUILD" ]] \
+    || fail "the app says $(plist CFBundleShortVersionString) ($(plist CFBundleVersion)), expected $SHOWN ($BUILD)"
 [[ "$(plist SUFeedURL)" == "$FEED" ]] || fail "SUFeedURL is $(plist SUFeedURL), expected $FEED"
 # An update signed with any other key would be refused by every installed copy
 [[ "$("$SPARKLE_BIN/generate_keys" --account "$KEY_ACCOUNT" -p)" == "$(plist SUPublicEDKey)" ]] \
@@ -124,7 +134,7 @@ DMG="$OUT/Sukusho-$VERSION.dmg"
 mkdir "$OUT/dmg"
 ditto "$APP" "$OUT/dmg/Sukusho.app"
 ln -s /Applications "$OUT/dmg/Applications"
-hdiutil create -volname "Sukusho $VERSION" -srcfolder "$OUT/dmg" -format UDZO -o "$DMG"
+hdiutil create -volname "Sukusho $SHOWN" -srcfolder "$OUT/dmg" -format UDZO -o "$DMG"
 codesign -s "$DEVELOPER_ID" --timestamp "$DMG"
 notarize "$DMG"
 xcrun stapler staple "$DMG"
@@ -137,20 +147,15 @@ gatekeeper --type open --context context:primary-signature "$DMG"
 mkdir "$OUT/updates"
 cp "$DMG" "$OUT/updates/"
 cp "$NOTES" "$OUT/updates/Sukusho-$VERSION.md"
-"$SPARKLE_BIN/generate_appcast" --account "$KEY_ACCOUNT" --maximum-deltas 0 --embed-release-notes \
-    --download-url-prefix "https://github.com/tommyent/sukusho/releases/download/v$VERSION/" \
-    --full-release-notes-url "https://github.com/tommyent/sukusho/releases" \
-    --link "https://tommyent.github.io/sukusho/" "$OUT/updates"
-APPCAST="$(<"$OUT/updates/appcast.xml")"
-for want in "<sparkle:version>$BUILD</sparkle:version>" "<sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>" \
-    "url=\"https://github.com/tommyent/sukusho/releases/download/v$VERSION/Sukusho-$VERSION.dmg\"" \
-    "length=\"$(stat -f %z "$DMG")\"" "sparkle:edSignature=" 'sparkle:format="markdown"' \
-    "<sparkle:minimumSystemVersion>"; do
-    [[ "$APPCAST" == *"$want"* ]] || fail "appcast lacks $want"
-done
+# A beta's item is added to the feed as published; a stable release's feed is that release alone.
+[[ -z "${BETA:-}" ]] || git show gh-pages:appcast.xml > "$OUT/published-appcast.xml"
+VERSION="$VERSION" SHOWN="$SHOWN" BUILD="$BUILD" BETA="${BETA:-}" FEED="$OUT/published-appcast.xml" \
+    SPARKLE_BIN="$SPARKLE_BIN" KEY_ACCOUNT="$KEY_ACCOUNT" scripts/appcast.sh "$OUT/updates"
 
 cat > "$OUT/manifest.txt" <<EOF
 version: $VERSION ($BUILD)
+shown: $SHOWN
+channel: ${${BETA:+beta}:-stable}
 commit: $(git rev-parse HEAD)
 sha256: $(cut -d' ' -f1 "$DMG.sha256")  ${DMG:t}
 architectures: $ARCHS

@@ -7,6 +7,8 @@ import AppKit
 import SwiftUI
 
 struct SettingsAboutPane: View {
+    @AppStorage(UpdateChannels.betaKey) private var getsBetaUpdates = false
+
     var body: some View {
         Form {
             Section {
@@ -19,6 +21,11 @@ struct SettingsAboutPane: View {
                         get: { UpdaterManager.shared.automaticallyChecksForUpdates },
                         set: { UpdaterManager.shared.automaticallyChecksForUpdates = $0 }
                     ))
+
+                    Toggle(isOn: $getsBetaUpdates) {
+                        Text("Get beta updates")
+                        Text("Offers versions that are still being tested, as well as every regular release.")
+                    }
 
                     Button("Check for Updates…") {
                         UpdaterManager.shared.checkForUpdates()

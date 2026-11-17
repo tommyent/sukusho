@@ -20,6 +20,7 @@
 		0F7100000000000000000017 /* cjpeg in Embed Helpers */ = {isa = PBXBuildFile; fileRef = 0F7100000000000000000018 /* cjpeg */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		0F7100000000000000000019 /* jpegtran in Embed Helpers */ = {isa = PBXBuildFile; fileRef = 0F710000000000000000001A /* jpegtran */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		0F7100000000000000000021 /* OptimizerLicenses in Resources */ = {isa = PBXBuildFile; fileRef = 0F7100000000000000000022 /* OptimizerLicenses */; };
+		0F7200000000000000000001 /* Screendrop/UpdateChannels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F7200000000000000000002 /* Screendrop/UpdateChannels.swift */; };
 		AFAC00000000000000000001 /* Screendrop/Engine/AnnoEditorClipboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFAC00000000000000000002 /* Screendrop/Engine/AnnoEditorClipboard.swift */; };
 		AE7C00000000000000000001 /* Screendrop/Engine/AnnoTextEditorOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE7C00000000000000000002 /* Screendrop/Engine/AnnoTextEditorOverlay.swift */; };
 		AF3100000000000000000005 /* Screendrop/FreeToUseMusicPickerModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF3100000000000000000006 /* Screendrop/FreeToUseMusicPickerModel.swift */; };
@@ -219,6 +220,7 @@
 		0F7100000000000000000018 /* cjpeg */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; name = cjpeg; path = Vendor/optimizers/cjpeg; sourceTree = SOURCE_ROOT; };
 		0F710000000000000000001A /* jpegtran */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; name = jpegtran; path = Vendor/optimizers/jpegtran; sourceTree = SOURCE_ROOT; };
 		0F7100000000000000000022 /* OptimizerLicenses */ = {isa = PBXFileReference; lastKnownFileType = folder; name = OptimizerLicenses; path = Vendor/optimizers/OptimizerLicenses; sourceTree = SOURCE_ROOT; };
+		0F7200000000000000000002 /* Screendrop/UpdateChannels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/UpdateChannels.swift; sourceTree = SOURCE_ROOT; };
 		AB0C00000000000000000012 /* Screendrop/AgentAccessCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AgentAccessCore.swift; sourceTree = SOURCE_ROOT; };
 		AB0C00000000000000000014 /* Screendrop/AgentAccessSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AgentAccessSocket.swift; sourceTree = SOURCE_ROOT; };
 		AB0C00000000000000000016 /* Screendrop/AgentAccessTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AgentAccessTools.swift; sourceTree = SOURCE_ROOT; };
@@ -463,6 +465,7 @@
 				0F7100000000000000000008 /* Screendrop/ShelfFileSave.swift */,
 				0F7100000000000000000002 /* Screendrop/ImageOptimizer.swift */,
 				0F7100000000000000000004 /* Screendrop/OptimizedImageCopy.swift */,
+				0F7200000000000000000002 /* Screendrop/UpdateChannels.swift */,
 				AFAC00000000000000000002 /* Screendrop/Engine/AnnoEditorClipboard.swift */,
 				AE7C00000000000000000002 /* Screendrop/Engine/AnnoTextEditorOverlay.swift */,
 				AF3100000000000000000006 /* Screendrop/FreeToUseMusicPickerModel.swift */,
@@ -793,6 +796,7 @@
 				0F7100000000000000000007 /* Screendrop/ShelfFileSave.swift in Sources */,
 				0F7100000000000000000001 /* Screendrop/ImageOptimizer.swift in Sources */,
 				0F7100000000000000000003 /* Screendrop/OptimizedImageCopy.swift in Sources */,
+				0F7200000000000000000001 /* Screendrop/UpdateChannels.swift in Sources */,
 				AFAC00000000000000000001 /* Screendrop/Engine/AnnoEditorClipboard.swift in Sources */,
 				AE7C00000000000000000001 /* Screendrop/Engine/AnnoTextEditorOverlay.swift in Sources */,
 				AA6100000000000000000065 /* Screendrop/Engine/AnnoEditorInteraction.swift in Sources */,

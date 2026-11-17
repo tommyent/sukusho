@@ -2,12 +2,14 @@
 # Puts a finished release on the site: commits its appcast.xml and the page's version, download links and DMG size
 # to the local gh-pages branch in one commit, without checking the branch out. Pushing it is a separate step, after
 # the release is published, since the appcast points every installed copy at the new DMG.
+# A beta (release.sh with BETA=<n>) changes only the appcast: the page keeps the stable download.
 # Usage: scripts/site.sh ../builds/release-<version>.XXXXXX (the folder release.sh printed)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 fail() { print -u2 -- "site: $1"; exit 1 }
 REL="${1:?usage: scripts/site.sh <the release folder release.sh printed>}"
-VERSION="$(sed -n 's/^version: \([0-9.]*\) .*/\1/p' "$REL/manifest.txt")"
+VERSION="$(sed -n 's/^version: \([^ ]*\) .*/\1/p' "$REL/manifest.txt")"
+BETA="$(grep -c '^channel: beta$' "$REL/manifest.txt" || true)"   # 1 for a beta
 DMG="$REL/Sukusho-$VERSION.dmg"
 [[ -n "$VERSION" && -s "$REL/updates/appcast.xml" && -s "$DMG" ]] || fail "$REL is not a finished release"
 git rev-parse -q --verify gh-pages >/dev/null || fail "there is no local gh-pages branch"
@@ -15,6 +17,19 @@ SIZE="$(printf '%.1f MB' $(( $(stat -f %z "$DMG") / 1000000.0 )))"   # decimal m
 
 WORK="$(mktemp -d)"
 git show gh-pages:index.html > "$WORK/index.html"
+if (( BETA )); then
+    # A beta changes the feed only. The page keeps offering the stable download and says nothing of the beta:
+    # people get betas from inside the app, with Settings › About › Get beta updates.
+    SHOWN="$(sed -n 's/^shown: //p' "$REL/manifest.txt")"
+    export GIT_INDEX_FILE="$WORK/index"
+    git read-tree gh-pages
+    git update-index --add --cacheinfo "100644,$(git hash-object -w "$REL/updates/appcast.xml"),appcast.xml"
+    COMMIT="$(git commit-tree "$(git write-tree)" -p gh-pages -m "Sukusho $SHOWN: appcast, on the beta channel")"
+    unset GIT_INDEX_FILE
+    git update-ref refs/heads/gh-pages "$COMMIT"
+    git log -1 --stat gh-pages
+    exit 0
+fi
 # The page names the version only as v1.2.0 (links), Sukusho-1.2.0 (the DMG), "Version 1.2.0" and "Sukusho 1.2.0"
 sed -E -i '' -e "s/v[0-9]+\.[0-9]+\.[0-9]+/v$VERSION/g" -e "s/Sukusho-[0-9]+\.[0-9]+\.[0-9]+/Sukusho-$VERSION/g" \
     -e "s/(Version|Sukusho) [0-9]+\.[0-9]+\.[0-9]+/\1 $VERSION/g" -e "s/[0-9]+\.[0-9] MB/$SIZE/g" "$WORK/index.html"

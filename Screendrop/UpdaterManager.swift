@@ -14,7 +14,7 @@ import SwiftUI
 /// `SUEnableAutomaticChecks` unset, so Sparkle asks on the second launch, and
 /// Settings › About can change the answer later.
 @Observable
-final class UpdaterManager: NSObject, SPUStandardUserDriverDelegate {
+final class UpdaterManager: NSObject, SPUStandardUserDriverDelegate, SPUUpdaterDelegate {
     static let shared = UpdaterManager()
 
     /// The released app only. Debug builds, Sukusho Dev and test builds under
@@ -35,7 +35,7 @@ final class UpdaterManager: NSObject, SPUStandardUserDriverDelegate {
 
     private override init() {
         super.init()
-        controller = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: nil, userDriverDelegate: self)
+        controller = SPUStandardUpdaterController(startingUpdater: false, updaterDelegate: self, userDriverDelegate: self)
         canCheckSubscription = controller.updater.publisher(for: \.canCheckForUpdates)
             .sink { [weak self] canCheck in self?.canCheckForUpdates = canCheck }
     }
@@ -62,6 +62,13 @@ final class UpdaterManager: NSObject, SPUStandardUserDriverDelegate {
         guard Self.updatesThisBuild else { return }
         NSApp.activate()
         controller.checkForUpdates(nil)
+    }
+
+    // MARK: SPUUpdaterDelegate
+
+    /// Sparkle asks at every check, so Settings › About › Get beta updates applies to the next one at once.
+    func allowedChannels(for updater: SPUUpdater) -> Set<String> {
+        UpdateChannels.allowed()
     }
 
     // MARK: SPUStandardUserDriverDelegate
