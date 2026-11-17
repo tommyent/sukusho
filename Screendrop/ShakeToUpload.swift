@@ -300,18 +300,25 @@ final class ShakeToUpload {
     private func save(_ holding: ShelfOptimization, replacing: Bool) {
         var saved: [URL] = []
         var changed = 0
+        var kept = 0
         var failure: String?
         for row in holding.rows {
             guard let result = row.result, result.outcome == .optimized || result.outcome == .converted else { continue }
             switch ShelfFileSave.save(result.url, of: row.file, identity: result.source, replacing: replacing) {
-            case .saved(let file): saved.append(file)
+            case .saved(let file, let originalKept):
+                saved.append(file)
+                if originalKept { kept += 1 }
             case .changed: changed += 1
             case .failed(let reason): failure = reason
             }
         }
         let toast = CaptureTextFeedbackPresenter.shared
-        let skipped = changed == 0 ? nil : changed == 1 ? "1 file changed since it was optimized and was left alone."
+        var skipped = changed == 0 ? nil : changed == 1 ? "1 file changed since it was optimized and was left alone."
             : "\(changed) files changed since they were optimized and were left alone."
+        if kept > 0, skipped == nil {
+            skipped = kept == 1 ? "1 original couldn’t be moved to the Trash and is still there."
+                : "\(kept) originals couldn’t be moved to the Trash and are still there."
+        }
         if let failure {
             toast.showDone("Couldn’t Save", detail: failure, symbol: "exclamationmark.triangle", displayID: Self.display)
         } else if saved.isEmpty {

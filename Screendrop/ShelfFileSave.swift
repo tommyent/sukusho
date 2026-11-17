@@ -12,8 +12,10 @@
 import Foundation
 
 nonisolated enum ShelfFileSave {
-    enum Outcome: Equatable {
-        case saved(URL)
+    enum Outcome: Equatable, Sendable {
+        /// `originalKept`: a Replace whose new file is in place, but whose original could not be moved to the
+        /// Trash and is still beside it.
+        case saved(URL, originalKept: Bool = false)
         /// The source isn't the file that was optimized any more; nothing was written or moved.
         case changed
         case failed(String)
@@ -65,7 +67,13 @@ nonisolated enum ShelfFileSave {
             let destination = unused(name, in: folder)
             try files.moveItem(at: staged, to: destination)
             // Another format gets another name, so the original is retired after its replacement is in place.
-            if replacing { _ = try retire(original) }
+            // If it can't be, the new file is saved all the same, and that is what is reported.
+            guard replacing else { return .saved(destination) }
+            do {
+                _ = try retire(original)
+            } catch {
+                return .saved(destination, originalKept: true)
+            }
             return .saved(destination)
         } catch {
             return .failed(error.localizedDescription)

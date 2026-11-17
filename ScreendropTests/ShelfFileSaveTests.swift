@@ -152,6 +152,22 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
         #expect(desk.text(retired) == "original pixels, long")
     }
 
+    /// editor-opus L4: a Replace in another format whose new file is in place, but whose original the Trash
+    /// won't take, has saved. It says so, with a note that the original is still there.
+    @Test func aReplaceThatSavedButKeptTheOriginalIsNotAFailure() throws {
+        let desk = try Desk()
+        defer { desk.remove() }
+        let photo = try desk.file("photo.png", "png bytes")
+        let webP = try desk.file("photo.webp", "webp", in: desk.results)
+        let outcome = ShelfFileSave.save(webP, of: photo, identity: FileIdentity(photo), replacing: true) { _ in
+            throw CocoaError(.fileWriteNoPermission)
+        }
+        #expect(outcome == .saved(desk.folder.appending(path: "photo.webp"), originalKept: true))
+        #expect(desk.text(desk.folder.appending(path: "photo.webp")) == "webp")
+        #expect(desk.text(photo) == "png bytes")
+        #expect(desk.names == ["photo.png", "photo.webp"])
+    }
+
     /// Astra OR2: the original must not be gone when the new file can't be put in place.
     @Test func aFailedReplaceLeavesTheOriginalWhereItWas() throws {
         let desk = try Desk()
