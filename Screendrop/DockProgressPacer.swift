@@ -20,6 +20,11 @@ nonisolated struct DockProgressPacer: Equatable {
         return value
     }
 
+    /// The bar shows its target and nothing waits: what was handed over is on screen.
+    func isSettled(shown: Double, target: Double) -> Bool {
+        shown == target && held == nil
+    }
+
     /// The value that waited, once the bar shows its target.
     mutating func release(shown: Double, target: Double) -> Double? {
         guard shown == target, let value = held else { return nil }

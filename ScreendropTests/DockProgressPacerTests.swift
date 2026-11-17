@@ -14,4 +14,15 @@ struct DockProgressPacerTests {
         #expect(pacer.held == nil)
         #expect(pacer.release(shown: 0.3, target: 0.3) == nil)
     }
+
+    /// Astra: start, 0.2, 1, finish showed 0, 0.2, 0. A finished export's 1 waits its turn and is on the bar before reset.
+    @Test func aFinishedExportFillsTheBarBeforeItClears() {
+        var pacer = DockProgressPacer()
+        #expect(pacer.offer(0.2, shown: 0, target: 0) == 0.2)
+        #expect(pacer.offer(1, shown: 0.05, target: 0.2) == nil)
+        #expect(!pacer.isSettled(shown: 0.2, target: 0.2))
+        #expect(pacer.release(shown: 0.2, target: 0.2) == 1)
+        #expect(!pacer.isSettled(shown: 0.6, target: 1))
+        #expect(pacer.isSettled(shown: 1, target: 1))
+    }
 }

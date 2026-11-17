@@ -18,6 +18,8 @@ final class DockExportProgressCoordinator {
     private var progressByTask: [UUID: Double] = [:]
     private var pacer = DockProgressPacer()
     private var releaseTimer: Timer?
+    /// Exports that finished well, kept at 100% until the bar shows it (Astra, 2026-11-17: it reset at 20%).
+    private var completed: Set<UUID> = []
 
     private init() {}
 
@@ -29,19 +31,27 @@ final class DockExportProgressCoordinator {
     }
 
     func update(_ id: UUID, progress: Double) {
-        guard progressByTask[id] != nil else { return }
+        guard progressByTask[id] != nil, !completed.contains(id) else { return }
         progressByTask[id] = min(max(progress, 0), 1)
         updateDockIcon()
     }
 
-    func finish(_ id: UUID) {
-        guard progressByTask.removeValue(forKey: id) != nil else { return }
+    /// `completed` for an export that finished well: its bar fills before it goes. Cancelled and failed ones go at once.
+    func finish(_ id: UUID, completed succeeded: Bool = false) {
+        guard progressByTask[id] != nil, !completed.contains(id) else { return }
+        if succeeded {
+            progressByTask[id] = 1
+            completed.insert(id)
+        } else {
+            progressByTask.removeValue(forKey: id)
+        }
         updateDockIcon()
     }
 
     private func updateDockIcon() {
         guard !progressByTask.isEmpty else {
             pacer = DockProgressPacer()
+            completed = []
             releaseTimer?.invalidate()
             releaseTimer = nil
             DockProgress.resetProgress()
@@ -50,7 +60,8 @@ final class DockExportProgressCoordinator {
         let average = progressByTask.values.reduce(0, +) / Double(progressByTask.count)
         if let value = pacer.offer(average, shown: DockProgress.displayedProgress, target: DockProgress.progress) {
             DockProgress.progress = value
-        } else if releaseTimer == nil {
+        }
+        if releaseTimer == nil, pacer.held != nil || !completed.isEmpty {
             // The bar is still easing: hand over the latest value once it has caught up (DockProgressPacer).
             releaseTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated { self?.releaseHeldProgress() }
@@ -59,11 +70,18 @@ final class DockExportProgressCoordinator {
     }
 
     private func releaseHeldProgress() {
-        guard DockProgress.displayedProgress == DockProgress.progress else { return }
+        let shown = DockProgress.displayedProgress, target = DockProgress.progress
+        if let value = pacer.release(shown: shown, target: target) {
+            DockProgress.progress = value
+            return
+        }
+        guard pacer.isSettled(shown: shown, target: target) else { return }
         releaseTimer?.invalidate()
         releaseTimer = nil
-        if let value = pacer.release(shown: DockProgress.displayedProgress, target: DockProgress.progress) {
-            DockProgress.progress = value
-        }
+        // The finished exports' 100% is on the bar now.
+        guard !completed.isEmpty else { return }
+        for id in completed { progressByTask.removeValue(forKey: id) }
+        completed = []
+        updateDockIcon()
     }
 }

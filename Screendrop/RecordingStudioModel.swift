@@ -3240,7 +3240,7 @@ final class RecordingStudioModel {
                 let savedURL = try await Self.save(movie: temporaryURL, as: settings, suggestedFileName: suggestedFileName) {
                     report(renderShare + $0 * (1 - renderShare))
                 }
-                DockExportProgressCoordinator.shared.finish(dockProgressID)
+                DockExportProgressCoordinator.shared.finish(dockProgressID, completed: true)
                 RecordingExportNotifier.notifySuccess(fileURL: savedURL)
                 RecordingExportNotifier.revealIfPreferred(fileURL: savedURL)
                 ScreenshotPreviewStack.shared.dismissVideo(for: previewURL)
@@ -3347,7 +3347,7 @@ final class RecordingStudioModel {
                     suggestedFileName: suggestedFileName
                 )
                 try? FileManager.default.removeItem(at: temporaryURL)
-                DockExportProgressCoordinator.shared.finish(dockProgressID)
+                DockExportProgressCoordinator.shared.finish(dockProgressID, completed: true)
                 RecordingExportNotifier.notifySuccess(fileURL: savedURL)
                 RecordingExportNotifier.revealIfPreferred(fileURL: savedURL)
                 self?.audioExportState = .finished(savedURL)
