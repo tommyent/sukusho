@@ -466,6 +466,17 @@ struct TextLabelTests {
         #expect(editor.textSizeReadout == nil)
     }
 
+    /// ⌘⌥+ and ⌘⌥− step a label's size by about a tenth, at least a point, on whole points, and
+    /// stay within the sizes new text can start at.
+    @Test func keyboardStepsTheTextSize() {
+        #expect(AnnotationTextMetrics.steppedFontSize(48, by: 1) == 53)
+        #expect(AnnotationTextMetrics.steppedFontSize(48, by: -1) == 43)
+        #expect(AnnotationTextMetrics.steppedFontSize(12, by: 1) == 13)
+        #expect(AnnotationTextMetrics.steppedFontSize(37.4, by: 1) == 41)
+        #expect(AnnotationTextMetrics.steppedFontSize(9, by: -1) == AnnotationTextMetrics.minimumFontSize)
+        #expect(AnnotationTextMetrics.steppedFontSize(999, by: 1) == AnnotationTextMetrics.maximumFontSize)
+    }
+
     /// The tail turns with its label: half a turn puts the tip, its handle and its click target
     /// on the other side of the origin.
     @Test func rotationCarriesTheTail() throws {

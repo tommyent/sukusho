@@ -17,6 +17,8 @@ struct AnnotationKeyCommandHandler: NSViewRepresentable {
     let onSelectTool: (AnnotationTool) -> Void
     let onZoomIn: () -> Void
     let onZoomOut: () -> Void
+    /// ⌘⌥+ (1) and ⌘⌥− (-1): the selected or next text one size step bigger or smaller.
+    let onStepTextSize: (Int) -> Void
     let onFitCanvas: () -> Void
     let onActualSize: () -> Void
     let onToggleCrop: () -> Void
@@ -60,6 +62,7 @@ struct AnnotationKeyCommandHandler: NSViewRepresentable {
         view.onSelectTool = onSelectTool
         view.onZoomIn = onZoomIn
         view.onZoomOut = onZoomOut
+        view.onStepTextSize = onStepTextSize
         view.onFitCanvas = onFitCanvas
         view.onActualSize = onActualSize
         view.onToggleCrop = onToggleCrop
@@ -85,6 +88,7 @@ final class AnnotationKeyCommandHandlerView: NSView {
     var onSelectTool: ((AnnotationTool) -> Void)?
     var onZoomIn: (() -> Void)?
     var onZoomOut: (() -> Void)?
+    var onStepTextSize: ((Int) -> Void)?
     var onFitCanvas: (() -> Void)?
     var onActualSize: (() -> Void)?
     var onToggleCrop: (() -> Void)?
@@ -258,6 +262,12 @@ final class AnnotationKeyCommandHandlerView: NSView {
                 return nil
             }
 
+            // Before zoom, which is the same keys without Option.
+            if let direction = Self.textSizeStep(event) {
+                self.onStepTextSize?(direction)
+                return nil
+            }
+
             if Self.isZoomIn(event) {
                 self.onZoomIn?()
                 return nil
@@ -396,14 +406,25 @@ final class AnnotationKeyCommandHandlerView: NSView {
     }
 
     private static func isZoomIn(_ event: NSEvent) -> Bool {
-        guard event.modifierFlags.contains(.command) else { return false }
+        guard event.modifierFlags.contains(.command), !event.modifierFlags.contains(.option) else { return false }
         let character = event.charactersIgnoringModifiers
         return character == "+" || character == "="
     }
 
     private static func isZoomOut(_ event: NSEvent) -> Bool {
-        event.modifierFlags.contains(.command)
+        event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.option)
             && (event.charactersIgnoringModifiers == "-" || event.charactersIgnoringModifiers == "_")
+    }
+
+    /// ⌘⌥+ or ⌘⌥=, and ⌘⌥− or ⌘⌥_: one text size step up or down.
+    private static func textSizeStep(_ event: NSEvent) -> Int? {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard flags.contains([.command, .option]), !flags.contains(.control) else { return nil }
+        switch event.charactersIgnoringModifiers {
+        case "+", "=": return 1
+        case "-", "_": return -1
+        default: return nil
+        }
     }
 
     private static func isFitCanvas(_ event: NSEvent) -> Bool {

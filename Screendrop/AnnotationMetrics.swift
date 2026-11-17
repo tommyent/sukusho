@@ -7,7 +7,7 @@ import AppKit
 
 enum AnnotationTextMetrics {
     static let minimumFontSize: CGFloat = 9
-    /// The largest text size the inspector sets: three digits in the font-size field.
+    /// The largest text size kept for new text.
     static let maximumFontSize: CGFloat = 999
 
     /// Keeps a text style's font size in range. An unbounded size can't be shown as a whole
@@ -16,6 +16,13 @@ enum AnnotationTextMetrics {
         size.isNaN ? minimumFontSize : min(max(size, minimumFontSize), maximumFontSize)
     }
     static let defaultFontName: String = "SF Pro"
+
+    /// One ⌘⌥+ or ⌘⌥− step for a label's size: about a tenth of it, at least a point, landing on
+    /// whole points.
+    static func steppedFontSize(_ size: CGFloat, by direction: Int) -> CGFloat {
+        let step = max(1, (size * 0.1).rounded())
+        return clampedFontSize(size.rounded() + step * CGFloat(direction.signum()))
+    }
 }
 
 enum AnnotationSizeStops {

@@ -70,6 +70,19 @@ extension AnnotationEditorModel {
         }
     }
 
+    /// ⌘⌥+ and ⌘⌥− (⌘+ and ⌘− zoom): with a lone label selected, or nothing selected.
+    var canStepTextSize: Bool { engine.selectedIds.isEmpty || selectedTextShape != nil }
+
+    /// One step bigger (1) or smaller (-1) for the selected label, and for the next text.
+    func stepTextSize(by direction: Int) {
+        let current = selectedTextShape?.textProps.map { CGFloat($0.fontSize) } ?? textFontSize
+        let size = AnnotationTextMetrics.steppedFontSize(current, by: direction)
+        textFontSize = size
+        engine.currentTextFontSize = Double(size)
+        saveAnnotationPreset()
+        updateSelectedText { $0.fontSize = Double(size) }
+    }
+
     func setTextBold(_ bold: Bool) {
         textIsBold = bold
         engine.currentTextIsBold = bold

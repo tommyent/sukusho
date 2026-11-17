@@ -150,6 +150,9 @@ struct AnnotationEditorWindow: View {
                 },
                 onZoomIn: model.zoomIn,
                 onZoomOut: model.zoomOut,
+                onStepTextSize: { direction in
+                    if model.canStepTextSize { model.stepTextSize(by: direction) }
+                },
                 onFitCanvas: model.fitCanvas,
                 onActualSize: { model.setZoomPercent(100) },
                 onToggleCrop: { withAnimation(.snappy(duration: 0.2)) { model.toggleCropping() } },
@@ -685,6 +688,22 @@ struct AnnotationEditorSaveAsCommand: View {
             Button("Save As…") { editor.requestSaveAs() }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
         }
+    }
+}
+
+/// Format › Bigger Text and Smaller Text for the key editor window: text is sized by its handles,
+/// and these are the keyboard's way. ⌘+ and ⌘− are the editor's zoom, so they take ⌥ too. In the
+/// menu so Help's search finds them.
+struct AnnotationEditorTextSizeCommands: View {
+    @FocusedValue(\.annotationEditor) private var editor
+
+    var body: some View {
+        Button("Bigger Text") { editor?.stepTextSize(by: 1) }
+            .keyboardShortcut("+", modifiers: [.command, .option])
+            .disabled(!(editor?.canStepTextSize ?? false))
+        Button("Smaller Text") { editor?.stepTextSize(by: -1) }
+            .keyboardShortcut("-", modifiers: [.command, .option])
+            .disabled(!(editor?.canStepTextSize ?? false))
     }
 }
 

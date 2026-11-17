@@ -55,6 +55,9 @@ struct ScreendropApp: App {
                 AnnotationEditorSaveAsCommand()
                 AnnotationEditorRevertCommand()
             }
+            CommandMenu("Format") {
+                AnnotationEditorTextSizeCommands()
+            }
         }
         .windowResizability(.contentSize)
         .defaultSize(width: 1100, height: 760)
