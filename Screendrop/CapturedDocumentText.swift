@@ -210,23 +210,23 @@ nonisolated enum CaptureTextParagraphs {
             || ["func ", "let ", "var ", "const ", "def ", "return ", "import ", "#include"].contains { line.hasPrefix($0) }
     }
 
-    /// Footnote marks, only on lines with no code and only where the text says they are ones (Astra R5-3, R5A-2,
-    /// R5A-4 and Sol's round 4, 2026-11-17: "array[2]", "let a = [[1],[2]]", "print([1],[2], [3])" and
-    /// "[1], [2], [3]" lost indices): a misread "!2]" or "|2]" (Fable saw "!2]" in Wikipedia text), and a "[2]" right
-    /// after a sentence's end (. ! ? or a closing quote) or a space after it, as Vision reads "display.[2]"
-    /// ("display. [2]"), followed by a space or the line's end. Other punctuation, a comma above all, proves nothing:
-    /// a Wikipedia mark after one stays. A "[2]" stuck to a word ("Tokyo[3] is") goes only when the text has a
-    /// misread mark too; otherwise it may be an index ("x[2] and y[3]") and stays. Nothing inside an open bracket
-    /// goes: prose footnotes sit outside them, indices and lists inside.
+    /// Footnote marks, removed only where the line plainly reads as prose; when in doubt a "[n]" stays (Astra and Sol,
+    /// 2026-11-17: indices in "array[2]", "[[1],[2]]", "print([1],[2], [3])", "[1], [2], [3]", "\"abc\"[2]",
+    /// "items?.[2]" and "value![2]" were eaten one rule after another). Three kinds go:
+    /// - a misread "!2]" or "|2]" after a letter or a full stop (Fable saw "display.!2]" in Wikipedia text);
+    /// - "[2]" right after a full stop or a closing ” that ends a plain word, or a space after one, as Vision reads
+    ///   "display.[2]" ("display. [2]"), when a new sentence or the line's end follows;
+    /// - "[2]" stuck to a word ("Tokyo[3]"), only when the text also has a misread mark.
+    /// Each must be followed by whitespace or the line's end, outside any open bracket, on a prose line.
     private static func cleaned(_ text: String) -> String {
-        let misread = #"(?<=[\p{L}.!?”"’])[!|]\d{1,3}\](?=[\s.,;:]|$)"#
-        let marked = misread + #"|(?<=[.!?”"’]) ?\[\d{1,3}\](?=\s|$)|(?<=[.!?”"’]) [!|]\d{1,3}\](?=\s|$)"#
-        let attached = #"(?<=\p{L})\[\d{1,3}\](?= \p{L})"#
+        let misread = #"(?<=[\p{L}.])[!|]\d{1,3}\](?=\s|$)"#
+        // A full stop that ends a plain word ("large.", not "obj.method." or "\"abc\"."), then a new sentence or the end.
+        let marked = misread + #"|(?<=(?:^|\s)\p{L}[\p{L}'’-]{0,40}(?:\.|\.”|”)) ?\[\d{1,3}\](?=$|\s+[\p{Lu}“"])"#
+        let attached = #"(?<=\p{L})\[\d{1,3}\](?=\s|$)"#
         let lines = text.components(separatedBy: "\n")
-        let isProse = { (line: String) in !looksLikeCode(line) && !line.contains("=") }
-        let hasMarks = lines.contains { isProse($0) && !topLevelMatches(of: misread, in: $0).isEmpty }
+        let hasMarks = lines.contains { readsAsProse($0) && !topLevelMatches(of: misread, in: $0).isEmpty }
         return lines.map { line in
-            guard isProse(line) else { return line }
+            guard readsAsProse(line) else { return line }
             var line = line
             for range in topLevelMatches(of: marked, in: line).reversed() { line.removeSubrange(range) }
             if hasMarks {
@@ -234,6 +234,13 @@ nonisolated enum CaptureTextParagraphs {
             }
             return line
         }.joined(separator: "\n")
+    }
+
+    /// Three or more words of letters, and nothing code has: no = ; { } ( ) < > \ ` and no ?. => -> ::.
+    private static func readsAsProse(_ line: String) -> Bool {
+        guard !looksLikeCode(line), !line.contains(where: { "=;{}()<>\\`".contains($0) }),
+              !["?.", "=>", "->", "::"].contains(where: line.contains) else { return false }
+        return line.split(whereSeparator: { $0.isWhitespace }).filter { $0.filter(\.isLetter).count >= 2 }.count >= 3
     }
 
     /// Where `pattern` matches in `line` outside any open ( [ or {.

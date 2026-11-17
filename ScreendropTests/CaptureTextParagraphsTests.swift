@@ -87,6 +87,16 @@ struct CaptureTextParagraphsTests {
         #expect(CaptureTextParagraphs.reflowed("([1], [2]), [3]") == "([1], [2]), [3]")
         #expect(CaptureTextParagraphs.reflowed("[1], [2], [3]") == "[1], [2], [3]")
         #expect(CaptureTextParagraphs.reflowed("Tokyo,[3] Osaka and Kyoto") == "Tokyo,[3] Osaka and Kyoto")
+        // Sol, round 5: punctuation alone isn't prose.
+        #expect(CaptureTextParagraphs.reflowed("\"abc\"[2]") == "\"abc\"[2]")
+        #expect(CaptureTextParagraphs.reflowed("items?.[2]") == "items?.[2]")
+        #expect(CaptureTextParagraphs.reflowed("value![2]") == "value![2]")
+        #expect(CaptureTextParagraphs.reflowed("the \"abc\"[2] string is long") == "the \"abc\"[2] string is long")
+        #expect(CaptureTextParagraphs.reflowed("the value![2] is set here") == "the value![2] is set here")
+        #expect(CaptureTextParagraphs.reflowed("use items?.[2] when it exists") == "use items?.[2] when it exists")
+        // A full stop inside a name isn't a sentence's end.
+        #expect(CaptureTextParagraphs.reflowed("call obj.method.[2] after the setup") == "call obj.method.[2] after the setup")
+        #expect(CaptureTextParagraphs.reflowed("print \"abc\".[2] in old Python") == "print \"abc\".[2] in old Python")
     }
 
     /// Fable live check C: 10 pt text captured at 1× lost "Uses"; read at 2× it didn't.
