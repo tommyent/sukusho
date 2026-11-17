@@ -782,6 +782,9 @@ struct InspectorSegmented<Option: Hashable, Label: View>: View {
 
     var height: CGFloat = InspectorMetrics.sliderHeight
     var equalWidths: Bool = true
+    /// A segment's tooltip and VoiceOver name, for segments drawn as icons. They go on the
+    /// segment's button: on the label inside it no tooltip showed (E01).
+    var name: ((Option) -> String)? = nil
 
     @State private var hoveredOption: Option?
 
@@ -828,6 +831,19 @@ struct InspectorSegmented<Option: Hashable, Label: View>: View {
             }
         }
         .accessibilityAddTraits(selected ? .isSelected : [])
+        .modifier(SegmentName(name: name?(option)))
+    }
+}
+
+private struct SegmentName: ViewModifier {
+    let name: String?
+
+    func body(content: Content) -> some View {
+        if let name {
+            content.help(name).accessibilityLabel(name)
+        } else {
+            content
+        }
     }
 }
 

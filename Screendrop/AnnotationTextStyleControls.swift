@@ -22,11 +22,8 @@ struct AnnotationTextStyleControls: View {
                     options: TextBoxStyle.allCases,
                     isSelected: { $0 == model.selectedTextBoxStyle },
                     onTap: { model.selectedTextBoxStyle = $0 },
-                    label: { style in
-                        TextBoxStyleIcon(style: style)
-                            .help(style.title)
-                            .accessibilityLabel(style.title)
-                    }
+                    label: { TextBoxStyleIcon(style: $0) },
+                    name: { $0.title }
                 )
                 .frame(maxWidth: .infinity)
 
@@ -47,15 +44,14 @@ struct AnnotationTextStyleControls: View {
                         }
                     },
                     label: { segment in
-                        // A named face has no bold or italic of its own, and none is
-                        // synthesized; the setting is kept for when the font changes back.
-                        let isInert = model.selectedTextFontFace != nil && segment != .underline
                         Text(segment.title)
                             .font(segment.font)
                             .underline(segment == .underline)
-                            .opacity(isInert ? 0.35 : 1)
-                            .help(isInert ? "Not available in this font" : "")
-                            .accessibilityLabel(segment.accessibilityTitle)
+                            .opacity(isInert(segment) ? 0.35 : 1)
+                    },
+                    name: { segment in
+                        isInert(segment) ? "\(segment.accessibilityTitle): not available in this font"
+                            : segment.accessibilityTitle
                     }
                 )
                 .frame(maxWidth: .infinity)
@@ -72,6 +68,12 @@ struct AnnotationTextStyleControls: View {
             )
         }
         .frame(maxWidth: .infinity)
+    }
+
+    /// A named face has no bold or italic of its own, and none is synthesized; the setting is
+    /// kept for when the font changes back.
+    private func isInert(_ segment: TextStyleSegment) -> Bool {
+        model.selectedTextFontFace != nil && segment != .underline
     }
 
     private var fontFamilyMenu: some View {

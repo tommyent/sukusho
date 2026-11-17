@@ -356,12 +356,9 @@ struct AnnotationEditorInspector: View {
                                 onEditorAction()
                                 model.setMagnifierShape($0)
                             },
-                            label: { shape in
-                                MagnifierShapeIcon(shape: shape)
-                                    .help(shape.label)
-                                    .accessibilityLabel(shape.label)
-                            },
-                            height: InspectorMetrics.controlHeight
+                            label: { MagnifierShapeIcon(shape: $0) },
+                            height: InspectorMetrics.controlHeight,
+                            name: { $0.label }
                         )
                         .frame(width: InspectorMetrics.controlHeight * 3 + InspectorMetrics.controlInset * 2)
                     }

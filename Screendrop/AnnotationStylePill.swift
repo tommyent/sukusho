@@ -45,12 +45,9 @@ struct AnnotationStylePillButton: View {
                             options: TextBoxStyle.allCases,
                             isSelected: { $0 == model.selectedTextBoxStyle },
                             onTap: { model.selectedTextBoxStyle = $0 },
-                            label: { style in
-                                TextBoxStyleIcon(style: style)
-                                    .help(style.title)
-                                    .accessibilityLabel(style.title)
-                            },
-                            height: InspectorMetrics.controlHeight
+                            label: { TextBoxStyleIcon(style: $0) },
+                            height: InspectorMetrics.controlHeight,
+                            name: { $0.title }
                         )
                         .frame(width: 64)
                     } else if model.isStrokeStyleAvailable {
