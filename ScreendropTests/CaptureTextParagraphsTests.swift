@@ -60,7 +60,8 @@ struct CaptureTextParagraphsTests {
         #expect(CaptureTextParagraphs.reflowed("shows the contents of a computer display.!2] It is created")
                 == "shows the contents of a computer display. It is created")
         // A mark stuck to a word goes when the text has a sure one too, and stays on its own (it may be an index).
-        #expect(CaptureTextParagraphs.reflowed("the display.[2] Tokyo[3] is big") == "the display. Tokyo is big")
+        #expect(CaptureTextParagraphs.reflowed("the display.!2] Tokyo[3] is big") == "the display. Tokyo is big")
+        #expect(CaptureTextParagraphs.reflowed("the display.[2] Tokyo[3] is big") == "the display. Tokyo[3] is big")
         #expect(CaptureTextParagraphs.reflowed("as a camera[3] would") == "as a camera[3] would")
         // Vision's reading of "display.[2]" in the VM check (2026-11-17), at a line's end and mid-line.
         #expect(CaptureTextParagraphs.reflowed("that powers the display. [2]") == "that powers the display.")
@@ -82,7 +83,10 @@ struct CaptureTextParagraphsTests {
         #expect(CaptureTextParagraphs.reflowed("print(a,[2])") == "print(a,[2])")
         // Astra R5A-4: marks inside a call's brackets, after commas.
         #expect(CaptureTextParagraphs.reflowed("print([1],[2], [3])") == "print([1],[2], [3])")
-        #expect(CaptureTextParagraphs.reflowed("Tokyo,[3] Osaka and Kyoto") == "Tokyo, Osaka and Kyoto")
+        // Sol, round 4: a comma proves nothing, so a Wikipedia mark after one stays.
+        #expect(CaptureTextParagraphs.reflowed("([1], [2]), [3]") == "([1], [2]), [3]")
+        #expect(CaptureTextParagraphs.reflowed("[1], [2], [3]") == "[1], [2], [3]")
+        #expect(CaptureTextParagraphs.reflowed("Tokyo,[3] Osaka and Kyoto") == "Tokyo,[3] Osaka and Kyoto")
     }
 
     /// Fable live check C: 10 pt text captured at 1× lost "Uses"; read at 2× it didn't.

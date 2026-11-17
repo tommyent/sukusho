@@ -210,21 +210,21 @@ nonisolated enum CaptureTextParagraphs {
             || ["func ", "let ", "var ", "const ", "def ", "return ", "import ", "#include"].contains { line.hasPrefix($0) }
     }
 
-    /// Footnote marks, only on lines with no code and only where the text says they are ones (Astra R5-3, R5A-2 and
-    /// R5A-4, 2026-11-17: "array[2]", "let a = [[1],[2]]" and "print([1],[2], [3])" lost indices): a misread "!2]"
-    /// or "|2]" (Fable saw "!2]" in Wikipedia text), or "[2]" right after a sentence's punctuation or a space after
-    /// it, as Vision reads "display.[2]" ("display. [2]"), followed by a space, punctuation or the line's end (after
-    /// a comma, a space or the end only). A "[2]" stuck to a word ("Tokyo[3] is") goes only when the same text has
-    /// one of those marks too; otherwise it may be an index ("x[2] and y[3]") and stays. Nothing inside an open
-    /// bracket goes: prose footnotes sit outside them, indices and lists inside.
+    /// Footnote marks, only on lines with no code and only where the text says they are ones (Astra R5-3, R5A-2,
+    /// R5A-4 and Sol's round 4, 2026-11-17: "array[2]", "let a = [[1],[2]]", "print([1],[2], [3])" and
+    /// "[1], [2], [3]" lost indices): a misread "!2]" or "|2]" (Fable saw "!2]" in Wikipedia text), and a "[2]" right
+    /// after a sentence's end (. ! ? or a closing quote) or a space after it, as Vision reads "display.[2]"
+    /// ("display. [2]"), followed by a space or the line's end. Other punctuation, a comma above all, proves nothing:
+    /// a Wikipedia mark after one stays. A "[2]" stuck to a word ("Tokyo[3] is") goes only when the text has a
+    /// misread mark too; otherwise it may be an index ("x[2] and y[3]") and stays. Nothing inside an open bracket
+    /// goes: prose footnotes sit outside them, indices and lists inside.
     private static func cleaned(_ text: String) -> String {
-        let end = #"(?=[\s.,;:]|$)"#
-        let marked = #"(?<=[\p{L}.,;:)”"])[!|]\d{1,3}\]"# + end + #"|(?<=[.;:”"])\[\d{1,3}\]"# + end
-            + #"|(?<=,)\[\d{1,3}\](?=\s|$)|(?<=[.,;:)”"]) [\[!|]\d{1,3}\]"# + end
+        let misread = #"(?<=[\p{L}.!?”"’])[!|]\d{1,3}\](?=[\s.,;:]|$)"#
+        let marked = misread + #"|(?<=[.!?”"’]) ?\[\d{1,3}\](?=\s|$)|(?<=[.!?”"’]) [!|]\d{1,3}\](?=\s|$)"#
         let attached = #"(?<=\p{L})\[\d{1,3}\](?= \p{L})"#
         let lines = text.components(separatedBy: "\n")
         let isProse = { (line: String) in !looksLikeCode(line) && !line.contains("=") }
-        let hasMarks = lines.contains { isProse($0) && !topLevelMatches(of: marked, in: $0).isEmpty }
+        let hasMarks = lines.contains { isProse($0) && !topLevelMatches(of: misread, in: $0).isEmpty }
         return lines.map { line in
             guard isProse(line) else { return line }
             var line = line
