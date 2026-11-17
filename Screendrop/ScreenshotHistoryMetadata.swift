@@ -174,6 +174,13 @@ struct MarkedHistory<Row: SavedMarkRow> {
         let merged = CaptureSavedMarks.merged(file: fileMarks, rows: rows.map { ($0.id, $0.librarySavedAt) })
         historyHoldsMarks = rows.contains { $0.librarySavedAt != nil }
         writeProblem = nil
+        // A History that couldn't be fully read changes nothing on disk, the marks file included: its unread rows may
+        // carry marks the file doesn't, and the move waits for a launch that reads it all (Astra R5). The marks it did
+        // read still show.
+        if history.isReadOnly {
+            for index in rows.indices { rows[index].librarySavedAt = merged[rows[index].id] }
+            return rows
+        }
         if merged != fileMarks {
             do {
                 try marks.write(merged)
