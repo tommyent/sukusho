@@ -59,7 +59,9 @@ struct CaptureTextParagraphsTests {
     @Test func misreadFootnoteMarksGo() {
         #expect(CaptureTextParagraphs.reflowed("shows the contents of a computer display.!2] It is created")
                 == "shows the contents of a computer display. It is created")
-        #expect(CaptureTextParagraphs.reflowed("as a camera[3] would") == "as a camera would")
+        // A mark stuck to a word goes when the text has a sure one too, and stays on its own (it may be an index).
+        #expect(CaptureTextParagraphs.reflowed("the display.[2] Tokyo[3] is big") == "the display. Tokyo is big")
+        #expect(CaptureTextParagraphs.reflowed("as a camera[3] would") == "as a camera[3] would")
         // Vision's reading of "display.[2]" in the VM check (2026-11-17), at a line's end and mid-line.
         #expect(CaptureTextParagraphs.reflowed("that powers the display. [2]") == "that powers the display.")
         #expect(CaptureTextParagraphs.reflowed("the display. [2] It is") == "the display. It is")
@@ -74,6 +76,10 @@ struct CaptureTextParagraphsTests {
         #expect(CaptureTextParagraphs.reflowed("result = matrix[12]") == "result = matrix[12]")
         #expect(CaptureTextParagraphs.reflowed("the first is items[0]") == "the first is items[0]")
         #expect(CaptureTextParagraphs.reflowed("if x[2] > 0 then") == "if x[2] > 0 then")
+        // Astra R5A-2: one-line code, and an index mid-line.
+        #expect(CaptureTextParagraphs.reflowed("let a = [[1],[2]]") == "let a = [[1],[2]]")
+        #expect(CaptureTextParagraphs.reflowed("x[2] and y[3]") == "x[2] and y[3]")
+        #expect(CaptureTextParagraphs.reflowed("print(a,[2])") == "print(a,[2])")
     }
 
     /// Fable live check C: 10 pt text captured at 1× lost "Uses"; read at 2× it didn't.

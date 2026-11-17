@@ -210,16 +210,21 @@ nonisolated enum CaptureTextParagraphs {
             || ["func ", "let ", "var ", "const ", "def ", "return ", "import ", "#include"].contains { line.hasPrefix($0) }
     }
 
-    /// Footnote marks, where the text says they are ones (Astra R5-3, 2026-11-17: "array[2]" lost its index):
-    /// a misread "!2]" or "|2]" (Fable saw "!2]" in Wikipedia text); "[2]" right after a sentence's punctuation, or a
-    /// space after it, as Vision reads "display.[2]" ("display. [2]"); and "[2]" stuck to a word when prose goes on
-    /// after it ("a camera[3] would"). An index at a line's end, or on a line with code in it, stays.
+    /// Footnote marks, only on lines with no code and only where the text says they are ones (Astra R5-3 and R5A-2,
+    /// 2026-11-17: "array[2]" and "let a = [[1],[2]]" lost indices): a misread "!2]" or "|2]" (Fable saw "!2]" in
+    /// Wikipedia text), or "[2]" right after a sentence's punctuation or a space after it, as Vision reads
+    /// "display.[2]" ("display. [2]"), each followed by a space, punctuation or the line's end. A "[2]" stuck to a
+    /// word ("Tokyo[3] is") goes only when the same text has one of those marks too; otherwise it may be an index
+    /// ("x[2] and y[3]") and stays.
     private static func cleaned(_ text: String) -> String {
-        text.components(separatedBy: "\n").map { line in
-            var line = line.replacingOccurrences(
-                of: #"(?<=[\p{L}.,;:)”"])[!|]\d{1,3}\]|(?<=[.,;:”"])\[\d{1,3}\]|(?<=[.,;:)”"]) [\[!|]\d{1,3}\]"#, with: "",
-                options: .regularExpression)
-            if !looksLikeCode(line), !line.contains("=") {
+        let marked = #"(?:(?<=[\p{L}.,;:)”"])[!|]\d{1,3}\]|(?<=[.,;:”"])\[\d{1,3}\]|(?<=[.,;:)”"]) [\[!|]\d{1,3}\])(?=\s|$|[.,;:])"#
+        let lines = text.components(separatedBy: "\n")
+        let isProse = { (line: String) in !looksLikeCode(line) && !line.contains("=") }
+        let hasMarks = lines.contains { isProse($0) && $0.range(of: marked, options: .regularExpression) != nil }
+        return lines.map { line in
+            guard isProse(line) else { return line }
+            var line = line.replacingOccurrences(of: marked, with: "", options: .regularExpression)
+            if hasMarks {
                 line = line.replacingOccurrences(of: #"(?<=\p{L})\[\d{1,3}\](?= \p{L})"#, with: "", options: .regularExpression)
             }
             return line
