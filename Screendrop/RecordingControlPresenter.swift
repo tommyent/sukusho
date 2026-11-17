@@ -40,7 +40,8 @@ struct RecordingSessionControls: View {
 
             BarActionButton(
                 id: .pen,
-                title: ink.isPenOn ? "Stop drawing (esc)" : "Draw on screen",
+                hover: ink.isPenOn ? BarHover("Stop drawing", "Esc · ⌘Z undoes the last stroke")
+                    : BarHover("Draw on screen", "Drags draw instead of clicking"),
                 systemImage: "pencil.tip",
                 tint: ink.isPenOn ? BarMetrics.recordTint : BarMetrics.activeTint,
                 accessibility: ink.isPenOn
@@ -53,7 +54,7 @@ struct RecordingSessionControls: View {
 
             BarActionButton(
                 id: .pauseResume,
-                title: isPaused ? "Resume recording" : "Pause recording",
+                hover: isPaused ? BarHover("Resume", "Recording is paused") : BarHover("Pause", "The take keeps its place"),
                 systemImage: isPaused ? "play.fill" : "pause.fill"
             ) {
                 if isPaused {
@@ -66,7 +67,7 @@ struct RecordingSessionControls: View {
 
             BarActionButton(
                 id: .restart,
-                title: "Start over",
+                hover: BarHover("Start over", "Moves this take to the Trash and starts again"),
                 systemImage: "arrow.counterclockwise",
                 accessibility: "Restart - move this take to the Trash and start again"
             ) {
@@ -76,7 +77,8 @@ struct RecordingSessionControls: View {
 
             BarActionButton(
                 id: .stop,
-                title: "Stop and save",
+                hover: BarHover("Stop recording", ScreendropPreferences.recordingBugReport
+                    ? "Writes the bug report" : "Opens the recording in Studio"),
                 systemImage: "stop.fill",
                 tint: BarMetrics.recordTint,
                 accessibility: "Stop and save the recording"
@@ -87,7 +89,7 @@ struct RecordingSessionControls: View {
 
             BarActionButton(
                 id: .discard,
-                title: "Discard recording",
+                hover: BarHover("Discard", "Moves this recording to the Trash"),
                 systemImage: "trash.fill",
                 accessibility: "Discard - move this recording to the Trash"
             ) {

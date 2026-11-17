@@ -387,7 +387,10 @@ private struct RecordingBarView: View {
     private var tooltipLayer: some View {
         GeometryReader { _ in
             if let target = tooltip.visible {
-                BarTooltipPill(text: target.text)
+                // Bottom-aligned in the tallest pill's room, so a one-line name sits as close
+                // to the bar as a two-line one.
+                BarTooltipPill(hover: target.hover)
+                    .frame(height: BarTooltip.pillHeight, alignment: .bottom)
                     .position(
                         x: target.frame.midX,
                         y: -(BarTooltip.gap + BarTooltip.pillHeight / 2)
@@ -399,7 +402,7 @@ private struct RecordingBarView: View {
         // the bar glides the pill from control to control rather than
         // cross-fading it in place.
         .animation(.easeOut(duration: 0.12), value: tooltip.visible?.id)
-        .animation(.easeOut(duration: 0.12), value: tooltip.visible?.text)
+        .animation(.easeOut(duration: 0.12), value: tooltip.visible?.hover)
     }
 
     private var barShape: RoundedRectangle {

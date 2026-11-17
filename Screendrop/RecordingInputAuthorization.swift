@@ -46,6 +46,17 @@ enum RecordingInputAuthorization {
         }
     }
 
+    /// Denied or restricted: no choice of device works until it's allowed.
+    static func isBlocked(_ input: Input) -> Bool {
+        let status = status(for: input)
+        return status == .denied || status == .restricted
+    }
+
+    /// The input's Privacy & Security pane, where a blocked input is allowed.
+    static func openSettings(for input: Input) {
+        if let url = input.settingsURL { NSWorkspace.shared.open(url) }
+    }
+
     static func status(for input: Input) -> AVAuthorizationStatus {
         AVCaptureDevice.authorizationStatus(for: input.mediaType)
     }
