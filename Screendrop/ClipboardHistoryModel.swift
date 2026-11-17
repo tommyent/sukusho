@@ -201,12 +201,12 @@ final class ClipboardHistoryModel {
         CaptureLibraryModel.shared.actionFeedback.show(message)
     }
 
-    /// Convert to WebP…: the Library's sheet, on this clip's image.
-    func convertToWebP(_ entry: ClipboardEntry) {
+    /// Convert to WebP… and Convert to JPEG…: the Library's sheet, on this clip's image as the card shows it.
+    func convert(_ entry: ClipboardEntry, to format: ImageConversion.Format) {
         guard entry.kind == .image, let url = entry.imageURL ?? entry.libraryPath.map({ URL(fileURLWithPath: $0) }) else { return }
         let name = entry.libraryPath.map { URL(fileURLWithPath: $0).deletingPathExtension().lastPathComponent } ?? "Copied Image"
         CaptureLibraryModel.shared.pendingConversion = ImageConversion(
-            format: .webP, files: [(url, name)], subtitle: "\(entry.pixelWidth) × \(entry.pixelHeight) image")
+            format: format, files: [(url, name)], subtitle: "\(entry.pixelWidth) × \(entry.pixelHeight) image")
     }
 
     /// The clip as it was first copied: its oldest version, when it was optimized or rewritten since.

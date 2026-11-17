@@ -272,7 +272,8 @@ struct ClipboardEntryMenu: View {
         if entry.kind == .image {
             Divider()
             Button("Optimize") { model.optimize(entry) }
-            Button("Convert to WebP…") { model.convertToWebP(entry) }
+            Button("Convert to WebP…") { model.convert(entry, to: .webP) }
+            Button("Convert to JPEG…") { model.convert(entry, to: .jpeg) }
         }
         Divider()
         Button(entry.pinnedAt == nil ? "Save" : "Remove from Saved") { model.toggleSaved(entry) }
