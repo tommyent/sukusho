@@ -198,10 +198,15 @@ struct ClipboardHistoryStoreTests {
                          byteSize: value.utf8.count)
     }
 
-    private func image(_ size: Int) -> ClipboardCapture {
-        let data = Data(UUID().uuidString.utf8) + Data(repeating: 7, count: size - 36)
-        return ClipboardCapture(kind: .image, hash: ClipboardPasteboardReader.digest(data), image: data,
-                                imageExtension: "png", pixelWidth: 1, pixelHeight: 1, byteSize: data.count)
+    private func image(_ size: Int, width: Int = 1, height: Int = 1) -> ClipboardCapture {
+        image(Data(UUID().uuidString.utf8) + Data(repeating: 7, count: size - 36), width: width, height: height)
+    }
+
+    private func image(_ data: Data, width: Int, height: Int, source: String? = nil) -> ClipboardCapture {
+        var capture = ClipboardCapture(kind: .image, hash: ClipboardPasteboardReader.digest(data), image: data,
+                                       imageExtension: "png", pixelWidth: width, pixelHeight: height, byteSize: data.count)
+        capture.sourceBundleID = source
+        return capture
     }
 
     @Test func copyingAgainBumpsTheSameEntry() async throws {
@@ -252,10 +257,11 @@ struct ClipboardHistoryStoreTests {
 
     @Test func sizeCapDropsTheOldestUnpinnedFirst() async throws {
         let store = try store()
-        guard case .inserted(let oldest) = try await store.record(image(1000), at: start) else { return }
+        // Different sizes, so none of them counts as a rewrite of the one before.
+        guard case .inserted(let oldest) = try await store.record(image(1000, width: 1), at: start) else { return }
         try await store.setPinned(oldest, true)
-        try await store.record(image(1000), at: start + 1)
-        guard case .inserted(let newest) = try await store.record(image(1000), at: start + 2) else { return }
+        try await store.record(image(1000, width: 2), at: start + 1)
+        guard case .inserted(let newest) = try await store.record(image(1000, width: 3), at: start + 2) else { return }
         #expect(try await store.totalBytes() == 3000)
         try await store.sweep(now: start + 3, retention: nil, maxBytes: 2000)
         #expect(Set(try await store.entries().map(\.id)) == [oldest, newest])
@@ -299,6 +305,72 @@ struct ClipboardHistoryStoreTests {
         try await store.deleteHistory()
         #expect(try await store.entries().map(\.title) == ["Kept"])
         #expect(try await store.totalBytes() == 4)
+    }
+
+    /// An optimiser such as Clop puts a smaller version of the image back on the clipboard a moment later
+    /// (2026-11-16 on the owner's Air: two entries per screenshot). History keeps one entry with the new bytes.
+    @Test func anOptimisersRewriteReplacesTheCopyBefore() async throws {
+        let store = try store()
+        let file = directory.appendingPathComponent("capture.png")
+        var original = image(Data(repeating: 1, count: 79_041), width: 359, height: 815, source: "com.tommyent.Sukusho")
+        original.image = nil
+        original.libraryPath = file.path
+        guard case .inserted(let id) = try await store.record(original, at: start) else { Issue.record("not inserted"); return }
+        let rewrite = image(Data(repeating: 2, count: 22_523), width: 359, height: 815, source: "com.apple.Terminal")
+        #expect(try await store.record(rewrite, at: start + 0.5) == .replaced(id))
+        let entries = try await store.entries()
+        #expect(entries.count == 1)
+        let entry = try #require(entries.first)
+        #expect(entry.byteSize == 22_523)
+        #expect(entry.libraryPath == file.path)
+        #expect(entry.sourceBundleID == "com.tommyent.Sukusho")
+        #expect(entry.timesCopied == 1)
+        #expect(entry.firstCopiedAt == start)
+        let url = try #require(entry.imageURL)
+        #expect(try Data(contentsOf: url) == rewrite.image)
+        #expect(try await store.totalBytes() == 22_523)
+    }
+
+    @Test func aNewCopyIsNotARewrite() async throws {
+        // A different size, a copy after the window, a copy in between, a pinned or a repeated entry: all kept.
+        let cases: [(String, (ClipboardHistoryStore) async throws -> Void)] = [
+            ("size", { try await $0.record(self.image(500, width: 10, height: 10), at: self.start + 1) }),
+            ("window", { try await $0.record(self.image(500, width: 359, height: 815), at: self.start + 11) }),
+            ("between", { store in
+                try await store.record(self.text("in between"), at: self.start + 1)
+                try await store.record(self.image(500, width: 359, height: 815), at: self.start + 2)
+            }),
+        ]
+        for (name, then) in cases {
+            let store = try ClipboardHistoryStore(
+                directory: directory.appendingPathComponent(name, isDirectory: true), deviceID: "test-mac")
+            try await store.record(image(500, width: 359, height: 815), at: start)
+            try await then(store)
+            #expect(try await store.entries().filter { $0.kind == .image }.count == 2, "\(name)")
+        }
+        let pinnedStore = try ClipboardHistoryStore(
+            directory: directory.appendingPathComponent("pinned", isDirectory: true), deviceID: "test-mac")
+        guard case .inserted(let pinned) = try await pinnedStore.record(image(500, width: 359, height: 815), at: start) else { return }
+        try await pinnedStore.setPinned(pinned, true)
+        try await pinnedStore.record(image(500, width: 359, height: 815), at: start + 1)
+        #expect(try await pinnedStore.entries().count == 2)
+    }
+
+    @Test func copyingAnOptimisedImageAgainKeepsOneEntry() async throws {
+        let store = try store()
+        let original = Data(repeating: 1, count: 900), optimised = Data(repeating: 2, count: 300)
+        guard case .inserted(let id) = try await store.record(image(original, width: 40, height: 40), at: start) else { return }
+        #expect(try await store.record(image(optimised, width: 40, height: 40), at: start + 1) == .replaced(id))
+        // Copied again later: the original arrives as a new entry, then its rewrite matches the kept one.
+        guard case .inserted(let fresh) = try await store.record(image(original, width: 40, height: 40), at: start + 60) else {
+            Issue.record("not inserted"); return
+        }
+        let freshURL = try #require(try await store.entries().first { $0.id == fresh }?.imageURL)
+        #expect(try await store.record(image(optimised, width: 40, height: 40), at: start + 61) == .bumped(id))
+        let entries = try await store.entries()
+        #expect(entries.map(\.id) == [id])
+        #expect(entries.first?.timesCopied == 2)
+        #expect(!FileManager.default.fileExists(atPath: freshURL.path))
     }
 
     @Test func aClipAddedToTheLibraryKeepsItsOwnImage() async throws {

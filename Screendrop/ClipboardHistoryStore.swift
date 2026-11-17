@@ -28,8 +28,14 @@ nonisolated struct ClipboardEntry: Sendable, Equatable, Identifiable {
 /// a change number, so sync between Macs can come later without a migration.
 actor ClipboardHistoryStore {
     nonisolated enum RecordOutcome: Equatable, Sendable {
-        case inserted(String), bumped(String)
+        /// `replaced`: the copy was a rewrite of the image copied just before it, which now holds the new bytes.
+        case inserted(String), bumped(String), replaced(String)
     }
+
+    /// How long after an image copy a same-size image counts as its rewrite rather than a new copy. Image
+    /// optimisers such as Clop put a smaller version back on the clipboard: 0.5 s and 1.1 s after Sukusho's
+    /// copies on the owner's Air (2026-11-16), where history kept both. The owner's rule: keep only the rewrite.
+    static let rewriteWindow: TimeInterval = 10
 
     nonisolated struct StoreError: Error, CustomStringConvertible {
         let description: String
@@ -100,20 +106,26 @@ actor ClipboardHistoryStore {
         try transaction {
             let existing = try query("SELECT id FROM entries WHERE kind = ? AND hash = ?",
                                      [capture.kind.rawValue, capture.hash]) { $0.text(0) }.first
+            let rewritten = try rewrittenEntry(by: capture, at: date)
             if let id = existing ?? nil {
+                // The rewrite of a copy whose rewrite history already holds: the fresh original goes.
+                if let rewritten, rewritten.id != id { try delete(ids: [rewritten.id]) }
                 try run("UPDATE entries SET last_copied_at = ?, times_copied = times_copied + 1, change_seq = ? WHERE id = ?",
                         [date.timeIntervalSince1970, try nextChange(), id])
                 return .bumped(id)
             }
-            let id = UUID().uuidString
-            var blob: String?
-            if let image = capture.image {
-                let name = "\(capture.hash.prefix(2))/\(capture.hash).\(capture.imageExtension ?? "img")"
-                let url = blobs.appendingPathComponent(name)
-                try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try image.write(to: url, options: .atomic)
-                blob = name
+            let blob = try writeBlob(of: capture)
+            if let rewritten {
+                // The earlier entry keeps its source, first copy time and Library link; the bytes are the rewrite's.
+                try run("""
+                    UPDATE entries SET hash = ?, blob = ?, byte_size = ?, stored_bytes = ?,
+                        library_path = COALESCE(library_path, ?), last_copied_at = ?, change_seq = ? WHERE id = ?
+                    """, [capture.hash, blob, capture.byteSize, capture.storedBytes, capture.libraryPath,
+                          date.timeIntervalSince1970, try nextChange(), rewritten.id])
+                if let old = rewritten.blob, old != blob { try? FileManager.default.removeItem(at: blobs.appendingPathComponent(old)) }
+                return .replaced(rewritten.id)
             }
+            let id = UUID().uuidString
             try run("""
                 INSERT INTO entries (id, kind, hash, text, blob, library_path, byte_size, stored_bytes, pixel_width,
                     pixel_height, source_bundle_id, is_remote, first_copied_at, last_copied_at, origin_device, change_seq)
@@ -243,6 +255,33 @@ actor ClipboardHistoryStore {
     }
 
     // MARK: - SQLite
+
+    /// The entry `capture` rewrites, if any: the latest copy, an unpinned image copied once with the same
+    /// pixel size, under `rewriteWindow` ago. Any other copy in between makes it a new copy.
+    private func rewrittenEntry(by capture: ClipboardCapture, at date: Date) throws -> (id: String, blob: String?)? {
+        guard capture.kind == .image else { return nil }
+        let latest = try query("""
+            SELECT id, kind, pixel_width, pixel_height, times_copied, pinned_at IS NULL, last_copied_at, blob
+            FROM entries WHERE kind != 'snippet' ORDER BY last_copied_at DESC LIMIT 1
+            """, []) { row in
+            (id: row.text(0) ?? "", kind: row.text(1), width: row.int(2), height: row.int(3), times: row.int(4),
+             unpinned: row.int(5) != 0, copiedAt: row.double(6), blob: row.text(7))
+        }.first
+        guard let latest, latest.kind == ClipboardEntryKind.image.rawValue, latest.unpinned, latest.times == 1,
+              latest.width == capture.pixelWidth, latest.height == capture.pixelHeight,
+              (0..<Self.rewriteWindow).contains(date.timeIntervalSince1970 - latest.copiedAt) else { return nil }
+        return (latest.id, latest.blob)
+    }
+
+    /// Writes a copy's image under its hash and returns the name, or nil for a copy without one.
+    private func writeBlob(of capture: ClipboardCapture) throws -> String? {
+        guard let image = capture.image else { return nil }
+        let name = "\(capture.hash.prefix(2))/\(capture.hash).\(capture.imageExtension ?? "img")"
+        let url = blobs.appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try image.write(to: url, options: .atomic)
+        return name
+    }
 
     private func delete(ids: [String]) throws {
         guard !ids.isEmpty else { return }
