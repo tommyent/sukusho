@@ -444,8 +444,17 @@ enum SystemScreenshotShortcuts {
 
     /// The launch notice: what happens, and the two ways out, naming the keys Use Other Keys would pick.
     static func noticeText(_ clashes: [Clash], otherKeys: [CaptureHotkeyAction: HotkeyShortcut]) -> String {
-        let moves = inKeyOrder(clashes).compactMap { otherKeys[$0.action]?.displayTokens.joined() }
-        let use = moves.isEmpty ? "" : "Use Other Keys moves them to \(list(moves)). "
+        let sorted = inKeyOrder(clashes)
+        let moving = sorted.filter { otherKeys[$0.action] != nil }
+        let staying = sorted.filter { otherKeys[$0.action] == nil }
+        let moves = moving.compactMap { otherKeys[$0.action]?.displayTokens.joined() }
+        var use = ""
+        if !moving.isEmpty {
+            // All of them, or only some: those left over are named, for a key picked by hand (Sol, R9-1).
+            use = staying.isEmpty ? "Use Other Keys moves them to \(list(moves)). "
+                : "Use Other Keys moves \(list(moving.map(\.action.title))) to \(list(moves)); pick another key for "
+                    + "\(list(staying.map(\.action.title))) in Settings › Shortcuts. "
+        }
         return "\(summary(clashes)) \(use)Or turn macOS’s off in Keyboard Shortcuts."
     }
 
@@ -473,10 +482,17 @@ enum SystemScreenshotShortcuts {
     /// The keys tried for a clashing shortcut, in order: the same key with ⌥⇧⌘, then ⌃⌥⌘. Neither is on Apple's list of
     /// Mac shortcuts for 3, 4 or 5 (support.apple.com/102650, read 2026-11-17: ⌃⌥⌘ only 8, comma and period), and the
     /// same digit keeps each action on its number. ⌃⇧⌘3 and ⌃⇧⌘4 are macOS's own copy-to-clipboard screenshots.
+    /// Only those verified digits get candidates (Sol, R9-1): a screenshot shortcut remapped to another key, such as ⇧⌘Q,
+    /// would otherwise offer ⌥⇧⌘Q, Apple's immediate log-out. Any other key is left for the user to change by hand,
+    /// with the warning still shown.
     static func candidates(for shortcut: HotkeyShortcut) -> [HotkeyShortcut] {
-        [HotkeyShortcut(modifiers: [.option, .shift, .command], keyCode: shortcut.keyCode),
-         HotkeyShortcut(modifiers: [.control, .option, .command], keyCode: shortcut.keyCode)]
+        guard verifiedKeyCodes.contains(shortcut.keyCode) else { return [] }
+        return [HotkeyShortcut(modifiers: [.option, .shift, .command], keyCode: shortcut.keyCode),
+                HotkeyShortcut(modifiers: [.control, .option, .command], keyCode: shortcut.keyCode)]
     }
+
+    /// 3, 4 and 5: the digits checked against Apple's list for both families.
+    static let verifiedKeyCodes: Set<Int> = [Int(kVK_ANSI_3), Int(kVK_ANSI_4), Int(kVK_ANSI_5)]
 
     /// New keys for the clashing actions: the first candidate macOS doesn't have on and no other Sukusho action uses,
     /// counting the keys already chosen here. An action with no free candidate is left out.

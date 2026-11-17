@@ -102,6 +102,9 @@ struct SystemScreenshotShortcutsTests {
         #expect(SystemScreenshotShortcuts.noticeText(defaults, otherKeys: moved)
             .hasSuffix("Use Other Keys moves them to ⌥⇧⌘3, ⌥⇧⌘4, and ⌥⇧⌘5. Or turn macOS’s off in Keyboard Shortcuts."))
         #expect(!SystemScreenshotShortcuts.noticeText(defaults, otherKeys: [:]).contains("Use Other Keys"))
+        // Only some get new keys: the rest are named for a key picked by hand.
+        #expect(SystemScreenshotShortcuts.noticeText(defaults, otherKeys: [.area: altShift(20)])
+            .contains("Use Other Keys moves Area to ⌥⇧⌘3; pick another key for Scrolling Capture and Capture Text in Settings › Shortcuts."))
     }
 
     private func altShift(_ keyCode: Int) -> HotkeyShortcut { HotkeyShortcut(modifiers: [.option, .shift, .command], keyCode: keyCode) }
@@ -120,6 +123,18 @@ struct SystemScreenshotShortcutsTests {
         let withOption3 = system.union([altShift(20)])
         #expect(SystemScreenshotShortcuts.otherKeys(for: [.area], shortcuts: sukusho, system: withOption3)[.area]
             == HotkeyShortcut(modifiers: [.control, .option, .command], keyCode: 20))
+
+        // Sol, R9-1: macOS's ⇧⌘5 entry remapped to ⇧⌘Q, and Capture Text recorded onto ⇧⌘Q. It still clashes, so the
+        // warning shows, but no new key is offered: ⌥⇧⌘Q is Apple's immediate log-out.
+        let shiftQ = HotkeyShortcut(modifiers: [.shift, .command], keyCode: 12)
+        var remapped = allOff
+        remapped["184"] = entry(true, character: 113, keyCode: 12, flags: shiftCommand)
+        let remappedSystem = SystemScreenshotShortcuts.enabled(in: remapped)
+        var onQ = sukusho
+        onQ[.textCapture] = shiftQ
+        #expect(SystemScreenshotShortcuts.clashes(onQ, with: remappedSystem) == [.textCapture])
+        #expect(SystemScreenshotShortcuts.candidates(for: shiftQ).isEmpty)
+        #expect(SystemScreenshotShortcuts.otherKeys(for: [.textCapture], shortcuts: onQ, system: remappedSystem).isEmpty)
 
         // Another Sukusho action already on ⌥⇧⌘5 and ⌃⌥⌘5: Capture Text has no free key and stays out.
         var taken = sukusho
