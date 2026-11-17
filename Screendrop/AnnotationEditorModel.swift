@@ -957,19 +957,32 @@ final class AnnotationEditorModel {
             engine.currentRedactionDensity = props.density
         }
         if let props = shape.textProps {
+            // New text starts in the style last given to a label, by picking it or by its
+            // handles: the engine, which makes the next label, takes it as well as the inspector.
+            // Two tuples: Swift compares tuples of up to six.
+            func style() -> ((AnnoFontFamily, String?, CGFloat, Bool), (Bool, Bool, NSTextAlignment, TextBoxStyle)) {
+                ((textFontFamily, textFontFace, textFontSize, textIsBold),
+                 (textIsItalic, textIsUnderline, textAlignment, textBoxStyle))
+            }
+            let before = style()
             textFontFamily = props.fontFamily
             textFontFace = props.fontFace
-            // New text starts at the size last given to a label, by its handles or by picking it.
-            if textFontSize != CGFloat(props.fontSize) {
-                textFontSize = CGFloat(props.fontSize)
-                engine.currentTextFontSize = props.fontSize
-                saveAnnotationPreset()
-            }
+            textFontSize = CGFloat(props.fontSize)
             textIsBold = props.isBold
             textIsItalic = props.isItalic
             textIsUnderline = props.isUnderline
             textAlignment = props.align.nsTextAlignment
             textBoxStyle = props.boxStyle ?? .plain
+            engine.currentFontFamily = textFontFamily
+            engine.currentFontFace = textFontFace
+            engine.currentTextFontSize = props.fontSize
+            engine.currentTextIsBold = textIsBold
+            engine.currentTextIsItalic = textIsItalic
+            engine.currentTextIsUnderline = textIsUnderline
+            engine.currentTextAlign = props.align
+            engine.currentTextBoxStyle = textBoxStyle
+            let after = style()
+            if before.0 != after.0 || before.1 != after.1 { saveAnnotationPreset() }
         }
         rememberDrawingStyle()
         syncArmedDrawingStyle()
