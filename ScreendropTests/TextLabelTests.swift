@@ -477,6 +477,24 @@ struct TextLabelTests {
         #expect(AnnotationTextMetrics.steppedFontSize(999, by: 1) == AnnotationTextMetrics.maximumFontSize)
     }
 
+    /// Italic SF text is italic, bold or not (sd-3zwn): the weight re-asserted for SF's variable
+    /// font mustn't replace the traits that carry italic, and bold must keep its weight.
+    @Test(arguments: [false, true])
+    func italicSurvivesTheWeight(bold: Bool) {
+        var props = TextProps(text: "Italic", fontSize: 48)
+        props.isBold = bold
+        props.isItalic = true
+        let font = TextMeasure.font(props)
+        #expect(font.fontDescriptor.symbolicTraits.contains(.italic))
+        #expect(font.italicAngle != 0, "the glyphs slant: \(font.fontName)")
+        #expect(font.fontName.hasSuffix(bold ? "BoldItalic" : "RegularItalic"), "\(font.fontName)")
+        // An absent weight is Regular's 0.
+        let weight = (font.fontDescriptor.object(forKey: .traits) as? [NSFontDescriptor.TraitKey: Any])?[.weight] as? CGFloat ?? 0
+        #expect(abs(weight - (bold ? NSFont.Weight.bold : .regular).rawValue) < 0.01)
+        props.isItalic = false
+        #expect(TextMeasure.font(props).italicAngle == 0)
+    }
+
     /// The tail turns with its label: half a turn puts the tip, its handle and its click target
     /// on the other side of the origin.
     @Test func rotationCarriesTheTail() throws {
