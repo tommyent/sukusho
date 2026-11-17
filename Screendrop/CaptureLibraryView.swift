@@ -477,8 +477,8 @@ struct CaptureLibraryView: View {
     /// spaces keep each key with its name, so the line wraps between them.
     private var shortcutLine: String? {
         let actions: [(CaptureHotkeyAction, String)] = switch activeFilter {
-        case .all: [(.area, "Area"), (.window, "Window"), (.fullscreen, "Screen"), (.screenRecording, "Record")]
-        case .screenshots: [(.area, "Area"), (.window, "Window"), (.fullscreen, "Screen")]
+        case .all: [(.area, "Area"), (.window, "Window"), (.fullscreen, "Fullscreen"), (.screenRecording, "Record")]
+        case .screenshots: [(.area, "Area"), (.window, "Window"), (.fullscreen, "Fullscreen")]
         case .recordings: [(.screenRecording, "Record")]
         }
         let keys = actions

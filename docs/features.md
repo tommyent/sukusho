@@ -102,7 +102,7 @@ Capture a display, a window, an area, a scrolling region, or just the text in an
 
 | Default shortcut | Action |
 | --- | --- |
-| `Command + Shift + 1` | Capture full screen |
+| `Command + Shift + 1` | Capture Fullscreen |
 | `Command + Shift + 2` | Capture a window |
 | `Command + Shift + 3` | Capture an area |
 | `Command + Shift + 4` | Scrolling Capture |
