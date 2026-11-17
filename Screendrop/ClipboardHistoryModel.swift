@@ -255,8 +255,9 @@ final class ClipboardHistoryModel {
     private static let quickLookFolder = FileManager.default.temporaryDirectory
         .appendingPathComponent("Clipboard Quick Look", isDirectory: true)
 
-    /// The files written for Quick Look hold copies' contents; they go with the copies.
-    private static func clearQuickLookFiles() {
+    /// The files written for Quick Look hold copies' contents; they go with the copies, deleted by the user or
+    /// dropped by the retention sweep.
+    static func clearQuickLookFiles() {
         try? FileManager.default.removeItem(at: quickLookFolder)
     }
 
