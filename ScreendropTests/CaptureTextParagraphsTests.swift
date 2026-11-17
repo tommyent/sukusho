@@ -80,6 +80,9 @@ struct CaptureTextParagraphsTests {
         #expect(CaptureTextParagraphs.reflowed("let a = [[1],[2]]") == "let a = [[1],[2]]")
         #expect(CaptureTextParagraphs.reflowed("x[2] and y[3]") == "x[2] and y[3]")
         #expect(CaptureTextParagraphs.reflowed("print(a,[2])") == "print(a,[2])")
+        // Astra R5A-4: marks inside a call's brackets, after commas.
+        #expect(CaptureTextParagraphs.reflowed("print([1],[2], [3])") == "print([1],[2], [3])")
+        #expect(CaptureTextParagraphs.reflowed("Tokyo,[3] Osaka and Kyoto") == "Tokyo, Osaka and Kyoto")
     }
 
     /// Fable live check C: 10 pt text captured at 1× lost "Uses"; read at 2× it didn't.
