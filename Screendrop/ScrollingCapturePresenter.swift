@@ -109,7 +109,7 @@ final class ScrollingCapturePresenter {
         outcomeContinuation = nil
         defer { isRunning = false }
 
-        guard ScreenRecordingManager.ensureScreenCapturePermission(),
+        guard ScreenRecordingManager.ensureScreenCapturePermission(to: "take a scrolling capture"),
               let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) else {
             return nil
         }

@@ -683,24 +683,33 @@ final class ScreenRecordingManager {
         alert.runModal()
     }
 
-    /// Screen-recording TCC must be granted before SCStream will start; a
-    /// missing grant otherwise fails with a silent -3801. Trigger the system
-    /// prompt on first use and route the user to System Settings after that
-    /// (macOS only shows the prompt once per app).
-    static func ensureScreenCapturePermission() -> Bool {
+    static let screenCapturePermissionAskedKey = "screenCapturePermission.asked"
+
+    /// Screen-recording TCC must be granted before SCStream will start, and
+    /// `screencapture` without it quietly takes nothing: both fail silently.
+    /// The first time, macOS asks; after that it never does again, so from
+    /// then on Sukusho says why nothing happened and offers System Settings
+    /// (Fable #10: the second screenshot did nothing visible). `action` ends
+    /// the sentence "Sukusho can't …".
+    static func ensureScreenCapturePermission(to action: String = "record") -> Bool {
         if CGPreflightScreenCaptureAccess() {
             return true
         }
+        let defaults = UserDefaults.standard
+        let alreadyAsked = defaults.bool(forKey: screenCapturePermissionAskedKey)
+        defaults.set(true, forKey: screenCapturePermissionAskedKey)
         if CGRequestScreenCaptureAccess() {
             return true
         }
+        // macOS's own prompt is up; a second dialog would cover it.
+        guard alreadyAsked else { return false }
 
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Screen Recording permission needed"
         alert.informativeText = """
-        Sukusho can't record until it's allowed under Privacy & Security > \
+        Sukusho can't \(action) until it's allowed under Privacy & Security > \
         Screen & System Audio Recording. After turning it on, quit and reopen \
         Sukusho - macOS applies the permission on relaunch.
         """
