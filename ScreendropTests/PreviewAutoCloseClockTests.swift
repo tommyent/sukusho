@@ -27,4 +27,19 @@ struct PreviewAutoCloseClockTests {
         clock.forget(3)
         #expect(clock.remaining(3, now: t0.addingTimeInterval(35)) == nil)
     }
+
+    /// Astra R5-4: the stack emptying leaves no countdowns behind, and a hover in progress still holds the next card.
+    @Test func anEmptiedStackForgetsEveryCountdown() {
+        let t0 = Date(timeIntervalSinceReferenceDate: 0)
+        var clock = PreviewAutoCloseClock<Int>()
+        clock.start(1, seconds: 10, now: t0)
+        clock.start(2, seconds: 10, now: t0)
+        clock.pause(now: t0.addingTimeInterval(1))
+        clock.forgetAll()
+        clock.start(3, seconds: 10, now: t0.addingTimeInterval(2))
+        clock.resume(now: t0.addingTimeInterval(5))
+        #expect(clock.remaining(1, now: t0.addingTimeInterval(5)) == nil)
+        #expect(clock.remaining(2, now: t0.addingTimeInterval(5)) == nil)
+        #expect(clock.remaining(3, now: t0.addingTimeInterval(5)) == 10)
+    }
 }

@@ -22,6 +22,11 @@ nonisolated struct PreviewAutoCloseClock<ID: Hashable> {
         due[id] = nil
     }
 
+    /// The stack emptied; a hover in progress still holds the next card.
+    mutating func forgetAll() {
+        due.removeAll()
+    }
+
     mutating func pause(now: Date) {
         if pausedAt == nil { pausedAt = now }
     }

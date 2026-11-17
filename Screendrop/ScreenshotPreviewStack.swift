@@ -366,10 +366,13 @@ final class ScreenshotPreviewStack {
     /// pending auto-close. Called from the high-intent action sites.
     func markEngaged(id: ScreenshotPreviewItem.ID) {
         engagedItemIDs.insert(id)
+        autoCloseClock.forget(id)
     }
 
     private func autoCloseIfIdle(id: ScreenshotPreviewItem.ID) {
-        guard items.contains(where: { $0.id == id }) else {
+        // A high-intent action voids the transient-overlay contract: leave the
+        // card on screen until the user dismisses it themselves.
+        guard items.contains(where: { $0.id == id }), !engagedItemIDs.contains(id) else {
             autoCloseClock.forget(id)
             return
         }
@@ -382,10 +385,6 @@ final class ScreenshotPreviewStack {
             }
             return
         }
-
-        // A high-intent action voids the transient-overlay contract: leave the
-        // card on screen until the user dismisses it themselves.
-        guard !engagedItemIDs.contains(id) else { return }
 
         // While Quick Look is on screen, don't auto-close *any* card. Removing a
         // background card collapses/tears down the floating overlay, which closes
@@ -822,6 +821,7 @@ final class ScreenshotPreviewStack {
         items.removeAll { $0.id == id }
         dismissingItemIDs.remove(id)
         engagedItemIDs.remove(id)
+        autoCloseClock.forget(id)
         clearCompressionState(for: id)
 
         if hoveredItemID == id {
@@ -873,6 +873,7 @@ final class ScreenshotPreviewStack {
         items.removeAll()
         dismissingItemIDs.removeAll()
         engagedItemIDs.removeAll()
+        autoCloseClock.forgetAll()
         clearAllCompressionState()
         hoveredItemID = nil
         draggingItemID = nil
@@ -889,6 +890,7 @@ final class ScreenshotPreviewStack {
         items.removeAll()
         dismissingItemIDs.removeAll()
         engagedItemIDs.removeAll()
+        autoCloseClock.forgetAll()
         clearAllCompressionState()
         hoveredItemID = nil
         draggingItemID = nil
