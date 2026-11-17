@@ -138,7 +138,8 @@ final class ClipboardPopupPresenter {
         let panel = ClipboardPopupPanel(size: Self.size)
         panel.contentView = NSHostingView(rootView: ClipboardPopupView(state: state, presenter: self))
         panel.onResign = { [weak self] in self?.close() }
-        // Private copies: hidden from screen sharing and every capture, whatever the setting (owner, 2026-11-17).
+        // Private copies: out of Sukusho's own captures whatever the setting, and macOS is asked to hide it
+        // from other apps, which it may not do everywhere (owner, 2026-11-17; Sol, CVR-1).
         PreviewWindowCaptureExclusion.shared.registerPrivate(window: panel)
         return panel
     }
