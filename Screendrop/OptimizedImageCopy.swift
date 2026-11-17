@@ -6,6 +6,11 @@
 //  the finished result: never the original first and the smaller file later,
 //  which is what makes clipboard managers keep two entries for one copy.
 //
+//  The one exception is the copy made right after a capture (`copyThenSwap`),
+//  which the owner chose not to wait for: the original first, the smaller
+//  file in its place when it is ready. Its caller marks the second write as
+//  auto-generated, so a well-behaved clipboard manager still keeps one entry.
+//
 
 import AppKit
 
