@@ -2,53 +2,13 @@
 //  RecordingExportFeedback.swift
 //  Screendrop
 //
-//  Surfaces Studio export progress and completion outside the editor window:
-//  a Dock icon progress bar while exporting, and a system notification once
-//  the file is saved.
+//  Surfaces Studio export completion outside the editor window: a system
+//  notification once the file is saved. The Dock icon's progress bar is in
+//  DockExportProgress.swift.
 //
 
 import AppKit
-import DockProgress
 import UserNotifications
-
-/// Mirrors every in-flight Studio export onto the single shared Dock icon.
-/// Multiple Studio windows can export at once, so progress is averaged
-/// across them rather than one export's updates fighting another's.
-@MainActor
-final class DockExportProgressCoordinator {
-    static let shared = DockExportProgressCoordinator()
-
-    private var progressByTask: [UUID: Double] = [:]
-
-    private init() {}
-
-    func start() -> UUID {
-        let id = UUID()
-        progressByTask[id] = 0
-        updateDockIcon()
-        return id
-    }
-
-    func update(_ id: UUID, progress: Double) {
-        guard progressByTask[id] != nil else { return }
-        progressByTask[id] = min(max(progress, 0), 1)
-        updateDockIcon()
-    }
-
-    func finish(_ id: UUID) {
-        guard progressByTask.removeValue(forKey: id) != nil else { return }
-        updateDockIcon()
-    }
-
-    private func updateDockIcon() {
-        guard !progressByTask.isEmpty else {
-            DockProgress.resetProgress()
-            return
-        }
-        let average = progressByTask.values.reduce(0, +) / Double(progressByTask.count)
-        DockProgress.progress = average
-    }
-}
 
 /// Delivers the "export finished" notification and reveals the file in
 /// Finder when the user clicks it.
