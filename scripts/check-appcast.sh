@@ -91,4 +91,13 @@ if VERSION=9.9.0 SHOWN=9.9.0 BUILD=99.991231.2400 SPARKLE_BIN="$SPARKLE_BIN" APP
     fail "appcast.sh accepted an item on the beta channel as a stable release"
 fi
 refused "a stable item on the beta channel" "the new item's channel is 'beta'"
+# release.sh refuses a counter the app wouldn't read as a beta's, before it looks at anything else (Sol, round 4).
+# PERSONAL=1 too: should a counter ever get through, BETA with PERSONAL stops the script before it builds anything.
+for counter in 0 01 010 1x -1 '1 ' '١' '１'; do
+    if BETA="$counter" PERSONAL=1 scripts/release.sh > "$WORK/refused.txt" 2>&1; then fail "release.sh took BETA='$counter'"; fi
+    refused "BETA='$counter'" "BETA is the beta's number"
+done
+# And a good counter gets past that check (it stops later, for its own reasons, before any build).
+BETA=12 PERSONAL=1 scripts/release.sh > "$WORK/refused.txt" 2>&1 || true
+if grep -qF "BETA is the beta's number" "$WORK/refused.txt"; then fail "release.sh refused BETA=12"; fi
 print -r -- "check-appcast: passed. The feeds are in $WORK"

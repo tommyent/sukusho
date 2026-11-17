@@ -20,6 +20,11 @@ BUNDLE_ID=com.tommyent.Sukusho
 KEY_ACCOUNT=$BUNDLE_ID   # Sparkle's EdDSA key, kept apart from other apps' keys
 FEED=https://tommyent.github.io/sukusho/appcast.xml
 fail() { print -u2 -- "release: $1"; exit 1 }
+# First, before anything is looked at, so scripts/check-appcast.sh can try it. The app counts only "x.y.z beta N", N an
+# ASCII number from 1 with no leading zero, as a beta (UpdateChannels.isBeta): BETA=01 would ship a beta that acts as a
+# regular release (Sol, round 4).
+[[ -z "${BETA:-}" || "$BETA" =~ '^[123456789][0123456789]*$' ]] \
+    || fail "BETA is the beta's number, from 1 with no leading zero: BETA=1 for the first beta"
 
 git diff --quiet HEAD -- || fail "commit the tracked changes first: a release is built from a commit"
 # Folder-synchronized groups compile every file in Screendrop/, so untracked files would ship unnamed by the commit.
@@ -37,7 +42,6 @@ VERSIONS=("${(@f)$(sed -n 's/.*MARKETING_VERSION = \(.*\);/\1/p' Screendrop.xcod
 VERSION="${VERSIONS[1]}"
 SHOWN="$VERSION"   # what the app and the update window call it
 if [[ -n "${BETA:-}" ]]; then
-    [[ "$BETA" == <1-> ]] || fail "BETA is the beta's number: BETA=1 for the first beta of $VERSION"
     [[ -z "${PERSONAL:-}" ]] || fail "BETA and PERSONAL don't go together"
     git rev-parse -q --verify gh-pages >/dev/null || fail "a beta is added to the feed on the local gh-pages branch, which is missing"
     SHOWN="$VERSION beta $BETA"
