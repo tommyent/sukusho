@@ -396,8 +396,14 @@ struct ClipboardLibraryInspector: View {
                 .padding(DS.Space.l)
             }
         } else {
-            ContentUnavailableView("Nothing Selected", systemImage: "doc.on.clipboard",
-                                   description: Text(model.showsSnippets ? "Select a snippet to edit it." : "Select a copy to see it here."))
+            // The Library's own empty inspector, small, as on every other page. ContentUnavailableView drew a large
+            // heading in a lighter band (Fable #8; on macOS 26 and on 27.2 alike).
+            LibraryInspectorPlaceholder(
+                symbol: model.showsSnippets ? "text.badge.star" : "doc.on.clipboard",
+                title: model.showsSnippets ? "Snippet details" : "Copy details",
+                message: model.showsSnippets ? "Select a snippet\nto edit it." : "Select a copy\nto see it here."
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }
