@@ -512,7 +512,8 @@ struct LibraryCellContent: View {
                 if isRenaming(item) {
                     CaptureNameField(id: item.id, location: .card, font: .system(size: 13, weight: .medium), placeholder: item.automaticTitle)
                 } else {
-                    Text(item.title).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.middle)
+                    // Cut at the end, so the app's name in "Finder: Sukusho Dev" stays whole (Fable 15 #4).
+                    Text(item.title).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.tail)
                         .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.cellSpace)) } action: { onTitleFrame($0) }
                 }
                 if item.hasDraft { Image(systemName: "circle.fill").font(.system(size: 6)).foregroundStyle(.orange) }

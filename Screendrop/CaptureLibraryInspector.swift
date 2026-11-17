@@ -388,7 +388,7 @@ private struct LibraryInspectorTitle: View {
                 Text(item.title)
                     .font(.system(size: 16, weight: .semibold))
                     .lineLimit(3)
-                    .truncationMode(.middle)
+                    .truncationMode(.tail)
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(.rect)
