@@ -78,6 +78,24 @@ final class ClipboardPopupPresenter {
         }
         panel.makeKeyAndOrderFront(nil)
         installKeyMonitor()
+        // SwiftUI asks for the search field's focus before the reused panel is key, and on the first opening after
+        // launch the request can be lost: typing then went nowhere (Astra B3, 2026-11-16). Once the panel is key,
+        // and after SwiftUI's first layout, the field takes the keyboard.
+        focusSearchField()
+        DispatchQueue.main.async { [weak self] in self?.focusSearchField() }
+    }
+
+    /// Makes the popup's search field the first responder, unless it already is.
+    private func focusSearchField() {
+        guard let panel, panel.isKeyWindow, let field = Self.searchField(in: panel.contentView) else { return }
+        if let editor = field.currentEditor(), panel.firstResponder === editor { return }
+        panel.makeFirstResponder(field)
+    }
+
+    private static func searchField(in view: NSView?) -> NSTextField? {
+        guard let view else { return nil }
+        if let field = view as? NSTextField, field.isEditable { return field }
+        return view.subviews.lazy.compactMap { searchField(in: $0) }.first
     }
 
     func close() {
@@ -104,7 +122,13 @@ final class ClipboardPopupPresenter {
     private func installKeyMonitor() {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, event.window === panel, handle(event) else { return event }
+            guard let self, event.window === panel else { return event }
+            guard handle(event) else {
+                // A keystroke the popup doesn't handle is typing: it goes to the search field, focused first if
+                // something took the focus away, so a quick first word isn't lost.
+                focusSearchField()
+                return event
+            }
             return nil
         }
     }
