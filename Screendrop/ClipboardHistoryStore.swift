@@ -164,6 +164,11 @@ actor ClipboardHistoryStore {
                     INSERT OR IGNORE INTO versions (entry_id, hash, blob, library_path, byte_size, stored_bytes, copied_at)
                     SELECT id, hash, blob, library_path, byte_size, stored_bytes, last_copied_at FROM entries WHERE id = ?
                     """, [rewritten.id])
+                // A kept Original owns its bytes: a capture file can be edited or trashed later (Astra L1).
+                if let owned = try snapshot(rewritten.libraryPath, hash: rewritten.hash) {
+                    try run("UPDATE versions SET blob = ?, stored_bytes = ? WHERE entry_id = ? AND hash = ?",
+                            [owned.blob, owned.bytes, rewritten.id, rewritten.hash])
+                }
                 try run("""
                     UPDATE entries SET hash = ?, blob = ?, library_path = ?, byte_size = ?, stored_bytes = ?,
                         last_copied_at = ?, change_seq = ? WHERE id = ?
@@ -205,9 +210,18 @@ actor ClipboardHistoryStore {
                 [title, text, text.utf8.count, text.utf8.count, try nextChange(), id])
     }
 
+    /// Saving a copy that only refers to a capture file snapshots that file, so the Saved card keeps its picture when
+    /// the capture is edited or trashed (Astra L1). The capture link stays as it was.
     func setPinned(_ id: String, _ pinned: Bool, at date: Date = .now) throws {
-        try run("UPDATE entries SET pinned_at = ?, change_seq = ? WHERE id = ?",
-                [pinned ? date.timeIntervalSince1970 : nil, try nextChange(), id])
+        try transaction {
+            try run("UPDATE entries SET pinned_at = ?, change_seq = ? WHERE id = ?",
+                    [pinned ? date.timeIntervalSince1970 : nil, try nextChange(), id])
+            guard pinned, let reference = try query(
+                "SELECT library_path, hash FROM entries WHERE id = ? AND blob IS NULL AND library_path IS NOT NULL", [id],
+                { ($0.text(0), $0.text(1) ?? "") }).first,
+                  let owned = try snapshot(reference.0, hash: reference.1) else { return }
+            try run("UPDATE entries SET blob = ?, stored_bytes = ? WHERE id = ?", [owned.blob, owned.bytes, id])
+        }
     }
 
     /// A clip added to the Library: it shows as in the Library and isn't added twice.
@@ -255,8 +269,11 @@ actor ClipboardHistoryStore {
             }
         }
         try delete(ids: evicted)
-        // Only references: a clip that was added to the Library keeps its own image.
-        let gone = try query("SELECT id, library_path FROM entries WHERE library_path IS NOT NULL AND blob IS NULL", []) {
+        // Only unsaved references: a clip that was added to the Library or saved keeps its own image, and a Saved card
+        // is never cleared out, even if its capture's file is gone (Astra L1).
+        let gone = try query("""
+            SELECT id, library_path FROM entries WHERE library_path IS NOT NULL AND blob IS NULL AND pinned_at IS NULL
+            """, []) {
             ($0.text(0) ?? "", $0.text(1) ?? "")
         }.filter { !FileManager.default.fileExists(atPath: $0.1) }.map(\.0)
         try delete(ids: gone)
@@ -343,21 +360,36 @@ actor ClipboardHistoryStore {
     /// The match is approximate (Astra C1/C2: a low-contrast word, a faint selection, transparency), which is why it
     /// only ever stacks and never deletes. A copy of a Library capture is never a rewrite: an optimiser's version
     /// has no file in History.
-    private func rewrittenEntry(by capture: ClipboardCapture, at date: Date) throws -> (id: String, blob: String?)? {
+    private func rewrittenEntry(by capture: ClipboardCapture, at date: Date) throws
+        -> (id: String, hash: String, libraryPath: String?)? {
         guard capture.kind == .image, capture.libraryPath == nil, let incoming = capture.image else { return nil }
         let latest = try query("""
-            SELECT id, kind, pixel_width, pixel_height, times_copied, pinned_at IS NULL, last_copied_at, blob, library_path
+            SELECT id, kind, pixel_width, pixel_height, times_copied, pinned_at IS NULL, last_copied_at, blob, library_path, hash
             FROM entries WHERE kind != 'snippet' ORDER BY last_copied_at DESC LIMIT 1
             """, []) { row in
             (id: row.text(0) ?? "", kind: row.text(1), width: row.int(2), height: row.int(3), times: row.int(4),
-             unpinned: row.int(5) != 0, copiedAt: row.double(6), blob: row.text(7), libraryPath: row.text(8))
+             unpinned: row.int(5) != 0, copiedAt: row.double(6), blob: row.text(7), libraryPath: row.text(8),
+             hash: row.text(9) ?? "")
         }.first
         guard let latest, latest.kind == ClipboardEntryKind.image.rawValue, latest.unpinned, latest.times == 1,
               latest.width == capture.pixelWidth, latest.height == capture.pixelHeight,
               (0..<Self.rewriteWindow).contains(date.timeIntervalSince1970 - latest.copiedAt),
               let picture = latest.blob.map({ blobs.appendingPathComponent($0) }) ?? latest.libraryPath.map(URL.init(fileURLWithPath:)),
               ClipboardImageMatch.isSamePicture(incoming, picture) else { return nil }
-        return (latest.id, latest.blob)
+        return (latest.id, latest.hash, latest.blob == nil ? latest.libraryPath : nil)
+    }
+
+    /// Copies a capture file into the blob store under its content's name, when it still holds the content `hash`
+    /// names; nil when it's gone or changed, since then the bytes it stood for are already lost.
+    private func snapshot(_ path: String?, hash: String) throws -> (blob: String, bytes: Int)? {
+        guard let path, let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              ClipboardPasteboardReader.digest(data) == hash else { return nil }
+        let ext = URL(fileURLWithPath: path).pathExtension
+        let name = "\(hash.prefix(2))/\(hash).\(ext.isEmpty ? "img" : ext)"
+        let url = blobs.appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if !FileManager.default.fileExists(atPath: url.path) { try data.write(to: url, options: .atomic) }
+        return (name, data.count)
     }
 
     /// Writes a copy's image under its hash and returns the name, or nil for a copy without one.

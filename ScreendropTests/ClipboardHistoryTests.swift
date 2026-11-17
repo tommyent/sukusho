@@ -382,7 +382,9 @@ struct ClipboardHistoryStoreTests {
         #expect(try Data(contentsOf: try #require(entry.imageURL)) == rewrite.image)
         let earlier = try #require(entry.earlierVersions.first)
         #expect(entry.earlierVersions.count == 1)
-        #expect(earlier.hash == original.hash && earlier.libraryPath == original.libraryPath && earlier.imageURL == nil)
+        #expect(earlier.hash == original.hash && earlier.libraryPath == original.libraryPath)
+        // The Original owns a copy of the capture's bytes (Astra L1).
+        #expect(try Data(contentsOf: try #require(earlier.imageURL)) == Self.picture(1))
         #expect(earlier.copiedAt == start)
         #expect(FileManager.default.fileExists(atPath: try #require(original.libraryPath)))
     }
@@ -431,6 +433,42 @@ struct ClipboardHistoryStoreTests {
             // Whichever card shows it, the newest copy is what's pasted.
             #expect(try entries.first.flatMap(\.imageURL).map { try Data(contentsOf: $0) } == second, "\(name)")
         }
+    }
+
+    /// Astra L1: an Original or a Saved card that came from a capture file owns its bytes. Editing the capture can't
+    /// change it, and trashing the capture can't clear it; the capture link stays beside the owned copy.
+    @Test func anOriginalAndASavedCardOwnTheirBytes() async throws {
+        let store = try store()
+        let original = try capture(5, named: "stacked.png")
+        guard case .inserted(let stack) = try await store.record(original, at: start) else { Issue.record("not inserted"); return }
+        #expect(try await store.record(picture(5, reencoded: true), at: start + 0.5) == .stacked(stack))
+        let reference = try capture(6, named: "saved.png")
+        guard case .inserted(let saved) = try await store.record(reference, at: start + 30) else { Issue.record("not inserted"); return }
+        try await store.setPinned(saved, true)
+        func bytes(_ url: URL?) throws -> Data { try Data(contentsOf: try #require(url)) }
+        for name in ["stacked.png", "saved.png"] { try Self.picture(9).write(to: directory.appendingPathComponent(name)) }
+        var entries = try await store.entries()
+        let version = try #require(entries.first { $0.id == stack }?.earlierVersions.first)
+        #expect(try bytes(version.imageURL) == Self.picture(5) && version.libraryPath == original.libraryPath)
+        let card = try #require(entries.first { $0.id == saved })
+        #expect(try bytes(card.imageURL) == Self.picture(6) && card.libraryPath == reference.libraryPath)
+        for name in ["stacked.png", "saved.png"] { try FileManager.default.removeItem(at: directory.appendingPathComponent(name)) }
+        try await store.sweep(now: start + 60, retention: nil, maxBytes: .max)
+        entries = try await store.entries()
+        #expect(Set(entries.map(\.id)) == [stack, saved])
+        #expect(try bytes(entries.first { $0.id == saved }?.imageURL) == Self.picture(6))
+        #expect(try bytes(entries.first { $0.id == stack }?.earlierVersions.first?.imageURL) == Self.picture(5))
+    }
+
+    /// A saved card that refers to a capture whose file is gone stays: Saved items are never cleared out (Astra L1).
+    @Test func aSavedReferenceOutlivesItsCaptureFile() async throws {
+        let store = try store()
+        let reference = try capture(7, named: "gone.png")
+        guard case .inserted(let saved) = try await store.record(reference, at: start) else { return }
+        try FileManager.default.removeItem(at: directory.appendingPathComponent("gone.png"))
+        try await store.setPinned(saved, true)
+        try await store.sweep(now: start + 60, retention: nil, maxBytes: .max)
+        #expect(try await store.entries().map(\.id) == [saved])
     }
 
     /// The bump branch (Astra C1): a lookalike whose content history already holds bumps that card and leaves the fresh
