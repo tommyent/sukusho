@@ -41,10 +41,13 @@ struct ClipboardLibraryPage: View {
                             LazyVStack(alignment: .leading, spacing: DS.Space.l, pinnedViews: []) {
                                 ForEach(sections) { section in
                                     // A capsule as wide as its words: the page plate is 520 pt wide and drawn past its
-                                    // text, which put a bar over the filters and past the grid (owner, 2026-11-16).
-                                    Text(section.title).font(DS.TypeScale.labelSemibold).foregroundStyle(.secondary)
-                                        .padding(.horizontal, DS.Space.ml).padding(.vertical, 2)
-                                        .workspaceTextPlate(capsule: true)
+                                    // text, which put a bar over the filters and past the grid (owner, 2026-11-16). On
+                                    // Snippets the one heading would repeat the window's title (Fable #10).
+                                    if !model.showsSnippets {
+                                        Text(section.title).font(DS.TypeScale.labelSemibold).foregroundStyle(.secondary)
+                                            .padding(.horizontal, DS.Space.ml).padding(.vertical, 2)
+                                            .workspaceTextPlate(capsule: true)
+                                    }
                                     if showsList {
                                         // One solid panel per section, as the cards are solid, so rows read over any
                                         // workspace background.
@@ -126,10 +129,13 @@ struct ClipboardLibraryPage: View {
     private var snippetBar: some View {
         HStack {
             Spacer()
-            Button("New Snippet", systemImage: "plus") {
-                Task { model.librarySelection = await model.addSnippet(title: "New Snippet") }
+            // With no snippets yet, the empty page's own New Snippet button is the one (Fable #10).
+            if model.snippetCount > 0 {
+                Button("New Snippet", systemImage: "plus") {
+                    Task { model.librarySelection = await model.addSnippet() }
+                }
+                .controlSize(.small)
             }
-            .controlSize(.small)
         }
     }
 
@@ -170,7 +176,7 @@ struct ClipboardLibraryPage: View {
             } description: {
                 Text("Save text you paste often. Paste a snippet from the clipboard popup (⌃⌘V) like any copy.")
             } actions: {
-                Button("New Snippet") { Task { model.librarySelection = await model.addSnippet(title: "New Snippet") } }
+                Button("New Snippet") { Task { model.librarySelection = await model.addSnippet() } }
                     .buttonStyle(.borderedProminent)
             }
             .workspaceTextPlate()

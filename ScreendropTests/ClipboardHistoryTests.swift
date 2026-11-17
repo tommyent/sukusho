@@ -797,7 +797,7 @@ struct ClipboardListTests {
         #expect(ClipboardList.title(of: entry(.text, "\n\n  first line  \nsecond")) == "first line")
         #expect(ClipboardList.title(of: entry(.files, "/a/one.png\n/b/two.txt")) == "one.png, two.txt")
         #expect(ClipboardList.title(of: entry(.files, "/1\n/2\n/3\n/4")) == "4 files")
-        #expect(ClipboardList.title(of: entry(.snippet, "x", title: "")) == "Untitled Snippet")
+        #expect(ClipboardList.title(of: entry(.snippet, "x", title: "")) == "x")
         #expect(ClipboardList.typeName(of: entry(.image, image: "a.jpg")) == "JPEG image")
         #expect(ClipboardList.typeName(of: entry(.image, image: "a.png")) == "PNG image")
         #expect(ClipboardList.typeName(of: entry(.text, "https://example.com")) == "Link")
@@ -1003,6 +1003,18 @@ struct ClipboardCardTextTests {
             Issue.record("rgb() isn't a color")
         }
         #expect(ClipboardList.cardTitle(of: text("rgb(10, 132, 255)")) == "rgb(10, 132, 255)")
+    }
+
+    /// Fable #10: an unnamed snippet is called by its first line, not a literal "New Snippet".
+    @Test func anUnnamedSnippetIsCalledByItsFirstLine() {
+        func snippet(_ title: String?, _ body: String) -> ClipboardEntry {
+            ClipboardEntry(id: UUID().uuidString, kind: .snippet, text: body, title: title, imageURL: nil, libraryPath: nil,
+                           byteSize: body.utf8.count, pixelWidth: 0, pixelHeight: 0, sourceBundleID: nil, isRemote: false,
+                           firstCopiedAt: .now, lastCopiedAt: .now, timesCopied: 1, pinnedAt: nil)
+        }
+        #expect(ClipboardList.title(of: snippet("Signature", "Best,\nTom")) == "Signature")
+        #expect(ClipboardList.title(of: snippet("", "\n  Best regards,\nTom")) == "Best regards,")
+        #expect(ClipboardList.title(of: snippet(nil, "")) == "Untitled Snippet")
     }
 }
 

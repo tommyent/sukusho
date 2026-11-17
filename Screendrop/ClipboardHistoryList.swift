@@ -124,7 +124,11 @@ nonisolated enum ClipboardList {
             let names = (entry.text ?? "").split(separator: "\n").map { ($0 as NSString).lastPathComponent }
             return names.count > 3 ? "\(names.count) files" : names.joined(separator: ", ")
         case .snippet:
-            return entry.title.flatMap { $0.isEmpty ? nil : $0 } ?? "Untitled Snippet"
+            // Unnamed, it's called by its first line, as a note is (Fable #10: a fresh one was literally "New Snippet").
+            if let name = entry.title?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty { return name }
+            let line = (entry.text ?? "").split(whereSeparator: \.isNewline)
+                .first { !$0.allSatisfy(\.isWhitespace) }.map { $0.trimmingCharacters(in: .whitespaces) }
+            return line.map { String($0.prefix(300)) } ?? "Untitled Snippet"
         case .text:
             if case .color(let hex) = textForm(of: entry) { return hex }
             let line = (entry.text ?? "").split(whereSeparator: \.isNewline)
