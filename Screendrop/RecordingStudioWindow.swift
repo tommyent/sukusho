@@ -161,6 +161,8 @@ private struct RecordingStudioContent: View {
             }
             configureCloseGuard()
             closeGuard.attach(to: window)
+            // Left out of Sukusho's own screenshots like every other Sukusho window (Astra E2).
+            PreviewWindowCaptureExclusion.shared.register(window: window)
         }
         // Saves on leaving the window or the app, as the image editor does.
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResignMainNotification)) { note in

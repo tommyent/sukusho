@@ -358,6 +358,7 @@ final class AgentApprovalPresenter: AgentAsker {
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.contentViewController = NSHostingController(rootView: view)
+        PreviewWindowCaptureExclusion.shared.register(window: panel)
         panel.onClose = { [weak self, weak panel] in
             onClose()
             self?.panels.removeAll { $0 === panel }

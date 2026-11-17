@@ -96,6 +96,9 @@ struct AnnotationEditorWindow: View {
                 }
                 configureCloseGuard()
                 closeGuard.attach(to: window)
+                // As the Library does: Sukusho's own screenshots leave the editor out unless
+                // "Include Sukusho windows" is on; other apps still see it (Astra E2).
+                PreviewWindowCaptureExclusion.shared.register(window: window)
             }
             // Saves at a pause, so History and the Library keep up without a
             // Save button. Not on resign key: the editor's own popovers take
