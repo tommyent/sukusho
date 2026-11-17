@@ -72,6 +72,18 @@ struct EditorInspectorTests {
         }
     }
 
+    /// One letter per tool, shared by the keyboard, the tooltips and the Tools menu; C is Crop's.
+    @Test static func toolLettersAreUniqueAndInTheTooltips() {
+        let keyed = AnnotationTool.allCases.compactMap { tool in tool.shortcutKey.map { (tool, $0) } }
+        #expect(Set(keyed.map(\.1)).count == keyed.count)
+        #expect(!keyed.contains { $0.1 == "c" })
+        for (tool, key) in keyed {
+            #expect(tool.helpText == "\(tool.title) (\(key.uppercased()))")
+        }
+        #expect(AnnotationTool.rectangle.shortcutKey == "r" && AnnotationTool.numberedCircle.shortcutKey == "n")
+        #expect(AnnotationTool.freehand.helpText == "Freehand")
+    }
+
     /// A capture saved with a camera tilt opens with the switch on.
     @Test static func aSavedTiltOpensWithTheSwitchOn() {
         var settings = AnnotationBackgroundSettings()

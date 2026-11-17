@@ -18,7 +18,8 @@ struct AnnotationToolDock: View {
     /// and a little air below, so an image scrolled to its top starts clear.
     static let canvasReserve: CGFloat = topPadding + height + 8
 
-    private static let groups: [[AnnotationTool]] = [
+    /// Also the Tools menu's order.
+    static let groups: [[AnnotationTool]] = [
         [.select],
         [.rectangle, .ellipse, .highlight],
         [.arrow, .line, .freehand, .highlighter],

@@ -92,23 +92,29 @@ enum AnnotationTool: String, CaseIterable, Identifiable, Codable {
         }
     }
 
-    var helpText: String {
-        let shortcut: String
+    /// The letter that picks the tool in the editor, shown in its tooltip and the Tools menu.
+    var shortcutKey: Character? {
         switch self {
-        case .select, .filledRectangle, .freehand: return title
-        case .highlighter: return "Highlighter: draw a horizontal or vertical line"
-        case .rectangle: shortcut = "R"
-        case .ellipse: shortcut = "O"
-        case .line: shortcut = "L"
-        case .arrow: shortcut = "A"
-        case .numberedCircle: shortcut = "N"
-        case .text: shortcut = "T"
-        case .highlight: return "Spotlight: keep this area visible and dim everything outside"
-        case .pixelate: shortcut = "P"
-        case .blur: shortcut = "B"
-        case .magnifier: shortcut = "M"
+        case .rectangle: "r"
+        case .ellipse: "o"
+        case .line: "l"
+        case .arrow: "a"
+        // 1 and 2 measure, so numbering is on N.
+        case .numberedCircle: "n"
+        case .text: "t"
+        case .pixelate: "p"
+        case .blur: "b"
+        case .magnifier: "m"
+        case .select, .filledRectangle, .freehand, .highlighter, .highlight: nil
         }
-        return "\(title) (\(shortcut))"
+    }
+
+    var helpText: String {
+        switch self {
+        case .highlighter: return "Highlighter: draw a horizontal or vertical line"
+        case .highlight: return "Spotlight: keep this area visible and dim everything outside"
+        default: return shortcutKey.map { "\(title) (\($0.uppercased()))" } ?? title
+        }
     }
 
     var isRedactionTool: Bool {

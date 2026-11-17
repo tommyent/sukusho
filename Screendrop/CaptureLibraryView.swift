@@ -278,6 +278,7 @@ struct CaptureLibraryView: View {
         .navigationSplitViewStyle(.balanced)
         .modifier(LibraryToolbarSeparator())
         .toolbar { toolbar }
+        .focusedSceneValue(\.captureLibraryCardWidth, $cardWidth)
         .background { refreshShortcut }
         .frame(minWidth: 860, minHeight: 540)
         .onAppear {
@@ -567,7 +568,7 @@ struct CaptureLibraryView: View {
             }
             if !comments.isShown, !likes.isShown {
                 // Capped where the 640 px thumbnails stay sharp on Retina.
-                Slider(value: $cardWidth, in: 140...320) {
+                Slider(value: $cardWidth, in: LibraryCardWidth.range) {
                     EmptyView()
                 } minimumValueLabel: {
                     Image(systemName: "photo").imageScale(.small)
