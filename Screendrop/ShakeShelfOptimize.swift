@@ -110,22 +110,28 @@ struct ShakeShelfHolding: View {
 
     private var buttons: some View {
         HStack(spacing: DS.Space.s) {
+            // A choice is on only when it has something to work with: Save needs a new file, and the others
+            // need a file Sukusho could read. A list of nothing but "Couldn't read the file" leaves only Done.
             if offersCloud {
                 Button { finish(.share) } label: { Text("Share…").frame(maxWidth: .infinity) }
+                    .disabled(!model.canHandOver)
                 Button { finish(.upload) } label: { Text("Upload Now").frame(maxWidth: .infinity) }
                     .buttonStyle(.borderedProminent)
+                    .disabled(!model.canHandOver)
             } else {
                 Button { finish(.copy) } label: { Text("Copy").frame(maxWidth: .infinity) }
+                    .disabled(!model.canHandOver)
                 Button { finish(.save(replacing: false)) } label: { Text("Save").frame(maxWidth: .infinity) }
                     .buttonStyle(.borderedProminent)
+                    .disabled(!model.canSave)
             }
             Menu {
                 if offersCloud {
-                    if offersGallery { Button("Gallery…") { finish(.gallery) } }
-                    Button("Copy") { finish(.copy) }
-                    Button("Save") { finish(.save(replacing: false)) }
+                    if offersGallery { Button("Gallery…") { finish(.gallery) }.disabled(!model.canHandOver) }
+                    Button("Copy") { finish(.copy) }.disabled(!model.canHandOver)
+                    Button("Save") { finish(.save(replacing: false)) }.disabled(!model.canSave)
                 }
-                Button("Save and Replace Originals") { finish(.save(replacing: true)) }
+                Button("Save and Replace Originals") { finish(.save(replacing: true)) }.disabled(!model.canSave)
                 Divider()
                 Button("Done") { finish(.done) }
             } label: {

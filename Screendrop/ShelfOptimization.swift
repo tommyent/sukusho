@@ -62,6 +62,11 @@ final class ShelfOptimization {
             guard let result, let source = result.source, source == FileIdentity(file) else { return nil }
             return result
         }
+
+        /// A smaller or converted file was made for it: something to save.
+        var hasNewFile: Bool { result?.outcome == .optimized || result?.outcome == .converted }
+        /// Sukusho wasn't allowed to open it, so there is nothing of it to copy, share or save.
+        var isUnreadable: Bool { result?.outcome == .failed(ImageOptimizer.unreadableReason) }
     }
 
     private(set) var rows: [Row]
@@ -153,10 +158,16 @@ final class ShelfOptimization {
         return await work(rows)
     }
 
+    /// Save has something to write: at least one file came out smaller or converted.
+    var canSave: Bool { rows.contains(where: \.hasNewFile) }
+    /// Copy, Share and Upload have something to take: at least one file Sukusho could read.
+    var canHandOver: Bool { rows.contains { !$0.isUnreadable } }
+
     /// What goes on from the shelf: each file's result, or the file itself where there is none or where the
-    /// file has changed since. Finding that out reads every file, so it is done off the main actor.
+    /// file has changed since. A file Sukusho wasn't allowed to read is left out: it couldn't be copied or
+    /// sent either. Finding the rest out reads every file, so it is done off the main actor.
     nonisolated static func currentFiles(of rows: [Row]) async -> [URL] {
-        await Task.detached { rows.map { $0.currentResult?.url ?? $0.file } }.value
+        await Task.detached { rows.filter { !$0.isUnreadable }.map { $0.currentResult?.url ?? $0.file } }.value
     }
 
     /// The same files again, from the originals, in another format. Not while a choice is being carried

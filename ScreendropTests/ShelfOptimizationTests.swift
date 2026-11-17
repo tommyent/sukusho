@@ -66,6 +66,19 @@ import UniformTypeIdentifiers
         #expect(list.resultBytes == converted + list.rows[1].bytes)
         #expect(list.originalBytes == list.rows[0].bytes + list.rows[1].bytes)
 
+        // From the test Mac: with a row that couldn't be read, Copy and Save must have something to work with.
+        // Here one file did come out, so both are on, and only that file is handed over.
+        #expect(list.canSave && list.canHandOver)
+        let handed = await ShelfOptimization.currentFiles(of: list.rows)
+        #expect(handed == [try #require(list.rows[0].result?.url)])
+        // A list of nothing but the unreadable file: nothing to save, nothing to hand over.
+        let unreadableOnly = model([refused], .same, in: folder)
+        try await settled(unreadableOnly)
+        #expect(unreadableOnly.rows[0].isUnreadable)
+        #expect(!unreadableOnly.canSave && !unreadableOnly.canHandOver)
+        let nothing = await ShelfOptimization.currentFiles(of: unreadableOnly.rows)
+        #expect(nothing.isEmpty)
+
         // Thumbnails are read off the main actor too (this test runs on it), and a refused file has none.
         let thumbnail = await ShelfOptimization.thumbnail(of: readable)
         let none = await ShelfOptimization.thumbnail(of: refused)

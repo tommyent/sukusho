@@ -390,6 +390,12 @@ final class ShakeToUpload {
             }
             guard let done = await stage.finish(holding, { await ShelfOptimization.currentFiles(of: $0) }) else { return }
             let files = done.value
+            // Nothing Sukusho could read is left to hand over (the buttons are off for that; this is the guard).
+            guard !files.isEmpty else {
+                holding.discard()
+                if done.isShowing { dismiss() }
+                return
+            }
             let toast = CaptureTextFeedbackPresenter.shared
             switch finish {
             case .share, .gallery, .upload:
