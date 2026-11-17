@@ -12,24 +12,6 @@ enum AnnotationEditorFocusedField: Hashable {
     case watermarkText
 }
 
-/// Sections that fold with a chevron rather than a feature switch.
-private enum AnnotationInspectorAdvancedSection: String, Hashable, CaseIterable {
-    case camera
-}
-
-private enum AnnotationInspectorSectionState {
-    static let expandedSectionsKey = "annotationInspector.expandedAdvancedSections"
-
-    static func loadExpandedSections() -> Set<AnnotationInspectorAdvancedSection> {
-        let rawValues = UserDefaults.standard.stringArray(forKey: expandedSectionsKey) ?? []
-        return Set(rawValues.compactMap(AnnotationInspectorAdvancedSection.init(rawValue:)))
-    }
-
-    static func saveExpandedSections(_ sections: Set<AnnotationInspectorAdvancedSection>) {
-        UserDefaults.standard.set(sections.map(\.rawValue), forKey: expandedSectionsKey)
-    }
-}
-
 struct AnnotationEditorInspector: View {
     @Bindable var model: AnnotationEditorModel
     @Bindable var wallpaperStore: AnnotationWallpaperStore
@@ -38,7 +20,6 @@ struct AnnotationEditorInspector: View {
     let onEditorAction: () -> Void
     let onPickWallpaper: () -> Void
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
-    @State private var expandedAdvancedSections: Set<AnnotationInspectorAdvancedSection> = AnnotationInspectorSectionState.loadExpandedSections()
 
     var body: some View {
         ScrollView(.vertical) {
@@ -140,12 +121,18 @@ struct AnnotationEditorInspector: View {
 
                 InspectorSection(
                     "Camera",
-                    summary: AnnotationInspectorSummary.camera(model.backgroundSettings.camera),
-                    isExpanded: expansionBinding(for: .camera),
+                    isOn: Binding(
+                        get: { model.isCameraOn },
+                        set: { value in
+                            onEditorAction()
+                            model.setCameraOn(value)
+                        }
+                    ),
+                    toggleTitle: "Enable camera",
                     accessory: {
-                        if !model.backgroundSettings.camera.isDefault {
+                        if model.isCameraOn, model.backgroundSettings.camera != .gentleTilt {
                             sectionResetButton("Reset camera") {
-                                model.backgroundSettings.camera = AnnotationCameraSettings()
+                                model.backgroundSettings.camera = .gentleTilt
                             }
                         }
                     }
@@ -181,8 +168,6 @@ struct AnnotationEditorInspector: View {
                         onEditorAction: onEditorAction
                     )
                 }
-
-                InspectorGroupBreak()
 
                 InspectorSection(
                     "Watermark",
@@ -268,22 +253,6 @@ struct AnnotationEditorInspector: View {
 
     private var sectionAnimation: Animation? {
         accessibilityReduceMotion ? nil : .morph
-    }
-
-    private func expansionBinding(
-        for section: AnnotationInspectorAdvancedSection
-    ) -> Binding<Bool> {
-        Binding(
-            get: { expandedAdvancedSections.contains(section) },
-            set: { isExpanded in
-                if isExpanded {
-                    expandedAdvancedSections.insert(section)
-                } else {
-                    expandedAdvancedSections.remove(section)
-                }
-                AnnotationInspectorSectionState.saveExpandedSections(expandedAdvancedSections)
-            }
-        )
     }
 
     /// A feature switch in a section header. The section folds with it.
@@ -419,28 +388,6 @@ struct AnnotationEditorInspector: View {
 /// One-line readouts for collapsed section headers. `nil` means the section
 /// has nothing active worth announcing.
 private enum AnnotationInspectorSummary {
-    static func camera(_ settings: AnnotationCameraSettings) -> String? {
-        guard !settings.isDefault else { return nil }
-        var parts: [String] = []
-        let angles = [
-            settings.tiltXDegrees, settings.tiltYDegrees, settings.rollDegrees,
-            settings.rotationXDegrees, settings.rotationYDegrees
-        ]
-        if angles.contains(where: { abs($0) > 0.0001 }) {
-            parts.append("Angled")
-        }
-        if abs(settings.zoom - 1) > 0.0001 {
-            parts.append(InspectorValueFormat.magnification(fractionDigits: 2).displayString(for: settings.zoom))
-        }
-        if abs(settings.panX) > 0.0001 || abs(settings.panY) > 0.0001 {
-            parts.append("Panned")
-        }
-        if parts.isEmpty {
-            parts.append("FOV \(InspectorValueFormat.degrees().displayString(for: settings.fieldOfViewDegrees))")
-        }
-        return parts.joined(separator: " · ")
-    }
-
     static func progressiveBlur(_ settings: AnnotationProgressiveBlurSettings) -> String? {
         guard settings.isEnabled else { return nil }
         return "\(settings.mode.title) · \(Int(settings.strength.rounded()))"

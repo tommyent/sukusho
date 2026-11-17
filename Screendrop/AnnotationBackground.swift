@@ -132,6 +132,31 @@ struct AnnotationCameraSettings: Equatable {
     }
 }
 
+extension AnnotationCameraSettings {
+    /// What Camera's switch turns on the first time: a gentle tilt, so the switch
+    /// visibly does something.
+    static let gentleTilt = AnnotationCameraSettings(tiltXDegrees: -14, tiltYDegrees: 6)
+}
+
+/// Camera's on/off switch, like Border's, Progressive Blur's and Watermark's.
+/// Off is flat and keeps the last values; on brings them back, or a gentle tilt
+/// when there are none.
+struct AnnotationCameraSwitch {
+    private(set) var parked: AnnotationCameraSettings?
+
+    static func isOn(_ camera: AnnotationCameraSettings) -> Bool { !camera.isDefault }
+
+    mutating func turn(_ on: Bool, camera: inout AnnotationCameraSettings) {
+        guard on != Self.isOn(camera) else { return }
+        if on {
+            camera = parked ?? .gentleTilt
+        } else {
+            parked = camera
+            camera = AnnotationCameraSettings()
+        }
+    }
+}
+
 enum AnnotationProgressiveBlurMode: String, CaseIterable, Identifiable, Sendable {
     case radial
     case directional

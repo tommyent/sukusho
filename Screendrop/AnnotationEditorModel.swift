@@ -105,6 +105,9 @@ final class AnnotationEditorModel {
     /// picking it writes the settings.
     var previewBackground: AnnotationBackgroundStyle?
     var errorMessage: String?
+    /// Camera's last values while its switch is off. Kept for this editor
+    /// window, not saved with the capture.
+    @ObservationIgnored private var cameraSwitch = AnnotationCameraSwitch()
     var isSmartRedacting = false
     var smartRedactionMessage: String?
 
@@ -257,6 +260,7 @@ final class AnnotationEditorModel {
     func load(url: URL?, dismiss: DismissAction) {
         idleSaveTask?.cancel()
         cancelSmartRedaction()
+        cameraSwitch = AnnotationCameraSwitch()
         guard let url else {
             dismiss()
             return
@@ -1582,6 +1586,14 @@ extension AnnotationEditorModel {
 extension AnnotationEditorModel {
     /// Shows or clears a hovered fill. Leaving one fill can arrive after
     /// entering the next, so only the fill being left is cleared.
+    var isCameraOn: Bool { AnnotationCameraSwitch.isOn(backgroundSettings.camera) }
+
+    func setCameraOn(_ isOn: Bool) {
+        var camera = backgroundSettings.camera
+        cameraSwitch.turn(isOn, camera: &camera)
+        backgroundSettings.camera = camera
+    }
+
     func previewBackground(_ background: AnnotationBackgroundStyle, isHovering: Bool) {
         if isHovering {
             previewBackground = background
