@@ -270,6 +270,7 @@ struct PreviewWindowView: View {
         .animation(previewStackAnimation, value: isFanned)
         .onHover { inside in
             unfanTask?.cancel()
+            previewStack.setStackHovered(inside)
             if inside {
                 isFanned = true
             } else {
@@ -281,6 +282,8 @@ struct PreviewWindowView: View {
                 }
             }
         }
+        // A stack that goes away under the pointer never reports it leaving; the next stack's cards mustn't stay held.
+        .onDisappear { previewStack.setStackHovered(false) }
         // Report the whole column as one interactive region (rather than each
         // card) so the passthrough hosting view treats the inter-card gaps and
         // edges as interactive too - otherwise the cursor flickers in and out of

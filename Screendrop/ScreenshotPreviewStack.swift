@@ -28,6 +28,7 @@ final class ScreenshotPreviewStack {
     /// for these so we never yank a capture out from under the user while - or
     /// after - they were actively working with it.
     private var engagedItemIDs: Set<ScreenshotPreviewItem.ID> = []
+    private var autoCloseClock = PreviewAutoCloseClock<ScreenshotPreviewItem.ID>()
 
     /// When true the overlay is tucked into a small "peek" tab at the bottom
     /// edge instead of showing the full stack. The overlay window itself stays
@@ -349,10 +350,16 @@ final class ScreenshotPreviewStack {
     private func scheduleAutoClose(id: ScreenshotPreviewItem.ID) {
         guard ScreendropPreferences.previewAutoCloseSeconds > 0 else { return }
         let seconds = ScreendropPreferences.previewAutoCloseSeconds
+        autoCloseClock.start(id, seconds: Double(seconds), now: .now)
         Task {
             try? await Task.sleep(for: .seconds(Double(seconds)))
             autoCloseIfIdle(id: id)
         }
+    }
+
+    /// The pointer on the stack holds every card; leaving resumes each countdown (PreviewAutoCloseClock).
+    func setStackHovered(_ isHovered: Bool) {
+        if isHovered { autoCloseClock.pause(now: .now) } else { autoCloseClock.resume(now: .now) }
     }
 
     /// Marks an item as explicitly engaged (Quick Look / editor), cancelling its
@@ -362,7 +369,19 @@ final class ScreenshotPreviewStack {
     }
 
     private func autoCloseIfIdle(id: ScreenshotPreviewItem.ID) {
-        guard items.contains(where: { $0.id == id }) else { return }
+        guard items.contains(where: { $0.id == id }) else {
+            autoCloseClock.forget(id)
+            return
+        }
+        // Held while the stack is hovered, and then for the time it had left.
+        if autoCloseClock.isPaused || (autoCloseClock.remaining(id, now: .now) ?? 0) > 0.05 {
+            let wait = autoCloseClock.remaining(id, now: .now) ?? 0.5
+            Task {
+                try? await Task.sleep(for: .seconds(max(wait, 0.1)))
+                autoCloseIfIdle(id: id)
+            }
+            return
+        }
 
         // A high-intent action voids the transient-overlay contract: leave the
         // card on screen until the user dismisses it themselves.
@@ -384,6 +403,7 @@ final class ScreenshotPreviewStack {
             return
         }
 
+        autoCloseClock.forget(id)
         dismiss(id: id)
     }
 
