@@ -175,6 +175,13 @@ struct ClipboardCard: View {
                 .overlay(alignment: .bottomLeading) {
                     if entry.libraryPath != nil { Text("In Captures").cardPill().padding(6) }
                 }
+                .overlay(alignment: .topTrailing) {
+                    // A re-encode another app put back (such as Clop's) stacked on this card; the inspector has the rest.
+                    if !entry.earlierVersions.isEmpty {
+                        Label("\(entry.earlierVersions.count + 1)", systemImage: "square.stack").cardPill().padding(6)
+                            .help("\(entry.earlierVersions.count + 1) versions: the newest is shown and pasted")
+                    }
+                }
                 .padding([.top, .horizontal], LibraryGridMetrics.pictureInset)
             VStack(spacing: 3) {
                 Text(ClipboardList.title(of: entry)).font(.system(size: 13, weight: .medium)).lineLimit(1)
@@ -296,6 +303,7 @@ struct ClipboardLibraryInspector: View {
                             if entry.kind == .image { Button("Edit") { model.openInEditor(entry) }.help("Open in the editor") }
                         }
                         .controlSize(.small)
+                        if !entry.earlierVersions.isEmpty { ClipboardVersionList(entry: entry, model: model) }
                         ClipboardInfo(entry: entry, model: model)
                     }
                     if let message = model.feedback.message {
@@ -451,5 +459,48 @@ struct ClipboardSetupSteps: View {
         }
         .padding(DS.Space.l)
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// A card's earlier versions, one click away: another app (such as Clop) put a re-encode back on the clipboard, which
+/// became the newest version; the original is kept here with its own image and Library link (owner, 2026-11-16).
+private struct ClipboardVersionList: View {
+    let entry: ClipboardEntry
+    let model: ClipboardHistoryModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
+            Text("Versions").font(DS.TypeScale.labelSemibold).foregroundStyle(.secondary)
+            Text("Another app put a re-encoded copy back on the clipboard. The newest is shown and pasted; the earlier one is kept.")
+                .font(DS.TypeScale.label).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            ForEach(Array(entry.earlierVersions.enumerated()), id: \.element.hash) { index, version in
+                let earlier = model.entry(entry, at: version)
+                HStack(spacing: DS.Space.m) {
+                    Button { model.quickLook(earlier) } label: {
+                        Group {
+                            if let url = earlier.imageFileURL {
+                                ClipboardThumbnail(url: url, maxPixelSize: 160, contentMode: .fit)
+                            } else {
+                                Image(systemName: "photo").foregroundStyle(.tertiary)
+                            }
+                        }
+                        .frame(width: 56, height: 40)
+                        .background(Color(nsColor: .quaternaryLabelColor).opacity(0.25), in: RoundedRectangle(cornerRadius: 5))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Quick Look")
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(index == entry.earlierVersions.count - 1 ? "Original" : "Earlier version")
+                            .font(DS.TypeScale.labelMedium)
+                        Text([ByteCountFormatter.string(fromByteCount: Int64(version.byteSize), countStyle: .file),
+                              ClipboardInfo.when(version.copiedAt), version.libraryPath == nil ? nil : "In Captures"]
+                            .compactMap { $0 }.joined(separator: " · "))
+                            .font(DS.TypeScale.label).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    Button("Copy") { model.deliver(earlier, as: .copy, to: nil) }.controlSize(.small)
+                }
+            }
+        }
     }
 }
