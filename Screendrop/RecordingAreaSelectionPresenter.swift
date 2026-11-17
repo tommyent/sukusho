@@ -19,8 +19,30 @@ final class RecordingAreaSelectionPresenter {
     private var completion: ((CGRect?) -> Void)?
     private var eventMonitor: Any?
     private var freezeTask: Task<Void, Never>?
+    private var runningAppsObservation: NSKeyValueObservation?
 
     private init() {}
+
+    /// Ends the picker as cancelled when macOS's own Screenshot UI starts while it is open (sd-7l2f): see
+    /// `AreaPickerSystemScreenshot`. NSWorkspace's launch notification never comes for that UI, but its running-
+    /// applications list reports it, in time for ⇧⌘5 (VM, 27.2.1, three tries). Only new arrivals count, not the list
+    /// as it is when the picker opens: that UI keeps running about 5 s after its toolbar closes, and a Capture Text
+    /// started then must stay. No Sukusho path runs `screencapture` while this picker is open.
+    private func watchSystemScreenshot() {
+        guard runningAppsObservation == nil else { return }
+        runningAppsObservation = NSWorkspace.shared.observe(\.runningApplications, options: [.new]) { [weak self] _, change in
+            let bundleIDs = (change.newValue ?? []).map(\.bundleIdentifier)
+            Task { @MainActor [weak self] in
+                guard let self, !self.panels.isEmpty, AreaPickerSystemScreenshot.endsPicker(running: bundleIDs) else { return }
+                self.finish(rect: nil)
+            }
+        }
+    }
+
+    private func stopWatchingSystemScreenshot() {
+        runningAppsObservation?.invalidate()
+        runningAppsObservation = nil
+    }
 
     /// The drawn area in AppKit's global coordinates, or nil when cancelled. With `confirmTitle`, a drawn area waits
     /// with handles to move and resize it and a bar with that button and Cancel, rather than being taken as the drag
@@ -127,6 +149,7 @@ final class RecordingAreaSelectionPresenter {
         // The first panel takes the keyboard; the rest only need the pointer.
         if panels.isEmpty {
             installEventMonitor()
+            watchSystemScreenshot()
             panel.makeKeyAndOrderFront(nil)
         }
         panels.append(panel)
@@ -140,6 +163,7 @@ final class RecordingAreaSelectionPresenter {
         freezeTask?.cancel()
         freezeTask = nil
         removeEventMonitor()
+        stopWatchingSystemScreenshot()
         for panel in panels {
             (panel.contentView as? RecordingAreaSelectionView)?.endSelectionCursorSession()
             panel.orderOut(nil)

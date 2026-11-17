@@ -38,6 +38,19 @@ struct AreaHandleTests {
     }
 }
 
+/// sd-7l2f: only macOS's own Screenshot UI running ends the picker; nothing else that runs or starts does.
+struct AreaPickerSystemScreenshotTests {
+    @Test func onlyMacOSsScreenshotUIEndsThePicker() {
+        #expect(AreaPickerSystemScreenshot.endsPicker(running: ["com.apple.screencaptureui"]))
+        #expect(AreaPickerSystemScreenshot.endsPicker(running: ["com.apple.finder", nil, "com.apple.screencaptureui"]))
+        // Sukusho itself, the private-window prompt's process, any other app, or one without an ID: the picker stays.
+        let others: [String?] = ["com.tommyent.Sukusho", "com.tommyent.Sukusho.dev", "com.apple.UserNotificationCenter",
+                                 "com.apple.finder", "com.apple.screencaptureui.helper", "", nil]
+        #expect(!AreaPickerSystemScreenshot.endsPicker(running: others))
+        #expect(!AreaPickerSystemScreenshot.endsPicker(running: []))
+    }
+}
+
 private extension CGRect {
     var center: CGPoint { CGPoint(x: midX, y: midY) }
 }

@@ -43,3 +43,17 @@ nonisolated enum AreaHandle: CaseIterable, Sendable {
         return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
     }
 }
+
+/// When the area picker gives up as cancelled because macOS's own Screenshot UI is running (sd-7l2f). One ⇧⌘5 opens both
+/// Capture Text's picker and macOS's Screenshot toolbar; the toolbar takes Escape without Sukusho losing the keyboard or
+/// another app activating (seen in the VM), and a stray click deliberately leaves the picker open, so it dimmed the
+/// screen until a second Escape. macOS starts that UI afresh, as com.apple.screencaptureui, for each ⇧⌘5, and it quits
+/// when done.
+nonisolated enum AreaPickerSystemScreenshot {
+    static let bundleID = "com.apple.screencaptureui"
+
+    /// `running`: the apps the running-applications list reports as newly started.
+    static func endsPicker(running bundleIDs: [String?]) -> Bool {
+        bundleIDs.contains(bundleID)
+    }
+}
