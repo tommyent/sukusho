@@ -492,7 +492,7 @@ private struct ClipboardVersionList: View {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(index == entry.earlierVersions.count - 1 ? "Original" : "Earlier version")
                             .font(DS.TypeScale.labelMedium)
-                        Text([ByteCountFormatter.string(fromByteCount: Int64(version.byteSize), countStyle: .file),
+                        Text([version.byteSize.formatted(.byteCount(style: .file)),
                               ClipboardInfo.when(version.copiedAt), version.libraryPath == nil ? nil : "In Captures"]
                             .compactMap { $0 }.joined(separator: " · "))
                             .font(DS.TypeScale.label).foregroundStyle(.secondary).lineLimit(1)
