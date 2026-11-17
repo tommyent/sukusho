@@ -169,7 +169,7 @@ final class ClipboardHistoryModel {
             defer { result.discard() }
             switch result.outcome {
             case .optimized:
-                guard let data = try? Data(contentsOf: result.url) else { return feedback.show("Couldn’t optimize this image.") }
+                guard let data = try? Data(contentsOf: result.url) else { return say("Couldn’t optimize this image.") }
                 var capture = ClipboardCapture(kind: .image, hash: ClipboardPasteboardReader.digest(data))
                 capture.image = data
                 capture.imageExtension = result.url.pathExtension
@@ -179,19 +179,26 @@ final class ClipboardHistoryModel {
                 capture.sourceBundleID = entry.sourceBundleID
                 do {
                     guard try await store?.stack(capture, on: entry.id) != false else {
-                        return feedback.show("An optimized copy of this image is already in the history.")
+                        return say("An optimized copy of this image is already in the history.")
                     }
                     refresh()
-                    feedback.show("Optimized · \(result.sizeSummary)")
+                    say("Optimized · \(result.sizeSummary)")
                 } catch {
-                    feedback.show("Couldn’t optimize this image.")
+                    say("Couldn’t optimize this image.")
                 }
             case .failed(let reason):
-                feedback.show("Couldn’t optimize. \(reason)")
+                say("Couldn’t optimize. \(reason)")
             case .alreadyOptimized, .converted, .timedOut:
-                feedback.show("Already Optimized")
+                say("Already Optimized")
             }
         }
+    }
+
+    /// Says it where it is seen: the Clipboard page shows its own messages only in the inspector, which is
+    /// empty when a clip is optimized from its right-click menu, so the Library's status bar says it too.
+    private func say(_ message: String) {
+        feedback.show(message)
+        CaptureLibraryModel.shared.actionFeedback.show(message)
     }
 
     /// Convert to WebP…: the Library's sheet, on this clip's image.
