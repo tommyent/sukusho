@@ -11,114 +11,31 @@ import AppKit
 import ImageIO
 import SwiftUI
 
-@MainActor
-@Observable
-final class ShelfOptimization {
-    enum Format: CaseIterable {
-        case same, webP, jpeg
-
-        var title: String {
-            switch self {
-            case .same: "Same Format"
-            case .webP: "WebP"
-            case .jpeg: "JPEG"
-            }
-        }
-
-        /// On the list's popup, beside the files: what will be done, so a bare "JPEG" or "WebP" there isn't
-        /// read as the kind of file that was dropped.
-        var actionTitle: String {
-            switch self {
-            case .same: "Same Format"
-            case .webP: "To WebP"
-            case .jpeg: "To JPEG"
-            }
-        }
-
-        var target: ImageOptimizationTarget {
-            switch self {
-            case .same: .lossless
-            case .webP: OptimizePreferences.webP
-            case .jpeg: OptimizePreferences.jpeg
-            }
+extension ShelfOptimization.Format {
+    var title: String {
+        switch self {
+        case .same: "Same Format"
+        case .webP: "WebP"
+        case .jpeg: "JPEG"
         }
     }
 
-    nonisolated struct Row: Identifiable, Sendable {
-        let id = UUID()
-        let file: URL
-        let bytes: Int64
-        var result: ImageOptimizationResult?
-
-        /// The result, while the file still holds the contents it was made from: the shelf can sit for a
-        /// while, and an older result must not stand in for a newer file. Reads the file.
-        var currentResult: ImageOptimizationResult? {
-            guard let result, let source = result.source, source == FileIdentity(file) else { return nil }
-            return result
+    /// On the list's popup, beside the files: what will be done, so a bare "JPEG" or "WebP" there isn't
+    /// read as the kind of file that was dropped.
+    var actionTitle: String {
+        switch self {
+        case .same: "Same Format"
+        case .webP: "To WebP"
+        case .jpeg: "To JPEG"
         }
     }
 
-    private(set) var rows: [Row]
-    private(set) var format: Format
-    private(set) var isWorking = false
-    @ObservationIgnored private var task: Task<Void, Never>?
-    @ObservationIgnored private let optimizer: ImageOptimizer
-
-    init(files: [URL], format: Format, optimizer: ImageOptimizer = .shared) {
-        rows = files.map { Row(file: $0, bytes: Int64((try? $0.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)) }
-        self.format = format
-        self.optimizer = optimizer
-        start()
-    }
-
-    /// The row being worked on.
-    var currentIndex: Int? { isWorking ? rows.firstIndex { $0.result == nil } : nil }
-    /// What goes on from the shelf: each file's result, or the file itself where there is none or where the
-    /// file has changed since. Finding that out reads every file, so it is done off the main actor.
-    func currentFiles() async -> [URL] {
-        let rows = rows
-        return await Task.detached { rows.map { $0.currentResult?.url ?? $0.file } }.value
-    }
-    var originalBytes: Int64 { rows.reduce(0) { $0 + $1.bytes } }
-    var resultBytes: Int64 { rows.reduce(0) { $0 + ($1.result?.resultByteCount ?? $1.bytes) } }
-
-    /// The same files again, from the originals, in another format.
-    func rerun(as format: Format) {
-        stop()
-        discard()
-        for index in rows.indices { rows[index].result = nil }
-        self.format = format
-        start()
-    }
-
-    /// Keeps what is finished; the rest go on as they are.
-    func stop() {
-        task?.cancel()
-        task = nil
-        isWorking = false
-    }
-
-    func discard() {
-        for row in rows { row.result?.discard() }
-    }
-
-    private func start() {
-        isWorking = true
-        let target = format.target
-        let effort = OptimizePreferences.effort
-        // One file at a time: each encoder already uses every core.
-        task = Task { [weak self, optimizer] in
-            while let file = self?.rows.first(where: { $0.result == nil })?.file {
-                guard let result = try? await optimizer.optimize(file, to: target, effort: effort) else { return }
-                // Stopped, or run again in another format, while this one was finishing.
-                guard !Task.isCancelled, let self, let index = self.rows.firstIndex(where: { $0.file == file && $0.result == nil }) else {
-                    result.discard()
-                    return
-                }
-                self.rows[index].result = result
-            }
-            self?.isWorking = false
-            self?.task = nil
+    /// What Settings › Optimize makes of each format.
+    var target: ImageOptimizationTarget {
+        switch self {
+        case .same: .lossless
+        case .webP: OptimizePreferences.webP
+        case .jpeg: OptimizePreferences.jpeg
         }
     }
 }
@@ -174,6 +91,8 @@ struct ShakeShelfHolding: View {
                     }
                 }
                 .fixedSize()
+                // Not while a choice is being carried out: it is working with these results.
+                .disabled(model.isFinishing)
                 .help("Run the files again in another format")
             }
         }
@@ -216,7 +135,7 @@ struct ShakeShelfHolding: View {
             .fixedSize()
             .accessibilityLabel("More")
         }
-        .disabled(model.isWorking)
+        .disabled(model.isWorking || model.isFinishing)
     }
 }
 

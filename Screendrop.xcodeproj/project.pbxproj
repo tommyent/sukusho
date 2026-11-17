@@ -10,6 +10,7 @@
 		0F7100000000000000000005 /* Screendrop/OptimizedMark.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F7100000000000000000006 /* Screendrop/OptimizedMark.swift */; };
 		0F7100000000000000000009 /* Screendrop/ScreenshotEditFileTransaction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F710000000000000000000A /* Screendrop/ScreenshotEditFileTransaction.swift */; };
 		0F710000000000000000000B /* Screendrop/ScheduledOnce.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F710000000000000000000C /* Screendrop/ScheduledOnce.swift */; };
+		0F710000000000000000000D /* Screendrop/ShelfOptimization.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F710000000000000000000E /* Screendrop/ShelfOptimization.swift */; };
 		0F7100000000000000000007 /* Screendrop/ShelfFileSave.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F7100000000000000000008 /* Screendrop/ShelfFileSave.swift */; };
 		0F7100000000000000000001 /* Screendrop/ImageOptimizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F7100000000000000000002 /* Screendrop/ImageOptimizer.swift */; };
 		0F7100000000000000000003 /* Screendrop/OptimizedImageCopy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F7100000000000000000004 /* Screendrop/OptimizedImageCopy.swift */; };
@@ -198,6 +199,7 @@
 		0F7100000000000000000006 /* Screendrop/OptimizedMark.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/OptimizedMark.swift; sourceTree = SOURCE_ROOT; };
 		0F710000000000000000000A /* Screendrop/ScreenshotEditFileTransaction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ScreenshotEditFileTransaction.swift; sourceTree = SOURCE_ROOT; };
 		0F710000000000000000000C /* Screendrop/ScheduledOnce.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ScheduledOnce.swift; sourceTree = SOURCE_ROOT; };
+		0F710000000000000000000E /* Screendrop/ShelfOptimization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ShelfOptimization.swift; sourceTree = SOURCE_ROOT; };
 		0F7100000000000000000008 /* Screendrop/ShelfFileSave.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ShelfFileSave.swift; sourceTree = SOURCE_ROOT; };
 		0F7100000000000000000002 /* Screendrop/ImageOptimizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ImageOptimizer.swift; sourceTree = SOURCE_ROOT; };
 		0F7100000000000000000004 /* Screendrop/OptimizedImageCopy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/OptimizedImageCopy.swift; sourceTree = SOURCE_ROOT; };
@@ -437,6 +439,7 @@
 				0F7100000000000000000006 /* Screendrop/OptimizedMark.swift */,
 				0F710000000000000000000A /* Screendrop/ScreenshotEditFileTransaction.swift */,
 				0F710000000000000000000C /* Screendrop/ScheduledOnce.swift */,
+				0F710000000000000000000E /* Screendrop/ShelfOptimization.swift */,
 				0F7100000000000000000008 /* Screendrop/ShelfFileSave.swift */,
 				0F7100000000000000000002 /* Screendrop/ImageOptimizer.swift */,
 				0F7100000000000000000004 /* Screendrop/OptimizedImageCopy.swift */,
@@ -756,6 +759,7 @@
 				0F7100000000000000000005 /* Screendrop/OptimizedMark.swift in Sources */,
 				0F7100000000000000000009 /* Screendrop/ScreenshotEditFileTransaction.swift in Sources */,
 				0F710000000000000000000B /* Screendrop/ScheduledOnce.swift in Sources */,
+				0F710000000000000000000D /* Screendrop/ShelfOptimization.swift in Sources */,
 				0F7100000000000000000007 /* Screendrop/ShelfFileSave.swift in Sources */,
 				0F7100000000000000000001 /* Screendrop/ImageOptimizer.swift in Sources */,
 				0F7100000000000000000003 /* Screendrop/OptimizedImageCopy.swift in Sources */,

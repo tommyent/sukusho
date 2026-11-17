@@ -62,8 +62,6 @@ final class ShakeToUpload {
 
     /// The files being optimized on the shelf, while it holds them.
     private(set) var holding: ShelfOptimization?
-    /// True while a choice on the list is being carried out.
-    @ObservationIgnored private var isFinishing = false
 
     /// The tile a drag is over, for its highlight.
     private(set) var targeted: Tile?
@@ -262,7 +260,7 @@ final class ShakeToUpload {
         stopWatchingDrag()
         showsShelf = false
         targeted = nil
-        let model = ShelfOptimization(files: files, format: format)
+        let model = ShelfOptimization(files: files, format: format, optimizer: .shared, effort: OptimizePreferences.effort) { $0.target }
         holding = model
         let offersCloud = offersCloud
         let offersGallery = offersCloud
@@ -287,34 +285,35 @@ final class ShakeToUpload {
     }
 
     func finishHolding(_ finish: Finish) {
-        guard let holding, !isFinishing else { return }
-        holding.stop()
+        // One choice at a time: until it is done, the results on the list are its to work with (ShelfOptimization.finishing).
+        guard let holding, !holding.isFinishing else { return }
         if case .done = finish {
+            holding.stop()
             holding.discard()
             dismiss()
             return
         }
         // Every other choice reads whole files: to see that each is still the one its result was made from,
-        // and to save. That happens off the main actor, with the list still up; a second choice waits.
-        isFinishing = true
+        // and to save. That happens off the main actor, with the list still up and its controls off.
         Task {
-            defer { isFinishing = false }
             if case .save(let replacing) = finish {
                 // Each new file beside its original, as "name optimized.png" or "name.webp", or with
                 // `replacing` in its place, with the original in the Trash (ShelfFileSave).
-                let rows = holding.rows
-                let outcomes = await Task.detached {
-                    rows.compactMap { row -> ShelfFileSave.Outcome? in
-                        guard let result = row.result, result.outcome == .optimized || result.outcome == .converted else { return nil }
-                        return ShelfFileSave.save(result.url, of: row.file, identity: result.source, replacing: replacing)
-                    }
-                }.value
+                let outcomes = await holding.finishing { rows in
+                    await Task.detached {
+                        rows.compactMap { row -> ShelfFileSave.Outcome? in
+                            guard let result = row.result, result.outcome == .optimized || result.outcome == .converted else { return nil }
+                            return ShelfFileSave.save(result.url, of: row.file, identity: result.source, replacing: replacing)
+                        }
+                    }.value
+                }
+                guard let outcomes else { return }
                 report(outcomes, replacing: replacing)
                 holding.discard()
                 dismiss()
                 return
             }
-            let files = await holding.currentFiles()
+            guard let files = await holding.finishing({ await ShelfOptimization.currentFiles(of: $0) }) else { return }
             let toast = CaptureTextFeedbackPresenter.shared
             switch finish {
             case .share, .gallery:
