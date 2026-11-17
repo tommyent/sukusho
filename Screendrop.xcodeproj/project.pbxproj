@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0F7200000000000000000001 /* Screendrop/UpdateChannels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F7200000000000000000002 /* Screendrop/UpdateChannels.swift */; };
 		AFAC00000000000000000001 /* Screendrop/Engine/AnnoEditorClipboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFAC00000000000000000002 /* Screendrop/Engine/AnnoEditorClipboard.swift */; };
 		AE7C00000000000000000001 /* Screendrop/Engine/AnnoTextEditorOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE7C00000000000000000002 /* Screendrop/Engine/AnnoTextEditorOverlay.swift */; };
 		AF3100000000000000000005 /* Screendrop/FreeToUseMusicPickerModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF3100000000000000000006 /* Screendrop/FreeToUseMusicPickerModel.swift */; };
@@ -180,6 +181,7 @@
 
 /* Begin PBXFileReference section */
 		AB0C00000000000000000001 /* sukusho-mcp */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "sukusho-mcp"; sourceTree = BUILT_PRODUCTS_DIR; };
+		0F7200000000000000000002 /* Screendrop/UpdateChannels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/UpdateChannels.swift; sourceTree = SOURCE_ROOT; };
 		AB0C00000000000000000012 /* Screendrop/AgentAccessCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AgentAccessCore.swift; sourceTree = SOURCE_ROOT; };
 		AB0C00000000000000000014 /* Screendrop/AgentAccessSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AgentAccessSocket.swift; sourceTree = SOURCE_ROOT; };
 		AB0C00000000000000000016 /* Screendrop/AgentAccessTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AgentAccessTools.swift; sourceTree = SOURCE_ROOT; };
@@ -395,6 +397,7 @@
 		AA6100000000000000000003 /* Tested logic */ = {
 			isa = PBXGroup;
 			children = (
+				0F7200000000000000000002 /* Screendrop/UpdateChannels.swift */,
 				AFAC00000000000000000002 /* Screendrop/Engine/AnnoEditorClipboard.swift */,
 				AE7C00000000000000000002 /* Screendrop/Engine/AnnoTextEditorOverlay.swift */,
 				AF3100000000000000000006 /* Screendrop/FreeToUseMusicPickerModel.swift */,
@@ -709,6 +712,7 @@
 				AA6200000000000000000005 /* Screendrop/ScreenRecordingState.swift in Sources */,
 				AF1100000000000000000001 /* Screendrop/RecordingDesktopFilter.swift in Sources */,
 				AA6100000000000000000064 /* Screendrop/Engine/AnnoEditor.swift in Sources */,
+				0F7200000000000000000001 /* Screendrop/UpdateChannels.swift in Sources */,
 				AFAC00000000000000000001 /* Screendrop/Engine/AnnoEditorClipboard.swift in Sources */,
 				AE7C00000000000000000001 /* Screendrop/Engine/AnnoTextEditorOverlay.swift in Sources */,
 				AA6100000000000000000065 /* Screendrop/Engine/AnnoEditorInteraction.swift in Sources */,
