@@ -221,9 +221,6 @@ struct ClipboardCard: View {
                 }
                 .clipShape(libraryCardPictureShape)
                 .overlay { libraryCardPictureShape.strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5) }
-                .overlay(alignment: .bottomLeading) {
-                    if entry.libraryPath != nil { Text("In Captures").cardPill().padding(6) }
-                }
                 .overlay(alignment: .topTrailing) {
                     // A re-encode another app put back (such as Clop's) stacked on this card; the inspector has the rest.
                     if !entry.earlierVersions.isEmpty {
@@ -237,6 +234,11 @@ struct ClipboardCard: View {
                 // The time first: it's what differs between cards, so a narrow card cuts the app rather than the time.
                 HStack(spacing: 3) {
                     if entry.kind != .snippet { Text(ClipboardInfo.shortWhen(entry.lastCopiedAt)).layoutPriority(1) }
+                    // The one mark that the picture is also a capture, on the caption line (Fable #5).
+                    if entry.libraryPath != nil {
+                        Text("·")
+                        Text("In Captures").foregroundStyle(.tint).layoutPriority(1)
+                    }
                     if let app = model.appName(entry.sourceBundleID) {
                         if entry.kind != .snippet { Text("·") }
                         if let icon = model.appIcon(entry.sourceBundleID) { Image(nsImage: icon).resizable().frame(width: 12, height: 12) }

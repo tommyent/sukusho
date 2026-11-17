@@ -154,7 +154,6 @@ struct ClipboardInfo: View {
                                 Image(nsImage: icon).resizable().frame(width: 16, height: 16)
                             }
                             Text(source)
-                            if entry.libraryPath != nil { badge("In Captures", .blue) }
                             if entry.isRemote { badge("Another device", .gray) }
                         }
                     }

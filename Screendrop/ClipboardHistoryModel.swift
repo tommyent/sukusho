@@ -292,33 +292,53 @@ final class ClipboardHistoryModel {
         return bitmap.representation(using: .png, properties: [:])
     }
 
-    /// A copied image becomes an ordinary capture, with its source app. Returns the capture's file.
-    @discardableResult
-    func addToLibrary(_ entry: ClipboardEntry, announcing: Bool = true) -> URL? {
-        // A copy whose capture was deleted from the Library can be added again from the image history kept.
-        let isInLibrary = entry.libraryPath.map { FileManager.default.fileExists(atPath: $0) } ?? false
-        guard entry.kind == .image, !isInLibrary, let url = entry.imageURL else { return nil }
-        // An app this Mac doesn't have stays unnamed rather than showing its bundle ID.
-        let source = appName(entry.sourceBundleID).map { CaptureSource(bundleIdentifier: entry.sourceBundleID, appName: $0) }
-        let added = ScreenshotHistoryStore.shared.importScreenshot(from: url, source: source)
-        Task {
-            try? await store?.linkToLibrary(entry.id, path: added.path)
-            refresh()
-        }
-        if announcing { feedback.show("Added to the Library") }
-        return added
-    }
-
-    /// Opens an image entry in the editor. The editor works on Library captures, saving its edits beside the
-    /// capture, so a copy that isn't one yet is added to the Library first, as Add to Library does.
+    /// Opens an image entry in the editor. A copy that's a capture opens as that capture. Any other opens as a copy
+    /// outside the Library, which becomes a capture only on its first saved edit, dated when it was copied and
+    /// credited to its app, and the clip is linked to it then (Fable #5: opening alone added it to the Library, dated
+    /// the moment Edit was clicked).
     func openInEditor(_ entry: ClipboardEntry) {
         guard entry.kind == .image else { return }
-        let capture = entry.libraryPath.map { URL(fileURLWithPath: $0) }
-            .flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
-            ?? addToLibrary(entry, announcing: false)
+        if let capture = entry.libraryPath.map({ URL(fileURLWithPath: $0) }),
+           FileManager.default.fileExists(atPath: capture.path) {
+            return open(capture)
+        }
         // Only a copy that was nothing but a link to a capture since deleted has nothing left to open.
-        guard let capture else { return feedback.show("This image's capture is no longer in the Library.") }
+        guard let image = entry.imageURL, let copy = editableCopy(of: entry, from: image) else {
+            return feedback.show("This image's capture is no longer in the Library.")
+        }
+        let source = appName(entry.sourceBundleID).map { CaptureSource(bundleIdentifier: entry.sourceBundleID, appName: $0) }
+        let entryID = entry.id
+        ScreenshotHistoryStore.shared.registerPendingImport(.init(createdAt: entry.firstCopiedAt, source: source, title: nil) { [weak self] capture in
+            Task {
+                try? await self?.store?.linkToLibrary(entryID, path: capture.path)
+                self?.refresh()
+            }
+        }, for: copy)
+        open(copy)
+    }
+
+    private func open(_ image: URL) {
         QuickLookPreviewPresenter.dismiss()
-        PreviewPanelPresenter.shared.onAnnotate?(capture)
+        PreviewPanelPresenter.shared.onAnnotate?(image)
+    }
+
+    private static let editFolder = FileManager.default.temporaryDirectory
+        .appendingPathComponent("Clipboard Edits", isDirectory: true)
+
+    /// A copy of a clip's image to edit, named as the clip is so the editor's title says what it is. History's own
+    /// blob is never edited in place.
+    private func editableCopy(of entry: ClipboardEntry, from image: URL) -> URL? {
+        let folder = Self.editFolder.appendingPathComponent(entry.id, isDirectory: true)
+        let name = String(ClipboardList.title(of: entry).prefix(60))
+            .replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+        let copy = folder.appendingPathComponent((name.isEmpty ? "Clipboard image" : name) + "." + image.pathExtension)
+        if FileManager.default.fileExists(atPath: copy.path) { return copy }
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try FileManager.default.copyItem(at: image, to: copy)
+            return copy
+        } catch {
+            return nil
+        }
     }
 }

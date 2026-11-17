@@ -235,10 +235,28 @@ final class ScreenshotHistoryStore {
         savedMarksProblem = files.problem
     }
 
-    @discardableResult
+    /// An outside file open in the editor that becomes a capture on its first saved edit, with these details rather
+    /// than the file's: a clipboard image is dated when it was copied and credited to its app (Fable #5).
+    struct PendingImport {
+        let createdAt: Date
+        let source: CaptureSource?
+        let title: String?
+        /// Told the capture's History URL once it exists, so the clip can link to it.
+        let onImport: (URL) -> Void
+    }
+
+    /// Keyed by the outside file's standardized path.
+    @ObservationIgnored private var pendingImports: [String: PendingImport] = [:]
+
+    func registerPendingImport(_ pending: PendingImport, for fileURL: URL) {
+        pendingImports[fileURL.standardizedFileURL.path] = pending
+    }
+
     /// `title` is the Library title for an image the user opened or imported: its own file name, rather than the
-    /// History file's `screenshot_…` (Fable #2). It doesn't save the capture, as naming it would.
-    func importScreenshot(from sourceURL: URL, source: CaptureSource? = nil, title: String? = nil) -> URL {
+    /// History file's `screenshot_…` (Fable #2). It doesn't save the capture, as naming it would. `createdAt` dates it
+    /// when that isn't now, such as a clipboard image's copy time.
+    @discardableResult
+    func importScreenshot(from sourceURL: URL, source: CaptureSource? = nil, title: String? = nil, createdAt: Date? = nil) -> URL {
         do {
             try FileManager.default.createDirectory(at: Self.historyDirectory, withIntermediateDirectories: true)
             let destinationURL = uniqueHistoryURL(for: sourceURL)
@@ -253,7 +271,7 @@ final class ScreenshotHistoryStore {
             let imageSize = ScreenshotImageLoader.imageSize(at: destinationURL) ?? .zero
             let item = ScreenshotHistoryItem(
                 id: UUID(),
-                createdAt: Date(),
+                createdAt: createdAt ?? Date(),
                 updatedAt: Date(),
                 fileName: destinationURL.lastPathComponent,
                 pixelWidth: Int(imageSize.width),
@@ -374,9 +392,14 @@ final class ScreenshotHistoryStore {
     ) throws -> URL {
         _ = try loadEditDocument(for: displayURL)
         guard isHistoryURL(displayURL) else {
-            // The file as opened, not a crop of it, so History keeps the original, and its name.
-            let imported = importScreenshot(from: displayURL, title: displayURL.deletingPathExtension().lastPathComponent)
+            // The file as opened, not a crop of it, so History keeps the original, and its name. A clipboard image keeps
+            // its own date and app instead, and its clip is linked to the new capture.
+            let pending = pendingImports.removeValue(forKey: displayURL.standardizedFileURL.path)
+            let imported = importScreenshot(from: displayURL, source: pending?.source,
+                                            title: pending == nil ? displayURL.deletingPathExtension().lastPathComponent : pending?.title,
+                                            createdAt: pending?.createdAt)
             guard isHistoryURL(imported) else { throw CocoaError(.fileWriteUnknown) }
+            pending?.onImport(imported)
             return try commitAnnotations(displayURL: imported, baseURL: baseURL,
                                          renderedURL: renderedURL, document: document)
         }
