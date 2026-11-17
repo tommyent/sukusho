@@ -350,6 +350,7 @@ private struct RecordingStudioContent: View {
         case .idle:
             RecordingExportButton(
                 currentSettings: model.exportSettings,
+                hasAudio: model.hasAudio,
                 onExport: model.export(settings:)
             ) {
                 Label("Export", systemImage: "arrow.down.circle")
@@ -373,6 +374,7 @@ private struct RecordingStudioContent: View {
 
                 RecordingExportButton(
                     currentSettings: model.exportSettings,
+                    hasAudio: model.hasAudio,
                     onExport: model.export(settings:)
                 ) {
                     Image(systemName: "arrow.down.circle")
@@ -388,6 +390,7 @@ private struct RecordingStudioContent: View {
 
                 RecordingExportButton(
                     currentSettings: model.exportSettings,
+                    hasAudio: model.hasAudio,
                     onExport: model.export(settings:)
                 ) {
                     Text("Retry")
