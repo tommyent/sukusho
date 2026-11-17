@@ -20,9 +20,6 @@ enum AnnotationTextMetrics {
 
 enum AnnotationSizeStops {
     static let lineWidths: [CGFloat] = [1, 2, 3, 4, 6, 8, 12, 16]
-    static let textSizes: [CGFloat] = [AnnotationTextMetrics.minimumFontSize]
-        + [12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 64, 72, 96]
-            .filter { $0 > AnnotationTextMetrics.minimumFontSize }
 
     static func value(at fraction: CGFloat, in stops: [CGFloat]) -> CGFloat {
         guard stops.count > 1 else { return stops.first ?? 0 }

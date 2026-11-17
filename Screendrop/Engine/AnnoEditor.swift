@@ -173,6 +173,8 @@ final class AnnoEditor {
     private(set) var hintedBindingId: AnnoShapeID?
     private(set) var hoveredShapeId: AnnoShapeID?
     private(set) var snapGuides: [AnnoSnapGuide] = []
+    /// While a corner drag sizes a lone label, its size for the badge beside the handle.
+    private(set) var textSizeReadout: TextSizeReadout?
 
     private var undoStack: [AnnoDocument.Snapshot] = []
     /// Bumped by every undo mark, undo and redo, so a caller can tell
@@ -187,9 +189,13 @@ final class AnnoEditor {
 
     func setInteraction(_ interaction: AnnoInteraction) {
         self.interaction = interaction
-        if case .idle = interaction { snapGuides = [] }
+        if case .idle = interaction {
+            snapGuides = []
+            textSizeReadout = nil
+        }
     }
     func setSnapGuides(_ guides: [AnnoSnapGuide]) { snapGuides = guides }
+    func setTextSizeReadout(_ readout: TextSizeReadout?) { textSizeReadout = readout }
     func setBrush(_ brush: Box?) { self.brush = brush }
     func setHintedBinding(_ id: AnnoShapeID?) { hintedBindingId = id }
 

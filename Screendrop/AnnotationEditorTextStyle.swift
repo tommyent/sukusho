@@ -22,11 +22,6 @@ extension AnnotationEditorModel {
         return selectedTool == .text
     }
 
-    var selectedTextFontSize: CGFloat {
-        get { selectedTextShape?.textProps.map { CGFloat($0.fontSize) } ?? textFontSize }
-        set { setTextFontSize(newValue) }
-    }
-
     var selectedTextFontFamily: AnnoFontFamily {
         selectedTextShape?.textProps?.fontFamily ?? textFontFamily
     }
@@ -60,14 +55,6 @@ extension AnnotationEditorModel {
     var selectedTextBoxStyle: TextBoxStyle {
         get { selectedTextShape?.textProps.map { $0.boxStyle ?? .plain } ?? textBoxStyle }
         set { setTextBoxStyle(newValue) }
-    }
-
-    func setTextFontSize(_ pointSize: CGFloat) {
-        let clamped = AnnotationTextMetrics.clampedFontSize(pointSize)
-        textFontSize = clamped
-        engine.currentTextFontSize = Double(clamped)
-        saveAnnotationPreset()
-        updateSelectedText { $0.fontSize = Double(clamped) }
     }
 
     /// An SF family, or a face (`AnnoFontFace`) with the family to fall back on.

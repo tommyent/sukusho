@@ -959,7 +959,12 @@ final class AnnotationEditorModel {
         if let props = shape.textProps {
             textFontFamily = props.fontFamily
             textFontFace = props.fontFace
-            textFontSize = CGFloat(props.fontSize)
+            // New text starts at the size last given to a label, by its handles or by picking it.
+            if textFontSize != CGFloat(props.fontSize) {
+                textFontSize = CGFloat(props.fontSize)
+                engine.currentTextFontSize = props.fontSize
+                saveAnnotationPreset()
+            }
             textIsBold = props.isBold
             textIsItalic = props.isItalic
             textIsUnderline = props.isUnderline

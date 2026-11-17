@@ -123,6 +123,31 @@ enum TextBoxStyle: String, CaseIterable, Codable {
     case box
 }
 
+/// A label is sized by its handles (sd-g18y): a corner drag settles on another label's size when
+/// it comes close, which is how labels are matched without a size field, and otherwise on a
+/// whole point unless an edge snap has already placed the handle.
+enum TextSizeSnapping {
+    /// How close a dragged size has to come to another label's, as a fraction of it.
+    static let tolerance = 0.06
+
+    static func settle(_ size: Double, others: [Double], toWholePoint: Bool = true) -> (size: Double, matched: Bool) {
+        if let nearest = others.min(by: { abs($0 - size) < abs($1 - size) }),
+           abs(nearest - size) <= nearest * tolerance {
+            return (nearest, true)
+        }
+        return (toWholePoint ? Swift.max(4, size.rounded()) : size, false)
+    }
+}
+
+/// The size shown beside the handle while a corner drag sizes a lone label.
+struct TextSizeReadout: Equatable {
+    var pointSize: Double
+    /// The drag settled on another label's size.
+    var matchesAnotherLabel: Bool
+    /// Where the pointer is, in screen points.
+    var screenPoint: Vec
+}
+
 struct TextProps: Codable, Equatable, Hashable {
     var text: String = ""
     /// The text's colour, or the box's when it has one.

@@ -39,14 +39,8 @@ struct AnnotationStylePillButton: View {
                     }
                     .fixedSize()
 
+                    // Text is sized by its handles on the canvas, not here (sd-g18y).
                     if model.isTextStyleAvailable {
-                        TaperedSlider(
-                            title: "Text size",
-                            value: model.selectedTextFontSize,
-                            stops: AnnotationSizeStops.textSizes,
-                            onEditing: model.setInspectorEditing
-                        ) { model.selectedTextFontSize = $0 }
-
                         InspectorSegmented(
                             options: TextBoxStyle.allCases,
                             isSelected: { $0 == model.selectedTextBoxStyle },

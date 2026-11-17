@@ -433,6 +433,39 @@ struct TextLabelTests {
         #expect(abs(stretched.x - tip.x * props.w / width) < 1e-6 && stretched.y == tip.y)
     }
 
+    /// A label is sized by its corner (sd-g18y): the size lands on another label's size when the
+    /// drag comes within 6% of it, else on a whole point unless an edge snap placed the handle; a
+    /// badge shows it while dragging and goes at the end.
+    @Test func cornerDragSettlesOnAnotherLabelsSize() throws {
+        #expect(TextSizeSnapping.settle(37.3, others: []) == (37, false))
+        #expect(TextSizeSnapping.settle(57.5, others: [60, 24]) == (60, true))
+        #expect(TextSizeSnapping.settle(55, others: [60]) == (55, false))
+        #expect(TextSizeSnapping.settle(1.2, others: []) == (4, false))
+        #expect(TextSizeSnapping.settle(37.3, others: [], toWholePoint: false) == (37.3, false))
+
+        let (editor, id) = Self.labelEditor()
+        let other = AnnoShape(x: 100, y: 400, kind: .text(Self.boxed("Step 1", fontSize: 60)))
+        editor.replaceDocument(shapes: [try #require(editor.document.shape(id)), other])
+        editor.selectedIds = [id]
+        let corner = editor.pageToScreen(try #require(editor.selectionBounds).pagePoint(Vec(1, 1)))
+        editor.pointerDown(Self.pointer(corner.x, corner.y))
+        var sizes: [Double] = []
+        var matched = false
+        for step in stride(from: 4.0, through: 120, by: 4) {
+            editor.pointerMove(Self.pointer(corner.x + step, corner.y + step))
+            let size = try #require(editor.document.shape(id)?.textProps?.fontSize)
+            let readout = try #require(editor.textSizeReadout)
+            #expect(readout.pointSize == size)
+            if readout.matchesAnotherLabel { #expect(size == 60); matched = true }
+            sizes.append(size)
+        }
+        #expect(matched, "some step of the drag landed on the other label's 60 (sizes: \(sizes))")
+        // Whole points, except where an edge snap (to the page's centre, say) placed the handle.
+        #expect(sizes.filter { $0 == $0.rounded() }.count * 4 >= sizes.count * 3, "sizes: \(sizes)")
+        editor.pointerUp(Self.pointer(corner.x + 40, corner.y + 40))
+        #expect(editor.textSizeReadout == nil)
+    }
+
     /// The tail turns with its label: half a turn puts the tip, its handle and its click target
     /// on the other side of the origin.
     @Test func rotationCarriesTheTail() throws {

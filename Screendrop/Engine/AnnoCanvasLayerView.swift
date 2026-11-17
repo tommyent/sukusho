@@ -261,6 +261,8 @@ final class AnnoCanvasNSView: NSView {
             context.stroke(rect)
         }
 
+        if let readout = editor.textSizeReadout { drawTextSizeBadge(readout) }
+
         // While text is being typed the selection frame stays hidden - the text view is the only
         // affordance.
         guard editor.editingTextId == nil, !editor.selectedIds.isEmpty else { return }
@@ -323,6 +325,23 @@ final class AnnoCanvasNSView: NSView {
         for (_, point) in editor.resizeHandlePoints(bounds) { drawRoundHandle(at: point, in: context) }
 
         if let tail = editor.textTailHandlePoint { drawRoundHandle(at: tail, in: context) }
+    }
+
+    /// The label's size beside the pointer while a corner drag sizes it, in the snap guides' pink
+    /// when it has settled on another label's size.
+    private func drawTextSizeBadge(_ readout: TextSizeReadout) {
+        let text = "\(Int(readout.pointSize.rounded())) pt" as NSString
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold),
+            .foregroundColor: NSColor.white
+        ]
+        let size = text.size(withAttributes: attributes)
+        let badge = CGRect(x: readout.screenPoint.x + 14, y: readout.screenPoint.y + 14,
+                           width: ceil(size.width) + 14, height: ceil(size.height) + 6)
+        let fill = readout.matchesAnotherLabel ? NSColor.systemPink : AnnoTheme.selectionStroke
+        fill.setFill()
+        NSBezierPath(roundedRect: badge, xRadius: badge.height / 2, yRadius: badge.height / 2).fill()
+        text.draw(at: CGPoint(x: badge.minX + 7, y: badge.minY + 3), withAttributes: attributes)
     }
 
     private func drawRoundHandle(at point: Vec, in context: CGContext) {

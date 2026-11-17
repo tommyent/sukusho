@@ -604,6 +604,26 @@ extension AnnoEditor {
             }
         }
         if offset != .zero { applyResize() }
+        if uniformlySized, let id = selectedIds.first, let size = document.shape(id)?.textProps?.fontSize, size > 0 {
+            // A label's size comes from its handles: settle on another label's size or a whole point.
+            // ⌘ turns it off with the rest of snapping; an edge snap outranks the whole point.
+            let others = pointer.command ? [] : document.shapes.compactMap { $0.id == id ? nil : $0.textProps?.fontSize }
+            let settled = TextSizeSnapping.settle(size, others: others, toWholePoint: !pointer.command && offset == .zero)
+            if settled.size != size {
+                scaleX *= settled.size / size
+                scaleY *= settled.size / size
+                applyResize()
+                // Exactly the settled size, not the product's rounding error.
+                document.update(id) { shape in
+                    guard case var .text(props) = shape.kind, abs(props.fontSize - settled.size) < 0.01 else { return }
+                    props.fontSize = settled.size
+                    shape.kind = .text(props)
+                }
+            }
+            let landed = document.shape(id)?.textProps?.fontSize ?? settled.size
+            setTextSizeReadout(TextSizeReadout(pointSize: landed, matchesAnotherLabel: settled.matched && landed == settled.size,
+                                               screenPoint: pointer.screenPoint))
+        }
         if let actual = selectionBounds {
             retainSnapGuides(alignedWith: AnnoSnapping.anchors(actual.pagePoint(Vec(1 - anchorNormalized.x, 1 - anchorNormalized.y))))
         }
