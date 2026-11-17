@@ -26,7 +26,7 @@ extension ScreenshotFileActions {
             try await copyImageToClipboard(from: url, dataType: dataType)
             return nil
         }
-        let copied = try await OptimizedImageCopy.shared.copy(url, optimize: { try await optimizedUnlessEscaped($0) }) {
+        let copied = try await OptimizedImageCopy.shared.copy(url, optimize: { try await optimizedForCopy($0) }) {
             try await ScreenshotClipboardImage.item(from: $0, dataType: dataType, includeTIFF: ScreendropPreferences.copyTIFF)
         }
         guard let copied, copied.outcome == .optimized else { return nil }
@@ -34,9 +34,10 @@ extension ScreenshotFileActions {
         return "\(ImageOptimizationResult.saving(from: copied.originalByteCount, to: copied.resultByteCount)) · \(size)"
     }
 
+    /// The file to copy for `url`: its optimized result, or the file itself when nothing smaller comes out.
     /// Waits for the optimizer however long it takes, with a cue once the wait can be noticed. Esc stops
     /// the wait: the original is copied as it is.
-    private static func optimizedUnlessEscaped(_ url: URL) async throws -> ImageOptimizationResult {
+    static func optimizedForCopy(_ url: URL) async throws -> ImageOptimizationResult {
         final class Finished { var result: Result<ImageOptimizationResult, Error>? }
         let work = Task.detached { try await ImageOptimizer.shared.optimize(url, effort: OptimizePreferences.quietEffort) }
         let finished = Finished()

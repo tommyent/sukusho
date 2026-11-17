@@ -33,10 +33,22 @@ extension CaptureLibraryModel {
                     self.actionFeedback.show(original ? "Copied Original" : saving.map { "Copied · \($0)" } ?? "Copied")
                     return
                 } else {
+                    // Several captures go to the clipboard as files, in one write. Screenshots are optimized
+                    // first, as a single one is; ⇧⌘C copies them as they are. Recordings go as rendered.
+                    let optimizes = action == .copy && OptimizePreferences.whenCopying
                     var urls: [URL] = []
+                    var results: [ImageOptimizationResult] = []
+                    defer { results.forEach { $0.discard() } }   // the clipboard gets its own copies of the files
                     for item in selected {
-                        let url = item.isVideo ? try await RecordingDeliverable.resolve(for: item.fileURL) : item.fileURL
-                        urls.append(url)
+                        if item.isVideo {
+                            urls.append(try await RecordingDeliverable.resolve(for: item.fileURL))
+                        } else if optimizes {
+                            let result = try await ScreenshotFileActions.optimizedForCopy(item.fileURL)
+                            results.append(result)
+                            urls.append(result.url)
+                        } else {
+                            urls.append(item.fileURL)
+                        }
                     }
                     try VideoFileActions.copyFilesToClipboard(from: urls)
                 }
