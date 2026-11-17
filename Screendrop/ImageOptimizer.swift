@@ -580,34 +580,151 @@ nonisolated struct ImageOptimizer: Sendable {
                   let after = bitmap(candidate, in: space, bits: 8, premultiplied: true), before == after else {
                 throw Failure("The WebP file didn't keep the picture exactly, so it wasn't kept.")
             }
-        case .webP, .jpeg:
-            // A smaller, lossy file can't be the same pixels, but it has to decode in full and look like the source.
-            guard bitmap(candidate, in: space, bits: 8, premultiplied: true) != nil, resembles(original, candidate) else {
-                throw Failure("The converted file doesn't show the picture, so it wasn't kept.")
+        case .webP(let quality?), .jpeg(let quality):
+            // A smaller, lossy file can't be the same pixels. It has to keep what every lossy encoder keeps.
+            var onWhite = false
+            if case .jpeg = target { onWhite = true }
+            guard let before = bitmap(original, in: space, bits: 8, premultiplied: true),
+                  let after = bitmap(candidate, in: space, bits: 8, premultiplied: true),
+                  keepsPicture(before, after, width: original.width, height: original.height, onWhite: onWhite, quality: quality) else {
+                throw Failure("The converted file doesn't show the whole picture, so it wasn't kept.")
             }
         }
     }
 
-    /// Whether two images show the same picture, roughly: both drawn small on white, their colors may differ by
-    /// a sixth of the range on average. Any quality setting passes; another picture, or a blank one, doesn't.
-    private static func resembles(_ first: CGImage, _ second: CGImage) -> Bool {
-        let side = 64
-        func small(_ image: CGImage) -> [UInt8]? {
-            guard let context = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side * 4,
-                                          space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue),
-                  let data = context.data else { return nil }
-            let frame = CGRect(x: 0, y: 0, width: side, height: side)
-            context.setFillColor(CGColor.white)
-            context.fill(frame)
-            context.draw(image, in: frame)
-            return Array(UnsafeBufferPointer(start: data.assumingMemoryBound(to: UInt8.self), count: side * side * 4))
+    /// Whether a lossy `result` still shows `source`'s picture, both as premultiplied RGBA rows of 8 bits.
+    ///
+    /// Lossy encoders blur and quantize, but at every quality the app offers they keep the mean of each
+    /// 8 x 8 pixels closely (measured on real captures down to quality 10: within 22 of 255). So both pictures
+    /// are reduced to those means, and the result is refused when a block's brightness is far off, or when,
+    /// in any window of 4 x 4 blocks, the color has shifted, a pattern the source has there is gone or
+    /// replaced, or a pattern has appeared where the source is flat. Transparency must be exact: WebP's
+    /// is stored without loss, and a JPEG is compared with the source on white (`onWhite`), as it was made.
+    ///
+    /// What it can't see: a one-pixel pattern turned to its average, which MozJPEG does to a checkerboard
+    /// legitimately; below quality 30, thin detail lost without moving a block's mean by 48; and anything in
+    /// a picture under 16 pixels a side that the blocks don't show.
+    private static func keepsPicture(_ source: Data, _ result: Data, width: Int, height: Int, onWhite: Bool, quality: Int) -> Bool {
+        guard width > 0, height > 0, source.count == width * height * 4, result.count == source.count else { return false }
+        let block = 8, across = (width + block - 1) / block, down = (height + block - 1) / block
+        // Per block: the red, green and blue means of the source, then of the result.
+        var means = [Float](repeating: 0, count: across * down * 6)
+        let alphaKept = source.withUnsafeBytes { (s: UnsafeRawBufferPointer) -> Bool in
+            result.withUnsafeBytes { (r: UnsafeRawBufferPointer) -> Bool in
+                for blockY in 0..<down {
+                    for blockX in 0..<across {
+                        var sums = (0, 0, 0, 0, 0, 0)
+                        let endX = min(blockX * block + block, width), endY = min(blockY * block + block, height)
+                        for y in (blockY * block)..<endY {
+                            var at = (y * width + blockX * block) * 4
+                            for _ in (blockX * block)..<endX {
+                                let lift = onWhite ? 255 - Int(s[at + 3]) : 0
+                                if !onWhite, s[at + 3] != r[at + 3] { return false }
+                                sums.0 += Int(s[at]) + lift
+                                sums.1 += Int(s[at + 1]) + lift
+                                sums.2 += Int(s[at + 2]) + lift
+                                sums.3 += Int(r[at])
+                                sums.4 += Int(r[at + 1])
+                                sums.5 += Int(r[at + 2])
+                                at += 4
+                            }
+                        }
+                        let count = Float((endX - blockX * block) * (endY - blockY * block)), index = (blockY * across + blockX) * 6
+                        means[index] = Float(sums.0) / count
+                        means[index + 1] = Float(sums.1) / count
+                        means[index + 2] = Float(sums.2) / count
+                        means[index + 3] = Float(sums.3) / count
+                        means[index + 4] = Float(sums.4) / count
+                        means[index + 5] = Float(sums.5) / count
+                    }
+                }
+                return true
+            }
         }
-        guard let one = small(first), let two = small(second) else { return false }
-        var difference = 0
-        for index in stride(from: 0, to: one.count, by: 4) {
-            for channel in 0..<3 { difference += abs(Int(one[index + channel]) - Int(two[index + channel])) }
+        guard alphaKept else { return false }
+        func brightness(_ index: Int) -> Double {
+            (54 * Double(means[index]) + 183 * Double(means[index + 1]) + 19 * Double(means[index + 2])) / 256
         }
-        return difference / (side * side * 3) < 42
+        // Each limit leaves room above the worst a real encoder did at the lowest quality offered (in brackets).
+        let window = 4
+        for windowY in stride(from: 0, to: down, by: window) {
+            for windowX in stride(from: 0, to: across, by: window) {
+                var count = 0.0, s = 0.0, r = 0.0, ss = 0.0, rr = 0.0, sr = 0.0
+                var shift = (0.0, 0.0, 0.0)
+                for blockY in windowY..<min(windowY + window, down) {
+                    for blockX in windowX..<min(windowX + window, across) {
+                        let index = (blockY * across + blockX) * 6
+                        let a = brightness(index), b = brightness(index + 3)
+                        guard abs(a - b) <= 48 else { return false }   // one block's brightness (22)
+                        count += 1
+                        s += a
+                        r += b
+                        ss += a * a
+                        rr += b * b
+                        sr += a * b
+                        shift.0 += Double(means[index] - means[index + 3])
+                        shift.1 += Double(means[index + 1] - means[index + 4])
+                        shift.2 += Double(means[index + 2] - means[index + 5])
+                    }
+                }
+                // The window's brightness (22) and each of its colors (55, for one-pixel red and blue stripes).
+                guard abs(s - r) / count <= 32, max(abs(shift.0), abs(shift.1), abs(shift.2)) / count <= 96 else { return false }
+                // A sliver at the edge is too few blocks to speak of a pattern.
+                guard count >= 8 else { continue }
+                let spread = max(0, ss / count - (s / count) * (s / count)).squareRoot()
+                let spreadAfter = max(0, rr / count - (r / count) * (r / count)).squareRoot()
+                if spread >= 8 {
+                    // A pattern in the source: most of its contrast is still there (0.59), in the same places (0.83).
+                    guard spreadAfter >= 0.35 * spread,
+                          sr / count - (s / count) * (r / count) >= 0.5 * spread * spreadAfter else { return false }
+                } else if spread < 2 {
+                    // Flat in the source: nothing has been drawn there (5.5).
+                    guard spreadAfter <= 24 else { return false }
+                }
+            }
+        }
+
+        // Finer than a block: thin text changes a block's mean too little to stand out from what an encoder
+        // does to a dithered picture. So each 16 x 16 tile with contrast coarser than single pixels must keep
+        // some of it: a tile gone flat is content gone. Real results kept 0.74 of it or more, an ordered dither
+        // 0.20, at quality 30. Below that MozJPEG flattens film grain entirely, so there only the blocks count.
+        guard quality >= 30 else { return true }
+        return source.withUnsafeBytes { (s: UnsafeRawBufferPointer) -> Bool in
+            result.withUnsafeBytes { (r: UnsafeRawBufferPointer) -> Bool in
+                for tileY in stride(from: 0, to: height - 15, by: 16) {
+                    for tileX in stride(from: 0, to: width - 15, by: 16) {
+                        // Sums and sums of squares: the source's pixels, the result's, and the source's 2 x 2 cells.
+                        var a = 0, aa = 0, b = 0, bb = 0, c = 0, cc = 0
+                        for y in stride(from: tileY, to: tileY + 16, by: 2) {
+                            for x in stride(from: tileX, to: tileX + 16, by: 2) {
+                                var cell = 0
+                                for down in 0..<2 {
+                                    for across in 0..<2 {
+                                        let at = ((y + down) * width + x + across) * 4
+                                        let lift = onWhite ? 255 - Int(s[at + 3]) : 0
+                                        let before = (54 * (Int(s[at]) + lift) + 183 * (Int(s[at + 1]) + lift) + 19 * (Int(s[at + 2]) + lift)) >> 8
+                                        let after = (54 * Int(r[at]) + 183 * Int(r[at + 1]) + 19 * Int(r[at + 2])) >> 8
+                                        a += before
+                                        aa += before * before
+                                        b += after
+                                        bb += after * after
+                                        cell += before
+                                    }
+                                }
+                                c += cell
+                                cc += cell * cell
+                            }
+                        }
+                        let spread = max(0, Double(aa) / 256 - (Double(a) / 256) * (Double(a) / 256)).squareRoot()
+                        let coarse = max(0, Double(cc) / 64 - (Double(c) / 64) * (Double(c) / 64)).squareRoot() / 4
+                        guard spread >= 20, coarse >= 10 else { continue }
+                        let spreadAfter = max(0, Double(bb) / 256 - (Double(b) / 256) * (Double(b) / 256)).squareRoot()
+                        guard spreadAfter >= 0.1 * spread else { return false }
+                    }
+                }
+                return true
+            }
+        }
     }
 
     /// The first image, turned the way its orientation says. An image already upright is decoded as it is,

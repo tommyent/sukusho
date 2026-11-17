@@ -567,6 +567,102 @@ private func isRunning(_ text: String) -> Bool {
         }
     }
 
+    /// Astra's second review: a lossy result is judged block by block. A picture with a part gone or blank is
+    /// refused, however small the part, and so is lost transparency; a real low-quality result passes.
+    @Test func aLossyResultMustKeepEveryPartOfThePicture() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        /// `image` again, on white when `opaque`, with whatever `change` draws over it.
+        func drawn(_ image: CGImage, opaque: Bool = false, _ change: (CGContext) -> Void = { _ in }) throws -> CGImage {
+            let alpha: CGImageAlphaInfo = opaque ? .noneSkipLast : .premultipliedLast
+            let space = try #require(image.colorSpace)
+            let context = try #require(CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0,
+                                                 space: space, bitmapInfo: alpha.rawValue))
+            let frame = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+            if opaque {
+                context.setFillColor(CGColor(gray: 1, alpha: 1))
+                context.fill(frame)
+            }
+            context.draw(image, in: frame)
+            change(context)
+            return try #require(context.makeImage())
+        }
+        /// What the real encoder makes of `image`, kept to stand in for another picture's result.
+        func encoded(_ image: CGImage, _ name: String, _ target: ImageOptimizationTarget) async throws -> URL {
+            let result = try await bench.optimizer.optimize(try bench.file("made/\(name).png", image), to: target)
+            try #require(result.outcome == .converted)
+            let kept = bench.folder.appending(path: "standins/\(name).\(result.url.pathExtension)")
+            try FileManager.default.createDirectory(at: kept.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? FileManager.default.removeItem(at: kept)
+            try FileManager.default.copyItem(at: result.url, to: kept)
+            result.discard()
+            return kept
+        }
+        func refused(_ source: URL, _ target: ImageOptimizationTarget, standIn: URL, _ what: String) async throws {
+            var tool = "cwebp"
+            if case .jpeg = target { tool = "cjpeg" }
+            let tools = try standInTools(where: tool, leaves: standIn)
+            defer { try? FileManager.default.removeItem(at: tools) }
+            let result = try await ImageOptimizer(toolsDirectory: tools, outputDirectory: bench.output).optimize(source, to: target)
+            guard case .failed = result.outcome else {
+                Issue.record("\(what) as \(target): \(result.outcome)")
+                result.discard()
+                return
+            }
+            #expect(result.url == source)
+            #expect(bench.leftovers.isEmpty, "\(what): \(bench.leftovers)")
+        }
+
+        // Real results pass at 50 and at 10, the lowest quality the app offers: light, dark and with transparency.
+        let page = Sample.screenshot(width: 1280, height: 800, seed: 51)
+        let clear = Sample.screenshot(width: 640, height: 400, seed: 53, transparent: true)
+        let pageFile = try bench.file("Page.png", page), clearFile = try bench.file("Clear.png", clear)
+        let darkFile = try bench.file("Dark.png", Sample.screenshot(width: 640, height: 400, seed: 52, dark: true))
+        // Noise is what a lossy encoder keeps least of, and quality 30 is where the finer rule starts.
+        let noiseFile = try bench.file("Noise.png", Sample.noise(width: 256, height: 256))
+        for file in [pageFile, darkFile, clearFile, noiseFile] {
+            for target in [ImageOptimizationTarget.jpeg(quality: 10), .jpeg(quality: 30), .jpeg(quality: 50), .webP(quality: 10), .webP(quality: 50)] {
+                let result = try await bench.optimizer.optimize(file, to: target)
+                #expect(result.outcome == .converted, "\(file.lastPathComponent) as \(target): \(result.outcome)")
+                result.discard()
+            }
+        }
+
+        // Astra's case: a black bar on white, and a result that is only white.
+        let bar = try drawn(Sample.noise(width: 64, height: 64), opaque: true) { context in
+            context.setFillColor(CGColor(gray: 1, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
+            context.setFillColor(CGColor(gray: 0, alpha: 1))
+            context.fill(CGRect(x: 16, y: 28, width: 32, height: 8))
+        }
+        let white = try drawn(bar) { context in
+            context.setFillColor(CGColor(gray: 1, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
+        }
+        let barFile = try bench.file("Bar.png", bar)
+        for target in [ImageOptimizationTarget.jpeg(quality: 80), .webP(quality: 80)] {
+            try await refused(barFile, target, standIn: try await encoded(white, "white", target), "a blank result")
+        }
+
+        // Sparse content: the same page with one line of its text painted over, then with one word.
+        let paper = CGColor(colorSpace: try #require(page.colorSpace), components: [0.97, 0.97, 0.98, 1])!
+        for (what, gone) in [("a line gone", CGRect(x: 300, y: 590, width: 980, height: 16)), ("a word gone", CGRect(x: 300, y: 510, width: 64, height: 16))] {
+            let erased = try drawn(page) { context in
+                context.setFillColor(paper)
+                context.fill(gone)
+            }
+            let erasedFile = try bench.file("made/erased.png", erased)
+            #expect(try pixels(at: erasedFile) != pixels(at: pageFile))   // there was text there
+            for target in [ImageOptimizationTarget.jpeg(quality: 50), .webP(quality: 50)] {
+                try await refused(pageFile, target, standIn: try await encoded(erased, "erased", target), what)
+            }
+        }
+
+        // Transparency: a WebP of the picture on white is not the picture.
+        try await refused(clearFile, .webP(quality: 80), standIn: try await encoded(try drawn(clear, opaque: true), "opaque", .webP(quality: 80)),
+                          "transparency gone")
+    }
+
     @Test func anOutputFolderThatCannotBeWrittenFallsBackToTheOriginal() async throws {
         let bench = try Bench()
         defer { bench.remove() }
