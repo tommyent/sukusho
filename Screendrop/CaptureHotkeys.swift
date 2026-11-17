@@ -408,25 +408,31 @@ enum SystemScreenshotShortcuts {
 
     typealias Clash = (action: CaptureHotkeyAction, shortcut: HotkeyShortcut)
 
-    private static func list(_ items: [String]) -> String { ListFormatter.localizedString(byJoining: items) }
+    /// "⇧⌘3, ⇧⌘4 and ⇧⌘5": the wording agreed with the owner has no comma before "and".
+    private static func list(_ items: [String]) -> String {
+        items.count < 2 ? items.joined() : items.dropLast().joined(separator: ", ") + " and " + items[items.count - 1]
+    }
 
     private static func inKeyOrder(_ clashes: [Clash]) -> [Clash] {
         clashes.sorted { ($0.shortcut.keyCode, $0.shortcut.modifiers.rawValue) < ($1.shortcut.keyCode, $1.shortcut.modifiers.rawValue) }
     }
 
-    /// The warning, the same in Settings and the launch notice, short and plain (the owner, 2026-11-17): the keys that
-    /// clash, in key order, and the two ways out. Without free keys to move to, only choosing your own is offered.
-    /// Choose My Own in Settings records the first clashing row, top to bottom.
-    static func firstToChoose(in order: [CaptureHotkeyAction], shortcuts: [CaptureHotkeyAction: HotkeyShortcut],
-                              system: Set<HotkeyShortcut>) -> CaptureHotkeyAction? {
-        order.first { shortcuts[$0].map(system.contains) ?? false }
-    }
-
+    /// The warning, the same in Settings and the launch notice, in the words agreed with the owner (2026-11-17): the keys
+    /// that clash, in key order, and the two ways out. Without free keys to move to, the first way is picking keys here.
     static func warning(_ clashes: [Clash], canUseOtherKeys: Bool) -> String {
         let keys = list(inKeyOrder(clashes).map { $0.shortcut.displayTokens.joined() })
-        let what = clashes.count == 1 ? "\(keys) is also one of macOS’s screenshot shortcuts."
-            : "\(keys) are also macOS’s screenshot shortcuts."
-        return what + (canUseOtherKeys ? " Use other keys, or choose your own." : " Choose your own keys.")
+        let one = clashes.count == 1
+        let what = one ? "\(keys) is also one of macOS’s screenshot shortcuts." : "\(keys) are also macOS’s screenshot shortcuts."
+        let ours = canUseOtherKeys ? (one ? "Give Sukusho another key (you can change it)" : "Give Sukusho other keys (you can change them)")
+            : (one ? "Pick another key for Sukusho" : "Pick other keys for Sukusho")
+        return "\(what) \(ours), or turn macOS’s off in Keyboard Shortcuts › Screenshots."
+    }
+
+    /// Opens System Settings at its Keyboard pane, the nearest place a link reaches (checked in the VM); Keyboard
+    /// Shortcuts… › Screenshots is one click and one choice from there.
+    @MainActor static func openKeyboardSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     // MARK: - Use Other Keys

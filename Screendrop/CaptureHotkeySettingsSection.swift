@@ -81,7 +81,9 @@ struct CaptureHotkeySettingsSection: View {
         }
     }
 
-    /// Above the list while shortcuts clash (the owner's layout B and wording): the keys, and the two choices.
+    /// Above the list while shortcuts clash (the owner's layout B and wording): the keys, and the two ways out. Use Other
+    /// Keys moves them here, where the rows show the new keys to change if wanted; Open Keyboard Shortcuts… goes to
+    /// macOS's settings, to turn macOS's off and keep Sukusho's keys.
     private var clashSummary: some View {
         let canMove = !SystemScreenshotShortcuts.otherKeys(for: clashes.map(\.action), shortcuts: shortcuts, system: systemAll).isEmpty
         return VStack(alignment: .leading, spacing: DS.Space.s) {
@@ -91,20 +93,13 @@ struct CaptureHotkeySettingsSection: View {
                 if canMove {
                     Button("Use Other Keys") { useOtherKeys() }
                         .controlSize(.small)
-                        .help("Move these to keys macOS doesn’t use")
+                        .help("Move these to keys macOS doesn’t use; you can change them below")
                 }
-                Button("Choose My Own") { chooseMyOwn() }
+                Button("Open Keyboard Shortcuts…") { SystemScreenshotShortcuts.openKeyboardSettings() }
                     .controlSize(.small)
-                    .help("Type a new shortcut for \(clashes.first?.action.title ?? "it")")
+                    .help("Turn macOS’s off in Keyboard Shortcuts › Screenshots")
             }
         }
-    }
-
-    /// Choose My Own: the first clashing row starts recording, as a click on its keys does.
-    private func chooseMyOwn() {
-        guard let first = SystemScreenshotShortcuts.firstToChoose(in: actions, shortcuts: shortcuts, system: Set(systemEntries.values)),
-              !isRecording(first) else { return }
-        toggleRecording(for: first)
     }
 
     /// A warning in the system's own colors: the multicolor triangle, the text as secondary labels are.

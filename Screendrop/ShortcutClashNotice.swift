@@ -29,9 +29,9 @@ extension SystemScreenshotShortcuts {
 }
 
 /// Once, at launch, when a Sukusho shortcut is one of macOS's screenshot shortcuts that is still on (the owner,
-/// 2026-11-17: beta 1), with the owner's two choices: Use Other Keys moves them, Choose My Own opens Settings ›
-/// Shortcuts to record new ones; Not Now leaves them. Settings keeps the same line and choices for as long as the clash
-/// lasts; this notice never comes back.
+/// 2026-11-17: beta 1), with the owner's two ways out: Use Other Keys… moves them and opens Settings › Shortcuts to
+/// change them further, Open Keyboard Shortcuts… opens macOS's settings to turn macOS's off; Not Now leaves them.
+/// Settings keeps the same line and buttons for as long as the clash lasts; this notice never comes back.
 enum ShortcutClashNotice {
     static let shownKey = "shortcutClashNotice.shown"
 
@@ -46,15 +46,18 @@ enum ShortcutClashNotice {
         alert.alertStyle = .informational
         alert.messageText = "macOS also uses some of Sukusho’s shortcuts"
         alert.informativeText = SystemScreenshotShortcuts.warning(clashes, canUseOtherKeys: !otherKeys.isEmpty)
-        if !otherKeys.isEmpty { alert.addButton(withTitle: "Use Other Keys") }
-        alert.addButton(withTitle: "Choose My Own")
+        if !otherKeys.isEmpty { alert.addButton(withTitle: "Use Other Keys…") }
+        alert.addButton(withTitle: "Open Keyboard Shortcuts…")
         alert.addButton(withTitle: "Not Now")
         NSApp.activate()
         let response = alert.runModal()
         let first = NSApplication.ModalResponse.alertFirstButtonReturn
         switch (otherKeys.isEmpty, response) {
-        case (false, first): SystemScreenshotShortcuts.useOtherKeys()
-        case (false, .alertSecondButtonReturn), (true, first): SettingsWindowController.show(tab: .shortcuts)
+        case (false, first):
+            // One button for "other keys or your own" (the owner): moved, then shown in Settings to change if wanted.
+            SystemScreenshotShortcuts.useOtherKeys()
+            SettingsWindowController.show(tab: .shortcuts)
+        case (false, .alertSecondButtonReturn), (true, first): SystemScreenshotShortcuts.openKeyboardSettings()
         default: break
         }
     }

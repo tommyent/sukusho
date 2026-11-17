@@ -85,16 +85,19 @@ struct SystemScreenshotShortcutsTests {
         #expect(SystemScreenshotShortcuts.entry(for: HotkeyShortcut(modifiers: [.command], keyCode: 20), in: entries) == nil)
 
         let several: [SystemScreenshotShortcuts.Clash] = [(.screenRecording, shift5), (.scrollingCapture, shift4), (.area, shift3)]
+        // The words desk-lead agreed with the owner, for Sukusho's three default clashes.
         #expect(SystemScreenshotShortcuts.warning(several, canUseOtherKeys: true)
-            == "⇧⌘3, ⇧⌘4, and ⇧⌘5 are also macOS’s screenshot shortcuts. Use other keys, or choose your own.")
+            == "⇧⌘3, ⇧⌘4 and ⇧⌘5 are also macOS’s screenshot shortcuts. Give Sukusho other keys (you can change them), or turn macOS’s off in Keyboard Shortcuts › Screenshots.")
+        #expect(SystemScreenshotShortcuts.warning([(.area, shift3), (.screenRecording, shift5)], canUseOtherKeys: true)
+            .hasPrefix("⇧⌘3 and ⇧⌘5 are also"))
         #expect(SystemScreenshotShortcuts.warning([(.area, shift3)], canUseOtherKeys: true)
-            == "⇧⌘3 is also one of macOS’s screenshot shortcuts. Use other keys, or choose your own.")
+            == "⇧⌘3 is also one of macOS’s screenshot shortcuts. Give Sukusho another key (you can change it), or turn macOS’s off in Keyboard Shortcuts › Screenshots.")
         #expect(SystemScreenshotShortcuts.warning([(.area, shift3)], canUseOtherKeys: false)
-            == "⇧⌘3 is also one of macOS’s screenshot shortcuts. Choose your own keys.")
+            == "⇧⌘3 is also one of macOS’s screenshot shortcuts. Pick another key for Sukusho, or turn macOS’s off in Keyboard Shortcuts › Screenshots.")
         #expect(!SystemScreenshotShortcuts.warning(several, canUseOtherKeys: true).hasPrefix("On"))
     }
 
-    /// The owner's set as the defaults, his row order, and Choose My Own recording the first clashing row.
+    /// The owner's set as the defaults, and his row order.
     @Test func theOwnersDefaultsAndOrder() {
         let shiftCmd = { (key: Int) in HotkeyShortcut(modifiers: [.shift, .command], keyCode: key) }
         let expected: [CaptureHotkeyAction: HotkeyShortcut] = [
@@ -109,12 +112,6 @@ struct SystemScreenshotShortcutsTests {
             == [.fullscreen, .window, .area, .scrollingCapture, .screenRecording, .textCapture, .library, .clipboardHistory])
         #expect(Set(CaptureHotkeyAction.settingsOrder) == Set(CaptureHotkeyAction.allCases))
 
-        let system = SystemScreenshotShortcuts.enabled(in: [:])
-        #expect(SystemScreenshotShortcuts.firstToChoose(in: CaptureHotkeyAction.settingsOrder, shortcuts: expected, system: system) == .area)
-        var moved = expected
-        moved[.area] = altShift(20)
-        #expect(SystemScreenshotShortcuts.firstToChoose(in: CaptureHotkeyAction.settingsOrder, shortcuts: moved, system: system) == .scrollingCapture)
-        #expect(SystemScreenshotShortcuts.firstToChoose(in: CaptureHotkeyAction.settingsOrder, shortcuts: expected, system: []) == nil)
     }
 
     private func altShift(_ keyCode: Int) -> HotkeyShortcut { HotkeyShortcut(modifiers: [.option, .shift, .command], keyCode: keyCode) }
