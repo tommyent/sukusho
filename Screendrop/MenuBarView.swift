@@ -99,6 +99,14 @@ struct MenuBarView: View {
             // only fires while Sukusho is the front app.
             .keyboardShortcut(Self.shortcut(for: .library))
 
+            // The ⌃⌘V popup, for the frontmost app, as its global shortcut opens it (Fable #10).
+            Button {
+                ClipboardPopupPresenter.shared.show()
+            } label: {
+                Label("Clipboard History", systemImage: "list.clipboard")
+            }
+            .keyboardShortcut(Self.shortcut(for: .clipboardHistory))
+
             Menu {
                 projectsMenuContent
             } label: {
