@@ -7,6 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0F7100000000000000000001 /* Screendrop/ImageOptimizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F7100000000000000000002 /* Screendrop/ImageOptimizer.swift */; };
+		0F7100000000000000000003 /* Screendrop/OptimizedImageCopy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F7100000000000000000004 /* Screendrop/OptimizedImageCopy.swift */; };
+		0F7100000000000000000011 /* oxipng in Embed Helpers */ = {isa = PBXBuildFile; fileRef = 0F7100000000000000000012 /* oxipng */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		0F7100000000000000000013 /* cwebp in Embed Helpers */ = {isa = PBXBuildFile; fileRef = 0F7100000000000000000014 /* cwebp */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		0F7100000000000000000015 /* webpmux in Embed Helpers */ = {isa = PBXBuildFile; fileRef = 0F7100000000000000000016 /* webpmux */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		0F7100000000000000000017 /* cjpeg in Embed Helpers */ = {isa = PBXBuildFile; fileRef = 0F7100000000000000000018 /* cjpeg */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		0F7100000000000000000019 /* jpegtran in Embed Helpers */ = {isa = PBXBuildFile; fileRef = 0F710000000000000000001A /* jpegtran */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		0F7100000000000000000021 /* OptimizerLicenses in Resources */ = {isa = PBXBuildFile; fileRef = 0F7100000000000000000022 /* OptimizerLicenses */; };
 		AFAC00000000000000000001 /* Screendrop/Engine/AnnoEditorClipboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFAC00000000000000000002 /* Screendrop/Engine/AnnoEditorClipboard.swift */; };
 		AE7C00000000000000000001 /* Screendrop/Engine/AnnoTextEditorOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE7C00000000000000000002 /* Screendrop/Engine/AnnoTextEditorOverlay.swift */; };
 		AF3100000000000000000005 /* Screendrop/FreeToUseMusicPickerModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF3100000000000000000006 /* Screendrop/FreeToUseMusicPickerModel.swift */; };
@@ -170,6 +178,11 @@
 			dstSubfolderSpec = 1;
 			files = (
 				AB0C0000000000000000000E /* sukusho-mcp in Embed Helpers */,
+				0F7100000000000000000011 /* oxipng in Embed Helpers */,
+				0F7100000000000000000013 /* cwebp in Embed Helpers */,
+				0F7100000000000000000015 /* webpmux in Embed Helpers */,
+				0F7100000000000000000017 /* cjpeg in Embed Helpers */,
+				0F7100000000000000000019 /* jpegtran in Embed Helpers */,
 			);
 			name = "Embed Helpers";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -178,6 +191,14 @@
 
 /* Begin PBXFileReference section */
 		AB0C00000000000000000001 /* sukusho-mcp */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "sukusho-mcp"; sourceTree = BUILT_PRODUCTS_DIR; };
+		0F7100000000000000000002 /* Screendrop/ImageOptimizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ImageOptimizer.swift; sourceTree = SOURCE_ROOT; };
+		0F7100000000000000000004 /* Screendrop/OptimizedImageCopy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/OptimizedImageCopy.swift; sourceTree = SOURCE_ROOT; };
+		0F7100000000000000000012 /* oxipng */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; name = oxipng; path = Vendor/optimizers/oxipng; sourceTree = SOURCE_ROOT; };
+		0F7100000000000000000014 /* cwebp */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; name = cwebp; path = Vendor/optimizers/cwebp; sourceTree = SOURCE_ROOT; };
+		0F7100000000000000000016 /* webpmux */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; name = webpmux; path = Vendor/optimizers/webpmux; sourceTree = SOURCE_ROOT; };
+		0F7100000000000000000018 /* cjpeg */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; name = cjpeg; path = Vendor/optimizers/cjpeg; sourceTree = SOURCE_ROOT; };
+		0F710000000000000000001A /* jpegtran */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; name = jpegtran; path = Vendor/optimizers/jpegtran; sourceTree = SOURCE_ROOT; };
+		0F7100000000000000000022 /* OptimizerLicenses */ = {isa = PBXFileReference; lastKnownFileType = folder; name = OptimizerLicenses; path = Vendor/optimizers/OptimizerLicenses; sourceTree = SOURCE_ROOT; };
 		AB0C00000000000000000012 /* Screendrop/AgentAccessCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AgentAccessCore.swift; sourceTree = SOURCE_ROOT; };
 		AB0C00000000000000000014 /* Screendrop/AgentAccessSocket.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AgentAccessSocket.swift; sourceTree = SOURCE_ROOT; };
 		AB0C00000000000000000016 /* Screendrop/AgentAccessTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AgentAccessTools.swift; sourceTree = SOURCE_ROOT; };
@@ -374,8 +395,22 @@
 				AA6100000000000000000002 /* ScreendropTests */,
 				AB0C00000000000000000002 /* SukushoMCP */,
 				AA6100000000000000000003 /* Tested logic */,
+				0F7100000000000000000030 /* Optimizers */,
 				3163891E2F9DC05A002A7AF3 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		0F7100000000000000000030 /* Optimizers */ = {
+			isa = PBXGroup;
+			children = (
+				0F7100000000000000000012 /* oxipng */,
+				0F7100000000000000000014 /* cwebp */,
+				0F7100000000000000000016 /* webpmux */,
+				0F7100000000000000000018 /* cjpeg */,
+				0F710000000000000000001A /* jpegtran */,
+				0F7100000000000000000022 /* OptimizerLicenses */,
+			);
+			name = Optimizers;
 			sourceTree = "<group>";
 		};
 		3163891E2F9DC05A002A7AF3 /* Products */ = {
@@ -391,6 +426,8 @@
 		AA6100000000000000000003 /* Tested logic */ = {
 			isa = PBXGroup;
 			children = (
+				0F7100000000000000000002 /* Screendrop/ImageOptimizer.swift */,
+				0F7100000000000000000004 /* Screendrop/OptimizedImageCopy.swift */,
 				AFAC00000000000000000002 /* Screendrop/Engine/AnnoEditorClipboard.swift */,
 				AE7C00000000000000000002 /* Screendrop/Engine/AnnoTextEditorOverlay.swift */,
 				AF3100000000000000000006 /* Screendrop/FreeToUseMusicPickerModel.swift */,
@@ -642,6 +679,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0F7100000000000000000021 /* OptimizerLicenses in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -703,6 +741,8 @@
 				AA6200000000000000000005 /* Screendrop/ScreenRecordingState.swift in Sources */,
 				AF1100000000000000000001 /* Screendrop/RecordingDesktopFilter.swift in Sources */,
 				AA6100000000000000000064 /* Screendrop/Engine/AnnoEditor.swift in Sources */,
+				0F7100000000000000000001 /* Screendrop/ImageOptimizer.swift in Sources */,
+				0F7100000000000000000003 /* Screendrop/OptimizedImageCopy.swift in Sources */,
 				AFAC00000000000000000001 /* Screendrop/Engine/AnnoEditorClipboard.swift in Sources */,
 				AE7C00000000000000000001 /* Screendrop/Engine/AnnoTextEditorOverlay.swift in Sources */,
 				AA6100000000000000000065 /* Screendrop/Engine/AnnoEditorInteraction.swift in Sources */,

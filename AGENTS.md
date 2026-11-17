@@ -65,6 +65,7 @@ All annotation positions/sizes are normalized to `[0, 1]` relative to the source
 ## Conventions
 
 - **No new SPM packages or external dependencies** without the owner's OK. The existing ones are DockProgress, Sparkle (updates) and the MCP Swift SDK (the `sukusho-mcp` helper only); otherwise the project uses only Apple frameworks (SwiftUI, AppKit, ScreenCaptureKit, CoreGraphics, CoreImage, ImageIO, Carbon).
+- **Image optimizers:** `Vendor/optimizers` holds five encoders that the app bundles in `Contents/Helpers` and runs as separate processes through `ImageOptimizer.swift`: oxipng (MIT), libwebp's cwebp and webpmux (BSD-3-Clause), and MozJPEG's cjpeg and jpegtran (IJG, BSD-3-Clause, zlib). Their licenses are in `Vendor/optimizers/OptimizerLicenses`, shown from Settings › About. `scripts/build-optimizers.sh` builds them from pinned source; the app build only copies and signs what is checked in. Never add a GPL encoder (pngquant, libimagequant, jpegoptim, or anything taken from Clop).
 - **`@Observable` macro** (Observation framework) is used for state - not `ObservableObject`/`@Published`.
 - **App sandbox is disabled** (`ENABLE_APP_SANDBOX = NO`) - the app needs screen capture permissions and direct filesystem access.
 - Screenshots are saved as lossless PNG to `NSTemporaryDirectory()` first, then optionally compressed to JPEG on export.

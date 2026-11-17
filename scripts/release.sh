@@ -68,7 +68,7 @@ if [[ -d "$FW/Versions/B/XPCServices" ]]; then
     $SIGN "$FW/Versions/B/XPCServices/Installer.xpc"
     $SIGN --preserve-metadata=entitlements "$FW/Versions/B/XPCServices/Downloader.xpc"
 fi
-for code in "$FW/Versions/B/Autoupdate" "$FW/Versions/B/Updater.app" "$FW" "$APP/Contents/Helpers/sukusho-mcp"; do
+for code in "$FW/Versions/B/Autoupdate" "$FW/Versions/B/Updater.app" "$FW" "$APP"/Contents/Helpers/*(.); do   # the MCP helper and the image optimizers
     $SIGN "$code"
 done
 $SIGN --entitlements Screendrop/Screendrop.entitlements "$APP"
