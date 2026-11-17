@@ -985,5 +985,24 @@ struct ClipboardCardTextTests {
         // From a code app, any plain text counts, as before.
         #expect(ClipboardList.kindWord(of: text("ls -la", from: "com.apple.Terminal")) == "code")
     }
+
+    /// Fable #3: rgb() and hsl() get a swatch, as hex does.
+    @Test func functionalColorsAreColors() {
+        #expect(ClipboardCapturePolicy.functionalColor("rgb(10, 132, 255)") == "#0A84FF")
+        #expect(ClipboardCapturePolicy.functionalColor("rgb(10 132 255 / 50%)") == "#0A84FF80")
+        #expect(ClipboardCapturePolicy.functionalColor("rgba(255, 99, 99, 0.5)") == "#FF636380")
+        #expect(ClipboardCapturePolicy.functionalColor("RGB(100%, 0%, 0%)") == "#FF0000")
+        #expect(ClipboardCapturePolicy.functionalColor("hsl(0, 100%, 50%)") == "#FF0000")
+        #expect(ClipboardCapturePolicy.functionalColor("hsl(120deg 100% 25%)") == "#008000")
+        #expect(ClipboardCapturePolicy.functionalColor("hsl(210, 80%, 55%)") == "#308CE8")
+        #expect(ClipboardCapturePolicy.functionalColor("hsla(240, 100%, 50%, 0.25)") == "#0000FF40")
+        for text in ["rgb(300, 0, 0)", "rgb(1, 2)", "hsl(0, 100, 50)", "rgb(a, b, c)", "rgbx(1, 2, 3)", "rgb(1, 2, 3", "call(rgb(1, 2, 3))"] {
+            #expect(ClipboardCapturePolicy.functionalColor(text) == nil, "\(text)")
+        }
+        if case .color(let hex) = ClipboardCapturePolicy.textForm("  rgb(10, 132, 255) ") { #expect(hex == "#0A84FF") } else {
+            Issue.record("rgb() isn't a color")
+        }
+        #expect(ClipboardList.cardTitle(of: text("rgb(10, 132, 255)")) == "rgb(10, 132, 255)")
+    }
 }
 
