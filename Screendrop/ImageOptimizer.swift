@@ -301,6 +301,8 @@ nonisolated struct ImageOptimizer: Sendable {
         process.standardOutput = FileHandle.nullDevice
         // A file, not a pipe: a pipe nobody reads would stop an encoder that has much to say.
         process.standardError = errors
+        // Work nobody is waiting for, such as a new capture optimized in the background, stays out of the way.
+        if Task.currentPriority <= .utility { process.qualityOfService = .utility }
         let toolRun = ToolRun(process)
         let status: Int32
         do {

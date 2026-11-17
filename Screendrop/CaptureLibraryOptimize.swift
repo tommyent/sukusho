@@ -87,7 +87,7 @@ enum CaptureOptimizer {
     /// Settings › Optimize › Optimize new captures: quietly, right after a screenshot reaches the Library.
     static func optimizeNewCapture(_ url: URL) {
         guard OptimizePreferences.newCaptures else { return }
-        Task {
+        Task(priority: .utility) {
             // Not while the capture is being copied or saved by its after-capture actions.
             try? await Task.sleep(for: .seconds(2))
             if case .optimized = await optimizeInPlace(url, effort: OptimizePreferences.quietEffort) {
