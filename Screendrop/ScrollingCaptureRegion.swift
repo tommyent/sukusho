@@ -82,19 +82,62 @@ nonisolated enum ScrollingCaptureRegion {
             rows: top..<(top + Int((selection.height * scale).rounded())))
     }
 
-    /// The rim macOS draws along a window's edge: the last device-pixel row of a Safari window on
-    /// 27.0.1 is lighter than the page above it, with the corners' shading at its ends (VM, 2026-11-08).
-    static let windowRim: CGFloat = 1
+    /// The bottom of a window that is window, not page: the last device-pixel row is lighter than
+    /// the page above it (VM, 2026-11-08), and above it the rounded corners cut the page away.
+    /// On 27.0 at 2x the corners are 12-15 px wide and 11-28 rows tall at Chrome's bottom edge, over
+    /// a near-black desktop: full-page captures showed them as black notches at the left and right
+    /// edges (owner's captures, 2026-11-14). Eight points clears the corners and the rim.
+    static let windowBottomChrome: CGFloat = 8
+
+    /// The overlay scroll bar macOS draws along the right edge of a window's content while it
+    /// scrolls, over the page: 18 device px wide, inset about 2 pt, on 27.0. Twelve points clears it.
+    static let windowScrollBar: CGFloat = 12
+
+    /// What of the selection is page: a capture that reaches the target window's bottom chrome
+    /// (its rim and rounded corners) or the overlay scroll bar along its right edge stops short of
+    /// them. Frames may include both - the crop never does, so no frame's rows can carry either
+    /// into the stitched output.
+    struct PageCrop: Equatable, Sendable {
+        let rect: CGRect
+        /// The crop stops above the target window's bottom chrome.
+        let trimsBottomChrome: Bool
+        /// The crop stops short of the target window's right edge, past the scroll bar.
+        let trimsScrollBar: Bool
+    }
+
+    static func pageCrop(selection: CGRect, matching: Matching, windows: [(frame: CGRect, isTarget: Bool)]) -> PageCrop {
+        var rect = selection
+        var trimsBottomChrome = false, trimsScrollBar = false
+        // A window a point or so short of holding the selection (drawn that little too wide) still
+        // has its chrome to keep out; a window in front of the selection is no page to crop.
+        let anchor = matching.target ?? (matching.reason == .selectionNotInWindow
+            ? windows.indices.first { windows[$0].isTarget && windows[$0].frame.intersects(selection) } : nil)
+        if let target = anchor {
+            let window = windows[target].frame
+            // The corners are only in the frames when they reach the window's bottom themselves.
+            if matching.rect.maxY >= window.maxY - 0.5, rect.maxY > window.maxY - windowBottomChrome {
+                let trim = max(0, min(rect.maxY - (window.maxY - windowBottomChrome), rect.height - 8))
+                rect.size.height -= trim
+                trimsBottomChrome = trim > 0
+            }
+            if rect.maxX > window.maxX - windowScrollBar {
+                let trim = max(0, min(rect.maxX - (window.maxX - windowScrollBar), rect.width - 8))
+                rect.size.width -= trim
+                trimsScrollBar = trim > 0
+            }
+        }
+        return PageCrop(rect: rect, trimsBottomChrome: trimsBottomChrome, trimsScrollBar: trimsScrollBar)
+    }
 
     /// The frame rows below the selection that the output keeps when auto-scroll reaches the end of
     /// the page: down to the bottom of the frames (the target window's visible bottom, short of windows
-    /// in front), a `windowRim` above `windowBottom` (the target window's frame), and no lower than
-    /// `usableBottom`, the bottom of the display's visible frame, so the Dock's full-display window,
-    /// which `matching` leaves out, never ends up in it.
+    /// in front), `windowBottomChrome` above `windowBottom` (the target window's frame), and no lower
+    /// than `usableBottom`, the bottom of the display's visible frame, so the Dock's full-display
+    /// window, which `matching` leaves out, never ends up in it.
     static func rowsBelow(output: ScrollingCaptureOutputRect, matching: CGRect, windowBottom: CGFloat?,
                           usableBottom: CGFloat, scale: CGFloat) -> Range<Int> {
-        let bottom = Int(((min(matching.maxY, usableBottom, (windowBottom ?? .infinity) - windowRim) - matching.minY) * scale)
-            .rounded(.down))
+        let bottom = Int(((min(matching.maxY, usableBottom, (windowBottom ?? .infinity) - windowBottomChrome)
+            - matching.minY) * scale).rounded(.down))
         return output.rows.upperBound..<max(output.rows.upperBound, bottom)
     }
 }

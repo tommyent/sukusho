@@ -6,8 +6,8 @@ import Foundation
 ///
 /// The output is the first frame down to the cut, every row appended since,
 /// then the last reference frame from the cut down: the rows below the cut are
-/// held back (see `ScrollingCaptureOffsetVerifier.heldBackFraction`). A sidebar
-/// pinned while the content moved is shown once (`PinnedRun`).
+/// held back (see `ScrollingCaptureOffsetVerifier.heldBackFraction`). Every
+/// output pixel comes from a captured row; repeated sticky content stays visible.
 actor ScrollingCaptureFrameStitcher {
     enum Placement: Equatable, Sendable {
         /// Moved up by this many rows; they were appended.
@@ -58,24 +58,6 @@ actor ScrollingCaptureFrameStitcher {
     private var lastWasUpward = false
     /// The last offset appended: tried when Vision's candidate doesn't verify.
     private var lastStep: Int?
-    /// Side columns that stayed put while the content between them moved (`Verified.pinnedLeft` and
-    /// `pinnedRight`), stuck at output row `start`, over output rows `from` to `end` (nil: still pinned).
-    /// There the output shows the frame they stuck in from the cut down, once, then the side's most
-    /// common colour in that frame (a column one colour down most of it, a divider, keeps that),
-    /// instead of a slice of the same sidebar per step. A run that loses columns goes on in fewer from
-    /// that row, as another run with the same `start`.
-    private struct PinnedRun {
-        let isLeft: Bool
-        let columns: Range<Int>
-        let start: Int
-        var from: Int
-        var end: Int?
-        /// The frame's columns `stored`, rows 0..<height.
-        let stored: Range<Int>
-        let frame: [UInt8]
-    }
-    private var pinnedRuns: [PinnedRun] = []
-
     init?(firstFrame: [UInt8], width: Int, height: Int, ignoredTrailingColumns: Int) {
         guard width > 0, height > 0, firstFrame.count == width * height * 4 else { return nil }
         self.width = width
@@ -156,24 +138,16 @@ actor ScrollingCaptureFrameStitcher {
             guard -k * rowBytes <= appended.count else {
                 first = frame
                 appended = []
-                pinnedRuns = []
                 return .restarted(k)
             }
             appended.removeLast(-k * rowBytes)
-            // Runs past the new end are gone; the one it ends in is current again.
-            let end = cut + appended.count / rowBytes
-            pinnedRuns.removeAll { $0.from >= end }
-            for i in pinnedRuns.indices where pinnedRuns[i].end ?? end >= end { pinnedRuns[i].end = nil }
             return .trimmed(k)
         }
         lastWasUpward = false
         // Never true: the verifier only confirms overlap above the cut.
         guard k < cut else { return .skipped }
-        let previous = last
         last = frame
         guard k > 0 else { return .redrawn }
-        updatePinnedRuns(left: found.pinnedLeft, right: found.pinnedRight, from: cut + appended.count / rowBytes,
-                         previous: previous, offset: k)
         appended.append(contentsOf: frame[((cut - k) * rowBytes)..<(cut * rowBytes)])
         lastStep = k
         return .appended(k)
@@ -181,8 +155,8 @@ actor ScrollingCaptureFrameStitcher {
 
     /// The capture so far, shrunk for the live preview: every `step`th pixel of every `step`th
     /// row, packed like `makeImage`, with `step` the smallest that fits `maxWidth`.
-    // shortcut: nearest-neighbour and without `pinnedRuns`, which reads fine at thumbnail
-    // size and costs nothing per frame; average the pixels if the preview ever gets large.
+    // shortcut: nearest-neighbour reads fine at thumbnail size and costs nothing per frame;
+    // average the pixels if the preview ever gets large.
     func preview(maxWidth: Int) -> (pixels: [UInt8], width: Int, height: Int) {
         let step = Swift.max(1, (width + Swift.max(1, maxWidth) - 1) / Swift.max(1, maxWidth))
         let outWidth = (width + step - 1) / step, outHeight = (stitchedHeight + step - 1) / step
@@ -212,7 +186,7 @@ actor ScrollingCaptureFrameStitcher {
     }
 
     /// Packed BGRA, `stitchedHeight` rows, then `below`: more rows, the same width, that go on under
-    /// the last frame, with `pinnedRuns` applied.
+    /// the last frame. No captured pixel is repainted.
     func makeImage(appending below: [UInt8] = []) -> [UInt8] {
         let split = cut * width * 4
         var image: [UInt8] = []
@@ -221,8 +195,6 @@ actor ScrollingCaptureFrameStitcher {
         image.append(contentsOf: appended)
         image.append(contentsOf: last[split...])
         image.append(contentsOf: below)
-        let rows = image.count / (width * 4)
-        image.withUnsafeMutableBytes { applyPinnedRuns(to: $0, rows: rows) }
         return image
     }
 
@@ -240,76 +212,6 @@ actor ScrollingCaptureFrameStitcher {
             last.withUnsafeBytes { data.append($0.baseAddress!.advanced(by: split).assumingMemoryBound(to: UInt8.self), count: last.count - split) }
         }
         data.append(contentsOf: below)
-        let rows = data.count / (width * 4)
-        data.withUnsafeMutableBytes { applyPinnedRuns(to: $0, rows: rows) }
         return data
-    }
-
-    private func applyPinnedRuns(to out: UnsafeMutableRawBufferPointer, rows: Int) {
-        for run in pinnedRuns where run.from < rows {
-            run.frame.withUnsafeBytes { frame in
-                func stored(_ x: Int, _ y: Int) -> UInt32 {
-                    frame.loadUnaligned(fromByteOffset: (y * run.stored.count + x - run.stored.lowerBound) * 4, as: UInt32.self)
-                }
-                func mostCommon(_ counts: [UInt32: Int]) -> (colour: UInt32, count: Int) {
-                    counts.max { ($0.value, $0.key) < ($1.value, $1.key) }.map { ($0.key, $0.value) } ?? (0, 0)
-                }
-                var side: [UInt32: Int] = [:]
-                let columns = run.columns.map { x in
-                    var counts: [UInt32: Int] = [:]
-                    for y in 0..<height { counts[stored(x, y), default: 0] += 1 }
-                    side.merge(counts, uniquingKeysWith: +)
-                    return mostCommon(counts)
-                }
-                let background = mostCommon(side).colour
-                // A column that is one colour down most of the frame (a divider, a border) goes on in it.
-                let fill = columns.map { $0.count * 4 >= height * 3 ? $0.colour : background }
-                for row in run.from..<min(run.end ?? rows, rows) {
-                    let y = cut + row - run.start
-                    for (i, x) in run.columns.enumerated() {
-                        out.storeBytes(of: y < height ? stored(x, y) : fill[i], toByteOffset: (row * width + x) * 4, as: UInt32.self)
-                    }
-                }
-            }
-        }
-    }
-
-    /// Opens, narrows or ends each side's run for a frame appended at output row `row`, `offset` below
-    /// `previous`. The right side takes the ignored trailing columns too: the overlay scroll bar's strip.
-    private func updatePinnedRuns(left: Int, right: Int, from row: Int, previous: [UInt8], offset k: Int) {
-        let usable = ScrollingCaptureOffsetVerifier.hashedWidth(width: width, ignoredTrailingColumns: ignoredTrailingColumns)
-        /// The rows that changed in these columns, if most didn't move with the content: a sidebar redrawn
-        /// in place (Wikipedia's contents reflowing as the current section turns bold), still pinned.
-        func redrawnInPlace(_ columns: Range<Int>) -> Bool {
-            func row(_ pixels: [UInt8], _ y: Int) -> ArraySlice<UInt8> {
-                pixels[((y * width + columns.lowerBound) * 4)..<((y * width + columns.upperBound) * 4)]
-            }
-            var changed = 0, moved = 0
-            for y in 0..<(height - k) where row(last, y) != row(previous, y) {
-                changed += 1
-                if row(last, y) == row(previous, y + k) { moved += 1 }
-            }
-            return changed == 0 || moved * 2 < changed
-        }
-        for (isLeft, pinned) in [(true, left), (false, right)] {
-            let columns = isLeft ? 0..<pinned : (usable - pinned)..<(pinned > 0 ? width : usable - pinned)
-            if let i = pinnedRuns.lastIndex(where: { $0.isLeft == isLeft && $0.end == nil }) {
-                // The run's columns that aren't pinned this time leave it only when they moved with the
-                // content (a footer pushing the sidebar up, say): from here it goes on in the rest, if any.
-                let run = pinnedRuns[i]
-                let kept = run.columns.clamped(to: columns.isEmpty ? (isLeft ? 0..<0 : width..<width) : columns)
-                let dropped = isLeft ? kept.upperBound..<run.columns.upperBound : run.columns.lowerBound..<kept.lowerBound
-                guard !dropped.isEmpty, !redrawnInPlace(dropped) else { continue }
-                pinnedRuns[i].end = row
-                if !kept.isEmpty {
-                    pinnedRuns.append(PinnedRun(isLeft: isLeft, columns: kept, start: run.start, from: row,
-                                                stored: run.stored, frame: run.frame))
-                }
-            } else if !columns.isEmpty {
-                // `last` matches the new frame there, so its rows from the cut down go on from the rows above.
-                let frame = (0..<height).flatMap { y in last[((y * width + columns.lowerBound) * 4)..<((y * width + columns.upperBound) * 4)] }
-                pinnedRuns.append(PinnedRun(isLeft: isLeft, columns: columns, start: row, from: row, stored: columns, frame: frame))
-            }
-        }
     }
 }
