@@ -56,25 +56,30 @@ struct CaptureTextParagraphsTests {
                 == "The capture is taken with a timer and an example of the screen.")
     }
 
-    @Test func misreadFootnoteMarksGo() {
-        #expect(CaptureTextParagraphs.reflowed("shows the contents of a computer display.!2] It is created")
-                == "shows the contents of a computer display. It is created")
-        #expect(CaptureTextParagraphs.reflowed("a display|3] then more") == "a display then more")
-        // Only the misread mark itself: it never makes another mark disposable.
-        #expect(CaptureTextParagraphs.reflowed("the display.!2] Tokyo[3] is big") == "the display. Tokyo[3] is big")
-    }
-
-    /// Sol, round 6: every literal "[n]" stays, real footnotes included, since text can't tell one from an index.
-    @Test func literalMarksStay() {
-        #expect(CaptureTextParagraphs.reflowed("the display.[2] It is") == "the display.[2] It is")
-        #expect(CaptureTextParagraphs.reflowed("that powers the display. [2]") == "that powers the display. [2]")
-        #expect(CaptureTextParagraphs.reflowed("the display. [2] It is") == "the display. [2] It is")
-        #expect(CaptureTextParagraphs.reflowed("as a camera[3] would") == "as a camera[3] would")
-        #expect(CaptureTextParagraphs.reflowed("array [2] of items") == "array [2] of items")
-        #expect(CaptureTextParagraphs.reflowed("echo capture complete. [2]") == "echo capture complete. [2]")
-        #expect(CaptureTextParagraphs.reflowed("A computer display.!2] This is prose.\n\nalpha[2] and beta[3]")
-                == "A computer display. This is prose.\n\nalpha[2] and beta[3]")
-        #expect(CaptureTextParagraphs.reflowed("alpha[2] and beta[3] # note.!2]") == "alpha[2] and beta[3] # note.")
+    /// Capture Text never deletes characters by pattern, footnote marks or anything that looks like an OCR slip: in
+    /// code, JSON or a regex the same characters are data (Astra and Sol, seven rounds on 2026-11-17). It only joins
+    /// lines.
+    @Test func noMarkIsRemoved() {
+        let unchanged = [
+            "shows the contents of a computer display.!2] It is created",
+            "a display|3] then more",
+            "the display.!2] Tokyo[3] is big",
+            "the display.[2] It is",
+            "that powers the display. [2]",
+            "the display. [2] It is",
+            "as a camera[3] would",
+            "array [2] of items",
+            "echo capture complete. [2]",
+            "A computer display.!2] This is prose.\n\nalpha[2] and beta[3]",
+            "alpha[2] and beta[3] # note.!2]",
+            // Sol, round 7: the "misread" shapes as data.
+            "let text = \"x!2] y\"",
+            "message = \"text!2] next\"",
+            "print(\"text!2] next\")",
+            "{\"message\":\"text!2] next\"}",
+            "const pattern = /[a|2] b/",
+        ]
+        for text in unchanged { #expect(CaptureTextParagraphs.reflowed(text) == text) }
     }
 
     /// Astra R5-3: an index in code isn't a footnote mark.

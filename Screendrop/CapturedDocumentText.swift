@@ -161,7 +161,7 @@ nonisolated enum CaptureTextParagraphs {
         let lines = text.components(separatedBy: "\n")
         let nonBlank = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
         // Code keeps every line.
-        guard nonBlank.count > 1 else { return cleaned(text) }
+        guard nonBlank.count > 1 else { return text }
         guard nonBlank.filter(looksLikeCode).count * 3 < nonBlank.count else { return text }
         let longest = nonBlank.map { $0.trimmingCharacters(in: .whitespaces).count }.max() ?? 0
         var out: [String] = []
@@ -175,7 +175,7 @@ nonisolated enum CaptureTextParagraphs {
                 ? String(last.dropLast()) + line
                 : last + " " + line
         }
-        return cleaned(out.joined(separator: "\n"))
+        return out.joined(separator: "\n")
     }
 
     /// The first words of what was copied, for the message that says it's on the clipboard.
@@ -208,13 +208,5 @@ nonisolated enum CaptureTextParagraphs {
         let line = line.trimmingCharacters(in: .whitespaces)
         return line.hasSuffix("{") || line.hasSuffix("}") || line.hasSuffix(";") || line.hasPrefix("//")
             || ["func ", "let ", "var ", "const ", "def ", "return ", "import ", "#include"].contains { line.hasPrefix($0) }
-    }
-
-    /// Only a misread footnote mark goes: "!2]" or "|2]" after a letter or a full stop, before whitespace or the end
-    /// (Fable saw "display.!2]" in Wikipedia text). Every literal "[n]" stays, real footnotes such as "display.[2]"
-    /// included: text alone can't tell a citation from an index ("alpha[2]", "items?.[2]", "echo done. [2]"), and one
-    /// mark never makes another disposable (Astra and Sol, six rounds on 2026-11-17).
-    private static func cleaned(_ text: String) -> String {
-        text.replacingOccurrences(of: #"(?<=[\p{L}.])[!|]\d{1,3}\](?=\s|$)"#, with: "", options: .regularExpression)
     }
 }
