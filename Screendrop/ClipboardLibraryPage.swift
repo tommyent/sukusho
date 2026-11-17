@@ -7,7 +7,7 @@ struct ClipboardLibraryPage: View {
     /// The status bar's card-size slider, shared with the captures and Cloud grids.
     let cardWidth: CGFloat
     @FocusState private var gridFocused: Bool
-    /// The grid's width, for how many cards a row holds when Up and Down move the selection.
+    /// The grid's width, for its layout and for how many cards a row holds when Up and Down move the selection.
     @State private var gridWidth: CGFloat = 0
     @AppStorage(ScreendropPreferences.clipboardHistoryEnabledKey) private var enabled = false
     @State private var library = CaptureLibraryModel.shared
@@ -19,6 +19,8 @@ struct ClipboardLibraryPage: View {
             ProgressView("Loading Clipboard…").workspaceTextPlate().frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             let sections = model.librarySections(query: library.searchText)
+            // The captures grid's layout: the strip a fixed column count left on the right is shared out instead.
+            let grid = LibraryGridMetrics(width: gridWidth, cardWidth: cardWidth)
             VStack(spacing: 0) {
                 // On a bar of its own, as the Cloud page's rows are, so the grid scrolls under it, never over it.
                 Group { if model.showsSnippets { snippetBar } else { filterBar } }
@@ -38,18 +40,20 @@ struct ClipboardLibraryPage: View {
                                     Text(section.title).font(DS.TypeScale.labelSemibold).foregroundStyle(.secondary)
                                         .padding(.horizontal, DS.Space.ml).padding(.vertical, 2)
                                         .workspaceTextPlate(capsule: true)
-                                    LazyVGrid(columns: [GridItem(.adaptive(minimum: cardWidth, maximum: cardWidth), spacing: DS.Space.l)],
-                                              alignment: .leading, spacing: DS.Space.l) {
+                                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(grid.cellWidth), spacing: grid.spacing),
+                                                             count: grid.columns),
+                                              alignment: .leading, spacing: LibraryGridMetrics.minimumGap) {
                                         ForEach(section.entries) { entry in
                                             // The captures grid's proportions: a 16:10 picture over the labels.
-                                            ClipboardCard(entry: entry, model: model, faceHeight: (cardWidth * 0.625).rounded(.down),
+                                            ClipboardCard(entry: entry, model: model, faceHeight: (grid.cellWidth * 0.625).rounded(.down),
                                                           isSelected: model.librarySelection == entry.id)
                                                 .id(entry.id)
                                         }
                                     }
                                 }
                             }
-                            .padding(DS.Space.xl)
+                            .padding(.leading, grid.leftInset).padding(.trailing, grid.rightInset)
+                            .padding(.vertical, DS.Space.xl)
                             // A click on any card, the selected one too, gives the grid the keyboard, so arrows and
                             // Space work on the cards rather than the sidebar or the search field (Astra, 2026-11-16).
                             .simultaneousGesture(TapGesture().onEnded { gridFocused = true })
@@ -68,7 +72,7 @@ struct ClipboardLibraryPage: View {
                         .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow]) { press in
                             let ids = sections.flatMap { $0.entries.map(\.id) }
                             let step = press.key == .leftArrow ? -1 : press.key == .rightArrow ? 1
-                                : (press.key == .upArrow ? -1 : 1) * columns
+                                : (press.key == .upArrow ? -1 : 1) * grid.columns
                             guard let next = ClipboardList.move(from: model.librarySelection, by: step, in: ids) else { return .ignored }
                             model.librarySelection = next
                             // Only as far as it takes to show the card, as Finder scrolls.
@@ -84,12 +88,6 @@ struct ClipboardLibraryPage: View {
                 if let selection = model.librarySelection, !shown.contains(selection) { model.librarySelection = nil }
             }
         }
-    }
-
-    /// Cards in a row, as the adaptive grid lays them out inside its padding.
-    private var columns: Int {
-        let spacing = DS.Space.l
-        return max(1, Int((gridWidth - 2 * DS.Space.xl + spacing) / (cardWidth + spacing)))
     }
 
     private var snippetBar: some View {

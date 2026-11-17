@@ -750,3 +750,29 @@ struct ClipboardImageMatchTests {
         #expect(!ClipboardImageMatch.isSamePicture(Data("not an image".utf8), URL(fileURLWithPath: "/nonexistent.png")))
     }
 }
+
+/// The captures grid's layout, which the clipboard grid now shares (Astra B2: a strip was left on the right).
+@Suite
+struct LibraryGridMetricsTests {
+    @Test func spareWidthGoesToGapsThenEvenMargins() {
+        for width in stride(from: 220.0, through: 1600, by: 37) {
+            for card in [140.0, 192, 220, 320] {
+                let grid = LibraryGridMetrics(width: width, cardWidth: card)
+                let row = CGFloat(grid.columns) * grid.cellWidth + CGFloat(grid.columns - 1) * grid.spacing
+                #expect(grid.leftInset + row + grid.rightInset <= width, "\(width) \(card)")
+                #expect(grid.spacing >= 16 && grid.spacing <= 32)
+                // No room for another card is left over, and the margins differ by at most a point.
+                #expect(width - row - grid.leftInset - grid.rightInset < grid.cellWidth + grid.spacing)
+                #expect(abs(grid.leftInset - grid.rightInset) <= 1, "\(width) \(card)")
+            }
+        }
+    }
+
+    @Test func astrasCaseFitsTwoCardsCentred() {
+        // About 600 pt of grid at a medium card size: two cards, the leftover split evenly, not a strip on the right.
+        let grid = LibraryGridMetrics(width: 600, cardWidth: 192)
+        #expect(grid.columns == 2)
+        #expect(grid.spacing == 32)
+        #expect(grid.leftInset == 92)
+    }
+}
