@@ -479,6 +479,21 @@ struct ClipboardHistoryStoreTests {
         #expect(entry.isDescribed)
     }
 
+    /// A description finished after an optimiser's rewrite took the entry's place isn't written onto it.
+    @Test func aDescriptionOfStaleContentIsNotWritten() async throws {
+        let store = try store()
+        guard case .inserted(let id) = try await store.record(picture(7), at: start) else { return }
+        let asked = try #require(try await store.entries().first).hash
+        #expect(try await store.record(picture(7, reencoded: true), at: start + 0.5) == .replaced(id))
+        try await store.setReadText(id, "stale", forHash: asked)
+        try await store.setDescription(id, title: "Stale", keywords: [], category: nil, forHash: asked)
+        var entry = try #require(try await store.entries().first)
+        #expect(entry.readText == nil && entry.modelTitle == nil && !entry.isDescribed)
+        try await store.setReadText(id, "current", forHash: entry.hash)
+        entry = try #require(try await store.entries().first)
+        #expect(entry.readText == "current")
+    }
+
     @Test func aDeclinedImageIsNotAskedAgain() async throws {
         guard case .inserted(let id) = try await store().record(image(500), at: start) else { return }
         #expect(try await store().entries().first?.isDescribed == false)

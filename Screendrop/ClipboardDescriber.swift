@@ -50,7 +50,7 @@ final class ClipboardDescriber {
                     return
                 }
                 text = read
-                try? await store.setReadText(entry.id, read)
+                try? await store.setReadText(entry.id, read, forHash: entry.hash)
             }
             guard describes, !entry.isDescribed else { return }
             let paragraphs = (text ?? "").split(separator: "\n").map(String.init)
@@ -63,7 +63,7 @@ final class ClipboardDescriber {
                 skipped.insert(entry.id)
             case .insight(let insight):
                 try? await store.setDescription(entry.id, title: insight.declined ? nil : insight.title,
-                                                keywords: insight.keywords, category: insight.category)
+                                                keywords: insight.keywords, category: insight.category, forHash: entry.hash)
             }
         }
     }

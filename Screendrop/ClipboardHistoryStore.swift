@@ -272,16 +272,20 @@ actor ClipboardHistoryStore {
     }
 
     /// The text read in an image; empty when it has none, so it isn't read again.
-    func setReadText(_ id: String, _ text: String) throws {
-        try run("UPDATE entries SET read_text = ?, change_seq = ? WHERE id = ?", [text, try nextChange(), id])
+    /// With `hash`, nothing is written when the entry's content changed while its text was read: the answer
+    /// belongs to the image it was asked about (Astra, 2026-11-16).
+    func setReadText(_ id: String, _ text: String, forHash hash: String? = nil) throws {
+        try run("UPDATE entries SET read_text = ?, change_seq = ? WHERE id = ? AND (? IS NULL OR hash = ?)",
+                [text, try nextChange(), id, hash, hash])
     }
 
-    /// The model's answer for an image, or its refusal (no title), after which it isn't asked again.
-    func setDescription(_ id: String, title: String?, keywords: [String], category: String?) throws {
+    /// The model's answer for an image, or its refusal (no title), after which it isn't asked again; with `hash`,
+    /// only while the entry still holds that content.
+    func setDescription(_ id: String, title: String?, keywords: [String], category: String?, forHash hash: String? = nil) throws {
         try run("""
             UPDATE entries SET model_title = ?, model_keywords = ?, model_category = ?, described = 1, change_seq = ?
-            WHERE id = ?
-            """, [title, keywords.isEmpty ? nil : keywords.joined(separator: "\n"), category, try nextChange(), id])
+            WHERE id = ? AND (? IS NULL OR hash = ?)
+            """, [title, keywords.isEmpty ? nil : keywords.joined(separator: "\n"), category, try nextChange(), id, hash, hash])
     }
 
     func richText(for id: String) throws -> [String: Data] {
