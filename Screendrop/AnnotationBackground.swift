@@ -48,6 +48,13 @@ struct AnnotationBackgroundSettings: Equatable {
         camera.hasEffect || !usesCanvasLayout ? .center : alignment
     }
 
+    /// Alignment is the one placement control that something else can block:
+    /// a camera transform sets the position itself.
+    var alignmentAvailability: AnnotationAlignmentAvailability {
+        if !requiresCanvasLayout { return .hidden }
+        return camera.hasEffect ? .blockedByCamera : .available
+    }
+
     var hasRenderableContent: Bool {
         isEnabled
             || camera.hasEffect
@@ -55,6 +62,15 @@ struct AnnotationBackgroundSettings: Equatable {
             || border.isVisible
             || watermark.isVisible
     }
+}
+
+/// Whether the inspector shows Alignment, and why it can't be used. Without a
+/// canvas (no background, border, camera or scene blur) the placement and edge
+/// rows do nothing and are hidden, not greyed (sd-g18y).
+enum AnnotationAlignmentAvailability: Equatable {
+    case hidden
+    case blockedByCamera
+    case available
 }
 
 struct AnnotationScreenshotBorderSettings: Equatable {

@@ -67,7 +67,11 @@ struct AnnotationEditorInspector: View {
                         onEditorAction: onEditorAction,
                         onPickWallpaper: onPickWallpaper,
                         onPreview: { model.previewBackground($0, isHovering: $1) },
-                        onEndPreview: { model.previewBackground = nil }
+                        onEndPreview: { model.previewBackground = nil },
+                        onTurnCameraOff: {
+                            onEditorAction()
+                            withAnimation(sectionAnimation) { model.setCameraOn(false) }
+                        }
                     )
                 }
 
@@ -88,12 +92,13 @@ struct AnnotationEditorInspector: View {
                         }
                     }
                 ) {
-                    AnnotationScreenshotEdgeInspector(
-                        settings: backgroundBinding,
-                        onEditorAction: onEditorAction
-                    )
-                    .disabled(!model.backgroundSettings.requiresCanvasLayout)
-                    .opacity(model.backgroundSettings.requiresCanvasLayout ? 1 : 0.4)
+                    // Corners and shadow need a canvas; Border works without one.
+                    if model.backgroundSettings.requiresCanvasLayout {
+                        AnnotationScreenshotEdgeInspector(
+                            settings: backgroundBinding,
+                            onEditorAction: onEditorAction
+                        )
+                    }
 
                     InspectorToggleRow("Border", isOn: Binding(
                         get: { model.backgroundSettings.border.isEnabled },

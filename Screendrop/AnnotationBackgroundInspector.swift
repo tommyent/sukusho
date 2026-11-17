@@ -30,6 +30,7 @@ struct AnnotationBackgroundInspector: View {
     let onPickWallpaper: () -> Void
     let onPreview: (AnnotationBackgroundStyle, Bool) -> Void
     let onEndPreview: () -> Void
+    let onTurnCameraOff: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
@@ -44,10 +45,16 @@ struct AnnotationBackgroundInspector: View {
                 onEndPreview: onEndPreview
             )
 
-            placementControls
-                // Without a canvas there is nothing to shape, pad or align.
-                .disabled(!settings.requiresCanvasLayout)
-                .opacity(settings.requiresCanvasLayout ? 1 : 0.4)
+            // Without a canvas there is nothing to shape, pad or align: the
+            // rows stay out of the way until a background makes them work.
+            if settings.requiresCanvasLayout {
+                placementControls
+            } else {
+                Text("Choose a background to set padding, corners, shadow and alignment.")
+                    .font(.inspectorLabel)
+                    .foregroundStyle(InspectorControlPalette.label)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -78,10 +85,23 @@ struct AnnotationBackgroundInspector: View {
             InspectorRow("Alignment") {
                 AlignmentPositionPicker(
                     alignment: $settings.alignment,
-                    isEnabled: !settings.camera.hasEffect,
+                    isEnabled: settings.alignmentAvailability == .available,
                     onEditorAction: onEditorAction
                 )
                 .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+
+            if settings.alignmentAvailability == .blockedByCamera {
+                // Kept in view with the reason and a way out, not silently greyed.
+                Text("Camera sets the position while it’s on. [Turn Camera off](sukusho-inspector:camera-off) to use alignment.")
+                    .font(.inspectorLabel)
+                    .foregroundStyle(InspectorControlPalette.label)
+                    .tint(Palette.accent)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .environment(\.openURL, OpenURLAction { _ in
+                        onTurnCameraOff()
+                        return .handled
+                    })
             }
         }
     }
@@ -661,7 +681,7 @@ private struct AlignmentPositionPicker: View {
         .background(shape.fill(InspectorControlPalette.trackFill(for: colorScheme)))
         .clipShape(shape)
         .opacity(isEnabled ? 1 : 0.46)
-        .help(isEnabled ? "Image alignment" : "Reset Camera to use alignment")
+        .help(isEnabled ? "Image alignment" : "Turn Camera off to use alignment")
         .onChange(of: isEnabled) { _, enabled in
             if !enabled {
                 hoveredAlignment = nil

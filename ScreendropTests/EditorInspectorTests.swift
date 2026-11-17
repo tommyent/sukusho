@@ -29,6 +29,30 @@ struct EditorInspectorTests {
         #expect(camera == tilted)
     }
 
+    /// With nothing to place the screenshot on, the placement and edge rows are hidden; a
+    /// background, a border, a camera or scene blur brings them back, and Camera blocks only
+    /// Alignment, which then says why.
+    @Test static func placementRowsShowOnlyWhenTheyWork() {
+        var settings = AnnotationBackgroundSettings()
+        #expect(!settings.requiresCanvasLayout && settings.alignmentAvailability == .hidden)
+
+        settings.style = .solid(.transparent)
+        #expect(settings.requiresCanvasLayout && settings.alignmentAvailability == .available)
+
+        var cameraSwitch = AnnotationCameraSwitch()
+        cameraSwitch.turn(true, camera: &settings.camera)
+        #expect(settings.alignmentAvailability == .blockedByCamera)
+        cameraSwitch.turn(false, camera: &settings.camera)
+        #expect(settings.alignmentAvailability == .available)
+
+        settings.style = .none
+        settings.border.isEnabled = true
+        #expect(settings.alignmentAvailability == .available, "a border needs a canvas, so padding works")
+        settings.border.isEnabled = false
+        settings.progressiveBlur.isEnabled = true
+        #expect(settings.alignmentAvailability == .available, "scene blur needs a canvas too")
+    }
+
     /// A capture saved with a camera tilt opens with the switch on.
     @Test static func aSavedTiltOpensWithTheSwitchOn() {
         var settings = AnnotationBackgroundSettings()
