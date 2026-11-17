@@ -25,14 +25,14 @@ enum UnsupportedOSNotice {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Sukusho is built and tested on macOS \(AppVersion.testedMacOSMajor)"
-        alert.informativeText = "You’re running macOS \(name), so some features may be missing or not work."
+        alert.informativeText = "You’re running macOS \(name), so some features may be missing or may not work."
         alert.addButton(withTitle: "OK")
         alert.showsSuppressionButton = true
-        alert.suppressionButton?.title = "Don’t show again for macOS \(name)"
+        alert.suppressionButton?.title = "Don’t show again for macOS \(version.majorVersion)"
         NSApp.activate()
         alert.runModal()
         if alert.suppressionButton?.state == .on {
-            defaults.set(name, forKey: dismissedKey)
+            defaults.set("\(version.majorVersion)", forKey: dismissedKey)
         }
     }
 

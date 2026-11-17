@@ -36,9 +36,11 @@ nonisolated enum AppVersion {
         return version.patchVersion > 0 ? "\(base).\(version.patchVersion)" : base
     }
 
-    /// The notice shows below the tested macOS until it's dismissed for that exact version.
+    /// The notice shows below the tested macOS until it's dismissed for that major version
+    /// ("26"); an older saved "26.5.1" counts for 26 too.
     static func showsUnsupportedNotice(on version: OperatingSystemVersion, dismissedFor: String?) -> Bool {
-        version.majorVersion < testedMacOSMajor && dismissedFor != macOSString(version)
+        version.majorVersion < testedMacOSMajor
+            && dismissedFor?.split(separator: ".").first != "\(version.majorVersion)"
     }
 
     /// `system` is `ProcessInfo.operatingSystemVersionString`, "Version 27.3 (Build 26C5035r)".

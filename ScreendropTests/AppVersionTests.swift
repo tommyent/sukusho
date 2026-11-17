@@ -17,7 +17,7 @@ struct AppVersionTests {
         #expect(AppVersion.display(info: info.merging(["SukushoGitCommit": ""]) { $1 }) == "Version 1.2.0 (32.261110.1244)")
     }
 
-    /// Below macOS 27 launch warns, until dismissed for that exact version; 27 and later,
+    /// Below macOS 27 launch warns, until dismissed for that major version; 27 and later,
     /// betas included, never (sd: older macOS, 2026-11-16).
     @Test func theUnsupportedNoticeShowsOnlyBelowTheTestedMacOS() {
         func os(_ major: Int, _ minor: Int, _ patch: Int) -> OperatingSystemVersion {
@@ -26,8 +26,10 @@ struct AppVersionTests {
         #expect(AppVersion.macOSString(os(26, 5, 1)) == "26.5.1")
         #expect(AppVersion.macOSString(os(26, 4, 0)) == "26.4")
         #expect(AppVersion.showsUnsupportedNotice(on: os(26, 5, 1), dismissedFor: nil))
-        #expect(!AppVersion.showsUnsupportedNotice(on: os(26, 5, 1), dismissedFor: "26.5.1"))
-        #expect(AppVersion.showsUnsupportedNotice(on: os(26, 6, 0), dismissedFor: "26.5.1"), "a new macOS asks again")
+        #expect(!AppVersion.showsUnsupportedNotice(on: os(26, 5, 1), dismissedFor: "26"))
+        #expect(!AppVersion.showsUnsupportedNotice(on: os(26, 6, 0), dismissedFor: "26"), "a point update stays quiet")
+        #expect(!AppVersion.showsUnsupportedNotice(on: os(26, 6, 0), dismissedFor: "26.5.1"), "an older saved version counts for its major")
+        #expect(AppVersion.showsUnsupportedNotice(on: os(25, 1, 0), dismissedFor: "26"), "another major asks again")
         #expect(!AppVersion.showsUnsupportedNotice(on: os(27, 0, 0), dismissedFor: nil))
         #expect(!AppVersion.showsUnsupportedNotice(on: os(27, 3, 0), dismissedFor: nil))
         #expect(!AppVersion.showsUnsupportedNotice(on: os(28, 0, 0), dismissedFor: nil))
