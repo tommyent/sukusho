@@ -17,7 +17,8 @@ import SwiftUI
 enum BarToggleLook {
     /// Goes into the recording: filled with its own colour, white icon, proof beside it.
     case input(Color)
-    /// Only helps: a soft blue tint with a blue icon.
+    /// Only helps: a soft blue tint with a blue outline and icon. Strong enough to read on the bar's
+    /// glass in dark mode, where a fainter tint vanished (seen in the VM).
     case helper
 
     fileprivate var foreground: Color {
@@ -30,14 +31,14 @@ enum BarToggleLook {
     fileprivate var fill: Color {
         switch self {
         case .input(let color): color
-        case .helper: BarMetrics.helperOn.opacity(0.16)
+        case .helper: BarMetrics.helperOn.opacity(0.3)
         }
     }
 
     fileprivate var stroke: Color {
         switch self {
         case .input: .clear
-        case .helper: BarMetrics.helperOn.opacity(0.45)
+        case .helper: BarMetrics.helperOn.opacity(0.9)
         }
     }
 }
