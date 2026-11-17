@@ -139,8 +139,46 @@ nonisolated enum ClipboardList {
         "com.apple.dt.Xcode", "com.microsoft.VSCode", "com.sublimetext.4", "dev.zed.Zed",
     ]
 
+    /// Text from a code app, or text that reads as code wherever it came from: Fable's copies were credited to the
+    /// app in front, so the source alone missed them (Fable #3).
     static func looksLikeCode(_ entry: ClipboardEntry) -> Bool {
-        textForm(of: entry) == .plain && entry.sourceBundleID.map(codeApps.contains) == true
+        textForm(of: entry) == .plain && (entry.sourceBundleID.map(codeApps.contains) == true || isCodeLike(entry.text ?? ""))
+    }
+
+    /// At least half the lines open with a lowercase keyword, or end in a brace or a semicolon. Prose capitalizes
+    /// its first word and rarely ends a line in either.
+    static func isCodeLike(_ text: String) -> Bool {
+        let lines = text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        guard !lines.isEmpty else { return false }
+        let keywords = ["func ", "def ", "class ", "struct ", "enum ", "import ", "return ", "const ", "let ", "var ", "fn ",
+                        "#include", "public ", "private ", "if (", "for (", "while (", "function "]
+        let code = lines.filter { line in
+            keywords.contains { line.hasPrefix($0) } || line.hasSuffix("{") || line.hasSuffix(";") || line == "}"
+        }
+        return code.count * 2 >= max(lines.count, 2)
+    }
+
+    /// A card's title line, or nil where the card's face already shows the text, so it isn't said twice (Fable #3).
+    static func cardTitle(of entry: ClipboardEntry) -> String? {
+        switch entry.kind {
+        case .text:
+            if case .color = textForm(of: entry) { return (entry.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+            return nil
+        case .image:
+            if let title = entry.modelTitle, !title.isEmpty { return title }
+            return entry.pixelWidth > 0 ? "\(entry.pixelWidth) × \(entry.pixelHeight)" : "Image"
+        case .files, .snippet:
+            return title(of: entry)
+        }
+    }
+
+    /// The small word in the corner of a card that shows its text: what kind of text it is.
+    static func kindWord(of entry: ClipboardEntry) -> String? {
+        switch textForm(of: entry) {
+        case .plain: looksLikeCode(entry) ? "code" : "text"
+        case .link: "link"
+        default: nil
+        }
     }
 
     /// The Information block's "Content type".

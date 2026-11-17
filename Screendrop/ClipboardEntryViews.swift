@@ -245,6 +245,15 @@ struct ClipboardInfo: View {
             .background(color.opacity(0.15), in: Capsule())
     }
 
+    /// A card's time: "14:38" today, "Yesterday", else the date. The page's Today, Yesterday and Earlier headings
+    /// carry the rest, and the card's line has room for the app after it (Fable #3).
+    static func shortWhen(_ date: Date) -> String {
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) { return date.formatted(date: .omitted, time: .shortened) }
+        if calendar.isDateInYesterday(date) { return "Yesterday" }
+        return date.formatted(.dateTime.month(.abbreviated).day())
+    }
+
     /// "Today at 14:38", else the date and time.
     static func when(_ date: Date) -> String {
         Calendar.current.isDateInToday(date)

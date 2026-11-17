@@ -949,3 +949,41 @@ struct LibraryGridMetricsTests {
         #expect(large.pictureHeight == ((320 - 16) * 0.625).rounded(.down))
     }
 }
+
+/// Fable #3: a card says its text once, names its kind, and code is recognized by what it says.
+@Suite
+struct ClipboardCardTextTests {
+    private func text(_ value: String, from app: String? = nil) -> ClipboardEntry {
+        ClipboardEntry(id: UUID().uuidString, kind: .text, text: value, title: nil, imageURL: nil, libraryPath: nil, byteSize: value.utf8.count,
+                       pixelWidth: 0, pixelHeight: 0, sourceBundleID: app, isRemote: false, firstCopiedAt: .now, lastCopiedAt: .now,
+                       timesCopied: 1, pinnedAt: nil)
+    }
+
+    @Test func textIsSaidOnceAndNamedByKind() {
+        #expect(ClipboardList.cardTitle(of: text("Meeting moved to 3pm")) == nil)
+        #expect(ClipboardList.kindWord(of: text("Meeting moved to 3pm")) == "text")
+        #expect(ClipboardList.cardTitle(of: text("https://nspasteboard.org/")) == nil)
+        #expect(ClipboardList.kindWord(of: text("https://nspasteboard.org/")) == "link")
+        // A color keeps a title, as copied; its face is the swatch.
+        #expect(ClipboardList.cardTitle(of: text(" #ff6363 ")) == "#ff6363")
+        #expect(ClipboardList.kindWord(of: text("#ff6363")) == nil)
+    }
+
+    @Test func codeIsRecognizedByWhatItSays() {
+        let swift = """
+            func tailPath(radius r: CGFloat, tip d: CGFloat) -> CGPath {
+                let path = CGMutablePath()
+                return path
+            }
+            """
+        #expect(ClipboardList.isCodeLike(swift))
+        #expect(ClipboardList.isCodeLike("func tailPath(radius r: CGFloat, tip d: CGFloat) -> CGPath {"))
+        #expect(ClipboardList.kindWord(of: text(swift, from: "com.tommyent.Sukusho.dev")) == "code")
+        #expect(!ClipboardList.isCodeLike("Meeting moved to 3pm"))
+        #expect(!ClipboardList.isCodeLike("Let me know if the fix works.\nThanks!"))
+        #expect(!ClipboardList.isCodeLike("hello@example.com"))
+        // From a code app, any plain text counts, as before.
+        #expect(ClipboardList.kindWord(of: text("ls -la", from: "com.apple.Terminal")) == "code")
+    }
+}
+

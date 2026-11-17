@@ -164,12 +164,22 @@ struct ClipboardCard: View {
     /// Built like a capture card (LibraryCellContent): a solid backing in the chrome color, the image edge to
     /// edge at the top, the same border and selection ring. Without the backing, the workspace wallpaper
     /// showed through the cards (owner, 2026-11-16).
+    /// The title line, and the gap under it: a card without one gives the room to its face, so every card in a row
+    /// is as tall as the others.
+    private static let titleRow: CGFloat = 16 + 3
+
     var body: some View {
+        let title = ClipboardList.cardTitle(of: entry)
         // Finder-like, as capture cards: the picture floats inside the card, the caption centred below.
         VStack(spacing: 8) {
             face
                 .frame(maxWidth: .infinity)
-                .frame(height: faceHeight)
+                .frame(height: faceHeight + (title == nil ? Self.titleRow : 0))
+                .overlay(alignment: .bottomTrailing) {
+                    if let word = ClipboardList.kindWord(of: entry) {
+                        Text(word).font(.system(size: 10)).foregroundStyle(.tertiary).padding(.horizontal, 8).padding(.vertical, 6)
+                    }
+                }
                 .clipShape(libraryCardPictureShape)
                 .overlay { libraryCardPictureShape.strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5) }
                 .overlay(alignment: .bottomLeading) {
@@ -184,11 +194,15 @@ struct ClipboardCard: View {
                 }
                 .padding([.top, .horizontal], LibraryGridMetrics.pictureInset)
             VStack(spacing: 3) {
-                Text(ClipboardList.title(of: entry)).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                HStack(spacing: DS.Space.xs) {
-                    if let icon = model.appIcon(entry.sourceBundleID) { Image(nsImage: icon).resizable().frame(width: 12, height: 12) }
-                    Text([model.appName(entry.sourceBundleID), entry.kind == .snippet ? nil : ClipboardInfo.when(entry.lastCopiedAt)]
-                        .compactMap { $0 }.joined(separator: " · "))
+                if let title { Text(title).font(.system(size: 13, weight: .medium)).lineLimit(1).frame(height: 16) }
+                // The time first: it's what differs between cards, so a narrow card cuts the app rather than the time.
+                HStack(spacing: 3) {
+                    if entry.kind != .snippet { Text(ClipboardInfo.shortWhen(entry.lastCopiedAt)).layoutPriority(1) }
+                    if let app = model.appName(entry.sourceBundleID) {
+                        if entry.kind != .snippet { Text("·") }
+                        if let icon = model.appIcon(entry.sourceBundleID) { Image(nsImage: icon).resizable().frame(width: 12, height: 12) }
+                        Text(app).truncationMode(.tail)
+                    }
                     if entry.pinnedAt != nil { Image(systemName: "star.fill").font(.system(size: 8)).foregroundStyle(.yellow) }
                 }
                 .font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
