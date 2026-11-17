@@ -167,6 +167,7 @@ final class ClipboardHistoryModel {
     }
 
     func delete(_ entry: ClipboardEntry) {
+        Self.clearQuickLookFiles()
         Task {
             try? await store?.delete(entry.id)
             if librarySelection == entry.id { librarySelection = nil }
@@ -175,6 +176,7 @@ final class ClipboardHistoryModel {
     }
 
     func deleteHistory() {
+        Self.clearQuickLookFiles()
         Task {
             try? await store?.deleteHistory()
             librarySelection = nil
@@ -210,21 +212,27 @@ final class ClipboardHistoryModel {
     /// What Quick Look shows for an entry. It previews files only: an image or copied files are shown as
     /// they are; text and colors are written out for it, in a folder per entry so titles never collide.
     func quickLookURLs(for entry: ClipboardEntry) -> [URL] {
+        let folder = Self.quickLookFolder.appendingPathComponent(entry.id, isDirectory: true)
+        let name = String(ClipboardList.title(of: entry).prefix(60))
+            .replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
         switch entry.kind {
         case .image:
-            return entry.imageFileURL.map { [$0] } ?? []
+            guard let url = entry.imageFileURL else { return [] }
+            // A Library capture's own name is shown as it is. History keeps images under their hash, which
+            // Quick Look would put in its title bar: a link named after the entry shows its title instead.
+            guard entry.libraryPath == nil else { return [url] }
+            let named = folder.appendingPathComponent((name.isEmpty ? "Image" : name) + "." + url.pathExtension)
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            if !FileManager.default.fileExists(atPath: named.path) { try? FileManager.default.linkItem(at: url, to: named) }
+            return [FileManager.default.fileExists(atPath: named.path) ? named : url]
         case .files:
             return entry.filePaths.map { URL(fileURLWithPath: $0) }.filter { FileManager.default.fileExists(atPath: $0.path) }
         case .text, .snippet:
-            let folder = FileManager.default.temporaryDirectory
-                .appendingPathComponent("Clipboard Quick Look/\(entry.id)", isDirectory: true)
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             if case .color(let hex) = ClipboardList.textForm(of: entry), let png = Self.swatch(hex) {
                 let url = folder.appendingPathComponent("\(hex.dropFirst()).png")
                 return (try? png.write(to: url, options: .atomic)).map { [url] } ?? []
             }
-            let name = String(ClipboardList.title(of: entry).prefix(60))
-                .replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
             let url = folder.appendingPathComponent((name.isEmpty ? "Text" : name) + ".txt")
             return (try? Data((entry.text ?? "").utf8).write(to: url, options: .atomic)).map { [url] } ?? []
         }
@@ -232,6 +240,8 @@ final class ClipboardHistoryModel {
 
     /// Opens Quick Look on an entry, or closes it when it already shows that entry, as Space does in Finder.
     func quickLook(_ entry: ClipboardEntry) {
+        // Only the entry being looked at keeps files here, so a deleted copy doesn't linger in them.
+        if !QuickLookPreviewPresenter.isShown { Self.clearQuickLookFiles() }
         let urls = quickLookURLs(for: entry)
         guard let first = urls.first else { return }
         if QuickLookPreviewPresenter.isShown,
@@ -240,6 +250,14 @@ final class ClipboardHistoryModel {
             return
         }
         QuickLookPreviewPresenter.show(urls: urls)
+    }
+
+    private static let quickLookFolder = FileManager.default.temporaryDirectory
+        .appendingPathComponent("Clipboard Quick Look", isDirectory: true)
+
+    /// The files written for Quick Look hold copies' contents; they go with the copies.
+    private static func clearQuickLookFiles() {
+        try? FileManager.default.removeItem(at: quickLookFolder)
     }
 
     /// A 512 px square of the color, as a PNG.
