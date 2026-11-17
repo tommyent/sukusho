@@ -106,31 +106,38 @@ private struct ClipboardCard: View {
     let entry: ClipboardEntry
     let model: ClipboardHistoryModel
     let isSelected: Bool
+    @State private var isHovering = false
 
+    /// Built like a capture card (LibraryCellContent): a solid backing in the chrome color, the image edge to
+    /// edge at the top, the same border and selection ring. Without the backing, the workspace wallpaper
+    /// showed through the cards (owner, 2026-11-16).
     var body: some View {
-        VStack(alignment: .leading, spacing: DS.Space.s) {
+        VStack(alignment: .leading, spacing: 8) {
             face
-                .frame(height: 124)
                 .frame(maxWidth: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: DS.Radius.l))
-                .overlay(RoundedRectangle(cornerRadius: DS.Radius.l)
-                    .strokeBorder(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(.separator), lineWidth: isSelected ? 3 : 0.5))
+                .frame(height: 124)
+                .clipShape(libraryCardImageShape)
+                .overlay { libraryCardImageShape.strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5) }
                 .overlay(alignment: .bottomLeading) {
-                    if entry.libraryPath != nil {
-                        Text("In Library").font(.system(size: 11, weight: .semibold)).foregroundStyle(.blue)
-                            .padding(.horizontal, 6).padding(.vertical, 1)
-                            .background(.background, in: Capsule()).padding(DS.Space.s)
-                    }
+                    if entry.libraryPath != nil { Text("In Library").cardPill().padding(6) }
                 }
-            Text(ClipboardList.title(of: entry)).font(DS.TypeScale.labelMedium).lineLimit(1)
-            HStack(spacing: DS.Space.xs) {
-                if let icon = model.appIcon(entry.sourceBundleID) { Image(nsImage: icon).resizable().frame(width: 14, height: 14) }
-                Text([model.appName(entry.sourceBundleID), entry.kind == .snippet ? nil : ClipboardInfo.when(entry.lastCopiedAt)]
-                    .compactMap { $0 }.joined(separator: " · "))
-                if entry.pinnedAt != nil { Image(systemName: "pin.fill").font(.system(size: 9)) }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(ClipboardList.title(of: entry)).font(DS.TypeScale.labelMedium).lineLimit(1)
+                HStack(spacing: DS.Space.xs) {
+                    if let icon = model.appIcon(entry.sourceBundleID) { Image(nsImage: icon).resizable().frame(width: 14, height: 14) }
+                    Text([model.appName(entry.sourceBundleID), entry.kind == .snippet ? nil : ClipboardInfo.when(entry.lastCopiedAt)]
+                        .compactMap { $0 }.joined(separator: " · "))
+                    if entry.pinnedAt != nil { Image(systemName: "pin.fill").font(.system(size: 9)) }
+                }
+                .font(DS.TypeScale.label).foregroundStyle(.secondary).lineLimit(1)
             }
-            .font(DS.TypeScale.label).foregroundStyle(.secondary).lineLimit(1)
+            .padding(.horizontal, 10).padding(.bottom, 10)
         }
+        .background(Color.primary.opacity(isSelected ? 0.075 : isHovering ? 0.035 : 0.012),
+                    in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
+        .background(WorkspaceChrome.background, in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
+        .overlay { LibraryCardBorder(selected: isSelected) }
+        .onHover { isHovering = $0 }
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { model.deliver(entry, as: .copy, to: nil) }
         .onTapGesture { model.librarySelection = entry.id }
