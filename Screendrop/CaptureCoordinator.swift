@@ -256,7 +256,8 @@ final class CaptureCoordinator {
         // The picker already left to make room for the selection, so when
         // the selection or its countdown is cancelled nothing else turns off
         // the camera it warmed.
-        RecordingAreaSelectionPresenter.shared.selectArea(on: display) { rect in
+        // The drawn area waits for Record, so it can be adjusted first; the countdown, if any, follows Record.
+        RecordingAreaSelectionPresenter.shared.selectArea(on: display, confirmTitle: "Record") { rect in
             guard let rect else {
                 Task { await CameraRecordingManager.shared.stopPreview() }
                 return

@@ -22,8 +22,10 @@ final class RecordingAreaSelectionPresenter {
 
     private init() {}
 
-    /// The drawn area in AppKit's global coordinates, or nil when cancelled.
-    func selectArea(on display: SCDisplay, completion: @escaping (CGRect?) -> Void) {
+    /// The drawn area in AppKit's global coordinates, or nil when cancelled. With `confirmTitle`, a drawn area waits
+    /// with handles to move and resize it and a bar with that button and Cancel, rather than being taken as the drag
+    /// ends (Fable #3: area recording started the moment the drag was released). Return takes it too, Escape cancels.
+    func selectArea(on display: SCDisplay, confirmTitle: String? = nil, completion: @escaping (CGRect?) -> Void) {
         cancel()
 
         guard let screen = ActiveDisplayResolver.screen(for: display.displayID) ?? NSScreen.main else {
@@ -36,7 +38,7 @@ final class RecordingAreaSelectionPresenter {
             width: CGFloat(display.width) / max(screen.frame.width, 1),
             height: CGFloat(display.height) / max(screen.frame.height, 1)
         )
-        show(on: screen, pixelScale: pixelScale, isScreenshot: false) { panel, localRect in
+        show(on: screen, pixelScale: pixelScale, isScreenshot: false, confirmTitle: confirmTitle) { panel, localRect in
             CGRect(
                 x: panel.frame.minX + localRect.minX,
                 y: panel.frame.minY + localRect.minY,
@@ -83,7 +85,7 @@ final class RecordingAreaSelectionPresenter {
     }
 
     private func show(on screen: NSScreen, pixelScale: CGSize, isScreenshot: Bool, hintInset: CGFloat? = nil,
-                      globalRect: @escaping (NSPanel, CGRect) -> CGRect) {
+                      confirmTitle: String? = nil, globalRect: @escaping (NSPanel, CGRect) -> CGRect) {
         let panel = RecordingAreaSelectionPanel(
             contentRect: screen.frame,
             styleMask: [.borderless, .nonactivatingPanel],
@@ -106,7 +108,8 @@ final class RecordingAreaSelectionPresenter {
             frame: CGRect(origin: .zero, size: screen.frame.size),
             pixelScale: pixelScale,
             isScreenshot: isScreenshot,
-            hintInset: hintInset
+            hintInset: hintInset,
+            confirmTitle: confirmTitle
         )
         selectionView.onCancel = { [weak self] in
             self?.finish(rect: nil)
@@ -251,14 +254,23 @@ private final class RecordingAreaSelectionView: NSView {
     private var pressedSnap: CGRect?
     private var isSpaceDown = false
 
+    /// The button that takes a drawn area, such as Record; nil takes it as the drag ends.
+    private let confirmTitle: String?
+    /// The drawn area while it waits to be taken: it can be moved and resized, or drawn again.
+    private var adjusting: CGRect?
+    /// What the pointer holds while adjusting: the whole area, or one of its eight handles.
+    private var grab: (handle: AreaHandle?, area: CGRect, start: CGPoint)?
+    private var confirmBar: NSView?
+
     override var acceptsFirstResponder: Bool {
         true
     }
 
-    init(frame frameRect: NSRect, pixelScale: CGSize, isScreenshot: Bool, hintInset: CGFloat?) {
+    init(frame frameRect: NSRect, pixelScale: CGSize, isScreenshot: Bool, hintInset: CGFloat?, confirmTitle: String? = nil) {
         self.pixelScale = pixelScale
         self.isScreenshot = isScreenshot
         self.hintInset = hintInset
+        self.confirmTitle = confirmTitle
         heldSinceOpen = NSEvent.modifierFlags
         super.init(frame: frameRect)
         wantsLayer = true
@@ -286,7 +298,17 @@ private final class RecordingAreaSelectionView: NSView {
         NSColor.black.withAlphaComponent(0.28).setFill()
         bounds.fill()
 
-        if let selectionRect {
+        if let adjusting {
+            drawHole(adjusting, color: .white)
+            for handle in AreaHandle.allCases {
+                let dot = handle.rect(in: adjusting)
+                NSColor.white.setFill()
+                NSBezierPath(ovalIn: dot).fill()
+                NSColor.black.withAlphaComponent(0.35).setStroke()
+                NSBezierPath(ovalIn: dot).stroke()
+            }
+            drawBadge(sizeLabel(for: adjusting)) { self.badgeOrigin(for: adjusting, size: $0) }
+        } else if let selectionRect {
             drawHole(selectionRect, color: .white)
             if isScreenshot, let currentPoint {
                 drawBadge(sizeLabel(for: selectionRect)) { self.badgeOrigin(besidePointer: currentPoint, size: $0) }
@@ -474,6 +496,19 @@ private final class RecordingAreaSelectionView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        if let adjusting {
+            // A handle resizes, inside moves, and anywhere else draws a new area.
+            if let handle = AreaHandle.allCases.first(where: { $0.rect(in: adjusting).insetBy(dx: -6, dy: -6).contains(point) }) {
+                grab = (handle, adjusting, point)
+                return
+            }
+            if adjusting.contains(point) {
+                grab = (nil, adjusting, point)
+                return
+            }
+            self.adjusting = nil
+            hideConfirmBar()
+        }
         movePointer(to: point)
         if let snapRect {
             pressedSnap = snapRect
@@ -491,6 +526,14 @@ private final class RecordingAreaSelectionView: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        if let grab {
+            adjusting = AreaHandle.adjust(grab.area, handle: grab.handle, by: CGSize(width: point.x - grab.start.x,
+                                                                                    height: point.y - grab.start.y),
+                                          within: bounds, minimum: 16)
+            placeConfirmBar()
+            needsDisplay = true
+            return
+        }
         pointer = point
         // Space held: the whole area follows the pointer, as with the system crosshair.
         if isScreenshot, isSpaceDown, let start = startPoint, let last = currentPoint {
@@ -501,6 +544,10 @@ private final class RecordingAreaSelectionView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if grab != nil {
+            grab = nil
+            return
+        }
         if let pressedSnap {
             onSelect?(pressedSnap)
             return
@@ -519,7 +566,81 @@ private final class RecordingAreaSelectionView: NSView {
             return
         }
 
-        onSelect?(isScreenshot ? rect.intersection(bounds) : rect)
+        guard confirmTitle != nil else {
+            onSelect?(isScreenshot ? rect.intersection(bounds) : rect)
+            return
+        }
+        startPoint = nil
+        currentPoint = nil
+        adjusting = rect.intersection(bounds)
+        showConfirmBar()
+        needsDisplay = true
+    }
+
+    // MARK: - Confirming
+
+    private func confirm() {
+        guard let adjusting else { return }
+        hideConfirmBar()
+        onSelect?(adjusting)
+    }
+
+    @objc private func confirmPressed() { confirm() }
+    @objc private func cancelPressed() { onCancel?() }
+
+    /// Cancel and the confirm button, on glass under the area, as Scrolling Capture's bar sits.
+    private func showConfirmBar() {
+        guard confirmBar == nil, let confirmTitle else { return placeConfirmBar() }
+        let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancelPressed))
+        cancel.bezelStyle = .push
+        let take = NSButton(title: confirmTitle, target: self, action: #selector(confirmPressed))
+        take.bezelStyle = .push
+        take.keyEquivalent = "\r"
+        if confirmTitle == "Record" {
+            take.image = NSImage(systemSymbolName: "record.circle", accessibilityDescription: nil)
+            take.imagePosition = .imageLeading
+        }
+        let hint = NSTextField(labelWithString: "Drag the area or its handles to adjust  ·  Esc to cancel")
+        hint.font = .systemFont(ofSize: 11)
+        hint.textColor = .secondaryLabelColor
+        let stack = NSStackView(views: [hint, cancel, take])
+        stack.spacing = 8
+        stack.edgeInsets = NSEdgeInsets(top: 8, left: 14, bottom: 8, right: 8)
+        let bar = NSVisualEffectView()
+        bar.material = .hudWindow
+        bar.blendingMode = .withinWindow
+        bar.state = .active
+        bar.wantsLayer = true
+        bar.layer?.cornerRadius = 12
+        bar.layer?.masksToBounds = true
+        bar.addSubview(stack)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: bar.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
+        ])
+        addSubview(bar)
+        confirmBar = bar
+        placeConfirmBar()
+    }
+
+    /// Under the area, else above it, else inside its bottom edge, and always on the display.
+    private func placeConfirmBar() {
+        guard let bar = confirmBar, let area = adjusting else { return }
+        let size = bar.fittingSize
+        let gap: CGFloat = 12
+        var y = area.minY - gap - size.height
+        if y < bounds.minY + 8 { y = area.maxY + gap }
+        if y + size.height > bounds.maxY - 8 { y = area.minY + gap }
+        let x = min(max(area.midX - size.width / 2, bounds.minX + 8), bounds.maxX - size.width - 8)
+        bar.frame = CGRect(x: x, y: y, width: size.width, height: size.height)
+    }
+
+    private func hideConfirmBar() {
+        confirmBar?.removeFromSuperview()
+        confirmBar = nil
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -558,6 +679,10 @@ private final class RecordingAreaSelectionView: NSView {
     /// Modifiers, Space and the arrows, from the presenter's monitor. True
     /// when the event was this picker's to use.
     func handle(_ event: NSEvent) -> Bool {
+        if adjusting != nil, event.type == .keyDown, event.keyCode == 36 || event.keyCode == 76 {
+            confirm()
+            return true
+        }
         guard isScreenshot else { return false }
         switch event.type {
         case .flagsChanged:
@@ -618,3 +743,4 @@ private final class RecordingAreaSelectionView: NSView {
         )
     }
 }
+
