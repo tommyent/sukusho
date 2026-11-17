@@ -341,11 +341,13 @@ struct AnnotationEditorInspector: View {
                 AnnotationTextStyleControls(model: model)
             } else {
                 if model.inspectedTool == .magnifier {
-                    InspectorSlider("Zoom", value: Binding(
-                        get: { model.magnifierZoom },
-                        set: { onEditorAction(); model.setMagnifierZoom($0) }
-                    ), range: 1...8, format: .magnification(fractionDigits: 1))
-                    InspectorRow("Shape") {
+                    // The shapes drawn, not named, so they fit beside Zoom.
+                    HStack(spacing: InspectorMetrics.rowSpacing) {
+                        InspectorSlider("Zoom", value: Binding(
+                            get: { model.magnifierZoom },
+                            set: { onEditorAction(); model.setMagnifierZoom($0) }
+                        ), range: 1...8, format: .magnification(fractionDigits: 1))
+
                         InspectorSegmented(
                             options: MagnifierShape.allCases,
                             isSelected: { $0 == model.magnifierShape },
@@ -353,9 +355,14 @@ struct AnnotationEditorInspector: View {
                                 onEditorAction()
                                 model.setMagnifierShape($0)
                             },
-                            label: { Text($0.label) },
+                            label: { shape in
+                                MagnifierShapeIcon(shape: shape)
+                                    .help(shape.label)
+                                    .accessibilityLabel(shape.label)
+                            },
                             height: InspectorMetrics.controlHeight
                         )
+                        .frame(width: InspectorMetrics.controlHeight * 3 + InspectorMetrics.controlInset * 2)
                     }
                 }
                 if model.isFillStyleAvailable {
@@ -400,6 +407,29 @@ struct AnnotationEditorInspector: View {
                     }
                 }
             }
+        }
+    }
+}
+
+/// A magnifier shape drawn as a small outline, in the segment's own colour so it
+/// follows the selected and hover states.
+private struct MagnifierShapeIcon: View {
+    let shape: MagnifierShape
+
+    var body: some View {
+        switch shape {
+        case .roundedSquare:
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .strokeBorder(lineWidth: 1.5)
+                .frame(width: 14, height: 14)
+        case .circle:
+            Circle()
+                .strokeBorder(lineWidth: 1.5)
+                .frame(width: 14, height: 14)
+        case .rectangle:
+            Rectangle()
+                .strokeBorder(lineWidth: 1.5)
+                .frame(width: 16, height: 11)
         }
     }
 }
