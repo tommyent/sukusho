@@ -558,9 +558,17 @@ struct CaptureLibraryEditorRegistration: ViewModifier {
     }
     private func update(_ new: URL?) {
         guard registered != new else { return }
-        if let registered { CaptureLibraryOpenEditors.remove(registered) }
+        let released = registered
         registered = new
-        if let new { CaptureLibraryOpenEditors.add(new) }
+        if let new {
+            CaptureLibraryOpenEditors.add(new)
+            ClipboardHistoryModel.editorOpened(new)
+        }
+        if let released {
+            CaptureLibraryOpenEditors.remove(released)
+            // A clipboard image's copy lives only as long as an editor has it open (Astra R5-2).
+            ClipboardHistoryModel.clearEditCopies()
+        }
     }
 }
 

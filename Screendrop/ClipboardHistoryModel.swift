@@ -184,6 +184,7 @@ final class ClipboardHistoryModel {
 
     func delete(_ entry: ClipboardEntry) {
         Self.clearQuickLookFiles()
+        Self.clearEditCopies()
         Task {
             try? await store?.delete(entry.id)
             if librarySelection == entry.id { librarySelection = nil }
@@ -193,6 +194,7 @@ final class ClipboardHistoryModel {
 
     func deleteHistory() {
         Self.clearQuickLookFiles()
+        Self.clearEditCopies()
         Task {
             try? await store?.deleteHistory()
             librarySelection = nil
@@ -323,6 +325,7 @@ final class ClipboardHistoryModel {
                 self?.refresh()
             }
         }, for: copy)
+        if !CaptureLibraryOpenEditors.isEditing(copy) { Self.openingEditCopies.insert(copy) }
         open(copy)
     }
 
@@ -331,23 +334,31 @@ final class ClipboardHistoryModel {
         PreviewPanelPresenter.shared.onAnnotate?(image)
     }
 
-    private static let editFolder = FileManager.default.temporaryDirectory
-        .appendingPathComponent("Clipboard Edits", isDirectory: true)
+    private static let editCopies = ClipboardEditCopies(folder: FileManager.default.temporaryDirectory
+        .appendingPathComponent("Clipboard Edits", isDirectory: true))
+    /// Copies handed to an editor that hasn't registered them yet: opening its window takes a moment.
+    private static var openingEditCopies: Set<URL> = []
+
+    private static func editCopyInUse(_ folder: URL) -> Bool {
+        CaptureLibraryOpenEditors.contains(folder) || openingEditCopies.contains { $0.path.hasPrefix(folder.path + "/") }
+    }
+
+    /// An editor registered `url`: it's no longer on its way.
+    static func editorOpened(_ url: URL) {
+        openingEditCopies.remove(url)
+    }
+
+    /// Deletes the copies no editor has open: after an editor closes or moves to its capture, and with clips.
+    static func clearEditCopies() {
+        editCopies.clear(inUse: editCopyInUse)
+    }
 
     /// A copy of a clip's image to edit, named as the clip is so the editor's title says what it is. History's own
     /// blob is never edited in place.
     private func editableCopy(of entry: ClipboardEntry, from image: URL) -> URL? {
-        let folder = Self.editFolder.appendingPathComponent(entry.id, isDirectory: true)
         let name = String(ClipboardList.title(of: entry).prefix(60))
             .replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
-        let copy = folder.appendingPathComponent((name.isEmpty ? "Clipboard image" : name) + "." + image.pathExtension)
-        if FileManager.default.fileExists(atPath: copy.path) { return copy }
-        do {
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            try FileManager.default.copyItem(at: image, to: copy)
-            return copy
-        } catch {
-            return nil
-        }
+        return Self.editCopies.copy(of: image, named: (name.isEmpty ? "Clipboard image" : name) + "." + image.pathExtension,
+                                    entryID: entry.id, inUse: Self.editCopyInUse)
     }
 }
