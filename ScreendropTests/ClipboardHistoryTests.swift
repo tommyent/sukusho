@@ -453,6 +453,18 @@ struct ClipboardListTests {
                        pinnedAt: pinnedAgo.map { now - $0 })
     }
 
+    @Test func searchingAllTypesFindsSnippetsToo() {
+        let copy = entry(.text, "Thanks for the fix")
+        let snippet = entry(.snippet, "Thanks for the report.", title: "Release reply")
+        func ids(_ query: String, all: Bool) -> [[String]] {
+            ClipboardList.sections([copy, snippet], filter: .all, query: CaptureLibraryQuery(query), includesSnippets: all,
+                                   now: now, calendar: calendar).map { $0.entries.map(\.id) }
+        }
+        #expect(ids("thanks", all: true) == [[copy.id], [snippet.id]])
+        #expect(ids("release", all: true) == [[snippet.id]])
+        #expect(ids("thanks", all: false) == [[copy.id]])
+    }
+
     @Test func arrowsMoveTheSelectionInsideTheGrid() {
         let ids = ["a", "b", "c", "d", "e"]
         #expect(ClipboardList.move(from: nil, by: 1, in: ids) == "a")

@@ -11,7 +11,8 @@ final class ClipboardPopupState {
     var selection: ClipboardEntry.ID?
 
     var sections: [ClipboardList.Section] {
-        ClipboardHistoryModel.shared.sections(filter: filter, query: query)
+        // A search under All Types finds snippets too (Astra, 2026-11-16); the list without one stays history.
+        ClipboardHistoryModel.shared.sections(filter: filter, query: query, includesSnippets: !query.isEmpty)
     }
 
     var visibleEntries: [ClipboardEntry] { sections.flatMap(\.entries) }

@@ -75,11 +75,13 @@ nonisolated enum ClipboardList {
     }
 
     /// Pinned first, in the order they were pinned; then Today, Yesterday and
-    /// Earlier, newest first. Snippets have their own list.
+    /// Earlier, newest first. Snippets have their own list; `includesSnippets` adds the ones that match
+    /// to All, after the copies, for a search that covers everything (the popup's All Types).
     static func sections(
         _ entries: [ClipboardEntry],
         filter: ClipboardFilter,
         query: CaptureLibraryQuery,
+        includesSnippets: Bool = false,
         appName: (String?) -> String? = { _ in nil },
         now: Date = .now,
         calendar: Calendar = .current
@@ -102,6 +104,10 @@ nonisolated enum ClipboardList {
         for (name, contains) in groups {
             let group = rest.filter { contains($0.lastCopiedAt) }
             if !group.isEmpty { sections.append(Section(title: name, entries: group)) }
+        }
+        if includesSnippets, filter == .all {
+            let snippets = entries.filter { $0.kind == .snippet && matches($0, query: query, appName: appName($0.sourceBundleID)) }
+            if !snippets.isEmpty { sections.append(Section(title: "Snippets", entries: snippets.sorted { title(of: $0) < title(of: $1) })) }
         }
         return sections
     }

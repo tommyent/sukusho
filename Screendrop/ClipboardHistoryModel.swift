@@ -78,8 +78,9 @@ final class ClipboardHistoryModel {
         refresh()
     }
 
-    func sections(filter: ClipboardFilter, query: String) -> [ClipboardList.Section] {
-        ClipboardList.sections(entries, filter: filter, query: CaptureLibraryQuery(query), appName: appName)
+    func sections(filter: ClipboardFilter, query: String, includesSnippets: Bool = false) -> [ClipboardList.Section] {
+        ClipboardList.sections(entries, filter: filter, query: CaptureLibraryQuery(query), includesSnippets: includesSnippets,
+                               appName: appName)
     }
 
     /// What the Library's Clipboard page shows; the status bar counts the same.
