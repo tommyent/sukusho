@@ -29,8 +29,9 @@ extension SystemScreenshotShortcuts {
 }
 
 /// Once, at launch, when a Sukusho shortcut is one of macOS's screenshot shortcuts that is still on (the owner,
-/// 2026-11-17: beta 1). It says what one press does now and offers Use Other Keys, Open Keyboard Shortcuts… or Not Now.
-/// Settings › Shortcuts keeps the same line and buttons for as long as the clash lasts; this notice never comes back.
+/// 2026-11-17: beta 1), with the owner's two choices: Use Other Keys moves them, Choose My Own opens Settings ›
+/// Shortcuts to record new ones; Not Now leaves them. Settings keeps the same line and choices for as long as the clash
+/// lasts; this notice never comes back.
 enum ShortcutClashNotice {
     static let shownKey = "shortcutClashNotice.shown"
 
@@ -44,16 +45,16 @@ enum ShortcutClashNotice {
         let alert = NSAlert()
         alert.alertStyle = .informational
         alert.messageText = "macOS also uses some of Sukusho’s shortcuts"
-        alert.informativeText = SystemScreenshotShortcuts.noticeText(clashes, otherKeys: otherKeys)
+        alert.informativeText = SystemScreenshotShortcuts.warning(clashes, canUseOtherKeys: !otherKeys.isEmpty)
         if !otherKeys.isEmpty { alert.addButton(withTitle: "Use Other Keys") }
-        alert.addButton(withTitle: "Open Keyboard Shortcuts…")
+        alert.addButton(withTitle: "Choose My Own")
         alert.addButton(withTitle: "Not Now")
         NSApp.activate()
         let response = alert.runModal()
         let first = NSApplication.ModalResponse.alertFirstButtonReturn
         switch (otherKeys.isEmpty, response) {
         case (false, first): SystemScreenshotShortcuts.useOtherKeys()
-        case (false, .alertSecondButtonReturn), (true, first): SystemScreenshotShortcuts.openKeyboardSettings()
+        case (false, .alertSecondButtonReturn), (true, first): SettingsWindowController.show(tab: .shortcuts)
         default: break
         }
     }

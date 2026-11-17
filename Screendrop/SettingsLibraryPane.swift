@@ -77,13 +77,13 @@ struct LibrarySettingsPane: View {
     private static let secondsPerCapture = 2.5
 }
 
-/// Settings › Shortcuts: every system-wide shortcut in one place, captures first, images
-/// before the recording (design pass choice 12), then Show Library and Clipboard History.
+/// Settings › Shortcuts: every system-wide shortcut in one place, in the order 1 to 5, then O, L and V
+/// (the owner, 2026-11-17).
 struct ShortcutsSettingsPane: View {
     var body: some View {
         Form {
             CaptureHotkeySettingsSection(
-                actions: [.fullscreen, .window, .area, .scrollingCapture, .textCapture, .screenRecording, .library, .clipboardHistory]
+                actions: CaptureHotkeyAction.settingsOrder
             )
         }
         .formStyle(.grouped)

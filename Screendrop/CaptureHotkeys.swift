@@ -193,11 +193,9 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
         }
     }
 
-    /// ⌘⇧ chords picked by the user (2026-10-19): 1 Fullscreen, 2 Window,
-    /// 3 Area, 4 Scrolling, 5 Text and 6 Recording. ⌘⇧3, ⌘⇧4 and ⌘⇧5 are also
-    /// macOS's screenshot shortcuts, which must be off for them to register.
-    /// Only actions the user never recorded follow a default, so recorded
-    /// shortcuts stay.
+    /// The owner's own set (2026-11-17, beta 1): ⇧⌘1 Fullscreen, ⇧⌘2 Window, ⇧⌘3 Area, ⇧⌘4 Scrolling, ⇧⌘5 Recording,
+    /// ⇧⌘O Capture Text, ⇧⌘L Library, ⌃⌘V Clipboard History. ⇧⌘3, ⇧⌘4 and ⇧⌘5 are also macOS's screenshot shortcuts
+    /// (Settings and a notice say so). Only actions the user never recorded follow a default, so recorded shortcuts stay.
     var defaultShortcut: HotkeyShortcut {
         switch self {
         case .fullscreen:
@@ -207,9 +205,9 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
         case .area:
             HotkeyShortcut(modifiers: [.command, .shift], keyCode: Int(kVK_ANSI_3))
         case .screenRecording:
-            HotkeyShortcut(modifiers: [.command, .shift], keyCode: Int(kVK_ANSI_6))
-        case .textCapture:
             HotkeyShortcut(modifiers: [.command, .shift], keyCode: Int(kVK_ANSI_5))
+        case .textCapture:
+            HotkeyShortcut(modifiers: [.command, .shift], keyCode: Int(kVK_ANSI_O))
         case .scrollingCapture:
             HotkeyShortcut(modifiers: [.command, .shift], keyCode: Int(kVK_ANSI_4))
         case .library:
@@ -219,6 +217,21 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
             HotkeyShortcut(modifiers: [.control, .command], keyCode: Int(kVK_ANSI_V))
         }
     }
+
+    /// The defaults before beta 1, where they differ: Recording ⇧⌘6, Capture Text ⇧⌘5. A stored shortcut that equals one
+    /// was stored by an older build, not chosen, so it is forgotten and follows the new default (`dropStoredDefaults`).
+    var previousDefaultShortcut: HotkeyShortcut? {
+        switch self {
+        case .screenRecording: HotkeyShortcut(modifiers: [.command, .shift], keyCode: Int(kVK_ANSI_6))
+        case .textCapture: HotkeyShortcut(modifiers: [.command, .shift], keyCode: Int(kVK_ANSI_5))
+        default: nil
+        }
+    }
+
+    /// Settings › Shortcuts' rows: 1 to 5, then O, L and V (the owner, 2026-11-17).
+    static let settingsOrder: [CaptureHotkeyAction] = [
+        .fullscreen, .window, .area, .scrollingCapture, .screenRecording, .textCapture, .library, .clipboardHistory,
+    ]
 
     var preferencesKey: String {
         switch self {
@@ -302,12 +315,16 @@ enum CaptureHotkeyPreferences {
         return shortcut(for: action, defaults: defaults) == action.defaultShortcut
     }
 
-    /// Forgets stored shortcuts that equal their action's default, so a later change of a default reaches them, as it
-    /// does everyone who never recorded one. Cleared and changed shortcuts stay. Run at launch.
+    /// Forgets stored shortcuts that equal their action's default, or its default before beta 1, so a change of a
+    /// default reaches them, as it does everyone who never recorded one: an older build stored defaults, and without this
+    /// a stored old ⇧⌘5 for Capture Text would collide with Recording's new ⇧⌘5. Cleared and changed shortcuts stay.
+    /// Run at launch.
     static func dropStoredDefaults(defaults: UserDefaults = .standard) {
-        for action in CaptureHotkeyAction.allCases where defaults.data(forKey: action.preferencesKey) != nil
-            && isDefault(action, defaults: defaults) {
-            defaults.removeObject(forKey: action.preferencesKey)
+        for action in CaptureHotkeyAction.allCases where defaults.data(forKey: action.preferencesKey) != nil {
+            let stored = shortcut(for: action, defaults: defaults)
+            if isDefault(action, defaults: defaults) || (stored != nil && stored == action.previousDefaultShortcut) {
+                defaults.removeObject(forKey: action.preferencesKey)
+            }
         }
     }
 
@@ -350,25 +367,6 @@ enum SystemScreenshotShortcuts {
         184: HotkeyShortcut(modifiers: [.shift, .command], keyCode: 23),            // ⇧⌘5
     ]
 
-    /// What one press does when a Sukusho shortcut is also one of macOS's.
-    enum Outcome: Equatable {
-        /// macOS does its screenshot and Sukusho does its action as well.
-        case both
-        /// Only macOS's runs: every one of macOS's screenshot shortcuts starts its Screenshot UI, and Sukusho's area
-        /// picker closes when that UI starts (sd-7l2f).
-        case macOSOnly
-    }
-
-    /// By Sukusho's action, since all five of macOS's start the same Screenshot UI. Area, Capture Text and Scrolling
-    /// Capture open Sukusho's picker at once, so they don't run: seen for ⇧⌘3, ⇧⌘4 and ⇧⌘5 in the VM (27.2.1). Any
-    /// other action has no picker to close, so it runs as well (inferred, not seen).
-    static func outcome(for action: CaptureHotkeyAction) -> Outcome {
-        switch action {
-        case .area, .textCapture, .scrollingCapture: .macOSOnly
-        default: .both
-        }
-    }
-
     /// The screenshot shortcuts macOS has on, by entry number, from its AppleSymbolicHotKeys dictionary.
     static func enabledEntries(in hotkeys: [String: Any]?) -> [Int: HotkeyShortcut] {
         defaults.reduce(into: [:]) { result, item in
@@ -389,7 +387,7 @@ enum SystemScreenshotShortcuts {
 
     /// Sukusho's actions whose shortcut macOS also uses, in Settings' order.
     static func clashes(_ shortcuts: [CaptureHotkeyAction: HotkeyShortcut], with system: Set<HotkeyShortcut>) -> [CaptureHotkeyAction] {
-        CaptureHotkeyAction.allCases.filter { shortcuts[$0].map(system.contains) ?? false }
+        CaptureHotkeyAction.settingsOrder.filter { shortcuts[$0].map(system.contains) ?? false }
     }
 
     /// The macOS entry that also uses `shortcut`, if one does; the lowest number when two share it.
@@ -408,15 +406,6 @@ enum SystemScreenshotShortcuts {
         clashes(CaptureHotkeyPreferences.shortcuts(), with: Set(currentEntries().values))
     }
 
-    /// Where the user turns macOS's screenshot shortcuts off, as System Settings names it (checked on screen in the VM).
-    static let settingsPath = "Keyboard › Keyboard Shortcuts… › Screenshots"
-
-    /// Opens System Settings at its Keyboard pane, the nearest place a link reaches (checked in the VM).
-    @MainActor static func openKeyboardSettings() {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension") else { return }
-        NSWorkspace.shared.open(url)
-    }
-
     typealias Clash = (action: CaptureHotkeyAction, shortcut: HotkeyShortcut)
 
     private static func list(_ items: [String]) -> String { ListFormatter.localizedString(byJoining: items) }
@@ -425,37 +414,19 @@ enum SystemScreenshotShortcuts {
         clashes.sorted { ($0.shortcut.keyCode, $0.shortcut.modifiers.rawValue) < ($1.shortcut.keyCode, $1.shortcut.modifiers.rawValue) }
     }
 
-    /// What one press does now on the clashing keys, in key order: the line above Settings' list and the notice's start.
-    static func summary(_ clashes: [Clash]) -> String {
-        let sorted = inKeyOrder(clashes)
-        let macOSOnly = sorted.filter { outcome(for: $0.action) == .macOSOnly }
-        let both = sorted.filter { outcome(for: $0.action) == .both }
-        var lines: [String] = []
-        if !macOSOnly.isEmpty {
-            lines.append("On \(list(macOSOnly.map { $0.shortcut.displayTokens.joined() })), macOS takes its own screenshot, "
-                + "so Sukusho’s \(list(macOSOnly.map(\.action.title))) \(macOSOnly.count == 1 ? "doesn’t" : "don’t") run.")
-        }
-        if !both.isEmpty {
-            lines.append("On \(list(both.map { $0.shortcut.displayTokens.joined() })), macOS takes its own screenshot "
-                + "as well as Sukusho’s \(list(both.map(\.action.title))).")
-        }
-        return lines.joined(separator: " ")
+    /// The warning, the same in Settings and the launch notice, short and plain (the owner, 2026-11-17): the keys that
+    /// clash, in key order, and the two ways out. Without free keys to move to, only choosing your own is offered.
+    /// Choose My Own in Settings records the first clashing row, top to bottom.
+    static func firstToChoose(in order: [CaptureHotkeyAction], shortcuts: [CaptureHotkeyAction: HotkeyShortcut],
+                              system: Set<HotkeyShortcut>) -> CaptureHotkeyAction? {
+        order.first { shortcuts[$0].map(system.contains) ?? false }
     }
 
-    /// The launch notice: what happens, and the two ways out, naming the keys Use Other Keys would pick.
-    static func noticeText(_ clashes: [Clash], otherKeys: [CaptureHotkeyAction: HotkeyShortcut]) -> String {
-        let sorted = inKeyOrder(clashes)
-        let moving = sorted.filter { otherKeys[$0.action] != nil }
-        let staying = sorted.filter { otherKeys[$0.action] == nil }
-        let moves = moving.compactMap { otherKeys[$0.action]?.displayTokens.joined() }
-        var use = ""
-        if !moving.isEmpty {
-            // All of them, or only some: those left over are named, for a key picked by hand (Sol, R9-1).
-            use = staying.isEmpty ? "Use Other Keys moves them to \(list(moves)). "
-                : "Use Other Keys moves \(list(moving.map(\.action.title))) to \(list(moves)); pick another key for "
-                    + "\(list(staying.map(\.action.title))) in Settings › Shortcuts. "
-        }
-        return "\(summary(clashes)) \(use)Or turn macOS’s off in Keyboard Shortcuts."
+    static func warning(_ clashes: [Clash], canUseOtherKeys: Bool) -> String {
+        let keys = list(inKeyOrder(clashes).map { $0.shortcut.displayTokens.joined() })
+        let what = clashes.count == 1 ? "\(keys) is also one of macOS’s screenshot shortcuts."
+            : "\(keys) are also macOS’s screenshot shortcuts."
+        return what + (canUseOtherKeys ? " Use other keys, or choose your own." : " Choose your own keys.")
     }
 
     // MARK: - Use Other Keys

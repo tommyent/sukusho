@@ -81,22 +81,30 @@ struct CaptureHotkeySettingsSection: View {
         }
     }
 
-    /// Above the list while shortcuts clash (the owner's layout B): what one press does now, and the two ways out.
+    /// Above the list while shortcuts clash (the owner's layout B and wording): the keys, and the two choices.
     private var clashSummary: some View {
-        VStack(alignment: .leading, spacing: DS.Space.s) {
-            warningLabel(SystemScreenshotShortcuts.summary(clashes))
+        let canMove = !SystemScreenshotShortcuts.otherKeys(for: clashes.map(\.action), shortcuts: shortcuts, system: systemAll).isEmpty
+        return VStack(alignment: .leading, spacing: DS.Space.s) {
+            warningLabel(SystemScreenshotShortcuts.warning(clashes, canUseOtherKeys: canMove))
             HStack(spacing: DS.Space.m) {
                 Spacer(minLength: 0)
-                Button("Use Other Keys") { useOtherKeys() }
+                if canMove {
+                    Button("Use Other Keys") { useOtherKeys() }
+                        .controlSize(.small)
+                        .help("Move these to keys macOS doesn’t use")
+                }
+                Button("Choose My Own") { chooseMyOwn() }
                     .controlSize(.small)
-                    .disabled(SystemScreenshotShortcuts.otherKeys(for: clashes.map(\.action), shortcuts: shortcuts,
-                                                                  system: systemAll).isEmpty)
-                    .help("Move these to keys macOS doesn’t use")
-                Button("Open Keyboard Shortcuts…") { SystemScreenshotShortcuts.openKeyboardSettings() }
-                    .controlSize(.small)
-                    .help("Turn macOS’s off in Keyboard Shortcuts › Screenshots")
+                    .help("Type a new shortcut for \(clashes.first?.action.title ?? "it")")
             }
         }
+    }
+
+    /// Choose My Own: the first clashing row starts recording, as a click on its keys does.
+    private func chooseMyOwn() {
+        guard let first = SystemScreenshotShortcuts.firstToChoose(in: actions, shortcuts: shortcuts, system: Set(systemEntries.values)),
+              !isRecording(first) else { return }
+        toggleRecording(for: first)
     }
 
     /// A warning in the system's own colors: the multicolor triangle, the text as secondary labels are.
