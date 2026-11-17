@@ -16,7 +16,7 @@ nonisolated enum LibrarySavedFilter: String, CaseIterable, Identifiable, Sendabl
 }
 
 /// One saved thing: a capture (screenshot or recording) or a clip.
-nonisolated enum LibrarySavedCard: Identifiable, Equatable {
+enum LibrarySavedCard: Identifiable {
     case capture(CaptureLibraryItem)
     case clip(ClipboardEntry)
 
@@ -53,6 +53,15 @@ nonisolated enum LibrarySavedCard: Identifiable, Equatable {
     var isShown = false
     var filter: LibrarySavedFilter = .all
     private init() {}
+
+    /// What the page shows, and the status bar counts: saved captures the search finds, and saved clips, as the
+    /// Clipboard page's Saved section lists them.
+    var cards: [LibrarySavedCard] {
+        let library = CaptureLibraryModel.shared
+        let clips = ClipboardHistoryModel.shared.sections(filter: .all, query: library.searchText)
+            .first { $0.title == "Saved" }?.entries ?? []
+        return LibrarySavedCard.cards(captures: library.visibleItems, clips: clips, filter: filter)
+    }
 }
 
 struct LibrarySavedPage: View {
@@ -62,17 +71,8 @@ struct LibrarySavedPage: View {
     @State private var clipboard = ClipboardHistoryModel.shared
     @State private var gridWidth: CGFloat = 0
 
-    /// The clips the search finds, as the Clipboard page's Saved section lists them.
-    private var clips: [ClipboardEntry] {
-        clipboard.sections(filter: .all, query: library.searchText).first { $0.title == "Saved" }?.entries ?? []
-    }
-
-    var cards: [LibrarySavedCard] {
-        LibrarySavedCard.cards(captures: library.visibleItems, clips: clips, filter: saved.filter)
-    }
-
     var body: some View {
-        let cards = cards
+        let cards = saved.cards
         let grid = LibraryGridMetrics(width: gridWidth, cardWidth: cardWidth)
         VStack(spacing: 0) {
             filterChips

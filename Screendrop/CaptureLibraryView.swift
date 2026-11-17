@@ -548,7 +548,7 @@ struct CaptureLibraryView: View {
                 if !cloud.selection.isEmpty { Text("· \(cloud.selection.count) selected") }
                 if !cloud.deletingIDs.isEmpty { Text("· Deleting…") }
             } else if saved.isShown {
-                let count = LibrarySavedPage(cardWidth: cardWidth).cards.count
+                let count = saved.cards.count
                 Text("\(count) saved")
             } else if clipboard.isShown {
                 if clipboardEnabled {
