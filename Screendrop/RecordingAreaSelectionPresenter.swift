@@ -20,6 +20,7 @@ final class RecordingAreaSelectionPresenter {
     private var eventMonitor: Any?
     private var freezeTask: Task<Void, Never>?
     private var runningAppsObservation: NSKeyValueObservation?
+    private var session = AreaPickerSession()
 
     private init() {}
 
@@ -27,13 +28,16 @@ final class RecordingAreaSelectionPresenter {
     /// `AreaPickerSystemScreenshot`. NSWorkspace's launch notification never comes for that UI, but its running-
     /// applications list reports it, in time for ⇧⌘5 (VM, 27.2.1, three tries). Only new arrivals count, not the list
     /// as it is when the picker opens: that UI keeps running about 5 s after its toolbar closes, and a Capture Text
-    /// started then must stay. No Sukusho path runs `screencapture` while this picker is open.
-    private func watchSystemScreenshot() {
+    /// started then must stay. The queued check is bound to this selection's `generation` (Sol, SP-1).
+    /// Sukusho's own Capture Text and Area run `screencapture` only after this picker has closed; another capture
+    /// started meanwhile, such as Window by its shortcut (`screencapture -w`), may start that UI too and so close the
+    /// picker, as starting a different capture may (not seen live).
+    private func watchSystemScreenshot(generation: Int) {
         guard runningAppsObservation == nil else { return }
         runningAppsObservation = NSWorkspace.shared.observe(\.runningApplications, options: [.new]) { [weak self] _, change in
             let bundleIDs = (change.newValue ?? []).map(\.bundleIdentifier)
             Task { @MainActor [weak self] in
-                guard let self, !self.panels.isEmpty, AreaPickerSystemScreenshot.endsPicker(running: bundleIDs) else { return }
+                guard let self, self.session.cancels(generation, running: bundleIDs) else { return }
                 self.finish(rect: nil)
             }
         }
@@ -149,7 +153,7 @@ final class RecordingAreaSelectionPresenter {
         // The first panel takes the keyboard; the rest only need the pointer.
         if panels.isEmpty {
             installEventMonitor()
-            watchSystemScreenshot()
+            watchSystemScreenshot(generation: session.open())
             panel.makeKeyAndOrderFront(nil)
         }
         panels.append(panel)
@@ -158,6 +162,8 @@ final class RecordingAreaSelectionPresenter {
     }
 
     private func finish(rect: CGRect?) {
+        // Whatever was queued for this selection is stale from here on (Sol, SP-1).
+        session.close()
         let completion = completion
         self.completion = nil
         freezeTask?.cancel()

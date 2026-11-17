@@ -49,6 +49,27 @@ struct AreaPickerSystemScreenshotTests {
         #expect(!AreaPickerSystemScreenshot.endsPicker(running: others))
         #expect(!AreaPickerSystemScreenshot.endsPicker(running: []))
     }
+
+    /// Sol, SP-1: a "Screenshot UI started" queued for picker A, which then closes, and picker B opened before the queued
+    /// check runs: the check belongs to A and must not cancel B. B's own callbacks still do.
+    @Test func aCallbackQueuedForOnePickerNeverCancelsTheNext() {
+        let screenshotUI: [String?] = ["com.apple.screencaptureui"]
+        var session = AreaPickerSession()
+        let a = session.open()
+        #expect(session.cancels(a, running: screenshotUI))   // A's own callback, while A is open
+
+        // Queued for A, then A closes and B opens before the queued check runs.
+        session.close()
+        let b = session.open()
+        #expect(!session.cancels(a, running: screenshotUI))
+        #expect(session.cancels(b, running: screenshotUI))
+        #expect(!session.cancels(b, running: ["com.apple.finder"]))
+
+        // Once B has closed too, nothing queued for it does anything.
+        session.close()
+        #expect(!session.cancels(b, running: screenshotUI))
+        #expect(!session.isOpen)
+    }
 }
 
 private extension CGRect {

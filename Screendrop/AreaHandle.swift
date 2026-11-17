@@ -57,3 +57,28 @@ nonisolated enum AreaPickerSystemScreenshot {
         bundleIDs.contains(bundleID)
     }
 }
+
+/// Which selection a queued "Screenshot UI started" belongs to (Sol, SP-1): each selection gets its own generation, and
+/// closing one moves on, so a callback queued for a picker that has since closed can't cancel one opened after it.
+nonisolated struct AreaPickerSession {
+    private(set) var generation = 0
+    private(set) var isOpen = false
+
+    /// A new selection; the callbacks scheduled for it carry the returned generation.
+    mutating func open() -> Int {
+        generation += 1
+        isOpen = true
+        return generation
+    }
+
+    /// The selection ended, however it ended: everything already queued for it is now stale.
+    mutating func close() {
+        generation += 1
+        isOpen = false
+    }
+
+    /// Whether a callback scheduled for `generation`, reporting `running`, cancels the open selection.
+    func cancels(_ generation: Int, running bundleIDs: [String?]) -> Bool {
+        isOpen && generation == self.generation && AreaPickerSystemScreenshot.endsPicker(running: bundleIDs)
+    }
+}
