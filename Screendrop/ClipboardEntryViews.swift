@@ -144,6 +144,7 @@ struct ClipboardInfo: View {
             Text("Information").font(DS.TypeScale.labelSemibold).foregroundStyle(.secondary).padding(.bottom, DS.Space.xs)
             if entry.kind == .snippet {
                 row("Name") { Text(ClipboardList.title(of: entry)) }
+                textRows
                 row("Edited") { Text(Self.when(entry.lastCopiedAt)) }
             } else {
                 if let source = model.appName(entry.sourceBundleID) {
@@ -159,16 +160,66 @@ struct ClipboardInfo: View {
                     }
                 }
                 row("Content type") { Text(ClipboardList.typeName(of: entry)) }
+                fileRows
                 if entry.kind == .image, entry.pixelWidth > 0 {
                     row("Dimensions") { Text("\(entry.pixelWidth) × \(entry.pixelHeight)") }
                 }
+                switch ClipboardList.textForm(of: entry) {
+                case .link: if let host = URL(string: entry.text ?? "")?.host() { row("Domain") { Text(host) } }
+                case .color(let hex): colorRows(hex)
+                case .plain: textRows
+                case nil: EmptyView()
+                }
                 row("Size") { Text(entry.byteSize.formatted(.byteCount(style: .file))) }
                 row("Times copied") { Text(entry.timesCopied, format: .number) }
-                row("Last copied") { Text(Self.when(entry.lastCopiedAt)) }
-                if entry.timesCopied > 1 { row("First copied") { Text(Self.when(entry.firstCopiedAt)) } }
+                row("First copied") { Text(Self.when(entry.firstCopiedAt)) }
+                if entry.lastCopiedAt != entry.firstCopiedAt { row("Last copied") { Text(Self.when(entry.lastCopiedAt)) } }
             }
         }
         .font(.system(size: 12.5))
+    }
+
+    /// Where an image's capture or the copied files are: the file name, its folder and a way to Finder.
+    @ViewBuilder private var fileRows: some View {
+        let paths = entry.kind == .files ? entry.filePaths : entry.libraryPath.map { [$0] } ?? []
+        if let first = paths.first {
+            row(paths.count == 1 ? "File" : "Files") {
+                HStack(spacing: DS.Space.xs) {
+                    Text(paths.count == 1 ? (first as NSString).lastPathComponent : "\(paths.count) files")
+                        .truncationMode(.middle)
+                        .help(paths.joined(separator: "\n"))
+                    Button("Show in Finder", systemImage: "arrow.right.circle.fill") {
+                        NSWorkspace.shared.activateFileViewerSelecting(paths.map { URL(fileURLWithPath: $0) })
+                    }
+                    .labelStyle(.iconOnly).buttonStyle(.borderless).foregroundStyle(.secondary)
+                    .help("Show in Finder")
+                }
+            }
+            row("Where") {
+                Text(((first as NSString).deletingLastPathComponent as NSString).abbreviatingWithTildeInPath)
+                    .truncationMode(.head)
+                    .help((first as NSString).deletingLastPathComponent)
+            }
+        }
+    }
+
+    @ViewBuilder private var textRows: some View {
+        let text = entry.text ?? ""
+        row("Characters") { Text(text.count, format: .number) }
+        row("Words") { Text(text.split(whereSeparator: { $0.isWhitespace }).count, format: .number) }
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).count
+        if lines > 1 { row("Lines") { Text(lines, format: .number) } }
+    }
+
+    @ViewBuilder private func colorRows(_ hex: String) -> some View {
+        if let color = Color(clipboardHex: hex).map(NSColor.init)?.usingColorSpace(.sRGB) {
+            let rgb = [color.redComponent, color.greenComponent, color.blueComponent].map { Int(($0 * 255).rounded()) }
+            row("RGB") { Text(rgb.map(String.init).joined(separator: ", ")).monospacedDigit() }
+            row("HSB") {
+                Text("\(Int((color.hueComponent * 360).rounded()))°, \(Int((color.saturationComponent * 100).rounded()))%, \(Int((color.brightnessComponent * 100).rounded()))%")
+                    .monospacedDigit()
+            }
+        }
     }
 
     private func row(_ label: String, @ViewBuilder value: () -> some View) -> some View {
