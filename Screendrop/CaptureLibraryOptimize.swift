@@ -71,6 +71,19 @@ enum CaptureOptimizer {
         }
     }
 
+    /// Settings › Optimize › Optimize before sharing to Cloud: the smaller file to upload, or nil to upload
+    /// the capture as it is (switched off, not a PNG or JPEG, already optimized, or nothing smaller came out).
+    static func forCloud(_ url: URL) async -> ImageOptimizationResult? {
+        guard OptimizePreferences.beforeCloud, ["png", "jpg", "jpeg"].contains(url.pathExtension.lowercased()),
+              OptimizedMark.saving(of: url) == nil,
+              let result = try? await ImageOptimizer.shared.optimize(url, effort: OptimizePreferences.quietEffort) else { return nil }
+        guard result.outcome == .optimized else {
+            result.discard()
+            return nil
+        }
+        return result
+    }
+
     /// Settings › Optimize › Optimize new captures: quietly, right after a screenshot reaches the Library.
     static func optimizeNewCapture(_ url: URL) {
         guard OptimizePreferences.newCaptures else { return }

@@ -61,7 +61,7 @@ final class CloudUploader: NSObject {
 
     func upload(
         itemID: UUID,
-        fileURL: URL,
+        fileURL originalURL: URL,
         title: String? = nil,
         socialEnabled: Bool = true,
         expiresAt: Date? = nil,
@@ -79,6 +79,11 @@ final class CloudUploader: NSObject {
         }
         let creds = CloudCredentialStore.shared.snapshot()
         if let replacingUploadID, !CloudPreviewCache.isSafeID(replacingUploadID) { throw CloudUploadError.invalidURL }
+        // Settings › Optimize › Optimize before sharing to Cloud: a screenshot goes up as a smaller file with
+        // the same pixels. The capture on disk is not touched here.
+        let optimized = asFile || replacingUploadID != nil ? nil : await CaptureOptimizer.forCloud(originalURL)
+        defer { optimized?.discard() }
+        let fileURL = optimized?.url ?? originalURL
         var replacementSnapshot: URL?
         defer {
             if let replacementSnapshot { try? FileManager.default.removeItem(at: replacementSnapshot) }

@@ -54,6 +54,8 @@ extension ImageOptimizationEffort {
 
 struct OptimizeSettingsPane: View {
     @AppStorage(OptimizePreferences.whenCopyingKey) private var whenCopying = true
+    @AppStorage(OptimizePreferences.newCapturesKey) private var newCaptures = true
+    @AppStorage(OptimizePreferences.beforeCloudKey) private var beforeCloud = true
     @AppStorage(OptimizePreferences.effortKey) private var effort = ImageOptimizationEffort.balanced
     @AppStorage(OptimizePreferences.webPLosslessKey) private var webPLossless = true
     @AppStorage(OptimizePreferences.webPQualityKey) private var webPQuality = OptimizePreferences.defaultQuality
@@ -67,6 +69,24 @@ struct OptimizeSettingsPane: View {
                     detail: "Copies a smaller image with the same pixels. Esc while it works, or ⇧⌘C, copies the original."
                 ).control { label in
                     Toggle(isOn: $whenCopying) { label }
+                }
+                .toggleStyle(.switch)
+            }
+
+            Section("Captures") {
+                SettingsControlLabel(
+                    "Optimize new captures",
+                    detail: "Makes each screenshot smaller in the background right after it's taken, without changing a pixel."
+                ).control { label in
+                    Toggle(isOn: $newCaptures) { label }
+                }
+                .toggleStyle(.switch)
+
+                SettingsControlLabel(
+                    "Optimize before sharing to Cloud",
+                    detail: "Uploads a smaller file with the same pixels."
+                ).control { label in
+                    Toggle(isOn: $beforeCloud) { label }
                 }
                 .toggleStyle(.switch)
             }

@@ -226,6 +226,7 @@ final class ScreenshotHistoryStore {
             )
             items.insert(item, at: 0)
             saveMetadata()
+            CaptureOptimizer.optimizeNewCapture(destinationURL)
             return destinationURL
         } catch {
             print("Failed to import screenshot into history: \(error)")
