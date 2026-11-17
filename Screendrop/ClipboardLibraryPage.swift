@@ -123,9 +123,12 @@ struct ClipboardLibraryPage: View {
         }
     }
 
+    /// A search with no match says so, on Snippets too, rather than saying there are none (Astra, 2026-11-16).
     @ViewBuilder
     private var emptyPage: some View {
-        if model.showsSnippets {
+        if !library.searchText.isEmpty {
+            ContentUnavailableView.search(text: library.searchText).workspaceTextPlate()
+        } else if model.showsSnippets {
             ContentUnavailableView {
                 Label("No Snippets", systemImage: "text.badge.star")
             } description: {
@@ -135,8 +138,6 @@ struct ClipboardLibraryPage: View {
                     .buttonStyle(.borderedProminent)
             }
             .workspaceTextPlate()
-        } else if !library.searchText.isEmpty {
-            ContentUnavailableView.search(text: library.searchText).workspaceTextPlate()
         } else {
             ContentUnavailableView {
                 Label("Nothing Copied Yet", systemImage: "doc.on.clipboard")
