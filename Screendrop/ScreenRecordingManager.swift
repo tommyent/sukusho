@@ -154,6 +154,9 @@ final class ScreenRecordingManager {
     /// had already started.
     private var isStartCancelled = false
     private var currentSource: ScreenRecordingSource?
+    /// What the running recording's filter leaves out of the private windows, and how to rebuild it.
+    private var privateCoverage: PrivateWindowCoverage?
+    private var privateFilterContext: (source: ScreenRecordingSource, options: ScreenRecordingCaptureOptions)?
     private var activityToken: NSObjectProtocol?
     private var terminationCompletion: ((RecordingSession?) -> Void)?
 
@@ -312,6 +315,8 @@ final class ScreenRecordingManager {
                 // screen stream begins, so setup UI is never baked into video.
                 try await capture.startCapture(filter: target.filter, configuration: target.configuration)
                 guard try isStarting(session: session) else { return }
+                privateCoverage = Self.privateCoverage(for: source, content: content, options: options)
+                privateFilterContext = (source, options)
 
                 manifest = CaptureManifest()
                 manifest.pixelWidth = target.width
@@ -834,6 +839,8 @@ final class ScreenRecordingManager {
         session = nil
         displayID = nil
         currentSource = nil
+        privateCoverage = nil
+        privateFilterContext = nil
         startedAt = nil
         pausedAt = nil
         accumulatedPauseDuration = 0
@@ -845,6 +852,40 @@ final class ScreenRecordingManager {
         finishAction = .preview
         isStopping = false
         state = .idle
+    }
+
+    private static func privateCoverage(for source: ScreenRecordingSource, content: SCShareableContent,
+                                        options: ScreenRecordingCaptureOptions) -> PrivateWindowCoverage {
+        let present = Set(content.windows.map(\.windowID))
+        let recordsDisplay: Bool = switch source.kind {
+        case .fullscreen, .area: true
+        case .window: false
+        }
+        return PrivateWindowCoverage(recordsDisplay: recordsDisplay,
+                                     includesAppWindows: PreviewWindowCaptureExclusion.includesAppWindowsInCaptures,
+                                     excludedIDs: PreviewWindowCaptureExclusion.shared.privateWindowIDs.intersection(present))
+    }
+
+    /// Makes the running recording leave out a private window before it is shown (Sol, CVR-2): its
+    /// filter is rebuilt from content that includes off-screen windows, and the stream takes it. True
+    /// when the window can be shown: no recording, one that can't see it, or the update succeeded.
+    func excludeFromRecording(windowID: CGWindowID) async -> Bool {
+        guard isActive else { return true }
+        // Still starting: the filter isn't known yet, so a popup that the recording would see waits.
+        guard let coverage = privateCoverage else { return !PreviewWindowCaptureExclusion.includesAppWindowsInCaptures }
+        guard coverage.needsFilterUpdate(for: windowID) else { return true }
+        guard let context = privateFilterContext,
+              let content = try? await ScreenRecordingCapture.availableContent(onScreenWindowsOnly: false),
+              content.windows.contains(where: { $0.windowID == windowID }),
+              let target = try? Self.captureTarget(for: context.source, content: content, options: context.options),
+              isActive else { return false }
+        do {
+            try await capture.updateFilter(target.filter)
+        } catch {
+            return false
+        }
+        privateCoverage?.excludedIDs.insert(windowID)
+        return true
     }
 
     private static func captureTarget(
@@ -1059,6 +1100,12 @@ nonisolated final class ScreenRecordingCapture: NSObject, SCStreamOutput, SCStre
         }
         try await stream.startCapture()
         self.stream = stream
+    }
+
+    /// Replaces the running stream's filter; throws when there is no stream or ScreenCaptureKit refuses.
+    func updateFilter(_ filter: SCContentFilter) async throws {
+        guard let stream else { throw CancellationError() }
+        try await stream.updateContentFilter(filter)
     }
 
     func stopCapture() async throws {

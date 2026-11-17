@@ -2,6 +2,20 @@ import CoreGraphics
 import Foundation
 import ScreenCaptureKit
 
+/// Whether a running recording must change its filter before a private window (the clipboard
+/// popup) may appear. A display or area recording that includes Sukusho's windows captures any new
+/// window of the app unless the filter names it; a window recording captures only its window, and a
+/// recording that leaves the whole app out needs nothing (Sol, CVR-2).
+nonisolated struct PrivateWindowCoverage: Equatable {
+    var recordsDisplay: Bool
+    var includesAppWindows: Bool
+    var excludedIDs: Set<CGWindowID>
+
+    func needsFilterUpdate(for windowID: CGWindowID) -> Bool {
+        recordsDisplay && includesAppWindows && !excludedIDs.contains(windowID)
+    }
+}
+
 nonisolated struct RecordingDesktopFilter {
     let cleanDesktop: Bool
     let excludedApplications: [SCRunningApplication]

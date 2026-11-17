@@ -86,6 +86,22 @@ struct RecordingDesktopFilterTests {
         ))
     }
 
+    /// A recording that captures Sukusho's windows must be told about the popup before it opens, the
+    /// first time included (Sol, CVR-2): display and area recordings with Include on (as Bug report sets
+    /// it), not one that leaves the app out, not a window recording, and not once it is already named.
+    @Test func aPopupFirstOpenedDuringARecordingNeedsTheFilterUpdated() {
+        let popup: CGWindowID = 4242
+        #expect(PrivateWindowCoverage(recordsDisplay: true, includesAppWindows: true, excludedIDs: []).needsFilterUpdate(for: popup))
+        #expect(!PrivateWindowCoverage(recordsDisplay: true, includesAppWindows: true, excludedIDs: [popup]).needsFilterUpdate(for: popup))
+        #expect(!PrivateWindowCoverage(recordsDisplay: true, includesAppWindows: false, excludedIDs: []).needsFilterUpdate(for: popup))
+        #expect(!PrivateWindowCoverage(recordsDisplay: false, includesAppWindows: true, excludedIDs: []).needsFilterUpdate(for: popup))
+        // Once a filter has been rebuilt with the popup, the same plan leaves it out.
+        #expect(!RecordingDesktopFilter.excludesApplication(bundleIdentifier: "test.app", ownBundleIdentifier: "test.app",
+                                                            includesAppWindows: true, cleanDesktop: false))
+        #expect(RecordingDesktopFilter.excludesWindow(bundleIdentifier: "test.app", layer: 0, cleanDesktop: false, windowID: popup,
+                                                      overlayWindowIDs: [popup], includesAppWindows: true))
+    }
+
     /// The clipboard popup is private: hidden from every capture and from screen sharing, before,
     /// during and after Sukusho's own screenshots, and named for recordings to leave out (owner).
     @MainActor
