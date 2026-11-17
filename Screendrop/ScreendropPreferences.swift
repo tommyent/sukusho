@@ -152,6 +152,21 @@ enum ScreendropPreferences {
         return defaultExportDirectory
     }
     
+    /// Where recordings and everything exported from them (movies, GIFs, audio) are saved: the Save folder the user
+    /// chose, else ~/Movies/Sukusho, as images go to ~/Pictures/Sukusho (owner, 2026-11-17).
+    static var videoExportDirectory: URL {
+        if let path = UserDefaults.standard.string(forKey: exportDirectoryPathKey), !path.isEmpty {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+        return defaultVideoExportDirectory
+    }
+
+    static var defaultVideoExportDirectory: URL {
+        let movies = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first
+        return (movies ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Movies"))
+            .appendingPathComponent(ScreendropStorage.directoryName, isDirectory: true)
+    }
+
     static var defaultExportDirectory: URL {
         let picturesDirectory = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first
         return (picturesDirectory ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Pictures"))
