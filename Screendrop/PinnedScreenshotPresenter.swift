@@ -51,6 +51,9 @@ final class PinnedScreenshotPresenter {
         )
 
         panel.setFrameOrigin(cascadedOrigin(for: contentSize))
+        // A pin follows "Include Sukusho windows in captures" like every other Sukusho window (owner,
+        // 2026-11-17): out of Sukusho's own screenshots unless that is on; other apps always see it.
+        PreviewWindowCaptureExclusion.shared.register(window: panel)
         panel.orderFrontRegardless()
         panels.insert(panel)
     }
