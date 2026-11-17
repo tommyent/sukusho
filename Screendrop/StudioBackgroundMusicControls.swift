@@ -42,41 +42,48 @@ struct StudioBackgroundMusicControls: View {
                     }
                 }
             } else {
-                InspectorHint(findMusic == nil ? "No background music. Add your own file." : "No background music. Find a track or add your own file.")
+                // Volume, looping and ducking appear once there is a track (Fable pass 3, #4).
+                if !model.isProject {
+                    InspectorHint("Background music works in a recording project.")
+                } else {
+                    InspectorHint(findMusic == nil
+                        ? "No background music. Add your own file to set its volume, looping and ducking."
+                        : "No background music. Find a track or add your own file to set its volume, looping and ducking.")
+                }
             }
 
-            HStack(spacing: InspectorMetrics.rowSpacing) {
-                if let findMusic {
-                    InspectorActionButton("Find music…", systemImage: "magnifyingglass", action: findMusic)
+            if model.isProject {
+                HStack(spacing: InspectorMetrics.rowSpacing) {
+                    if let findMusic {
+                        InspectorActionButton("Find music…", systemImage: "magnifyingglass", action: findMusic)
+                    }
+                    InspectorActionButton("Add music…", systemImage: "plus") { pickMusic() }
                 }
-                InspectorActionButton("Add music…", systemImage: "plus") { pickMusic() }
+                .disabled(model.hasRunningWork)
             }
-            .disabled(!model.isProject || model.hasRunningWork)
 
             if let error = model.backgroundMusicError { InspectorHint(error, tint: .orange) }
-            if !model.isProject { InspectorHint("Background music needs a recording project.") }
 
-            VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
+            if model.hasBackgroundMusic {
                 InspectorSlider("Music volume", value: $model.musicVolume, range: 0...1, format: .percent(),
                     onEditingChanged: model.setMusicSliderEditing)
-                Toggle("Loop to fit", isOn: $model.musicLoops)
-                    .toggleStyle(.switch)
+                InspectorToggleRow("Loop to fit", isOn: $model.musicLoops)
                     .help("Repeats from the chosen start point to the end of the track")
-                Toggle("Lower under voice", isOn: $model.musicDucks)
-                    .toggleStyle(.switch)
-                    .disabled(!model.canIsolateVoice)
-                    .help("Dips the music while the recorded microphone has speech")
-                if !model.canIsolateVoice { InspectorHint("No microphone track to follow for ducking.") }
-                InspectorSegmented(options: RecordingBackgroundMusic.DuckAmount.allCases,
-                    isSelected: { $0 == model.musicDuckAmount },
-                    onTap: { model.musicDuckAmount = $0 },
-                    label: { Text($0.title).font(.inspectorSegment).help("\($0.rawValue.formatted()) dB") })
-                    .disabled(!model.canIsolateVoice || !model.musicDucks)
-                    .accessibilityLabel("How much to lower the music")
+                if model.canIsolateVoice {
+                    InspectorToggleRow("Lower under voice", isOn: $model.musicDucks)
+                        .help("Dips the music while the recorded microphone has speech")
+                    if model.musicDucks {
+                        InspectorSegmented(options: RecordingBackgroundMusic.DuckAmount.allCases,
+                            isSelected: { $0 == model.musicDuckAmount },
+                            onTap: { model.musicDuckAmount = $0 },
+                            label: { Text($0.title).font(.inspectorSegment).help("\($0.rawValue.formatted()) dB") })
+                            .accessibilityLabel("How much to lower the music")
+                    }
+                } else {
+                    InspectorHint("Lowering it under the voice follows the microphone track, and this recording has none.")
+                }
+                InspectorHint("Fades out over the last second. Exports and shares include the music.")
             }
-            .disabled(!model.hasBackgroundMusic)
-
-            InspectorHint("Fades out over the last second. Exports and shares include the music.")
         }
     }
 
