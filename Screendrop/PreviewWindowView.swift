@@ -156,6 +156,7 @@ struct PreviewWindowView: View {
                     isCompressing: previewStack.compressingItemIDs.contains(item.id),
                     isPreparing: previewStack.preparingItemIDs.contains(item.id),
                     compressionResult: previewStack.compressionResultBadges[item.id],
+                    optimizedNote: previewStack.optimizedNotes[item.id],
                     slideDirection: slideDirection,
                     suppressHoverActions: isOverlayTransitioning,
                     onHoverChanged: { isHovered in

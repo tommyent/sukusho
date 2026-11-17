@@ -1203,6 +1203,123 @@ private func isRunning(_ text: String) -> Bool {
         #expect(bench.leftovers.count == 1)
     }
 
+    /// The copy right after a capture (the owner's choice): the original at once, and the optimized copy in
+    /// its place when it is ready.
+    @Test func theCopyAfterACaptureIsSwappedForItsOptimizedCopy() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let source = try bench.file("Capture.png", Sample.screenshot(width: 640, height: 400, seed: 38))
+        let optimizer = bench.optimizer
+        let copier = OptimizedImageCopy()
+        let board = pasteboard()
+        defer { board.releaseGlobally() }
+        let count = board.changeCount
+        let (started, didStart) = AsyncStream<Void>.makeStream()
+        let (release, doRelease) = AsyncStream<Void>.makeStream()
+        let original = try item(source)
+        let swap = Task {
+            try await copier.copyThenSwap(original, to: board) {
+                didStart.yield()
+                for await _ in release { break }
+                guard let result = try? await optimizer.optimize(source), result.outcome == .optimized else { return nil }
+                defer { result.discard() }
+                return try? item(result.url)
+            }
+        }
+        for await _ in started { break }
+        // The original is there before the optimizer has done anything: a paste now gets it, with no wait.
+        #expect(board.data(forType: .png) == (try Data(contentsOf: source)))
+        #expect(board.changeCount == count + 1)
+
+        doRelease.yield()
+        #expect(try await swap.value)
+        let swapped = try #require(board.data(forType: .png))
+        #expect(swapped.count < size(source))
+        let pasted = bench.folder.appending(path: "pasted.png")
+        try swapped.write(to: pasted)
+        #expect(try pixels(at: pasted) == pixels(at: source))
+        #expect(board.changeCount == count + 2)
+        #expect(board.pasteboardItems?.count == 1)
+        #expect(bench.leftovers.isEmpty)
+    }
+
+    /// The swap never replaces anything but the write it follows, and a failed optimizer leaves that write alone.
+    @Test func theCopyAfterACaptureStaysWhenItCannotOrMustNotBeSwapped() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let source = try bench.file("Capture.png", Sample.screenshot(width: 640, height: 400, seed: 39))
+        let quick = try bench.file("Quick.png", Sample.screenshot(width: 320, height: 200, seed: 40))
+        let optimizer = bench.optimizer
+        let copier = OptimizedImageCopy()
+        /// A swap whose optimized copy is ready only once `meanwhile` has run.
+        func swap(on board: NSPasteboard, meanwhile: () async throws -> Void) async throws -> Bool {
+            let (started, didStart) = AsyncStream<Void>.makeStream()
+            let (release, doRelease) = AsyncStream<Void>.makeStream()
+            let original = try item(source)
+            let late = Task {
+                try await copier.copyThenSwap(original, to: board) {
+                    didStart.yield()
+                    for await _ in release { break }
+                    guard let result = try? await optimizer.optimize(source), result.outcome == .optimized else { return nil }
+                    defer { result.discard() }
+                    return try? item(result.url)
+                }
+            }
+            for await _ in started { break }
+            try await meanwhile()
+            doRelease.yield()
+            return try await late.value
+        }
+
+        // Something copied in another app while the optimizer was working.
+        do {
+            let board = pasteboard()
+            defer { board.releaseGlobally() }
+            var count = 0
+            let swapped = try await swap(on: board) {
+                board.clearContents()
+                board.setString("copied elsewhere", forType: .string)
+                count = board.changeCount
+            }
+            #expect(!swapped)
+            #expect(board.string(forType: .string) == "copied elsewhere")
+            #expect(board.changeCount == count)
+        }
+
+        // A copy made in Sukusho meanwhile.
+        do {
+            let board = pasteboard()
+            defer { board.releaseGlobally() }
+            var newer: ImageOptimizationResult?
+            var count = 0
+            let swapped = try await swap(on: board) {
+                newer = try await copier.copy(quick, to: board, optimize: { try await optimizer.optimize($0) }, item: item)
+                count = board.changeCount
+            }
+            #expect(!swapped)
+            #expect(board.data(forType: .png) == (try Data(contentsOf: try #require(newer).url)))
+            #expect(board.changeCount == count)
+            newer?.discard()
+        }
+
+        // The optimizer fails: the original stays, written once.
+        do {
+            let board = pasteboard()
+            defer { board.releaseGlobally() }
+            let count = board.changeCount
+            let noTools = ImageOptimizer(toolsDirectory: bench.folder.appending(path: "nothing-here"), outputDirectory: bench.output)
+            let original = try item(source)
+            let swapped = try await copier.copyThenSwap(original, to: board) {
+                guard let result = try? await noTools.optimize(source), result.outcome == .optimized else { return nil }
+                return try? item(result.url)
+            }
+            #expect(!swapped)
+            #expect(board.data(forType: .png) == (try Data(contentsOf: source)))
+            #expect(board.changeCount == count + 1)
+        }
+        #expect(bench.leftovers.isEmpty)
+    }
+
     @Test func aFailedOptimizationStillCopiesTheOriginalOnce() async throws {
         let bench = try Bench()
         defer { bench.remove() }
@@ -1216,6 +1333,50 @@ private func isRunning(_ text: String) -> Bool {
         #expect(board.data(forType: .png) == (try Data(contentsOf: source)))
         #expect(board.changeCount > count)
         #expect(board.pasteboardItems?.count == 1)
+    }
+}
+
+// MARK: - One optimization for a new capture
+
+@MainActor
+@Suite struct ScheduledOnceTests {
+    private final class Counter { var runs = 0 }
+
+    /// A new capture's optimizing is due two seconds after the capture, and wanted at once by the copy that
+    /// follows it. Both get the one run: the capture isn't optimized twice.
+    @Test func workAskedForSoonerRunsOnceAndAtOnce() async throws {
+        let counter = Counter()
+        let scheduled = ScheduledOnce<String, Int>()
+        let clock = ContinuousClock()
+        let start = clock.now
+        scheduled.schedule("capture", after: .seconds(30)) {
+            counter.runs += 1
+            return 7
+        }
+        // Scheduling it again while it waits adds nothing.
+        scheduled.schedule("capture", after: .seconds(30)) {
+            counter.runs += 100
+            return 8
+        }
+        #expect(counter.runs == 0)
+        let asked = await scheduled.now("capture")
+        #expect(asked == 7)
+        #expect(clock.now - start < .seconds(5))
+        #expect(counter.runs == 1)
+
+        // It has run: there is nothing left to ask for, and nothing runs again.
+        let again = await scheduled.now("capture")
+        let other = await scheduled.now("another")
+        #expect(again == nil && other == nil)
+        #expect(counter.runs == 1)
+
+        // Left alone, it runs by itself after its delay.
+        scheduled.schedule("later", after: .milliseconds(50)) {
+            counter.runs += 1
+            return 9
+        }
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(counter.runs == 2)
     }
 }
 

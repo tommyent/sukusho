@@ -21,6 +21,11 @@ final class ScreenshotPreviewStack {
     /// Recordings currently being flattened into a shareable deliverable.
     private(set) var preparingItemIDs: Set<ScreenshotPreviewItem.ID> = []
     private(set) var compressionResultBadges: [ScreenshotPreviewItem.ID: ScreenshotCompressionResult] = [:]
+    /// The saving ("↓32%") a card shows for a moment after the copy made on capture was swapped for the
+    /// optimized one.
+    private(set) var optimizedNotes: [ScreenshotPreviewItem.ID: String] = [:]
+    /// How long that note stays before it fades.
+    static let optimizedNoteDuration: Duration = .seconds(2.5)
     var isExiting = false
 
     /// Items the user has explicitly engaged with via a high-intent action
@@ -44,6 +49,7 @@ final class ScreenshotPreviewStack {
     @ObservationIgnored private var overlayExitTask: Task<Void, Never>?
     @ObservationIgnored private var compressionTasks: [ScreenshotPreviewItem.ID: Task<Void, Never>] = [:]
     @ObservationIgnored private var compressionBadgeTasks: [ScreenshotPreviewItem.ID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var optimizedNoteTasks: [ScreenshotPreviewItem.ID: Task<Void, Never>] = [:]
     private var visibleCapacity: Int?
     @ObservationIgnored private var pendingImageTasks: [ScreenshotPreviewItem.ID: Task<Void, Never>] = [:]
 
@@ -207,7 +213,7 @@ final class ScreenshotPreviewStack {
         if AfterCaptureActions.isEnabled(.copy, for: type) {
             switch type {
             case .screenshot:
-                _ = await copyURLToClipboard(url)
+                await copyAfterCapture(url, itemID: itemID)
             case .recording:
                 Task { _ = await copyVideoURLToClipboard(url, itemID: itemID) }
             }
@@ -902,6 +908,40 @@ final class ScreenshotPreviewStack {
         }
     }
 
+    /// The copy right after a capture. With Settings › Optimize › Optimize when copying on, nobody waits: the
+    /// original is on the clipboard at once, the optimized file takes its place when it is ready, unless
+    /// something else was copied meanwhile, and the capture's card, if it is still showing, says so for a
+    /// moment. Esc and ⇧⌘C have no part here; every other copy still waits for its optimized file.
+    private func copyAfterCapture(_ url: URL, itemID: UUID) async {
+        guard OptimizePreferences.whenCopying else {
+            _ = await copyURLToClipboard(url)
+            return
+        }
+        // Not awaited past the first write: the other after-capture actions don't wait for the optimizer.
+        Task {
+            do {
+                if let saving = try await ScreenshotFileActions.copyOriginalThenOptimized(from: url) {
+                    showOptimizedNote(saving, on: itemID)
+                }
+            } catch {
+                print("Failed to copy screenshot: \(error)")
+            }
+        }
+    }
+
+    private func showOptimizedNote(_ saving: String, on id: ScreenshotPreviewItem.ID) {
+        // Only on a card that is still showing: no card, no word.
+        guard items.contains(where: { $0.id == id }) else { return }
+        withAnimation(.easeOut(duration: 0.2)) { optimizedNotes[id] = saving }
+        optimizedNoteTasks[id]?.cancel()
+        optimizedNoteTasks[id] = Task {
+            try? await Task.sleep(for: Self.optimizedNoteDuration)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.6)) { optimizedNotes[id] = nil }
+            optimizedNoteTasks[id] = nil
+        }
+    }
+
     private func clearCompressionState(for id: ScreenshotPreviewItem.ID) {
         compressionTasks[id]?.cancel()
         compressionTasks[id] = nil
@@ -909,6 +949,9 @@ final class ScreenshotPreviewStack {
         compressionBadgeTasks[id] = nil
         compressingItemIDs.remove(id)
         compressionResultBadges[id] = nil
+        optimizedNoteTasks[id]?.cancel()
+        optimizedNoteTasks[id] = nil
+        optimizedNotes[id] = nil
     }
 
     private func clearAllCompressionState() {
@@ -923,6 +966,9 @@ final class ScreenshotPreviewStack {
         compressionBadgeTasks.removeAll()
         compressingItemIDs.removeAll()
         compressionResultBadges.removeAll()
+        optimizedNoteTasks.values.forEach { $0.cancel() }
+        optimizedNoteTasks.removeAll()
+        optimizedNotes.removeAll()
     }
 
     private func copyURLToClipboard(_ url: URL, original: Bool = false) async -> Bool {

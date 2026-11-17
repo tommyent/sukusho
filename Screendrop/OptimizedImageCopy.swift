@@ -48,6 +48,29 @@ final class OptimizedImageCopy {
         return result
     }
 
+    /// The copy right after a capture, which nobody should wait for: `first` goes on the pasteboard now,
+    /// and the item `smaller` makes, if it makes one, takes its place when it is ready. It does so only
+    /// while the pasteboard still holds this very write: a later copy from here, or anything copied in
+    /// another app meanwhile, stays. Returns whether the swap happened; `smaller` giving nil (nothing
+    /// smaller came out, or the optimizer failed) leaves the original there.
+    func copyThenSwap(_ first: NSPasteboardItem, to pasteboard: NSPasteboard = .general,
+                      smaller: () async -> NSPasteboardItem?) async throws -> Bool {
+        latest += 1
+        let mine = latest
+        // A copy that was still optimizing is overtaken by this write.
+        cancelInFlight?()
+        cancelInFlight = nil
+        pasteboard.clearContents()
+        guard pasteboard.writeObjects([first]) else { throw CocoaError(.fileWriteUnknown) }
+        let countAfterWrite = pasteboard.changeCount
+        guard let item = await smaller() else { return false }
+        // No suspension between this check and the write, as in `copy`.
+        guard mine == latest, pasteboard.changeCount == countAfterWrite else { return false }
+        pasteboard.clearContents()
+        guard pasteboard.writeObjects([item]) else { throw CocoaError(.fileWriteUnknown) }
+        return true
+    }
+
     /// Several files at once, as the Library copies a selection. Each goes through `ready` in turn (a
     /// screenshot optimized, a recording rendered); then `write` gets the files to put on the pasteboard, in
     /// one go, and must not suspend. The rule is `copy`'s: nil, with nothing written and the results deleted,

@@ -14,7 +14,7 @@ import UniformTypeIdentifiers
 
 @MainActor
 enum CaptureOptimizer {
-    enum Outcome {
+    enum Outcome: Sendable {
         case optimized(ImageOptimizationResult)
         case alreadyOptimized
         case failed(String)
@@ -96,16 +96,38 @@ enum CaptureOptimizer {
         }
     }
 
-    /// Settings › Optimize › Optimize new captures: quietly, right after a screenshot reaches the Library.
+    /// New captures waiting for their one background pass.
+    private static let newCaptures = ScheduledOnce<URL, Outcome>()
+
+    /// Settings › Optimize › Optimize new captures: quietly, two seconds after a screenshot reaches the
+    /// Library, unless the copy that follows the capture asks for it sooner (`smallerForFirstCopy`).
     static func optimizeNewCapture(_ url: URL) {
         guard OptimizePreferences.newCaptures else { return }
-        Task(priority: .utility) {
-            // Not while the capture is being copied or saved by its after-capture actions.
-            try? await Task.sleep(for: .seconds(2))
-            if case .optimized = await optimizeInPlace(url, effort: OptimizePreferences.quietEffort) {
-                CaptureLibraryModel.shared.refresh()
-            }
+        newCaptures.schedule(url.standardizedFileURL, after: .seconds(2)) {
+            let outcome = await optimizeInPlace(url, effort: OptimizePreferences.quietEffort)
+            if case .optimized = outcome { CaptureLibraryModel.shared.refresh() }
+            return outcome
         }
+    }
+
+    /// For the copy right after a capture: the smaller file to put on the clipboard in the original's place,
+    /// with the saving to show ("↓32%"), or nil when there is none. A new capture due its background pass
+    /// gets that pass now, so it is optimized once and the smaller file is the capture itself. Any other
+    /// image is optimized to a file of its own: `result`, for the caller to discard.
+    static func smallerForFirstCopy(_ url: URL) async -> (file: URL, saving: String, result: ImageOptimizationResult?)? {
+        guard ["png", "jpg", "jpeg"].contains(url.pathExtension.lowercased()) else { return nil }
+        if let outcome = await newCaptures.now(url.standardizedFileURL) {
+            guard case .optimized(let result) = outcome else { return nil }
+            return (url, ImageOptimizationResult.saving(from: result.originalByteCount, to: result.resultByteCount), nil)
+        }
+        // Its pass has already run and left a smaller file.
+        if OptimizedMark.isCurrent(url) { return OptimizedMark.saving(of: url).map { (url, $0.percent, nil) } }
+        guard let result = try? await ImageOptimizer.shared.optimize(url, effort: OptimizePreferences.quietEffort) else { return nil }
+        guard result.outcome == .optimized else {
+            result.discard()
+            return nil
+        }
+        return (result.url, ImageOptimizationResult.saving(from: result.originalByteCount, to: result.resultByteCount), result)
     }
 }
 
