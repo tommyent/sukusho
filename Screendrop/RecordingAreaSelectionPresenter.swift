@@ -284,8 +284,10 @@ private final class RecordingAreaSelectionView: NSView {
         endSelectionCursorSession()
     }
 
+    /// The same bold crosshair for every picker: the system's thin one read as an ordinary pointer on the Area
+    /// screenshot and Capture Text pickers, where the area recording's showed clearly (owner, 2026-11-17).
     private var selectionCursor: NSCursor {
-        isScreenshot ? .crosshair : .annotationPlus
+        .annotationPlus
     }
 
     private var modifiers: NSEvent.ModifierFlags {
