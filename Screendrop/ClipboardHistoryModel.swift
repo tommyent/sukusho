@@ -18,6 +18,8 @@ final class ClipboardHistoryModel {
     var showsSnippets = false
     /// The Library page's selected entry.
     var librarySelection: ClipboardEntry.ID?
+    /// A snippet just made with New Snippet, whose editor takes the keyboard so typing goes into it (Astra R3).
+    var snippetAwaitingFocus: ClipboardEntry.ID?
     /// The Library page's type filter.
     var libraryFilter: ClipboardFilter = .all
     /// Bumped each time the popup opens, so it starts from a clean search.
@@ -204,6 +206,13 @@ final class ClipboardHistoryModel {
         let id = try? await store.addSnippet(title: title, text: text)
         refresh()
         return id
+    }
+
+    /// New Snippet, from the bar or the empty page: makes one, selects it and puts the keyboard in its text.
+    func newSnippet() async {
+        guard let id = await addSnippet() else { return }
+        snippetAwaitingFocus = id
+        librarySelection = id
     }
 
     func saveAsSnippet(_ entry: ClipboardEntry) {

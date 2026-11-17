@@ -86,7 +86,10 @@ struct ClipboardLibraryPage: View {
                         .focusable()
                         .focusEffectDisabled()
                         .focused($gridFocused)
-                        .onChange(of: model.librarySelection) { _, selection in if selection != nil { gridFocused = true } }
+                        .onChange(of: model.librarySelection) { _, selection in
+                            // A new snippet's editor takes the keyboard instead.
+                            if selection != nil, selection != model.snippetAwaitingFocus { gridFocused = true }
+                        }
                         .onKeyPress(.space) {
                             guard let entry = model.entry(model.librarySelection) else { return .ignored }
                             model.quickLook(entry)
@@ -132,7 +135,7 @@ struct ClipboardLibraryPage: View {
             // With no snippets yet, the empty page's own New Snippet button is the one (Fable #10).
             if model.snippetCount > 0 {
                 Button("New Snippet", systemImage: "plus") {
-                    Task { model.librarySelection = await model.addSnippet() }
+                    Task { await model.newSnippet() }
                 }
                 .controlSize(.small)
             }
@@ -176,7 +179,7 @@ struct ClipboardLibraryPage: View {
             } description: {
                 Text("Save text you paste often. Paste a snippet from the clipboard popup (⌃⌘V) like any copy.")
             } actions: {
-                Button("New Snippet") { Task { model.librarySelection = await model.addSnippet() } }
+                Button("New Snippet") { Task { await model.newSnippet() } }
                     .buttonStyle(.borderedProminent)
             }
             .workspaceTextPlate()
@@ -425,11 +428,13 @@ private struct SnippetEditor: View {
     @State private var title = ""
     @State private var text = ""
     @State private var saving: Task<Void, Never>?
+    @FocusState private var textFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.m) {
             TextField("Name", text: $title).textFieldStyle(.roundedBorder).font(DS.TypeScale.title)
             TextEditor(text: $text)
+                .focused($textFocused)
                 .font(.system(size: 13))
                 .frame(minHeight: 220)
                 .scrollContentBackground(.hidden)
@@ -446,6 +451,11 @@ private struct SnippetEditor: View {
         .task(id: entry.id) {
             title = entry.title ?? ""
             text = entry.text ?? ""
+            // Just made with New Snippet: typing goes into its text, not to the Library (Astra R3).
+            if model.snippetAwaitingFocus == entry.id {
+                model.snippetAwaitingFocus = nil
+                textFocused = true
+            }
         }
         .onChange(of: title) { _, _ in scheduleSave() }
         .onChange(of: text) { _, _ in scheduleSave() }
