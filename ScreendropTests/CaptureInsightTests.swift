@@ -15,6 +15,19 @@ struct CaptureInsightTests {
         #expect(CaptureInsightRules.title(customName: nil, modelTitle: nil, dateTitle: date) == date)
     }
 
+    /// Without a model's title (macOS 26), the app and window come before the date (Fable #2).
+    @Test func theAppAndWindowComeBeforeTheDate() {
+        let date = "Nov 16, 11:05 PM"
+        let source = CaptureInsightRules.sourceTitle(appName: "Safari", windowTitle: "Screenshot - Wikipedia")
+        #expect(source == "Safari: Screenshot - Wikipedia")
+        #expect(CaptureInsightRules.title(customName: nil, modelTitle: nil, sourceTitle: source, dateTitle: date) == "Safari: Screenshot - Wikipedia")
+        #expect(CaptureInsightRules.title(customName: nil, modelTitle: "Wikipedia article", sourceTitle: source, dateTitle: date) == "Wikipedia article")
+        // No window title: the date says more than the app alone. A window named as its app isn't said twice.
+        #expect(CaptureInsightRules.sourceTitle(appName: "Finder", windowTitle: nil) == nil)
+        #expect(CaptureInsightRules.sourceTitle(appName: "Finder", windowTitle: "  ") == nil)
+        #expect(CaptureInsightRules.sourceTitle(appName: "Notes", windowTitle: "Notes") == "Notes")
+    }
+
     @Test func modelTitlesAreTwoToSixPlainWords() {
         #expect(CaptureInsightRules.cleanTitle("  \"Swift build error in Xcode.\" ") == "Swift build error in Xcode")
         #expect(CaptureInsightRules.cleanTitle("Invoice  1042 (Stripe)") == "Invoice 1042 (Stripe)")

@@ -76,7 +76,7 @@ nonisolated enum ClipboardCapturePolicy {
     /// Text that is a hex colour or a link is shown as one.
     static func textForm(_ text: String) -> ClipboardTextForm {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let hex = hexColor(trimmed) { return .color(hex: hex) }
+        if let hex = hexColor(trimmed) ?? functionalColor(trimmed) { return .color(hex: hex) }
         if isLink(trimmed) { return .link }
         return .plain
     }
@@ -87,6 +87,46 @@ nonisolated enum ClipboardCapturePolicy {
         let digits = text.dropFirst()
         guard [3, 6, 8].contains(digits.count), digits.allSatisfy(\.isHexDigit) else { return nil }
         return "#" + digits.uppercased()
+    }
+
+    /// rgb(), rgba(), hsl() and hsla() as CSS writes them, with commas or spaces, an alpha after "/" or a fourth
+    /// value, percentages and "deg": the hex for their swatch, or nil (Fable #3: "rgb(10, 132, 255)" was plain text).
+    static func functionalColor(_ text: String) -> String? {
+        let lower = text.lowercased()
+        guard let open = lower.firstIndex(of: "("), lower.hasSuffix(")") else { return nil }
+        let name = String(lower[..<open])
+        guard ["rgb", "rgba", "hsl", "hsla"].contains(name) else { return nil }
+        let tokens = lower[lower.index(after: open)..<lower.index(before: lower.endIndex)]
+            .split(whereSeparator: { $0 == "," || $0 == "/" || $0.isWhitespace })
+            .map(String.init)
+        guard tokens.count == 3 || tokens.count == 4 else { return nil }
+        func number(_ token: String, percentOf full: Double, suffix: String = "") -> Double? {
+            var token = token
+            if !suffix.isEmpty, token.hasSuffix(suffix) { token.removeLast(suffix.count) }
+            if token.hasSuffix("%") { return Double(token.dropLast()).map { $0 / 100 * full } }
+            return Double(token)
+        }
+        let alpha = tokens.count == 4 ? number(tokens[3], percentOf: 1) : 1
+        guard let alpha, (0...1).contains(alpha) else { return nil }
+        var rgb: [Double]
+        if name.hasPrefix("rgb") {
+            let channels = tokens.prefix(3).compactMap { number($0, percentOf: 255) }
+            guard channels.count == 3, channels.allSatisfy({ (0...255).contains($0) }) else { return nil }
+            rgb = channels.map { $0 / 255 }
+        } else {
+            guard let hue = number(tokens[0], percentOf: 360, suffix: "deg"), tokens[1].hasSuffix("%"), tokens[2].hasSuffix("%"),
+                  let saturation = number(tokens[1], percentOf: 1), let lightness = number(tokens[2], percentOf: 1),
+                  (0...1).contains(saturation), (0...1).contains(lightness) else { return nil }
+            // CSS Color 4's hsl-to-rgb.
+            func channel(_ n: Double) -> Double {
+                let k = (n + hue.truncatingRemainder(dividingBy: 360) / 30).truncatingRemainder(dividingBy: 12)
+                let a = saturation * min(lightness, 1 - lightness)
+                return lightness - a * max(-1, min(k - 3, 9 - k, 1))
+            }
+            rgb = [channel(0), channel(8), channel(4)]
+        }
+        if alpha < 1 { rgb.append(alpha) }
+        return "#" + rgb.map { String(format: "%02X", Int(($0 * 255).rounded())) }.joined()
     }
 
     /// One word with a scheme and "://", or a mailto: address.

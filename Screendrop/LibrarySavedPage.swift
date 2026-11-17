@@ -83,19 +83,27 @@ struct LibrarySavedPage: View {
         let cards = saved.cards
         let grid = LibraryGridMetrics(width: gridWidth, cardWidth: cardWidth)
         VStack(spacing: 0) {
-            filterChips
+            // In a sideways scroll, as the Clipboard page's chips are, so they never set the column's minimum width.
+            ScrollView(.horizontal, showsIndicators: false) { filterChips }
+                .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
                 .padding(.horizontal, DS.Space.xl).padding(.vertical, DS.Space.m)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(.bar)
                 .overlay(alignment: .bottom) { Divider() }
             // The marks file can't be fully read: Saved shows what could be read and won't change it (Astra M1).
+            // One line, the full reason in its help tag. Sized to its text (fixedSize(vertical:)), the page asked for
+            // more height than the window and the Library slid up out of it (Astra F1); wrapped, its height followed
+            // the width, so resizing changed the split view's minimum size inside AppKit's constraint pass, which
+            // looped until it crashed (VM, 2026-11-17).
             if let problem = history.savedMarksProblem {
                 Label(problem, systemImage: "exclamationmark.triangle.fill")
                     .font(DS.TypeScale.label)
                     .symbolRenderingMode(.multicolor)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                    .help(problem)
                     .padding(.horizontal, DS.Space.xl).padding(.vertical, DS.Space.s)
-                    .frame(maxWidth: .infinity, alignment: .leading)
                     .background(.bar)
                     .overlay(alignment: .bottom) { Divider() }
             }
@@ -112,6 +120,10 @@ struct LibrarySavedPage: View {
                         }
                         .padding(.leading, grid.leftInset).padding(.trailing, grid.rightInset)
                         .padding(.vertical, LibraryGridMetrics.edgeMargin)
+                        // No minimum width of its own. The fixed columns, worked out from the last measured width, made
+                        // one: as the window narrowed, the split view's minimum size chased it inside AppKit's
+                        // constraint pass until it crashed (VM, 2026-11-17). The Clipboard page's LazyVStack has none.
+                        .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
                         // A click on any card gives the grid the keyboard, as on the Clipboard page (Astra L4).
                         .simultaneousGesture(TapGesture().onEnded { gridFocused = true })
                     }
@@ -151,8 +163,11 @@ struct LibrarySavedPage: View {
     @ViewBuilder private func cardView(_ card: LibrarySavedCard, grid: LibraryGridMetrics) -> some View {
         switch card {
         case .capture(let item):
+            // Height only: the grid's fixed columns set the width. A width from the last measurement made the cards
+            // wider than the column for a frame while the window narrowed, and the split view's minimum size looped
+            // in AppKit's constraint pass until it crashed (VM, 2026-11-17).
             LibraryCellContent(item: item, selected: library.selection == [item.id])
-                .frame(width: grid.cellWidth, height: grid.cardHeight)
+                .frame(height: grid.cardHeight)
                 .contentShape(Rectangle())
                 .onTapGesture(count: 2) { select(item); library.perform(.edit) }
                 .onTapGesture { select(item) }
@@ -166,7 +181,6 @@ struct LibrarySavedPage: View {
         case .clip(let entry):
             ClipboardCard(entry: entry, model: clipboard, faceHeight: grid.pictureHeight,
                           isSelected: clipboard.librarySelection == entry.id)
-                .frame(width: grid.cellWidth)
                 .simultaneousGesture(TapGesture().onEnded { library.selection = [] })
         }
     }
