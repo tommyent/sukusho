@@ -873,8 +873,11 @@ final class ScreenRecordingManager {
         }
 
         let scaleFactor = max(1, CGFloat(filter.pointPixelScale))
-        let width = max(2, Int((sourceSize.width * scaleFactor).rounded(.toNearestOrAwayFromZero)))
-        let height = max(2, Int((sourceSize.height * scaleFactor).rounded(.toNearestOrAwayFromZero)))
+        // Even, as the HEVC encoder writes it: asked for 781 × 689, it made a 780 × 688 movie, so the Library (from the
+        // manifest) and Studio (from the movie) disagreed by a pixel (Fable #8). The capture, the pointer mapping, the
+        // manifest and the file now share one size.
+        let width = ScreenRecordingCapture.evenPixels(sourceSize.width * scaleFactor)
+        let height = ScreenRecordingCapture.evenPixels(sourceSize.height * scaleFactor)
         let configuration = ScreenRecordingCapture.buildConfiguration(
             width: width,
             height: height,
@@ -1043,6 +1046,11 @@ nonisolated final class ScreenRecordingCapture: NSObject, SCStreamOutput, SCStre
     ) -> SCContentFilter {
         RecordingDesktopFilter(content: content, includesAppWindows: includesAppWindows, cleanDesktop: false)
             .makeFilter(for: display)
+    }
+
+    /// A recording's pixel count along one side: rounded, at least 2, and even.
+    static func evenPixels(_ value: CGFloat) -> Int {
+        max(2, Int(value.rounded(.toNearestOrAwayFromZero)) & ~1)
     }
 
     static func buildConfiguration(
