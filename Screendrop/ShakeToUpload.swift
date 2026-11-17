@@ -183,20 +183,16 @@ final class ShakeToUpload {
                                   isUploading: CloudUploader.shared.isConfigured && CloudLibraryModel.shared.fileUploads != nil)
         let size = NSHostingController(rootView: view).sizeThatFits(in: CGSize(width: 2000, height: 2000))
         // The first tile is Share…, so a drop right where the shake ended asks first, or Optimize without Cloud.
-        // On macOS 27 it opens under the pointer. On macOS 26 a window that appears under a drag already
-        // inside it was never told of the drag (the test Mac, 26.5.1: no tile reacted and no drop arrived,
-        // while the same drag dropped into TextEdit). So there the whole window, its clear margin included,
-        // opens a few points below the pointer, tiles first, and the drag enters it. Not yet seen to be the
-        // cure: the Debug log will say.
+        // It opens under the pointer, on every macOS: what macOS 26 needed was the drop view registered before
+        // the panel is shown (seen on the test Mac, 26.5.1: with that, a drop is taken under the pointer too).
         let pointer = Self.pointer
         var gap: CGFloat = 0
-        if #unavailable(macOS 27) { gap = 6 }
         var style: NSWindow.StyleMask = [.borderless, .nonactivatingPanel]
         var level = NSWindow.Level.statusBar
         var opensAtCenter = false
         #if DEBUG
         // For finding out on a Mac where the drop fails, each with `defaults write <bundle id> …` and a relaunch:
-        // shelfGap -float 0 (under the pointer) or any distance; shelfOpensAtCenter -bool YES (a fixed place, so
+        // shelfGap -float 6 (that far below the pointer, so the drag enters it); shelfOpensAtCenter -bool YES (a fixed place, so
         // a straight drag enters from outside); shelfLevel -string normal|floating|statusBar;
         // shelfActivating -bool YES (an ordinary panel, not a non-activating one).
         let defaults = UserDefaults.standard
@@ -639,8 +635,9 @@ private struct ShelfTileMarker: NSViewRepresentable {
 /// The shelf's drop target: one AppKit view over all the tiles, registered for file drags before the panel is
 /// on screen. SwiftUI's `dropDestination(for: URL.self)` was on each tile until the owner's first try by hand,
 /// on macOS 26.5.1, where its action was never called; a dragging destination made by each tile as SwiftUI
-/// laid it out worked on macOS 27 and still got no drag on 26. This view finds the tile under the drag from
-/// the tiles' markers, and reads the files from the drop's own pasteboard inside the drop.
+/// laid it out worked on macOS 27 and still got no drag on 26. Registered before the panel shows, this one
+/// takes drops on 26.5.1 wherever the shelf opens (seen on the test Mac). It finds the tile under the drag
+/// from the tiles' markers, and reads the files from the drop's own pasteboard inside the drop.
 private final class ShelfDropView: NSView {
     private var lastTile: ShakeToUpload.Tile?
 
