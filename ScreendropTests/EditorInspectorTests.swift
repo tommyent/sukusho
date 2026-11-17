@@ -53,12 +53,23 @@ struct EditorInspectorTests {
         #expect(settings.alignmentAvailability == .available, "scene blur needs a canvas too")
     }
 
-    /// The tool options slot is headed by the tool, the one annotation selected, or the count.
-    @Test static func toolOptionsHeading() {
-        #expect(AnnotationTool.inspectorHeading(for: .magnifier, selectionCount: 0) == "Magnifier")
-        #expect(AnnotationTool.inspectorHeading(for: .text, selectionCount: 1) == "Text")
-        #expect(AnnotationTool.inspectorHeading(for: .arrow, selectionCount: 3) == "3 Annotations")
-        #expect(AnnotationTool.inspectorHeading(for: nil, selectionCount: 0) == "Select")
+    /// The pinned tool slot follows the dock: Crop, Pick Color and Measure outrank the tool, so
+    /// the slot never shows the previous tool while one of them is on (Fable #1).
+    @Test static func toolSlotFollowsTheDock() {
+        func slot(_ tool: AnnotationTool?, _ count: Int = 0, crop: Bool = false, pick: Bool = false, measure: Bool = false) -> AnnotationToolSlot {
+            .current(tool: tool, selectionCount: count, isCropping: crop, isPickingColor: pick, isMeasuring: measure)
+        }
+        #expect(slot(.magnifier).heading == "Magnifier")
+        #expect(slot(.text, 1).heading == "Text")
+        #expect(slot(.arrow, 3).heading == "3 Annotations")
+        #expect(slot(nil).heading == "Select")
+        #expect(slot(.magnifier, crop: true) == .crop)
+        #expect(slot(.magnifier, pick: true).heading == "Pick Color")
+        #expect(slot(.text, 1, measure: true).heading == "Measure")
+        #expect(slot(.text, crop: true, pick: true) == .crop)
+        for tool in AnnotationTool.allCases {
+            #expect(!AnnotationToolSlot.tool(tool).line.isEmpty)
+        }
     }
 
     /// A capture saved with a camera tilt opens with the switch on.

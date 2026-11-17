@@ -12,12 +12,12 @@ struct AnnotationTextStyleControls: View {
     @Bindable var model: AnnotationEditorModel
 
     var body: some View {
+        // Two rows, the slot's height: font with box style, then B/I/U with alignment.
         VStack(spacing: InspectorMetrics.rowSpacing) {
-            fontFamilyMenu
-                .frame(minWidth: 0, maxWidth: .infinity)
-
-            // With the size gone from this row, the two controls share its width.
             HStack(spacing: 6) {
+                fontFamilyMenu
+                    .frame(minWidth: 0, maxWidth: .infinity)
+
                 InspectorSegmented(
                     options: TextBoxStyle.allCases,
                     isSelected: { $0 == model.selectedTextBoxStyle },
@@ -26,7 +26,9 @@ struct AnnotationTextStyleControls: View {
                     name: { $0.title }
                 )
                 .frame(maxWidth: .infinity)
+            }
 
+            HStack(spacing: 6) {
                 InspectorSegmented(
                     options: TextStyleSegment.allCases,
                     isSelected: { segment in
@@ -55,17 +57,18 @@ struct AnnotationTextStyleControls: View {
                     }
                 )
                 .frame(maxWidth: .infinity)
-            }
 
-            InspectorSegmented(
-                options: TextAlignmentSegment.allCases,
-                isSelected: { $0 == TextAlignmentSegment(model.selectedTextAlignment) },
-                onTap: { model.selectedTextAlignment = $0.nsTextAlignment },
-                label: { segment in
-                    Image(systemName: segment.systemImage)
-                        .font(.system(size: 11, weight: .semibold))
-                }
-            )
+                InspectorSegmented(
+                    options: TextAlignmentSegment.allCases,
+                    isSelected: { $0 == TextAlignmentSegment(model.selectedTextAlignment) },
+                    onTap: { model.selectedTextAlignment = $0.nsTextAlignment },
+                    label: { segment in
+                        Image(systemName: segment.systemImage)
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                )
+                .frame(maxWidth: .infinity)
+            }
         }
         .frame(maxWidth: .infinity)
     }

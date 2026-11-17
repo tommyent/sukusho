@@ -35,10 +35,10 @@ enum InspectorMetrics {
     /// steppers, pickers, segmented controls).
     static let controlHeight: CGFloat = 28
     static let sliderHeight: CGFloat = controlHeight
-    /// The tool options slot at the top of the editor's inspector is always as
-    /// tall as the tallest tool's options (Text's three rows), so switching
-    /// tools never moves the sections below it.
-    static let toolOptionsHeight: CGFloat = controlHeight * 3 + DS.Space.m * 2
+    /// The tool options slot pinned at the top of the editor's inspector is
+    /// always two rows tall, the most any tool uses, so switching tools never
+    /// moves the sections below it.
+    static let toolOptionsHeight: CGFloat = controlHeight * 2 + rowSpacing
     /// Corner radius for fields and segmented tracks: half the control
     /// height, so every field is a pill like the segmented controls.
     static let fieldRadius: CGFloat = controlHeight / 2
