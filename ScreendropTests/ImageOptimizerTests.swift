@@ -544,6 +544,44 @@ private func isRunning(_ text: String) -> Bool {
         #expect(bench.leftovers.isEmpty)
     }
 
+    /// Astra OR6: an encoder that ignores the request to stop. It is killed after a short grace, so neither a
+    /// time limit nor a cancel waits on it, and its working files go.
+    @Test func anEncoderThatIgnoresStopIsKilled() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let source = try bench.file("Page.png", Sample.screenshot(width: 64, height: 40, seed: 25))
+        let tools = FileManager.default.temporaryDirectory.appending(path: "SukushoStubborn-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tools, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tools) }
+        // Ignores SIGTERM and never finishes by itself. No child process, so nothing can outlive it.
+        try Data("#!/bin/sh\ntrap '' TERM\nwhile :; do :; done\n".utf8).write(to: tools.appending(path: "oxipng"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tools.appending(path: "oxipng").path)
+        let optimizer = ImageOptimizer(toolsDirectory: tools, outputDirectory: bench.output)
+        let clock = ContinuousClock()
+
+        var asked = clock.now
+        let limited = try await optimizer.optimize(source, timeLimit: .milliseconds(100))
+        #expect(limited.outcome == .timedOut)
+        #expect(limited.url == source)
+        #expect(clock.now - asked < .seconds(2))
+        #expect(!isRunning(tools.lastPathComponent))
+        #expect(bench.leftovers.isEmpty)
+
+        let task = Task { try await optimizer.optimize(source) }
+        var sawEncoder = false
+        for _ in 0..<100 where !sawEncoder {
+            try await Task.sleep(for: .milliseconds(50))
+            sawEncoder = isRunning(tools.lastPathComponent)
+        }
+        #expect(sawEncoder)
+        asked = clock.now
+        task.cancel()
+        await #expect(throws: CancellationError.self) { try await task.value }
+        #expect(clock.now - asked < .seconds(2))
+        #expect(!isRunning(tools.lastPathComponent))
+        #expect(bench.leftovers.isEmpty)
+    }
+
     @Test func aTimeLimitGivesTheOriginalBackAndStopsTheEncoder() async throws {
         let bench = try Bench()
         defer { bench.remove() }

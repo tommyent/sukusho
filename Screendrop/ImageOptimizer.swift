@@ -283,10 +283,23 @@ nonisolated struct ImageOptimizer: Sendable {
             }
         }
 
+        /// How long an encoder has to stop once it is asked to, before it is killed.
+        static let grace: TimeInterval = 0.5
+
         func cancel() {
-            lock.withLock {
+            let wasRunning = lock.withLock {
                 isCancelled = true
-                if process.isRunning { process.terminate() }
+                guard process.isRunning else { return false }
+                process.terminate()
+                return true
+            }
+            guard wasRunning else { return }
+            // An encoder that ignores the request is killed: a cancel or a time limit is waiting for it to be
+            // gone. Only this process, and only while it is still the one that was started.
+            DispatchQueue.global().asyncAfter(deadline: .now() + Self.grace) { [self] in
+                lock.withLock {
+                    if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+                }
             }
         }
     }
