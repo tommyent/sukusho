@@ -29,47 +29,52 @@ struct ClipboardLibraryPage: View {
                 if sections.isEmpty {
                     emptyPage.frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: DS.Space.l, pinnedViews: []) {
-                            ForEach(sections) { section in
-                                // A capsule as wide as its words: the page plate is 520 pt wide and drawn past its
-                                // text, which put a bar over the filters and past the grid (owner, 2026-11-16).
-                                Text(section.title).font(DS.TypeScale.labelSemibold).foregroundStyle(.secondary)
-                                    .padding(.horizontal, DS.Space.ml).padding(.vertical, 2)
-                                    .workspaceTextPlate(capsule: true)
-                                LazyVGrid(columns: [GridItem(.adaptive(minimum: cardWidth, maximum: cardWidth), spacing: DS.Space.l)],
-                                          alignment: .leading, spacing: DS.Space.l) {
-                                    ForEach(section.entries) { entry in
-                                        // The captures grid's proportions: a 16:10 picture over the labels.
-                                        ClipboardCard(entry: entry, model: model, faceHeight: (cardWidth * 0.625).rounded(.down),
-                                                      isSelected: model.librarySelection == entry.id)
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: DS.Space.l, pinnedViews: []) {
+                                ForEach(sections) { section in
+                                    // A capsule as wide as its words: the page plate is 520 pt wide and drawn past its
+                                    // text, which put a bar over the filters and past the grid (owner, 2026-11-16).
+                                    Text(section.title).font(DS.TypeScale.labelSemibold).foregroundStyle(.secondary)
+                                        .padding(.horizontal, DS.Space.ml).padding(.vertical, 2)
+                                        .workspaceTextPlate(capsule: true)
+                                    LazyVGrid(columns: [GridItem(.adaptive(minimum: cardWidth, maximum: cardWidth), spacing: DS.Space.l)],
+                                              alignment: .leading, spacing: DS.Space.l) {
+                                        ForEach(section.entries) { entry in
+                                            // The captures grid's proportions: a 16:10 picture over the labels.
+                                            ClipboardCard(entry: entry, model: model, faceHeight: (cardWidth * 0.625).rounded(.down),
+                                                          isSelected: model.librarySelection == entry.id)
+                                                .id(entry.id)
+                                        }
                                     }
                                 }
                             }
+                            .padding(DS.Space.xl)
+                            // A click on any card, the selected one too, gives the grid the keyboard, so arrows and
+                            // Space work on the cards rather than the sidebar or the search field (Astra, 2026-11-16).
+                            .simultaneousGesture(TapGesture().onEnded { gridFocused = true })
                         }
-                        .padding(DS.Space.xl)
-                        // A click on any card, the selected one too, gives the grid the keyboard, so arrows and
-                        // Space work on the cards rather than the sidebar or the search field (Astra, 2026-11-16).
-                        .simultaneousGesture(TapGesture().onEnded { gridFocused = true })
-                    }
-                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { gridWidth = $0 }
-                    // Space opens Quick Look on the selected card, as in the captures grid.
-                    .focusable()
-                    .focusEffectDisabled()
-                    .focused($gridFocused)
-                    .onChange(of: model.librarySelection) { _, selection in if selection != nil { gridFocused = true } }
-                    .onKeyPress(.space) {
-                        guard let entry = model.entry(model.librarySelection) else { return .ignored }
-                        model.quickLook(entry)
-                        return .handled
-                    }
-                    .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow]) { press in
-                        let ids = sections.flatMap { $0.entries.map(\.id) }
-                        let step = press.key == .leftArrow ? -1 : press.key == .rightArrow ? 1
-                            : (press.key == .upArrow ? -1 : 1) * columns
-                        guard let next = ClipboardList.move(from: model.librarySelection, by: step, in: ids) else { return .ignored }
-                        model.librarySelection = next
-                        return .handled
+                        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { gridWidth = $0 }
+                        // Space opens Quick Look on the selected card, as in the captures grid.
+                        .focusable()
+                        .focusEffectDisabled()
+                        .focused($gridFocused)
+                        .onChange(of: model.librarySelection) { _, selection in if selection != nil { gridFocused = true } }
+                        .onKeyPress(.space) {
+                            guard let entry = model.entry(model.librarySelection) else { return .ignored }
+                            model.quickLook(entry)
+                            return .handled
+                        }
+                        .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow]) { press in
+                            let ids = sections.flatMap { $0.entries.map(\.id) }
+                            let step = press.key == .leftArrow ? -1 : press.key == .rightArrow ? 1
+                                : (press.key == .upArrow ? -1 : 1) * columns
+                            guard let next = ClipboardList.move(from: model.librarySelection, by: step, in: ids) else { return .ignored }
+                            model.librarySelection = next
+                            // Only as far as it takes to show the card, as Finder scrolls.
+                            withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(next) }
+                            return .handled
+                        }
                     }
                 }
             }
