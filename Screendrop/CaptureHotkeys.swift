@@ -331,3 +331,64 @@ enum CaptureHotkeyPreferences {
         }
     }
 }
+
+/// macOS's own screenshot shortcuts, which one press shares with any Sukusho shortcut on the same keys: both start, and
+/// for ⇧⌘5 macOS's toolbar wins (sd-7l2f). macOS keeps them in com.apple.symbolichotkeys › AppleSymbolicHotKeys, each
+/// under its number with `enabled` and `value.parameters` = [character, key code, modifier flags] (read on a Mac and in
+/// the VM, 2026-11-17).
+enum SystemScreenshotShortcuts {
+    static let domain = "com.apple.symbolichotkeys"
+    static let key = "AppleSymbolicHotKeys"
+
+    /// The screenshot entries, with the keys macOS gives them: an entry that isn't in the file was never changed, so it
+    /// is on with these keys.
+    static let defaults: [Int: HotkeyShortcut] = [
+        28: HotkeyShortcut(modifiers: [.shift, .command], keyCode: 20),             // ⇧⌘3
+        29: HotkeyShortcut(modifiers: [.control, .shift, .command], keyCode: 20),   // ⌃⇧⌘3
+        30: HotkeyShortcut(modifiers: [.shift, .command], keyCode: 21),             // ⇧⌘4
+        31: HotkeyShortcut(modifiers: [.control, .shift, .command], keyCode: 21),   // ⌃⇧⌘4
+        184: HotkeyShortcut(modifiers: [.shift, .command], keyCode: 23),            // ⇧⌘5
+    ]
+
+    /// The screenshot shortcuts macOS has on, from its AppleSymbolicHotKeys dictionary.
+    static func enabled(in hotkeys: [String: Any]?) -> Set<HotkeyShortcut> {
+        Set(defaults.compactMap { id, fallback -> HotkeyShortcut? in
+            guard let entry = hotkeys?[String(id)] as? [String: Any] else { return fallback }
+            guard (entry["enabled"] as? Bool) ?? (entry["enabled"] as? NSNumber)?.boolValue ?? true else { return nil }
+            let parameters = (entry["value"] as? [String: Any])?["parameters"] as? [NSNumber]
+            guard let parameters, parameters.count >= 3 else { return fallback }
+            let flags = NSEvent.ModifierFlags(rawValue: parameters[2].uintValue)
+            return HotkeyShortcut(modifiers: HotkeyShortcut.Modifiers(from: flags), keyCode: parameters[1].intValue)
+        })
+    }
+
+    /// Sukusho's actions whose shortcut macOS also uses, in Settings' order.
+    static func clashes(_ shortcuts: [CaptureHotkeyAction: HotkeyShortcut], with system: Set<HotkeyShortcut>) -> [CaptureHotkeyAction] {
+        CaptureHotkeyAction.allCases.filter { shortcuts[$0].map(system.contains) ?? false }
+    }
+
+    /// macOS's settings as they are now: synchronized first, so a shortcut just turned off in System Settings counts.
+    static func current() -> Set<HotkeyShortcut> {
+        CFPreferencesAppSynchronize(domain as CFString)
+        return enabled(in: CFPreferencesCopyAppValue(key as CFString, domain as CFString) as? [String: Any])
+    }
+
+    /// Sukusho's shortcuts that macOS also uses now.
+    static func currentClashes() -> [CaptureHotkeyAction] {
+        clashes(CaptureHotkeyPreferences.shortcuts(), with: current())
+    }
+
+    /// Where the user turns macOS's screenshot shortcuts off, as System Settings names it (checked on screen in the VM).
+    static let settingsPath = "Keyboard › Keyboard Shortcuts… › Screenshots"
+
+    /// Opens System Settings at its Keyboard pane, the nearest place a link reaches (checked in the VM).
+    @MainActor static func openKeyboardSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// The line Settings shows under a clashing shortcut.
+    static func warning(for shortcut: HotkeyShortcut) -> String {
+        "macOS also uses \(shortcut.displayTokens.joined()) for screenshots, so one press starts both. Turn macOS’s off in System Settings › \(settingsPath), or pick another key here."
+    }
+}

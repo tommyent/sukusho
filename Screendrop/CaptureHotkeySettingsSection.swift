@@ -16,6 +16,8 @@ struct CaptureHotkeySettingsSection: View {
     @State private var recorder = HotkeyShortcutRecorder()
     @State private var recordingAction: CaptureHotkeyAction?
     @State private var errorMessage: String?
+    /// Actions whose shortcut macOS's own screenshot shortcuts also use, read again whenever it could have changed.
+    @State private var clashes: [CaptureHotkeyAction] = []
 
     var body: some View {
         Section {
@@ -39,6 +41,9 @@ struct CaptureHotkeySettingsSection: View {
                             .help("Remove this shortcut")
                     }
                 }
+                if clashes.contains(action), let shortcut = shortcuts[action] {
+                    clashWarning(for: shortcut)
+                }
             }
 
             messages
@@ -58,6 +63,23 @@ struct CaptureHotkeySettingsSection: View {
         .onDisappear {
             recorder.stop()
             recordingAction = nil
+        }
+        // Back from System Settings with macOS's shortcut turned off: the warning goes without a relaunch.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            reloadClashes()
+        }
+    }
+
+    /// Under a shortcut macOS also uses: what happens, where to turn macOS's off, and a way there.
+    private func clashWarning(for shortcut: HotkeyShortcut) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: DS.Space.m) {
+            Label(SystemScreenshotShortcuts.warning(for: shortcut), systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            Button("Open Keyboard Shortcuts…") { SystemScreenshotShortcuts.openKeyboardSettings() }
+                .controlSize(.small)
         }
     }
 
@@ -169,6 +191,7 @@ struct CaptureHotkeySettingsSection: View {
         do {
             try HotkeyManager.shared.setShortcut(shortcut, for: action)
             shortcuts[action] = shortcut
+            reloadClashes()
             errorMessage = nil
         } catch {
             errorMessage = "\(error.localizedDescription) Your previous shortcut has been kept."
@@ -187,6 +210,11 @@ struct CaptureHotkeySettingsSection: View {
 
     private func reloadShortcuts() {
         shortcuts = CaptureHotkeyPreferences.shortcuts(for: actions)
+        reloadClashes()
+    }
+
+    private func reloadClashes() {
+        clashes = SystemScreenshotShortcuts.clashes(shortcuts, with: SystemScreenshotShortcuts.current())
     }
 }
 

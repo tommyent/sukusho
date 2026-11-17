@@ -222,9 +222,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             CaptureLibraryModel.shared.show()
         }
         // Below the macOS this build is tested on, say so, in front of the Library and before
-        // Sparkle's question; not when an agent's helper started the app.
+        // Sparkle's question; not when an agent's helper started the app. Then, once, any shortcut
+        // macOS's own screenshot shortcuts also use: each notice waits for the one before.
         if !CommandLine.arguments.contains(AgentAccess.launchArgument) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { UnsupportedOSNotice.showIfNeeded() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                UnsupportedOSNotice.showIfNeeded()
+                ShortcutClashNotice.showIfNeeded()
+            }
         }
     }
 
