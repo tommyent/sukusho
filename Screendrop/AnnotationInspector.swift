@@ -330,7 +330,8 @@ struct AnnotationEditorInspector: View {
     /// What the slot says when the tool has no options of its own.
     private var toolOptionsHint: String {
         if model.inspectedTool == nil { return "Pick a tool, or select an annotation to change it." }
-        if model.isColorStyleAvailable { return "Color and width are in the toolbar." }
+        if model.isStrokeStyleAvailable { return "Color and width are in the toolbar." }
+        if model.isColorStyleAvailable { return "Its color is in the toolbar." }
         return "This tool has no options."
     }
 
