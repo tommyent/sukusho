@@ -179,37 +179,64 @@ struct NumberedProps: Codable, Equatable {
     /// circle. Missing means no tail.
     var tail: Vec?
 
-    /// The furthest a tip gets from the centre, in diameters: three quarters of one past the
-    /// edge. A label's tail can be any length; a number's stays a nub.
-    static let tailMaxReach = 1.25
+    /// The furthest a tip gets from the centre, in diameters. With the rounding past it, the
+    /// tail ends about 1.8 radii out: a nub, where a label's tail can be any length.
+    static let tailMaxReach = 0.84
     /// Nearer the centre than this, in diameters, there is no tail: how dragging it back removes it.
     static let tailMinReach = 0.62
+    /// How far the tail's outline sits outside its sharp skeleton, as a fraction of the radius:
+    /// it rounds the tip.
+    static let tailRounding = 0.12
 
     /// `point`, in the shape's local space, as a tail tip no further out than `tailMaxReach`.
     func tailTip(toward point: Vec) -> Vec {
         let offset = Vec((point.x - diameter / 2) / diameter, (point.y - diameter / 2) / diameter)
-        let length = hypot(offset.x, offset.y)
-        return length > Self.tailMaxReach ? Vec.mul(offset, Self.tailMaxReach / length) : offset
+        return Self.clampedReach(offset)
     }
 
-    /// The tail's tip in the shape's local space, when there is a tail.
+    private static func clampedReach(_ offset: Vec) -> Vec {
+        let length = hypot(offset.x, offset.y)
+        return length > tailMaxReach ? Vec.mul(offset, tailMaxReach / length) : offset
+    }
+
+    /// The tail's tip in the shape's local space, when there is a tail. Tips saved further out
+    /// by older builds come in to the current reach.
     var tailPoint: Vec? {
         guard let tail, hypot(tail.x, tail.y) >= Self.tailMinReach else { return nil }
-        return Vec(diameter / 2 + tail.x * diameter, diameter / 2 + tail.y * diameter)
+        let reach = Self.clampedReach(tail)
+        return Vec(diameter / 2 + reach.x * diameter, diameter / 2 + reach.y * diameter)
     }
 
-    /// The tail in the shape's local space: a triangle from inside the disc, which covers its
-    /// base, out to the tip.
+    /// The tail in the shape's local space: sides that curve in from a wide base inside the disc
+    /// to a rounded tip.
     var tailPath: CGPath? {
         guard let tip = tailPoint, let tail else { return nil }
-        let angle = atan2(tail.y, tail.x), radius = diameter / 2, spread = 0.5
-        let path = CGMutablePath()
-        for side in [-spread, spread] {
-            let point = CGPoint(x: radius + cos(angle + side) * radius * 0.9, y: radius + sin(angle + side) * radius * 0.9)
-            if side < 0 { path.move(to: point) } else { path.addLine(to: tip.cgPoint); path.addLine(to: point) }
+        let radius = diameter / 2, rounding = radius * Self.tailRounding
+        let along = Vec.mul(Vec(tail.x, tail.y), 1 / hypot(tail.x, tail.y)), across = Vec(-along.y, along.x)
+        let centre = Vec(radius, radius), reach = hypot(tip.x - radius, tip.y - radius)
+        func point(_ a: Double, _ n: Double) -> CGPoint {
+            Vec.add(centre, Vec.add(Vec.mul(along, a), Vec.mul(across, n))).cgPoint
         }
-        path.closeSubpath()
-        return path
+        // The base leaves the disc 30° either side of the tail's line, a rounding in from the edge
+        // so the grown outline meets the circle rather than bulging past it.
+        let baseRadius = radius - rounding, baseA = baseRadius * cos(.pi / 6), baseN = baseRadius * sin(.pi / 6)
+        // Each side bends towards the tail's line: its control point sits a third of the way to
+        // the tip, pulled in to under half its offset (mockup 05, A).
+        let controlA = baseA + (reach - baseA) * 0.365, controlN = baseN * (1 - 0.365) * 0.46
+        let skeleton = CGMutablePath()
+        skeleton.move(to: centre.cgPoint)
+        skeleton.addLine(to: point(baseA, -baseN))
+        skeleton.addQuadCurve(to: tip.cgPoint, control: point(controlA, -controlN))
+        skeleton.addQuadCurve(to: point(baseA, baseN), control: point(controlA, controlN))
+        skeleton.closeSubpath()
+        let grown = skeleton.copy(strokingWithWidth: rounding * 2, lineCap: .round, lineJoin: .round, miterLimit: 1)
+        return skeleton.union(grown)
+    }
+
+    /// The badge and its tail as one outline, so the ring follows both and never crosses the join.
+    var outlinePath: CGPath {
+        let disc = CGPath(ellipseIn: CGRect(x: 0, y: 0, width: diameter, height: diameter), transform: nil)
+        return tailPath.map { disc.union($0) } ?? disc
     }
 }
 

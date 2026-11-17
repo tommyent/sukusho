@@ -230,19 +230,20 @@ enum AnnoShapeDrawing {
     }
 
     private static func drawNumbered(_ props: NumberedProps, in context: CGContext) {
-        let rect = CGRect(x: 0, y: 0, width: props.diameter, height: props.diameter)
         let outlineWidth = Swift.max(1, props.diameter * 0.055)
+        let outline = props.outlinePath
 
         context.setFillColor(props.swatch.nsColor.cgColor)
+        context.addPath(outline); context.fillPath()
+        // The ring runs just inside the edge of the whole outline: a stroke twice its width,
+        // clipped to the shape.
+        context.saveGState()
+        context.addPath(outline); context.clip()
         context.setStrokeColor(props.swatch.numberedCircleOutlineNSColor.cgColor)
-        context.setLineWidth(outlineWidth)
-        if let tail = props.tailPath {
-            // Under the disc, whose fill covers the tail's base and its outline there.
-            context.setLineJoin(.round)
-            context.addPath(tail); context.drawPath(using: .fillStroke)
-        }
-        context.fillEllipse(in: rect)
-        context.strokeEllipse(in: rect.insetBy(dx: outlineWidth / 2, dy: outlineWidth / 2))
+        context.setLineWidth(outlineWidth * 2)
+        context.setLineJoin(.round)
+        context.addPath(outline); context.strokePath()
+        context.restoreGState()
 
         // The digits go through the same glyph-outline path text uses, so a rotated callout's
         // number rotates with it and needs no flipped graphics context.
