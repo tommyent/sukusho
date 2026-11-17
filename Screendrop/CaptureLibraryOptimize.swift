@@ -321,9 +321,9 @@ struct ImageConversionSheet: View {
                 panel.nameFieldStringValue = files[0].lastPathComponent
                 panel.directoryURL = ScreendropPreferences.exportDirectory
                 guard panel.runModal() == .OK, let destination = panel.url else { return }
-                // The panel has already asked about replacing a file of that name.
-                try? FileManager.default.removeItem(at: destination)
-                try FileManager.default.copyItem(at: files[0], to: destination)
+                // The panel has already asked about replacing a file of that name. The new file is staged beside
+                // it and swapped in whole, and the old one comes back if that fails: it is never deleted first.
+                try ScreenshotEditFileTransaction.apply(replacements: [(files[0], destination)])
                 saved = [destination]
             } else {
                 let panel = NSOpenPanel()
