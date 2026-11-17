@@ -10,7 +10,7 @@ import AVFoundation
 @preconcurrency import CoreMedia
 import Observation
 
-struct ScreenshotHistoryItem: Identifiable, Codable, Equatable {
+struct ScreenshotHistoryItem: Identifiable, Codable, Equatable, SavedMarkRow {
     let id: UUID
     var createdAt: Date
     var updatedAt: Date
@@ -183,10 +183,12 @@ final class ScreenshotHistoryStore {
         FileManager.default.fileExists(atPath: Self.editDocumentURL(for: displayURL).path)
     }
 
-    @ObservationIgnored private var metadata = ScreenshotHistoryMetadata<ScreenshotHistoryItem>()
+    @ObservationIgnored private var files = MarkedHistory<ScreenshotHistoryItem>(historyURL: ScreenshotHistoryStore.metadataURL, marksURL: ScreenshotHistoryStore.savedMarksURL)
     /// False when history.json, or a row in it, couldn't be read, so `items`
     /// may be missing captures that still exist.
-    var isFullyLoaded: Bool { !metadata.isReadOnly }
+    var isFullyLoaded: Bool { !files.history.isReadOnly }
+    /// Why Saved marks can't be read or written, for the Library to show; nil when all is well.
+    private(set) var savedMarksProblem: String?
 
     private(set) var items: [ScreenshotHistoryItem] = []
 
@@ -586,27 +588,19 @@ final class ScreenshotHistoryStore {
     }
 
     private func load() {
-        var rows = metadata.load(from: Self.metadataURL)
-        let file = CaptureSavedMarks.load(from: Self.savedMarksURL)
-        let marks = CaptureSavedMarks.merged(file: file, rows: rows.map { ($0.id, $0.librarySavedAt) })
-        // Marks still in history.json from before move to the file now, before an older build can drop them.
-        if marks != file ?? [:] { try? CaptureSavedMarks.save(marks, to: Self.savedMarksURL) }
-        for index in rows.indices { rows[index].librarySavedAt = marks[rows[index].id] }
-        items = rows
+        items = files.load()
             .filter { FileManager.default.fileExists(atPath: $0.url.path) }
             .sorted { $0.createdAt > $1.createdAt }
+        savedMarksProblem = files.problem
     }
 
     private func saveMetadata() {
         do {
-            try metadata.save(items, to: Self.metadataURL)
-            // Only after History saved: a History that couldn't be fully read holds rows `items` doesn't, whose
-            // marks must stay.
-            try CaptureSavedMarks.save(Dictionary(items.compactMap { item in item.librarySavedAt.map { (item.id, $0) } },
-                                                  uniquingKeysWith: max), to: Self.savedMarksURL)
+            try files.save(items)
         } catch {
             print("Failed to save screenshot history: \(error)")
         }
+        savedMarksProblem = files.problem
     }
 
     private func uniqueHistoryURL(for sourceURL: URL) -> URL {

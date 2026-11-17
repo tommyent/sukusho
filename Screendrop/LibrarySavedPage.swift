@@ -69,6 +69,7 @@ struct LibrarySavedPage: View {
     @State private var saved = LibrarySavedModel.shared
     @State private var library = CaptureLibraryModel.shared
     @State private var clipboard = ClipboardHistoryModel.shared
+    @State private var history = ScreenshotHistoryStore.shared
     @State private var gridWidth: CGFloat = 0
     @FocusState private var gridFocused: Bool
 
@@ -87,6 +88,17 @@ struct LibrarySavedPage: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(.bar)
                 .overlay(alignment: .bottom) { Divider() }
+            // The marks file can't be fully read: Saved shows what could be read and won't change it (Astra M1).
+            if let problem = history.savedMarksProblem {
+                Label(problem, systemImage: "exclamationmark.triangle.fill")
+                    .font(DS.TypeScale.label)
+                    .symbolRenderingMode(.multicolor)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, DS.Space.xl).padding(.vertical, DS.Space.s)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.bar)
+                    .overlay(alignment: .bottom) { Divider() }
+            }
             if cards.isEmpty {
                 emptyPage.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {

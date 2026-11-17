@@ -57,20 +57,6 @@ struct ScreenshotHistoryMetadata<Row: Codable> {
 /// Saved rewrite history.json with only the keys they know, which dropped a `librarySavedAt` kept in the rows (VM,
 /// 2026-11-16); this file is one they never open.
 nonisolated enum CaptureSavedMarks {
-    /// Nil when there's no file, or it can't be read.
-    static func load(from url: URL) -> [UUID: Date]? {
-        guard let data = try? Data(contentsOf: url), let raw = try? JSONDecoder().decode([String: Date].self, from: data) else {
-            return nil
-        }
-        return Dictionary(raw.compactMap { key, date in UUID(uuidString: key).map { ($0, date) } }, uniquingKeysWith: max)
-    }
-
-    static func save(_ marks: [UUID: Date], to url: URL) throws {
-        let data = try JSONEncoder().encode(Dictionary(uniqueKeysWithValues: marks.map { ($0.key.uuidString, $0.value) }))
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try data.write(to: url, options: .atomic)
-    }
-
     /// The History rows that belong to a recording's package, whichever way their paths are written.
     static func rows(ofRecordingAt path: String, in rows: [(id: UUID, sessionPath: String?)]) -> Set<UUID> {
         let target = URL(fileURLWithPath: path).standardizedFileURL.path
@@ -82,5 +68,104 @@ nonisolated enum CaptureSavedMarks {
         var marks = file ?? [:]
         for row in rows { if let date = row.savedAt, marks[row.id] == nil { marks[row.id] = date } }
         return marks
+    }
+}
+
+/// A row that can carry a Saved mark: History's, read from the row only when it predates the marks file.
+nonisolated protocol SavedMarkRow: Codable {
+    var id: UUID { get }
+    var librarySavedAt: Date? { get set }
+}
+
+/// library-saved.json. A file that can't be fully read is never replaced: like History's read-only guard, it keeps
+/// marks this build couldn't read, and says why (Astra M1).
+nonisolated struct SavedMarksFile {
+    enum State: Equatable { case missing, loaded, unreadable }
+
+    let url: URL
+    private(set) var state = State.missing
+    /// Why the file is unreadable, for the Library to show.
+    private(set) var problem: String?
+
+    init(url: URL) { self.url = url }
+
+    /// The marks that could be read, entry by entry, so one bad value doesn't take the others with it.
+    mutating func load() -> [UUID: Date] {
+        problem = nil
+        let data: Data
+        do {
+            data = try Data(contentsOf: url)
+        } catch {
+            let error = error as NSError
+            if error.domain == NSCocoaErrorDomain, error.code == NSFileReadNoSuchFileError {
+                state = .missing
+                return [:]
+            }
+            return unreadable("it couldn't be opened (\(error.localizedDescription))")
+        }
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return unreadable("it isn't a list of marks")
+        }
+        var marks: [UUID: Date] = [:]
+        for (key, value) in object {
+            // A date is a number of seconds, as JSONEncoder writes it; true and false aren't.
+            guard let id = UUID(uuidString: key), let seconds = value as? NSNumber,
+                  CFGetTypeID(seconds) != CFBooleanGetTypeID() else { continue }
+            marks[id] = Date(timeIntervalSinceReferenceDate: seconds.doubleValue)
+        }
+        guard marks.count == object.count else {
+            _ = unreadable("\(object.count - marks.count) of its \(object.count) entries couldn't be read")
+            return marks
+        }
+        state = .loaded
+        return marks
+    }
+
+    private mutating func unreadable(_ reason: String) -> [UUID: Date] {
+        state = .unreadable
+        problem = "Saved marks in \(url.lastPathComponent) can't be fully read: \(reason). Saved is read-only until it's fixed."
+        return [:]
+    }
+
+    /// Throws, and leaves the file as it is, while it's unreadable.
+    mutating func write(_ marks: [UUID: Date]) throws {
+        guard state != .unreadable else {
+            throw NSError(domain: "Sukusho.SavedMarks", code: 1, userInfo: [NSLocalizedDescriptionKey: problem ?? "Saved marks can't be read."])
+        }
+        let data = try JSONEncoder().encode(Dictionary(uniqueKeysWithValues: marks.map { ($0.key.uuidString, $0.value) }))
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url, options: .atomic)
+        state = .loaded
+    }
+}
+
+/// History and its Saved marks, read and written together.
+struct MarkedHistory<Row: SavedMarkRow> {
+    let historyURL: URL
+    var history = ScreenshotHistoryMetadata<Row>()
+    var marks: SavedMarksFile
+
+    init(historyURL: URL, marksURL: URL) {
+        self.historyURL = historyURL
+        marks = SavedMarksFile(url: marksURL)
+    }
+
+    /// What the Library should show about the files, if anything.
+    var problem: String? { marks.problem }
+
+    /// The rows with their marks. Marks still in History from before the marks file move into it.
+    mutating func load() -> [Row] {
+        var rows = history.load(from: historyURL)
+        let fileMarks = marks.load()
+        let merged = CaptureSavedMarks.merged(file: fileMarks, rows: rows.map { ($0.id, $0.librarySavedAt) })
+        if merged != fileMarks, marks.state != .unreadable { try? marks.write(merged) }
+        for index in rows.indices { rows[index].librarySavedAt = merged[rows[index].id] }
+        return rows
+    }
+
+    mutating func save(_ rows: [Row]) throws {
+        try history.save(rows, to: historyURL)
+        // Only after History saved: a History that couldn't be fully read holds rows `rows` doesn't, whose marks must stay.
+        try marks.write(Dictionary(rows.compactMap { row in row.librarySavedAt.map { (row.id, $0) } }, uniquingKeysWith: max))
     }
 }
