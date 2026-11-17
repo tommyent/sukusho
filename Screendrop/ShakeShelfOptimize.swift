@@ -34,7 +34,7 @@ final class ShelfOptimization {
         }
     }
 
-    struct Row: Identifiable {
+    nonisolated struct Row: Identifiable, Sendable {
         let id = UUID()
         let file: URL
         let bytes: Int64
@@ -63,8 +63,12 @@ final class ShelfOptimization {
 
     /// The row being worked on.
     var currentIndex: Int? { isWorking ? rows.firstIndex { $0.result == nil } : nil }
-    /// What goes on from the shelf: each file's result, or the file itself where there is none.
-    var files: [URL] { rows.map { $0.currentResult?.url ?? $0.file } }
+    /// What goes on from the shelf: each file's result, or the file itself where there is none or where the
+    /// file has changed since. Finding that out reads every file, so it is done off the main actor.
+    func currentFiles() async -> [URL] {
+        let rows = rows
+        return await Task.detached { rows.map { $0.currentResult?.url ?? $0.file } }.value
+    }
     var originalBytes: Int64 { rows.reduce(0) { $0 + $1.bytes } }
     var resultBytes: Int64 { rows.reduce(0) { $0 + ($1.result?.resultByteCount ?? $1.bytes) } }
 

@@ -62,6 +62,8 @@ final class ShakeToUpload {
 
     /// The files being optimized on the shelf, while it holds them.
     private(set) var holding: ShelfOptimization?
+    /// True while a choice on the list is being carried out.
+    @ObservationIgnored private var isFinishing = false
 
     /// The tile a drag is over, for its highlight.
     private(set) var targeted: Tile?
@@ -262,49 +264,67 @@ final class ShakeToUpload {
     }
 
     func finishHolding(_ finish: Finish) {
-        guard let holding else { return }
+        guard let holding, !isFinishing else { return }
         holding.stop()
-        let files = holding.files
-        let toast = CaptureTextFeedbackPresenter.shared
-        switch finish {
-        case .share, .gallery:
-            // The results stay until the next launch: the upload reads them after the shelf is gone.
-            self.holding = nil
-            if case .gallery = finish { showOptions(files, gallery: true) } else { showOptions(files, gallery: false) }
-        case .upload:
-            self.holding = nil
-            start(files, gallery: false, options: .savedDefaults)
-        case .copy:
-            do {
-                try VideoFileActions.copyFilesToClipboard(from: files)
-                toast.showDone(files.count == 1 ? "File Copied" : "\(files.count) Files Copied",
-                               detail: files.count == 1 ? files[0].lastPathComponent : "Ready to paste", displayID: Self.display)
-            } catch {
-                toast.showDone("Couldn’t Copy", detail: error.localizedDescription, symbol: "exclamationmark.triangle", displayID: Self.display)
+        if case .done = finish {
+            holding.discard()
+            dismiss()
+            return
+        }
+        // Every other choice reads whole files: to see that each is still the one its result was made from,
+        // and to save. That happens off the main actor, with the list still up; a second choice waits.
+        isFinishing = true
+        Task {
+            defer { isFinishing = false }
+            if case .save(let replacing) = finish {
+                // Each new file beside its original, as "name optimized.png" or "name.webp", or with
+                // `replacing` in its place, with the original in the Trash (ShelfFileSave).
+                let rows = holding.rows
+                let outcomes = await Task.detached {
+                    rows.compactMap { row -> ShelfFileSave.Outcome? in
+                        guard let result = row.result, result.outcome == .optimized || result.outcome == .converted else { return nil }
+                        return ShelfFileSave.save(result.url, of: row.file, identity: result.source, replacing: replacing)
+                    }
+                }.value
+                report(outcomes, replacing: replacing)
+                holding.discard()
+                dismiss()
+                return
             }
-            holding.discard()
-            dismiss()
-        case .save(let replacing):
-            save(holding, replacing: replacing)
-            holding.discard()
-            dismiss()
-        case .done:
-            holding.discard()
-            dismiss()
+            let files = await holding.currentFiles()
+            let toast = CaptureTextFeedbackPresenter.shared
+            switch finish {
+            case .share, .gallery:
+                // The results stay until the next launch: the upload reads them after the shelf is gone.
+                self.holding = nil
+                if case .gallery = finish { showOptions(files, gallery: true) } else { showOptions(files, gallery: false) }
+            case .upload:
+                self.holding = nil
+                start(files, gallery: false, options: .savedDefaults)
+            case .copy:
+                do {
+                    try VideoFileActions.copyFilesToClipboard(from: files)
+                    toast.showDone(files.count == 1 ? "File Copied" : "\(files.count) Files Copied",
+                                   detail: files.count == 1 ? files[0].lastPathComponent : "Ready to paste", displayID: Self.display)
+                } catch {
+                    toast.showDone("Couldn’t Copy", detail: error.localizedDescription, symbol: "exclamationmark.triangle", displayID: Self.display)
+                }
+                holding.discard()
+                dismiss()
+            case .save, .done:
+                break
+            }
         }
     }
 
-    /// Writes each new file beside its original, as "name optimized.png" or "name.webp", or with `replacing`
-    /// in its place, with the original in the Trash (ShelfFileSave). A file changed since it was optimized
-    /// is left exactly as it is.
-    private func save(_ holding: ShelfOptimization, replacing: Bool) {
+    /// Says what a Save did. A file changed since it was optimized was left exactly as it is.
+    private func report(_ outcomes: [ShelfFileSave.Outcome], replacing: Bool) {
         var saved: [URL] = []
         var changed = 0
         var kept = 0
         var failure: String?
-        for row in holding.rows {
-            guard let result = row.result, result.outcome == .optimized || result.outcome == .converted else { continue }
-            switch ShelfFileSave.save(result.url, of: row.file, identity: result.source, replacing: replacing) {
+        for outcome in outcomes {
+            switch outcome {
             case .saved(let file, let originalKept):
                 saved.append(file)
                 if originalKept { kept += 1 }
