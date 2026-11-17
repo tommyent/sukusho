@@ -27,9 +27,10 @@ nonisolated enum UpdateChannels {
         defaults.object(forKey: betaKey) as? Bool ?? isBeta(version)
     }
 
-    /// A beta's version as scripts/release.sh's BETA mode stamps it: "1.3.0 beta 1".
+    /// A beta's version exactly as scripts/release.sh's BETA mode stamps it: "1.3.0 beta 1", an ASCII x.y.z and a
+    /// counter from 1, as BETA=<1-> allows (Sol, round 3: `\d` also took "beta 0", other scripts' digits and "1 beta 1").
     static func isBeta(_ version: String?) -> Bool {
-        version?.range(of: #"^\d+(\.\d+)* beta \d+$"#, options: .regularExpression) != nil
+        version?.range(of: #"^[0-9]+\.[0-9]+\.[0-9]+ beta [1-9][0-9]*$"#, options: .regularExpression) != nil
     }
 
     static var runningVersion: String? { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String }

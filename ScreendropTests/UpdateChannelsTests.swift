@@ -45,7 +45,12 @@ import Testing
     @Test func aBetaIsTheReleaseScriptsVersionShape() {
         #expect(UpdateChannels.isBeta("1.3.0 beta 1"))
         #expect(UpdateChannels.isBeta("1.3.0 beta 12"))
-        for version in ["1.3.0", "1.3.0-beta.1", "beta", "1.3.0 beta", "1.3.0 Beta 1", "", nil] as [String?] {
+        #expect(UpdateChannels.isBeta("1.3.0 beta 10"))
+        let others: [String?] = ["1.3.0", "1.3.0-beta.1", "beta", "1.3.0 beta", "1.3.0 Beta 1", "", nil,
+                                 // Sol, round 3: release.sh refuses BETA=0 and stamps an ASCII x.y.z.
+                                 "1.3.0 beta 0", "1.3.0 beta 01", "1.3.0 beta ١", "١.٣.٠ beta 1", "1.３.0 beta 1",
+                                 "1 beta 1", "1.3 beta 1", "1.3.0.1 beta 1", " 1.3.0 beta 1", "1.3.0 beta 1\n"]
+        for version in others {
             #expect(!UpdateChannels.isBeta(version))
         }
     }
