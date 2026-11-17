@@ -540,3 +540,87 @@ struct RecordingPickerControls: View {
         }
     }
 }
+
+// MARK: - Countdown
+
+/// The bar while a timer counts down to a recording: the seconds left in red, what the take will
+/// record as the same filled chips, and Cancel. The large number in the middle of the screen
+/// stays as it was.
+struct RecordingCountdownControls: View {
+    @State private var countdown = CaptureCountdownPresenter.shared
+    @AppStorage(ScreendropPreferences.recordingCameraDeviceIDKey) private var cameraID = ""
+    @AppStorage(ScreendropPreferences.recordingMicrophoneDeviceIDKey) private var microphoneID = ""
+    @AppStorage(ScreendropPreferences.recordingSystemAudioKey) private var systemAudio = false
+
+    var body: some View {
+        HStack(spacing: BarMetrics.itemSpacing) {
+            Text("\(countdown.remaining)")
+                .font(.system(size: 17, weight: .bold, design: .rounded).monospacedDigit())
+                .foregroundStyle(.white)
+                .frame(width: BarMetrics.chipHeight + 4, height: BarMetrics.chipHeight + 4)
+                .background(Circle().fill(BarMetrics.recordTint))
+                .contentTransition(.numericText(countsDown: true))
+                .animation(.snappy, value: countdown.remaining)
+                .padding(.leading, 4)
+                .accessibilityLabel("Recording starts in \(countdown.remaining)")
+
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Get ready")
+                    .font(.system(size: 13, weight: .semibold))
+                Text(hasInputs ? "Recording with" : "Recording the screen")
+                    .font(.system(size: 11))
+                    .opacity(0.7)
+            }
+            .foregroundStyle(BarMetrics.activeTint)
+            .padding(.horizontal, 6)
+            .fixedSize()
+
+            if !cameraID.isEmpty {
+                BarToggleLabel(id: .camera, state: .on, hover: BarHover("Camera will record"),
+                               offSymbol: "video.fill", onSymbol: "video.fill", look: .input(BarMetrics.cameraOn)) {
+                    BarCameraThumbnail()
+                }
+            }
+            if !microphoneID.isEmpty {
+                BarToggleLabel(id: .microphone, state: .on, hover: BarHover("Microphone will record"),
+                               offSymbol: "mic.fill", onSymbol: "mic.fill", look: .input(BarMetrics.microphoneOn)) {
+                    BarAudioGlyph()
+                }
+            }
+            if systemAudio {
+                BarToggleLabel(id: .systemAudio, state: .on, hover: BarHover("System audio will record"),
+                               offSymbol: "speaker.wave.2.fill", onSymbol: "speaker.wave.2.fill",
+                               look: .input(BarMetrics.systemAudioOn)) {
+                    BarAudioGlyph()
+                }
+            }
+
+            Button {
+                countdown.cancel()
+            } label: {
+                HStack(spacing: 6) {
+                    Text("Cancel")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("esc")
+                        .font(.system(size: 10, weight: .medium))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(BarMetrics.activeTint.opacity(0.12)))
+                }
+                .foregroundStyle(BarMetrics.activeTint)
+                .padding(.horizontal, 12)
+                .frame(height: BarMetrics.chipHeight + 2)
+                .background(Capsule().fill(BarMetrics.activeTint.opacity(0.08)))
+                .contentShape(Capsule())
+            }
+            .buttonStyle(BarButtonStyle())
+            .padding(.leading, 12)
+            .padding(.trailing, 4)
+            .accessibilityLabel("Cancel countdown")
+        }
+    }
+
+    private var hasInputs: Bool {
+        !cameraID.isEmpty || !microphoneID.isEmpty || systemAudio
+    }
+}

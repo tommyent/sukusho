@@ -28,6 +28,8 @@ final class CaptureCountdownPresenter {
     /// Stop can cancel it and leave a screenshot's alone. Set and cleared
     /// with `isRunning`, so it always describes the countdown that's running.
     private(set) var isCountingDownToRecord = false
+    /// Seconds left, for the recording bar's own countdown.
+    private(set) var remaining = 0
 
     /// False means cancelled or another countdown is already in progress.
     func runIfNeeded(seconds: Int, displayID: CGDirectDisplayID?, beforeRecording: Bool = false) async -> Bool {
@@ -46,6 +48,7 @@ final class CaptureCountdownPresenter {
                 for value in stride(from: seconds, through: 1, by: -1) {
                     try Task.checkCancellation()
                     model.remaining = value
+                    remaining = value
                     try await Task.sleep(for: .seconds(1))
                 }
                 dismiss()
@@ -73,6 +76,7 @@ final class CaptureCountdownPresenter {
         runID = nil
         isRunning = false
         isCountingDownToRecord = false
+        remaining = 0
         dismiss()
         if let escapeMonitor { NSEvent.removeMonitor(escapeMonitor) }
         if let globalEscapeMonitor { NSEvent.removeMonitor(globalEscapeMonitor) }

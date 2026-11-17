@@ -303,6 +303,8 @@ private struct RecordingBarView: View {
     private var bar: some View {
         Group {
             switch presenter.mode {
+            case .picker where CaptureCountdownPresenter.shared.isCountingDownToRecord:
+                RecordingCountdownControls()
             case .picker:
                 RecordingPickerControls()
             case .recording:
