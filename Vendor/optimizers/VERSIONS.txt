@@ -1,0 +1,10 @@
+Built by scripts/build-optimizers.sh on 2026-11-17.
+oxipng v10.2.1 36f3ef8aac65ecf1761739ea2f2e530281f1312b
+libwebp v1.6.0 4fa21912338357f89e4fd51cf2368325b59e9bd9 (cwebp, webpmux)
+mozjpeg v4.1.5 6c9f0897afa1c2738d7222a0a9ab49e8b536a267 (cjpeg, jpegtran)
+rustc: rustc 1.96.0 (ac68faa20 2026-05-25); cmake: cmake version 4.4.5; clang: Apple clang version 21.0.0 (clang-2100.4.1.1)
+oxipng: arm64, 1093104 bytes, sha256 dbd9f1ee4a8a00c602f738b574ee439587e5c18cb014ba7f538505940f8190e1
+cwebp: x86_64 arm64, 1240224 bytes, sha256 a5e272c2f849a78f137d5fdbbe0445589eab629b91ad03fac5c2e502bbd33862
+webpmux: x86_64 arm64, 645888 bytes, sha256 54a3e925f51496110e225692a7055b38be27e57c7a3a22f7489a2c4f89ceef0a
+cjpeg: x86_64 arm64, 1232624 bytes, sha256 25d4105bffba80a7a88e318ddf77e22183ad67fa549cf5cb26a1166bab7608e8
+jpegtran: x86_64 arm64, 803408 bytes, sha256 2c1d999ec4c75c754ea87addc642cff827de55395e0be615f4cff1303942f601
