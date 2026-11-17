@@ -105,7 +105,8 @@ nonisolated struct ImageOptimizer: Sendable {
     /// The most memory those bitmaps may take, in bytes. Checking a result holds up to five at once: both
     /// decoded images, and three copies of their pixels on the way to comparing them. A bitmap is four
     /// channels of 8 bits, or of 16 for a deeper image, so 100 million pixels at 8 bits just fit and a
-    /// 16-bit image may have half as many.
+    /// 16-bit image may have half as many. The budget is for one run: two that happen to overlap, such as
+    /// a copy while a new capture is optimized in the background, each get it.
     var memoryBudget = 2_000_000_000
 
     static let shared = ImageOptimizer(
@@ -645,7 +646,8 @@ nonisolated struct ImageOptimizer: Sendable {
     /// Whether a lossy `result` still shows `source`'s picture, both as premultiplied RGBA rows of 8 bits.
     ///
     /// Lossy encoders blur and quantize, but at every quality the app offers they keep the mean of each
-    /// 8 x 8 pixels closely (measured on real captures down to quality 10: within 22 of 255). So both pictures
+    /// 8 x 8 pixels closely. Measured down to quality 10: within 12 of 255 on real captures, 23 on one-pixel
+    /// red and blue stripes, and 32 on an ordered dither, the worst pattern tried. So both pictures
     /// are reduced to those means, and the result is refused when a block's brightness is far off; when a
     /// 16 x 16 group of blocks that has color in the source has lost or changed most of it; or when, in any
     /// window of 4 x 4 blocks, the average color is far off, a pattern the source has there is gone or
@@ -707,7 +709,7 @@ nonisolated struct ImageOptimizer: Sendable {
                     for blockX in windowX..<min(windowX + window, across) {
                         let index = (blockY * across + blockX) * 6
                         let a = brightness(index), b = brightness(index + 3)
-                        guard abs(a - b) <= 48 else { return false }   // one block's brightness (22)
+                        guard abs(a - b) <= 48 else { return false }   // one block's brightness (32)
                         count += 1
                         s += a
                         r += b
@@ -719,7 +721,8 @@ nonisolated struct ImageOptimizer: Sendable {
                         shift.2 += Double(means[index + 2] - means[index + 5])
                     }
                 }
-                // The window's brightness (22) and each of its colors (55, for one-pixel red and blue stripes).
+                // The window's brightness (23) and each of its colors (57), both for one-pixel red and blue
+                // stripes. The color limit only stops a gross shift; the groups above are the finer check.
                 guard abs(s - r) / count <= 32, max(abs(shift.0), abs(shift.1), abs(shift.2)) / count <= 96 else { return false }
                 // Color, at the size both encoders store it: 16 x 16 pixels, four blocks. Where the source has
                 // color there, the result must not have lost or changed most of it. Real results lost 0.39 of
@@ -755,7 +758,7 @@ nonisolated struct ImageOptimizer: Sendable {
                 let spread = max(0, ss / count - (s / count) * (s / count)).squareRoot()
                 let spreadAfter = max(0, rr / count - (r / count) * (r / count)).squareRoot()
                 if spread >= 8 {
-                    // A pattern in the source: most of its contrast is still there (0.59), in the same places (0.83).
+                    // A pattern in the source: most of its contrast is still there (0.64), in the same places (0.83).
                     guard spreadAfter >= 0.35 * spread,
                           sr / count - (s / count) * (r / count) >= 0.5 * spread * spreadAfter else { return false }
                 } else if spread < 2 {
