@@ -84,6 +84,11 @@ final class ShakeToUpload {
     func update() {
         let isOn = UserDefaults.standard.bool(forKey: Self.enabledKey)
         if isOn, monitor == nil {
+            #if DEBUG
+            // A scripted pointer in a test VM can't shake inside the real half second. For a live check:
+            // defaults write <bundle id> shakeTestWindow -float 8, then relaunch. Debug builds only.
+            if let seconds = UserDefaults.standard.object(forKey: "shakeTestWindow") as? Double { detector.window = seconds }
+            #endif
             // Copies of other apps' mouse events; macOS asks no permission for these.
             monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged]) { event in
                 let isPress = event.type == .leftMouseDown
