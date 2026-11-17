@@ -624,9 +624,10 @@ private struct FeedCount: View {
     let unread: Int
 
     var body: some View {
+        // Nothing at zero, as every other sidebar count (Astra R4).
         HStack(spacing: 5) {
             if unread > 0 { Circle().fill(.tint).frame(width: 6, height: 6) }
-            Text(total, format: .number)
+            if total > 0 { Text(total, format: .number) }
         }
         .foregroundStyle(.secondary)
         .font(.caption.monospacedDigit())
