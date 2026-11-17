@@ -15,15 +15,23 @@ struct ClipboardLibraryPage: View {
         } else {
             let sections = model.librarySections(query: library.searchText)
             VStack(spacing: 0) {
-                if model.showsSnippets { snippetBar } else { filterBar }
+                // On a bar of its own, as the Cloud page's rows are, so the grid scrolls under it, never over it.
+                Group { if model.showsSnippets { snippetBar } else { filterBar } }
+                    .padding(.horizontal, DS.Space.xl).padding(.vertical, DS.Space.m)
+                    .frame(maxWidth: .infinity)
+                    .background(.bar)
+                    .overlay(alignment: .bottom) { Divider() }
                 if sections.isEmpty {
                     emptyPage.frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: DS.Space.l, pinnedViews: []) {
                             ForEach(sections) { section in
+                                // A capsule as wide as its words: the page plate is 520 pt wide and drawn past its
+                                // text, which put a bar over the filters and past the grid (owner, 2026-11-16).
                                 Text(section.title).font(DS.TypeScale.labelSemibold).foregroundStyle(.secondary)
-                                    .workspaceTextPlate()
+                                    .padding(.horizontal, DS.Space.ml).padding(.vertical, 2)
+                                    .workspaceTextPlate(capsule: true)
                                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 190, maximum: 260), spacing: DS.Space.l)],
                                           alignment: .leading, spacing: DS.Space.l) {
                                     ForEach(section.entries) { entry in
@@ -48,7 +56,6 @@ struct ClipboardLibraryPage: View {
             }
             .controlSize(.small)
         }
-        .padding(.horizontal, DS.Space.xl).padding(.top, DS.Space.l)
     }
 
     private var filterBar: some View {
@@ -67,7 +74,6 @@ struct ClipboardLibraryPage: View {
             }
             Spacer()
         }
-        .padding(.horizontal, DS.Space.xl).padding(.top, DS.Space.l)
     }
 
     @ViewBuilder
