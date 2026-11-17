@@ -33,6 +33,9 @@ struct ScreenshotHistoryItem: Identifiable, Codable, Equatable {
     /// The app and window it was taken from. Nil for older rows, and when
     /// no window could be named. Stays on this Mac.
     var source: CaptureSource?
+    /// When it was saved (★) to Library › Saved, by hand or by naming, tagging or sharing it. Saved
+    /// captures are what the Library keeps; nil for older rows (option A, sd-ogtp.1.1).
+    var librarySavedAt: Date?
 
     var recordingSession: RecordingSession? {
         guard let recordingSessionPath else { return nil }
@@ -74,6 +77,7 @@ struct ScreenshotHistoryItem: Identifiable, Codable, Equatable {
         displayName = try container.decodeIfPresent(String.self, forKey: .displayName)
         tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
         source = try container.decodeIfPresent(CaptureSource.self, forKey: .source)
+        librarySavedAt = try container.decodeIfPresent(Date.self, forKey: .librarySavedAt)
     }
 
     init(
@@ -500,7 +504,18 @@ final class ScreenshotHistoryStore {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         items[index].displayName = trimmed.isEmpty ? nil : trimmed
+        // Naming a capture says it's worth keeping (Fable's critique, 2026-11-16).
+        if !trimmed.isEmpty, items[index].librarySavedAt == nil { items[index].librarySavedAt = Date() }
         items[index].updatedAt = Date()
+        saveMetadata()
+    }
+
+    /// Saves the items to Library › Saved, or takes them out. Leaves `updatedAt` alone, as tagging does.
+    func setLibrarySaved(_ saved: Bool, ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        for index in items.indices where ids.contains(items[index].id) {
+            items[index].librarySavedAt = saved ? (items[index].librarySavedAt ?? Date()) : nil
+        }
         saveMetadata()
     }
 
@@ -511,6 +526,8 @@ final class ScreenshotHistoryStore {
         for index in items.indices where ids.contains(items[index].id) {
             items[index].tags.removeAll { $0.caseInsensitiveCompare(tag) == .orderedSame }
             if applied { items[index].tags.append(tag) }
+            // So does tagging it.
+            if applied, items[index].librarySavedAt == nil { items[index].librarySavedAt = Date() }
         }
         saveMetadata()
     }
@@ -526,6 +543,8 @@ final class ScreenshotHistoryStore {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         if items[index].cloudURL != cloudURL { items[index].cloudRedactions = nil }
         items[index].cloudURL = cloudURL
+        // And sharing it.
+        if cloudURL != nil, items[index].librarySavedAt == nil { items[index].librarySavedAt = Date() }
         items[index].updatedAt = Date()
         saveMetadata()
     }
@@ -534,6 +553,7 @@ final class ScreenshotHistoryStore {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].cloudURL = cloudURL
         items[index].cloudRedactions = redactions
+        if items[index].librarySavedAt == nil { items[index].librarySavedAt = Date() }
         items[index].updatedAt = Date()
         saveMetadata()
     }

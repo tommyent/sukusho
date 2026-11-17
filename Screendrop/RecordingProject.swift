@@ -22,6 +22,8 @@ nonisolated struct RecordingProjectMetadata: Codable, Sendable, Equatable {
     var lastOpenedAt: Date?
     /// Library tags. Optional so project files without them still decode.
     var tags: [String]?
+    /// When the recording was saved (★) to Library › Saved; not `savedAt`, which is Studio's last save.
+    var librarySavedAt: Date?
     var chapters: [RecordingChapter]?
     /// The app and window it was recorded from. Optional so older project
     /// files still decode. Stays on this Mac.

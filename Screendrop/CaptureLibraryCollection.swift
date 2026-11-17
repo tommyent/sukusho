@@ -514,7 +514,11 @@ struct LibraryCellContent: View {
                 }
                 if item.hasDraft { Image(systemName: "circle.fill").font(.system(size: 6)).foregroundStyle(.orange) }
             }
-            Text(item.subtitle).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
+            HStack(spacing: 4) {
+                Text(item.subtitle).lineLimit(1)
+                if item.isSaved { Image(systemName: "star.fill").font(.system(size: 8)).foregroundStyle(.yellow) }
+            }
+            .font(.system(size: 10.5)).foregroundStyle(.secondary)
         }
     }
 

@@ -73,6 +73,7 @@ extension CaptureLibraryModel {
                     var tags = (metadata.tags ?? []).filter { $0.caseInsensitiveCompare(name) != .orderedSame }
                     if applied { tags.append(name) }
                     metadata.tags = tags.isEmpty ? nil : tags
+                    if applied, metadata.librarySavedAt == nil { metadata.librarySavedAt = Date() }
                 }
             } else {
                 historyIDs.formUnion(item.historyIDs)
@@ -165,6 +166,22 @@ extension CaptureLibraryModel {
         } + [LibraryMenuItem(title: "Refresh", startsGroup: true, perform: refresh)]
     }
 
+    /// Saves the selected captures to Library › Saved (★), or takes them out. Recordings keep the flag in
+    /// their own project, screenshots in the Library history, as tags do.
+    func setSaved(_ saved: Bool) {
+        guard !isBusy else { return }
+        var historyIDs = Set<UUID>()
+        for item in selectedItems {
+            if let session = item.session {
+                try? session.updateProjectMetadata { $0.librarySavedAt = saved ? ($0.librarySavedAt ?? Date()) : nil }
+            }
+            // A recording shared before its project could be saved carries the flag on its History row too.
+            historyIDs.formUnion(item.historyIDs)
+        }
+        ScreenshotHistoryStore.shared.setLibrarySaved(saved, ids: historyIDs)
+        refresh()
+    }
+
     /// The captures' right-click menu: the shared actions, then the
     /// selected capture's cloud actions, which moved here from the
     /// inspector's bar, then Move to Trash.
@@ -188,6 +205,9 @@ extension CaptureLibraryModel {
             items.insert(LibraryMenuItem(title: "Revert to Original…", isEnabled: !isBusy) { self.requestRevert(item) }, at: rename + 1)
         }
         let trash = items.removeLast()
+        let saved = !selectedItems.isEmpty && selectedItems.allSatisfy(\.isSaved)
+        items.append(LibraryMenuItem(title: saved ? "Remove from Saved" : "Save", isEnabled: count > 0 && !isBusy,
+                                     startsGroup: true) { self.setSaved(!saved) })
         items += cloudMenuItems()
         items.append(trash)
         return items

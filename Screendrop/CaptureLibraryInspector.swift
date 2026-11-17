@@ -89,6 +89,14 @@ struct CaptureLibraryInspector: View {
                     } else if item.hasEdits {
                         statusBadge("Edited", symbol: "slider.horizontal.3")
                     }
+                    Spacer(minLength: 0)
+                    // Save (★): kept in Library › Saved. Naming, tagging or sharing saves it too.
+                    Button(item.isSaved ? "Saved" : "Save", systemImage: item.isSaved ? "star.fill" : "star") {
+                        model.setSaved(!item.isSaved)
+                    }
+                    .controlSize(.small)
+                    .disabled(model.isBusy)
+                    .help(item.isSaved ? "Remove from Saved" : "Keep it in Library › Saved")
                 }
             }
         }
