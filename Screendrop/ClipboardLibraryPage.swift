@@ -7,6 +7,8 @@ struct ClipboardLibraryPage: View {
     /// The status bar's card-size slider, shared with the captures and Cloud grids.
     let cardWidth: CGFloat
     @FocusState private var gridFocused: Bool
+    /// The grid's width, for how many cards a row holds when Up and Down move the selection.
+    @State private var gridWidth: CGFloat = 0
     @AppStorage(ScreendropPreferences.clipboardHistoryEnabledKey) private var enabled = false
     @State private var library = CaptureLibraryModel.shared
 
@@ -46,9 +48,12 @@ struct ClipboardLibraryPage: View {
                             }
                         }
                         .padding(DS.Space.xl)
+                        // A click on any card, the selected one too, gives the grid the keyboard, so arrows and
+                        // Space work on the cards rather than the sidebar or the search field (Astra, 2026-11-16).
+                        .simultaneousGesture(TapGesture().onEnded { gridFocused = true })
                     }
-                    // Space opens Quick Look on the selected card, as in the captures grid. Clicking a card
-                    // gives the grid the keyboard.
+                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { gridWidth = $0 }
+                    // Space opens Quick Look on the selected card, as in the captures grid.
                     .focusable()
                     .focusEffectDisabled()
                     .focused($gridFocused)
@@ -58,9 +63,23 @@ struct ClipboardLibraryPage: View {
                         model.quickLook(entry)
                         return .handled
                     }
+                    .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow]) { press in
+                        let ids = sections.flatMap { $0.entries.map(\.id) }
+                        let step = press.key == .leftArrow ? -1 : press.key == .rightArrow ? 1
+                            : (press.key == .upArrow ? -1 : 1) * columns
+                        guard let next = ClipboardList.move(from: model.librarySelection, by: step, in: ids) else { return .ignored }
+                        model.librarySelection = next
+                        return .handled
+                    }
                 }
             }
         }
+    }
+
+    /// Cards in a row, as the adaptive grid lays them out inside its padding.
+    private var columns: Int {
+        let spacing = DS.Space.l
+        return max(1, Int((gridWidth - 2 * DS.Space.xl + spacing) / (cardWidth + spacing)))
     }
 
     private var snippetBar: some View {

@@ -453,6 +453,17 @@ struct ClipboardListTests {
                        pinnedAt: pinnedAgo.map { now - $0 })
     }
 
+    @Test func arrowsMoveTheSelectionInsideTheGrid() {
+        let ids = ["a", "b", "c", "d", "e"]
+        #expect(ClipboardList.move(from: nil, by: 1, in: ids) == "a")
+        #expect(ClipboardList.move(from: "a", by: 1, in: ids) == "b")
+        #expect(ClipboardList.move(from: "b", by: 3, in: ids) == "e")
+        #expect(ClipboardList.move(from: "d", by: 3, in: ids) == "e")
+        #expect(ClipboardList.move(from: "a", by: -1, in: ids) == nil)
+        #expect(ClipboardList.move(from: "gone", by: 1, in: ids) == "a")
+        #expect(ClipboardList.move(from: "a", by: 1, in: []) == nil)
+    }
+
     @Test func anImageIsNamedByTheModelAndFoundByItsText() {
         var described = entry(.image, size: (1600, 1000))
         described.modelTitle = "Xcode build failure in AgentAccessServer"

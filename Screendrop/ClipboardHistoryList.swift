@@ -56,6 +56,15 @@ nonisolated enum ClipboardList {
         }
     }
 
+    /// The entry `step` places from `selection` in `ids`, kept inside the list; the first one when nothing is
+    /// selected. Nil when there's nowhere to go, so the key goes on to whatever else wants it.
+    static func move(from selection: String?, by step: Int, in ids: [String]) -> String? {
+        guard !ids.isEmpty else { return nil }
+        guard let selection, let index = ids.firstIndex(of: selection) else { return ids[0] }
+        let target = min(max(index + step, 0), ids.count - 1)
+        return target == index ? nil : ids[target]
+    }
+
     /// The Library's own search rules, `app:` included.
     static func matches(_ entry: ClipboardEntry, query: CaptureLibraryQuery, appName: String?) -> Bool {
         guard !query.isEmpty else { return true }
