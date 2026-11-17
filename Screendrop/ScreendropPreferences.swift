@@ -31,6 +31,8 @@ enum ScreendropPreferences {
     static let showMenuBarIconKey = "showMenuBarIcon"
     static let includeAppWindowsInCapturesKey = "includeAppWindowsInCaptures"
     static let captureWindowShadowKey = "captureWindowShadow"
+    /// Capture Text keeps the screen's line breaks instead of joining wrapped lines into paragraphs. Off by default.
+    static let captureTextKeepsLineBreaksKey = "captureTextKeepsLineBreaks"
     static let captureDelaySecondsKey = "captureDelaySeconds"
     /// Hidden: `defaults write <bundle id> areaCaptureUsesSystemPicker -bool YES`
     /// brings back the system crosshair for the Area screenshot and Capture Text.
@@ -150,6 +152,21 @@ enum ScreendropPreferences {
         return defaultExportDirectory
     }
     
+    /// Where recordings and everything exported from them (movies, GIFs, audio) are saved: the Save folder the user
+    /// chose, else ~/Movies/Sukusho, as images go to ~/Pictures/Sukusho (owner, 2026-11-17).
+    static var videoExportDirectory: URL {
+        if let path = UserDefaults.standard.string(forKey: exportDirectoryPathKey), !path.isEmpty {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+        return defaultVideoExportDirectory
+    }
+
+    static var defaultVideoExportDirectory: URL {
+        let movies = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first
+        return (movies ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Movies"))
+            .appendingPathComponent(ScreendropStorage.directoryName, isDirectory: true)
+    }
+
     static var defaultExportDirectory: URL {
         let picturesDirectory = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first
         return (picturesDirectory ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Pictures"))
@@ -236,6 +253,10 @@ enum ScreendropPreferences {
 
     /// Whether captured windows include their drop shadow. Defaults to off
     /// (tighter, shadow-free crops).
+    static var captureTextKeepsLineBreaks: Bool {
+        UserDefaults.standard.bool(forKey: captureTextKeepsLineBreaksKey)
+    }
+
     static var captureWindowShadow: Bool {
         UserDefaults.standard.bool(forKey: captureWindowShadowKey)
     }
@@ -261,8 +282,12 @@ enum ScreendropPreferences {
     }
 
     /// Seconds before the preview overlay auto-dismisses. 0 means never.
+    /// 10 s unless set (Fable #2: cards stayed five minutes and piled up the edge). Hovering, dragging and opening a
+    /// card keep it; a user's own choice, Never (0) included, stands.
+    static let previewAutoCloseDefault = 10
     static var previewAutoCloseSeconds: Int {
-        max(0, UserDefaults.standard.integer(forKey: previewAutoCloseSecondsKey))
+        guard UserDefaults.standard.object(forKey: previewAutoCloseSecondsKey) != nil else { return previewAutoCloseDefault }
+        return max(0, UserDefaults.standard.integer(forKey: previewAutoCloseSecondsKey))
     }
 
     /// Whether dragging a preview card out dismisses it. Defaults to on.

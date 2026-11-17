@@ -15,10 +15,19 @@ enum ImageTextRecognizer {
     /// joined by newlines in reading order. Returns an empty string when
     /// nothing is found.
     static func recognizeText(at url: URL) async -> String {
+        await read { ScreenshotImageLoader.uprightImage(at: url) }
+    }
+
+    /// The same for an image already prepared, such as Capture Text's 2× read (`CapturedDocumentText.readable`).
+    static func recognizeText(in image: CGImage) async -> String {
+        await read { image }
+    }
+
+    private static func read(_ load: @escaping @Sendable () -> CGImage?) async -> String {
         await ImageTextWarmUp.shared.waitUntilReady()
         return await withCheckedContinuation { (continuation: CheckedContinuation<String, Never>) in
             DispatchQueue.global(qos: .userInitiated).async {
-                guard let cgImage = ScreenshotImageLoader.uprightImage(at: url) else {
+                guard let cgImage = load() else {
                     continuation.resume(returning: "")
                     return
                 }

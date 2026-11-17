@@ -4,6 +4,7 @@
 //
 
 import CoreGraphics
+import CoreImage
 import Foundation
 import Vision
 
@@ -83,6 +84,40 @@ nonisolated enum CapturedDocumentText {
 
     /// The blocks of `image` when it holds a table or a list; nil otherwise, and when Vision
     /// fails, so plain text keeps going through `ImageTextRecognizer` exactly as before.
+    /// The image Vision reads best: a capture under 1.5 pixels per point (a 1× display) scaled to 2. At 1×, 10 pt text
+    /// lost whole words ("Uses") and misread others, and the same capture scaled up read cleanly (Fable live check C,
+    /// 2026-11-17). Anything sharper, or an image that can't be scaled, is returned as it is.
+    static func readable(_ image: CGImage, pixelsPerPoint: CGFloat) -> CGImage {
+        guard let scale = readableScale(width: image.width, height: image.height, pixelsPerPoint: pixelsPerPoint) else { return image }
+        let filter = CIFilter(name: "CILanczosScaleTransform")
+        filter?.setValue(CIImage(cgImage: image), forKey: kCIInputImageKey)
+        filter?.setValue(scale, forKey: kCIInputScaleKey)
+        filter?.setValue(1.0, forKey: kCIInputAspectRatioKey)
+        guard let output = filter?.outputImage,
+              let scaled = CIContext().createCGImage(output, from: output.extent.integral) else { return image }
+        return scaled
+    }
+
+    /// At most this many pixels after scaling, about 144 MB at 4 bytes a pixel (Astra, 2026-11-17: an 8K capture at 1×
+    /// would have become 15360 × 8640, about 531 MB).
+    static let readableMaxPixels = 36_000_000.0
+
+    /// How much `readable` scales an image by: 2× its pixels per point, less when that would pass `readableMaxPixels`,
+    /// and nil when it's sharp enough already or the cap leaves too little gain to be worth it.
+    static func readableScale(width: Int, height: Int, pixelsPerPoint: CGFloat) -> CGFloat? {
+        guard pixelsPerPoint > 0, pixelsPerPoint < 1.5, width > 0, height > 0 else { return nil }
+        let scale = min(2 / pixelsPerPoint, CGFloat((readableMaxPixels / Double(width * height)).squareRoot()))
+        return scale >= 1.25 ? scale : nil
+    }
+
+    /// Capture Text's image of `url`, upright and made `readable` when the drawn `area` (in points) gives its pixels
+    /// per point. Decoding and scaling are slow on a big capture: call it off the main actor.
+    static func readableImage(at url: URL, area: CGRect?) -> CGImage? {
+        guard let image = ScreenshotImageLoader.uprightImage(at: url) else { return nil }
+        guard let area, area.width > 0 else { return image }
+        return readable(image, pixelsPerPoint: CGFloat(image.width) / area.width)
+    }
+
     static func structuredBlocks(in image: CGImage) async -> [CapturedTextBlock]? {
         guard let document = try? await RecognizeDocumentsRequest().perform(on: image).first?.document,
               !document.tables.isEmpty || !document.lists.isEmpty else { return nil }
@@ -99,10 +134,81 @@ nonisolated enum CapturedDocumentText {
             placed.append(Placed(block: .list(items), box: list.boundingRegion.boundingBox.cgRect))
         }
         for paragraph in document.paragraphs {
-            let text = paragraph.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Its screen lines, not its transcript (which Vision has already joined): Capture Text joins them itself,
+            // unless "Keep line breaks" is on (Fable live check B, 2026-11-17).
+            let text = paragraph.lines.map(\.transcript).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
             if !text.isEmpty { placed.append(Placed(block: .paragraph(text), box: paragraph.boundingRegion.boundingBox.cgRect)) }
         }
         let blocks = ordered(placed)
         return blocks.isEmpty ? nil : blocks
+    }
+}
+
+/// Capture Text's paragraphs: lines the screen wrapped mid-sentence are joined, and everything else keeps its breaks
+/// (owner, 2026-11-17: paragraphs by default, with a setting to keep the screen's lines).
+nonisolated enum CaptureTextParagraphs {
+    static func reflowed(_ blocks: [CapturedTextBlock]) -> [CapturedTextBlock] {
+        blocks.map { block in
+            if case let .paragraph(text) = block { return .paragraph(reflowed(text)) }
+            return block
+        }
+    }
+
+    /// Joins a line to the next when the sentence runs on: the line doesn't end a sentence, the next isn't a list item,
+    /// and either the next starts in lowercase or the line is about as long as the longest (it wrapped rather than
+    /// ended). Blank lines, list items, headings and code keep their breaks; a line ending in a hyphen keeps it.
+    static func reflowed(_ text: String) -> String {
+        let lines = text.components(separatedBy: "\n")
+        let nonBlank = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        // Code keeps every line.
+        guard nonBlank.count > 1 else { return text }
+        guard nonBlank.filter(looksLikeCode).count * 3 < nonBlank.count else { return text }
+        let longest = nonBlank.map { $0.trimmingCharacters(in: .whitespaces).count }.max() ?? 0
+        var out: [String] = []
+        for raw in lines {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            guard let last = out.last, !line.isEmpty, !last.isEmpty, joins(last, line, longest: longest) else {
+                out.append(line)
+                continue
+            }
+            // A line ending in a hyphen joins the next with the hyphen kept: it may be "re-sign", "well-known" or a
+            // minus, not a word broken for the margin (Sol, round 8 on R5A: "total-refund" became "totalrefund").
+            out[out.count - 1] = last.hasSuffix("-") && line.first?.isLowercase == true && last.dropLast().last?.isLetter == true
+                ? last + line
+                : last + " " + line
+        }
+        return out.joined(separator: "\n")
+    }
+
+    /// The first words of what was copied, for the message that says it's on the clipboard.
+    static func firstWords(of text: String, limit: Int = 8) -> String {
+        let words = text.split(whereSeparator: { $0.isWhitespace })
+        let shown = words.prefix(limit).joined(separator: " ")
+        return words.count > limit ? shown + "…" : shown
+    }
+
+    static func wordCount(of text: String) -> Int {
+        text.split(whereSeparator: { $0.isWhitespace }).count
+    }
+
+    private static func joins(_ line: String, _ next: String, longest: Int) -> Bool {
+        guard !isListItem(next), !isListItem(line) || !next.isEmpty else { return false }
+        // Any script's sentence end (Astra R5-5: Arabic "؟" ran on into the next sentence), or a clause's.
+        if let end = line.last, end.unicodeScalars.last?.properties.isSentenceTerminal == true || ":;؛\"”»)".contains(end) {
+            return false
+        }
+        if next.first?.isLowercase == true { return true }
+        // Long enough to have reached the edge, so it wrapped; a short line without an ending is a heading.
+        return Double(line.count) >= Double(longest) * 0.7 && !isListItem(line)
+    }
+
+    private static func isListItem(_ line: String) -> Bool {
+        line.range(of: #"^([•◦▪‣\-–—*·]|\d{1,3}[.)]|[a-zA-Z][.)])\s"#, options: .regularExpression) != nil
+    }
+
+    private static func looksLikeCode(_ line: String) -> Bool {
+        let line = line.trimmingCharacters(in: .whitespaces)
+        return line.hasSuffix("{") || line.hasSuffix("}") || line.hasSuffix(";") || line.hasPrefix("//")
+            || ["func ", "let ", "var ", "const ", "def ", "return ", "import ", "#include"].contains { line.hasPrefix($0) }
     }
 }

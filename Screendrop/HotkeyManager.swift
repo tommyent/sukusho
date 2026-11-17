@@ -39,6 +39,7 @@ final class HotkeyManager {
     
     func registerHotkeys() {
         installEventHandlerIfNeeded()
+        CaptureHotkeyPreferences.dropStoredDefaults()
         reloadHotkeys()
     }
 

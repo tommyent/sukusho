@@ -39,7 +39,7 @@ struct VideoSettingsPane: View {
 
 struct OverlaySettingsPane: View {
     @AppStorage(ScreendropPreferences.previewPositionKey) private var previewPositionRaw = PreviewOverlayPosition.right.rawValue
-    @AppStorage(ScreendropPreferences.previewAutoCloseSecondsKey) private var autoCloseSeconds = 0
+    @AppStorage(ScreendropPreferences.previewAutoCloseSecondsKey) private var autoCloseSeconds = ScreendropPreferences.previewAutoCloseDefault
     @AppStorage(ScreendropPreferences.previewCloseAfterDraggingKey) private var closeAfterDragging = true
     // The same two settings as "Show preview overlay" under After Capture and After Recording.
     @AppStorage(AfterCaptureAction.showOverlay.storageKey(for: .screenshot))

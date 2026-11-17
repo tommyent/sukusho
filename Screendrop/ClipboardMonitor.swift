@@ -167,6 +167,7 @@ final class ClipboardMonitor {
             do {
                 // Quick Look's copies of what the sweep dropped go too (Astra, 2026-11-16).
                 if try await store.sweep(retention: retention, maxBytes: maxBytes) > 0 { ClipboardHistoryModel.clearQuickLookFiles() }
+                ClipboardHistoryModel.clearEditCopies()
             } catch {
                 logger.error("Clipboard history cleanup failed: \(String(describing: error), privacy: .public)")
             }

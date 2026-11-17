@@ -192,11 +192,13 @@ final class CaptureCoordinator {
         ImageTextWarmUp.shared.start()
         let delay = ScreendropPreferences.captureDelaySeconds
         var captured: URL?
+        var area: CGRect?
         if ScreendropPreferences.areaCaptureUsesSystemPicker {
             captured = await ScreenshotManager.shared.captureArea(delaySeconds: delay)
         } else {
             let windows = CaptureSourceProbe(tracksPointer: false).windows.map(\.bounds)
             if let rect = await RecordingAreaSelectionPresenter.shared.selectScreenshotArea(windows: windows) {
+                area = rect
                 captured = await ScreenshotManager.shared.captureArea(rect, delaySeconds: delay)
             }
         }
@@ -210,9 +212,22 @@ final class CaptureCoordinator {
         CaptureTextFeedbackPresenter.shared.showReading(displayID: displayID)
         // A table or a list keeps its shape; anything else is read line by line, as always.
         var blocks: [CapturedTextBlock]?
-        if let image = ScreenshotImageLoader.uprightImage(at: url) { blocks = await CapturedDocumentText.structuredBlocks(in: image) }
+        // Text captured at 1× is read at 2×, off the main actor; the area, and so the scale, is unknown behind the
+        // system picker. Both readers below get this one image.
+        let readable = await Task.detached(priority: .userInitiated) { [area] in
+            CapturedDocumentText.readableImage(at: url, area: area)
+        }.value
+        if let readable { blocks = await CapturedDocumentText.structuredBlocks(in: readable) }
+        // Paragraphs rather than the screen's lines, unless the user keeps them (Settings › Screenshots).
+        let keepsLines = ScreendropPreferences.captureTextKeepsLineBreaks
+        if !keepsLines { blocks = blocks.map(CaptureTextParagraphs.reflowed) }
         let text: String
-        if let blocks { text = CapturedDocumentText.plainText(blocks) } else { text = await ImageTextRecognizer.recognizeText(at: url) }
+        if let blocks {
+            text = CapturedDocumentText.plainText(blocks)
+        } else {
+            let read = if let readable { await ImageTextRecognizer.recognizeText(in: readable) } else { await ImageTextRecognizer.recognizeText(at: url) }
+            text = keepsLines ? read : CaptureTextParagraphs.reflowed(read)
+        }
 
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             CaptureTextFeedbackPresenter.shared.showNoTextFound(displayID: displayID)
@@ -261,7 +276,8 @@ final class CaptureCoordinator {
         // The picker already left to make room for the selection, so when
         // the selection or its countdown is cancelled nothing else turns off
         // the camera it warmed.
-        RecordingAreaSelectionPresenter.shared.selectArea(on: display) { rect in
+        // The drawn area waits for Record, so it can be adjusted first; the countdown, if any, follows Record.
+        RecordingAreaSelectionPresenter.shared.selectArea(on: display, confirmTitle: "Record") { rect in
             guard let rect else {
                 Task { await CameraRecordingManager.shared.stopPreview() }
                 return

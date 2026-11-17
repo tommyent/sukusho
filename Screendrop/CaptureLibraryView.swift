@@ -235,6 +235,8 @@ struct CaptureLibraryView: View {
                 leading: columnVisibility != .detailOnly,
                 trailing: inspectorVisible
             ))
+            // New Snippet's editor is in the inspector: show it, or the typing has nowhere to go (VM check, 2026-11-17).
+            .onChange(of: clipboard.snippetAwaitingFocus) { _, id in if id != nil { inspectorVisible = true } }
             // Inside the detail column the inspector sits under the toolbar,
             // so the toolbar runs unbroken across it.
             .inspector(isPresented: $inspectorVisible) {
@@ -628,9 +630,10 @@ private struct FeedCount: View {
     let unread: Int
 
     var body: some View {
+        // Nothing at zero, as every other sidebar count (Astra R4).
         HStack(spacing: 5) {
             if unread > 0 { Circle().fill(.tint).frame(width: 6, height: 6) }
-            Text(total, format: .number)
+            if total > 0 { Text(total, format: .number) }
         }
         .foregroundStyle(.secondary)
         .font(.caption.monospacedDigit())

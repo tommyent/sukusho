@@ -248,29 +248,6 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
 
         self = action
     }
-
-    func perform() {
-        switch self {
-        case .fullscreen:
-            CaptureCoordinator.shared.captureFullscreen()
-        case .window:
-            CaptureCoordinator.shared.captureWindow()
-        case .area:
-            CaptureCoordinator.shared.captureArea()
-        case .screenRecording:
-            Task { @MainActor in
-                RecordingBarPresenter.shared.togglePicker()
-            }
-        case .textCapture:
-            CaptureCoordinator.shared.captureText()
-        case .scrollingCapture:
-            CaptureCoordinator.shared.captureScrolling()
-        case .library:
-            CaptureLibraryModel.shared.show()
-        case .clipboardHistory:
-            ClipboardPopupPresenter.shared.toggle()
-        }
-    }
 }
 
 enum CaptureHotkeyPreferences {
@@ -316,9 +293,22 @@ enum CaptureHotkeyPreferences {
         defaults.removeObject(forKey: action.preferencesKey)
     }
 
-    /// Whether the action follows its default: nothing recorded or cleared.
+    /// Whether the action has its default shortcut: nothing stored, or a stored shortcut that equals the default. An
+    /// older build stored defaults too, so Reset showed on rows it couldn't change (owner, 2026-11-17). A cleared
+    /// shortcut isn't the default.
     static func isDefault(_ action: CaptureHotkeyAction, defaults: UserDefaults = .standard) -> Bool {
-        defaults.object(forKey: action.preferencesKey) == nil
+        guard defaults.object(forKey: action.preferencesKey) != nil else { return true }
+        guard defaults.string(forKey: action.preferencesKey) != clearedValue else { return false }
+        return shortcut(for: action, defaults: defaults) == action.defaultShortcut
+    }
+
+    /// Forgets stored shortcuts that equal their action's default, so a later change of a default reaches them, as it
+    /// does everyone who never recorded one. Cleared and changed shortcuts stay. Run at launch.
+    static func dropStoredDefaults(defaults: UserDefaults = .standard) {
+        for action in CaptureHotkeyAction.allCases where defaults.data(forKey: action.preferencesKey) != nil
+            && isDefault(action, defaults: defaults) {
+            defaults.removeObject(forKey: action.preferencesKey)
+        }
     }
 
     /// Every action that has a shortcut; cleared ones are left out.

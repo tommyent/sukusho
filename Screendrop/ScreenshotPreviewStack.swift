@@ -28,6 +28,7 @@ final class ScreenshotPreviewStack {
     /// for these so we never yank a capture out from under the user while - or
     /// after - they were actively working with it.
     private var engagedItemIDs: Set<ScreenshotPreviewItem.ID> = []
+    private var autoCloseClock = PreviewAutoCloseClock<ScreenshotPreviewItem.ID>()
 
     /// When true the overlay is tucked into a small "peek" tab at the bottom
     /// edge instead of showing the full stack. The overlay window itself stays
@@ -349,24 +350,41 @@ final class ScreenshotPreviewStack {
     private func scheduleAutoClose(id: ScreenshotPreviewItem.ID) {
         guard ScreendropPreferences.previewAutoCloseSeconds > 0 else { return }
         let seconds = ScreendropPreferences.previewAutoCloseSeconds
+        autoCloseClock.start(id, seconds: Double(seconds), now: .now)
         Task {
             try? await Task.sleep(for: .seconds(Double(seconds)))
             autoCloseIfIdle(id: id)
         }
     }
 
+    /// The pointer on the stack holds every card; leaving resumes each countdown (PreviewAutoCloseClock).
+    func setStackHovered(_ isHovered: Bool) {
+        if isHovered { autoCloseClock.pause(now: .now) } else { autoCloseClock.resume(now: .now) }
+    }
+
     /// Marks an item as explicitly engaged (Quick Look / editor), cancelling its
     /// pending auto-close. Called from the high-intent action sites.
     func markEngaged(id: ScreenshotPreviewItem.ID) {
         engagedItemIDs.insert(id)
+        autoCloseClock.forget(id)
     }
 
     private func autoCloseIfIdle(id: ScreenshotPreviewItem.ID) {
-        guard items.contains(where: { $0.id == id }) else { return }
-
         // A high-intent action voids the transient-overlay contract: leave the
         // card on screen until the user dismisses it themselves.
-        guard !engagedItemIDs.contains(id) else { return }
+        guard items.contains(where: { $0.id == id }), !engagedItemIDs.contains(id) else {
+            autoCloseClock.forget(id)
+            return
+        }
+        // Held while the stack is hovered, and then for the time it had left.
+        if autoCloseClock.isPaused || (autoCloseClock.remaining(id, now: .now) ?? 0) > 0.05 {
+            let wait = autoCloseClock.remaining(id, now: .now) ?? 0.5
+            Task {
+                try? await Task.sleep(for: .seconds(max(wait, 0.1)))
+                autoCloseIfIdle(id: id)
+            }
+            return
+        }
 
         // While Quick Look is on screen, don't auto-close *any* card. Removing a
         // background card collapses/tears down the floating overlay, which closes
@@ -384,6 +402,7 @@ final class ScreenshotPreviewStack {
             return
         }
 
+        autoCloseClock.forget(id)
         dismiss(id: id)
     }
 
@@ -802,6 +821,7 @@ final class ScreenshotPreviewStack {
         items.removeAll { $0.id == id }
         dismissingItemIDs.remove(id)
         engagedItemIDs.remove(id)
+        autoCloseClock.forget(id)
         clearCompressionState(for: id)
 
         if hoveredItemID == id {
@@ -853,6 +873,7 @@ final class ScreenshotPreviewStack {
         items.removeAll()
         dismissingItemIDs.removeAll()
         engagedItemIDs.removeAll()
+        autoCloseClock.forgetAll()
         clearAllCompressionState()
         hoveredItemID = nil
         draggingItemID = nil
@@ -869,6 +890,7 @@ final class ScreenshotPreviewStack {
         items.removeAll()
         dismissingItemIDs.removeAll()
         engagedItemIDs.removeAll()
+        autoCloseClock.forgetAll()
         clearAllCompressionState()
         hoveredItemID = nil
         draggingItemID = nil

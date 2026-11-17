@@ -191,6 +191,26 @@ struct HistoryMetadataTests {
         }
     }
 
+    /// Astra R5: History with one readable legacy-marked row and one it can't read moves nothing: the marks file stays
+    /// as it was, or absent, while the readable row still shows its mark.
+    @Test func aPartlyReadableHistoryLeavesTheMarksFileAlone() throws {
+        try withIndex { url in
+            let marksURL = url.deletingLastPathComponent().appendingPathComponent("library-saved.json")
+            let rows: [[String: Any]] = [["id": legacy.uuidString, "name": "legacy", "librarySavedAt": legacyAt.timeIntervalSinceReferenceDate],
+                                         ["id": plain.uuidString, "name": 42]]
+            try JSONSerialization.data(withJSONObject: rows).write(to: url)
+            var files = MarkedHistory<MarkedRow>(historyURL: url, marksURL: marksURL)
+            #expect(marks(files.load()) == [legacy: legacyAt])
+            #expect(files.history.isReadOnly)
+            #expect(!FileManager.default.fileExists(atPath: marksURL.path))
+            let existing = Data(#"{"\#(saved.uuidString)":\#(savedAt.timeIntervalSinceReferenceDate)}"#.utf8)
+            try existing.write(to: marksURL)
+            var again = MarkedHistory<MarkedRow>(historyURL: url, marksURL: marksURL)
+            #expect(marks(again.load()) == [legacy: legacyAt])
+            #expect(try Data(contentsOf: marksURL) == existing)
+        }
+    }
+
     /// Naming or tagging a recording marks its History rows, found by package path however it's written.
     @Test func aRecordingsRowsAreFoundByItsPackage() {
         let first = UUID(), second = UUID(), other = UUID(), screenshot = UUID()

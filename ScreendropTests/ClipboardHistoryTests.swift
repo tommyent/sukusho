@@ -740,7 +740,7 @@ struct ClipboardListTests {
         described.keywords = ["Xcode"]
         let plain = entry(.image, size: (359, 815))
         #expect(ClipboardList.title(of: described) == "Xcode build failure in AgentAccessServer")
-        #expect(ClipboardList.title(of: plain) == "Image (359×815)")
+        #expect(ClipboardList.title(of: plain) == "Image (359 × 815)")
         let found = ClipboardList.sections([described, plain], filter: .all, query: CaptureLibraryQuery("not marked"), now: now,
                                            calendar: calendar)
         #expect(found.flatMap(\.entries).map(\.id) == [described.id])
@@ -792,7 +792,7 @@ struct ClipboardListTests {
     }
 
     @Test func titlesAndTypes() {
-        #expect(ClipboardList.title(of: entry(.image, size: (2880, 1800))) == "Image (2880×1800)")
+        #expect(ClipboardList.title(of: entry(.image, size: (2880, 1800))) == "Image (2880 × 1800)")
         #expect(ClipboardList.title(of: entry(.text, " #ff6363 ")) == "#FF6363")
         #expect(ClipboardList.title(of: entry(.text, "\n\n  first line  \nsecond")) == "first line")
         #expect(ClipboardList.title(of: entry(.files, "/a/one.png\n/b/two.txt")) == "one.png, two.txt")
@@ -980,6 +980,18 @@ struct ClipboardCardTextTests {
         #expect(ClipboardList.isCodeLike("func tailPath(radius r: CGFloat, tip d: CGFloat) -> CGPath {"))
         #expect(ClipboardList.kindWord(of: text(swift, from: "com.tommyent.Sukusho.dev")) == "code")
         #expect(!ClipboardList.isCodeLike("Meeting moved to 3pm"))
+        // Astra R2: prose that starts with a keyword or ends in a semicolon isn't code.
+        for prose in ["Please send the revised draft;", "return home before dinner", "let me know tomorrow",
+                      "Meet me at the cafe (downtown).", "Let me know (by Friday).", "for the record, it was fine",
+                      "if you can, call me", "Meeting moved to 3pm; bring the notes.",
+                      "Thanks for the update.\nlet me know when it ships;\nreturn the forms by Friday"] {
+            #expect(!ClipboardList.isCodeLike(prose), "\(prose)")
+        }
+        for code in ["let total = items.count", "const f = (a) => a + 1;", "console.log(total);", "return x == y",
+                     "def greet(name):\n    print(name)", "if (ready) {\n  start();\n}", "x = 5",
+                     "import Foundation\nlet url = URL(fileURLWithPath: path)", "Foo::bar()"] {
+            #expect(ClipboardList.isCodeLike(code), "\(code)")
+        }
         #expect(!ClipboardList.isCodeLike("Let me know if the fix works.\nThanks!"))
         #expect(!ClipboardList.isCodeLike("hello@example.com"))
         // From a code app, any plain text counts, as before.
@@ -996,7 +1008,12 @@ struct ClipboardCardTextTests {
         #expect(ClipboardCapturePolicy.functionalColor("hsl(120deg 100% 25%)") == "#008000")
         #expect(ClipboardCapturePolicy.functionalColor("hsl(210, 80%, 55%)") == "#308CE8")
         #expect(ClipboardCapturePolicy.functionalColor("hsla(240, 100%, 50%, 0.25)") == "#0000FF40")
-        for text in ["rgb(300, 0, 0)", "rgb(1, 2)", "hsl(0, 100, 50)", "rgb(a, b, c)", "rgbx(1, 2, 3)", "rgb(1, 2, 3", "call(rgb(1, 2, 3))"] {
+        // Negative hues wrap, as CSS Color 4 does (Astra R1): -120° is blue, -240° is green.
+        #expect(ClipboardCapturePolicy.functionalColor("hsl(-120 100% 50%)") == "#0000FF")
+        #expect(ClipboardCapturePolicy.functionalColor("hsl(-240, 100%, 50%)") == "#00FF00")
+        #expect(ClipboardCapturePolicy.functionalColor("hsl(480deg 100% 50%)") == "#00FF00")
+        for text in ["rgb(300, 0, 0)", "rgb(1, 2)", "hsl(0, 100, 50)", "rgb(a, b, c)", "rgbx(1, 2, 3)", "rgb(1, 2, 3", "call(rgb(1, 2, 3))",
+                     "rgb(1,,2,3)", "rgb(1/2/3)", "hsl(50% 100% 50%)", "rgb(1, 2, 3 / 0.5)", "rgb(1 2 3 / 0.5 / 1)", "rgb(1 2 / 3)"] {
             #expect(ClipboardCapturePolicy.functionalColor(text) == nil, "\(text)")
         }
         if case .color(let hex) = ClipboardCapturePolicy.textForm("  rgb(10, 132, 255) ") { #expect(hex == "#0A84FF") } else {

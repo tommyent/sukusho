@@ -40,7 +40,7 @@ final class RecordingSourceCatalog {
     }
 
     static func displayTitle(_ display: SCDisplay, index: Int) -> String {
-        let resolution = "\(display.width)x\(display.height)"
+        let resolution = "\(display.width) × \(display.height)"
         let name = displayName(for: display.displayID) ?? "Display \(index + 1)"
         return "\(name) (\(resolution))"
     }

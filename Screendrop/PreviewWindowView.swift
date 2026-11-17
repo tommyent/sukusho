@@ -16,6 +16,21 @@ let previewStackSpacing: CGFloat = 15
 let previewStackEdgePadding: CGFloat = 32
 let previewStackAnimation = Animation.smooth(duration: 0.3, extraBounce: 0)
 let previewCardSlideOffset = previewCardSize.width + previewTrailingPadding + 48
+/// How much of each older card shows above the one in front while the stack rests: four cards take the room of about
+/// one and a half (Fable #2: they used to stand apart, 190 pt each, down a third of the screen).
+let previewStackPeek: CGFloat = 20
+
+/// Where card `index` sits above the front one (0 is the newest), and the stack's height: overlapped while it rests,
+/// fanned out like before while the pointer is over it.
+enum PreviewStackLayout {
+    static func offset(of index: Int, fanned: Bool) -> CGFloat {
+        CGFloat(index) * (fanned ? previewCardSize.height + previewStackSpacing : previewStackPeek)
+    }
+
+    static func height(count: Int, fanned: Bool) -> CGFloat {
+        count == 0 ? 0 : previewCardSize.height + offset(of: count - 1, fanned: fanned)
+    }
+}
 
 struct PreviewWindowView: View {
     private let onRequestClose: (() -> Void)?
@@ -30,6 +45,9 @@ struct PreviewWindowView: View {
     @State private var transitionResetTask: Task<Void, Never>?
     @State private var stackHeight: CGFloat = 500
     @State private var peekHeight: CGFloat = 64
+    /// The pointer is over the stack, so it fans out and every card's hover actions can be reached.
+    @State private var isFanned = false
+    @State private var unfanTask: Task<Void, Never>?
     @AppStorage(ScreendropPreferences.previewPositionKey) private var previewPositionRaw = PreviewOverlayPosition.right.rawValue
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismiss) private var dismissWindow
@@ -147,8 +165,10 @@ struct PreviewWindowView: View {
     }
 
     private var stackContent: some View {
-        VStack(spacing: previewStackSpacing) {
-            ForEach(previewStack.items) { item in
+        // Newest in front at the bottom; older cards show a strip above it, and fan out under the pointer.
+        let count = previewStack.items.count
+        return ZStack(alignment: .bottom) {
+            ForEach(Array(previewStack.items.enumerated()), id: \.element.id) { index, item in
                 PreviewCardView(
                     item: item,
                     isHidden: previewStack.draggingItemID == item.id,
@@ -242,8 +262,28 @@ struct PreviewWindowView: View {
                         }
                     }
                 )
+                .offset(y: -PreviewStackLayout.offset(of: index, fanned: isFanned))
+                .zIndex(Double(count - index))
             }
         }
+        .frame(height: PreviewStackLayout.height(count: count, fanned: isFanned), alignment: .bottom)
+        .animation(previewStackAnimation, value: isFanned)
+        .onHover { inside in
+            unfanTask?.cancel()
+            previewStack.setStackHovered(inside)
+            if inside {
+                isFanned = true
+            } else {
+                // A moment's grace, so crossing the edge on the way to a card doesn't fold the stack under the pointer.
+                unfanTask = Task {
+                    try? await Task.sleep(for: .milliseconds(350))
+                    guard !Task.isCancelled else { return }
+                    isFanned = false
+                }
+            }
+        }
+        // A stack that goes away under the pointer never reports it leaving; the next stack's cards mustn't stay held.
+        .onDisappear { previewStack.setStackHovered(false) }
         // Report the whole column as one interactive region (rather than each
         // card) so the passthrough hosting view treats the inter-card gaps and
         // edges as interactive too - otherwise the cursor flickers in and out of
@@ -298,6 +338,7 @@ struct PreviewWindowView: View {
     private func visibleItemCapacity(for height: CGFloat) -> Int {
         guard height > 0 else { return Int.max }
 
+        // As many as fit fanned out, so a stack that fans under the pointer stays on screen.
         let availableHeight = max(0, height - (previewStackEdgePadding * 2))
         let itemStride = previewCardSize.height + previewStackSpacing
         let capacity = Int((availableHeight + previewStackSpacing) / itemStride)

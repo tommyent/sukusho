@@ -86,7 +86,10 @@ struct ClipboardLibraryPage: View {
                         .focusable()
                         .focusEffectDisabled()
                         .focused($gridFocused)
-                        .onChange(of: model.librarySelection) { _, selection in if selection != nil { gridFocused = true } }
+                        .onChange(of: model.librarySelection) { _, selection in
+                            // A new snippet's editor takes the keyboard instead.
+                            if selection != nil, selection != model.snippetAwaitingFocus { gridFocused = true }
+                        }
                         .onKeyPress(.space) {
                             guard let entry = model.entry(model.librarySelection) else { return .ignored }
                             model.quickLook(entry)
@@ -132,7 +135,7 @@ struct ClipboardLibraryPage: View {
             // With no snippets yet, the empty page's own New Snippet button is the one (Fable #10).
             if model.snippetCount > 0 {
                 Button("New Snippet", systemImage: "plus") {
-                    Task { model.librarySelection = await model.addSnippet() }
+                    Task { await model.newSnippet() }
                 }
                 .controlSize(.small)
             }
@@ -176,7 +179,7 @@ struct ClipboardLibraryPage: View {
             } description: {
                 Text("Save text you paste often. Paste a snippet from the clipboard popup (⌃⌘V) like any copy.")
             } actions: {
-                Button("New Snippet") { Task { model.librarySelection = await model.addSnippet() } }
+                Button("New Snippet") { Task { await model.newSnippet() } }
                     .buttonStyle(.borderedProminent)
             }
             .workspaceTextPlate()
@@ -221,9 +224,6 @@ struct ClipboardCard: View {
                 }
                 .clipShape(libraryCardPictureShape)
                 .overlay { libraryCardPictureShape.strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5) }
-                .overlay(alignment: .bottomLeading) {
-                    if entry.libraryPath != nil { Text("In Captures").cardPill().padding(6) }
-                }
                 .overlay(alignment: .topTrailing) {
                     // A re-encode another app put back (such as Clop's) stacked on this card; the inspector has the rest.
                     if !entry.earlierVersions.isEmpty {
@@ -237,6 +237,11 @@ struct ClipboardCard: View {
                 // The time first: it's what differs between cards, so a narrow card cuts the app rather than the time.
                 HStack(spacing: 3) {
                     if entry.kind != .snippet { Text(ClipboardInfo.shortWhen(entry.lastCopiedAt)).layoutPriority(1) }
+                    // The one mark that the picture is also a capture, on the caption line (Fable #5).
+                    if entry.libraryPath != nil {
+                        Text("·")
+                        Text("In Captures").foregroundStyle(.tint).layoutPriority(1)
+                    }
                     if let app = model.appName(entry.sourceBundleID) {
                         if entry.kind != .snippet { Text("·") }
                         if let icon = model.appIcon(entry.sourceBundleID) { Image(nsImage: icon).resizable().frame(width: 12, height: 12) }
@@ -305,6 +310,8 @@ struct ClipboardCard: View {
                     .font(ClipboardList.looksLikeCode(entry) ? .system(size: 11.5, design: .monospaced) : .system(size: 12))
                     .lineLimit(6)
                     .padding(DS.Space.l)
+                    // Room for the kind word in the bottom corner, so it never sits over the last line (Astra R2).
+                    .padding(.bottom, ClipboardList.kindWord(of: entry) == nil ? 0 : 8)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .background(.background)
             }
@@ -421,11 +428,13 @@ private struct SnippetEditor: View {
     @State private var title = ""
     @State private var text = ""
     @State private var saving: Task<Void, Never>?
+    @FocusState private var textFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.m) {
             TextField("Name", text: $title).textFieldStyle(.roundedBorder).font(DS.TypeScale.title)
             TextEditor(text: $text)
+                .focused($textFocused)
                 .font(.system(size: 13))
                 .frame(minHeight: 220)
                 .scrollContentBackground(.hidden)
@@ -442,6 +451,11 @@ private struct SnippetEditor: View {
         .task(id: entry.id) {
             title = entry.title ?? ""
             text = entry.text ?? ""
+            // Just made with New Snippet: typing goes into its text, not to the Library (Astra R3).
+            if model.snippetAwaitingFocus == entry.id {
+                model.snippetAwaitingFocus = nil
+                textFocused = true
+            }
         }
         .onChange(of: title) { _, _ in scheduleSave() }
         .onChange(of: text) { _, _ in scheduleSave() }

@@ -115,7 +115,7 @@ enum VideoFileActions {
 
     @discardableResult
     static func saveToDefaultLocation(from url: URL, suggestedFileName: String? = nil) async throws -> URL {
-        let destinationDirectory = ScreendropPreferences.exportDirectory
+        let destinationDirectory = ScreendropPreferences.videoExportDirectory
         try FileManager.default.createDirectory(
             at: destinationDirectory,
             withIntermediateDirectories: true

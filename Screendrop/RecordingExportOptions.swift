@@ -54,6 +54,8 @@ enum RecordingExportPreferences {
 /// and remembers them.
 struct RecordingExportOptionsPopover: View {
     let onConfirm: (VideoCompressionSettings) -> Void
+    /// False for a recording with no sound at all: Include audio has nothing to include, so it isn't offered.
+    let hasAudio: Bool
 
     @State private var settings: VideoCompressionSettings
     @Environment(\.dismiss) private var dismiss
@@ -61,9 +63,11 @@ struct RecordingExportOptionsPopover: View {
 
     init(
         initialSettings: VideoCompressionSettings,
+        hasAudio: Bool = true,
         onConfirm: @escaping (VideoCompressionSettings) -> Void
     ) {
         self.onConfirm = onConfirm
+        self.hasAudio = hasAudio
         _settings = State(initialValue: initialSettings)
     }
 
@@ -118,11 +122,16 @@ struct RecordingExportOptionsPopover: View {
             .help("Soften motion during zooms and pans. Turn off for faster exports with sharper motion.")
 
             if !settings.effectiveExportsGIF {
-                toggle("Include audio", isOn: Binding(
-                    get: { !settings.removeAudio },
-                    set: { settings.removeAudio = !$0 }
-                ))
-                .padding(.top, 2)
+                if hasAudio {
+                    toggle("Include audio", isOn: Binding(
+                        get: { !settings.removeAudio },
+                        set: { settings.removeAudio = !$0 }
+                    ))
+                    .padding(.top, 2)
+                } else {
+                    // Fable #8: the switch showed on, for a recording with no sound to include.
+                    InspectorHint("This recording has no audio.")
+                }
             }
 
             HStack(spacing: 8) {
@@ -216,6 +225,7 @@ private enum RecordingExportFormat: String, CaseIterable {
 /// `Button(action: model.export) { ... }` at an export call site.
 struct RecordingExportButton<Label: View>: View {
     let currentSettings: VideoCompressionSettings
+    var hasAudio = true
     let onExport: (VideoCompressionSettings) -> Void
     @ViewBuilder let label: () -> Label
 
@@ -230,6 +240,7 @@ struct RecordingExportButton<Label: View>: View {
         .popover(isPresented: $showingOptions, arrowEdge: .bottom) {
             RecordingExportOptionsPopover(
                 initialSettings: currentSettings,
+                hasAudio: hasAudio,
                 onConfirm: onExport
             )
         }

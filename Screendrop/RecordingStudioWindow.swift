@@ -266,7 +266,7 @@ private struct RecordingStudioContent: View {
         let total = Int(model.duration.rounded())
         let clock = String(format: "%d:%02d", total / 60, total % 60)
         let size = model.videoSize
-        return [model.saveStatus, "\(clock) · \(Int(size.width))×\(Int(size.height))"]
+        return [model.saveStatus, "\(clock) · \(Int(size.width)) × \(Int(size.height))"]
             .filter { !$0.isEmpty }
             .joined(separator: " · ")
     }
@@ -352,6 +352,7 @@ private struct RecordingStudioContent: View {
         case .idle:
             RecordingExportButton(
                 currentSettings: model.exportSettings,
+                hasAudio: model.hasAudio,
                 onExport: model.export(settings:)
             ) {
                 Label("Export", systemImage: "arrow.down.circle")
@@ -375,6 +376,7 @@ private struct RecordingStudioContent: View {
 
                 RecordingExportButton(
                     currentSettings: model.exportSettings,
+                    hasAudio: model.hasAudio,
                     onExport: model.export(settings:)
                 ) {
                     Image(systemName: "arrow.down.circle")
@@ -390,6 +392,7 @@ private struct RecordingStudioContent: View {
 
                 RecordingExportButton(
                     currentSettings: model.exportSettings,
+                    hasAudio: model.hasAudio,
                     onExport: model.export(settings:)
                 ) {
                     Text("Retry")
@@ -3680,6 +3683,9 @@ private struct StudioInspector: View {
                     format: .percent()
                 )
             }
+            // Without a background the video fills the canvas, as a screenshot with none does.
+            .disabled(model.style.background == .none)
+            .opacity(model.style.background == .none ? 0.4 : 1)
 
             // The shadow falls on the background; with none there is nothing for it to fall
             // on, and neither preview nor export draws one.

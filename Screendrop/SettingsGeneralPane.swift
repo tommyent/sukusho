@@ -65,6 +65,17 @@ struct GeneralSettingsPane: View {
                         .controlSize(.small)
                     }
                 }
+                // Videos have their own home while no folder is chosen (owner, 2026-11-17).
+                if exportDirectoryPath.isEmpty {
+                    LabeledContent("Videos") {
+                        Text(ScreendropPreferences.defaultVideoExportDirectory.abbreviatedPath)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help("Recordings and their exports are saved here; screenshots go to the Save folder.")
+                    }
+                }
 
                 SettingsControlLabel(
                     "Save without choosing a location",

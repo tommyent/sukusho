@@ -478,8 +478,9 @@ final class AnnotationEditorModel {
         guard let sourceURL else { return nil }
         if idle { guard hasUnsavedChanges, isIdleForSaving else { return nil } }
         var saved = false
+        var identity = sourceURL
         defer {
-            if self.sourceURL == sourceURL {
+            if self.sourceURL == identity {
                 lastSaveSucceeded = saved
                 if saved {
                     if errorMessage == saveFailureMessage { errorMessage = nil }
@@ -549,6 +550,13 @@ final class AnnotationEditorModel {
         }
 
         guard self.sourceURL == sourceURL else { return resultURL }
+        identity = EditorSaveIdentity.afterSave(editing: sourceURL, savedTo: resultURL,
+                                                isHistory: ScreenshotHistoryStore.shared.isHistoryURL)
+        if identity != sourceURL {
+            self.sourceURL = identity
+            // The capture began with this save, so there is no earlier session of it to keep.
+            keptOpeningSession = true
+        }
         // A crop or undo/redo during the render owns the live base now.
         if baseImageURL == baseURL {
             let storedBase = hasContent ? ScreenshotHistoryStore.baseImageURL(for: resultURL) : resultURL
