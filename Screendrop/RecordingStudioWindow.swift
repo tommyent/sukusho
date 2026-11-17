@@ -3332,34 +3332,6 @@ private extension ZoomAnchorMode {
     }
 }
 
-private enum StudioInspectorSection: String, Hashable, CaseIterable {
-    case motion
-    case cursor
-    case keystrokes
-    case transcription
-    case chapters
-    case camera
-    case audio
-    case redactions
-    case drawings
-}
-
-private enum StudioInspectorSectionState {
-    static let expandedSectionsKey = "studioInspector.expandedSections"
-    static let defaultSections: Set<StudioInspectorSection> = [.motion]
-
-    static func load() -> Set<StudioInspectorSection> {
-        guard let rawValues = UserDefaults.standard.stringArray(forKey: expandedSectionsKey) else {
-            return defaultSections
-        }
-        return Set(rawValues.compactMap(StudioInspectorSection.init(rawValue:)))
-    }
-
-    static func save(_ sections: Set<StudioInspectorSection>) {
-        UserDefaults.standard.set(sections.map(\.rawValue), forKey: expandedSectionsKey)
-    }
-}
-
 private enum StudioTranscriptTab: CaseIterable, Identifiable {
     case captions
     case edit
@@ -3382,7 +3354,6 @@ private struct StudioInspector: View {
     @Bindable var model: RecordingStudioModel
     @State private var wallpaperStore = AnnotationWallpaperStore.shared
     @State private var stylePresetStore = RecordingStudioStylePresetStore.shared
-    @State private var expandedSections = StudioInspectorSectionState.load()
     @State private var transcriptTab: StudioTranscriptTab = .captions
     /// The translated captions the list shows; nil for the original.
     @State private var captionLanguage: String?
@@ -3390,7 +3361,6 @@ private struct StudioInspector: View {
     @State private var isAudioExportOptionsPresented = false
     @State private var isMusicPickerPresented = false
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
     var body: some View {
         ScrollView(.vertical) {
@@ -3451,48 +3421,30 @@ private struct StudioInspector: View {
 
                 InspectorGroupBreak()
 
-                InspectorDisclosureSection(
-                    "Redactions",
-                    summary: model.redactions.isEmpty ? nil : "\(model.redactions.count)",
-                    isExpanded: expansionBinding(for: .redactions)
-                ) {
+                // As in the image editor: a section that can be off has a switch and shows its
+                // options while on; the rest are always open. No chevrons (Fable pass 3, #4).
+                InspectorSection("Redactions") {
                     RecordingRedactionControls(model: model)
                 }
 
-                InspectorDisclosureSection(
-                    title: "Zoom & Clicks",
-                    summary: zoomSummary,
-                    isExpanded: expansionBinding(for: .motion),
-                    accessory: {
-                        sectionToggle("Enable zooms", isOn: $model.zoomEnabled, section: .motion)
-                    }
-                ) {
+                InspectorSection("Zoom & Clicks", isOn: $model.zoomEnabled, toggleTitle: "Enable zooms") {
                     zoomControls
                 }
 
                 if model.pointerIsSynthesized {
-                    InspectorDisclosureSection(
-                        title: "Cursor",
-                        summary: model.style.hidesCursor
-                            ? "Hidden"
-                            : InspectorValueFormat.magnification(fractionDigits: 1)
-                                .displayString(for: model.style.cursorScale),
-                        isExpanded: expansionBinding(for: .cursor),
+                    InspectorSection(
+                        "Cursor",
+                        isOn: Binding(
+                            get: { !model.style.hidesCursor },
+                            set: { model.style.hidesCursor = !$0 }
+                        ),
+                        toggleTitle: "Show mouse pointer",
                         accessory: {
-                            HStack(spacing: 5) {
-                                if model.style.cursorScale != RecordingStudioStyle.defaultCursorScale {
-                                    InspectorResetButton(help: "Reset cursor size") {
-                                        model.style.cursorScale = RecordingStudioStyle.defaultCursorScale
-                                    }
+                            if !model.style.hidesCursor,
+                               model.style.cursorScale != RecordingStudioStyle.defaultCursorScale {
+                                InspectorResetButton(help: "Reset cursor size") {
+                                    model.style.cursorScale = RecordingStudioStyle.defaultCursorScale
                                 }
-                                sectionToggle(
-                                    "Show mouse pointer",
-                                    isOn: Binding(
-                                        get: { !model.style.hidesCursor },
-                                        set: { model.style.hidesCursor = !$0 }
-                                    ),
-                                    section: .cursor
-                                )
                             }
                         }
                     ) {
@@ -3501,49 +3453,30 @@ private struct StudioInspector: View {
                 }
 
                 if model.hasKeystrokes {
-                    InspectorDisclosureSection(
-                        title: "Keystrokes",
-                        summary: model.showsKeystrokes
-                            ? StudioInspectorSummary.keystrokePlacement(model.keystrokePlacement)
-                            : nil,
-                        isExpanded: expansionBinding(for: .keystrokes),
-                        accessory: {
-                            sectionToggle("Show keystrokes", isOn: $model.showsKeystrokes, section: .keystrokes)
-                        }
-                    ) {
+                    InspectorSection("Keystrokes", isOn: $model.showsKeystrokes, toggleTitle: "Show keystrokes") {
                         keystrokeControls
                     }
                 }
 
                 if model.hasInk {
-                    InspectorDisclosureSection(
-                        title: "Drawings",
-                        summary: model.showsInk ? "\(model.inkStrokes.count)" : nil,
-                        isExpanded: expansionBinding(for: .drawings),
-                        accessory: {
-                            sectionToggle("Show drawings", isOn: $model.showsInk, section: .drawings)
-                        }
-                    ) {
+                    InspectorSection("Drawings", isOn: $model.showsInk, toggleTitle: "Show drawings") {
                         inkControls
                     }
                 }
 
                 if model.canTranscribe || model.hasSubtitles {
-                    InspectorDisclosureSection(
-                        title: "Transcription",
-                        summary: transcriptionSummary,
-                        isExpanded: expansionBinding(for: .transcription),
+                    // A switch once there are subtitles to show; until then the section holds
+                    // what makes them.
+                    InspectorSection(
+                        "Transcription",
+                        isOn: model.hasSubtitles && !model.transcriptionState.isTranscribing
+                            ? $model.showsSubtitles : nil,
+                        toggleTitle: "Show subtitles",
                         accessory: {
                             if model.transcriptionState.isTranscribing {
                                 ProgressView()
                                     .controlSize(.mini)
                                     .frame(width: 24, height: 24)
-                            } else if model.hasSubtitles {
-                                sectionToggle(
-                                    "Show subtitles",
-                                    isOn: $model.showsSubtitles,
-                                    section: .transcription
-                                )
                             }
                         }
                     ) {
@@ -3552,34 +3485,19 @@ private struct StudioInspector: View {
                 }
 
                 if model.isProject {
-                    InspectorDisclosureSection(
-                        "Chapters",
-                        summary: "\(model.visibleChapters.count)",
-                        isExpanded: expansionBinding(for: .chapters)
-                    ) {
+                    InspectorSection("Chapters") {
                         chapterControls
                     }
                 }
 
                 if model.hasCameraVideo {
-                    InspectorDisclosureSection(
-                        title: "Camera",
-                        summary: model.style.camera.isVisible
-                            ? InspectorValueFormat.percent().displayString(for: model.style.camera.size)
-                            : nil,
-                        isExpanded: expansionBinding(for: .camera),
-                        accessory: {
-                            sectionToggle("Show camera", isOn: $model.style.camera.isVisible, section: .camera)
-                        }
-                    ) {
+                    InspectorSection("Camera", isOn: $model.style.camera.isVisible, toggleTitle: "Show camera") {
                         cameraControls
                     }
                 }
 
-                InspectorDisclosureSection(
-                    title: "Audio",
-                    summary: audioSummary,
-                    isExpanded: expansionBinding(for: .audio),
+                InspectorSection(
+                    "Audio",
                     accessory: {
                         if model.hasReplacementAudio {
                             if model.hasRecordedAudio {
@@ -4566,37 +4484,6 @@ private struct StudioInspector: View {
         return value < 60 ? String(format: "%.1fs", value) : clockText(value)
     }
 
-    // MARK: Summaries
-
-    private var zoomSummary: String? {
-        guard model.zoomEnabled else { return nil }
-        let count = model.zoomCues.count
-        return count == 1 ? "1 zoom" : "\(count) zooms"
-    }
-
-    private var transcriptionSummary: String? {
-        switch model.transcriptionState {
-        case .transcribing:
-            return "Transcribing…"
-        case .failed:
-            return "Failed"
-        case .idle:
-            guard model.hasSubtitles, model.showsSubtitles else { return nil }
-            let count = model.subtitleCues.count
-            return count == 1 ? "1 line" : "\(count) lines"
-        }
-    }
-
-    private var audioSummary: String? {
-        if let replacement = model.replacementAudio {
-            return replacement.displayName
-        }
-        if model.isIsolatingVoice { return "Isolating…" }
-        if model.isolateVoice { return "Voice isolated" }
-        guard model.hasAudio, abs(model.audioVolume - 1) > 0.001 else { return nil }
-        return "Volume \(InspectorValueFormat.percent().displayString(for: model.audioVolume))"
-    }
-
     // MARK: Helpers
 
     private var usesDefaultLayout: Bool {
@@ -4607,61 +4494,6 @@ private struct StudioInspector: View {
 
     private var sidebarBackground: Color {
         InspectorControlPalette.panelBackground(for: colorScheme)
-    }
-
-    private var sectionAnimation: Animation? {
-        accessibilityReduceMotion ? nil : .snappy(duration: 0.18)
-    }
-
-    private func expansionBinding(for section: StudioInspectorSection) -> Binding<Bool> {
-        Binding(
-            get: { expandedSections.contains(section) },
-            set: { setExpanded(section, $0, animated: false) }
-        )
-    }
-
-    private func setExpanded(_ section: StudioInspectorSection, _ isExpanded: Bool, animated: Bool = true) {
-        withAnimation(animated ? sectionAnimation : nil) {
-            if isExpanded {
-                expandedSections.insert(section)
-            } else {
-                expandedSections.remove(section)
-            }
-        }
-        StudioInspectorSectionState.save(expandedSections)
-    }
-
-    /// Header switch for a section with an on/off state. Turning one on
-    /// opens its controls; turning it off folds them away.
-    private func sectionToggle(
-        _ title: String,
-        isOn: Binding<Bool>,
-        section: StudioInspectorSection
-    ) -> some View {
-        InspectorToggle(
-            title,
-            isOn: Binding(
-                get: { isOn.wrappedValue },
-                set: { value in
-                    isOn.wrappedValue = value
-                    setExpanded(section, value)
-                }
-            )
-        )
-    }
-}
-
-/// Collapsed-header readouts for the Studio inspector.
-private enum StudioInspectorSummary {
-    static func keystrokePlacement(_ placement: RecordingKeystrokePlacement) -> String {
-        switch placement {
-        case .topLeft: "Top left"
-        case .topCenter: "Top"
-        case .topRight: "Top right"
-        case .bottomLeft: "Bottom left"
-        case .bottomCenter: "Bottom"
-        case .bottomRight: "Bottom right"
-        }
     }
 }
 
