@@ -310,8 +310,11 @@ actor ClipboardHistoryStore {
 
     /// Newest first, each with its earlier versions.
     func entries(limit: Int = 500, offset: Int = 0) throws -> [ClipboardEntry] {
+        // Versions come newest first, in the order they were set aside (the table's row order), not by their
+        // copy times: Optimize keeps a card's copy time, so those can all be equal, and the last one must be
+        // the original.
         let versions = Dictionary(grouping: try query("""
-            SELECT entry_id, hash, blob, library_path, byte_size, copied_at FROM versions ORDER BY copied_at DESC
+            SELECT entry_id, hash, blob, library_path, byte_size, copied_at FROM versions ORDER BY rowid DESC
             """, []) { row in
             (row.text(0) ?? "", ClipboardEntryVersion(hash: row.text(1) ?? "", imageURL: row.text(2).map { blobs.appendingPathComponent($0) },
                                                        libraryPath: row.text(3), byteSize: row.int(4),

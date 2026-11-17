@@ -231,13 +231,23 @@ struct ClipboardHistoryStoreTests {
         #expect(card.lastCopiedAt == start)
         #expect(entries.first?.id != id)   // the text copied later is still on top
 
+        // Astra OR4: optimized a second time, at another effort. The versions keep the order they were made
+        // in although the card's copy time never moved, so the original is still the last one.
+        let smallest = image(150, width: 4, height: 4)
+        #expect(try await store.stack(smallest, on: id))
+        let twice = try #require(try await store.entries().first { $0.id == id })
+        #expect(twice.hash == smallest.hash)
+        #expect(twice.earlierVersions.map(\.byteSize) == [200, 400])
+        #expect(twice.earlierVersions.last?.byteSize == 400)
+        #expect(twice.lastCopiedAt == start)
+
         // Content another card already holds can't be stacked: nothing changes, and the caller is told.
         let held = image(300, width: 4, height: 4)
         _ = try await store.record(held, at: start + 20)
         #expect(try await store.stack(held, on: id) == false)
         let after = try await store.entries()
         #expect(after.count == 3)
-        #expect(after.first { $0.id == id }?.hash == smaller.hash)
+        #expect(after.first { $0.id == id }?.hash == smallest.hash)
     }
 
     @Test func copyingAgainBumpsTheSameEntry() async throws {
