@@ -114,8 +114,12 @@ struct RecordingPickerControls: View {
             }
             .buttonStyle(BarButtonStyle())
             .accessibilityLabel("Clean desktop")
-            .accessibilityValue(cleanState.isOn ? "On" : "Off")
-            .accessibilityHint("Leaves desktop icons, the menu bar, Dock and notification banners out of screen and area recordings. Your desktop stays unchanged.")
+            // Ruled out by Bug report, it says so to VoiceOver as its hover does to the pointer
+            // (Astra SB3); it stays enabled so the pointer can still reach that hover.
+            .accessibilityValue(bugReport ? "Unavailable" : cleanState.isOn ? "On" : "Off")
+            .accessibilityHint(bugReport
+                ? "Off while Bug report is on: a bug report shows the whole desktop. Turn off Bug report to use it."
+                : "Leaves desktop icons, the menu bar, Dock and notification banners out of screen and area recordings. Your desktop stays unchanged.")
             .disabled(CaptureCountdownPresenter.shared.isRunning)
 
             Button {
