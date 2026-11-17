@@ -20,7 +20,7 @@ struct AnnotationScreenshotBorderInspector: View {
 
             InspectorFieldPair {
                 InspectorSlider(
-                    "Thickness",
+                    "Width",
                     value: binding(\.thickness),
                     range: 0.002...0.08,
                     format: .percent(fractionDigits: 1)
