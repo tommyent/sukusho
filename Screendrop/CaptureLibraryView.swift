@@ -7,6 +7,7 @@ struct CaptureLibraryView: View {
     @State private var comments = CommentsLibraryModel.shared
     @State private var likes = LikesLibraryModel.shared
     @State private var clipboard = ClipboardHistoryModel.shared
+    @State private var saved = LibrarySavedModel.shared
     @AppStorage(ScreendropPreferences.clipboardHistoryEnabledKey) private var clipboardEnabled = false
     @State private var history = ScreenshotHistoryStore.shared
     @State private var projects = RecordingProjectStore.shared
@@ -22,6 +23,7 @@ struct CaptureLibraryView: View {
     /// The sidebar picks a kind of capture, the cloud uploads or a tag.
     private var sidebarSelection: Binding<CaptureLibrarySidebarSelection?> {
         Binding {
+            if saved.isShown { return .saved }
             if clipboard.isShown { return clipboard.showsSnippets ? .snippets : .clipboard }
             if comments.isShown { return .comments }
             if likes.isShown { return .likes }
@@ -36,7 +38,14 @@ struct CaptureLibraryView: View {
             likes.setShown(selection == .likes)
             clipboard.isShown = selection == .clipboard || selection == .snippets
             clipboard.showsSnippets = selection == .snippets
+            saved.isShown = selection == .saved
             switch selection {
+            case .saved:
+                // Every saved capture, whatever kind or tag the captures page was on.
+                model.selection = []
+                clipboard.librarySelection = nil
+                model.tagFilter = nil
+                model.filter = .all
             case .cloud, .files, .received, .comments, .likes, .clipboard, .snippets:
                 // The toolbar's capture actions mustn't act on captures out of sight.
                 model.selection = []
@@ -56,7 +65,9 @@ struct CaptureLibraryView: View {
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             List(selection: sidebarSelection) {
-                Section("Library") {
+                // Option A (sd-ogtp.1.1): Captures is the working folder, everything taken or copied;
+                // Library is what the user chose to keep.
+                Section("Captures") {
                     ForEach(CaptureLibraryFilter.allCases) { filter in
                         Label {
                             HStack {
@@ -69,13 +80,11 @@ struct CaptureLibraryView: View {
                         } icon: { Image(systemName: filter.symbol) }
                         .tag(CaptureLibrarySidebarSelection.kind(filter))
                     }
-                }
-                // Copies from any app, beside the captures. While history is
-                // off, History opens its setup page.
-                Section("Clipboard") {
+                    // Copies from any app, beside the captures. While history is
+                    // off, it opens its setup page.
                     Label {
                         HStack {
-                            Text("History")
+                            Text("Clipboard")
                             Spacer()
                             Text(clipboardEnabled ? clipboard.historyCount.formatted() : "Off")
                                 .foregroundStyle(.secondary)
@@ -83,6 +92,18 @@ struct CaptureLibraryView: View {
                         }
                     } icon: { Image(systemName: "doc.on.clipboard") }
                     .tag(CaptureLibrarySidebarSelection.clipboard)
+                }
+                Section("Library") {
+                    Label {
+                        HStack {
+                            Text("Saved")
+                            Spacer()
+                            Text(model.items.count(where: \.isSaved) + clipboard.savedCount, format: .number)
+                                .foregroundStyle(.secondary)
+                                .font(.caption.monospacedDigit())
+                        }
+                    } icon: { Image(systemName: "star") }
+                    .tag(CaptureLibrarySidebarSelection.saved)
                     if clipboardEnabled {
                         Label {
                             HStack {
@@ -230,7 +251,11 @@ struct CaptureLibraryView: View {
             // so the toolbar runs unbroken across it.
             .inspector(isPresented: $inspectorVisible) {
                 Group {
-                    if clipboard.isShown {
+                    if saved.isShown, clipboard.librarySelection != nil {
+                        ClipboardLibraryInspector(model: clipboard)
+                    } else if saved.isShown {
+                        CaptureLibraryInspector(model: model)
+                    } else if clipboard.isShown {
                         ClipboardLibraryInspector(model: clipboard)
                     } else if comments.isShown {
                         CommentInspector(comments: comments)
@@ -248,7 +273,7 @@ struct CaptureLibraryView: View {
                 .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
             }
             .modifier(LibraryWindowSurface())
-            .navigationTitle(clipboard.isShown ? (clipboard.showsSnippets ? "Snippets" : "Clipboard History") : comments.isShown ? "Comments" : likes.isShown ? "Likes" : cloud.isShown ? (!CloudUploader.shared.isConfigured ? "Cloud" : cloud.showsReceived ? "Received" : cloud.showsFiles ? "Files" : "Uploads") : model.tagFilter ?? activeFilter.title)
+            .navigationTitle(saved.isShown ? "Saved" : clipboard.isShown ? (clipboard.showsSnippets ? "Snippets" : "Clipboard") : comments.isShown ? "Comments" : likes.isShown ? "Likes" : cloud.isShown ? (!CloudUploader.shared.isConfigured ? "Cloud" : cloud.showsReceived ? "Received" : cloud.showsFiles ? "Files" : "Uploads") : model.tagFilter ?? activeFilter.title)
         }
         .navigationSplitViewStyle(.balanced)
         .modifier(LibraryToolbarSeparator())
@@ -342,7 +367,9 @@ struct CaptureLibraryView: View {
     }
 
     @ViewBuilder private var browser: some View {
-        if clipboard.isShown {
+        if saved.isShown {
+            LibrarySavedPage(cardWidth: cardWidth)
+        } else if clipboard.isShown {
             ClipboardLibraryPage(model: clipboard, cardWidth: cardWidth)
         } else if comments.isShown {
             CommentsLibraryPage(comments: comments)
@@ -520,6 +547,9 @@ struct CaptureLibraryView: View {
                 Text("\(count) \(cloud.showsFiles || cloud.showsReceived ? (count == 1 ? "file" : "files") : count == 1 ? "upload" : "uploads")")
                 if !cloud.selection.isEmpty { Text("· \(cloud.selection.count) selected") }
                 if !cloud.deletingIDs.isEmpty { Text("· Deleting…") }
+            } else if saved.isShown {
+                let count = LibrarySavedPage(cardWidth: cardWidth).cards.count
+                Text("\(count) saved")
             } else if clipboard.isShown {
                 if clipboardEnabled {
                     let count = clipboard.librarySections(query: model.searchText).reduce(0) { $0 + $1.entries.count }
@@ -580,7 +610,7 @@ struct CaptureLibraryView: View {
         ToolbarItem(placement: .primaryAction) {
             LibrarySearchField(
                 text: $model.searchText,
-                prompt: clipboard.isShown ? (clipboard.showsSnippets ? "Search snippets" : "Search clipboard") : comments.isShown ? "Search comments" : likes.isShown ? "Search likes" : cloud.isShown ? (cloud.showsReceived ? "Search received files" : cloud.showsFiles ? "Search files" : "Search uploads") : "Search captures"
+                prompt: saved.isShown ? "Search saved" : clipboard.isShown ? (clipboard.showsSnippets ? "Search snippets" : "Search clipboard") : comments.isShown ? "Search comments" : likes.isShown ? "Search likes" : cloud.isShown ? (cloud.showsReceived ? "Search received files" : cloud.showsFiles ? "Search files" : "Search uploads") : "Search captures"
             )
             // About the width `.searchable` gave it; narrower when the toolbar is tight.
             .frame(minWidth: 120, idealWidth: 320, maxWidth: 320)
@@ -756,5 +786,6 @@ enum CaptureLibrarySidebarSelection: Hashable {
     case likes
     case clipboard
     case snippets
+    case saved
     case tag(String)
 }

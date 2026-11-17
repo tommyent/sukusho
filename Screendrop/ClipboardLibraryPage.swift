@@ -153,7 +153,7 @@ struct ClipboardLibraryPage: View {
 }
 
 /// One copy in the Library's grid: its picture, swatch, text or files, and where it came from.
-private struct ClipboardCard: View {
+struct ClipboardCard: View {
     let entry: ClipboardEntry
     let model: ClipboardHistoryModel
     let faceHeight: CGFloat
