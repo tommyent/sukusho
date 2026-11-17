@@ -1,7 +1,8 @@
 #!/bin/zsh
 # Dry run of scripts/appcast.sh: no release, no Keychain, nothing published. It makes a stand-in Sukusho.app with a
-# throwaway update key, puts it in a DMG, and makes two feeds in a temporary folder: a beta added to a published
-# feed, and a stable release. It then checks what release.sh relies on.
+# throwaway update key, puts it in a DMG, and makes feeds in a temporary folder: a beta added to the published
+# feed, a second beta added to that, and a stable release. It then checks what release.sh relies on, and that
+# appcast.sh refuses what it must.
 #   scripts/check-appcast.sh <folder with Sparkle's generate_appcast> [published appcast.xml]
 # The folder is <DerivedData>/SourcePackages/artifacts/sparkle/Sparkle/bin of any build. Without a published
 # feed, the local gh-pages branch's is used. Needs an openssl that knows Ed25519 (Homebrew's does).
@@ -38,15 +39,22 @@ build() {   # version in file names, version shown, build number: a signed stand
 }
 count() { xmllint --xpath "count($1)" "$2" }
 
-# A beta: one more item, on the beta channel, and every published item still there, byte for byte.
-build 9.9.0-beta.1 "9.9.0 beta 1" 99.991231.2359
-VERSION=9.9.0-beta.1 SHOWN="9.9.0 beta 1" BUILD=99.991231.2359 BETA=1 FEED="$WORK/published.xml" \
-    SPARKLE_BIN="$SPARKLE_BIN" APPCAST_KEY_FILE="$WORK/key" scripts/appcast.sh "$WORK/9.9.0-beta.1"
-BETA_FEED="$WORK/9.9.0-beta.1/appcast.xml"
-(( $(count "//item[*[local-name()='channel']='beta']" "$BETA_FEED") == 1 )) || fail "the beta feed should hold one beta item"
-grep -F 'sparkle:edSignature=' "$WORK/published.xml" | while read -r line; do
-    grep -qF -- "$line" "$BETA_FEED" || fail "a published item's download or signature changed in the beta feed"
-done
+# A beta: one more item, on the beta channel, and every item of the feed it was added to still there, byte for
+# byte. Counted against that feed, which may hold betas already: the published one does once beta 1 is out.
+beta() {   # version in file names, version shown, build number, the feed to add to
+    build "$1" "$2" "$3"
+    VERSION="$1" SHOWN="$2" BUILD="$3" BETA=1 FEED="$4" SPARKLE_BIN="$SPARKLE_BIN" APPCAST_KEY_FILE="$WORK/key" \
+        scripts/appcast.sh "$WORK/$1"
+    local betas="//item[*[local-name()='channel']='beta']" made="$WORK/$1/appcast.xml"
+    (( $(count "$betas" "$made") == $(count "$betas" "$4") + 1 )) || fail "$2 should add one beta item to its feed"
+    grep -F 'sparkle:edSignature=' "$4" | while read -r line; do
+        grep -qF -- "$line" "$made" || fail "an item's download or signature changed when $2 was added"
+    done
+}
+beta 9.9.0-beta.1 "9.9.0 beta 1" 99.991231.2359 "$WORK/published.xml"
+# The next beta joins a feed that already holds one, and the first stays as it is.
+beta 9.9.0-beta.2 "9.9.0 beta 2" 99.991231.2399 "$WORK/9.9.0-beta.1/appcast.xml"
+(( $(count "//item[*[local-name()='channel']='beta']" "$WORK/9.9.0-beta.2/appcast.xml") >= 2 )) || fail "the second beta's feed lost the first beta"
 
 # A stable release: its feed is that release alone, with no channel.
 build 9.9.0 9.9.0 99.991231.2400
