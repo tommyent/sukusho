@@ -544,16 +544,23 @@ final class ScreenshotHistoryStore {
         if items[index].cloudURL != cloudURL { items[index].cloudRedactions = nil }
         items[index].cloudURL = cloudURL
         // And sharing it.
-        if cloudURL != nil, items[index].librarySavedAt == nil { items[index].librarySavedAt = Date() }
+        if cloudURL != nil { markShared(index) }
         items[index].updatedAt = Date()
         saveMetadata()
+    }
+
+    /// A shared capture is saved: on its History row, and for a recording in its own project.json too, as an explicit
+    /// Save writes it (Astra L5). That's `librarySavedAt`, apart from Studio's `savedAt`.
+    private func markShared(_ index: Int) {
+        if items[index].librarySavedAt == nil { items[index].librarySavedAt = Date() }
+        try? items[index].recordingSession?.updateProjectMetadata { $0.librarySavedAt = $0.librarySavedAt ?? Date() }
     }
 
     func recordCloudUpload(id: UUID, cloudURL: String, redactions: [RecordingRedaction]?) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].cloudURL = cloudURL
         items[index].cloudRedactions = redactions
-        if items[index].librarySavedAt == nil { items[index].librarySavedAt = Date() }
+        markShared(index)
         items[index].updatedAt = Date()
         saveMetadata()
     }
