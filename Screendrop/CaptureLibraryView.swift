@@ -73,9 +73,7 @@ struct CaptureLibraryView: View {
                             HStack {
                                 Text(filter.title)
                                 Spacer()
-                                Text(model.count(for: filter), format: .number)
-                                    .foregroundStyle(.secondary)
-                                    .font(.caption.monospacedDigit())
+                                SidebarCount(model.count(for: filter))
                             }
                         } icon: { Image(systemName: filter.symbol) }
                         .tag(CaptureLibrarySidebarSelection.kind(filter))
@@ -86,9 +84,11 @@ struct CaptureLibraryView: View {
                         HStack {
                             Text("Clipboard")
                             Spacer()
-                            Text(clipboardEnabled ? clipboard.historyCount.formatted() : "Off")
-                                .foregroundStyle(.secondary)
-                                .font(.caption.monospacedDigit())
+                            if clipboardEnabled {
+                                SidebarCount(clipboard.historyCount)
+                            } else {
+                                Text("Off").foregroundStyle(.secondary).font(.caption)
+                            }
                         }
                     } icon: { Image(systemName: "doc.on.clipboard") }
                     .tag(CaptureLibrarySidebarSelection.clipboard)
@@ -98,9 +98,7 @@ struct CaptureLibraryView: View {
                         HStack {
                             Text("Saved")
                             Spacer()
-                            Text(model.items.count(where: \.isSaved) + clipboard.savedCount, format: .number)
-                                .foregroundStyle(.secondary)
-                                .font(.caption.monospacedDigit())
+                            SidebarCount(model.items.count(where: \.isSaved) + clipboard.savedCount)
                         }
                     } icon: { Image(systemName: "star") }
                     .tag(CaptureLibrarySidebarSelection.saved)
@@ -109,9 +107,7 @@ struct CaptureLibraryView: View {
                             HStack {
                                 Text("Snippets")
                                 Spacer()
-                                Text(clipboard.snippetCount, format: .number)
-                                    .foregroundStyle(.secondary)
-                                    .font(.caption.monospacedDigit())
+                                SidebarCount(clipboard.snippetCount)
                             }
                         } icon: { Image(systemName: "text.badge.star") }
                         .tag(CaptureLibrarySidebarSelection.snippets)
@@ -128,9 +124,7 @@ struct CaptureLibraryView: View {
                                 Text("Uploads")
                                 Spacer()
                                 if cloud.hasLoaded {
-                                    Text(cloud.count(files: false), format: .number)
-                                        .foregroundStyle(.secondary)
-                                        .font(.caption.monospacedDigit())
+                                    SidebarCount(cloud.count(files: false))
                                 }
                             }
                         } icon: { Image(systemName: "cloud") }
@@ -140,9 +134,7 @@ struct CaptureLibraryView: View {
                                 Text("Files")
                                 Spacer()
                                 if cloud.hasLoaded {
-                                    Text(cloud.count(files: true), format: .number)
-                                        .foregroundStyle(.secondary)
-                                        .font(.caption.monospacedDigit())
+                                    SidebarCount(cloud.count(files: true))
                                 }
                             }
                         } icon: { Image(systemName: "doc") }
@@ -152,9 +144,7 @@ struct CaptureLibraryView: View {
                                 Text("Received")
                                 Spacer()
                                 if cloud.hasLoaded {
-                                    Text(cloud.receivedCount, format: .number)
-                                        .foregroundStyle(.secondary)
-                                        .font(.caption.monospacedDigit())
+                                    SidebarCount(cloud.receivedCount)
                                 }
                             }
                         } icon: { Image(systemName: "tray.and.arrow.down") }
@@ -191,9 +181,7 @@ struct CaptureLibraryView: View {
                                 HStack {
                                     Text(tag)
                                     Spacer()
-                                    Text(model.tagCounts[tag] ?? 0, format: .number)
-                                        .foregroundStyle(.secondary)
-                                        .font(.caption.monospacedDigit())
+                                    SidebarCount(model.tagCounts[tag] ?? 0)
                                 }
                             } icon: { CaptureTagIcon(tag: tag) }
                             .tag(CaptureLibrarySidebarSelection.tag(tag))
@@ -792,4 +780,18 @@ enum CaptureLibrarySidebarSelection: Hashable {
     case snippets
     case saved
     case tag(String)
+}
+
+/// A sidebar row's count, shown only above zero: "Recordings 0" said nothing a missing number doesn't (Fable #10).
+private struct SidebarCount: View {
+    let value: Int
+    init(_ value: Int) { self.value = value }
+
+    var body: some View {
+        if value > 0 {
+            Text(value, format: .number)
+                .foregroundStyle(.secondary)
+                .font(.caption.monospacedDigit())
+        }
+    }
 }

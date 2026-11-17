@@ -413,7 +413,10 @@ struct AnnotationEditorWindow: View {
 
     /// What clearing the name goes back to, as on its Library card.
     private func automaticTitle(_ item: ScreenshotHistoryItem) -> String {
-        CaptureLibraryIndex.shared.visibleInsight(item.id.uuidString)?.title ?? CaptureLibraryItem.dateTitle(item.createdAt)
+        CaptureInsightRules.title(customName: nil, modelTitle: CaptureLibraryIndex.shared.visibleInsight(item.id.uuidString)?.title,
+                                  sourceTitle: CaptureInsightRules.sourceTitle(appName: item.source?.appName,
+                                                                               windowTitle: item.source?.windowTitle),
+                                  dateTitle: CaptureLibraryItem.dateTitle(item.createdAt))
     }
 
     private var historyItem: ScreenshotHistoryItem? {

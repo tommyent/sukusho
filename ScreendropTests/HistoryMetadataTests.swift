@@ -211,4 +211,16 @@ struct HistoryMetadataTests {
         #expect(!LibrarySaveRequest.command.applies(whileBusy: true))
         #expect(LibrarySaveRequest.command.applies(whileBusy: false))
     }
+
+    /// The owner's one-time retro-save: captures named, tagged or shared before Saved are marked, dated by their last
+    /// change; others aren't, and a mark already there keeps its date. Running it again changes nothing.
+    @Test func retroSaveMarksNamedTaggedAndSharedCapturesOnce() {
+        let named = UUID(), plainRow = UUID(), alreadySaved = UUID()
+        let changed = Date(timeIntervalSinceReferenceDate: 790_000_000), savedBefore = Date(timeIntervalSinceReferenceDate: 795_000_000)
+        let rows: [(id: UUID, isNamedTaggedOrShared: Bool, updatedAt: Date)] =
+            [(named, true, changed), (plainRow, false, changed), (alreadySaved, true, changed)]
+        let once = CaptureSavedMarks.retroSaved(rows, into: [alreadySaved: savedBefore])
+        #expect(once == [named: changed, alreadySaved: savedBefore])
+        #expect(CaptureSavedMarks.retroSaved(rows, into: once) == once)
+    }
 }

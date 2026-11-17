@@ -71,8 +71,18 @@ nonisolated struct CaptureInsight: Codable, Sendable, Equatable {
 /// Model titles and suggested tags: which to show and which to offer.
 nonisolated enum CaptureInsightRules {
     /// The user's name always wins, then the model's title, then the date.
-    static func title(customName: String?, modelTitle: String?, dateTitle: String) -> String {
-        customName ?? modelTitle ?? dateTitle
+    /// The user's name, else the model's title, else the app and window it was taken from, else the date. Without a
+    /// model (macOS 26, or switched off) the source tells captures apart where the date doesn't (Fable #2).
+    static func title(customName: String?, modelTitle: String?, sourceTitle: String? = nil, dateTitle: String) -> String {
+        customName ?? modelTitle ?? sourceTitle ?? dateTitle
+    }
+
+    /// "Safari: Screenshot - Wikipedia", when the window has a title; nil without one, since an app's name alone
+    /// says less than the time.
+    static func sourceTitle(appName: String?, windowTitle: String?) -> String? {
+        guard let window = windowTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !window.isEmpty else { return nil }
+        guard let app = appName?.trimmingCharacters(in: .whitespacesAndNewlines), !app.isEmpty, app != window else { return window }
+        return "\(app): \(window)"
     }
 
     /// Stored model output shows while its switch is on, even once the model

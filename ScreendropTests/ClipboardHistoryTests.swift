@@ -797,7 +797,7 @@ struct ClipboardListTests {
         #expect(ClipboardList.title(of: entry(.text, "\n\n  first line  \nsecond")) == "first line")
         #expect(ClipboardList.title(of: entry(.files, "/a/one.png\n/b/two.txt")) == "one.png, two.txt")
         #expect(ClipboardList.title(of: entry(.files, "/1\n/2\n/3\n/4")) == "4 files")
-        #expect(ClipboardList.title(of: entry(.snippet, "x", title: "")) == "Untitled Snippet")
+        #expect(ClipboardList.title(of: entry(.snippet, "x", title: "")) == "x")
         #expect(ClipboardList.typeName(of: entry(.image, image: "a.jpg")) == "JPEG image")
         #expect(ClipboardList.typeName(of: entry(.image, image: "a.png")) == "PNG image")
         #expect(ClipboardList.typeName(of: entry(.text, "https://example.com")) == "Link")
@@ -949,3 +949,72 @@ struct LibraryGridMetricsTests {
         #expect(large.pictureHeight == ((320 - 16) * 0.625).rounded(.down))
     }
 }
+
+/// Fable #3: a card says its text once, names its kind, and code is recognized by what it says.
+@Suite
+struct ClipboardCardTextTests {
+    private func text(_ value: String, from app: String? = nil) -> ClipboardEntry {
+        ClipboardEntry(id: UUID().uuidString, kind: .text, text: value, title: nil, imageURL: nil, libraryPath: nil, byteSize: value.utf8.count,
+                       pixelWidth: 0, pixelHeight: 0, sourceBundleID: app, isRemote: false, firstCopiedAt: .now, lastCopiedAt: .now,
+                       timesCopied: 1, pinnedAt: nil)
+    }
+
+    @Test func textIsSaidOnceAndNamedByKind() {
+        #expect(ClipboardList.cardTitle(of: text("Meeting moved to 3pm")) == nil)
+        #expect(ClipboardList.kindWord(of: text("Meeting moved to 3pm")) == "text")
+        #expect(ClipboardList.cardTitle(of: text("https://nspasteboard.org/")) == nil)
+        #expect(ClipboardList.kindWord(of: text("https://nspasteboard.org/")) == "link")
+        // A color keeps a title, as copied; its face is the swatch.
+        #expect(ClipboardList.cardTitle(of: text(" #ff6363 ")) == "#ff6363")
+        #expect(ClipboardList.kindWord(of: text("#ff6363")) == nil)
+    }
+
+    @Test func codeIsRecognizedByWhatItSays() {
+        let swift = """
+            func tailPath(radius r: CGFloat, tip d: CGFloat) -> CGPath {
+                let path = CGMutablePath()
+                return path
+            }
+            """
+        #expect(ClipboardList.isCodeLike(swift))
+        #expect(ClipboardList.isCodeLike("func tailPath(radius r: CGFloat, tip d: CGFloat) -> CGPath {"))
+        #expect(ClipboardList.kindWord(of: text(swift, from: "com.tommyent.Sukusho.dev")) == "code")
+        #expect(!ClipboardList.isCodeLike("Meeting moved to 3pm"))
+        #expect(!ClipboardList.isCodeLike("Let me know if the fix works.\nThanks!"))
+        #expect(!ClipboardList.isCodeLike("hello@example.com"))
+        // From a code app, any plain text counts, as before.
+        #expect(ClipboardList.kindWord(of: text("ls -la", from: "com.apple.Terminal")) == "code")
+    }
+
+    /// Fable #3: rgb() and hsl() get a swatch, as hex does.
+    @Test func functionalColorsAreColors() {
+        #expect(ClipboardCapturePolicy.functionalColor("rgb(10, 132, 255)") == "#0A84FF")
+        #expect(ClipboardCapturePolicy.functionalColor("rgb(10 132 255 / 50%)") == "#0A84FF80")
+        #expect(ClipboardCapturePolicy.functionalColor("rgba(255, 99, 99, 0.5)") == "#FF636380")
+        #expect(ClipboardCapturePolicy.functionalColor("RGB(100%, 0%, 0%)") == "#FF0000")
+        #expect(ClipboardCapturePolicy.functionalColor("hsl(0, 100%, 50%)") == "#FF0000")
+        #expect(ClipboardCapturePolicy.functionalColor("hsl(120deg 100% 25%)") == "#008000")
+        #expect(ClipboardCapturePolicy.functionalColor("hsl(210, 80%, 55%)") == "#308CE8")
+        #expect(ClipboardCapturePolicy.functionalColor("hsla(240, 100%, 50%, 0.25)") == "#0000FF40")
+        for text in ["rgb(300, 0, 0)", "rgb(1, 2)", "hsl(0, 100, 50)", "rgb(a, b, c)", "rgbx(1, 2, 3)", "rgb(1, 2, 3", "call(rgb(1, 2, 3))"] {
+            #expect(ClipboardCapturePolicy.functionalColor(text) == nil, "\(text)")
+        }
+        if case .color(let hex) = ClipboardCapturePolicy.textForm("  rgb(10, 132, 255) ") { #expect(hex == "#0A84FF") } else {
+            Issue.record("rgb() isn't a color")
+        }
+        #expect(ClipboardList.cardTitle(of: text("rgb(10, 132, 255)")) == "rgb(10, 132, 255)")
+    }
+
+    /// Fable #10: an unnamed snippet is called by its first line, not a literal "New Snippet".
+    @Test func anUnnamedSnippetIsCalledByItsFirstLine() {
+        func snippet(_ title: String?, _ body: String) -> ClipboardEntry {
+            ClipboardEntry(id: UUID().uuidString, kind: .snippet, text: body, title: title, imageURL: nil, libraryPath: nil,
+                           byteSize: body.utf8.count, pixelWidth: 0, pixelHeight: 0, sourceBundleID: nil, isRemote: false,
+                           firstCopiedAt: .now, lastCopiedAt: .now, timesCopied: 1, pinnedAt: nil)
+        }
+        #expect(ClipboardList.title(of: snippet("Signature", "Best,\nTom")) == "Signature")
+        #expect(ClipboardList.title(of: snippet("", "\n  Best regards,\nTom")) == "Best regards,")
+        #expect(ClipboardList.title(of: snippet(nil, "")) == "Untitled Snippet")
+    }
+}
+
