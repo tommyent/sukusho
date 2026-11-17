@@ -147,10 +147,26 @@ private struct ClipboardCard: View {
         .accessibilityAction(named: "Copy") { model.deliver(entry, as: .copy, to: nil) }
     }
 
+    /// A tall image's long side, decoded so its width still fills a card sharply.
+    private static func tallPixelSize(_ entry: ClipboardEntry) -> Int {
+        min(8192, 640 * entry.pixelHeight / max(entry.pixelWidth, 1))
+    }
+
     @ViewBuilder private var face: some View {
         switch entry.kind {
         case .image:
-            if let url = entry.imageFileURL { ClipboardThumbnail(url: url, maxPixelSize: 520) }
+            if let url = entry.imageFileURL {
+                // Whole, as capture cards show an image: filling cropped the sides off text (owner, 2026-11-16).
+                // A much taller one shows its top at full width instead of a thin strip.
+                let tall = TallCapture.isTall(width: entry.pixelWidth, height: entry.pixelHeight)
+                GeometryReader { geometry in
+                    ClipboardThumbnail(url: url, maxPixelSize: tall ? Self.tallPixelSize(entry) : 640,
+                                       contentMode: tall ? .fill : .fit)
+                        .frame(width: geometry.size.width, height: geometry.size.height, alignment: tall ? .top : .center)
+                        .clipped()
+                }
+                .background(Color(nsColor: .quaternaryLabelColor).opacity(0.25))
+            }
         case .files:
             VStack(alignment: .leading, spacing: DS.Space.s) {
                 ClipboardRowTile(entry: entry, size: 36)
