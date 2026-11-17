@@ -236,7 +236,9 @@ final class ScreenshotHistoryStore {
     }
 
     @discardableResult
-    func importScreenshot(from sourceURL: URL, source: CaptureSource? = nil) -> URL {
+    /// `title` is the Library title for an image the user opened or imported: its own file name, rather than the
+    /// History file's `screenshot_…` (Fable #2). It doesn't save the capture, as naming it would.
+    func importScreenshot(from sourceURL: URL, source: CaptureSource? = nil, title: String? = nil) -> URL {
         do {
             try FileManager.default.createDirectory(at: Self.historyDirectory, withIntermediateDirectories: true)
             let destinationURL = uniqueHistoryURL(for: sourceURL)
@@ -256,6 +258,7 @@ final class ScreenshotHistoryStore {
                 fileName: destinationURL.lastPathComponent,
                 pixelWidth: Int(imageSize.width),
                 pixelHeight: Int(imageSize.height),
+                displayName: title.flatMap { $0.isEmpty ? nil : $0 },
                 source: source
             )
             items.insert(item, at: 0)
@@ -371,8 +374,8 @@ final class ScreenshotHistoryStore {
     ) throws -> URL {
         _ = try loadEditDocument(for: displayURL)
         guard isHistoryURL(displayURL) else {
-            // The file as opened, not a crop of it, so History keeps the original.
-            let imported = importScreenshot(from: displayURL)
+            // The file as opened, not a crop of it, so History keeps the original, and its name.
+            let imported = importScreenshot(from: displayURL, title: displayURL.deletingPathExtension().lastPathComponent)
             guard isHistoryURL(imported) else { throw CocoaError(.fileWriteUnknown) }
             return try commitAnnotations(displayURL: imported, baseURL: baseURL,
                                          renderedURL: renderedURL, document: document)

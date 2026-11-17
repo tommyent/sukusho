@@ -92,14 +92,18 @@ nonisolated struct CaptureLibraryItem: Identifiable, Equatable, Sendable {
         pixelWidth > 0 && pixelHeight > 0 ? "\(pixelWidth) × \(pixelHeight)" : "Unknown"
     }
     var kindTitle: String { session != nil ? "Recording Project" : isVideo ? "Video" : "Screenshot" }
-    /// The custom name, else the model's title, else when it was taken (sd-8oa).
-    var title: String { CaptureInsightRules.title(customName: customName, modelTitle: modelTitle, dateTitle: dateTitle) }
+    /// The custom name, else the model's title, else the app and window, else when it was taken (sd-8oa, Fable #2).
+    var title: String { customName ?? automaticTitle }
     /// What an unnamed capture is called, and what clearing a name brings back.
-    var automaticTitle: String { modelTitle ?? dateTitle }
+    var automaticTitle: String {
+        CaptureInsightRules.title(customName: nil, modelTitle: modelTitle,
+                                  sourceTitle: CaptureInsightRules.sourceTitle(appName: source?.appName, windowTitle: source?.windowTitle),
+                                  dateTitle: dateTitle)
+    }
     var dateTitle: String { Self.dateTitle(createdAt) }
     /// Under the title: the date once a name or model title has taken its
     /// place, else the dimensions. A video's pill shows its length.
-    var subtitle: String { customName == nil && modelTitle == nil ? dimensions : dateTitle }
+    var subtitle: String { title == dateTitle ? dimensions : dateTitle }
 
     /// "Oct 13, 8:13 AM", with the year when it isn't this year's.
     static func dateTitle(_ date: Date) -> String {

@@ -26,7 +26,10 @@ enum RecordingAgentPromptExport {
     static func title(for session: RecordingSession) -> String {
         guard let created = session.loadCaptureManifest()?.createdAt else { return session.displayName }
         let modelTitle = CaptureLibraryIndex.shared.visibleInsight("recording:" + session.directoryURL.standardizedFileURL.path)?.title
-        return CaptureInsightRules.title(customName: session.customName, modelTitle: modelTitle, dateTitle: CaptureLibraryItem.dateTitle(created))
+        let source = session.loadProjectMetadata()?.source
+        return CaptureInsightRules.title(customName: session.customName, modelTitle: modelTitle,
+                                         sourceTitle: CaptureInsightRules.sourceTitle(appName: source?.appName, windowTitle: source?.windowTitle),
+                                         dateTitle: CaptureLibraryItem.dateTitle(created))
     }
 
     /// What Agent Prompt writes for a session, from its input log and capture manifest.

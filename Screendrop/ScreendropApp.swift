@@ -114,7 +114,7 @@ struct ScreendropApp: App {
 
         appDelegate.onOpenFiles = { [openWindow] urls in
             for url in urls where UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true {
-                let historyURL = ScreenshotHistoryStore.shared.importScreenshot(from: url)
+                let historyURL = ScreenshotHistoryStore.shared.importScreenshot(from: url, title: url.deletingPathExtension().lastPathComponent)
                 openWindow(id: "ANNOTATION_EDITOR", value: historyURL)
             }
         }

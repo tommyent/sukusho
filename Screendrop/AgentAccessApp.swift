@@ -103,7 +103,7 @@ final class AgentLiveBackend: AgentBackend {
     func addImages(_ files: [URL], title: String?, tags: [String]) async -> [AgentItem] {
         var ids: [UUID] = []
         for file in files {
-            let imported = ScreenshotHistoryStore.shared.importScreenshot(from: file)
+            let imported = ScreenshotHistoryStore.shared.importScreenshot(from: file, title: file.deletingPathExtension().lastPathComponent)
             guard imported != file, let row = ScreenshotHistoryStore.shared.item(for: imported) else { continue }
             ids.append(row.id)
         }
