@@ -29,6 +29,10 @@ struct AnnotationEditorInspector: View {
             // scrolls away and nothing below it moves (Fable #1).
             InspectorSection(toolSlot.heading) {
                 VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
+                    if toolSlot == .crop {
+                        AnnotationCropControls(model: model, onEditorAction: onEditorAction)
+                            .help(toolSlot.line)
+                    }
                     if showsStyleControls {
                         styleControls
                     }
@@ -46,183 +50,188 @@ struct AnnotationEditorInspector: View {
                 )
             }
 
-            ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 0) {
-                    AnnotationStyleStrip(
-                        model: model,
-                        presetStore: backgroundPresetStore,
-                        onEditorAction: onEditorAction
-                    )
+            // While cropping, Crop's options are all there is to set.
+            if !model.isCropping {
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        AnnotationStyleStrip(
+                            model: model,
+                            presetStore: backgroundPresetStore,
+                            onEditorAction: onEditorAction
+                        )
 
-                    InspectorSection(
-                        "Background",
-                        accessory: {
-                            if !usesDefaultPlacement {
-                                InspectorResetButton(help: "Reset padding and alignment") {
-                                    onEditorAction()
-                                    withAnimation(sectionAnimation) {
-                                        let defaults = AnnotationBackgroundSettings()
-                                        model.backgroundSettings.padding = defaults.padding
-                                        model.backgroundSettings.alignment = defaults.alignment
+                        InspectorSection(
+                            "Background",
+                            accessory: {
+                                if !usesDefaultPlacement {
+                                    InspectorResetButton(help: "Reset padding and alignment") {
+                                        onEditorAction()
+                                        withAnimation(sectionAnimation) {
+                                            let defaults = AnnotationBackgroundSettings()
+                                            model.backgroundSettings.padding = defaults.padding
+                                            model.backgroundSettings.alignment = defaults.alignment
+                                        }
+                                    }
+                                }
+                                if model.backgroundSettings.style != .none {
+                                    InspectorClearButton(help: "Remove background") {
+                                        onEditorAction()
+                                        model.backgroundSettings.style = .none
                                     }
                                 }
                             }
-                            if model.backgroundSettings.style != .none {
-                                InspectorClearButton(help: "Remove background") {
-                                    onEditorAction()
-                                    model.backgroundSettings.style = .none
-                                }
-                            }
-                        }
-                    ) {
-                        AnnotationBackgroundInspector(
-                            settings: backgroundBinding,
-                            wallpaperStore: wallpaperStore,
-                            onEditorAction: onEditorAction,
-                            onPickWallpaper: onPickWallpaper,
-                            onPreview: { model.previewBackground($0, isHovering: $1) },
-                            onEndPreview: { model.previewBackground = nil },
-                            onTurnCameraOff: {
-                                onEditorAction()
-                                withAnimation(sectionAnimation) { model.setCameraOn(false) }
-                            }
-                        )
-                    }
-
-                    // The screenshot's edge: corners, shadow and border all draw on it.
-                    InspectorSection(
-                        "Screenshot",
-                        accessory: {
-                            if !usesDefaultEdge {
-                                sectionResetButton("Reset corners, shadow and border") {
-                                    let defaults = AnnotationBackgroundSettings()
-                                    model.backgroundSettings.cornerRadius = defaults.cornerRadius
-                                    model.backgroundSettings.shadow = defaults.shadow
-                                    model.backgroundSettings.shadowStyle = defaults.shadowStyle
-                                    model.backgroundSettings.border = AnnotationScreenshotBorderSettings(
-                                        isEnabled: model.backgroundSettings.border.isEnabled
-                                    )
-                                }
-                            }
-                        }
-                    ) {
-                        // Corners and shadow need a canvas; Border works without one.
-                        if model.backgroundSettings.requiresCanvasLayout {
-                            AnnotationScreenshotEdgeInspector(
+                        ) {
+                            AnnotationBackgroundInspector(
                                 settings: backgroundBinding,
-                                onEditorAction: onEditorAction
+                                wallpaperStore: wallpaperStore,
+                                onEditorAction: onEditorAction,
+                                onPickWallpaper: onPickWallpaper,
+                                onPreview: { model.previewBackground($0, isHovering: $1) },
+                                onEndPreview: { model.previewBackground = nil },
+                                onTurnCameraOff: {
+                                    onEditorAction()
+                                    withAnimation(sectionAnimation) { model.setCameraOn(false) }
+                                }
                             )
                         }
 
-                        InspectorToggleRow("Border", isOn: Binding(
-                            get: { model.backgroundSettings.border.isEnabled },
-                            set: { value in
-                                onEditorAction()
-                                withAnimation(sectionAnimation) {
-                                    model.backgroundSettings.border.isEnabled = value
+                        // The screenshot's edge: corners, shadow and border all draw on it.
+                        InspectorSection(
+                            "Screenshot",
+                            accessory: {
+                                if !usesDefaultEdge {
+                                    sectionResetButton("Reset corners, shadow and border") {
+                                        let defaults = AnnotationBackgroundSettings()
+                                        model.backgroundSettings.cornerRadius = defaults.cornerRadius
+                                        model.backgroundSettings.shadow = defaults.shadow
+                                        model.backgroundSettings.shadowStyle = defaults.shadowStyle
+                                        model.backgroundSettings.border = AnnotationScreenshotBorderSettings(
+                                            isEnabled: model.backgroundSettings.border.isEnabled
+                                        )
+                                    }
                                 }
                             }
-                        ))
+                        ) {
+                            // Corners and shadow need a canvas; Border works without one.
+                            if model.backgroundSettings.requiresCanvasLayout {
+                                AnnotationScreenshotEdgeInspector(
+                                    settings: backgroundBinding,
+                                    onEditorAction: onEditorAction
+                                )
+                            }
 
-                        if model.backgroundSettings.border.isEnabled {
-                            AnnotationScreenshotBorderInspector(
+                            InspectorToggleRow("Border", isOn: Binding(
+                                get: { model.backgroundSettings.border.isEnabled },
+                                set: { value in
+                                    onEditorAction()
+                                    withAnimation(sectionAnimation) {
+                                        model.backgroundSettings.border.isEnabled = value
+                                    }
+                                }
+                            ))
+
+                            if model.backgroundSettings.border.isEnabled {
+                                AnnotationScreenshotBorderInspector(
+                                    settings: Binding(
+                                        get: { model.backgroundSettings.border },
+                                        set: { model.backgroundSettings.border = $0 }
+                                    ),
+                                    onEditorAction: onEditorAction
+                                )
+                                .transition(.opacity)
+                            }
+                        }
+
+                        InspectorGroupBreak()
+
+                        InspectorSection(
+                            "Camera",
+                            isOn: Binding(
+                                get: { model.isCameraOn },
+                                set: { value in
+                                    onEditorAction()
+                                    model.setCameraOn(value)
+                                }
+                            ),
+                            toggleTitle: "Enable camera",
+                            accessory: {
+                                if model.isCameraOn, model.backgroundSettings.camera != .gentleTilt {
+                                    sectionResetButton("Reset camera") {
+                                        model.backgroundSettings.camera = .gentleTilt
+                                    }
+                                }
+                            }
+                        ) {
+                            AnnotationCameraInspector(
                                 settings: Binding(
-                                    get: { model.backgroundSettings.border },
-                                    set: { model.backgroundSettings.border = $0 }
+                                    get: { model.backgroundSettings.camera },
+                                    set: { model.backgroundSettings.camera = $0 }
                                 ),
                                 onEditorAction: onEditorAction
                             )
-                            .transition(.opacity)
                         }
-                    }
 
-                    InspectorGroupBreak()
-
-                    InspectorSection(
-                        "Camera",
-                        isOn: Binding(
-                            get: { model.isCameraOn },
-                            set: { value in
-                                onEditorAction()
-                                model.setCameraOn(value)
-                            }
-                        ),
-                        toggleTitle: "Enable camera",
-                        accessory: {
-                            if model.isCameraOn, model.backgroundSettings.camera != .gentleTilt {
-                                sectionResetButton("Reset camera") {
-                                    model.backgroundSettings.camera = .gentleTilt
+                        InspectorSection(
+                            "Progressive Blur",
+                            summary: AnnotationInspectorSummary.progressiveBlur(model.backgroundSettings.progressiveBlur),
+                            isOn: featureBinding(\.progressiveBlur.isEnabled),
+                            toggleTitle: "Enable progressive blur",
+                            accessory: {
+                                if model.backgroundSettings.progressiveBlur.isEnabled,
+                                   model.backgroundSettings.progressiveBlur != AnnotationProgressiveBlurSettings(isEnabled: true) {
+                                    sectionResetButton("Reset progressive blur") {
+                                        model.backgroundSettings.progressiveBlur = AnnotationProgressiveBlurSettings(isEnabled: true)
+                                    }
                                 }
                             }
+                        ) {
+                            AnnotationProgressiveBlurInspector(
+                                settings: Binding(
+                                    get: { model.backgroundSettings.progressiveBlur },
+                                    set: { model.backgroundSettings.progressiveBlur = $0 }
+                                ),
+                                onEditorAction: onEditorAction
+                            )
                         }
-                    ) {
-                        AnnotationCameraInspector(
-                            settings: Binding(
-                                get: { model.backgroundSettings.camera },
-                                set: { model.backgroundSettings.camera = $0 }
-                            ),
-                            onEditorAction: onEditorAction
-                        )
-                    }
 
-                    InspectorSection(
-                        "Progressive Blur",
-                        summary: AnnotationInspectorSummary.progressiveBlur(model.backgroundSettings.progressiveBlur),
-                        isOn: featureBinding(\.progressiveBlur.isEnabled),
-                        toggleTitle: "Enable progressive blur",
-                        accessory: {
-                            if model.backgroundSettings.progressiveBlur.isEnabled,
-                               model.backgroundSettings.progressiveBlur != AnnotationProgressiveBlurSettings(isEnabled: true) {
-                                sectionResetButton("Reset progressive blur") {
-                                    model.backgroundSettings.progressiveBlur = AnnotationProgressiveBlurSettings(isEnabled: true)
+                        InspectorSection(
+                            "Watermark",
+                            summary: AnnotationInspectorSummary.watermark(model.backgroundSettings.watermark),
+                            isOn: featureBinding(\.watermark.isEnabled),
+                            toggleTitle: "Enable watermark",
+                            accessory: {
+                                if model.backgroundSettings.watermark.isEnabled,
+                                   model.backgroundSettings.watermark != AnnotationWatermarkSettings(isEnabled: true) {
+                                    sectionResetButton("Reset watermark") {
+                                        model.backgroundSettings.watermark = AnnotationWatermarkSettings(isEnabled: true)
+                                    }
                                 }
                             }
+                        ) {
+                            AnnotationWatermarkInspector(
+                                settings: Binding(
+                                    get: { model.backgroundSettings.watermark },
+                                    set: { model.backgroundSettings.watermark = $0 }
+                                ),
+                                focusedField: focusedField,
+                                onFocusCleared: onEditorAction
+                            )
                         }
-                    ) {
-                        AnnotationProgressiveBlurInspector(
-                            settings: Binding(
-                                get: { model.backgroundSettings.progressiveBlur },
-                                set: { model.backgroundSettings.progressiveBlur = $0 }
-                            ),
-                            onEditorAction: onEditorAction
-                        )
                     }
-
-                    InspectorSection(
-                        "Watermark",
-                        summary: AnnotationInspectorSummary.watermark(model.backgroundSettings.watermark),
-                        isOn: featureBinding(\.watermark.isEnabled),
-                        toggleTitle: "Enable watermark",
-                        accessory: {
-                            if model.backgroundSettings.watermark.isEnabled,
-                               model.backgroundSettings.watermark != AnnotationWatermarkSettings(isEnabled: true) {
-                                sectionResetButton("Reset watermark") {
-                                    model.backgroundSettings.watermark = AnnotationWatermarkSettings(isEnabled: true)
-                                }
-                            }
-                        }
-                    ) {
-                        AnnotationWatermarkInspector(
-                            settings: Binding(
-                                get: { model.backgroundSettings.watermark },
-                                set: { model.backgroundSettings.watermark = $0 }
-                            ),
-                            focusedField: focusedField,
-                            onFocusCleared: onEditorAction
-                        )
-                    }
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    // The Revert To bar keeps clear of the floating preview peek pill
+                    // itself; without the bar, the end of the list must.
+                    .padding(.bottom, showsRevertBar ? 12 : PreviewPeekTab.pillHeight * 1.1)
                 }
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-                // The Revert To bar keeps clear of the floating preview peek pill
-                // itself; without the bar, the end of the list must.
-                .padding(.bottom, showsRevertBar ? 12 : PreviewPeekTab.pillHeight * 1.1)
+                .scrollContentBackground(.hidden)
+                // A soft edge under the pinned slot shows there is more above.
+                .scrollEdgeEffectStyle(.soft, for: .all)
+            } else {
+                Spacer(minLength: 0)
             }
-            .scrollContentBackground(.hidden)
-            // A soft edge under the pinned slot shows there is more above.
-            .scrollEdgeEffectStyle(.soft, for: .all)
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if showsRevertBar {
+            if showsRevertBar, !model.isCropping {
                 InspectorRevertBar(background: sidebarBackground) {
                     AnnotationEditorRevertItems(editor: model)
                 }
@@ -339,9 +348,10 @@ struct AnnotationEditorInspector: View {
         }
     }
 
-    /// The help line fills the slot's free row: always for a mode or a tool with no options,
-    /// and under the one row of Hand-drawn or the magnifier's Zoom.
+    /// The help line fills the slot's free row: always for Pick Color, Measure or a tool with no
+    /// options, and under the one row of Hand-drawn or the magnifier's Zoom. Crop's controls fill it.
     private var showsSlotLine: Bool {
+        if toolSlot == .crop { return false }
         guard showsStyleControls else { return true }
         guard case .tool(let tool) = toolSlot else { return false }
         return [.line, .arrow, .magnifier].contains(tool)
@@ -416,6 +426,79 @@ struct AnnotationEditorInspector: View {
                         smartRedactionRow(tool: tool)
                     }
                 }
+            }
+        }
+    }
+}
+
+/// Crop's options in the tool slot (Fable #5): the aspect ratio and Reset, then Cancel and Crop.
+/// Return and Escape do the same from the keyboard (`AnnotationKeyCommandHandler`).
+private struct AnnotationCropControls: View {
+    let model: AnnotationEditorModel
+    let onEditorAction: () -> Void
+
+    var body: some View {
+        VStack(spacing: InspectorMetrics.rowSpacing) {
+            HStack(spacing: 6) {
+                Menu {
+                    Picker("Aspect Ratio", selection: Binding(
+                        get: { model.cropAspect },
+                        set: { aspect in
+                            onEditorAction()
+                            withAnimation(.snappy(duration: 0.18)) { model.setCropAspect(aspect) }
+                        }
+                    )) {
+                        ForEach(CropAspectRatio.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "aspectratio")
+                            .font(.system(size: 11, weight: .medium))
+                        Text(model.cropAspect.title)
+                            .font(.inspectorValue)
+                            .lineLimit(1)
+                            .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .foregroundStyle(.primary.opacity(0.85))
+                    .padding(.horizontal, InspectorMetrics.fieldInset)
+                    .inspectorField()
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .help("Aspect ratio")
+
+                InspectorActionButton("Reset", systemImage: "arrow.counterclockwise") {
+                    onEditorAction()
+                    withAnimation(.snappy(duration: 0.18)) { model.resetCrop() }
+                }
+                .help("Reset the selection to the whole image")
+            }
+
+            HStack(spacing: 6) {
+                InspectorActionButton("Cancel", systemImage: "xmark") {
+                    onEditorAction()
+                    withAnimation(.snappy(duration: 0.22)) { model.cancelCrop() }
+                }
+                .help("Leave Crop without cropping (Escape)")
+
+                Button {
+                    onEditorAction()
+                    withAnimation(.snappy(duration: 0.22)) { model.applyCrop() }
+                } label: {
+                    Label("Crop", systemImage: "crop")
+                        .font(.inspectorValue.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: InspectorMetrics.controlHeight)
+                        .background(Capsule().fill(Color.accentColor))
+                        .foregroundStyle(.white)
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Crop to the selection (Return)")
             }
         }
     }

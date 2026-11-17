@@ -56,8 +56,10 @@ struct AnnotationEditorWindow: View {
                 .sharedBackgroundVisibility(.hidden)
                 ToolbarSpacer(.flexible, placement: .primaryAction)
                 ToolbarItemGroup(placement: .primaryAction) {
+                    // Crop's options are in the inspector's tool slot; with the
+                    // inspector hidden they stay here.
                     if model.isCropping {
-                        cropActions
+                        if !isInspectorPresented { cropActions }
                     } else {
                         editingActions.disabled(isBusy)
                     }
@@ -190,7 +192,7 @@ struct AnnotationEditorWindow: View {
                     onEditorAction: clearInspectorFocus,
                     onPickWallpaper: pickCustomWallpaper
                 )
-                .disabled(model.isCropping || model.isBlockingCommit)
+                .disabled(model.isBlockingCommit)
             }
             .environment(probe)
     }
