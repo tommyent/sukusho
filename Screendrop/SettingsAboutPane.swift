@@ -42,6 +42,19 @@ struct SettingsAboutPane: View {
 
                 Link("Follow on X", destination: URL(string: "https://x.com/fayazara")!)
             }
+
+            Section("Acknowledgments") {
+                // The second sentence is the one the Independent JPEG Group's license asks for where MozJPEG
+                // ships without its own documentation.
+                Text("Images are optimized with oxipng, libwebp and MozJPEG. This software is based in part on the work of the Independent JPEG Group.")
+                    .foregroundStyle(.secondary)
+
+                Button("Show Licenses") {
+                    if let licenses = Bundle.main.url(forResource: "OptimizerLicenses", withExtension: nil) {
+                        NSWorkspace.shared.open(licenses)
+                    }
+                }
+            }
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
