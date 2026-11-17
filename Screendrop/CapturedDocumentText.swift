@@ -88,14 +88,34 @@ nonisolated enum CapturedDocumentText {
     /// lost whole words ("Uses") and misread others, and the same capture scaled up read cleanly (Fable live check C,
     /// 2026-11-17). Anything sharper, or an image that can't be scaled, is returned as it is.
     static func readable(_ image: CGImage, pixelsPerPoint: CGFloat) -> CGImage {
-        guard pixelsPerPoint > 0, pixelsPerPoint < 1.5 else { return image }
+        guard let scale = readableScale(width: image.width, height: image.height, pixelsPerPoint: pixelsPerPoint) else { return image }
         let filter = CIFilter(name: "CILanczosScaleTransform")
         filter?.setValue(CIImage(cgImage: image), forKey: kCIInputImageKey)
-        filter?.setValue(2 / pixelsPerPoint, forKey: kCIInputScaleKey)
+        filter?.setValue(scale, forKey: kCIInputScaleKey)
         filter?.setValue(1.0, forKey: kCIInputAspectRatioKey)
         guard let output = filter?.outputImage,
               let scaled = CIContext().createCGImage(output, from: output.extent.integral) else { return image }
         return scaled
+    }
+
+    /// At most this many pixels after scaling, about 144 MB at 4 bytes a pixel (Astra, 2026-11-17: an 8K capture at 1×
+    /// would have become 15360 × 8640, about 531 MB).
+    static let readableMaxPixels = 36_000_000.0
+
+    /// How much `readable` scales an image by: 2× its pixels per point, less when that would pass `readableMaxPixels`,
+    /// and nil when it's sharp enough already or the cap leaves too little gain to be worth it.
+    static func readableScale(width: Int, height: Int, pixelsPerPoint: CGFloat) -> CGFloat? {
+        guard pixelsPerPoint > 0, pixelsPerPoint < 1.5, width > 0, height > 0 else { return nil }
+        let scale = min(2 / pixelsPerPoint, CGFloat((readableMaxPixels / Double(width * height)).squareRoot()))
+        return scale >= 1.25 ? scale : nil
+    }
+
+    /// Capture Text's image of `url`, upright and made `readable` when the drawn `area` (in points) gives its pixels
+    /// per point. Decoding and scaling are slow on a big capture: call it off the main actor.
+    static func readableImage(at url: URL, area: CGRect?) -> CGImage? {
+        guard let image = ScreenshotImageLoader.uprightImage(at: url) else { return nil }
+        guard let area, area.width > 0 else { return image }
+        return readable(image, pixelsPerPoint: CGFloat(image.width) / area.width)
     }
 
     static func structuredBlocks(in image: CGImage) async -> [CapturedTextBlock]? {

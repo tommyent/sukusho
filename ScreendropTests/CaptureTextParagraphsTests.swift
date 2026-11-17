@@ -1,4 +1,6 @@
 import CoreGraphics
+import Foundation
+import ImageIO
 import Testing
 
 /// Owner, 2026-11-17: Capture Text joins lines that wrapped mid-sentence into paragraphs, and keeps every other break.
@@ -84,6 +86,32 @@ struct CaptureTextParagraphsTests {
         #expect(oneX.width == 240 && oneX.height == 80)
         #expect(CapturedDocumentText.readable(image, pixelsPerPoint: 2).width == 120)
         #expect(CapturedDocumentText.readable(image, pixelsPerPoint: 1.5).width == 120)
+    }
+
+    /// Astra: the 2× read is capped, so an 8K capture at 1× isn't scaled to 15360 × 8640.
+    @Test func theTwoXReadHasAPixelCap() throws {
+        #expect(CapturedDocumentText.readableScale(width: 1920, height: 1080, pixelsPerPoint: 1) == 2)
+        #expect(CapturedDocumentText.readableScale(width: 3840, height: 2160, pixelsPerPoint: 1) == 2)
+        let fiveK = try #require(CapturedDocumentText.readableScale(width: 5120, height: 2880, pixelsPerPoint: 1))
+        #expect(fiveK < 2 && Double(5120 * 2880) * Double(fiveK * fiveK) <= CapturedDocumentText.readableMaxPixels + 1)
+        #expect(CapturedDocumentText.readableScale(width: 7680, height: 4320, pixelsPerPoint: 1) == nil)
+        #expect(CapturedDocumentText.readableScale(width: 1920, height: 1080, pixelsPerPoint: 2) == nil)
+    }
+
+    /// The image both readers get, from the capture file: scaled when the drawn area says it's 1×, as it is otherwise.
+    @Test func theReadableImageComesFromTheFileOnce() throws {
+        let context = try #require(CGContext(data: nil, width: 120, height: 40, bitsPerComponent: 8, bytesPerRow: 0,
+                                             space: CGColorSpaceCreateDeviceRGB(),
+                                             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        let image = try #require(context.makeImage())
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("readable-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let destination = try #require(CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, nil)
+        #expect(CGImageDestinationFinalize(destination))
+        #expect(CapturedDocumentText.readableImage(at: url, area: CGRect(x: 0, y: 0, width: 120, height: 40))?.width == 240)
+        #expect(CapturedDocumentText.readableImage(at: url, area: CGRect(x: 0, y: 0, width: 60, height: 20))?.width == 120)
+        #expect(CapturedDocumentText.readableImage(at: url, area: nil)?.width == 120)
     }
 
     @Test func theMessageNamesTheFirstWords() {

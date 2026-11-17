@@ -207,13 +207,12 @@ final class CaptureCoordinator {
         CaptureTextFeedbackPresenter.shared.showReading(displayID: displayID)
         // A table or a list keeps its shape; anything else is read line by line, as always.
         var blocks: [CapturedTextBlock]?
-        // Pixels per point of the drawn area, so text captured at 1× is read at 2×. Unknown behind the system picker.
-        var pixelsPerPoint: CGFloat?
-        if let image = ScreenshotImageLoader.uprightImage(at: url) {
-            if let area, area.width > 0 { pixelsPerPoint = CGFloat(image.width) / area.width }
-            let readable = pixelsPerPoint.map { CapturedDocumentText.readable(image, pixelsPerPoint: $0) } ?? image
-            blocks = await CapturedDocumentText.structuredBlocks(in: readable)
-        }
+        // Text captured at 1× is read at 2×, off the main actor; the area, and so the scale, is unknown behind the
+        // system picker. Both readers below get this one image.
+        let readable = await Task.detached(priority: .userInitiated) { [area] in
+            CapturedDocumentText.readableImage(at: url, area: area)
+        }.value
+        if let readable { blocks = await CapturedDocumentText.structuredBlocks(in: readable) }
         // Paragraphs rather than the screen's lines, unless the user keeps them (Settings › Screenshots).
         let keepsLines = ScreendropPreferences.captureTextKeepsLineBreaks
         if !keepsLines { blocks = blocks.map(CaptureTextParagraphs.reflowed) }
@@ -221,7 +220,7 @@ final class CaptureCoordinator {
         if let blocks {
             text = CapturedDocumentText.plainText(blocks)
         } else {
-            let read = await ImageTextRecognizer.recognizeText(at: url, pixelsPerPoint: pixelsPerPoint)
+            let read = if let readable { await ImageTextRecognizer.recognizeText(in: readable) } else { await ImageTextRecognizer.recognizeText(at: url) }
             text = keepsLines ? read : CaptureTextParagraphs.reflowed(read)
         }
 
