@@ -3385,7 +3385,11 @@ private struct StudioInspector: View {
                             )
                         }
                     ) {
-                        selectedZoomControls(for: selected)
+                        if model.zoomEnabled {
+                            selectedZoomControls(for: selected)
+                        } else {
+                            InspectorHint("Zooms are off. Turn on Zoom & Clicks to change this one.")
+                        }
                     }
                     InspectorSectionDivider()
                 } else if let selectedClip = model.selectedClip {
@@ -3657,16 +3661,18 @@ private struct StudioInspector: View {
                 )
             }
 
-            InspectorSlider(
-                "Shadow",
-                value: $model.style.shadow,
-                range: 0...1,
-                format: .percent()
-            )
-            // The shadow falls on the background; with none there is
-            // nothing for it to fall on, and neither preview nor export draws one.
-            .disabled(model.style.background == .none)
-            .opacity(model.style.background == .none ? 0.4 : 1)
+            // The shadow falls on the background; with none there is nothing for it to fall
+            // on, and neither preview nor export draws one.
+            if model.style.background == .none {
+                InspectorHint("Choose a background to add a shadow.")
+            } else {
+                InspectorSlider(
+                    "Shadow",
+                    value: $model.style.shadow,
+                    range: 0...1,
+                    format: .percent()
+                )
+            }
         }
     }
 
@@ -3714,8 +3720,6 @@ private struct StudioInspector: View {
                 )
             }
         }
-        .disabled(!model.zoomEnabled)
-        .opacity(model.zoomEnabled ? 1 : 0.48)
     }
 
     private func selectedZoomControls(for selected: ZoomCue) -> some View {
@@ -3801,8 +3805,6 @@ private struct StudioInspector: View {
                 .help("Remove the selected zoom")
             }
         }
-        .disabled(!model.zoomEnabled)
-        .opacity(model.zoomEnabled ? 1 : 0.48)
     }
 
     private func zoomAmountSlider(for selected: ZoomCue) -> some View {
@@ -3870,8 +3872,6 @@ private struct StudioInspector: View {
                 InspectorToggleRow("Click highlights", isOn: $model.showsClickEffects)
             }
         }
-        .disabled(model.style.hidesCursor)
-        .opacity(model.style.hidesCursor ? 0.48 : 1)
     }
 
     // MARK: Keystrokes
@@ -3886,8 +3886,6 @@ private struct StudioInspector: View {
             }
         }
         .help("Shortcuts you pressed while recording appear as a caption")
-        .disabled(!model.showsKeystrokes)
-        .opacity(model.showsKeystrokes ? 1 : 0.48)
     }
 
     private var inkControls: some View {
@@ -3924,8 +3922,7 @@ private struct StudioInspector: View {
             }
             InspectorHint("Drawn with the pen while recording. A deleted drawing leaves the preview and exports; Undo brings it back.")
         }
-        .disabled(!model.showsInk || model.hasRunningWork)
-        .opacity(model.showsInk ? 1 : 0.48)
+        .disabled(model.hasRunningWork)
     }
 
     private func keystrokePlacementRow(
@@ -3944,19 +3941,24 @@ private struct StudioInspector: View {
             InspectorActionButton("Add at Playhead", systemImage: "plus") {
                 model.addChapterAtPlayhead()
             }
-            InspectorActionButton("Suggest Chapters", systemImage: "list.bullet") {
-                model.suggestChapters()
-            }
-            .disabled(!model.hasSubtitles)
-            .help("Suggest breaks at narration pauses after Transcribe Narration")
+            if model.hasSubtitles {
+                InspectorActionButton("Suggest Chapters", systemImage: "list.bullet") {
+                    model.suggestChapters()
+                }
+                .help("Suggest breaks at narration pauses")
 
-            InspectorActionButton("Name Chapters", systemImage: "sparkles", isBusy: model.isNamingChapters) {
-                model.nameChapters()
-            }
-            .disabled(!model.hasSubtitles || model.visibleChapters.isEmpty || model.textModelUnavailableReason != nil)
-            .help("Apple Intelligence titles each chapter from its narration, on this Mac")
-            if !model.visibleChapters.isEmpty, model.hasSubtitles, let reason = model.textModelUnavailableReason {
-                InspectorHint(reason)
+                if !model.visibleChapters.isEmpty {
+                    if let reason = model.textModelUnavailableReason {
+                        InspectorHint(reason)
+                    } else {
+                        InspectorActionButton("Name Chapters", systemImage: "sparkles", isBusy: model.isNamingChapters) {
+                            model.nameChapters()
+                        }
+                        .help("Apple Intelligence titles each chapter from its narration, on this Mac")
+                    }
+                }
+            } else {
+                InspectorHint("Transcribe the narration to suggest and name chapters.")
             }
 
             InspectorHint("Chapters save immediately. Undo restores changes.")
@@ -4119,20 +4121,20 @@ private struct StudioInspector: View {
             if let summary = model.summary {
                 StudioSummaryField(model: model, summary: summary)
                 HStack(spacing: InspectorMetrics.rowSpacing) {
-                    InspectorActionButton("Summarize Again", systemImage: "sparkles", isBusy: model.isSummarizing) {
-                        model.summarize()
+                    if model.textModelUnavailableReason == nil {
+                        InspectorActionButton("Summarize Again", systemImage: "sparkles", isBusy: model.isSummarizing) {
+                            model.summarize()
+                        }
                     }
-                    .disabled(model.textModelUnavailableReason != nil)
                     InspectorActionButton("Remove", systemImage: "trash", role: .destructive) {
                         model.setSummary(nil)
                     }
                     .help("Remove the summary")
                 }
-            } else {
+            } else if model.textModelUnavailableReason == nil {
                 InspectorActionButton("Summarize", systemImage: "sparkles", isBusy: model.isSummarizing) {
                     model.summarize()
                 }
-                .disabled(model.textModelUnavailableReason != nil)
                 .help("Apple Intelligence writes a short summary from the narration, on this Mac. The share page shows it.")
             }
             if let reason = model.textModelUnavailableReason {
@@ -4289,8 +4291,6 @@ private struct StudioInspector: View {
             )
         }
         .help("Drag the camera directly on the canvas to place it")
-        .disabled(!model.style.camera.isVisible)
-        .opacity(model.style.camera.isVisible ? 1 : 0.48)
     }
 
     // MARK: Audio
@@ -4308,14 +4308,14 @@ private struct StudioInspector: View {
             }
 
             if model.canIsolateVoice {
-                InspectorToggleRow("Isolate voice", isOn: $model.isolateVoice)
-                    .disabled(model.hasReplacementAudio)
-                    .help("Reduce background noise in the source microphone track")
-                if let progress = model.voiceIsolationProgress {
-                    ProgressView("Isolating voice…", value: progress)
-                }
                 if model.hasReplacementAudio {
                     InspectorHint("Reset to recorded audio to use voice isolation.")
+                } else {
+                    InspectorToggleRow("Isolate voice", isOn: $model.isolateVoice)
+                        .help("Reduce background noise in the source microphone track")
+                    if let progress = model.voiceIsolationProgress {
+                        ProgressView("Isolating voice…", value: progress)
+                    }
                 }
             }
             if let message = model.voiceIsolationError {
