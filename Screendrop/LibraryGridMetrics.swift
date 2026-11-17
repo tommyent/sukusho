@@ -33,7 +33,9 @@ nonisolated struct LibraryGridMetrics: Equatable, Sendable {
         let gap = Self.minimumGap(for: cellWidth)
         let fitting = max(1, floor((width - 2 * edge + gap) / (cellWidth + gap)))
         spacing = min(Self.maximumGap(for: cellWidth), max(gap, floor((width - fitting * cellWidth) / (fitting + 1))))
-        lineSpacing = max(20, (spacing * 0.75).rounded())
+        // The card's own gap, not the row's: with one column, `spacing` is mostly margin, and rows 110 pt apart at
+        // the largest size read as unrelated (VM, 2026-11-16).
+        lineSpacing = gap
         let rowWidth = fitting * cellWidth + (fitting - 1) * spacing
         columns = Int(fitting)
         leftInset = max(edge, floor((width - rowWidth) / 2))

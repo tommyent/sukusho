@@ -795,6 +795,9 @@ struct LibraryGridMetricsTests {
         let small = LibraryGridMetrics(width: 900, cardWidth: 140), large = LibraryGridMetrics(width: 900, cardWidth: 320)
         #expect(small.spacing >= 28 && large.spacing >= 64)
         #expect(large.spacing > small.spacing)
+        // Rows keep the card's own gap, even when one wide column turns the row gap into margin.
+        let single = LibraryGridMetrics(width: 612, cardWidth: 320)
+        #expect(single.columns == 1 && single.lineSpacing == LibraryGridMetrics.minimumGap(for: 320))
         #expect(large.cardHeight == LibraryGridMetrics.pictureInset + large.pictureHeight + LibraryGridMetrics.captionHeight)
         #expect(large.pictureHeight == ((320 - 16) * 0.625).rounded(.down))
     }
