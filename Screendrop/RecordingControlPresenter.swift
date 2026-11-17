@@ -147,7 +147,7 @@ struct RecordingSessionControls: View {
 
 /// The inputs going into the take, as the same filled chips the picker shows, so you can see the
 /// microphone is live while you talk. The microphone's and system audio's chips carry their live
-/// levels, the microphone's red for a moment after it clips; paused, the chips dim. Its own view so the ~20 level updates a second
+/// levels, the microphone's amber for a moment after it clips (red is only for recording); paused, the chips dim. Its own view so the ~20 level updates a second
 /// redraw only the chips, not the transport.
 struct RecordingInputChips: View {
     @State private var manager = ScreenRecordingManager.shared
