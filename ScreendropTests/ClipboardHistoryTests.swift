@@ -471,6 +471,25 @@ struct ClipboardHistoryStoreTests {
         #expect(try await store.entries().map(\.id) == [saved])
     }
 
+    /// Astra L2: an earlier version and a later copy of the same picture share one file, which counts once. A→B→A
+    /// within the cap keeps both cards; one byte under, the oldest card goes and the shared file stays.
+    @Test func aSharedFileCountsOnceAgainstTheCap() async throws {
+        let store = try store()
+        let a = picture(8), b = picture(8, reencoded: true)
+        guard case .inserted(let stack) = try await store.record(a, at: start) else { return }
+        #expect(try await store.record(b, at: start + 1) == .stacked(stack))
+        guard case .inserted(let later) = try await store.record(a, at: start + 20) else { Issue.record("not inserted"); return }
+        let physical = Int64(a.storedBytes + b.storedBytes)
+        #expect(try await store.totalBytes() == physical)
+        try await store.sweep(now: start + 30, retention: nil, maxBytes: physical)
+        #expect(Set(try await store.entries().map(\.id)) == [stack, later])
+        try await store.sweep(now: start + 30, retention: nil, maxBytes: physical - 1)
+        let left = try await store.entries()
+        #expect(left.map(\.id) == [later])
+        #expect(try Data(contentsOf: try #require(left.first?.imageURL)) == a.image)
+        #expect(try await store.totalBytes() == Int64(a.storedBytes))
+    }
+
     /// The bump branch (Astra C1): a lookalike whose content history already holds bumps that card and leaves the fresh
     /// copy before it alone, rather than deleting it.
     @Test func aLookalikeAlreadyInHistoryDeletesNothing() async throws {

@@ -256,19 +256,18 @@ actor ClipboardHistoryStore {
                                 [now.timeIntervalSince1970 - retention]) { $0.text(0) ?? "" }
         }
         try delete(ids: doomed)
-        var total = try totalBytes()
+        // Measured again after each eviction: cards can share an image file, so what a card frees depends on what's left
+        // (Astra L2: counting a shared file twice evicted a stack while the files were within the cap).
         var evicted: [String] = []
-        if total > maxBytes {
-            let oldest = try query("""
-                SELECT id, stored_bytes + COALESCE((SELECT SUM(stored_bytes) FROM versions WHERE entry_id = entries.id), 0)
-                FROM entries WHERE kind != 'snippet' AND pinned_at IS NULL ORDER BY last_copied_at
-                """, []) { ($0.text(0) ?? "", $0.int(1)) }
-            for (id, bytes) in oldest where total > maxBytes {
+        if try totalBytes() > maxBytes {
+            let oldest = try query(
+                "SELECT id FROM entries WHERE kind != 'snippet' AND pinned_at IS NULL ORDER BY last_copied_at", []) { $0.text(0) ?? "" }
+            for id in oldest {
+                guard try totalBytes() > maxBytes else { break }
+                try delete(ids: [id])
                 evicted.append(id)
-                total -= Int64(bytes)
             }
         }
-        try delete(ids: evicted)
         // Only unsaved references: a clip that was added to the Library or saved keeps its own image, and a Saved card
         // is never cleared out, even if its capture's file is gone (Astra L1).
         let gone = try query("""
@@ -348,8 +347,15 @@ actor ClipboardHistoryStore {
     }
 
     func totalBytes() throws -> Int64 {
+        // Each image file once, however many entries and versions share it, plus what's kept in the database itself.
         Int64(try query("""
-            SELECT COALESCE((SELECT SUM(stored_bytes) FROM entries), 0) + COALESCE((SELECT SUM(stored_bytes) FROM versions), 0)
+            SELECT COALESCE((SELECT SUM(bytes) FROM (
+                       SELECT MAX(stored_bytes) AS bytes FROM (
+                           SELECT blob, stored_bytes FROM entries WHERE blob IS NOT NULL
+                           UNION ALL SELECT blob, stored_bytes FROM versions WHERE blob IS NOT NULL)
+                       GROUP BY blob)), 0)
+                 + COALESCE((SELECT SUM(stored_bytes) FROM entries WHERE blob IS NULL), 0)
+                 + COALESCE((SELECT SUM(stored_bytes) FROM versions WHERE blob IS NULL), 0)
             """, []) { $0.int(0) }.first ?? 0)
     }
 
