@@ -86,6 +86,22 @@ struct RecordingDesktopFilterTests {
         ))
     }
 
+    /// The clipboard popup is private: hidden from every capture and from screen sharing, before,
+    /// during and after Sukusho's own screenshots, and named for recordings to leave out (owner).
+    @MainActor
+    @Test func thePrivatePopupStaysHiddenFromEveryCapture() {
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 80, height: 60), styleMask: .borderless,
+                              backing: .buffered, defer: true)
+        let exclusion = PreviewWindowCaptureExclusion.shared
+        exclusion.registerPrivate(window: window)
+        #expect(window.sharingType == .none)
+        #expect(exclusion.hidesFromOwnCaptures(window))
+        exclusion.beginOwnCapture()
+        exclusion.endOwnCapture()
+        exclusion.refreshRegisteredWindows()
+        #expect(window.sharingType == .none, "a refresh after a capture doesn't make it visible")
+    }
+
     /// With the preference off (its default), a Sukusho window is visible to every other capture
     /// tool and to screen sharing, and hidden only while Sukusho's own screencapture runs (Fable #9).
     @MainActor

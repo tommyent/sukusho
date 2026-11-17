@@ -160,7 +160,7 @@ final class RecordingAreaSelectionPresenter {
             content: content,
             includesAppWindows: PreviewWindowCaptureExclusion.includesAppWindowsInCaptures,
             cleanDesktop: false,
-            overlayWindowIDs: overlays
+            overlayWindowIDs: overlays.union(PreviewWindowCaptureExclusion.shared.privateWindowIDs)
         )
         for panel in panels {
             guard let view = panel.contentView as? RecordingAreaSelectionView, let screen = panel.screen,

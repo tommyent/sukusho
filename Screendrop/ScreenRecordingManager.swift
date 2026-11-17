@@ -859,7 +859,7 @@ final class ScreenRecordingManager {
         let displayID: CGDirectDisplayID?
         let tracksDynamicGeometry: Bool
         let includesAppWindows = PreviewWindowCaptureExclusion.includesAppWindowsInCaptures
-        let overlayWindowIDs = Set([CameraRecordingManager.shared.previewWindowID,
+        let overlayWindowIDs = PreviewWindowCaptureExclusion.shared.privateWindowIDs.union([CameraRecordingManager.shared.previewWindowID,
                                     RecordingInkPresenter.shared.windowID].compactMap { $0 })
 
         switch source.kind {
