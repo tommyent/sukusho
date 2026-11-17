@@ -75,7 +75,8 @@ final class ShakeToUpload {
     }
 
     /// The files being optimized on the shelf, while it holds them.
-    private(set) var holding: ShelfOptimization?
+    var holding: ShelfOptimization? { stage.holding }
+    @ObservationIgnored private let stage = ShelfStage()
 
     /// The tile a drag is over, for its highlight.
     private(set) var targeted: Tile?
@@ -327,7 +328,7 @@ final class ShakeToUpload {
         showsShelf = false
         targeted = nil
         let model = ShelfOptimization(files: files, format: format, optimizer: .shared, effort: OptimizePreferences.effort) { $0.target }
-        holding = model
+        stage.show(model)
         let offersCloud = offersCloud
         let offersGallery = offersCloud
             && ShakeShelfFiles.canShareGallery(files, workerSupportsGalleries: CloudLibraryModel.shared.supportsGalleries)
@@ -361,11 +362,14 @@ final class ShakeToUpload {
         }
         // Every other choice reads whole files: to see that each is still the one its result was made from,
         // and to save. That happens off the main actor, with the list still up and its controls off.
+        // By the time it is done the shelf may have been put away and opened again for other files. This
+        // choice then finishes with its own list's results and leaves the shelf alone: it dismisses,
+        // clears or changes the shelf only while its list is still the one on show (ShelfStage.finish).
         Task {
             if case .save(let replacing) = finish {
                 // Each new file beside its original, as "name optimized.png" or "name.webp", or with
                 // `replacing` in its place, with the original in the Trash (ShelfFileSave).
-                let outcomes = await holding.finishing { rows in
+                let done = await stage.finish(holding) { rows in
                     await Task.detached {
                         rows.compactMap { row -> ShelfFileSave.Outcome? in
                             guard let result = row.result, result.outcome == .optimized || result.outcome == .converted else { return nil }
@@ -373,22 +377,29 @@ final class ShakeToUpload {
                         }
                     }.value
                 }
-                guard let outcomes else { return }
-                report(outcomes, replacing: replacing)
+                guard let done else { return }
+                report(done.value, replacing: replacing)
                 holding.discard()
-                dismiss()
+                if done.isShowing { dismiss() }
                 return
             }
-            guard let files = await holding.finishing({ await ShelfOptimization.currentFiles(of: $0) }) else { return }
+            guard let done = await stage.finish(holding, { await ShelfOptimization.currentFiles(of: $0) }) else { return }
+            let files = done.value
             let toast = CaptureTextFeedbackPresenter.shared
             switch finish {
-            case .share, .gallery:
+            case .share, .gallery, .upload:
+                // Both go on in the shelf's panel, or put it away. With its list gone from the shelf there is
+                // nowhere to go on: the results go and the shelf stays as it is.
+                guard done.isShowing else { return holding.discard() }
                 // The results stay until the next launch: the upload reads them after the shelf is gone.
-                self.holding = nil
-                if case .gallery = finish { showOptions(files, gallery: true) } else { showOptions(files, gallery: false) }
-            case .upload:
-                self.holding = nil
-                start(files, gallery: false, options: .savedDefaults)
+                stage.putAway()
+                if case .upload = finish {
+                    start(files, gallery: false, options: .savedDefaults)
+                } else if case .gallery = finish {
+                    showOptions(files, gallery: true)
+                } else {
+                    showOptions(files, gallery: false)
+                }
             case .copy:
                 do {
                     try VideoFileActions.copyFilesToClipboard(from: files)
@@ -398,7 +409,7 @@ final class ShakeToUpload {
                     toast.showDone("Couldn’t Copy", detail: error.localizedDescription, symbol: "exclamationmark.triangle", displayID: Self.display)
                 }
                 holding.discard()
-                dismiss()
+                if done.isShowing { dismiss() }
             case .save, .done:
                 break
             }
@@ -464,8 +475,7 @@ final class ShakeToUpload {
 
     func dismiss() {
         stopWatchingDrag()
-        holding?.stop()
-        holding = nil
+        stage.putAway()
         panel?.orderOut(nil)
         panel = nil
         showsShelf = false

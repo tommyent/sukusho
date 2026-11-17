@@ -26,6 +26,69 @@ import UniformTypeIdentifiers
         try #require(!model.isWorking)
     }
 
+    private func model(_ files: [URL], _ format: ShelfOptimization.Format, in folder: URL) -> ShelfOptimization {
+        let tools = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appending(path: "Vendor/optimizers")
+        return ShelfOptimization(files: files, format: format, optimizer: ImageOptimizer(toolsDirectory: tools, outputDirectory: folder.appending(path: "out")),
+                                 effort: .fast) { $0 == .same ? .lossless : $0 == .webP ? .webP(quality: nil) : .jpeg(quality: 80) }
+    }
+
+    /// Sol, second round: Save for list A is done only after A was put away and the shelf opened again with
+    /// list B. A finishes with its own results and is told it is no longer on show; B is not touched.
+    @Test func aChoiceDoneAfterTheShelfMovedOnLeavesTheNewListAlone() async throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "SukushoShelfStage-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let filesA = [folder.appending(path: "a1.png"), folder.appending(path: "a2.png")]
+        let filesB = [folder.appending(path: "b1.png")]
+        try picture(filesA[0], shade: 0.9)
+        try picture(filesA[1], shade: 0.3)
+        try picture(filesB[0], shade: 0.6)
+        let stage = ShelfStage()
+        let a = model(filesA, .webP, in: folder)
+        stage.show(a)
+        try await settled(a)
+        let resultsA = try a.rows.map { try #require($0.result?.url) }
+
+        // A's Save, held open as a slow save is.
+        let (started, didStart) = AsyncStream<Void>.makeStream()
+        let (release, doRelease) = AsyncStream<Void>.makeStream()
+        let save = Task {
+            await stage.finish(a) { rows -> [Bool] in
+                didStart.yield()
+                for await _ in release { break }
+                return rows.map { $0.result.map { FileManager.default.fileExists(atPath: $0.url.path) } ?? false }
+            }
+        }
+        for await _ in started { break }
+
+        // The shelf is put away from outside (the setting switched off, say), then opens with other files.
+        stage.putAway()
+        #expect(stage.holding == nil)
+        #expect(resultsA.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })   // A's results are kept for its Save
+        let b = model(filesB, .webP, in: folder)
+        stage.show(b)
+        try await settled(b)
+        let resultB = try #require(b.rows.first?.result?.url)
+
+        doRelease.yield()
+        let done = try #require(await save.value)
+        // A's Save had its files to the end, and is told the shelf is no longer its own.
+        #expect(done.value == [true, true])
+        #expect(!done.isShowing)
+        // So the presenter doesn't dismiss: B is still on show, with its result.
+        #expect(stage.holding === b)
+        #expect(b.rows.first?.result?.url == resultB)
+        // A cleans up its own results and nothing of B's.
+        a.discard()
+        #expect(resultsA.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
+        #expect(FileManager.default.fileExists(atPath: resultB.path))
+
+        // A choice on the list that is on show is told so.
+        let onShow = try #require(await stage.finish(b) { $0.count })
+        #expect(onShow.value == 1 && onShow.isShowing)
+        b.discard()
+    }
+
     /// Sol OS3-2: Save is still reading the results when another format is chosen.
     @Test func aChoiceBeingCarriedOutKeepsItsResults() async throws {
         let folder = FileManager.default.temporaryDirectory.appending(path: "SukushoShelfModel-\(UUID().uuidString)")

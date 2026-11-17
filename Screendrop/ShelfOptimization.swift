@@ -11,6 +11,35 @@
 import Foundation
 import Observation
 
+/// Which list the shelf is showing, and the rule for a choice that is done only after the shelf has moved
+/// on: put away, or opened again for other files. Such a choice still finishes with its own list's
+/// results, but it may dismiss the shelf, clear it or change what it shows only if its list is still the
+/// one on show. `finish` says whether it is.
+@MainActor
+@Observable
+final class ShelfStage {
+    private(set) var holding: ShelfOptimization?
+
+    func show(_ model: ShelfOptimization) {
+        holding = model
+    }
+
+    /// The shelf is put away or goes on to something else. The list it showed stops, and keeps its
+    /// results: a choice may still be working with them.
+    func putAway() {
+        holding?.stop()
+        holding = nil
+    }
+
+    /// Carries out a choice on `model` (`ShelfOptimization.finishing`). Returns what `work` gave and
+    /// whether `model` is still the list on show now that it is done; nil while an earlier choice on it
+    /// is still going.
+    func finish<Value>(_ model: ShelfOptimization, _ work: ([ShelfOptimization.Row]) async -> Value) async -> (value: Value, isShowing: Bool)? {
+        guard let value = await model.finishing(work) else { return nil }
+        return (value, holding === model)
+    }
+}
+
 @MainActor
 @Observable
 final class ShelfOptimization {
