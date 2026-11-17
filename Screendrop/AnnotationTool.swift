@@ -141,6 +141,12 @@ enum AnnotationTool: String, CaseIterable, Identifiable, Codable {
         [.rectangle, .filledRectangle, .ellipse, .line, .arrow].contains(self)
     }
 
+    /// The heading over the inspector's tool options: the tool being drawn with or the one
+    /// annotation selected, or how many are selected.
+    static func inspectorHeading(for tool: AnnotationTool?, selectionCount: Int) -> String {
+        selectionCount > 1 ? "\(selectionCount) Annotations" : (tool ?? .select).title
+    }
+
     var createsAnnotation: Bool {
         self != .select
     }

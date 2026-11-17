@@ -24,21 +24,36 @@ struct AnnotationEditorInspector: View {
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 0) {
+                // One fixed slot for the tool's options, under its name, at
+                // the same height for every tool so nothing below it moves.
+                InspectorSection(AnnotationTool.inspectorHeading(
+                    for: model.inspectedTool,
+                    selectionCount: model.selectionCount
+                )) {
+                    VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
+                        if model.hasInspectorStyleControls {
+                            styleControls
+                        } else {
+                            Text(toolOptionsHint)
+                                .font(.inspectorLabel)
+                                .foregroundStyle(InspectorControlPalette.label)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .frame(
+                        maxWidth: .infinity,
+                        minHeight: InspectorMetrics.toolOptionsHeight,
+                        alignment: .topLeading
+                    )
+                }
+
+                InspectorSectionDivider()
+
                 AnnotationStyleStrip(
                     model: model,
                     presetStore: backgroundPresetStore,
                     onEditorAction: onEditorAction
                 )
-
-                // Only when the tool or selection has something to style:
-                // colour and width live in the dock's colour pill.
-                if model.hasInspectorStyleControls {
-                    InspectorSection(accessibilityLabel: "Style") {
-                        styleControls
-                    }
-
-                    InspectorSectionDivider()
-                }
 
                 InspectorSection(
                     "Background",
@@ -312,15 +327,16 @@ struct AnnotationEditorInspector: View {
         }
     }
 
+    /// What the slot says when the tool has no options of its own.
+    private var toolOptionsHint: String {
+        if model.inspectedTool == nil { return "Pick a tool, or select an annotation to change it." }
+        if model.isColorStyleAvailable { return "Color and width are in the toolbar." }
+        return "This tool has no options."
+    }
+
     @ViewBuilder
     private var styleControls: some View {
         if model.hasInspectorStyleControls {
-            if model.selectionCount > 1 {
-                Text("\(model.selectionCount) annotations selected")
-                    .font(.inspectorLabel)
-                    .foregroundStyle(InspectorControlPalette.label)
-            }
-
             if model.isTextStyleAvailable {
                 AnnotationTextStyleControls(model: model)
             } else {

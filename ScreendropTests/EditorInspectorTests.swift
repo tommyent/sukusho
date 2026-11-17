@@ -53,6 +53,14 @@ struct EditorInspectorTests {
         #expect(settings.alignmentAvailability == .available, "scene blur needs a canvas too")
     }
 
+    /// The tool options slot is headed by the tool, the one annotation selected, or the count.
+    @Test static func toolOptionsHeading() {
+        #expect(AnnotationTool.inspectorHeading(for: .magnifier, selectionCount: 0) == "Magnifier")
+        #expect(AnnotationTool.inspectorHeading(for: .text, selectionCount: 1) == "Text")
+        #expect(AnnotationTool.inspectorHeading(for: .arrow, selectionCount: 3) == "3 Annotations")
+        #expect(AnnotationTool.inspectorHeading(for: nil, selectionCount: 0) == "Select")
+    }
+
     /// A capture saved with a camera tilt opens with the switch on.
     @Test static func aSavedTiltOpensWithTheSwitchOn() {
         var settings = AnnotationBackgroundSettings()
