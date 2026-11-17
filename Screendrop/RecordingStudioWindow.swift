@@ -3738,6 +3738,9 @@ private struct StudioInspector: View {
                     format: .percent()
                 )
             }
+            // Without a background the video fills the canvas, as a screenshot with none does.
+            .disabled(model.style.background == .none)
+            .opacity(model.style.background == .none ? 0.4 : 1)
 
             InspectorSlider(
                 "Shadow",

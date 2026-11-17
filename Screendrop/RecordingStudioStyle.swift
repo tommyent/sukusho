@@ -347,10 +347,14 @@ struct StoredRecordingStudioStyle: Codable, Equatable {
 struct RecordingStudioStyle: Equatable {
     static let defaultCursorScale: CGFloat = 1.7
 
-    static var defaultBackground: AnnotationBackgroundStyle {
-        guard let gradient = AnnotationBackgroundGradient.presets.last else { return .none }
-        return .gradient(gradient)
-    }
+    /// None, as a screenshot starts (owner, 2026-11-17: no gradient behind a new recording). The last background a user
+    /// picked in Studio still follows them to the next recording (RecordingStudioDefaults).
+    static var defaultBackground: AnnotationBackgroundStyle { .none }
+
+    /// Padding and corners frame the video on its background, so with none they don't apply, as the image editor greys
+    /// them out: the recording fills its canvas. Kept as set, for when a background is picked again.
+    var framePadding: CGFloat { background == .none ? 0 : padding }
+    var frameCornerRadius: CGFloat { background == .none ? 0 : cornerRadius }
 
     var background: AnnotationBackgroundStyle = RecordingStudioStyle.defaultBackground
     /// Card inset as a fraction of the canvas's smaller dimension.
@@ -434,7 +438,7 @@ nonisolated struct RecordingStudioLayout: Sendable {
             width: sourceSize.width * crop.width,
             height: sourceSize.height * crop.height
         )
-        let padding = min(max(style.padding, 0), 0.475)
+        let padding = min(max(style.framePadding, 0), 0.475)
         let inset = min(visibleSize.width, visibleSize.height) * padding / (1 - 2 * padding)
         return CGSize(width: visibleSize.width + 2 * inset, height: visibleSize.height + 2 * inset)
     }
@@ -475,8 +479,8 @@ nonisolated struct RecordingStudioLayout: Sendable {
     ) -> RecordingStudioLayout {
         let minDimension = min(canvasSize.width, canvasSize.height)
         let inset = usesUniformPadding
-            ? min(max(style.padding, 0), 0.475) * minDimension
-            : (style.padding * minDimension).rounded()
+            ? min(max(style.framePadding, 0), 0.475) * minDimension
+            : (style.framePadding * minDimension).rounded()
         // Fixed presets retain their existing scale-based layout. Original's
         // canvas already includes the border, so inset each edge equally.
         let cardScale = max(0.05, 1 - 2 * inset / minDimension)
@@ -520,7 +524,7 @@ nonisolated struct RecordingStudioLayout: Sendable {
             width: cardSize.width,
             height: cardSize.height
         )
-        let cardCornerRadius = style.cornerRadius * minDimension
+        let cardCornerRadius = style.frameCornerRadius * minDimension
 
         var bubbleRect = CGRect.zero
         var bubbleCornerRadius: CGFloat = 0

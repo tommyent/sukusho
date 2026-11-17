@@ -77,7 +77,7 @@ struct StudioStylePreview: View {
             let size = proxy.size
             let short = min(size.width, size.height)
             // The canvas pads the video whether or not there is a fill.
-            let inset = style.padding * short
+            let inset = style.framePadding * short
             let available = CGSize(
                 width: max(1, size.width - inset * 2),
                 height: max(1, size.height - inset * 2)
@@ -100,7 +100,7 @@ struct StudioStylePreview: View {
                     }
                 }
                 .frame(width: card.width, height: card.height)
-                .clipShape(RoundedRectangle(cornerRadius: style.cornerRadius * short, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: style.frameCornerRadius * short, style: .continuous))
                 .shadow(
                     color: .black.opacity(style.background == .none ? 0 : 0.5 * style.shadow),
                     radius: short * 0.05 * style.shadow,
