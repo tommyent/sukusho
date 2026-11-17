@@ -337,21 +337,13 @@ final class LibraryCollectionLayout: NSCollectionViewFlowLayout {
         minimumInteritemSpacing = 16
         minimumLineSpacing = displayLayout == .grid ? 16 : 6
         if displayLayout == .grid {
-            // Finder-style: cells keep one size and a wider window fits more
-            // columns. The gaps share the leftover width up to 32 pt; past
-            // that it goes to the side margins, so the block sits centred
-            // instead of spreading 80 pt gaps between 18 pt rows (design pass
-            // choice 3). A part-filled last row keeps to the same columns.
-            let cellWidth = min(cardWidth, width - 32)
-            itemSize = CGSize(width: cellWidth, height: floor(cellWidth * 0.625) + 62)
-            let columns = max(1, floor((width - 16) / (cellWidth + 16)))
-            let space = min(32, max(16, floor((width - columns * cellWidth) / (columns + 1))))
-            let rowWidth = columns * cellWidth + (columns - 1) * space
-            minimumInteritemSpacing = space
-            sectionInset.left = max(16, floor((width - rowWidth) / 2))
-            // Rounding goes to the right margin, less half a point of slack so
-            // the last column can't wrap to the next row.
-            sectionInset.right = max(16, width - rowWidth - sectionInset.left - 0.5)
+            // LibraryGridMetrics: one card width, gaps up to 32 pt, the rest to centred margins.
+            // A part-filled last row keeps to the same columns.
+            let metrics = LibraryGridMetrics(width: width, cardWidth: cardWidth)
+            itemSize = CGSize(width: metrics.cellWidth, height: floor(metrics.cellWidth * 0.625) + 62)
+            minimumInteritemSpacing = metrics.spacing
+            sectionInset.left = metrics.leftInset
+            sectionInset.right = metrics.rightInset
         } else {
             itemSize = CGSize(width: width - 32, height: 76)
         }

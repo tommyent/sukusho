@@ -308,66 +308,158 @@ struct ClipboardHistoryStoreTests {
         #expect(try await store.totalBytes() == 4)
     }
 
-    /// An optimiser such as Clop puts a smaller version of the image back on the clipboard a moment later
+    /// A screenshot-like PNG: a light page with dark lines of "text" whose lengths come from `seed`, and a
+    /// colored band. `reencoded` nudges every channel by up to 6, as an optimiser's palette does: the same picture.
+    static func picture(_ seed: Int, width: Int = 400, height: Int = 240, reencoded: Bool = false) -> Data {
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        bytes.withUnsafeMutableBytes { buffer in
+            let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8,
+                                    bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            context.setFillColor(CGColor(red: 0.97, green: 0.97, blue: 0.96, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+            context.setFillColor(CGColor(red: 0.2, green: 0.5, blue: 0.9, alpha: 1))
+            context.fill(CGRect(x: 0, y: height - 24, width: width, height: 24))
+            var state = UInt32(truncatingIfNeeded: seed &* 2_654_435_761 &+ 1)
+            context.setFillColor(CGColor(red: 0.12, green: 0.12, blue: 0.14, alpha: 1))
+            for line in 0..<10 {
+                state = state &* 1_664_525 &+ 1_013_904_223
+                let length = 40 + Int(state >> 8) % (width - 80)
+                context.fill(CGRect(x: 16, y: 12 + line * 18, width: length, height: 8))
+            }
+        }
+        if reencoded {
+            for index in bytes.indices where index % 4 != 3 { bytes[index] = UInt8(min(255, Int(bytes[index]) / 12 * 12 + 6)) }
+        }
+        let provider = CGDataProvider(data: Data(bytes) as CFData)!
+        let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width * 4,
+                            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
+                            provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)!
+        let output = NSMutableData()
+        let destination = CGImageDestinationCreateWithData(output, "public.png" as CFString, 1, nil)!
+        CGImageDestinationAddImage(destination, image, nil)
+        CGImageDestinationFinalize(destination)
+        return output as Data
+    }
+
+    private func picture(_ seed: Int, reencoded: Bool = false, source: String? = nil) -> ClipboardCapture {
+        image(Self.picture(seed, reencoded: reencoded), width: 400, height: 240, source: source)
+    }
+
+    /// A Sukusho capture as copied: a file in the Library, referred to rather than kept again.
+    private func capture(_ seed: Int, named name: String) throws -> ClipboardCapture {
+        let file = directory.appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let data = Self.picture(seed)
+        try data.write(to: file)
+        var capture = image(data, width: 400, height: 240, source: "com.tommyent.Sukusho")
+        capture.image = nil
+        capture.libraryPath = file.path
+        return capture
+    }
+
+    /// An optimiser such as Clop puts a re-encoded version of the image back on the clipboard a moment later
     /// (2026-11-16 on the owner's Air: two entries per screenshot). History keeps one entry with the new bytes.
     @Test func anOptimisersRewriteReplacesTheCopyBefore() async throws {
         let store = try store()
-        let file = directory.appendingPathComponent("capture.png")
-        var original = image(Data(repeating: 1, count: 79_041), width: 359, height: 815, source: "com.tommyent.Sukusho")
-        original.image = nil
-        original.libraryPath = file.path
+        let original = try capture(1, named: "capture.png")
         guard case .inserted(let id) = try await store.record(original, at: start) else { Issue.record("not inserted"); return }
-        let rewrite = image(Data(repeating: 2, count: 22_523), width: 359, height: 815, source: "com.apple.Terminal")
+        let rewrite = picture(1, reencoded: true, source: "com.apple.Terminal")
         #expect(try await store.record(rewrite, at: start + 0.5) == .replaced(id))
         let entries = try await store.entries()
         #expect(entries.count == 1)
         let entry = try #require(entries.first)
-        #expect(entry.byteSize == 22_523)
-        #expect(entry.libraryPath == file.path)
+        #expect(entry.byteSize == rewrite.byteSize)
+        #expect(entry.libraryPath == original.libraryPath)
         #expect(entry.sourceBundleID == "com.tommyent.Sukusho")
         #expect(entry.timesCopied == 1)
         #expect(entry.firstCopiedAt == start)
         let url = try #require(entry.imageURL)
         #expect(try Data(contentsOf: url) == rewrite.image)
-        #expect(try await store.totalBytes() == 22_523)
+    }
+
+    /// Astra's counterexample (2026-11-16): two different pictures of one size, copied 1.5 s apart, became one entry.
+    @Test func twoDifferentPicturesOfOneSizeAreBothKept() async throws {
+        let store = try store()
+        try await store.record(picture(1), at: start)
+        guard case .inserted = try await store.record(picture(2), at: start + 1.5) else { Issue.record("merged"); return }
+        let entries = try await store.entries()
+        #expect(entries.count == 2)
+        let kept = Set(try entries.compactMap(\.imageURL).map { try Data(contentsOf: $0) })
+        #expect(kept == [Self.picture(1), Self.picture(2)])
+    }
+
+    /// Astra's second counterexample: two Sukusho captures 3 s apart became one row linked to the first file, so
+    /// Copy gave back the wrong screenshot. Each capture keeps its own row, linked to its own file.
+    @Test func twoLibraryCapturesAreBothKept() async throws {
+        let store = try store()
+        let first = try capture(1, named: "first.png"), second = try capture(2, named: "second.png")
+        try await store.record(first, at: start)
+        guard case .inserted = try await store.record(second, at: start + 3) else { Issue.record("merged"); return }
+        let entries = try await store.entries()
+        #expect(entries.count == 2)
+        for entry in entries {
+            let file = try #require(entry.libraryPath)
+            #expect(ClipboardPasteboardReader.digest(try Data(contentsOf: URL(fileURLWithPath: file))) == entry.hash)
+        }
+    }
+
+    @Test func copyingAnOlderPictureAfterAFreshOneKeepsBoth() async throws {
+        let store = try store()
+        guard case .inserted(let older) = try await store.record(picture(1), at: start) else { return }
+        guard case .inserted(let fresh) = try await store.record(picture(2), at: start + 60) else { return }
+        #expect(try await store.record(picture(1), at: start + 61) == .bumped(older))
+        let entries = try await store.entries()
+        #expect(Set(entries.map(\.id)) == [older, fresh])
+        #expect(entries.first { $0.id == older }?.timesCopied == 2)
+    }
+
+    @Test func aRapidRunOfPicturesKeepsEveryOne() async throws {
+        let store = try store()
+        for seed in 1...6 { try await store.record(picture(seed), at: start + Double(seed) * 0.8) }
+        #expect(try await store.entries().count == 6)
     }
 
     @Test func aNewCopyIsNotARewrite() async throws {
-        // A different size, a copy after the window, a copy in between, a pinned or a repeated entry: all kept.
+        // The same picture re-encoded, but copied after the window, after a copy in between, or onto a pinned or
+        // repeated entry: all kept apart.
         let cases: [(String, (ClipboardHistoryStore) async throws -> Void)] = [
-            ("size", { try await $0.record(self.image(500, width: 10, height: 10), at: self.start + 1) }),
-            ("window", { try await $0.record(self.image(500, width: 359, height: 815), at: self.start + 11) }),
+            ("window", { try await $0.record(self.picture(1, reencoded: true), at: self.start + 11) }),
             ("between", { store in
                 try await store.record(self.text("in between"), at: self.start + 1)
-                try await store.record(self.image(500, width: 359, height: 815), at: self.start + 2)
+                try await store.record(self.picture(1, reencoded: true), at: self.start + 2)
+            }),
+            ("repeated", { store in
+                try await store.record(self.picture(1), at: self.start + 1)
+                try await store.record(self.picture(1, reencoded: true), at: self.start + 2)
             }),
         ]
         for (name, then) in cases {
             let store = try ClipboardHistoryStore(
                 directory: directory.appendingPathComponent(name, isDirectory: true), deviceID: "test-mac")
-            try await store.record(image(500, width: 359, height: 815), at: start)
+            try await store.record(picture(1), at: start)
             try await then(store)
             #expect(try await store.entries().filter { $0.kind == .image }.count == 2, "\(name)")
         }
         let pinnedStore = try ClipboardHistoryStore(
             directory: directory.appendingPathComponent("pinned", isDirectory: true), deviceID: "test-mac")
-        guard case .inserted(let pinned) = try await pinnedStore.record(image(500, width: 359, height: 815), at: start) else { return }
+        guard case .inserted(let pinned) = try await pinnedStore.record(picture(1), at: start) else { return }
         try await pinnedStore.setPinned(pinned, true)
-        try await pinnedStore.record(image(500, width: 359, height: 815), at: start + 1)
+        try await pinnedStore.record(picture(1, reencoded: true), at: start + 1)
         #expect(try await pinnedStore.entries().count == 2)
     }
 
     @Test func copyingAnOptimisedImageAgainKeepsOneEntry() async throws {
         let store = try store()
-        let original = Data(repeating: 1, count: 900), optimised = Data(repeating: 2, count: 300)
-        guard case .inserted(let id) = try await store.record(image(original, width: 40, height: 40), at: start) else { return }
-        #expect(try await store.record(image(optimised, width: 40, height: 40), at: start + 1) == .replaced(id))
+        guard case .inserted(let id) = try await store.record(picture(3), at: start) else { return }
+        #expect(try await store.record(picture(3, reencoded: true), at: start + 1) == .replaced(id))
         // Copied again later: the original arrives as a new entry, then its rewrite matches the kept one.
-        guard case .inserted(let fresh) = try await store.record(image(original, width: 40, height: 40), at: start + 60) else {
+        guard case .inserted(let fresh) = try await store.record(picture(3), at: start + 60) else {
             Issue.record("not inserted"); return
         }
         let freshURL = try #require(try await store.entries().first { $0.id == fresh }?.imageURL)
-        #expect(try await store.record(image(optimised, width: 40, height: 40), at: start + 61) == .bumped(id))
+        #expect(try await store.record(picture(3, reencoded: true), at: start + 61) == .bumped(id))
         let entries = try await store.entries()
         #expect(entries.map(\.id) == [id])
         #expect(entries.first?.timesCopied == 2)
@@ -385,6 +477,21 @@ struct ClipboardHistoryStoreTests {
         #expect(entry.keywords == ["Xcode", "AgentAccessServer"])
         #expect(entry.category == "Error")
         #expect(entry.isDescribed)
+    }
+
+    /// A description finished after an optimiser's rewrite took the entry's place isn't written onto it.
+    @Test func aDescriptionOfStaleContentIsNotWritten() async throws {
+        let store = try store()
+        guard case .inserted(let id) = try await store.record(picture(7), at: start) else { return }
+        let asked = try #require(try await store.entries().first).hash
+        #expect(try await store.record(picture(7, reencoded: true), at: start + 0.5) == .replaced(id))
+        try await store.setReadText(id, "stale", forHash: asked)
+        try await store.setDescription(id, title: "Stale", keywords: [], category: nil, forHash: asked)
+        var entry = try #require(try await store.entries().first)
+        #expect(entry.readText == nil && entry.modelTitle == nil && !entry.isDescribed)
+        try await store.setReadText(id, "current", forHash: entry.hash)
+        entry = try #require(try await store.entries().first)
+        #expect(entry.readText == "current")
     }
 
     @Test func aDeclinedImageIsNotAskedAgain() async throws {
@@ -638,5 +745,49 @@ struct ClipboardWriterTests {
             let gone = URL(fileURLWithPath: "/tmp/SukushoClipboardTest-\(UUID().uuidString).png")
             #expect(!ClipboardWriter.write(entry(.image, nil, image: gone), richText: [:], plain: false, to: pasteboard))
         }
+    }
+}
+
+@Suite
+struct ClipboardImageMatchTests {
+    private func cgImage(_ data: Data) throws -> CGImage { try #require(ClipboardImageMatch.image(data)) }
+
+    @Test func aReencodeIsTheSamePicture() throws {
+        let original = try cgImage(ClipboardHistoryStoreTests.picture(5))
+        #expect(ClipboardImageMatch.isSamePicture(original, try cgImage(ClipboardHistoryStoreTests.picture(5, reencoded: true))))
+        #expect(ClipboardImageMatch.isSamePicture(original, original))
+    }
+
+    @Test func otherContentIsADifferentPicture() throws {
+        let original = try cgImage(ClipboardHistoryStoreTests.picture(5))
+        #expect(!ClipboardImageMatch.isSamePicture(original, try cgImage(ClipboardHistoryStoreTests.picture(6))))
+        #expect(!ClipboardImageMatch.isSamePicture(original, try cgImage(ClipboardHistoryStoreTests.picture(5, width: 401))))
+        #expect(!ClipboardImageMatch.isSamePicture(Data("not an image".utf8), URL(fileURLWithPath: "/nonexistent.png")))
+    }
+}
+
+/// The captures grid's layout, which the clipboard grid now shares (Astra B2: a strip was left on the right).
+@Suite
+struct LibraryGridMetricsTests {
+    @Test func spareWidthGoesToGapsThenEvenMargins() {
+        for width in stride(from: 220.0, through: 1600, by: 37) {
+            for card in [140.0, 192, 220, 320] {
+                let grid = LibraryGridMetrics(width: width, cardWidth: card)
+                let row = CGFloat(grid.columns) * grid.cellWidth + CGFloat(grid.columns - 1) * grid.spacing
+                #expect(grid.leftInset + row + grid.rightInset <= width, "\(width) \(card)")
+                #expect(grid.spacing >= 16 && grid.spacing <= 32)
+                // No room for another card is left over, and the margins differ by at most a point.
+                #expect(width - row - grid.leftInset - grid.rightInset < grid.cellWidth + grid.spacing)
+                #expect(abs(grid.leftInset - grid.rightInset) <= 1, "\(width) \(card)")
+            }
+        }
+    }
+
+    @Test func astrasCaseFitsTwoCardsCentred() {
+        // About 600 pt of grid at a medium card size: two cards, the leftover split evenly, not a strip on the right.
+        let grid = LibraryGridMetrics(width: 600, cardWidth: 192)
+        #expect(grid.columns == 2)
+        #expect(grid.spacing == 32)
+        #expect(grid.leftInset == 92)
     }
 }

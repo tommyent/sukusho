@@ -29,6 +29,8 @@ nonisolated struct ClipboardEntry: Sendable, Equatable, Identifiable {
     var category: String? = nil
     /// The model answered or declined, so it isn't asked again.
     var isDescribed = false
+    /// SHA-256 of the content; it changes when an optimiser's rewrite takes the entry's place.
+    var hash = ""
 }
 
 /// Clipboard history on disk: one SQLite database for entries, and images as
@@ -40,8 +42,8 @@ actor ClipboardHistoryStore {
         case inserted(String), bumped(String), replaced(String)
     }
 
-    /// How long after an image copy a same-size image counts as its rewrite rather than a new copy. Image
-    /// optimisers such as Clop put a smaller version back on the clipboard: 0.5 s and 1.1 s after Sukusho's
+    /// How long after an image copy a re-encode of the same picture counts as its rewrite rather than a new copy.
+    /// Image optimisers such as Clop put a smaller version back on the clipboard: 0.5 s and 1.1 s after Sukusho's
     /// copies on the owner's Air (2026-11-16), where history kept both. The owner's rule: keep only the rewrite.
     static let rewriteWindow: TimeInterval = 10
 
@@ -240,7 +242,7 @@ actor ClipboardHistoryStore {
         try query("""
             SELECT id, kind, text, title, blob, library_path, byte_size, pixel_width, pixel_height, source_bundle_id,
                 is_remote, first_copied_at, last_copied_at, times_copied, pinned_at,
-                read_text, model_title, model_keywords, model_category, described
+                read_text, model_title, model_keywords, model_category, described, hash
             FROM entries ORDER BY last_copied_at DESC LIMIT ? OFFSET ?
             """, [limit, offset]) { row in
             ClipboardEntry(
@@ -263,22 +265,27 @@ actor ClipboardHistoryStore {
                 modelTitle: row.text(16),
                 keywords: (row.text(17) ?? "").split(separator: "\n").map(String.init),
                 category: row.text(18),
-                isDescribed: row.int(19) != 0
+                isDescribed: row.int(19) != 0,
+                hash: row.text(20) ?? ""
             )
         }
     }
 
     /// The text read in an image; empty when it has none, so it isn't read again.
-    func setReadText(_ id: String, _ text: String) throws {
-        try run("UPDATE entries SET read_text = ?, change_seq = ? WHERE id = ?", [text, try nextChange(), id])
+    /// With `hash`, nothing is written when the entry's content changed while its text was read: the answer
+    /// belongs to the image it was asked about (Astra, 2026-11-16).
+    func setReadText(_ id: String, _ text: String, forHash hash: String? = nil) throws {
+        try run("UPDATE entries SET read_text = ?, change_seq = ? WHERE id = ? AND (? IS NULL OR hash = ?)",
+                [text, try nextChange(), id, hash, hash])
     }
 
-    /// The model's answer for an image, or its refusal (no title), after which it isn't asked again.
-    func setDescription(_ id: String, title: String?, keywords: [String], category: String?) throws {
+    /// The model's answer for an image, or its refusal (no title), after which it isn't asked again; with `hash`,
+    /// only while the entry still holds that content.
+    func setDescription(_ id: String, title: String?, keywords: [String], category: String?, forHash hash: String? = nil) throws {
         try run("""
             UPDATE entries SET model_title = ?, model_keywords = ?, model_category = ?, described = 1, change_seq = ?
-            WHERE id = ?
-            """, [title, keywords.isEmpty ? nil : keywords.joined(separator: "\n"), category, try nextChange(), id])
+            WHERE id = ? AND (? IS NULL OR hash = ?)
+            """, [title, keywords.isEmpty ? nil : keywords.joined(separator: "\n"), category, try nextChange(), id, hash, hash])
     }
 
     func richText(for id: String) throws -> [String: Data] {
@@ -293,20 +300,25 @@ actor ClipboardHistoryStore {
 
     // MARK: - SQLite
 
-    /// The entry `capture` rewrites, if any: the latest copy, an unpinned image copied once with the same
-    /// pixel size, under `rewriteWindow` ago. Any other copy in between makes it a new copy.
+    /// The entry `capture` rewrites, if any: the latest copy, an unpinned image copied once under
+    /// `rewriteWindow` ago, with nothing copied in between, that shows the same picture
+    /// (`ClipboardImageMatch`). Size and timing alone merged two different pictures copied 1.5 s apart, and two
+    /// Sukusho captures 3 s apart (Astra, 2026-11-16), so when in doubt both are kept. A copy of a Library
+    /// capture is never a rewrite: an optimiser's version has no file in History.
     private func rewrittenEntry(by capture: ClipboardCapture, at date: Date) throws -> (id: String, blob: String?)? {
-        guard capture.kind == .image else { return nil }
+        guard capture.kind == .image, capture.libraryPath == nil, let incoming = capture.image else { return nil }
         let latest = try query("""
-            SELECT id, kind, pixel_width, pixel_height, times_copied, pinned_at IS NULL, last_copied_at, blob
+            SELECT id, kind, pixel_width, pixel_height, times_copied, pinned_at IS NULL, last_copied_at, blob, library_path
             FROM entries WHERE kind != 'snippet' ORDER BY last_copied_at DESC LIMIT 1
             """, []) { row in
             (id: row.text(0) ?? "", kind: row.text(1), width: row.int(2), height: row.int(3), times: row.int(4),
-             unpinned: row.int(5) != 0, copiedAt: row.double(6), blob: row.text(7))
+             unpinned: row.int(5) != 0, copiedAt: row.double(6), blob: row.text(7), libraryPath: row.text(8))
         }.first
         guard let latest, latest.kind == ClipboardEntryKind.image.rawValue, latest.unpinned, latest.times == 1,
               latest.width == capture.pixelWidth, latest.height == capture.pixelHeight,
-              (0..<Self.rewriteWindow).contains(date.timeIntervalSince1970 - latest.copiedAt) else { return nil }
+              (0..<Self.rewriteWindow).contains(date.timeIntervalSince1970 - latest.copiedAt),
+              let picture = latest.blob.map({ blobs.appendingPathComponent($0) }) ?? latest.libraryPath.map(URL.init(fileURLWithPath:)),
+              ClipboardImageMatch.isSamePicture(incoming, picture) else { return nil }
         return (latest.id, latest.blob)
     }
 

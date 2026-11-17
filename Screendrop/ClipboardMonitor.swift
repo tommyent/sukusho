@@ -164,7 +164,10 @@ final class ClipboardMonitor {
         let retention = ScreendropPreferences.clipboardRetention
         let maxBytes = ScreendropPreferences.clipboardMaxStorageBytes
         Task {
-            do { try await store.sweep(retention: retention, maxBytes: maxBytes) } catch {
+            do {
+                // Quick Look's copies of what the sweep dropped go too (Astra, 2026-11-16).
+                if try await store.sweep(retention: retention, maxBytes: maxBytes) > 0 { ClipboardHistoryModel.clearQuickLookFiles() }
+            } catch {
                 logger.error("Clipboard history cleanup failed: \(String(describing: error), privacy: .public)")
             }
         }
