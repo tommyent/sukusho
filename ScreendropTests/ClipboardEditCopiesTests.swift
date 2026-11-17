@@ -28,6 +28,11 @@ struct ClipboardEditCopiesTests {
         #expect(FileManager.default.fileExists(atPath: a.path))
         #expect(!FileManager.default.fileExists(atPath: b.deletingLastPathComponent().path))
 
+        // The clip's title changed while its editor is open: a second Edit gets the open copy, which stays.
+        #expect(copies.copy(of: second, named: "Renamed clip.png", entryID: "A", inUse: inUse) == a)
+        #expect(try Data(contentsOf: a) == Data("second version".utf8))
+        #expect(!FileManager.default.fileExists(atPath: a.deletingLastPathComponent().appendingPathComponent("Renamed clip.png").path))
+
         // The editor closes.
         open = []
         copies.clear(inUse: inUse)

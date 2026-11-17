@@ -12,14 +12,22 @@ import Foundation
 nonisolated struct ClipboardEditCopies {
     let folder: URL
 
-    /// A fresh copy of `image` named `name`, unless an editor has this clip's copy open: then that one, so two
-    /// editors of one clip share it. A leftover is replaced, since the clip may hold a newer version by now.
+    /// A fresh copy of `image` named `name`, unless an editor has this clip's copy open: then that one, whatever its
+    /// name, so two editors of one clip share it (Astra R5A-1: the clip's title can change while its editor is open,
+    /// and a second Edit wiped the folder under the first). A leftover is replaced, since the clip may hold a newer
+    /// version by now.
     func copy(of image: URL, named name: String, entryID: String, inUse: (URL) -> Bool) -> URL? {
         let entryFolder = folder.appendingPathComponent(entryID, isDirectory: true)
-        let copy = entryFolder.appendingPathComponent(name)
-        if inUse(entryFolder), FileManager.default.fileExists(atPath: copy.path) { return copy }
-        do {
+        if inUse(entryFolder) {
+            // Built as the editor's URL was: the listing's URLs can be spelled differently (/private/var).
+            if let open = (try? FileManager.default.contentsOfDirectory(atPath: entryFolder.path))?.first {
+                return entryFolder.appendingPathComponent(open)
+            }
+        } else {
             try? FileManager.default.removeItem(at: entryFolder)
+        }
+        let copy = entryFolder.appendingPathComponent(name)
+        do {
             try FileManager.default.createDirectory(at: entryFolder, withIntermediateDirectories: true)
             try FileManager.default.copyItem(at: image, to: copy)
             return copy
