@@ -70,6 +70,13 @@ struct LibrarySavedPage: View {
     @State private var library = CaptureLibraryModel.shared
     @State private var clipboard = ClipboardHistoryModel.shared
     @State private var gridWidth: CGFloat = 0
+    @FocusState private var gridFocused: Bool
+
+    /// The selected card, whichever kind: a clip's selection is the Clipboard page's, a capture's the captures page's.
+    private var selectedID: String? {
+        if let clip = clipboard.librarySelection { return "clip:\(clip)" }
+        return library.selection.count == 1 ? library.selection.first.map { "capture:\($0)" } : nil
+    }
 
     var body: some View {
         let cards = saved.cards
@@ -83,17 +90,43 @@ struct LibrarySavedPage: View {
             if cards.isEmpty {
                 emptyPage.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
-                    LazyVGrid(columns: Array(repeating: GridItem(.fixed(grid.cellWidth), spacing: grid.spacing), count: grid.columns),
-                              alignment: .leading, spacing: grid.lineSpacing) {
-                        ForEach(cards) { card in
-                            cardView(card, grid: grid).id(card.id)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVGrid(columns: Array(repeating: GridItem(.fixed(grid.cellWidth), spacing: grid.spacing), count: grid.columns),
+                                  alignment: .leading, spacing: grid.lineSpacing) {
+                            ForEach(cards) { card in
+                                cardView(card, grid: grid).id(card.id)
+                            }
                         }
+                        .padding(.leading, grid.leftInset).padding(.trailing, grid.rightInset)
+                        .padding(.vertical, LibraryGridMetrics.edgeMargin)
+                        // A click on any card gives the grid the keyboard, as on the Clipboard page (Astra L4).
+                        .simultaneousGesture(TapGesture().onEnded { gridFocused = true })
                     }
-                    .padding(.leading, grid.leftInset).padding(.trailing, grid.rightInset)
-                    .padding(.vertical, LibraryGridMetrics.edgeMargin)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { gridWidth = $0 }
+                    .focusable()
+                    .focusEffectDisabled()
+                    .focused($gridFocused)
+                    .onChange(of: selectedID) { _, selection in if selection != nil { gridFocused = true } }
+                    // Space: Quick Look on the selected card, as in the other grids.
+                    .onKeyPress(.space) {
+                        guard let card = cards.first(where: { $0.id == selectedID }) else { return .ignored }
+                        switch card {
+                        case .capture: library.perform(.preview)
+                        case .clip(let entry): clipboard.quickLook(entry)
+                        }
+                        return .handled
+                    }
+                    .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow]) { press in
+                        let step = press.key == .leftArrow ? -1 : press.key == .rightArrow ? 1
+                            : (press.key == .upArrow ? -1 : 1) * grid.columns
+                        guard let next = ClipboardList.move(from: selectedID, by: step, in: cards.map(\.id)),
+                              let card = cards.first(where: { $0.id == next }) else { return .ignored }
+                        select(card)
+                        withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(next) }
+                        return .handled
+                    }
                 }
-                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { gridWidth = $0 }
             }
         }
         // A filter or search that hides the selection clears it, so the inspector never shows what the page doesn't.
@@ -129,6 +162,15 @@ struct LibrarySavedPage: View {
     private func select(_ item: CaptureLibraryItem) {
         clipboard.librarySelection = nil
         library.selection = [item.id]
+    }
+
+    private func select(_ card: LibrarySavedCard) {
+        switch card {
+        case .capture(let item): select(item)
+        case .clip(let entry):
+            library.selection = []
+            clipboard.librarySelection = entry.id
+        }
     }
 
     private var filterChips: some View {
