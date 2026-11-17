@@ -15,6 +15,7 @@ import CoreGraphics
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
+import zlib
 
 nonisolated enum ImageOptimizationTarget: Sendable, Equatable {
     /// The same format and the same pixels in fewer bytes. PNG and JPEG only.
@@ -253,11 +254,20 @@ nonisolated struct ImageOptimizer: Sendable {
         }
 
         // An encoder that exits cleanly can still leave a file nothing reads, such as one cut short by a full disk.
+        let wanted: UTType? = switch target {
+        case .lossless: type
+        case .webP: .webP
+        case .jpeg: .jpeg
+        }
         guard let check = CGImageSourceCreateWithURL(made as CFURL, nil), CGImageSourceGetCount(check) > 0,
               CGImageSourceGetStatusAtIndex(check, 0) == .statusComplete,
+              let madeType = (CGImageSourceGetType(check) as String?).flatMap({ UTType($0) }), let wanted, madeType.conforms(to: wanted),
               let madeSize = Self.uprightPixelSize(check), madeSize == size else {
-            throw Failure("The optimized file didn't come out right, so the original is used.")
+            throw Self.broken
         }
+        // ImageIO forgives a damaged file: it hands back pixels anyway, zeros where the decoder gave up, and
+        // those can't be told from a transparent picture. So the file's own structure is checked first.
+        try await requireIntact(made, type: madeType, scratch: scratch)
         // The encoder's word isn't taken for it: the result is decoded and held against the source.
         try Self.verify(check, against: imageSource, target: target)
         let folder = outputDirectory.appending(path: id, directoryHint: .isDirectory)
@@ -272,6 +282,111 @@ nonisolated struct ImageOptimizer: Sendable {
             throw Failure("The optimized file couldn't be written. \(Self.reason(error))")
         }
         return output
+    }
+
+    // MARK: - Whether a result is a whole file
+
+    private static let broken = Failure("The optimized file didn't come out right, so the original is used.")
+
+    /// Throws unless the file is whole by its format's own rules, whatever a decoder makes of it.
+    private func requireIntact(_ url: URL, type: UTType, scratch: URL) async throws {
+        if type.conforms(to: .jpeg) {
+            // MozJPEG reads every coefficient back; with -strict any warning, such as data cut short, fails it.
+            do {
+                try await run("jpegtran", ["-strict", "-copy", "none", "-outfile", "/dev/null", url.path],
+                              log: scratch.appending(path: "check.txt"))
+            } catch is Failure {
+                throw Self.broken
+            }
+            return
+        }
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe),
+              type.conforms(to: .png) ? Self.pngIsIntact(data) : Self.webPIsWhole(data) else { throw Self.broken }
+    }
+
+    /// Whether a PNG's chunks are whole (lengths and checksums, IHDR first, IEND last with nothing after it)
+    /// and its image data inflates, to the end of its stream, into exactly the rows the header promises.
+    static func pngIsIntact(_ data: Data) -> Bool {
+        data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) -> Bool in
+            let count = bytes.count
+            guard count >= 8, let base = bytes.baseAddress,
+                  bytes.prefix(8).elementsEqual([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) else { return false }
+            func word(_ offset: Int) -> Int { Int(bytes.loadUnaligned(fromByteOffset: offset, as: UInt32.self).bigEndian) }
+            var stream = z_stream()
+            guard inflateInit_(&stream, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size)) == Z_OK else { return false }
+            defer { inflateEnd(&stream) }
+            var output = [UInt8](repeating: 0, count: 1 << 16)
+            var expected = -1, inflated = 0, streamEnded = false
+            var offset = 8
+            while offset + 12 <= count {
+                let length = word(offset), type = offset + 4, body = offset + 8
+                guard length <= count - offset - 12,
+                      UInt(word(body + length)) == UInt(crc32(0, (base + type).assumingMemoryBound(to: Bytef.self), uInt(length + 4))) else {
+                    return false
+                }
+                switch String(decoding: bytes[type..<body], as: UTF8.self) {
+                case "IHDR":
+                    guard offset == 8, length == 13 else { return false }
+                    let width = word(body), height = word(body + 4), depth = Int(bytes[body + 8])
+                    guard width > 0, height > 0, [1, 2, 4, 8, 16].contains(depth),
+                          let channels = [0: 1, 2: 3, 3: 1, 4: 2, 6: 4][bytes[body + 9]] else { return false }
+                    // A row is a filter byte and its pixels, packed.
+                    func rows(_ width: Int, _ height: Int) -> Int {
+                        width > 0 && height > 0 ? height * (1 + (width * channels * depth + 7) / 8) : 0
+                    }
+                    if bytes[body + 12] == 0 {
+                        expected = rows(width, height)
+                    } else {
+                        // Adam7: seven smaller images, each with rows of its own.
+                        let passes = [(0, 0, 8, 8), (4, 0, 8, 8), (0, 4, 4, 8), (2, 0, 4, 4), (0, 2, 2, 4), (1, 0, 2, 2), (0, 1, 1, 2)]
+                        expected = passes.reduce(0) { $0 + rows((width - $1.0 + $1.2 - 1) / $1.2, (height - $1.1 + $1.3 - 1) / $1.3) }
+                    }
+                case "IDAT":
+                    guard expected >= 0, !streamEnded else { return false }
+                    stream.next_in = UnsafeMutablePointer(mutating: (base + body).assumingMemoryBound(to: Bytef.self))
+                    stream.avail_in = uInt(length)
+                    repeat {
+                        let status = output.withUnsafeMutableBufferPointer { buffer -> Int32 in
+                            stream.next_out = buffer.baseAddress
+                            stream.avail_out = uInt(buffer.count)
+                            let status = inflate(&stream, Z_NO_FLUSH)
+                            inflated += buffer.count - Int(stream.avail_out)
+                            return status
+                        }
+                        if status == Z_STREAM_END {
+                            streamEnded = true
+                            break
+                        }
+                        // Z_BUF_ERROR only says this chunk is used up.
+                        guard status == Z_OK || status == Z_BUF_ERROR, inflated <= expected else { return false }
+                    } while stream.avail_in > 0 || stream.avail_out == 0
+                    guard stream.avail_in == 0 else { return false }
+                case "IEND":
+                    return length == 0 && offset + 12 == count && streamEnded && inflated == expected
+                default:
+                    break
+                }
+                offset += 12 + length
+            }
+            return false
+        }
+    }
+
+    /// Whether a WebP's container adds up: its length is the one its header gives, and its chunks end exactly
+    /// there. WebP has no checksums; what the picture inside is worth, `verify` decides.
+    static func webPIsWhole(_ data: Data) -> Bool {
+        data.withUnsafeBytes { (bytes: UnsafeRawBufferPointer) -> Bool in
+            let count = bytes.count
+            func word(_ offset: Int) -> Int { Int(bytes.loadUnaligned(fromByteOffset: offset, as: UInt32.self).littleEndian) }
+            guard count >= 20, bytes[0..<4].elementsEqual("RIFF".utf8), bytes[8..<12].elementsEqual("WEBP".utf8),
+                  word(4) + 8 == count else { return false }
+            var offset = 12
+            while offset + 8 <= count {
+                let length = word(offset + 4)
+                offset += 8 + length + (length & 1)
+            }
+            return offset == count
+        }
     }
 
     // MARK: - Running an encoder
@@ -443,8 +558,9 @@ nonisolated struct ImageOptimizer: Sendable {
     /// Stops a result that isn't the source's picture. An encoder can exit cleanly and leave another image, or
     /// a file ImageIO calls complete that decodes to nothing; either would otherwise replace the original.
     private static func verify(_ result: CGImageSource, against source: CGImageSource, target: ImageOptimizationTarget) throws {
-        guard let original = uprightImage(source), let candidate = uprightImage(result) else {
-            throw Failure("The optimized file didn't come out right, so the original is used.")
+        // A decoder that failed outright has no data to give, though it still gave an image to draw.
+        guard let original = uprightImage(source), let candidate = uprightImage(result), candidate.dataProvider?.data != nil else {
+            throw broken
         }
         // Both are read into the source's color space, so a lost or changed profile shows as changed pixels.
         let space = rgbSpace(of: original)

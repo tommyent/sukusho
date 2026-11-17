@@ -8,6 +8,7 @@ import Foundation
 import ImageIO
 import Testing
 import UniformTypeIdentifiers
+import zlib
 
 // MARK: - Pictures drawn for the tests
 
@@ -130,6 +131,43 @@ private func profile(at url: URL) throws -> Data? {
 }
 
 private func size(_ url: URL) -> Int { (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1 }
+
+/// Astra's 80-byte file: 64 by 64, 8-bit RGB, a correct PNG container around data that is no image stream.
+private func corruptPNG() throws -> Data {
+    let hex = "89504e470d0a1a0a0000000d4948445200000040000000400802000000250be689000000174944415"
+        + "46e6f742061207a6c696220696d6167652073747265616d7d024fc00000000049454e44ae426082"
+    var bytes = Data()
+    var index = hex.startIndex
+    while index < hex.endIndex {
+        let next = hex.index(index, offsetBy: 2)
+        bytes.append(try #require(UInt8(hex[index..<next], radix: 16)))
+        index = next
+    }
+    try #require(bytes.count == 80)
+    return bytes
+}
+
+/// A folder of encoders where `tool` is a script that exits cleanly and leaves a copy of `standIn` as its
+/// output. The others are the real ones, so a result is read back by the real MozJPEG.
+private func standInTools(where tool: String, leaves standIn: URL) throws -> URL {
+    let tools = FileManager.default.temporaryDirectory.appending(path: "SukushoStandIn-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: tools, withIntermediateDirectories: true)
+    for name in try FileManager.default.contentsOfDirectory(atPath: Bench.tools.path) where name != tool {
+        try FileManager.default.createSymbolicLink(at: tools.appending(path: name), withDestinationURL: Bench.tools.appending(path: name))
+    }
+    // The output is what follows --out (oxipng), -outfile (MozJPEG) or the last -o (libwebp).
+    let script = """
+    #!/bin/sh
+    while [ $# -gt 0 ]; do
+      case "$1" in --out|-outfile|-o) out="$2";; esac
+      shift
+    done
+    cp "\(standIn.path)" "$out"
+    """
+    try Data(script.utf8).write(to: tools.appending(path: tool))
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tools.appending(path: tool).path)
+    return tools
+}
 
 /// Whether a process whose command line holds `text` is still running.
 private func isRunning(_ text: String) -> Bool {
@@ -438,39 +476,16 @@ private func isRunning(_ text: String) -> Bool {
         red.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
         let different = try bench.file("standins/different.png", try #require(red.makeImage()))
         #expect(size(different) < before.count)   // smaller, so only the picture check can stop it
-        // 64 by 64, 8-bit RGB: a correct PNG container around data that is no image stream.
-        let hex = "89504e470d0a1a0a0000000d4948445200000040000000400802000000250be689000000174944415"
-            + "46e6f742061207a6c696220696d6167652073747265616d7d024fc00000000049454e44ae426082"
-        var bytes = Data()
-        var index = hex.startIndex
-        while index < hex.endIndex {
-            let next = hex.index(index, offsetBy: 2)
-            bytes.append(try #require(UInt8(hex[index..<next], radix: 16)))
-            index = next
-        }
-        #expect(bytes.count == 80)
         let bad = bench.folder.appending(path: "standins/bad.png")
-        try bytes.write(to: bad)
+        try corruptPNG().write(to: bad)
 
-        for (standIn, tool, flag, target) in [
-            (different, "oxipng", "--out", ImageOptimizationTarget.lossless),
-            (bad, "oxipng", "--out", .lossless),
-            (bad, "cjpeg", "-outfile", .jpeg(quality: 80)),
+        for (standIn, tool, target) in [
+            (different, "oxipng", ImageOptimizationTarget.lossless),
+            (bad, "oxipng", .lossless),
+            (bad, "cjpeg", .jpeg(quality: 80)),
         ] {
-            let tools = FileManager.default.temporaryDirectory.appending(path: "SukushoStandIn-\(UUID().uuidString)")
-            try FileManager.default.createDirectory(at: tools, withIntermediateDirectories: true)
+            let tools = try standInTools(where: tool, leaves: standIn)
             defer { try? FileManager.default.removeItem(at: tools) }
-            let script = """
-            #!/bin/sh
-            while [ $# -gt 0 ]; do
-              if [ "$1" = "\(flag)" ]; then out="$2"; fi
-              shift
-            done
-            cp "\(standIn.path)" "$out"
-            """
-            try Data(script.utf8).write(to: tools.appending(path: tool))
-            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tools.appending(path: tool).path)
-
             let result = try await ImageOptimizer(toolsDirectory: tools, outputDirectory: bench.output).optimize(source, to: target)
             guard case .failed = result.outcome else {
                 Issue.record("\(standIn.lastPathComponent) from \(tool): \(result.outcome)")
@@ -479,6 +494,76 @@ private func isRunning(_ text: String) -> Bool {
             #expect(result.url == source)
             #expect(try Data(contentsOf: source) == before)
             #expect(bench.leftovers.isEmpty, "\(standIn.lastPathComponent): \(bench.leftovers)")
+        }
+    }
+
+    /// Astra's second review: ImageIO hands back pixels for a damaged file, zeros where its decoder gave up,
+    /// and a transparent source is all zeros too. A result has to be a whole file before its pixels count.
+    @Test func aDamagedResultIsRefusedEvenWhenItsPixelsMatch() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let clear = try #require(CGContext(data: nil, width: 64, height: 64, bitsPerComponent: 8, bytesPerRow: 0,
+                                           space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        let transparent = try bench.file("Clear.png", try #require(clear.makeImage()))
+        let whole = try Data(contentsOf: transparent)
+        #expect(ImageOptimizer.pngIsIntact(whole))
+
+        // Astra's file: a correct container around data that is no image stream.
+        let bad = bench.folder.appending(path: "standins/bad.png")
+        try FileManager.default.createDirectory(at: bad.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try corruptPNG().write(to: bad)
+        #expect(!ImageOptimizer.pngIsIntact(try Data(contentsOf: bad)))
+
+        // The source's own PNG with one byte of its image data changed: first with the chunk's checksum left
+        // wrong, then with the checksum put right, so only inflating the data can tell.
+        let idat = try #require(whole.range(of: Data("IDAT".utf8)))
+        let length = Int(whole[idat.lowerBound - 4]) << 24 | Int(whole[idat.lowerBound - 3]) << 16
+            | Int(whole[idat.lowerBound - 2]) << 8 | Int(whole[idat.lowerBound - 1])
+        var flipped = whole
+        flipped[idat.upperBound + length / 2] ^= 0x5A
+        let checksumWrong = bench.folder.appending(path: "standins/checksum.png")
+        try flipped.write(to: checksumWrong)
+        let checksum = flipped[idat.lowerBound..<(idat.upperBound + length)].withUnsafeBytes {
+            UInt32(crc32(0, $0.bindMemory(to: UInt8.self).baseAddress, uInt($0.count)))
+        }
+        for (index, shift) in [24, 16, 8, 0].enumerated() {
+            flipped[idat.upperBound + length + index] = UInt8(truncatingIfNeeded: checksum >> UInt32(shift))
+        }
+        let streamWrong = bench.folder.appending(path: "standins/stream.png")
+        try flipped.write(to: streamWrong)
+        #expect(!ImageOptimizer.pngIsIntact(try Data(contentsOf: checksumWrong)))
+        #expect(!ImageOptimizer.pngIsIntact(flipped))
+
+        for standIn in [bad, checksumWrong, streamWrong] {
+            let tools = try standInTools(where: "oxipng", leaves: standIn)
+            defer { try? FileManager.default.removeItem(at: tools) }
+            let result = try await ImageOptimizer(toolsDirectory: tools, outputDirectory: bench.output).optimize(transparent)
+            guard case .failed = result.outcome else {
+                Issue.record("\(standIn.lastPathComponent): \(result.outcome)")
+                continue
+            }
+            #expect(result.url == transparent)
+            #expect(try Data(contentsOf: transparent) == whole)
+            #expect(bench.leftovers.isEmpty)
+        }
+
+        // A JPEG and a WebP cut short, as a full disk leaves them. The real MozJPEG reads the JPEG back.
+        let page = try bench.file("Page.png", Sample.screenshot(width: 320, height: 200, seed: 41))
+        for (tool, target) in [("cjpeg", ImageOptimizationTarget.jpeg(quality: 80)), ("cwebp", .webP(quality: 80)), ("cwebp", .webP(quality: nil))] {
+            let made = try await bench.optimizer.optimize(page, to: target)
+            #expect(made.outcome == .converted)
+            let cut = bench.folder.appending(path: "standins/cut.\(made.url.pathExtension)")
+            try Data(contentsOf: made.url).prefix(Int(made.resultByteCount) * 2 / 3).write(to: cut)
+            made.discard()
+            let tools = try standInTools(where: tool, leaves: cut)
+            defer { try? FileManager.default.removeItem(at: tools) }
+            let result = try await ImageOptimizer(toolsDirectory: tools, outputDirectory: bench.output).optimize(page, to: target)
+            guard case .failed = result.outcome else {
+                Issue.record("cut \(target): \(result.outcome)")
+                continue
+            }
+            #expect(result.url == page)
+            #expect(bench.leftovers.isEmpty)
         }
     }
 
