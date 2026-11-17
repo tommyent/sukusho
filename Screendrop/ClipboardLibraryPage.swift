@@ -4,6 +4,8 @@ import SwiftUI
 /// The Library's Clipboard pages: History, Snippets, and the setup page while history is off.
 struct ClipboardLibraryPage: View {
     @Bindable var model: ClipboardHistoryModel
+    /// The status bar's card-size slider, shared with the captures and Cloud grids.
+    let cardWidth: CGFloat
     @AppStorage(ScreendropPreferences.clipboardHistoryEnabledKey) private var enabled = false
     @State private var library = CaptureLibraryModel.shared
 
@@ -32,10 +34,11 @@ struct ClipboardLibraryPage: View {
                                 Text(section.title).font(DS.TypeScale.labelSemibold).foregroundStyle(.secondary)
                                     .padding(.horizontal, DS.Space.ml).padding(.vertical, 2)
                                     .workspaceTextPlate(capsule: true)
-                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 190, maximum: 260), spacing: DS.Space.l)],
+                                LazyVGrid(columns: [GridItem(.adaptive(minimum: cardWidth, maximum: cardWidth), spacing: DS.Space.l)],
                                           alignment: .leading, spacing: DS.Space.l) {
                                     ForEach(section.entries) { entry in
-                                        ClipboardCard(entry: entry, model: model,
+                                        // The captures grid's proportions: a 16:10 picture over the labels.
+                                        ClipboardCard(entry: entry, model: model, faceHeight: (cardWidth * 0.625).rounded(.down),
                                                       isSelected: model.librarySelection == entry.id)
                                     }
                                 }
@@ -105,6 +108,7 @@ struct ClipboardLibraryPage: View {
 private struct ClipboardCard: View {
     let entry: ClipboardEntry
     let model: ClipboardHistoryModel
+    let faceHeight: CGFloat
     let isSelected: Bool
     @State private var isHovering = false
 
@@ -115,7 +119,7 @@ private struct ClipboardCard: View {
         VStack(alignment: .leading, spacing: 8) {
             face
                 .frame(maxWidth: .infinity)
-                .frame(height: 124)
+                .frame(height: faceHeight)
                 .clipShape(libraryCardImageShape)
                 .overlay { libraryCardImageShape.strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5) }
                 .overlay(alignment: .bottomLeading) {

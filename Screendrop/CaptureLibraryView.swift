@@ -343,7 +343,7 @@ struct CaptureLibraryView: View {
 
     @ViewBuilder private var browser: some View {
         if clipboard.isShown {
-            ClipboardLibraryPage(model: clipboard)
+            ClipboardLibraryPage(model: clipboard, cardWidth: cardWidth)
         } else if comments.isShown {
             CommentsLibraryPage(comments: comments)
         } else if likes.isShown {
@@ -535,7 +535,7 @@ struct CaptureLibraryView: View {
                     .help(comments.isShown ? "Refreshing comments" : likes.isShown ? "Refreshing likes"
                           : cloud.isShown ? "Refreshing uploads" : "Refreshing Library")
             }
-            if !comments.isShown, !likes.isShown, !clipboard.isShown {
+            if !comments.isShown, !likes.isShown {
                 // Capped where the 640 px thumbnails stay sharp on Retina.
                 Slider(value: $cardWidth, in: 140...320) {
                     EmptyView()
