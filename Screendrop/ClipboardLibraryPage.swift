@@ -6,6 +6,7 @@ struct ClipboardLibraryPage: View {
     @Bindable var model: ClipboardHistoryModel
     /// The status bar's card-size slider, shared with the captures and Cloud grids.
     let cardWidth: CGFloat
+    @FocusState private var gridFocused: Bool
     @AppStorage(ScreendropPreferences.clipboardHistoryEnabledKey) private var enabled = false
     @State private var library = CaptureLibraryModel.shared
 
@@ -45,6 +46,17 @@ struct ClipboardLibraryPage: View {
                             }
                         }
                         .padding(DS.Space.xl)
+                    }
+                    // Space opens Quick Look on the selected card, as in the captures grid. Clicking a card
+                    // gives the grid the keyboard.
+                    .focusable()
+                    .focusEffectDisabled()
+                    .focused($gridFocused)
+                    .onChange(of: model.librarySelection) { _, selection in if selection != nil { gridFocused = true } }
+                    .onKeyPress(.space) {
+                        guard let entry = model.entry(model.librarySelection) else { return .ignored }
+                        model.quickLook(entry)
+                        return .handled
                     }
                 }
             }
@@ -149,6 +161,7 @@ private struct ClipboardCard: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction(named: "Copy") { model.deliver(entry, as: .copy, to: nil) }
+        .accessibilityAction(named: "Quick Look") { model.quickLook(entry) }
     }
 
     /// A tall image's long side, decoded so its width still fills a card sharply.
@@ -201,6 +214,7 @@ struct ClipboardEntryMenu: View {
 
     var body: some View {
         Button("Copy") { model.deliver(entry, as: .copy, to: nil) }
+        Button("Quick Look") { model.quickLook(entry) }
         if entry.kind == .text { Button("Copy as Plain Text") { model.deliver(entry, as: .copyPlain, to: nil) } }
         Divider()
         Button(entry.pinnedAt == nil ? "Pin" : "Unpin") { model.togglePin(entry) }
@@ -224,7 +238,10 @@ struct ClipboardLibraryInspector: View {
                     if entry.kind == .snippet {
                         SnippetEditor(entry: entry, model: model)
                     } else {
-                        ClipboardPreview(entry: entry).frame(height: 220)
+                        // Clicking the picture opens Quick Look, as in a capture's inspector.
+                        Button { model.quickLook(entry) } label: { ClipboardPreview(entry: entry).frame(height: 220) }
+                            .buttonStyle(.plain)
+                            .help("Quick Look")
                         HStack {
                             Button("Copy") { model.deliver(entry, as: .copy, to: nil) }.buttonStyle(.borderedProminent)
                             Button(entry.pinnedAt == nil ? "Pin" : "Unpin") { model.togglePin(entry) }

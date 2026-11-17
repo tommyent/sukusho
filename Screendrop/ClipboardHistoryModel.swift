@@ -2,6 +2,7 @@ import AppKit
 import ApplicationServices
 import Observation
 import OSLog
+import SwiftUI
 
 /// Clipboard history as the popup and the Library's Clipboard page show it,
 /// and what they do with an entry.
@@ -180,6 +181,58 @@ final class ClipboardHistoryModel {
             try? await store?.updateSnippet(id, title: title, text: text)
             refresh()
         }
+    }
+
+    // MARK: - Quick Look
+
+    /// What Quick Look shows for an entry. It previews files only: an image or copied files are shown as
+    /// they are; text and colors are written out for it, in a folder per entry so titles never collide.
+    func quickLookURLs(for entry: ClipboardEntry) -> [URL] {
+        switch entry.kind {
+        case .image:
+            return entry.imageFileURL.map { [$0] } ?? []
+        case .files:
+            return entry.filePaths.map { URL(fileURLWithPath: $0) }.filter { FileManager.default.fileExists(atPath: $0.path) }
+        case .text, .snippet:
+            let folder = FileManager.default.temporaryDirectory
+                .appendingPathComponent("Clipboard Quick Look/\(entry.id)", isDirectory: true)
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            if case .color(let hex) = ClipboardList.textForm(of: entry), let png = Self.swatch(hex) {
+                let url = folder.appendingPathComponent("\(hex.dropFirst()).png")
+                return (try? png.write(to: url, options: .atomic)).map { [url] } ?? []
+            }
+            let name = String(ClipboardList.title(of: entry).prefix(60))
+                .replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+            let url = folder.appendingPathComponent((name.isEmpty ? "Text" : name) + ".txt")
+            return (try? Data((entry.text ?? "").utf8).write(to: url, options: .atomic)).map { [url] } ?? []
+        }
+    }
+
+    /// Opens Quick Look on an entry, or closes it when it already shows that entry, as Space does in Finder.
+    func quickLook(_ entry: ClipboardEntry) {
+        let urls = quickLookURLs(for: entry)
+        guard let first = urls.first else { return }
+        if QuickLookPreviewPresenter.isShown,
+           QuickLookPreviewPresenter.currentURL?.standardizedFileURL == first.standardizedFileURL {
+            QuickLookPreviewPresenter.dismiss()
+            return
+        }
+        QuickLookPreviewPresenter.show(urls: urls)
+    }
+
+    /// A 512 px square of the color, as a PNG.
+    private static func swatch(_ hex: String) -> Data? {
+        guard let color = Color(clipboardHex: hex).map(NSColor.init)?.usingColorSpace(.sRGB),
+              let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 512, pixelsHigh: 512, bitsPerSample: 8,
+                                            samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                            bytesPerRow: 0, bitsPerPixel: 0),
+              let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = context
+        color.setFill()
+        NSRect(x: 0, y: 0, width: 512, height: 512).fill()
+        NSGraphicsContext.restoreGraphicsState()
+        return bitmap.representation(using: .png, properties: [:])
     }
 
     /// A copied image becomes an ordinary capture, with its source app.
