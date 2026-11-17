@@ -12,6 +12,15 @@ set -euo pipefail
 fail() { print -u2 -- "appcast: $1"; exit 1 }
 UPDATES="${1:?usage: scripts/appcast.sh <the folder with the DMG and its notes>}"
 : "${VERSION:?}" "${SHOWN:?}" "${BUILD:?}" "${SPARKLE_BIN:?}"
+# The names must fit the channel, before anything is made. BETA alone decides the channel, so a beta's files
+# passed without it would come out as a stable item, which every copy is offered, beta updates on or not.
+if [[ -n "${BETA:-}" ]]; then
+    [[ "$VERSION" =~ '^[0-9]+(\.[0-9]+)+-beta\.[1-9][0-9]*$' && "$SHOWN" == "${VERSION%-beta.*} beta ${VERSION##*-beta.}" ]] \
+        || fail "a beta is named like 1.3.0-beta.1 and shown as \"1.3.0 beta 1\"; this is '$VERSION', shown as '$SHOWN'"
+else
+    [[ "$VERSION" =~ '^[0-9]+(\.[0-9]+)+$' && "$SHOWN" == "$VERSION" ]] \
+        || fail "a stable release is named by its number alone, like 1.3.0, and shown the same; this is '$VERSION', shown as '$SHOWN'. A beta needs BETA."
+fi
 DMG="$UPDATES/Sukusho-$VERSION.dmg"
 APPCAST="$UPDATES/appcast.xml"
 [[ -s "$DMG" && -s "$UPDATES/Sukusho-$VERSION.md" ]] || fail "$UPDATES needs Sukusho-$VERSION.dmg and Sukusho-$VERSION.md"

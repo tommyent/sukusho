@@ -54,9 +54,33 @@ VERSION=9.9.0 SHOWN=9.9.0 BUILD=99.991231.2400 SPARKLE_BIN="$SPARKLE_BIN" APPCAS
     scripts/appcast.sh "$WORK/9.9.0"
 (( $(count '//item' "$WORK/9.9.0/appcast.xml") == 1 )) || fail "a stable feed should hold one item"
 
-# The checks must also refuse: a beta item claimed for a stable release is caught.
-if VERSION=9.9.0-beta.1 SHOWN="9.9.0 beta 1" BUILD=99.991231.2359 FEED="$WORK/published.xml" SPARKLE_BIN="$SPARKLE_BIN" \
-    APPCAST_KEY_FILE="$WORK/key" scripts/appcast.sh "$WORK/9.9.0-beta.1" 2> "$WORK/refused.txt"; then
+# The checks must also refuse, each for its own reason (a refusal for another reason proves nothing).
+refused() {   # what was tried, the words its refusal must hold; the attempt's output is in refused.txt
+    grep -qF -- "$2" "$WORK/refused.txt" || fail "$1 was refused, but not for the reason expected: $(< "$WORK/refused.txt")"
+}
+# A beta's files without BETA, in a folder with nothing else in it, as release.sh's is: no feed is made. Without
+# the check on names this came out as a signed stable item, which every copy would be offered.
+mkdir "$WORK/fresh"
+cp "$WORK/9.9.0-beta.1/Sukusho-9.9.0-beta.1.dmg" "$WORK/9.9.0-beta.1/Sukusho-9.9.0-beta.1.md" "$WORK/fresh/"
+if VERSION=9.9.0-beta.1 SHOWN="9.9.0 beta 1" BUILD=99.991231.2359 SPARKLE_BIN="$SPARKLE_BIN" APPCAST_KEY_FILE="$WORK/key" \
+    scripts/appcast.sh "$WORK/fresh" > "$WORK/refused.txt" 2>&1; then
+    fail "appcast.sh made a stable feed from a beta's files"
+fi
+refused "a beta without BETA" "a stable release is named"
+[[ ! -e "$WORK/fresh/appcast.xml" ]] || fail "a refused beta still left a feed behind"
+# The other way round: a stable release's files with BETA.
+if VERSION=9.9.0 SHOWN=9.9.0 BUILD=99.991231.2400 BETA=1 FEED="$WORK/published.xml" SPARKLE_BIN="$SPARKLE_BIN" \
+    APPCAST_KEY_FILE="$WORK/key" scripts/appcast.sh "$WORK/9.9.0" > "$WORK/refused.txt" 2>&1; then
+    fail "appcast.sh put a stable release on the beta channel"
+fi
+refused "a stable release with BETA" "a beta is named"
+# An item that is already on the beta channel in the folder's feed, made again as a stable release: Sparkle
+# keeps the channel on an item it updates, and the check on the new item catches it.
+sed -i '' 's|<sparkle:version>99.991231.2400</sparkle:version>|&<sparkle:channel>beta</sparkle:channel>|' "$WORK/9.9.0/appcast.xml"
+(( $(count "//item[*[local-name()='channel']='beta']" "$WORK/9.9.0/appcast.xml") == 1 )) || fail "the dry run couldn't mark its stable item as a beta"
+if VERSION=9.9.0 SHOWN=9.9.0 BUILD=99.991231.2400 SPARKLE_BIN="$SPARKLE_BIN" APPCAST_KEY_FILE="$WORK/key" \
+    scripts/appcast.sh "$WORK/9.9.0" > "$WORK/refused.txt" 2>&1; then
     fail "appcast.sh accepted an item on the beta channel as a stable release"
 fi
+refused "a stable item on the beta channel" "the new item's channel is 'beta'"
 print -r -- "check-appcast: passed. The feeds are in $WORK"
