@@ -10,7 +10,7 @@ import AVFoundation
 @preconcurrency import CoreMedia
 import Observation
 
-struct ScreenshotHistoryItem: Identifiable, Codable, Equatable {
+struct ScreenshotHistoryItem: Identifiable, Codable, Equatable, SavedMarkRow {
     let id: UUID
     var createdAt: Date
     var updatedAt: Date
@@ -33,6 +33,18 @@ struct ScreenshotHistoryItem: Identifiable, Codable, Equatable {
     /// The app and window it was taken from. Nil for older rows, and when
     /// no window could be named. Stays on this Mac.
     var source: CaptureSource?
+    /// When it was saved (★) to Library › Saved, by hand or by naming, tagging or sharing it. Kept in
+    /// `CaptureSavedMarks`' file, not in history.json, which older builds rewrite without it; read from a row only to
+    /// move it there.
+    var librarySavedAt: Date?
+
+    /// Every key but `librarySavedAt`, so history.json no longer carries it.
+    enum CodingKeys: String, CodingKey {
+        case id, createdAt, updatedAt, fileName, pixelWidth, pixelHeight, kind, duration, cloudURL, cloudRedactions,
+             hasEdits, recordingSessionPath, displayName, tags, source
+    }
+
+    private enum LegacyKeys: String, CodingKey { case librarySavedAt }
 
     var recordingSession: RecordingSession? {
         guard let recordingSessionPath else { return nil }
@@ -74,6 +86,7 @@ struct ScreenshotHistoryItem: Identifiable, Codable, Equatable {
         displayName = try container.decodeIfPresent(String.self, forKey: .displayName)
         tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
         source = try container.decodeIfPresent(CaptureSource.self, forKey: .source)
+        librarySavedAt = try decoder.container(keyedBy: LegacyKeys.self).decodeIfPresent(Date.self, forKey: .librarySavedAt)
     }
 
     init(
@@ -118,6 +131,10 @@ final class ScreenshotHistoryStore {
 
     private static var metadataURL: URL {
         ScreendropStorage.applicationSupportDirectory.appendingPathComponent("history.json")
+    }
+
+    private static var savedMarksURL: URL {
+        ScreendropStorage.applicationSupportDirectory.appendingPathComponent("library-saved.json")
     }
 
     /// Location of the editable annotation sidecar document for a display image,
@@ -166,10 +183,12 @@ final class ScreenshotHistoryStore {
         FileManager.default.fileExists(atPath: Self.editDocumentURL(for: displayURL).path)
     }
 
-    @ObservationIgnored private var metadata = ScreenshotHistoryMetadata<ScreenshotHistoryItem>()
+    @ObservationIgnored private var files = MarkedHistory<ScreenshotHistoryItem>(historyURL: ScreenshotHistoryStore.metadataURL, marksURL: ScreenshotHistoryStore.savedMarksURL)
     /// False when history.json, or a row in it, couldn't be read, so `items`
     /// may be missing captures that still exist.
-    var isFullyLoaded: Bool { !metadata.isReadOnly }
+    var isFullyLoaded: Bool { !files.history.isReadOnly }
+    /// Why Saved marks can't be read or written, for the Library to show; nil when all is well.
+    private(set) var savedMarksProblem: String?
 
     private(set) var items: [ScreenshotHistoryItem] = []
 
@@ -500,8 +519,40 @@ final class ScreenshotHistoryStore {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         items[index].displayName = trimmed.isEmpty ? nil : trimmed
+        // Naming a capture says it's worth keeping (Fable's critique, 2026-11-16).
+        if !trimmed.isEmpty, items[index].librarySavedAt == nil { items[index].librarySavedAt = Date() }
         items[index].updatedAt = Date()
         saveMetadata()
+    }
+
+    /// Saves the items to Library › Saved, or takes them out. Leaves `updatedAt` alone, as tagging does.
+    /// Marks a recording's History rows saved, so the marks file covers it too: its project.json mark alone can be
+    /// dropped by an older Studio re-saving the project. For naming and tagging, which write only the project.
+    func markRecordingSaved(_ session: RecordingSession) {
+        // The project keeps its own mark; a failure here shows on the Saved page.
+        try? setLibrarySaved(true, ids: CaptureSavedMarks.rows(ofRecordingAt: session.directoryURL.path,
+                                                               in: items.map { ($0.id, $0.recordingSessionPath) }))
+    }
+
+    /// Throws, and leaves the marks as they were, when they couldn't be kept on disk: a Save that didn't stick isn't
+    /// shown as saved (Astra M2).
+    func setLibrarySaved(_ saved: Bool, ids: Set<UUID>) throws {
+        guard !ids.isEmpty else { return }
+        let before = items
+        for index in items.indices where ids.contains(items[index].id) {
+            items[index].librarySavedAt = saved ? (items[index].librarySavedAt ?? Date()) : nil
+        }
+        do {
+            guard try files.save(items) else {
+                throw NSError(domain: "Sukusho.SavedMarks", code: 2, userInfo: [
+                    NSLocalizedDescriptionKey: files.problem ?? "Saved marks couldn't be written."])
+            }
+            savedMarksProblem = files.problem
+        } catch {
+            items = before
+            savedMarksProblem = files.problem ?? error.localizedDescription
+            throw error
+        }
     }
 
     /// Adds `tag` to the items, or removes it, ignoring case. Leaves
@@ -511,6 +562,8 @@ final class ScreenshotHistoryStore {
         for index in items.indices where ids.contains(items[index].id) {
             items[index].tags.removeAll { $0.caseInsensitiveCompare(tag) == .orderedSame }
             if applied { items[index].tags.append(tag) }
+            // So does tagging it.
+            if applied, items[index].librarySavedAt == nil { items[index].librarySavedAt = Date() }
         }
         saveMetadata()
     }
@@ -526,30 +579,42 @@ final class ScreenshotHistoryStore {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         if items[index].cloudURL != cloudURL { items[index].cloudRedactions = nil }
         items[index].cloudURL = cloudURL
+        // And sharing it.
+        if cloudURL != nil { markShared(index) }
         items[index].updatedAt = Date()
         saveMetadata()
+    }
+
+    /// A shared capture is saved: on its History row, and for a recording in its own project.json too, as an explicit
+    /// Save writes it (Astra L5). That's `librarySavedAt`, apart from Studio's `savedAt`.
+    private func markShared(_ index: Int) {
+        if items[index].librarySavedAt == nil { items[index].librarySavedAt = Date() }
+        try? items[index].recordingSession?.updateProjectMetadata { $0.librarySavedAt = $0.librarySavedAt ?? Date() }
     }
 
     func recordCloudUpload(id: UUID, cloudURL: String, redactions: [RecordingRedaction]?) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].cloudURL = cloudURL
         items[index].cloudRedactions = redactions
+        markShared(index)
         items[index].updatedAt = Date()
         saveMetadata()
     }
 
     private func load() {
-        items = metadata.load(from: Self.metadataURL)
+        items = files.load()
             .filter { FileManager.default.fileExists(atPath: $0.url.path) }
             .sorted { $0.createdAt > $1.createdAt }
+        savedMarksProblem = files.problem
     }
 
     private func saveMetadata() {
         do {
-            try metadata.save(items, to: Self.metadataURL)
+            try files.save(items)
         } catch {
             print("Failed to save screenshot history: \(error)")
         }
+        savedMarksProblem = files.problem
     }
 
     private func uniqueHistoryURL(for sourceURL: URL) -> URL {

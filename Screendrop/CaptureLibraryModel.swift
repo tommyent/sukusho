@@ -77,6 +77,9 @@ nonisolated struct CaptureLibraryItem: Identifiable, Equatable, Sendable {
     var modelTitle: String? = nil
     /// A recording's last saved or draft edit, for its Agent Prompt circle.
     var editedAt: Date? = nil
+    /// When it was saved (★) to Library › Saved.
+    var savedAt: Date? = nil
+    var isSaved: Bool { savedAt != nil }
 
     var ownedURL: URL { session?.directoryURL ?? fileURL }
     /// Everything the capture keeps on disk: a recording's package, or a
@@ -130,6 +133,7 @@ nonisolated struct CaptureLibraryHistorySnapshot: Sendable {
     let cloudURL: String?
     let tags: [String]
     let source: CaptureSource?
+    let librarySavedAt: Date?
 
     @MainActor init(_ item: ScreenshotHistoryItem) {
         id = item.id
@@ -147,6 +151,7 @@ nonisolated struct CaptureLibraryHistorySnapshot: Sendable {
         cloudURL = item.cloudURL
         tags = item.tags
         source = item.source
+        librarySavedAt = item.librarySavedAt
     }
 }
 
@@ -217,6 +222,7 @@ final class CaptureLibraryModel {
     func show(filter: CaptureLibraryFilter? = nil) {
         if let filter {
             CloudLibraryModel.shared.isShown = false
+            LibrarySavedModel.shared.isShown = false
             CommentsLibraryModel.shared.setShown(false)
             LikesLibraryModel.shared.setShown(false)
             self.filter = filter
@@ -388,7 +394,8 @@ nonisolated enum CaptureLibraryScanner {
                 cloudURL: rows.compactMap(\.cloudURL).first,
                 tags: metadata?.tags ?? [],
                 thumbnailKey: "\(fileURL.path):\((content ?? modified).timeIntervalSince1970)",
-                source: metadata?.source, editedAt: edited
+                source: metadata?.source, editedAt: edited,
+                savedAt: metadata?.librarySavedAt ?? rows.compactMap(\.librarySavedAt).max()
             ))
         }
         for row in history where row.sessionPath == nil {
@@ -402,7 +409,8 @@ nonisolated enum CaptureLibraryScanner {
                 createdAt: row.createdAt, modifiedAt: max(modified, row.modifiedAt), pixelWidth: row.width,
                 pixelHeight: row.height, duration: row.duration, isVideo: row.isVideo,
                 hasEdits: row.hasEdits, hasDraft: false, cloudURL: row.cloudURL, tags: row.tags,
-                thumbnailKey: "\(url.path):\(modified.timeIntervalSince1970)", source: row.source
+                thumbnailKey: "\(url.path):\(modified.timeIntervalSince1970)", source: row.source,
+                savedAt: row.librarySavedAt
             ))
         }
         return (entries, listed != nil)

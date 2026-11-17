@@ -360,6 +360,7 @@ final class CloudLibraryModel {
         CaptureLibraryModel.shared.searchText = ""
         CommentsLibraryModel.shared.setShown(false)
         LikesLibraryModel.shared.setShown(false)
+        LibrarySavedModel.shared.isShown = false
         isShown = true
         // The feed's own type: the uploads list may not have loaded yet.
         showsReceived = false
@@ -373,6 +374,7 @@ final class CloudLibraryModel {
         CaptureLibraryModel.shared.searchText = ""
         CommentsLibraryModel.shared.setShown(false)
         LikesLibraryModel.shared.setShown(false)
+        LibrarySavedModel.shared.isShown = false
         isShown = true
         showsFiles = false
         showsReceived = true

@@ -298,14 +298,17 @@ struct ClipboardHistoryStoreTests {
         #expect(entries[0].timesCopied == 2)
     }
 
-    @Test func deletingHistoryKeepsSnippets() async throws {
+    /// Saved copies (★) and snippets belong to the Library: Delete History leaves them.
+    @Test func deletingHistoryKeepsSavedCopiesAndSnippets() async throws {
         let store = try store()
         try await store.record(image(500), at: start)
         try await store.record(text("gone"), at: start)
+        guard case .inserted(let saved) = try await store.record(text("saved"), at: start) else { return }
+        try await store.setPinned(saved, true)
         try await store.addSnippet(title: "Kept", text: "body", at: start)
         try await store.deleteHistory()
-        #expect(try await store.entries().map(\.title) == ["Kept"])
-        #expect(try await store.totalBytes() == 4)
+        #expect(Set(try await store.entries().compactMap(\.text)) == ["saved", "body"])
+        #expect(try await store.totalBytes() == 9)
     }
 
     /// A screenshot-like PNG: a light page with dark lines of "text" whose lengths come from `seed`, and a
@@ -360,23 +363,162 @@ struct ClipboardHistoryStoreTests {
     }
 
     /// An optimiser such as Clop puts a re-encoded version of the image back on the clipboard a moment later
-    /// (2026-11-16 on the owner's Air: two entries per screenshot). History keeps one entry with the new bytes.
-    @Test func anOptimisersRewriteReplacesTheCopyBefore() async throws {
+    /// (2026-11-16 on the owner's Air: two entries per screenshot). The owner's rule: one card, two versions. The
+    /// newest is shown and pasted; the original keeps its own hash, file and Library link.
+    @Test func anOptimisersRewriteStacksOnTheCopyBefore() async throws {
         let store = try store()
         let original = try capture(1, named: "capture.png")
         guard case .inserted(let id) = try await store.record(original, at: start) else { Issue.record("not inserted"); return }
         let rewrite = picture(1, reencoded: true, source: "com.apple.Terminal")
-        #expect(try await store.record(rewrite, at: start + 0.5) == .replaced(id))
+        #expect(try await store.record(rewrite, at: start + 0.5) == .stacked(id))
         let entries = try await store.entries()
         #expect(entries.count == 1)
         let entry = try #require(entries.first)
-        #expect(entry.byteSize == rewrite.byteSize)
-        #expect(entry.libraryPath == original.libraryPath)
+        #expect(entry.hash == rewrite.hash && entry.byteSize == rewrite.byteSize)
+        #expect(entry.libraryPath == nil)
         #expect(entry.sourceBundleID == "com.tommyent.Sukusho")
         #expect(entry.timesCopied == 1)
         #expect(entry.firstCopiedAt == start)
-        let url = try #require(entry.imageURL)
-        #expect(try Data(contentsOf: url) == rewrite.image)
+        #expect(try Data(contentsOf: try #require(entry.imageURL)) == rewrite.image)
+        let earlier = try #require(entry.earlierVersions.first)
+        #expect(entry.earlierVersions.count == 1)
+        #expect(earlier.hash == original.hash && earlier.libraryPath == original.libraryPath)
+        // The Original owns a copy of the capture's bytes (Astra L1).
+        #expect(try Data(contentsOf: try #require(earlier.imageURL)) == Self.picture(1))
+        #expect(earlier.copiedAt == start)
+        #expect(FileManager.default.fileExists(atPath: try #require(original.libraryPath)))
+    }
+
+    /// Astra C1/C2 (2026-11-16): pairs the matcher calls the same picture but aren't (a low-contrast word, a faint
+    /// selection, two pixels on an icon, transparent against white) were merged and the first copy lost. Now each
+    /// stacks, and both images stay readable.
+    @Test func lookalikePicturesKeepBothImages() async throws {
+        func drawn(_ width: Int, _ height: Int, opaque: Bool = true, _ draw: (CGContext) -> Void) -> Data {
+            let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                    space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            if opaque {
+                context.setFillColor(CGColor(gray: 238 / 255, alpha: 1))
+                context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+            }
+            draw(context)
+            let rep = NSBitmapImageRep(cgImage: context.makeImage()!)
+            return rep.representation(using: .png, properties: [:])!
+        }
+        let gray = CGColor(gray: 190 / 255, alpha: 1)
+        let pairs: [(String, Int, Int, Data, Data)] = [
+            ("word", 640, 360, drawn(640, 360) { $0.setFillColor(gray); $0.fill(CGRect(x: 100, y: 160, width: 60, height: 14)) },
+             drawn(640, 360) { $0.setFillColor(gray); $0.fill(CGRect(x: 100, y: 160, width: 72, height: 14)) }),
+            ("selection", 644, 364, drawn(644, 364) { _ in },
+             drawn(644, 364) { $0.setFillColor(CGColor(red: 0.85, green: 0.9, blue: 1, alpha: 1)); $0.fill(CGRect(x: 20, y: 200, width: 600, height: 24)) }),
+            ("icon", 16, 16, drawn(16, 16) { _ in },
+             drawn(16, 16) { $0.setFillColor(CGColor(gray: 0, alpha: 1)); $0.fill(CGRect(x: 7, y: 7, width: 2, height: 1)) }),
+            ("transparency", 128, 96,
+             drawn(128, 96, opaque: false) { $0.setFillColor(CGColor(red: 0.1, green: 0.3, blue: 0.8, alpha: 1)); $0.fill(CGRect(x: 24, y: 24, width: 80, height: 48)) },
+             drawn(128, 96, opaque: false) { context in
+                 context.setFillColor(CGColor(gray: 1, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: 128, height: 96))
+                 context.setFillColor(CGColor(red: 0.1, green: 0.3, blue: 0.8, alpha: 1)); context.fill(CGRect(x: 24, y: 24, width: 80, height: 48))
+             }),
+        ]
+        for (name, width, height, first, second) in pairs {
+            let store = try ClipboardHistoryStore(directory: directory.appendingPathComponent(name, isDirectory: true), deviceID: "test-mac")
+            try await store.record(image(first, width: width, height: height), at: start)
+            try await store.record(image(second, width: width, height: height), at: start + 1.5)
+            let entries = try await store.entries()
+            let kept = try entries.flatMap { [$0.imageURL] + $0.earlierVersions.map(\.imageURL) }.compactMap { $0 }
+                .map { try Data(contentsOf: $0) }
+            #expect(Set(kept) == [first, second], "\(name)")
+            // Each pair is one the matcher takes for a re-encode, so this runs the stacking path, not two plain inserts.
+            #expect(entries.count == 1 && entries.first?.earlierVersions.count == 1, "\(name) stacked")
+            // Whichever card shows it, the newest copy is what's pasted.
+            #expect(try entries.first.flatMap(\.imageURL).map { try Data(contentsOf: $0) } == second, "\(name)")
+        }
+    }
+
+    /// Astra L1: an Original or a Saved card that came from a capture file owns its bytes. Editing the capture can't
+    /// change it, and trashing the capture can't clear it; the capture link stays beside the owned copy.
+    @Test func anOriginalAndASavedCardOwnTheirBytes() async throws {
+        let store = try store()
+        let original = try capture(5, named: "stacked.png")
+        guard case .inserted(let stack) = try await store.record(original, at: start) else { Issue.record("not inserted"); return }
+        #expect(try await store.record(picture(5, reencoded: true), at: start + 0.5) == .stacked(stack))
+        let reference = try capture(6, named: "saved.png")
+        guard case .inserted(let saved) = try await store.record(reference, at: start + 30) else { Issue.record("not inserted"); return }
+        try await store.setPinned(saved, true)
+        func bytes(_ url: URL?) throws -> Data { try Data(contentsOf: try #require(url)) }
+        for name in ["stacked.png", "saved.png"] { try Self.picture(9).write(to: directory.appendingPathComponent(name)) }
+        var entries = try await store.entries()
+        let version = try #require(entries.first { $0.id == stack }?.earlierVersions.first)
+        #expect(try bytes(version.imageURL) == Self.picture(5) && version.libraryPath == original.libraryPath)
+        let card = try #require(entries.first { $0.id == saved })
+        #expect(try bytes(card.imageURL) == Self.picture(6) && card.libraryPath == reference.libraryPath)
+        for name in ["stacked.png", "saved.png"] { try FileManager.default.removeItem(at: directory.appendingPathComponent(name)) }
+        try await store.sweep(now: start + 60, retention: nil, maxBytes: .max)
+        entries = try await store.entries()
+        #expect(Set(entries.map(\.id)) == [stack, saved])
+        #expect(try bytes(entries.first { $0.id == saved }?.imageURL) == Self.picture(6))
+        #expect(try bytes(entries.first { $0.id == stack }?.earlierVersions.first?.imageURL) == Self.picture(5))
+    }
+
+    /// A saved card that refers to a capture whose file is gone stays: Saved items are never cleared out (Astra L1).
+    @Test func aSavedReferenceOutlivesItsCaptureFile() async throws {
+        let store = try store()
+        let reference = try capture(7, named: "gone.png")
+        guard case .inserted(let saved) = try await store.record(reference, at: start) else { return }
+        try FileManager.default.removeItem(at: directory.appendingPathComponent("gone.png"))
+        try await store.setPinned(saved, true)
+        try await store.sweep(now: start + 60, retention: nil, maxBytes: .max)
+        #expect(try await store.entries().map(\.id) == [saved])
+    }
+
+    /// Astra L2: an earlier version and a later copy of the same picture share one file, which counts once. A→B→A
+    /// within the cap keeps both cards; one byte under, the oldest card goes and the shared file stays.
+    @Test func aSharedFileCountsOnceAgainstTheCap() async throws {
+        let store = try store()
+        let a = picture(8), b = picture(8, reencoded: true)
+        guard case .inserted(let stack) = try await store.record(a, at: start) else { return }
+        #expect(try await store.record(b, at: start + 1) == .stacked(stack))
+        guard case .inserted(let later) = try await store.record(a, at: start + 20) else { Issue.record("not inserted"); return }
+        let physical = Int64(a.storedBytes + b.storedBytes)
+        #expect(try await store.totalBytes() == physical)
+        try await store.sweep(now: start + 30, retention: nil, maxBytes: physical)
+        #expect(Set(try await store.entries().map(\.id)) == [stack, later])
+        try await store.sweep(now: start + 30, retention: nil, maxBytes: physical - 1)
+        let left = try await store.entries()
+        #expect(left.map(\.id) == [later])
+        #expect(try Data(contentsOf: try #require(left.first?.imageURL)) == a.image)
+        #expect(try await store.totalBytes() == Int64(a.storedBytes))
+    }
+
+    /// Astra L3: what was read or said about the earlier image doesn't stay on the newest version, and an answer about
+    /// the earlier image that arrives after the stack isn't written onto it.
+    @Test func aStackedVersionIsReadAfresh() async throws {
+        let store = try store()
+        guard case .inserted(let id) = try await store.record(picture(10), at: start) else { return }
+        let first = try #require(try await store.entries().first).hash
+        try await store.setReadText(id, "Approved", forHash: first)
+        try await store.setDescription(id, title: "Approved request", keywords: ["approved"], category: "Status", forHash: first)
+        #expect(try await store.record(picture(10, reencoded: true), at: start + 0.5) == .stacked(id))
+        var entry = try #require(try await store.entries().first)
+        #expect(entry.readText == nil && entry.modelTitle == nil && entry.keywords.isEmpty && entry.category == nil)
+        #expect(!entry.isDescribed)
+        // Late: an answer asked about the first image lands after the stack.
+        try await store.setReadText(id, "Approved", forHash: first)
+        try await store.setDescription(id, title: "Approved request", keywords: [], category: nil, forHash: first)
+        entry = try #require(try await store.entries().first)
+        #expect(entry.readText == nil && entry.modelTitle == nil && !entry.isDescribed)
+    }
+
+    /// The bump branch (Astra C1): a lookalike whose content history already holds bumps that card and leaves the fresh
+    /// copy before it alone, rather than deleting it.
+    @Test func aLookalikeAlreadyInHistoryDeletesNothing() async throws {
+        let store = try store()
+        guard case .inserted(let kept) = try await store.record(picture(4, reencoded: true), at: start) else { return }
+        guard case .inserted(let fresh) = try await store.record(picture(4), at: start + 60) else { return }
+        #expect(try await store.record(picture(4, reencoded: true), at: start + 61) == .bumped(kept))
+        let entries = try await store.entries()
+        #expect(Set(entries.map(\.id)) == [kept, fresh])
+        #expect(try Data(contentsOf: try #require(entries.first { $0.id == fresh }?.imageURL)) == Self.picture(4))
     }
 
     /// Astra's counterexample (2026-11-16): two different pictures of one size, copied 1.5 s apart, became one entry.
@@ -450,20 +592,28 @@ struct ClipboardHistoryStoreTests {
         #expect(try await pinnedStore.entries().count == 2)
     }
 
-    @Test func copyingAnOptimisedImageAgainKeepsOneEntry() async throws {
+    /// Copied again later, the original arrives as a new card (its content is only an earlier version elsewhere), and its
+    /// re-encode bumps the stacked card. Nothing is deleted; the two cards share the original's file, which outlives
+    /// either one being deleted.
+    @Test func copyingAnOptimisedImageAgainDeletesNothing() async throws {
         let store = try store()
         guard case .inserted(let id) = try await store.record(picture(3), at: start) else { return }
-        #expect(try await store.record(picture(3, reencoded: true), at: start + 1) == .replaced(id))
-        // Copied again later: the original arrives as a new entry, then its rewrite matches the kept one.
+        #expect(try await store.record(picture(3, reencoded: true), at: start + 1) == .stacked(id))
         guard case .inserted(let fresh) = try await store.record(picture(3), at: start + 60) else {
             Issue.record("not inserted"); return
         }
-        let freshURL = try #require(try await store.entries().first { $0.id == fresh }?.imageURL)
         #expect(try await store.record(picture(3, reencoded: true), at: start + 61) == .bumped(id))
-        let entries = try await store.entries()
-        #expect(entries.map(\.id) == [id])
-        #expect(entries.first?.timesCopied == 2)
-        #expect(!FileManager.default.fileExists(atPath: freshURL.path))
+        var entries = try await store.entries()
+        #expect(Set(entries.map(\.id)) == [id, fresh])
+        let shared = try #require(entries.first { $0.id == fresh }?.imageURL)
+        #expect(entries.first { $0.id == id }?.earlierVersions.first?.imageURL == shared)
+        try await store.delete(fresh)
+        entries = try await store.entries()
+        #expect(try Data(contentsOf: try #require(entries.first?.earlierVersions.first?.imageURL)) == Self.picture(3))
+        // Deleting the card takes its versions with it, and the last user of a file takes the file.
+        try await store.delete(id)
+        #expect(!FileManager.default.fileExists(atPath: shared.path))
+        #expect(try await store.totalBytes() == 0)
     }
 
     @Test func anImagesTextAndDescriptionAreKept() async throws {
@@ -484,7 +634,7 @@ struct ClipboardHistoryStoreTests {
         let store = try store()
         guard case .inserted(let id) = try await store.record(picture(7), at: start) else { return }
         let asked = try #require(try await store.entries().first).hash
-        #expect(try await store.record(picture(7, reencoded: true), at: start + 0.5) == .replaced(id))
+        #expect(try await store.record(picture(7, reencoded: true), at: start + 0.5) == .stacked(id))
         try await store.setReadText(id, "stale", forHash: asked)
         try await store.setDescription(id, title: "Stale", keywords: [], category: nil, forHash: asked)
         var entry = try #require(try await store.entries().first)
@@ -606,7 +756,7 @@ struct ClipboardListTests {
             entry(.snippet, "body", title: "A snippet"),
         ]
         let sections = ClipboardList.sections(entries, filter: .all, query: CaptureLibraryQuery(""), now: now, calendar: calendar)
-        #expect(sections.map(\.title) == ["Pinned", "Today", "Yesterday", "Earlier"])
+        #expect(sections.map(\.title) == ["Saved", "Today", "Yesterday", "Earlier"])
         #expect(sections.map { $0.entries.map(\.text) } == [["pinned long ago"], ["this morning"], ["yesterday"], ["last week"]])
     }
 
@@ -766,7 +916,8 @@ struct ClipboardImageMatchTests {
     }
 }
 
-/// The captures grid's layout, which the clipboard grid now shares (Astra B2: a strip was left on the right).
+/// The Library grids' layout, shared by captures and clipboard: Finder-like gaps that grow with the cards
+/// (owner, 2026-11-16), and even margins rather than a strip on one side (Astra B2).
 @Suite
 struct LibraryGridMetricsTests {
     @Test func spareWidthGoesToGapsThenEvenMargins() {
@@ -775,7 +926,10 @@ struct LibraryGridMetricsTests {
                 let grid = LibraryGridMetrics(width: width, cardWidth: card)
                 let row = CGFloat(grid.columns) * grid.cellWidth + CGFloat(grid.columns - 1) * grid.spacing
                 #expect(grid.leftInset + row + grid.rightInset <= width, "\(width) \(card)")
-                #expect(grid.spacing >= 16 && grid.spacing <= 32)
+                if grid.columns > 1 {
+                    #expect(grid.spacing >= LibraryGridMetrics.minimumGap(for: grid.cellWidth))
+                    #expect(grid.spacing <= LibraryGridMetrics.maximumGap(for: grid.cellWidth))
+                }
                 // No room for another card is left over, and the margins differ by at most a point.
                 #expect(width - row - grid.leftInset - grid.rightInset < grid.cellWidth + grid.spacing)
                 #expect(abs(grid.leftInset - grid.rightInset) <= 1, "\(width) \(card)")
@@ -783,11 +937,15 @@ struct LibraryGridMetricsTests {
         }
     }
 
-    @Test func astrasCaseFitsTwoCardsCentred() {
-        // About 600 pt of grid at a medium card size: two cards, the leftover split evenly, not a strip on the right.
-        let grid = LibraryGridMetrics(width: 600, cardWidth: 192)
-        #expect(grid.columns == 2)
-        #expect(grid.spacing == 32)
-        #expect(grid.leftInset == 92)
+    @Test func gapsGrowWithTheCards() {
+        // Finder leaves room between items at every size: a fifth of a card at least, half a card at most.
+        let small = LibraryGridMetrics(width: 900, cardWidth: 140), large = LibraryGridMetrics(width: 900, cardWidth: 320)
+        #expect(small.spacing >= 28 && large.spacing >= 64)
+        #expect(large.spacing > small.spacing)
+        // Rows keep the card's own gap, even when one wide column turns the row gap into margin.
+        let single = LibraryGridMetrics(width: 612, cardWidth: 320)
+        #expect(single.columns == 1 && single.lineSpacing == LibraryGridMetrics.minimumGap(for: 320))
+        #expect(large.cardHeight == LibraryGridMetrics.pictureInset + large.pictureHeight + LibraryGridMetrics.captionHeight)
+        #expect(large.pictureHeight == ((320 - 16) * 0.625).rounded(.down))
     }
 }

@@ -49,7 +49,9 @@ extension CaptureLibraryModel {
                     let url = item.isVideo ? try await RecordingDeliverable.resolve(for: item.fileURL) : item.fileURL
                     urls.append(url)
                 }
-                LibrarySharing.show(urls)
+                // Saved once the chosen service says it shared them, not when the picker opens (Astra L5).
+                // A completion records a share that already happened, so it isn't dropped while another operation runs.
+                LibrarySharing.show(urls) { self.setSaved(true, items: selected, request: .completion) }
             }
         case .reveal:
             NSWorkspace.shared.activateFileViewerSelecting(selected.map(\.ownedURL))
@@ -73,7 +75,9 @@ extension CaptureLibraryModel {
                     var tags = (metadata.tags ?? []).filter { $0.caseInsensitiveCompare(name) != .orderedSame }
                     if applied { tags.append(name) }
                     metadata.tags = tags.isEmpty ? nil : tags
+                    if applied, metadata.librarySavedAt == nil { metadata.librarySavedAt = Date() }
                 }
+                if applied { ScreenshotHistoryStore.shared.markRecordingSaved(session) }
             } else {
                 historyIDs.formUnion(item.historyIDs)
             }
@@ -165,6 +169,27 @@ extension CaptureLibraryModel {
         } + [LibraryMenuItem(title: "Refresh", startsGroup: true, perform: refresh)]
     }
 
+    /// Saves the selected captures to Library › Saved (★), or takes them out. Recordings keep the flag in
+    /// their own project, screenshots in the Library history, as tags do.
+    func setSaved(_ saved: Bool, items: [CaptureLibraryItem]? = nil, request: LibrarySaveRequest = .command) {
+        guard request.applies(whileBusy: isBusy) else { return }
+        var historyIDs = Set<UUID>()
+        for item in items ?? selectedItems {
+            if let session = item.session {
+                try? session.updateProjectMetadata { $0.librarySavedAt = saved ? ($0.librarySavedAt ?? Date()) : nil }
+            }
+            // A recording shared before its project could be saved carries the flag on its History row too.
+            historyIDs.formUnion(item.historyIDs)
+        }
+        do {
+            try ScreenshotHistoryStore.shared.setLibrarySaved(saved, ids: historyIDs)
+        } catch {
+            errorMessage = (saved ? "The capture couldn't be saved. " : "The capture couldn't be removed from Saved. ")
+                + error.localizedDescription
+        }
+        refresh()
+    }
+
     /// The captures' right-click menu: the shared actions, then the
     /// selected capture's cloud actions, which moved here from the
     /// inspector's bar, then Move to Trash.
@@ -188,6 +213,9 @@ extension CaptureLibraryModel {
             items.insert(LibraryMenuItem(title: "Revert to Original…", isEnabled: !isBusy) { self.requestRevert(item) }, at: rename + 1)
         }
         let trash = items.removeLast()
+        let saved = !selectedItems.isEmpty && selectedItems.allSatisfy(\.isSaved)
+        items.append(LibraryMenuItem(title: saved ? "Remove from Saved" : "Save", isEnabled: count > 0 && !isBusy,
+                                     startsGroup: true) { self.setSaved(!saved) })
         items += cloudMenuItems()
         items.append(trash)
         return items
@@ -586,10 +614,38 @@ struct CaptureNameField: View {
 /// The system Share sheet for Library items, opened from a right-click
 /// menu, so it appears beside the pointer.
 enum LibrarySharing {
-    static func show(_ items: [URL]) {
+    /// The open picker's delegate; the picker holds it weakly.
+    private static var current: Delegate?
+
+    /// `onShared` runs when the chosen service reports it finished sharing: not on picking one, nor on a cancel.
+    static func show(_ items: [URL], onShared: @escaping () -> Void = {}) {
         guard !items.isEmpty, let window = NSApp.keyWindow, let view = window.contentView else { return }
         let point = view.convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil)
-        NSSharingServicePicker(items: items)
-            .show(relativeTo: NSRect(origin: point, size: .zero), of: view, preferredEdge: .minY)
+        let picker = NSSharingServicePicker(items: items)
+        let delegate = Delegate(onShared: onShared)
+        current = delegate
+        picker.delegate = delegate
+        picker.show(relativeTo: NSRect(origin: point, size: .zero), of: view, preferredEdge: .minY)
+    }
+
+    private final class Delegate: NSObject, NSSharingServicePickerDelegate, NSSharingServiceDelegate {
+        let onShared: () -> Void
+        init(onShared: @escaping () -> Void) { self.onShared = onShared }
+
+        func sharingServicePicker(_ picker: NSSharingServicePicker,
+                                  delegateFor sharingService: NSSharingService) -> (any NSSharingServiceDelegate)? { self }
+
+        func sharingServicePicker(_ picker: NSSharingServicePicker, didChoose service: NSSharingService?) {
+            if service == nil { LibrarySharing.current = nil }
+        }
+
+        func sharingService(_ sharingService: NSSharingService, didShareItems items: [Any]) {
+            onShared()
+            LibrarySharing.current = nil
+        }
+
+        func sharingService(_ sharingService: NSSharingService, didFailToShareItems items: [Any], error: any Error) {
+            LibrarySharing.current = nil
+        }
     }
 }

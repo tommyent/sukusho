@@ -90,6 +90,7 @@ final class ClipboardHistoryModel {
 
     var historyCount: Int { entries.count { $0.kind != .snippet } }
     var snippetCount: Int { entries.count { $0.kind == .snippet } }
+    var savedCount: Int { entries.count { $0.kind != .snippet && $0.pinnedAt != nil } }
 
     func entry(_ id: ClipboardEntry.ID?) -> ClipboardEntry? {
         id.flatMap { id in entries.first { $0.id == id } }
@@ -159,7 +160,20 @@ final class ClipboardHistoryModel {
         }
     }
 
-    func togglePin(_ entry: ClipboardEntry) {
+    /// The card as it was at an earlier version: that version's image and Library link, for Copy and Quick Look.
+    func entry(_ entry: ClipboardEntry, at version: ClipboardEntryVersion) -> ClipboardEntry {
+        var earlier = entry
+        earlier.imageURL = version.imageURL
+        earlier.libraryPath = version.libraryPath
+        earlier.byteSize = version.byteSize
+        earlier.hash = version.hash
+        earlier.earlierVersions = []
+        return earlier
+    }
+
+    /// Save (★) keeps a copy in Library › Saved, never aged out or swept, and out of Delete History. It's the
+    /// store's pinned flag, so clips pinned before option A are saved (sd-ogtp.1.1).
+    func toggleSaved(_ entry: ClipboardEntry) {
         Task {
             try? await store?.setPinned(entry.id, entry.pinnedAt == nil)
             refresh()
@@ -212,7 +226,9 @@ final class ClipboardHistoryModel {
     /// What Quick Look shows for an entry. It previews files only: an image or copied files are shown as
     /// they are; text and colors are written out for it, in a folder per entry so titles never collide.
     func quickLookURLs(for entry: ClipboardEntry) -> [URL] {
+        // Per version too: a link made for the original must not show again for the newer version stacked on it.
         let folder = Self.quickLookFolder.appendingPathComponent(entry.id, isDirectory: true)
+            .appendingPathComponent(String(entry.hash.prefix(16)), isDirectory: true)
         let name = String(ClipboardList.title(of: entry).prefix(60))
             .replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
         switch entry.kind {

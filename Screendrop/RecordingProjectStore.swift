@@ -70,7 +70,12 @@ final class RecordingProjectStore {
     func rename(_ session: RecordingSession, to name: String) {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard name != (session.customName ?? "") else { return }
-        try? session.updateProjectMetadata { $0.displayName = name.isEmpty ? nil : name }
+        try? session.updateProjectMetadata { metadata in
+            metadata.displayName = name.isEmpty ? nil : name
+            // Naming a recording saves it to the Library, as naming a screenshot does.
+            if !name.isEmpty, metadata.librarySavedAt == nil { metadata.librarySavedAt = Date() }
+        }
+        if !name.isEmpty { ScreenshotHistoryStore.shared.markRecordingSaved(session) }
         reload()
     }
 

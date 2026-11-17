@@ -9,10 +9,10 @@ nonisolated struct ClipboardEntry: Sendable, Equatable, Identifiable {
     /// A snippet's name.
     let title: String?
     /// The kept image, in the history's Blobs folder.
-    let imageURL: URL?
+    var imageURL: URL?
     /// A Sukusho capture's file, when the image stays in the Library.
-    let libraryPath: String?
-    let byteSize: Int
+    var libraryPath: String?
+    var byteSize: Int
     let pixelWidth: Int
     let pixelHeight: Int
     let sourceBundleID: String?
@@ -20,6 +20,7 @@ nonisolated struct ClipboardEntry: Sendable, Equatable, Identifiable {
     let firstCopiedAt: Date
     let lastCopiedAt: Date
     let timesCopied: Int
+    /// When the copy was saved (★, Library › Saved); stored as pinned_at, the name it had before option A.
     let pinnedAt: Date?
     /// An image's text, read on this Mac as the Library reads captures'; nil until read.
     var readText: String? = nil
@@ -29,8 +30,20 @@ nonisolated struct ClipboardEntry: Sendable, Equatable, Identifiable {
     var category: String? = nil
     /// The model answered or declined, so it isn't asked again.
     var isDescribed = false
-    /// SHA-256 of the content; it changes when an optimiser's rewrite takes the entry's place.
+    /// SHA-256 of the newest version's content.
     var hash = ""
+    /// Versions this card held before an optimiser's re-encode stacked a newer one on it, newest first. Each keeps
+    /// its own hash, image and Library link (owner, 2026-11-16: two versions on one card, nothing deleted).
+    var earlierVersions: [ClipboardEntryVersion] = []
+}
+
+/// An earlier version of an image entry: what was copied before an optimiser put its re-encode back.
+nonisolated struct ClipboardEntryVersion: Sendable, Equatable {
+    let hash: String
+    let imageURL: URL?
+    let libraryPath: String?
+    let byteSize: Int
+    let copiedAt: Date
 }
 
 /// Clipboard history on disk: one SQLite database for entries, and images as
@@ -38,13 +51,14 @@ nonisolated struct ClipboardEntry: Sendable, Equatable, Identifiable {
 /// a change number, so sync between Macs can come later without a migration.
 actor ClipboardHistoryStore {
     nonisolated enum RecordOutcome: Equatable, Sendable {
-        /// `replaced`: the copy was a rewrite of the image copied just before it, which now holds the new bytes.
-        case inserted(String), bumped(String), replaced(String)
+        /// `stacked`: the copy looked like a re-encode of the image copied just before it, so it became that card's
+        /// newest version; the earlier one is kept beside it.
+        case inserted(String), bumped(String), stacked(String)
     }
 
-    /// How long after an image copy a re-encode of the same picture counts as its rewrite rather than a new copy.
+    /// How long after an image copy a re-encode of the same picture stacks on its card rather than making a new one.
     /// Image optimisers such as Clop put a smaller version back on the clipboard: 0.5 s and 1.1 s after Sukusho's
-    /// copies on the owner's Air (2026-11-16), where history kept both. The owner's rule: keep only the rewrite.
+    /// copies on the owner's Air (2026-11-16). The owner's rule: one card, two versions, nothing deleted.
     static let rewriteWindow: TimeInterval = 10
 
     nonisolated struct StoreError: Error, CustomStringConvertible {
@@ -106,6 +120,16 @@ actor ClipboardHistoryStore {
                 data BLOB NOT NULL,
                 PRIMARY KEY (entry_id, type)
             );
+            CREATE TABLE IF NOT EXISTS versions (
+                entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+                hash TEXT NOT NULL,
+                blob TEXT,
+                library_path TEXT,
+                byte_size INTEGER NOT NULL DEFAULT 0,
+                stored_bytes INTEGER NOT NULL DEFAULT 0,
+                copied_at REAL NOT NULL,
+                PRIMARY KEY (entry_id, hash)
+            );
             """)
         // Histories from before the image descriptions get their columns; on a newer one each is a duplicate.
         for column in ["read_text TEXT", "model_title TEXT", "model_keywords TEXT", "model_category TEXT",
@@ -126,24 +150,34 @@ actor ClipboardHistoryStore {
         try transaction {
             let existing = try query("SELECT id FROM entries WHERE kind = ? AND hash = ?",
                                      [capture.kind.rawValue, capture.hash]) { $0.text(0) }.first
-            let rewritten = try rewrittenEntry(by: capture, at: date)
             if let id = existing ?? nil {
-                // The rewrite of a copy whose rewrite history already holds: the fresh original goes.
-                if let rewritten, rewritten.id != id { try delete(ids: [rewritten.id]) }
+                // Content history already holds: that card goes to the top. A fresh copy it looks like stays as it is.
                 try run("UPDATE entries SET last_copied_at = ?, times_copied = times_copied + 1, change_seq = ? WHERE id = ?",
                         [date.timeIntervalSince1970, try nextChange(), id])
                 return .bumped(id)
             }
             let blob = try writeBlob(of: capture)
-            if let rewritten {
-                // The earlier entry keeps its source, first copy time and Library link; the bytes are the rewrite's.
+            if let rewritten = try rewrittenEntry(by: capture, at: date) {
+                // The card's current version, with its own hash, image and Library link, becomes an earlier one; the
+                // new copy is the newest, shown and pasted. The card keeps its source and first copy time.
                 try run("""
-                    UPDATE entries SET hash = ?, blob = ?, byte_size = ?, stored_bytes = ?,
-                        library_path = COALESCE(library_path, ?), last_copied_at = ?, change_seq = ? WHERE id = ?
-                    """, [capture.hash, blob, capture.byteSize, capture.storedBytes, capture.libraryPath,
+                    INSERT OR IGNORE INTO versions (entry_id, hash, blob, library_path, byte_size, stored_bytes, copied_at)
+                    SELECT id, hash, blob, library_path, byte_size, stored_bytes, last_copied_at FROM entries WHERE id = ?
+                    """, [rewritten.id])
+                // A kept Original owns its bytes: a capture file can be edited or trashed later (Astra L1).
+                if let owned = try snapshot(rewritten.libraryPath, hash: rewritten.hash) {
+                    try run("UPDATE versions SET blob = ?, stored_bytes = ? WHERE entry_id = ? AND hash = ?",
+                            [owned.blob, owned.bytes, rewritten.id, rewritten.hash])
+                }
+                // What was read or said about the earlier image is cleared, so the newest is read and described
+                // afresh (Astra L3); late answers for the earlier image are kept out by their hash guard.
+                try run("""
+                    UPDATE entries SET hash = ?, blob = ?, library_path = ?, byte_size = ?, stored_bytes = ?,
+                        last_copied_at = ?, change_seq = ?, read_text = NULL, model_title = NULL, model_keywords = NULL,
+                        model_category = NULL, described = 0 WHERE id = ?
+                    """, [capture.hash, blob, capture.libraryPath, capture.byteSize, capture.storedBytes,
                           date.timeIntervalSince1970, try nextChange(), rewritten.id])
-                if let old = rewritten.blob, old != blob { try? FileManager.default.removeItem(at: blobs.appendingPathComponent(old)) }
-                return .replaced(rewritten.id)
+                return .stacked(rewritten.id)
             }
             let id = UUID().uuidString
             try run("""
@@ -179,9 +213,18 @@ actor ClipboardHistoryStore {
                 [title, text, text.utf8.count, text.utf8.count, try nextChange(), id])
     }
 
+    /// Saving a copy that only refers to a capture file snapshots that file, so the Saved card keeps its picture when
+    /// the capture is edited or trashed (Astra L1). The capture link stays as it was.
     func setPinned(_ id: String, _ pinned: Bool, at date: Date = .now) throws {
-        try run("UPDATE entries SET pinned_at = ?, change_seq = ? WHERE id = ?",
-                [pinned ? date.timeIntervalSince1970 : nil, try nextChange(), id])
+        try transaction {
+            try run("UPDATE entries SET pinned_at = ?, change_seq = ? WHERE id = ?",
+                    [pinned ? date.timeIntervalSince1970 : nil, try nextChange(), id])
+            guard pinned, let reference = try query(
+                "SELECT library_path, hash FROM entries WHERE id = ? AND blob IS NULL AND library_path IS NOT NULL", [id],
+                { ($0.text(0), $0.text(1) ?? "") }).first,
+                  let owned = try snapshot(reference.0, hash: reference.1) else { return }
+            try run("UPDATE entries SET blob = ?, stored_bytes = ? WHERE id = ?", [owned.blob, owned.bytes, id])
+        }
     }
 
     /// A clip added to the Library: it shows as in the Library and isn't added twice.
@@ -196,8 +239,9 @@ actor ClipboardHistoryStore {
     }
 
     /// Everything but snippets, and the images kept for it.
+    /// Every copy but the saved ones (pinned_at) and snippets, which belong to the Library.
     func deleteHistory() throws {
-        try delete(ids: try query("SELECT id FROM entries WHERE kind != 'snippet'", []) { $0.text(0) ?? "" })
+        try delete(ids: try query("SELECT id FROM entries WHERE kind != 'snippet' AND pinned_at IS NULL", []) { $0.text(0) ?? "" })
     }
 
     func delete(_ id: String) throws {
@@ -215,20 +259,23 @@ actor ClipboardHistoryStore {
                                 [now.timeIntervalSince1970 - retention]) { $0.text(0) ?? "" }
         }
         try delete(ids: doomed)
-        var total = try totalBytes()
+        // Measured again after each eviction: cards can share an image file, so what a card frees depends on what's left
+        // (Astra L2: counting a shared file twice evicted a stack while the files were within the cap).
         var evicted: [String] = []
-        if total > maxBytes {
-            let oldest = try query("""
-                SELECT id, stored_bytes FROM entries WHERE kind != 'snippet' AND pinned_at IS NULL ORDER BY last_copied_at
-                """, []) { ($0.text(0) ?? "", $0.int(1)) }
-            for (id, bytes) in oldest where total > maxBytes {
+        if try totalBytes() > maxBytes {
+            let oldest = try query(
+                "SELECT id FROM entries WHERE kind != 'snippet' AND pinned_at IS NULL ORDER BY last_copied_at", []) { $0.text(0) ?? "" }
+            for id in oldest {
+                guard try totalBytes() > maxBytes else { break }
+                try delete(ids: [id])
                 evicted.append(id)
-                total -= Int64(bytes)
             }
         }
-        try delete(ids: evicted)
-        // Only references: a clip that was added to the Library keeps its own image.
-        let gone = try query("SELECT id, library_path FROM entries WHERE library_path IS NOT NULL AND blob IS NULL", []) {
+        // Only unsaved references: a clip that was added to the Library or saved keeps its own image, and a Saved card
+        // is never cleared out, even if its capture's file is gone (Astra L1).
+        let gone = try query("""
+            SELECT id, library_path FROM entries WHERE library_path IS NOT NULL AND blob IS NULL AND pinned_at IS NULL
+            """, []) {
             ($0.text(0) ?? "", $0.text(1) ?? "")
         }.filter { !FileManager.default.fileExists(atPath: $0.1) }.map(\.0)
         try delete(ids: gone)
@@ -237,9 +284,16 @@ actor ClipboardHistoryStore {
 
     // MARK: - Reading
 
-    /// Newest first.
+    /// Newest first, each with its earlier versions.
     func entries(limit: Int = 500, offset: Int = 0) throws -> [ClipboardEntry] {
-        try query("""
+        let versions = Dictionary(grouping: try query("""
+            SELECT entry_id, hash, blob, library_path, byte_size, copied_at FROM versions ORDER BY copied_at DESC
+            """, []) { row in
+            (row.text(0) ?? "", ClipboardEntryVersion(hash: row.text(1) ?? "", imageURL: row.text(2).map { blobs.appendingPathComponent($0) },
+                                                       libraryPath: row.text(3), byteSize: row.int(4),
+                                                       copiedAt: Date(timeIntervalSince1970: row.double(5))))
+        }, by: \.0).mapValues { $0.map(\.1) }
+        return try query("""
             SELECT id, kind, text, title, blob, library_path, byte_size, pixel_width, pixel_height, source_bundle_id,
                 is_remote, first_copied_at, last_copied_at, times_copied, pinned_at,
                 read_text, model_title, model_keywords, model_category, described, hash
@@ -266,7 +320,8 @@ actor ClipboardHistoryStore {
                 keywords: (row.text(17) ?? "").split(separator: "\n").map(String.init),
                 category: row.text(18),
                 isDescribed: row.int(19) != 0,
-                hash: row.text(20) ?? ""
+                hash: row.text(20) ?? "",
+                earlierVersions: versions[row.text(0) ?? ""] ?? []
             )
         }
     }
@@ -295,31 +350,55 @@ actor ClipboardHistoryStore {
     }
 
     func totalBytes() throws -> Int64 {
-        Int64(try query("SELECT COALESCE(SUM(stored_bytes), 0) FROM entries", []) { $0.int(0) }.first ?? 0)
+        // Each image file once, however many entries and versions share it, plus what's kept in the database itself.
+        Int64(try query("""
+            SELECT COALESCE((SELECT SUM(bytes) FROM (
+                       SELECT MAX(stored_bytes) AS bytes FROM (
+                           SELECT blob, stored_bytes FROM entries WHERE blob IS NOT NULL
+                           UNION ALL SELECT blob, stored_bytes FROM versions WHERE blob IS NOT NULL)
+                       GROUP BY blob)), 0)
+                 + COALESCE((SELECT SUM(stored_bytes) FROM entries WHERE blob IS NULL), 0)
+                 + COALESCE((SELECT SUM(stored_bytes) FROM versions WHERE blob IS NULL), 0)
+            """, []) { $0.int(0) }.first ?? 0)
     }
 
     // MARK: - SQLite
 
-    /// The entry `capture` rewrites, if any: the latest copy, an unpinned image copied once under
-    /// `rewriteWindow` ago, with nothing copied in between, that shows the same picture
-    /// (`ClipboardImageMatch`). Size and timing alone merged two different pictures copied 1.5 s apart, and two
-    /// Sukusho captures 3 s apart (Astra, 2026-11-16), so when in doubt both are kept. A copy of a Library
-    /// capture is never a rewrite: an optimiser's version has no file in History.
-    private func rewrittenEntry(by capture: ClipboardCapture, at date: Date) throws -> (id: String, blob: String?)? {
+    /// The entry `capture` stacks on as a newer version, if any: the latest copy, an unpinned image copied once under
+    /// `rewriteWindow` ago, with nothing copied in between, that looks like the same picture (`ClipboardImageMatch`).
+    /// The match is approximate (Astra C1/C2: a low-contrast word, a faint selection, transparency), which is why it
+    /// only ever stacks and never deletes. A copy of a Library capture is never a rewrite: an optimiser's version
+    /// has no file in History.
+    private func rewrittenEntry(by capture: ClipboardCapture, at date: Date) throws
+        -> (id: String, hash: String, libraryPath: String?)? {
         guard capture.kind == .image, capture.libraryPath == nil, let incoming = capture.image else { return nil }
         let latest = try query("""
-            SELECT id, kind, pixel_width, pixel_height, times_copied, pinned_at IS NULL, last_copied_at, blob, library_path
+            SELECT id, kind, pixel_width, pixel_height, times_copied, pinned_at IS NULL, last_copied_at, blob, library_path, hash
             FROM entries WHERE kind != 'snippet' ORDER BY last_copied_at DESC LIMIT 1
             """, []) { row in
             (id: row.text(0) ?? "", kind: row.text(1), width: row.int(2), height: row.int(3), times: row.int(4),
-             unpinned: row.int(5) != 0, copiedAt: row.double(6), blob: row.text(7), libraryPath: row.text(8))
+             unpinned: row.int(5) != 0, copiedAt: row.double(6), blob: row.text(7), libraryPath: row.text(8),
+             hash: row.text(9) ?? "")
         }.first
         guard let latest, latest.kind == ClipboardEntryKind.image.rawValue, latest.unpinned, latest.times == 1,
               latest.width == capture.pixelWidth, latest.height == capture.pixelHeight,
               (0..<Self.rewriteWindow).contains(date.timeIntervalSince1970 - latest.copiedAt),
               let picture = latest.blob.map({ blobs.appendingPathComponent($0) }) ?? latest.libraryPath.map(URL.init(fileURLWithPath:)),
               ClipboardImageMatch.isSamePicture(incoming, picture) else { return nil }
-        return (latest.id, latest.blob)
+        return (latest.id, latest.hash, latest.blob == nil ? latest.libraryPath : nil)
+    }
+
+    /// Copies a capture file into the blob store under its content's name, when it still holds the content `hash`
+    /// names; nil when it's gone or changed, since then the bytes it stood for are already lost.
+    private func snapshot(_ path: String?, hash: String) throws -> (blob: String, bytes: Int)? {
+        guard let path, let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              ClipboardPasteboardReader.digest(data) == hash else { return nil }
+        let ext = URL(fileURLWithPath: path).pathExtension
+        let name = "\(hash.prefix(2))/\(hash).\(ext.isEmpty ? "img" : ext)"
+        let url = blobs.appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if !FileManager.default.fileExists(atPath: url.path) { try data.write(to: url, options: .atomic) }
+        return (name, data.count)
     }
 
     /// Writes a copy's image under its hash and returns the name, or nil for a copy without one.
@@ -332,12 +411,23 @@ actor ClipboardHistoryStore {
         return name
     }
 
+    /// Deletes the entries with their versions. An image file goes only when nothing else uses it: blobs are named
+    /// by content, so a version and a later copy of the same picture share one.
     private func delete(ids: [String]) throws {
         guard !ids.isEmpty else { return }
         for id in ids {
-            let blob = try query("SELECT blob FROM entries WHERE id = ?", [id]) { $0.text(0) }.first ?? nil
+            let files = try query("""
+                SELECT blob FROM entries WHERE id = ? AND blob IS NOT NULL
+                UNION SELECT blob FROM versions WHERE entry_id = ? AND blob IS NOT NULL
+                """, [id, id]) { $0.text(0) ?? "" }
+            try run("DELETE FROM versions WHERE entry_id = ?", [id])
             try run("DELETE FROM entries WHERE id = ?", [id])
-            if let blob { try? FileManager.default.removeItem(at: blobs.appendingPathComponent(blob)) }
+            for file in files {
+                let uses = try query("""
+                    SELECT (SELECT COUNT(*) FROM entries WHERE blob = ?) + (SELECT COUNT(*) FROM versions WHERE blob = ?)
+                    """, [file, file]) { $0.int(0) }.first ?? 0
+                if uses == 0 { try? FileManager.default.removeItem(at: blobs.appendingPathComponent(file)) }
+            }
         }
     }
 
