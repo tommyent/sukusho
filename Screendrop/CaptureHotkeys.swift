@@ -350,16 +350,50 @@ enum SystemScreenshotShortcuts {
         184: HotkeyShortcut(modifiers: [.shift, .command], keyCode: 23),            // ⇧⌘5
     ]
 
+    /// What one press does when a Sukusho shortcut is also one of macOS's.
+    enum Outcome: Equatable {
+        /// macOS does its screenshot and Sukusho does its action as well.
+        case both
+        /// Only macOS's runs: every one of macOS's screenshot shortcuts starts its Screenshot UI, and Sukusho's area
+        /// picker closes when that UI starts (sd-7l2f).
+        case macOSOnly
+    }
+
+    /// By Sukusho's action, since all five of macOS's start the same Screenshot UI. Area, Capture Text and Scrolling
+    /// Capture open Sukusho's picker at once, so they don't run: seen for ⇧⌘3, ⇧⌘4 and ⇧⌘5 in the VM (27.2.1). Any
+    /// other action has no picker to close, so it runs as well (inferred, not seen).
+    static func outcome(for action: CaptureHotkeyAction) -> Outcome {
+        switch action {
+        case .area, .textCapture, .scrollingCapture: .macOSOnly
+        default: .both
+        }
+    }
+
+    /// What macOS does on its entry's keys, for the sentence that says so.
+    static func macOSDoes(_ entry: Int) -> String {
+        switch entry {
+        case 28, 29: "takes its own screenshot"
+        case 30, 31: "starts its own area screenshot"
+        default: "opens its Screenshot toolbar"
+        }
+    }
+
+    /// The screenshot shortcuts macOS has on, by entry number, from its AppleSymbolicHotKeys dictionary.
+    static func enabledEntries(in hotkeys: [String: Any]?) -> [Int: HotkeyShortcut] {
+        defaults.reduce(into: [:]) { result, item in
+            let (id, fallback) = item
+            guard let entry = hotkeys?[String(id)] as? [String: Any] else { result[id] = fallback; return }
+            guard (entry["enabled"] as? Bool) ?? (entry["enabled"] as? NSNumber)?.boolValue ?? true else { return }
+            let parameters = (entry["value"] as? [String: Any])?["parameters"] as? [NSNumber]
+            guard let parameters, parameters.count >= 3 else { result[id] = fallback; return }
+            let flags = NSEvent.ModifierFlags(rawValue: parameters[2].uintValue)
+            result[id] = HotkeyShortcut(modifiers: HotkeyShortcut.Modifiers(from: flags), keyCode: parameters[1].intValue)
+        }
+    }
+
     /// The screenshot shortcuts macOS has on, from its AppleSymbolicHotKeys dictionary.
     static func enabled(in hotkeys: [String: Any]?) -> Set<HotkeyShortcut> {
-        Set(defaults.compactMap { id, fallback -> HotkeyShortcut? in
-            guard let entry = hotkeys?[String(id)] as? [String: Any] else { return fallback }
-            guard (entry["enabled"] as? Bool) ?? (entry["enabled"] as? NSNumber)?.boolValue ?? true else { return nil }
-            let parameters = (entry["value"] as? [String: Any])?["parameters"] as? [NSNumber]
-            guard let parameters, parameters.count >= 3 else { return fallback }
-            let flags = NSEvent.ModifierFlags(rawValue: parameters[2].uintValue)
-            return HotkeyShortcut(modifiers: HotkeyShortcut.Modifiers(from: flags), keyCode: parameters[1].intValue)
-        })
+        Set(enabledEntries(in: hotkeys).values)
     }
 
     /// Sukusho's actions whose shortcut macOS also uses, in Settings' order.
@@ -367,15 +401,20 @@ enum SystemScreenshotShortcuts {
         CaptureHotkeyAction.allCases.filter { shortcuts[$0].map(system.contains) ?? false }
     }
 
+    /// The macOS entry that also uses `shortcut`, if one does; the lowest number when two share it.
+    static func entry(for shortcut: HotkeyShortcut, in entries: [Int: HotkeyShortcut]) -> Int? {
+        entries.filter { $0.value == shortcut }.keys.min()
+    }
+
     /// macOS's settings as they are now: synchronized first, so a shortcut just turned off in System Settings counts.
-    static func current() -> Set<HotkeyShortcut> {
+    static func currentEntries() -> [Int: HotkeyShortcut] {
         CFPreferencesAppSynchronize(domain as CFString)
-        return enabled(in: CFPreferencesCopyAppValue(key as CFString, domain as CFString) as? [String: Any])
+        return enabledEntries(in: CFPreferencesCopyAppValue(key as CFString, domain as CFString) as? [String: Any])
     }
 
     /// Sukusho's shortcuts that macOS also uses now.
     static func currentClashes() -> [CaptureHotkeyAction] {
-        clashes(CaptureHotkeyPreferences.shortcuts(), with: current())
+        clashes(CaptureHotkeyPreferences.shortcuts(), with: Set(currentEntries().values))
     }
 
     /// Where the user turns macOS's screenshot shortcuts off, as System Settings names it (checked on screen in the VM).
@@ -387,8 +426,33 @@ enum SystemScreenshotShortcuts {
         NSWorkspace.shared.open(url)
     }
 
-    /// The line Settings shows under a clashing shortcut.
-    static func warning(for shortcut: HotkeyShortcut) -> String {
-        "macOS also uses \(shortcut.displayTokens.joined()) for screenshots, so one press starts both. Turn macOS’s off in System Settings › \(settingsPath), or pick another key here."
+    /// The line Settings shows under a clashing shortcut: what one press does now, and the way out.
+    static func warning(for action: CaptureHotkeyAction, shortcut: HotkeyShortcut, entry: Int) -> String {
+        let keys = shortcut.displayTokens.joined()
+        let now = switch outcome(for: action) {
+        case .both: "On \(keys), macOS also \(macOSDoes(entry)), so one press does both."
+        case .macOSOnly: "On \(keys), macOS \(macOSDoes(entry)) instead, so \(action.title) doesn’t run."
+        }
+        return "\(now) Turn macOS’s off in System Settings › \(settingsPath), or pick another key."
+    }
+
+    /// The launch notice's text for these clashes, the keys in order: what one press does now, and the way out.
+    static func noticeText(_ clashes: [(action: CaptureHotkeyAction, shortcut: HotkeyShortcut, entry: Int)]) -> String {
+        let sorted = clashes.sorted { ($0.shortcut.keyCode, $0.shortcut.modifiers.rawValue) < ($1.shortcut.keyCode, $1.shortcut.modifiers.rawValue) }
+        let list = { (items: [String]) in ListFormatter.localizedString(byJoining: items) }
+        let macOSOnly = sorted.filter { outcome(for: $0.action) == .macOSOnly }
+        let both = sorted.filter { outcome(for: $0.action) == .both }
+        var lines: [String] = []
+        if !macOSOnly.isEmpty {
+            let keys = list(macOSOnly.map { $0.shortcut.displayTokens.joined() })
+            let actions = list(macOSOnly.map(\.action.title))
+            lines.append("On \(keys), only macOS’s own screenshot runs, so Sukusho’s \(actions) \(macOSOnly.count == 1 ? "doesn’t" : "don’t").")
+        }
+        if !both.isEmpty {
+            let keys = list(both.map { $0.shortcut.displayTokens.joined() })
+            lines.append("On \(keys), macOS’s screenshot runs as well as Sukusho’s \(list(both.map(\.action.title))).")
+        }
+        lines.append("To use Sukusho’s, turn macOS’s off in System Settings › \(settingsPath), or pick other keys in Settings › Shortcuts.")
+        return lines.joined(separator: " ")
     }
 }

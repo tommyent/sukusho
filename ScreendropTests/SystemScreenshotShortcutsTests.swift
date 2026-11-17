@@ -75,4 +75,34 @@ struct SystemScreenshotShortcutsTests {
         #expect(system == [HotkeyShortcut(modifiers: [.shift, .command], keyCode: 28)])
         #expect(SystemScreenshotShortcuts.clashes([.area: shift4], with: system).isEmpty)
     }
+
+    /// desk-lead, SC2: the words say what one press does now. Every one of macOS's screenshot shortcuts starts its
+    /// Screenshot UI, which closes Sukusho's area picker (VM: ⇧⌘3, ⇧⌘4, ⇧⌘5), so Area, Capture Text and Scrolling
+    /// Capture don't run; other actions run as well. Which entry a clash hit follows macOS's keys, moved or not.
+    @Test func theWordsSayWhatOnePressDoes() {
+        let entries = SystemScreenshotShortcuts.enabledEntries(in: [:])
+        #expect(SystemScreenshotShortcuts.entry(for: shift5, in: entries) == 184)
+        #expect(SystemScreenshotShortcuts.entry(for: shift3, in: entries) == 28)
+        #expect(SystemScreenshotShortcuts.entry(for: HotkeyShortcut(modifiers: [.command], keyCode: 20), in: entries) == nil)
+        #expect([CaptureHotkeyAction.area, .textCapture, .scrollingCapture].allSatisfy {
+            SystemScreenshotShortcuts.outcome(for: $0) == .macOSOnly })
+        #expect([CaptureHotkeyAction.fullscreen, .window, .screenRecording].allSatisfy {
+            SystemScreenshotShortcuts.outcome(for: $0) == .both })
+
+        #expect(SystemScreenshotShortcuts.warning(for: .textCapture, shortcut: shift5, entry: 184)
+            .hasPrefix("On ⇧⌘5, macOS opens its Screenshot toolbar instead, so Capture Text doesn’t run."))
+        #expect(SystemScreenshotShortcuts.warning(for: .area, shortcut: shift3, entry: 28)
+            .hasPrefix("On ⇧⌘3, macOS takes its own screenshot instead, so Area doesn’t run."))
+        // Fullscreen recorded onto ⇧⌘3: both run.
+        #expect(SystemScreenshotShortcuts.warning(for: .fullscreen, shortcut: shift3, entry: 28)
+            .hasPrefix("On ⇧⌘3, macOS also takes its own screenshot, so one press does both."))
+
+        // The notice: Sukusho's defaults, keys in order whatever order the actions come in.
+        let notice = SystemScreenshotShortcuts.noticeText([(.textCapture, shift5, 184), (.scrollingCapture, shift4, 30),
+                                                           (.area, shift3, 28)])
+        #expect(notice.hasPrefix("On ⇧⌘3, ⇧⌘4, and ⇧⌘5, only macOS’s own screenshot runs, so Sukusho’s Area, Scrolling Capture, and Capture Text don’t."))
+        #expect(!notice.contains("as well"))
+        let single = SystemScreenshotShortcuts.noticeText([(.fullscreen, shift3, 28)])
+        #expect(single.hasPrefix("On ⇧⌘3, macOS’s screenshot runs as well as Sukusho’s Fullscreen."))
+    }
 }
