@@ -156,6 +156,7 @@ private struct ClipboardCard: View {
     let faceHeight: CGFloat
     let isSelected: Bool
     @State private var isHovering = false
+    @Environment(\.displayScale) private var displayScale
 
     /// Built like a capture card (LibraryCellContent): a solid backing in the chrome color, the image edge to
     /// edge at the top, the same border and selection ring. Without the backing, the workspace wallpaper
@@ -210,8 +211,13 @@ private struct ClipboardCard: View {
                 // A much taller one shows its top at full width instead of a thin strip.
                 let tall = TallCapture.isTall(width: entry.pixelWidth, height: entry.pixelHeight)
                 GeometryReader { geometry in
+                    // A small image, such as an icon, shows at its own size rather than blown up and blurred.
+                    let natural = CGSize(width: CGFloat(entry.pixelWidth) / displayScale, height: CGFloat(entry.pixelHeight) / displayScale)
+                    let shrinksOnly = !tall && natural.width > 0 && natural.height > 0
                     ClipboardThumbnail(url: url, maxPixelSize: tall ? Self.tallPixelSize(entry) : 640,
                                        contentMode: tall ? .fill : .fit)
+                        .frame(maxWidth: shrinksOnly ? min(geometry.size.width, natural.width) : .infinity,
+                               maxHeight: shrinksOnly ? min(geometry.size.height, natural.height) : .infinity)
                         .frame(width: geometry.size.width, height: geometry.size.height, alignment: tall ? .top : .center)
                         .clipped()
                 }
