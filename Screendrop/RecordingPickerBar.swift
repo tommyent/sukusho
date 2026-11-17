@@ -70,9 +70,7 @@ struct RecordingPickerControls: View {
                     offSymbol: "speaker.slash",
                     onSymbol: "speaker.wave.2.fill",
                     look: .input(BarMetrics.systemAudioOn)
-                ) {
-                    BarAudioGlyph()
-                }
+                )
             }
             .buttonStyle(BarButtonStyle())
             .accessibilityLabel(systemAudio
@@ -413,9 +411,7 @@ struct RecordingPickerControls: View {
             offSymbol: "mic.slash",
             onSymbol: "mic.fill",
             look: .input(BarMetrics.microphoneOn)
-        ) {
-            BarAudioGlyph()
-        }
+        )
         if state == .unavailable(.blocked) {
             Button {
                 tooltipDismiss()
@@ -583,16 +579,12 @@ struct RecordingCountdownControls: View {
             }
             if !microphoneID.isEmpty {
                 BarToggleLabel(id: .microphone, state: .on, hover: BarHover("Microphone will record"),
-                               offSymbol: "mic.fill", onSymbol: "mic.fill", look: .input(BarMetrics.microphoneOn)) {
-                    BarAudioGlyph()
-                }
+                               offSymbol: "mic.fill", onSymbol: "mic.fill", look: .input(BarMetrics.microphoneOn))
             }
             if systemAudio {
                 BarToggleLabel(id: .systemAudio, state: .on, hover: BarHover("System audio will record"),
                                offSymbol: "speaker.wave.2.fill", onSymbol: "speaker.wave.2.fill",
-                               look: .input(BarMetrics.systemAudioOn)) {
-                    BarAudioGlyph()
-                }
+                               look: .input(BarMetrics.systemAudioOn))
             }
 
             Button {

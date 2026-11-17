@@ -124,6 +124,9 @@ final class ScreenRecordingManager {
     private(set) var microphoneLevel: Double?
     /// True for a moment after the microphone clips, so the meter turns red.
     private(set) var isMicrophoneClipping = false
+    /// The level of what the take hears from the Mac (system audio), 0...1 like the microphone's;
+    /// nil when the take doesn't record system audio.
+    private(set) var systemAudioLevel: Double?
     /// What the take records besides the screen, for the bar's chips while it runs.
     private(set) var takeInputs = RecordingTakeInputs()
     private var microphoneClippedAt: Date?
@@ -271,13 +274,17 @@ final class ScreenRecordingManager {
                 let microphoneLevelTap = MicrophoneLevelTap { [weak self] peak in
                     Task { @MainActor in self?.receiveMicrophonePeak(peak) }
                 }
+                let systemAudioLevelTap = MicrophoneLevelTap { [weak self] peak in
+                    Task { @MainActor in self?.receiveSystemAudioPeak(peak) }
+                }
                 capture.onAudioSample = { [writer] sampleBuffer, kind in
                     if kind == .microphone {
                         teleprompterEngine?.ingest(sampleBuffer)
                     }
                     writer.writeAudioSample(sampleBuffer, kind: kind)
-                    if kind == .microphone {
-                        microphoneLevelTap.ingest(sampleBuffer)
+                    switch kind {
+                    case .microphone: microphoneLevelTap.ingest(sampleBuffer)
+                    case .system: systemAudioLevelTap.ingest(sampleBuffer)
                     }
                 }
                 capture.onError = { [weak self] error in
@@ -332,6 +339,7 @@ final class ScreenRecordingManager {
                 pauseIntervals = []
                 elapsedTime = 0
                 microphoneLevel = options.microphoneDeviceID == nil ? nil : 0
+                systemAudioLevel = options.capturesSystemAudio ? 0 : nil
                 takeInputs = RecordingTakeInputs(
                     camera: cameraStarted,
                     microphone: options.microphoneDeviceID != nil,
@@ -792,6 +800,13 @@ final class ScreenRecordingManager {
 
     /// The mic keeps feeding the meter while paused, so the level can be
     /// checked before resuming. Late peaks after the take ended are dropped.
+    /// The same meter for system audio, without the clip warning: a loud Mac isn't the
+    /// recording's fault the way a hot microphone is.
+    private func receiveSystemAudioPeak(_ peak: Float) {
+        guard let level = systemAudioLevel, state == .recording || state == .paused else { return }
+        systemAudioLevel = MicrophoneLevelMeter.nextLevel(previous: level, peak: peak)
+    }
+
     private func receiveMicrophonePeak(_ peak: Float) {
         guard let level = microphoneLevel, state == .recording || state == .paused else { return }
         let now = Date()
@@ -823,6 +838,7 @@ final class ScreenRecordingManager {
         pausedAt = nil
         accumulatedPauseDuration = 0
         microphoneLevel = nil
+        systemAudioLevel = nil
         takeInputs = RecordingTakeInputs()
         isMicrophoneClipping = false
         microphoneClippedAt = nil

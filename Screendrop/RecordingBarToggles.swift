@@ -142,12 +142,13 @@ struct BarCameraThumbnail: NSViewRepresentable {
     }
 }
 
-/// The microphone's level as four bars, during a take. Before recording the bar shows a still
-/// waveform instead: nothing opens the microphone before the take (it would light macOS's orange
-/// dot), so there is no level to show yet.
+/// An audio input's level as four bars, during a take only. Before it nothing opens the
+/// microphone or system audio (it would light macOS's indicators), so the picker and the countdown
+/// show those chips without a meter rather than one that doesn't move (Fable on m1).
 struct BarLevelMeter: View {
     let level: Double
     var isClipping = false
+    var accessibilityName = "Microphone level"
 
     private static let heights: [CGFloat] = [0.45, 0.8, 1, 0.65]
 
@@ -162,16 +163,7 @@ struct BarLevelMeter: View {
         .foregroundStyle(isClipping ? Color(nsColor: .systemRed) : .white)
         .animation(.linear(duration: 0.05), value: level)
         .accessibilityElement()
-        .accessibilityLabel("Microphone level")
+        .accessibilityLabel(accessibilityName)
         .accessibilityValue(isClipping ? "Too loud" : "\(Int((level * 100).rounded())) percent")
-    }
-}
-
-/// The still waveform an audio input shows when on, where there's no live level to draw.
-struct BarAudioGlyph: View {
-    var body: some View {
-        Image(systemName: "waveform")
-            .font(.system(size: 13, weight: .semibold))
-            .accessibilityHidden(true)
     }
 }
