@@ -145,7 +145,7 @@ struct GeneralSettingsPane: View {
             Section("Capture Visibility") {
                 SettingsControlLabel(
                     "Include Sukusho windows in captures",
-                    detail: "Show preview cards, recording controls, Settings, and other Sukusho windows in screenshots and screen recordings."
+                    detail: "Show preview cards, recording controls, Settings, and other Sukusho windows in Sukusho’s own screenshots and recordings. Other apps and screen sharing always see them."
                 ).control { label in
                     Toggle(isOn: $includeAppWindowsInCaptures) { label }
                 }

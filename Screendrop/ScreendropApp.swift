@@ -42,6 +42,14 @@ struct ScreendropApp: App {
                 Button("Settings…") { SettingsWindowController.show(tab: .general) }
                     .keyboardShortcut(",", modifiers: .command)
             }
+            // Fable's #6: the menu bar holds the app, so its shortcuts can be found there.
+            CommandMenu("Capture") { CaptureMenuItems() }
+            SidebarCommands()
+            InspectorCommands()
+            CommandGroup(before: .toolbar) {
+                AnnotationEditorZoomCommands()
+                LibraryCardSizeCommands()
+            }
         }
         
         WindowGroup("Sukusho Annotate", id: "ANNOTATION_EDITOR", for: URL.self) { value in
@@ -57,6 +65,9 @@ struct ScreendropApp: App {
             }
             CommandMenu("Format") {
                 AnnotationEditorTextSizeCommands()
+            }
+            CommandMenu("Tools") {
+                AnnotationEditorToolCommands()
             }
         }
         .windowResizability(.contentSize)
@@ -351,5 +362,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: "Quit Anyway")
 
         return alert.runModal() == .alertSecondButtonReturn ? .terminateNow : .terminateCancel
+    }
+}
+
+extension FocusedValues {
+    /// The Library's card width, for View › Bigger Cards and Smaller Cards.
+    @Entry var captureLibraryCardWidth: Binding<Double>?
+}
+
+/// The Library's card size, as its status bar slider sets it.
+enum LibraryCardWidth {
+    static let range: ClosedRange<Double> = 140...320
+    static let step: Double = 30
+
+    static func stepped(_ width: Double, by direction: Int) -> Double {
+        min(max(width + Double(direction) * step, range.lowerBound), range.upperBound)
+    }
+}
+
+/// View › Bigger Cards and Smaller Cards for the Library, on the keys the editor uses for zoom.
+/// Only there while the Library is focused, so the editor and Studio keep ⌘+ and ⌘−.
+struct LibraryCardSizeCommands: View {
+    @FocusedValue(\.captureLibraryCardWidth) private var cardWidth
+    @FocusedValue(\.annotationEditor) private var editor
+
+    var body: some View {
+        if editor == nil, let cardWidth {
+            Button("Bigger Cards") { cardWidth.wrappedValue = LibraryCardWidth.stepped(cardWidth.wrappedValue, by: 1) }
+                .keyboardShortcut("+", modifiers: .command)
+                .disabled(cardWidth.wrappedValue >= LibraryCardWidth.range.upperBound)
+            Button("Smaller Cards") { cardWidth.wrappedValue = LibraryCardWidth.stepped(cardWidth.wrappedValue, by: -1) }
+                .keyboardShortcut("-", modifiers: .command)
+                .disabled(cardWidth.wrappedValue <= LibraryCardWidth.range.lowerBound)
+        }
     }
 }

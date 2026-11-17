@@ -53,12 +53,70 @@ struct EditorInspectorTests {
         #expect(settings.alignmentAvailability == .available, "scene blur needs a canvas too")
     }
 
-    /// The tool options slot is headed by the tool, the one annotation selected, or the count.
-    @Test static func toolOptionsHeading() {
-        #expect(AnnotationTool.inspectorHeading(for: .magnifier, selectionCount: 0) == "Magnifier")
-        #expect(AnnotationTool.inspectorHeading(for: .text, selectionCount: 1) == "Text")
-        #expect(AnnotationTool.inspectorHeading(for: .arrow, selectionCount: 3) == "3 Annotations")
-        #expect(AnnotationTool.inspectorHeading(for: nil, selectionCount: 0) == "Select")
+    /// The pinned tool slot follows the dock: Crop, Pick Color and Measure outrank the tool, so
+    /// the slot never shows the previous tool while one of them is on (Fable #1).
+    @Test static func toolSlotFollowsTheDock() {
+        func slot(_ tool: AnnotationTool?, _ count: Int = 0, crop: Bool = false, pick: Bool = false, measure: Bool = false) -> AnnotationToolSlot {
+            .current(tool: tool, selectionCount: count, isCropping: crop, isPickingColor: pick, isMeasuring: measure)
+        }
+        #expect(slot(.magnifier).heading == "Magnifier")
+        #expect(slot(.text, 1).heading == "Text")
+        #expect(slot(.arrow, 3).heading == "3 Annotations")
+        #expect(slot(nil).heading == "Select")
+        #expect(slot(.magnifier, crop: true) == .crop)
+        #expect(slot(.magnifier, pick: true).heading == "Pick Color")
+        #expect(slot(.text, 1, measure: true).heading == "Measure")
+        #expect(slot(.text, crop: true, pick: true) == .crop)
+        for tool in AnnotationTool.allCases {
+            #expect(!AnnotationToolSlot.tool(tool).line.isEmpty)
+        }
+    }
+
+    /// One letter per tool, shared by the keyboard, the tooltips and the Tools menu; C is Crop's.
+    @Test static func toolLettersAreUniqueAndInTheTooltips() {
+        let keyed = AnnotationTool.allCases.compactMap { tool in tool.shortcutKey.map { (tool, $0) } }
+        #expect(Set(keyed.map(\.1)).count == keyed.count)
+        #expect(!keyed.contains { $0.1 == "c" })
+        for (tool, key) in keyed {
+            #expect(tool.helpText == "\(tool.title) (\(key.uppercased()))")
+        }
+        #expect(AnnotationTool.rectangle.shortcutKey == "r" && AnnotationTool.numberedCircle.shortcutKey == "n")
+        #expect(AnnotationTool.freehand.helpText == "Freehand")
+    }
+
+    /// The inspector folds as the window is made narrower past the point, stays folded until there
+    /// is room again plus a margin, and a window that opens narrow starts folded (Fable #7).
+    @Test static func inspectorFoldsBelowTheWidthAndComesBack() {
+        var state = InspectorFoldState()
+        var shown = true
+        func resize(_ width: CGFloat) {
+            let next = state.resized(to: width, foldBelow: 1000, isPresented: shown)
+            state = next.state
+            shown = next.isPresented
+        }
+        resize(1100); #expect(shown && !state.isFolded)
+        resize(990); #expect(!shown && state.isFolded)
+        resize(800); #expect(!shown)
+        resize(1020); #expect(!shown, "not back until the margin")
+        resize(1040); #expect(shown && !state.isFolded)
+
+        // Hidden by hand, it stays hidden however wide the window gets.
+        shown = false
+        resize(990); resize(1200)
+        #expect(!shown)
+
+        // Shown by hand while narrow (the view clears the fold), it stays at that width and while
+        // the window grows, and folds again as soon as the window is made narrower.
+        state = InspectorFoldState(width: 800, isFolded: false)
+        shown = true
+        resize(800); #expect(shown)
+        resize(820); #expect(shown)
+        resize(810); #expect(!shown)
+
+        var narrow = InspectorFoldState()
+        let opened = narrow.resized(to: 900, foldBelow: 1000, isPresented: true)
+        narrow = opened.state
+        #expect(!opened.isPresented && narrow.isFolded)
     }
 
     /// A capture saved with a camera tilt opens with the switch on.

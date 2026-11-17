@@ -278,8 +278,12 @@ struct CaptureLibraryView: View {
         .navigationSplitViewStyle(.balanced)
         .modifier(LibraryToolbarSeparator())
         .toolbar { toolbar }
+        .focusedSceneValue(\.captureLibraryCardWidth, $cardWidth)
         .background { refreshShortcut }
-        .frame(minWidth: 860, minHeight: 540)
+        // 860 pt holds the sidebar, the grid and the inspector; below 900 the inspector folds
+        // away on its own, and without it the window goes down to 620 (Fable #7).
+        .frame(minWidth: inspectorVisible ? 860 : 620, minHeight: 540)
+        .inspectorAutoFold(isPresented: $inspectorVisible, below: 900)
         .onAppear {
             AppActivationPolicy.enter()
             model.sortOrder = savedSort
@@ -473,8 +477,8 @@ struct CaptureLibraryView: View {
     /// spaces keep each key with its name, so the line wraps between them.
     private var shortcutLine: String? {
         let actions: [(CaptureHotkeyAction, String)] = switch activeFilter {
-        case .all: [(.area, "Area"), (.window, "Window"), (.fullscreen, "Screen"), (.screenRecording, "Record")]
-        case .screenshots: [(.area, "Area"), (.window, "Window"), (.fullscreen, "Screen")]
+        case .all: [(.area, "Area"), (.window, "Window"), (.fullscreen, "Fullscreen"), (.screenRecording, "Record")]
+        case .screenshots: [(.area, "Area"), (.window, "Window"), (.fullscreen, "Fullscreen")]
         case .recordings: [(.screenRecording, "Record")]
         }
         let keys = actions
@@ -567,7 +571,7 @@ struct CaptureLibraryView: View {
             }
             if !comments.isShown, !likes.isShown {
                 // Capped where the 640 px thumbnails stay sharp on Retina.
-                Slider(value: $cardWidth, in: 140...320) {
+                Slider(value: $cardWidth, in: LibraryCardWidth.range) {
                     EmptyView()
                 } minimumValueLabel: {
                     Image(systemName: "photo").imageScale(.small)

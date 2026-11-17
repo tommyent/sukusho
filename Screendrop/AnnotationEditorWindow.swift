@@ -31,6 +31,9 @@ struct AnnotationEditorWindow: View {
     @FocusState private var focusedField: AnnotationEditorFocusedField?
     @Environment(\.dismiss) private var dismissWindow
 
+    /// What the tool dock needs, and so the narrowest the window goes.
+    static let minimumWidth: CGFloat = 712
+
     private var isBusy: Bool { isSaving || isFinishing || isUploading || model.isBlockingCommit }
 
     var body: some View {
@@ -56,8 +59,10 @@ struct AnnotationEditorWindow: View {
                 .sharedBackgroundVisibility(.hidden)
                 ToolbarSpacer(.flexible, placement: .primaryAction)
                 ToolbarItemGroup(placement: .primaryAction) {
+                    // Crop's options are in the inspector's tool slot; with the
+                    // inspector hidden they stay here.
                     if model.isCropping {
-                        cropActions
+                        if !isInspectorPresented { cropActions }
                     } else {
                         editingActions.disabled(isBusy)
                     }
@@ -126,6 +131,12 @@ struct AnnotationEditorWindow: View {
                 if copiedLink != nil { withAnimation(.snappy(duration: 0.2)) { copiedLink = nil } }
             }
             .focusedSceneValue(\.annotationEditor, model)
+            .focusedSceneValue(\.annotationEditorSelectTool) { tool in
+                clearInspectorFocus()
+                probe.isPicking = false
+                probe.isMeasuringTool = false
+                model.selectTool(tool)
+            }
             .onChange(of: model.saveAsRequest) { _, _ in saveAs() }
             .onChange(of: model.saveRequest) { _, _ in saveEdits() }
             // The pixels under the pointer come from the base image, so they
@@ -190,8 +201,11 @@ struct AnnotationEditorWindow: View {
                     onEditorAction: clearInspectorFocus,
                     onPickWallpaper: pickCustomWallpaper
                 )
-                .disabled(model.isCropping || model.isBlockingCommit)
+                .disabled(model.isBlockingCommit)
             }
+            // Below this the inspector folds away and the window can go down to the canvas's
+            // own minimum; it was stuck at 1040 pt with the inspector (Fable #7).
+            .inspectorAutoFold(isPresented: $isInspectorPresented, below: 1000)
             .environment(probe)
     }
 
@@ -326,7 +340,11 @@ struct AnnotationEditorWindow: View {
                     .controlSize(.large)
             }
         }
-        .frame(minWidth: 760, minHeight: 580)
+        // The tool dock is about 686 pt wide, so the window never goes below 712 pt. With the
+        // inspector shown the canvas may take less while a drag passes the fold point: a minimum
+        // that changed mid-drag didn't reach AppKit, and the window stuck at the old one.
+        .frame(minWidth: Self.minimumWidth - (isInspectorPresented ? InspectorMetrics.columnMinWidth : 0),
+               minHeight: 580)
         .clipped()
         .overlay(alignment: .top) {
             if model.previewImage != nil, model.imageSize != .zero {
@@ -658,6 +676,63 @@ private struct AnnotationLoadFailureView: View {
 extension FocusedValues {
     /// The key editor window's model, for menu commands.
     @Entry var annotationEditor: AnnotationEditorModel?
+    /// Picks a tool as the dock does, turning Pick Color and Measure off.
+    @Entry var annotationEditorSelectTool: ((AnnotationTool) -> Void)?
+}
+
+/// Tools: the editor's tools in the dock's order with their letter keys, and Crop, for the key
+/// editor window. Only there while an editor is focused: a disabled item would still take its
+/// key. The letters pass through to whatever field has the keyboard, as they do without the menu.
+struct AnnotationEditorToolCommands: View {
+    @FocusedValue(\.annotationEditor) private var editor
+    @FocusedValue(\.annotationEditorSelectTool) private var selectTool
+
+    var body: some View {
+        if let editor, let selectTool {
+            ForEach(Array(AnnotationToolDock.groups.enumerated()), id: \.offset) { index, group in
+                if index > 0 { Divider() }
+                ForEach(group) { tool in
+                    let item = Toggle(tool.title, isOn: Binding(
+                        get: { editor.selectedTool == tool && !editor.isCropping },
+                        set: { _ in selectTool(tool) }
+                    ))
+                    if let key = tool.shortcutKey {
+                        item.keyboardShortcut(KeyEquivalent(key), modifiers: [])
+                    } else {
+                        item
+                    }
+                }
+            }
+            Divider()
+            Button(editor.isCropping ? "Cancel Crop" : "Crop") {
+                withAnimation(.snappy(duration: 0.2)) { editor.toggleCropping() }
+            }
+            .keyboardShortcut("c", modifiers: [])
+            .disabled(editor.imageSize == .zero)
+        } else {
+            Button("Open a Capture to Use Its Tools") {}
+                .disabled(true)
+        }
+    }
+}
+
+/// View › zoom for the key editor window: the same keys as the editor's own, which take them
+/// first, so a press zooms once. Only there while an editor is focused, for Studio's ⌘= and ⌘0.
+struct AnnotationEditorZoomCommands: View {
+    @FocusedValue(\.annotationEditor) private var editor
+
+    var body: some View {
+        if let editor {
+            Button("Zoom In") { editor.zoomIn() }
+                .keyboardShortcut("+", modifiers: .command)
+            Button("Zoom Out") { editor.zoomOut() }
+                .keyboardShortcut("-", modifiers: .command)
+            Button("Actual Size") { editor.setZoomPercent(100) }
+                .keyboardShortcut("0", modifiers: .command)
+            Button("Zoom to Fit") { editor.fitCanvas() }
+                .keyboardShortcut("1", modifiers: .command)
+        }
+    }
 }
 
 /// File › Save for the key editor window, disabled when clean. The editor's

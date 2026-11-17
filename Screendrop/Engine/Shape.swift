@@ -174,8 +174,13 @@ struct TextProps: Codable, Equatable, Hashable {
     /// scales with the label and stays put as typing grows the box. Drawn only on a box; kept while
     /// the box is off. Missing means no tail.
     var tail: Vec?
+    /// A light outline around the glyphs, so plain text reads over a busy screenshot (Fable #10).
+    /// Optional so older text decodes and older builds just leave it out; missing means none.
+    var halo: Bool?
 
     var hasBox: Bool { boxStyle == .box }
+    /// A box already sets the text apart, so the halo is drawn only on plain text.
+    var hasHalo: Bool { halo == true && !hasBox }
 }
 
 enum RedactionKind: String, CaseIterable, Codable {

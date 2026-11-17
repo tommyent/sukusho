@@ -10,6 +10,74 @@ import AVFoundation
 import ScreenCaptureKit
 import SwiftUI
 
+/// The capture commands with their global shortcuts, in the menu-bar menu and the app's Capture
+/// menu. The shortcuts are registered system-wide by `HotkeyManager`; a menu shows them.
+struct CaptureMenuItems: View {
+    var body: some View {
+        // Shortcuts change in Settings; this re-reads them.
+        let _ = HotkeyManager.shared.revision
+        Button {
+            CaptureCoordinator.shared.captureFullscreen()
+        } label: {
+            Label("Capture Fullscreen", systemImage: "macwindow")
+        }
+        .keyboardShortcut(MenuBarView.shortcut(for: .fullscreen))
+
+        Button {
+            CaptureCoordinator.shared.captureWindow()
+        } label: {
+            Label("Capture Window", systemImage: "macwindow.on.rectangle")
+        }
+        .keyboardShortcut(MenuBarView.shortcut(for: .window))
+
+        Button {
+            CaptureCoordinator.shared.captureArea()
+        } label: {
+            Label("Capture Area", systemImage: "rectangle.dashed")
+        }
+        .keyboardShortcut(MenuBarView.shortcut(for: .area))
+
+        Button {
+            CaptureCoordinator.shared.captureText()
+        } label: {
+            Label("Capture Text", systemImage: "text.viewfinder")
+        }
+        .keyboardShortcut(MenuBarView.shortcut(for: .textCapture))
+
+        Button {
+            CaptureCoordinator.shared.captureScrolling()
+        } label: {
+            Label(
+                ScrollingCapturePresenter.shared.isRunning ? "Finish Scrolling Capture" : "Scrolling Capture",
+                systemImage: "rectangle.expand.vertical"
+            )
+        }
+        .keyboardShortcut(MenuBarView.shortcut(for: .scrollingCapture))
+        // A recording and a scrolling capture both use the region
+        // highlight, so neither starts while the other runs.
+        .disabled(ScreenRecordingManager.shared.isActive)
+
+        // While recording, the item stops it, as Scrolling Capture's
+        // finishes it (design pass choice 13).
+        if ScreenRecordingManager.shared.isActive {
+            Button {
+                ScreenRecordingManager.shared.stopRecording()
+            } label: {
+                Label("Stop Recording", systemImage: "stop.circle")
+            }
+            .disabled(ScreenRecordingManager.shared.state == .finishing)
+        } else {
+            Button {
+                RecordingBarPresenter.shared.showPicker()
+            } label: {
+                Label("Record Screen", systemImage: "record.circle")
+            }
+            .keyboardShortcut(MenuBarView.shortcut(for: .screenRecording))
+            .disabled(ScrollingCapturePresenter.shared.isRunning)
+        }
+    }
+}
+
 struct MenuBarView: View {
     @State private var historyStore = ScreenshotHistoryStore.shared
     @State private var projectStore = RecordingProjectStore.shared
@@ -18,65 +86,7 @@ struct MenuBarView: View {
         // Shortcuts change in Settings; this re-reads them.
         let _ = HotkeyManager.shared.revision
         Group {
-            Button {
-                CaptureCoordinator.shared.captureFullscreen()
-            } label: {
-                Label("Capture Fullscreen", systemImage: "macwindow")
-            }
-            .keyboardShortcut(Self.shortcut(for: .fullscreen))
-            
-            Button {
-                CaptureCoordinator.shared.captureWindow()
-            } label: {
-                Label("Capture Window", systemImage: "macwindow.on.rectangle")
-            }
-            .keyboardShortcut(Self.shortcut(for: .window))
-            
-            Button {
-                CaptureCoordinator.shared.captureArea()
-            } label: {
-                Label("Capture Area", systemImage: "rectangle.dashed")
-            }
-            .keyboardShortcut(Self.shortcut(for: .area))
-
-            Button {
-                CaptureCoordinator.shared.captureText()
-            } label: {
-                Label("Capture Text", systemImage: "text.viewfinder")
-            }
-            .keyboardShortcut(Self.shortcut(for: .textCapture))
-
-            Button {
-                CaptureCoordinator.shared.captureScrolling()
-            } label: {
-                Label(
-                    ScrollingCapturePresenter.shared.isRunning ? "Finish Scrolling Capture" : "Scrolling Capture",
-                    systemImage: "rectangle.expand.vertical"
-                )
-            }
-            .keyboardShortcut(Self.shortcut(for: .scrollingCapture))
-            // A recording and a scrolling capture both use the region
-            // highlight, so neither starts while the other runs.
-            .disabled(ScreenRecordingManager.shared.isActive)
-
-            // While recording, the item stops it, as Scrolling Capture's
-            // finishes it (design pass choice 13).
-            if ScreenRecordingManager.shared.isActive {
-                Button {
-                    ScreenRecordingManager.shared.stopRecording()
-                } label: {
-                    Label("Stop Recording", systemImage: "stop.circle")
-                }
-                .disabled(ScreenRecordingManager.shared.state == .finishing)
-            } else {
-                Button {
-                    RecordingBarPresenter.shared.showPicker()
-                } label: {
-                    Label("Record Screen", systemImage: "record.circle")
-                }
-                .keyboardShortcut(Self.shortcut(for: .screenRecording))
-                .disabled(ScrollingCapturePresenter.shared.isRunning)
-            }
+            CaptureMenuItems()
 
             Divider()
 
@@ -88,6 +98,14 @@ struct MenuBarView: View {
             // Shown here, registered system-wide by `HotkeyManager`: a menu's own shortcut
             // only fires while Sukusho is the front app.
             .keyboardShortcut(Self.shortcut(for: .library))
+
+            // The ⌃⌘V popup, for the frontmost app, as its global shortcut opens it (Fable #10).
+            Button {
+                ClipboardPopupPresenter.shared.show()
+            } label: {
+                Label("Clipboard History", systemImage: "list.clipboard")
+            }
+            .keyboardShortcut(Self.shortcut(for: .clipboardHistory))
 
             Menu {
                 projectsMenuContent

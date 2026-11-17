@@ -140,6 +140,14 @@ struct StylePresetPicker<Library: StylePresetLibrary, Preview: View>: View {
         .closesOnEditorEscape($isPickerPresented)
         .popover(isPresented: $isPickerPresented, arrowEdge: .leading) {
             VStack(spacing: 8) {
+                // With no styles yet, say what one is before offering the empty + tile (Fable #10).
+                if library.presets.isEmpty {
+                    Text("A style is a saved look: the background and everything set with it. Save this \(itemNoun)’s look with +, then put it on any other \(itemNoun) in one click.")
+                        .font(.inspectorLabel)
+                        .foregroundStyle(InspectorControlPalette.label)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
                 InspectorGridScroll {
                     LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
                         ForEach(library.presets) { preset in

@@ -123,7 +123,11 @@ final class ScreenshotManager {
     /// Runs `/usr/sbin/screencapture` silently off the main thread and returns the file URL on success.
     private func runScreencapture(args: [String]) async -> URL? {
         CameraRecordingManager.shared.hidePreviewForScreenshot()
-        defer { CameraRecordingManager.shared.restorePreviewAfterScreenshot() }
+        PreviewWindowCaptureExclusion.shared.beginOwnCapture()
+        defer {
+            CameraRecordingManager.shared.restorePreviewAfterScreenshot()
+            PreviewWindowCaptureExclusion.shared.endOwnCapture()
+        }
         let filePath = generateTempPath(extension: "png")
         
         return await withCheckedContinuation { continuation in

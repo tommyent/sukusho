@@ -62,7 +62,7 @@ struct CropResolutionBadge: View {
             Text("\(Int(size.width)) × \(Int(size.height)) px")
                 .font(.system(size: 12, weight: .medium))
                 .monospacedDigit()
-            Text("Return to crop")
+            Text("Press Return to crop")
                 .font(.system(size: 10))
         }
         .foregroundStyle(.secondary)

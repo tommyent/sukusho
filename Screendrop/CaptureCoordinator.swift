@@ -94,6 +94,7 @@ final class CaptureCoordinator {
 
     @discardableResult
     private func performCaptureFullscreen() async -> URL? {
+        guard ScreenRecordingManager.ensureScreenCapturePermission(to: "take screenshots") else { return nil }
         let displayID = ActiveDisplayResolver.activeDisplayID(preferPointer: false)
         PreviewWindowPlacement.shared.setTargetDisplayID(displayID)
 
@@ -108,6 +109,7 @@ final class CaptureCoordinator {
 
     @discardableResult
     private func performCaptureWindow() async -> URL? {
+        guard ScreenRecordingManager.ensureScreenCapturePermission(to: "take screenshots") else { return nil }
         // The self-timer is handled by screencapture's `-T` so the delay
         // happens *after* the window is picked, not before.
         let probe = CaptureSourceProbe(tracksPointer: true)
@@ -126,6 +128,7 @@ final class CaptureCoordinator {
     /// self-timer are the same as with the system crosshair.
     @discardableResult
     private func performCaptureArea() async -> URL? {
+        guard ScreenRecordingManager.ensureScreenCapturePermission(to: "take screenshots") else { return nil }
         guard !ScreendropPreferences.areaCaptureUsesSystemPicker else { return await performSystemCaptureArea() }
         // The windows as they are before the picker's own panels go up.
         let probe = CaptureSourceProbe(tracksPointer: false)
@@ -142,6 +145,7 @@ final class CaptureCoordinator {
     /// The system crosshair, kept behind `areaCaptureUsesSystemPicker`.
     @discardableResult
     private func performSystemCaptureArea() async -> URL? {
+        guard ScreenRecordingManager.ensureScreenCapturePermission(to: "take screenshots") else { return nil }
         // The self-timer is handled by screencapture's `-T` so the delay
         // happens *after* the area is drawn, not before.
         let probe = CaptureSourceProbe(tracksPointer: true)
@@ -184,6 +188,7 @@ final class CaptureCoordinator {
     /// matching Capture Area.
     @discardableResult
     private func performCaptureText() async -> CaptureTextOutcome {
+        guard ScreenRecordingManager.ensureScreenCapturePermission(to: "capture text") else { return .cancelled }
         ImageTextWarmUp.shared.start()
         let delay = ScreendropPreferences.captureDelaySeconds
         var captured: URL?

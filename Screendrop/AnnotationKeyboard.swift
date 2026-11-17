@@ -446,19 +446,7 @@ final class AnnotationKeyCommandHandlerView: NSView {
             return nil
         }
 
-        switch character {
-        case "r": return .rectangle
-        case "o": return .ellipse
-        case "t": return .text
-        case "l": return .line
-        case "a": return .arrow
-        case "p": return .pixelate
-        case "b": return .blur
-        case "m": return .magnifier
-        // 1 and 2 measure, so numbering moved to N.
-        case "n": return .numberedCircle
-        default: return nil
-        }
+        return AnnotationTool.allCases.first { $0.shortcutKey.map(String.init) == character }
     }
 }
 

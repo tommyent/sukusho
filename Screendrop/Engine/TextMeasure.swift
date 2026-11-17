@@ -344,6 +344,21 @@ enum TextMeasure {
         return contrastWithWhite(props.swatch) < boxBlackInkBelowContrast ? .black : .white
     }
 
+    /// The halo's width on each side of the glyphs, as a fraction of the point size.
+    static let haloWidthPerPoint = 0.08
+
+    /// The halo: the glyphs' outline grown evenly with round joins, filled under them.
+    static func haloPath(_ props: TextProps, glyphs: CGPath) -> CGPath {
+        glyphs.copy(strokingWithWidth: max(2, props.fontSize * haloWidthPerPoint * 2),
+                    lineCap: .round, lineJoin: .round, miterLimit: 1)
+    }
+
+    /// White behind ink that white sets off; black behind ink too light for it (yellow, white).
+    static func haloColor(_ props: TextProps) -> NSColor {
+        contrastWithWhite(props.swatch) < boxBlackInkBelowContrast
+            ? NSColor.black.withAlphaComponent(0.8) : NSColor.white.withAlphaComponent(0.92)
+    }
+
     /// WCAG's contrast ratio of white against the colour, from its relative luminance.
     static func contrastWithWhite(_ swatch: AnnotationSwatch) -> Double {
         let color = swatch.nsColor.usingColorSpace(.sRGB) ?? swatch.nsColor

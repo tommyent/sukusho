@@ -6,19 +6,22 @@
 //
 
 import AppKit
-import SwiftUI
 
 @MainActor
 final class PreviewWindowCaptureExclusion {
     static let shared = PreviewWindowCaptureExclusion()
 
-    /// Whether Screendrop's UI should be available to screenshot and screen
-    /// recording APIs. Opt in via Settings; the pre-record reminder can turn it off.
+    /// Whether Sukusho's own screenshots and recordings show its windows. Opt in via Settings;
+    /// the pre-record reminder can turn it off. Other apps and screen sharing always see them
+    /// (Fable #9): ScreenCaptureKit captures leave them out by filter (`RecordingDesktopFilter`),
+    /// and only `screencapture` runs hide them, for as long as the run lasts.
     static var includesAppWindowsInCaptures: Bool {
         ScreendropPreferences.includeAppWindowsInCaptures
     }
 
     private let registeredWindows = NSHashTable<NSWindow>.weakObjects()
+    /// `screencapture` runs in progress; while any is, the windows are hidden unless included.
+    private var ownCaptureCount = 0
 
     private init() {}
 
@@ -39,21 +42,23 @@ final class PreviewWindowCaptureExclusion {
         }
     }
 
-    /// Applies capture visibility to the overlay panel and wires it into the
-    /// placement manager.
-    ///
-    /// The overlay no longer hides itself for editors or Quick Look - it stays
-    /// mounted and collapses into the peek tab instead (see
-    /// `ScreenshotPreviewStack.collapse()`), and the passthrough hosting view
-    /// keeps it from intercepting clicks meant for the windows beneath it.
-    func attach(window: NSWindow?) {
-        guard let window else { return }
+    /// Hides the windows from the `screencapture` run about to start, which can't filter by app.
+    func beginOwnCapture() {
+        ownCaptureCount += 1
+        if ownCaptureCount == 1 { refreshRegisteredWindows() }
+    }
 
-        register(window: window)
-        PreviewWindowPlacement.shared.attach(window: window)
+    func endOwnCapture() {
+        ownCaptureCount = max(0, ownCaptureCount - 1)
+        if ownCaptureCount == 0 { refreshRegisteredWindows() }
+    }
+
+    /// Whether Sukusho's own captures leave this window out.
+    func hidesFromOwnCaptures(_ window: NSWindow) -> Bool {
+        !Self.includesAppWindowsInCaptures && registeredWindows.contains(window)
     }
 
     private func applyCaptureVisibility(to window: NSWindow) {
-        window.sharingType = Self.includesAppWindowsInCaptures ? .readOnly : .none
+        window.sharingType = ownCaptureCount > 0 && !Self.includesAppWindowsInCaptures ? .none : .readOnly
     }
 }

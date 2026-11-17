@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Testing
 
@@ -83,5 +84,26 @@ struct RecordingDesktopFilterTests {
             bundleIdentifier: "test.app", layer: 0, cleanDesktop: cleanDesktop,
             windowID: 42, overlayWindowIDs: [], includesAppWindows: includesAppWindows
         ))
+    }
+
+    /// With the preference off (its default), a Sukusho window is visible to every other capture
+    /// tool and to screen sharing, and hidden only while Sukusho's own screencapture runs (Fable #9).
+    @MainActor
+    @Test func ownWindowsHideOnlyDuringSukushosOwnScreenshots() {
+        guard !ScreendropPreferences.includeAppWindowsInCaptures else { return }
+        let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 80, height: 60), styleMask: .borderless,
+                              backing: .buffered, defer: true)
+        let exclusion = PreviewWindowCaptureExclusion.shared
+        exclusion.register(window: window)
+        #expect(window.sharingType == .readOnly)
+        #expect(exclusion.hidesFromOwnCaptures(window))
+
+        exclusion.beginOwnCapture()
+        exclusion.beginOwnCapture()
+        #expect(window.sharingType == .none)
+        exclusion.endOwnCapture()
+        #expect(window.sharingType == .none, "still hidden while another run is going")
+        exclusion.endOwnCapture()
+        #expect(window.sharingType == .readOnly)
     }
 }

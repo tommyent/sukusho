@@ -49,7 +49,7 @@ nonisolated enum ScreendropIntentError: Error, CustomLocalizedStringResourceConv
 // MARK: - Screenshots
 
 nonisolated struct TakeFullScreenScreenshotIntent: AppIntent {
-    static var title: LocalizedStringResource = "Take Full Screen Screenshot"
+    static var title: LocalizedStringResource = "Take Fullscreen Screenshot"
     static var description = IntentDescription(
         "Captures the entire screen and adds it to Sukusho's history."
     )
@@ -206,7 +206,7 @@ nonisolated struct ScreendropShortcuts: AppShortcutsProvider {
                 "Take a screenshot with \(.applicationName)",
                 "Capture the screen with \(.applicationName)"
             ],
-            shortTitle: "Take Full Screen Screenshot",
+            shortTitle: "Take Fullscreen Screenshot",
             systemImageName: "camera.viewfinder"
         )
         AppShortcut(

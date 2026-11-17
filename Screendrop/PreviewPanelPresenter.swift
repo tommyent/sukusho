@@ -23,7 +23,10 @@ final class PreviewPanelPresenter {
     func show(displayID: CGDirectDisplayID?) {
         let panel = panel ?? makePanel()
 
-        PreviewWindowCaptureExclusion.shared.attach(window: panel)
+        PreviewWindowCaptureExclusion.shared.register(window: panel)
+        // The overlay stays mounted and collapses into the peek tab for editors and Quick Look
+        // (`ScreenshotPreviewStack.collapse()`); its passthrough hosting view lets clicks through.
+        PreviewWindowPlacement.shared.attach(window: panel)
         PreviewWindowPlacement.shared.setTargetDisplayID(displayID)
         PreviewWindowPlacement.shared.showAboveActiveSpaceAfterOpening()
     }

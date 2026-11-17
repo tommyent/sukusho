@@ -52,9 +52,15 @@ extension AnnotationEditorModel {
         set { setTextAlignment(newValue) }
     }
 
-    var selectedTextBoxStyle: TextBoxStyle {
-        get { selectedTextShape?.textProps.map { $0.boxStyle ?? .plain } ?? textBoxStyle }
-        set { setTextBoxStyle(newValue) }
+    /// Plain, with a halo, or on a box: the selected label's, else what new text gets.
+    var selectedTextBackdrop: TextBackdrop {
+        get {
+            if let props = selectedTextShape?.textProps {
+                return props.hasBox ? .box : props.hasHalo ? .halo : .plain
+            }
+            return textBoxStyle == .box ? .box : textHalo ? .halo : .plain
+        }
+        set { setTextBackdrop(newValue) }
     }
 
     /// An SF family, or a face (`AnnoFontFace`) with the family to fall back on.
@@ -111,11 +117,18 @@ extension AnnotationEditorModel {
         updateSelectedText { $0.align = TextAlign(alignment) }
     }
 
-    func setTextBoxStyle(_ style: TextBoxStyle) {
+    func setTextBackdrop(_ backdrop: TextBackdrop) {
+        let style: TextBoxStyle = backdrop == .box ? .box : .plain
         textBoxStyle = style
         engine.currentTextBoxStyle = style
+        // A box keeps the halo choice for when the box comes off.
+        if backdrop != .box { textHalo = backdrop == .halo }
+        engine.currentTextHalo = textHalo
         saveAnnotationPreset()
-        updateSelectedText { $0.boxStyle = style }
+        updateSelectedText {
+            $0.boxStyle = style
+            if backdrop != .box { $0.halo = backdrop == .halo ? true : nil }
+        }
     }
 
     private func updateSelectedText(_ mutate: (inout TextProps) -> Void) {

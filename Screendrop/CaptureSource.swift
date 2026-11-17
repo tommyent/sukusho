@@ -181,8 +181,8 @@ final class CaptureSourceProbe {
             var title = (info[kCGWindowName as String] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
             if pid == ownPID, let number = (info[kCGWindowNumber as String] as? NSNumber)?.intValue,
                let window = NSApp.window(withWindowNumber: number) {
-                // Hidden from captures (Include app windows off, the default): the capture shows what's behind it.
-                guard window.sharingType != .none else { return nil }
+                // Left out of Sukusho's captures (Include app windows off, the default): the capture shows what's behind it.
+                guard !PreviewWindowCaptureExclusion.shared.hidesFromOwnCaptures(window) else { return nil }
                 title = ownWindowName(identifier: window.identifier?.rawValue, autosaveName: window.frameAutosaveName) ?? title
             }
             return Window(pid: pid, ownerName: owner, title: title?.isEmpty == false ? title : nil, bounds: bounds)

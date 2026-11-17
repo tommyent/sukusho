@@ -92,23 +92,29 @@ enum AnnotationTool: String, CaseIterable, Identifiable, Codable {
         }
     }
 
-    var helpText: String {
-        let shortcut: String
+    /// The letter that picks the tool in the editor, shown in its tooltip and the Tools menu.
+    var shortcutKey: Character? {
         switch self {
-        case .select, .filledRectangle, .freehand: return title
-        case .highlighter: return "Highlighter: draw a horizontal or vertical line"
-        case .rectangle: shortcut = "R"
-        case .ellipse: shortcut = "O"
-        case .line: shortcut = "L"
-        case .arrow: shortcut = "A"
-        case .numberedCircle: shortcut = "N"
-        case .text: shortcut = "T"
-        case .highlight: return "Spotlight: keep this area visible and dim everything outside"
-        case .pixelate: shortcut = "P"
-        case .blur: shortcut = "B"
-        case .magnifier: shortcut = "M"
+        case .rectangle: "r"
+        case .ellipse: "o"
+        case .line: "l"
+        case .arrow: "a"
+        // 1 and 2 measure, so numbering is on N.
+        case .numberedCircle: "n"
+        case .text: "t"
+        case .pixelate: "p"
+        case .blur: "b"
+        case .magnifier: "m"
+        case .select, .filledRectangle, .freehand, .highlighter, .highlight: nil
         }
-        return "\(title) (\(shortcut))"
+    }
+
+    var helpText: String {
+        switch self {
+        case .highlighter: return "Highlighter: draw a horizontal or vertical line"
+        case .highlight: return "Spotlight: keep this area visible and dim everything outside"
+        default: return shortcutKey.map { "\(title) (\($0.uppercased()))" } ?? title
+        }
     }
 
     var isRedactionTool: Bool {
@@ -141,11 +147,6 @@ enum AnnotationTool: String, CaseIterable, Identifiable, Codable {
         [.rectangle, .filledRectangle, .ellipse, .line, .arrow].contains(self)
     }
 
-    /// The heading over the inspector's tool options: the tool being drawn with or the one
-    /// annotation selected, or how many are selected.
-    static func inspectorHeading(for tool: AnnotationTool?, selectionCount: Int) -> String {
-        selectionCount > 1 ? "\(selectionCount) Annotations" : (tool ?? .select).title
-    }
 
     var createsAnnotation: Bool {
         self != .select
@@ -155,5 +156,56 @@ enum AnnotationTool: String, CaseIterable, Identifiable, Codable {
     /// pixelate and the magnifier read the screenshot's own pixels, so they grab it as Select does.
     var drawsOverPictures: Bool {
         createsAnnotation && ![.blur, .pixelate, .magnifier].contains(self)
+    }
+}
+
+/// What the inspector's pinned tool slot is about: an annotation tool (the one drawn with, or the
+/// one annotation selected), several annotations, or one of the dock's modes, which outrank both.
+enum AnnotationToolSlot: Equatable {
+    case tool(AnnotationTool)
+    case annotations(Int)
+    case crop
+    case pickColor
+    case measure
+
+    static func current(
+        tool: AnnotationTool?, selectionCount: Int,
+        isCropping: Bool, isPickingColor: Bool, isMeasuring: Bool
+    ) -> AnnotationToolSlot {
+        if isCropping { return .crop }
+        if isPickingColor { return .pickColor }
+        if isMeasuring { return .measure }
+        return selectionCount > 1 ? .annotations(selectionCount) : .tool(tool ?? .select)
+    }
+
+    var heading: String {
+        switch self {
+        case .tool(let tool): tool.title
+        case .annotations(let count): "\(count) Annotations"
+        case .crop: "Crop"
+        case .pickColor: "Pick Color"
+        case .measure: "Measure"
+        }
+    }
+
+    /// One line of help, shown where the tool's options leave room.
+    var line: String {
+        switch self {
+        case .tool(let tool):
+            switch tool {
+            case .select: "Click an annotation to change it, or drag across several."
+            case .numberedCircle: "Click to place the next number. Its color is in the toolbar."
+            case .text: "Click to type. Drag a corner to resize."
+            case .highlight: "Keeps an area visible and dims everything outside."
+            case .highlighter: "Draws a straight line across or down. Color and width are in the toolbar."
+            case .pixelate, .blur: "Drag over what to hide."
+            case .rectangle, .filledRectangle, .ellipse, .line, .arrow, .freehand, .magnifier:
+                "Color and width are in the toolbar."
+            }
+        case .annotations: "Their color and width are in the toolbar."
+        case .crop: "Drag the edges, or ⌘-click a box in the image. Press Return to crop."
+        case .pickColor: "Click the image to copy a color’s hex. Tab copies the color under the pointer any time."
+        case .measure: "Point at the image for width and height. Hold 1 or 2 with any tool."
+        }
     }
 }
