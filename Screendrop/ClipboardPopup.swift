@@ -83,7 +83,7 @@ final class ClipboardPopupPresenter {
                 NSSound.beep()
                 CaptureTextFeedbackPresenter.shared.showDone(
                     "Clipboard History Didn’t Open",
-                    detail: "The recording couldn’t be told to leave it out. Stop the recording, or turn off Include Sukusho windows.",
+                    detail: "The recording couldn’t be told to leave it out yet. Try again in a moment, or after the recording.",
                     symbol: "eye.slash", displayID: nil)
             }
         }
