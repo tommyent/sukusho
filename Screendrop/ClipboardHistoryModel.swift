@@ -235,9 +235,10 @@ final class ClipboardHistoryModel {
         return bitmap.representation(using: .png, properties: [:])
     }
 
-    /// A copied image becomes an ordinary capture, with its source app.
-    func addToLibrary(_ entry: ClipboardEntry) {
-        guard entry.kind == .image, entry.libraryPath == nil, let url = entry.imageURL else { return }
+    /// A copied image becomes an ordinary capture, with its source app. Returns the capture's file.
+    @discardableResult
+    func addToLibrary(_ entry: ClipboardEntry, announcing: Bool = true) -> URL? {
+        guard entry.kind == .image, entry.libraryPath == nil, let url = entry.imageURL else { return nil }
         // An app this Mac doesn't have stays unnamed rather than showing its bundle ID.
         let source = appName(entry.sourceBundleID).map { CaptureSource(bundleIdentifier: entry.sourceBundleID, appName: $0) }
         let added = ScreenshotHistoryStore.shared.importScreenshot(from: url, source: source)
@@ -245,6 +246,19 @@ final class ClipboardHistoryModel {
             try? await store?.linkToLibrary(entry.id, path: added.path)
             refresh()
         }
-        feedback.show("Added to the Library")
+        if announcing { feedback.show("Added to the Library") }
+        return added
+    }
+
+    /// Opens an image entry in the editor. The editor works on Library captures, saving its edits beside the
+    /// capture, so a copy that isn't one yet is added to the Library first, as Add to Library does.
+    func openInEditor(_ entry: ClipboardEntry) {
+        guard entry.kind == .image else { return }
+        let capture = entry.libraryPath.map { URL(fileURLWithPath: $0) }
+            .flatMap { FileManager.default.fileExists(atPath: $0.path) ? $0 : nil }
+            ?? addToLibrary(entry, announcing: false)
+        guard let capture else { return }
+        QuickLookPreviewPresenter.dismiss()
+        PreviewPanelPresenter.shared.onAnnotate?(capture)
     }
 }

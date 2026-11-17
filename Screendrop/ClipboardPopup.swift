@@ -150,6 +150,7 @@ final class ClipboardPopupPresenter {
         menu.addItem(.separator())
         add(entry.pinnedAt == nil ? "Pin Entry" : "Unpin Entry", ".", .command) { model.togglePin(entry) }
         if entry.kind == .image, entry.libraryPath == nil { add("Add to Library") { model.addToLibrary(entry) } }
+        if entry.kind == .image { add("Open in Editor") { [weak self] in self?.close(); model.openInEditor(entry) } }
         if entry.kind == .text { add("Save as Snippet") { model.saveAsSnippet(entry) } }
         menu.addItem(.separator())
         add("Delete Entry", "x", .control) { model.delete(entry) }

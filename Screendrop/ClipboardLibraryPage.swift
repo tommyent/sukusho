@@ -215,6 +215,7 @@ struct ClipboardEntryMenu: View {
     var body: some View {
         Button("Copy") { model.deliver(entry, as: .copy, to: nil) }
         Button("Quick Look") { model.quickLook(entry) }
+        if entry.kind == .image { Button("Open in Editor") { model.openInEditor(entry) } }
         if entry.kind == .text { Button("Copy as Plain Text") { model.deliver(entry, as: .copyPlain, to: nil) } }
         Divider()
         Button(entry.pinnedAt == nil ? "Pin" : "Unpin") { model.togglePin(entry) }
@@ -248,6 +249,7 @@ struct ClipboardLibraryInspector: View {
                             if entry.kind == .image, entry.libraryPath == nil {
                                 Button("Add to Library") { model.addToLibrary(entry) }
                             }
+                            if entry.kind == .image { Button("Edit") { model.openInEditor(entry) }.help("Open in the editor") }
                         }
                         .controlSize(.small)
                         ClipboardInfo(entry: entry, model: model)
