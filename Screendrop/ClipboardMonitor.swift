@@ -18,6 +18,9 @@ final class ClipboardMonitor {
     private var pollTimer: Timer?
     private var sweepTimer: Timer?
     private var lastChangeCount = 0
+    /// How many times in a row the pasteboard was read empty; see `finish`.
+    private var emptyRereads = 0
+    private static let maxEmptyRereads = 4
     private var readToken = 0
     private var isReading = false
     private var defaultsObserver: NSObjectProtocol?
@@ -127,6 +130,7 @@ final class ClipboardMonitor {
     private func finish(_ outcome: ClipboardPasteboardReader.Outcome, types: [String], token: Int) {
         guard token == readToken, isReading else { return }
         isReading = false
+        if !types.isEmpty { emptyRereads = 0 }
         if UserDefaults.standard.bool(forKey: ScreendropPreferences.clipboardTraceKey) {
             logger.notice("Clipboard copy: \(String(describing: outcome.trace), privacy: .public) types \(types.joined(separator: ","), privacy: .public)")
         }
@@ -140,7 +144,14 @@ final class ClipboardMonitor {
             }
         case .skipped(.ownWrite):
             break
+        case .skipped(.nothingKept) where types.isEmpty && emptyRereads < Self.maxEmptyRereads:
+            // Read between an app's clearContents and its write: the write doesn't change the count again,
+            // so look once more on the next polls, or that copy is lost (seen in the VM, 2026-11-16).
+            emptyRereads += 1
+            lastChangeCount = -1
+            return
         case .skipped:
+            emptyRereads = 0
             skippedCount += 1
         case .changed:
             // Read again on the next poll: the copy that replaced it is the one to keep.
