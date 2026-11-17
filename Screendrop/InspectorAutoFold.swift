@@ -5,9 +5,9 @@
 
 import SwiftUI
 
-/// Folds an inspector away on its own when its window is dragged narrower than `foldBelow`, so the
-/// window can keep getting narrower, and brings it back once there is room again, unless someone
-/// showed or hid it themselves in the meantime (Fable #7). Measure the whole window: apply it
+/// Folds an inspector away on its own whenever its window is made narrower while below `foldBelow`,
+/// so the window can keep getting narrower, and brings it back once there is room again, unless
+/// someone hid it themselves in the meantime (Fable #7). Measure the whole window: apply it
 /// outside `.inspector`, so folding doesn't change the width it reads.
 struct InspectorAutoFold: ViewModifier {
     @Binding var isPresented: Bool
@@ -43,8 +43,10 @@ nonisolated struct InspectorFoldState: Equatable {
     func resized(to width: CGFloat, foldBelow: CGFloat, isPresented: Bool) -> (state: Self, isPresented: Bool) {
         var next = self
         next.width = width
-        let wasWide = (self.width ?? .infinity) >= foldBelow
-        if isPresented, wasWide, width < foldBelow {
+        // Any shrink below the point folds it, so an inspector shown by hand (or pulled out by
+        // its divider) at a narrow width stays until the window is made narrower again.
+        let isShrinking = width < (self.width ?? .infinity)
+        if isPresented, isShrinking, width < foldBelow {
             next.isFolded = true
             return (next, false)
         }

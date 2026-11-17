@@ -31,6 +31,9 @@ struct AnnotationEditorWindow: View {
     @FocusState private var focusedField: AnnotationEditorFocusedField?
     @Environment(\.dismiss) private var dismissWindow
 
+    /// What the tool dock needs, and so the narrowest the window goes.
+    static let minimumWidth: CGFloat = 712
+
     private var isBusy: Bool { isSaving || isFinishing || isUploading || model.isBlockingCommit }
 
     var body: some View {
@@ -337,8 +340,11 @@ struct AnnotationEditorWindow: View {
                     .controlSize(.large)
             }
         }
-        // The tool dock is about 686 pt wide; the canvas keeps it clear of the edges.
-        .frame(minWidth: 712, minHeight: 580)
+        // The tool dock is about 686 pt wide, so the window never goes below 712 pt. With the
+        // inspector shown the canvas may take less while a drag passes the fold point: a minimum
+        // that changed mid-drag didn't reach AppKit, and the window stuck at the old one.
+        .frame(minWidth: Self.minimumWidth - (isInspectorPresented ? InspectorMetrics.columnMinWidth : 0),
+               minHeight: 580)
         .clipped()
         .overlay(alignment: .top) {
             if model.previewImage != nil, model.imageSize != .zero {
