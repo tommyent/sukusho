@@ -44,7 +44,7 @@ struct RecordingSessionControls: View {
                     : BarHover("Draw on screen", "Drags draw instead of clicking"),
                 systemImage: "pencil.tip",
                 // A helper, so soft blue when on: red is for recording alone.
-                tint: ink.isPenOn ? BarMetrics.helperOn : BarMetrics.activeTint,
+                tint: ink.isPenOn ? BarMetrics.helperForeground : BarMetrics.activeTint,
                 accessibility: ink.isPenOn
                     ? "Stop drawing. Escape also stops, and Command-Z undoes the last stroke."
                     : "Draw on screen. Drags draw instead of clicking until you stop drawing."
@@ -128,10 +128,10 @@ struct RecordingSessionControls: View {
                 // doesn't nudge the whole bar sideways.
                 .frame(minWidth: 52, alignment: .leading)
         }
-        .foregroundStyle(isPaused ? Color.black.opacity(0.85) : .white)
+        .foregroundStyle(isPaused ? BarMetrics.onCaution : .white)
         .padding(.horizontal, 12)
         .frame(height: BarMetrics.chipHeight + 2)
-        .background(Capsule().fill(isPaused ? BarMetrics.caution : BarMetrics.recordTint))
+        .background(Capsule().fill(isPaused ? BarMetrics.caution : BarMetrics.recordFill))
         .padding(.leading, 4)
         .padding(.trailing, 2)
         .frame(height: BarMetrics.controlSize)

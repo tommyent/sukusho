@@ -71,8 +71,23 @@ enum BarMetrics {
     static let microphoneOn = Color(red: 0xCF / 255, green: 0x67 / 255, blue: 0x00 / 255)
     static let systemAudioOn = Color(red: 0xA0 / 255, green: 0x5C / 255, blue: 0xE0 / 255)
     /// A helper that's on (teleprompter, timer, Clean desktop, Bug report): a quieter blue, so what
-    /// goes into the recording stands out from what only helps.
-    static let helperOn = Color(nsColor: .systemBlue)
+    /// goes into the recording stands out from what only helps. As in the chosen mockup, the icon
+    /// and the tint are separate colours, the icon darker in light mode and lighter in dark, so it
+    /// keeps at least 4.5:1 on its tint (Astra SB2); a stronger tint alone lowered that.
+    static let helperForeground = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? NSColor(srgbRed: 0x9C / 255, green: 0xC3 / 255, blue: 0xFF / 255, alpha: 1)
+            : NSColor(srgbRed: 0x14 / 255, green: 0x5A / 255, blue: 0xC8 / 255, alpha: 1)
+    })
+    static let helperFill = Color(nsColor: NSColor(name: nil) { appearance in
+        NSColor.systemBlue.withAlphaComponent(
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? 0.26 : 0.16)
+    })
+    /// Behind white text (the clock while recording, the countdown's seconds): a red a little
+    /// darker than the system's, for 4.87:1 with white. The mockup's #E0352B gives 4.46:1 (SB2).
+    static let recordFill = Color(red: 0xD6 / 255, green: 0x30 / 255, blue: 0x26 / 255)
+    /// The symbol on an amber caution mark: dark, as in the mockup, for about 7:1 (SB2).
+    static let onCaution = Color.black.opacity(0.85)
     /// Caution: the capture strip, a blocked input, paused.
     static let caution = Color(nsColor: .systemOrange)
     /// The filled capsule an input that's on draws behind its icon and proof.

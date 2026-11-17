@@ -17,28 +17,27 @@ import SwiftUI
 enum BarToggleLook {
     /// Goes into the recording: filled with its own colour, white icon, proof beside it.
     case input(Color)
-    /// Only helps: a soft blue tint with a blue outline and icon. Strong enough to read on the bar's
-    /// glass in dark mode, where a fainter tint vanished (seen in the VM).
+    /// Only helps: a soft blue tint with an outline and icon in a blue of its own per appearance.
     case helper
 
     fileprivate var foreground: Color {
         switch self {
         case .input: .white
-        case .helper: BarMetrics.helperOn
+        case .helper: BarMetrics.helperForeground
         }
     }
 
     fileprivate var fill: Color {
         switch self {
         case .input(let color): color
-        case .helper: BarMetrics.helperOn.opacity(0.3)
+        case .helper: BarMetrics.helperFill
         }
     }
 
     fileprivate var stroke: Color {
         switch self {
         case .input: .clear
-        case .helper: BarMetrics.helperOn.opacity(0.9)
+        case .helper: BarMetrics.helperForeground.opacity(0.6)
         }
     }
 }
@@ -98,7 +97,7 @@ struct BarToggleLabel<Proof: View>: View {
         Image(systemName: "exclamationmark.circle.fill")
             .font(.system(size: 11, weight: .bold))
             .symbolRenderingMode(.palette)
-            .foregroundStyle(.white, BarMetrics.caution)
+            .foregroundStyle(BarMetrics.onCaution, BarMetrics.caution)
             .offset(x: -6, y: 7)
             .accessibilityHidden(true)
     }
@@ -160,7 +159,8 @@ struct BarLevelMeter: View {
             }
         }
         .frame(height: 14)
-        .foregroundStyle(isClipping ? Color(nsColor: .systemRed) : .white)
+        // Amber, not red, when it clips: red means recording and nothing else (Astra's note).
+        .foregroundStyle(isClipping ? BarMetrics.caution : .white)
         .animation(.linear(duration: 0.05), value: level)
         .accessibilityElement()
         .accessibilityLabel(accessibilityName)

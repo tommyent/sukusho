@@ -569,7 +569,7 @@ struct RecordingCountdownControls: View {
                 .font(.system(size: 17, weight: .bold, design: .rounded).monospacedDigit())
                 .foregroundStyle(.white)
                 .frame(width: BarMetrics.chipHeight + 4, height: BarMetrics.chipHeight + 4)
-                .background(Circle().fill(BarMetrics.recordTint))
+                .background(Circle().fill(BarMetrics.recordFill))
                 .contentTransition(.numericText(countsDown: true))
                 .animation(.snappy, value: countdown.remaining)
                 .padding(.leading, 4)
