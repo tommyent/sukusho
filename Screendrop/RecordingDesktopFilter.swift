@@ -16,6 +16,39 @@ nonisolated struct PrivateWindowCoverage: Equatable {
     }
 }
 
+/// One request to leave a private window out of whatever recording is running, sequenced so it can
+/// only ever change the filter of the take it was checked against (Sol, CVR2-1).
+@MainActor
+enum PrivateWindowExclusion {
+    /// A running take as the request sees it: its id (new for every take) and the coverage its
+    /// installed filter has, nil until that filter is running.
+    struct Take: Equatable {
+        let id: Int
+        let coverage: PrivateWindowCoverage?
+    }
+
+    /// True when the window may be shown: no take is running, the running take can't see it, or its
+    /// filter now names it. `current` reads the running take; `update` rebuilds and installs that
+    /// take's filter naming the window and must refuse (false) if its take is no longer current;
+    /// `covered` records the success on that take. A take that changed while `update` waited is
+    /// tried afresh; a take whose coverage isn't known yet fails closed.
+    static func request(windowID: CGWindowID, current: () -> Take?, update: (Take) async -> Bool,
+                        covered: (Take) -> Void, attempts: Int = 3) async -> Bool {
+        for _ in 0..<attempts {
+            guard let take = current() else { return true }
+            guard let coverage = take.coverage else { return false }
+            guard coverage.needsFilterUpdate(for: windowID) else { return true }
+            let updated = await update(take)
+            // Whatever happened, it counts only for the take that is still running.
+            guard current()?.id == take.id else { continue }
+            guard updated else { return false }
+            covered(take)
+            return true
+        }
+        return false
+    }
+}
+
 nonisolated struct RecordingDesktopFilter {
     let cleanDesktop: Bool
     let excludedApplications: [SCRunningApplication]
