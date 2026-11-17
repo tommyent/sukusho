@@ -118,6 +118,11 @@ nonisolated struct ImageOptimizer: Sendable {
     /// Optimizes or converts the file at `source`, which stays as it is. Only cancellation throws: any
     /// failure comes back as `.failed` with the original's URL, so the caller always has a file to use.
     /// With a `timeLimit`, work that takes longer is stopped and the original comes back as `.timedOut`.
+    ///
+    /// Always off the caller's thread (`@concurrent`), whoever calls: it reads whole files, hashes them and
+    /// compares bitmaps, and a file in a folder macOS guards makes its first read wait for the person's
+    /// answer to a prompt. On the main actor that would stop the app.
+    @concurrent
     func optimize(_ source: URL, to target: ImageOptimizationTarget = .lossless, effort: ImageOptimizationEffort = .balanced,
                   timeLimit: Duration? = nil) async throws -> ImageOptimizationResult {
         try await optimize(source, to: target, effort: effort, timeLimit: timeLimit, sourceFolder: nil)
@@ -125,6 +130,7 @@ nonisolated struct ImageOptimizer: Sendable {
 
     /// The same for an image in memory: it is written as a PNG named `name` first, and that file stands in
     /// for the original in the result. Nil when the PNG can't be written.
+    @concurrent
     func optimize(_ image: CGImage, named name: String, to target: ImageOptimizationTarget = .lossless,
                   effort: ImageOptimizationEffort = .balanced, timeLimit: Duration? = nil) async throws -> ImageOptimizationResult? {
         let folder = outputDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
@@ -151,9 +157,33 @@ nonisolated struct ImageOptimizer: Sendable {
         init(_ message: String) { self.message = message }
     }
 
+    /// What a result says when macOS, or the file's own permissions, won't let Sukusho open the file.
+    static let unreadableReason = "Sukusho isn't allowed to read this file."
+
+    /// True when opening the file is refused. A file that is missing, or isn't an image, is another matter.
+    private static func isRefused(_ url: URL) -> Bool {
+        let descriptor = open(url.path, O_RDONLY)
+        guard descriptor < 0 else {
+            close(descriptor)
+            return false
+        }
+        // EACCES is the file's own permissions; EPERM is macOS saying no for a guarded folder.
+        return errno == EACCES || errno == EPERM
+    }
+
+    @concurrent
     private func optimize(_ source: URL, to target: ImageOptimizationTarget, effort: ImageOptimizationEffort,
                           timeLimit: Duration?, sourceFolder: URL?) async throws -> ImageOptimizationResult {
         try Task.checkCancellation()
+        #if DEBUG
+        // Guards the promise above in every test and Debug run: no file is read on the main thread.
+        dispatchPrecondition(condition: .notOnQueue(.main))
+        #endif
+        // The first read. For a file in a guarded folder this is where macOS asks, and waits.
+        guard !Self.isRefused(source) else {
+            return ImageOptimizationResult(url: source, outcome: .failed(Self.unreadableReason), originalByteCount: 0,
+                                           resultByteCount: 0, ownedFolder: sourceFolder, source: nil)
+        }
         let originalBytes = Self.byteCount(source) ?? 0
         // What the encoder is about to read.
         let identity = FileIdentity(source)

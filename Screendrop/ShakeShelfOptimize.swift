@@ -168,7 +168,8 @@ private struct ShelfRow: View {
     private var isNew: Bool { row.result?.outcome == .optimized || row.result?.outcome == .converted }
 
     private var sizes: String {
-        guard let result = row.result, isNew else { return Self.size(row.bytes) }
+        // Not read yet, or not readable.
+        guard let result = row.result, isNew else { return row.bytes > 0 ? Self.size(row.bytes) : "—" }
         return "\(Self.size(result.originalByteCount)) → \(Self.size(result.resultByteCount))"
     }
 
@@ -189,8 +190,10 @@ private struct ShelfRow: View {
         case .timedOut:
             note("Not optimized")
         case .failed(let reason):
-            // Anything that isn't a picture goes on as it is, which is no failure.
-            note(reason.contains("isn't an image") ? "Not an image" : "Couldn’t optimize").help(reason)
+            // Anything that isn't a picture goes on as it is, which is no failure. A file macOS won't let
+            // Sukusho open, such as one in a folder the person said no for, says so.
+            note(reason == ImageOptimizer.unreadableReason ? "Couldn’t read the file"
+                : reason.contains("isn't an image") ? "Not an image" : "Couldn’t optimize").help(reason)
         }
     }
 
@@ -224,16 +227,8 @@ private struct ShelfThumbnail: View {
         }
         .frame(width: 38, height: 27)
         .clipShape(.rect(cornerRadius: 5))
-        .task { image = await Self.thumbnail(of: url) }
+        // Read off the main actor (ShelfOptimization.thumbnail): the file may be behind a macOS prompt.
+        .task { image = await ShelfOptimization.thumbnail(of: url) }
         .accessibilityHidden(true)
-    }
-
-    private nonisolated static func thumbnail(of url: URL) async -> CGImage? {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
-        return CGImageSourceCreateThumbnailAtIndex(source, 0, [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: 120,
-        ] as CFDictionary)
     }
 }

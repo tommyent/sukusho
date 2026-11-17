@@ -8,7 +8,9 @@
 //  another format choice would delete, so the two must never overlap.
 //
 
+import CoreGraphics
 import Foundation
+import ImageIO
 import Observation
 
 /// Which list the shelf is showing, and the rule for a choice that is done only after the shelf has moved
@@ -50,7 +52,8 @@ final class ShelfOptimization {
     nonisolated struct Row: Identifiable, Sendable {
         let id = UUID()
         let file: URL
-        let bytes: Int64
+        /// The file's size, once it has been read; 0 until then, or when it can't be.
+        var bytes: Int64 = 0
         var result: ImageOptimizationResult?
 
         /// The result, while the file still holds the contents it was made from: the shelf can sit for a
@@ -75,18 +78,69 @@ final class ShelfOptimization {
     /// `target` says what each format is made with (the app's Optimize settings).
     init(files: [URL], format: Format, optimizer: ImageOptimizer, effort: ImageOptimizationEffort,
          target: @escaping (Format) -> ImageOptimizationTarget) {
-        rows = files.map { Row(file: $0, bytes: Int64((try? $0.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)) }
+        // Nothing about the files is read here, on the main actor. A file in a folder macOS guards (Desktop,
+        // Documents, Downloads) makes its first read wait for the person's answer to a prompt, and the app
+        // would wait with it: on the test Mac the shelf stayed stuck on its tiles that way.
+        rows = files.map { Row(file: $0) }
         self.format = format
         self.optimizer = optimizer
         self.effort = effort
         self.target = target
+        readSizes()
         start()
+    }
+
+    /// The shelf's small reads, one after the other on a queue of their own. Not in Swift's pool of threads,
+    /// which is small: a read waiting on a macOS prompt would hold one of those as long as the prompt is up.
+    private nonisolated static let reads = DispatchQueue(label: "com.tommyent.Sukusho.shelf.reads", qos: .utility)
+
+    private nonisolated static func reading<Value: Sendable>(_ work: @escaping @Sendable () -> Value) async -> Value {
+        await withCheckedContinuation { continuation in
+            reads.async { continuation.resume(returning: work()) }
+        }
+    }
+
+    /// The ones of `urls` that are files, not folders, asked off the main actor.
+    nonisolated static func regularFiles(_ urls: [URL]) async -> [URL] {
+        await reading { urls.filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true } }
+    }
+
+    private func readSizes() {
+        let files = rows.map(\.file)
+        Task { [weak self] in
+            let sizes = await Self.reading {
+                files.map { (try? FileManager.default.attributesOfItem(atPath: $0.path)[.size] as? NSNumber)?.int64Value ?? 0 }
+            }
+            guard let self else { return }
+            for (index, size) in sizes.enumerated() where index < self.rows.count && self.rows[index].file == files[index] {
+                self.rows[index].bytes = size
+            }
+        }
+    }
+
+    /// A small picture of the file for its row, read off the main actor; nil when it isn't an image or
+    /// can't be read.
+    nonisolated static func thumbnail(of url: URL) async -> CGImage? {
+        await reading {
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+            return CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: 120,
+            ] as CFDictionary)
+        }
     }
 
     /// The row being worked on.
     var currentIndex: Int? { isWorking ? rows.firstIndex { $0.result == nil } : nil }
     var originalBytes: Int64 { rows.reduce(0) { $0 + $1.bytes } }
-    var resultBytes: Int64 { rows.reduce(0) { $0 + ($1.result?.resultByteCount ?? $1.bytes) } }
+    /// What the files come to now: a new file's size where one was made, the file's own size otherwise.
+    var resultBytes: Int64 {
+        rows.reduce(0) { total, row in
+            guard let result = row.result, result.outcome == .optimized || result.outcome == .converted else { return total + row.bytes }
+            return total + result.resultByteCount
+        }
+    }
 
     /// Carries out a choice on the list. `work` gets the rows as they are now, and until it returns they
     /// stay as they are: `rerun` does nothing meanwhile, so no result file `work` is reading can be

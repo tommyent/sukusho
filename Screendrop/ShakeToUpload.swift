@@ -283,22 +283,31 @@ final class ShakeToUpload {
 
     func drop(_ urls: [URL], on tile: Tile) {
         shelfNote("drop handed on: \(urls.count) files on \(tile.title), shelf showing \(showsShelf)")
-        guard showsShelf else { return }
-        let files = CloudLibraryModel.regularFiles(urls)
-        // As the Files page says it; the files go on without the folders.
-        if files.count < urls.count {
-            let optimizes = tile == .optimize || tile == .webP
-            CaptureTextFeedbackPresenter.shared.showDone(optimizes ? "Folders Are Left Out" : "Folders Can’t Be Shared",
-                                                         detail: "Drop the files inside them instead.",
-                                                         symbol: "folder", displayID: Self.display)
-        }
-        guard !files.isEmpty else { return dismiss() }
-        if tile == .optimize || tile == .webP { return showHolding(files, format: tile == .webP ? .webP : .same) }
-        let gallery = tile == .gallery
-        if tile == .upload || NSEvent.modifierFlags.contains(.option) {
-            start(files, gallery: gallery, options: .savedDefaults)
-        } else {
-            showOptions(files, gallery: gallery)
+        guard showsShelf, let shelf = panel else { return }
+        // The drop has come, so the shelf stops waiting for one.
+        stopWatchingDrag()
+        let skipsOptions = NSEvent.modifierFlags.contains(.option)
+        Task {
+            // Nothing about the dropped files is read on the main actor, not even which of them are folders:
+            // a read can wait on a macOS prompt (ShelfOptimization.init).
+            let files = await ShelfOptimization.regularFiles(urls)
+            // Put away meanwhile, or another shelf by now.
+            guard showsShelf, panel === shelf else { return }
+            // As the Files page says it; the files go on without the folders.
+            if files.count < urls.count {
+                let optimizes = tile == .optimize || tile == .webP
+                CaptureTextFeedbackPresenter.shared.showDone(optimizes ? "Folders Are Left Out" : "Folders Can’t Be Shared",
+                                                             detail: "Drop the files inside them instead.",
+                                                             symbol: "folder", displayID: Self.display)
+            }
+            guard !files.isEmpty else { return dismiss() }
+            if tile == .optimize || tile == .webP { return showHolding(files, format: tile == .webP ? .webP : .same) }
+            let gallery = tile == .gallery
+            if tile == .upload || skipsOptions {
+                start(files, gallery: gallery, options: .savedDefaults)
+            } else {
+                showOptions(files, gallery: gallery)
+            }
         }
     }
 

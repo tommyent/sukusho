@@ -915,6 +915,17 @@ private func isRunning(_ text: String) -> Bool {
         let gone = try await bench.optimizer.optimize(bench.folder.appending(path: "gone.png"))
         #expect(gone.outcome == .failed("The file isn't an image Sukusho can read."))
 
+        // A file Sukusho isn't allowed to open, as macOS makes one in a folder the person said no for: it says
+        // so, for every target, and comes back as it is.
+        let refused = try bench.file("Refused.png", Sample.screenshot(width: 64, height: 40, seed: 24))
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: refused.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: refused.path) }
+        for target in [ImageOptimizationTarget.lossless, .webP(quality: 80), .jpeg(quality: 80)] {
+            let result = try await bench.optimizer.optimize(refused, to: target)
+            #expect(result.outcome == .failed(ImageOptimizer.unreadableReason), "\(target)")
+            #expect(result.url == refused)
+        }
+
         // Only PNG and JPEG have a lossless route; a TIFF says so and can still be converted.
         let tiff = try bench.file("Scan.tiff", Sample.screenshot(width: 64, height: 40, seed: 23), as: .tiff)
         let lossless = try await bench.optimizer.optimize(tiff)

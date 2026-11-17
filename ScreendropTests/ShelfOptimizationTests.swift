@@ -32,6 +32,52 @@ import UniformTypeIdentifiers
                                  effort: .fast) { $0 == .same ? .lossless : $0 == .webP ? .webP(quality: nil) : .jpeg(quality: 80) }
     }
 
+    /// From the test Mac, macOS 26.5.1: a file on the Desktop made macOS ask, the thumbnail's read waited on
+    /// the main thread, and the app waited with it. The shelf reads nothing on the main actor now, and a file
+    /// it isn't allowed to open gets a row that says so. Here a file without read permission stands in for
+    /// one macOS refuses.
+    @Test func theShelfReadsOffTheMainActorAndSaysWhenItMayNotReadAFile() async throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "SukushoShelfReads-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let readable = folder.appending(path: "readable.png"), refused = folder.appending(path: "refused.png")
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: refused.path)
+            try? FileManager.default.removeItem(at: folder)
+        }
+        try picture(readable, shade: 0.8)
+        try picture(refused, shade: 0.4)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: refused.path)
+
+        // Making the list reads nothing: the sizes come a moment later, from another queue.
+        let list = model([readable, refused], .webP, in: folder)
+        #expect(list.rows.map(\.bytes) == [0, 0])
+        try await settled(list)
+        for _ in 0..<200 where list.rows[0].bytes == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(list.rows[0].bytes > 0)
+
+        // The readable file is converted; the other one's row says it couldn't be read, and nothing else fails.
+        #expect(list.rows[0].result?.outcome == .converted)
+        #expect(list.rows[1].result?.outcome == .failed(ImageOptimizer.unreadableReason))
+        #expect(list.rows[1].result?.url == refused)
+        // The list's total counts the unread file at its own size, not as shrunk to nothing.
+        for _ in 0..<200 where list.rows[1].bytes == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        let converted = try #require(list.rows[0].result?.resultByteCount)
+        #expect(list.rows[1].bytes > 0)
+        #expect(list.resultBytes == converted + list.rows[1].bytes)
+        #expect(list.originalBytes == list.rows[0].bytes + list.rows[1].bytes)
+
+        // Thumbnails are read off the main actor too (this test runs on it), and a refused file has none.
+        let thumbnail = await ShelfOptimization.thumbnail(of: readable)
+        let none = await ShelfOptimization.thumbnail(of: refused)
+        #expect(thumbnail != nil)
+        #expect(none == nil)
+
+        // Folders are told from files without the main actor reading anything either.
+        let kinds = await ShelfOptimization.regularFiles([readable, folder])
+        #expect(kinds == [readable])
+        list.discard()
+    }
+
     /// Sol, second round: Save for list A is done only after A was put away and the shelf opened again with
     /// list B. A finishes with its own results and is told it is no longer on show; B is not touched.
     @Test func aChoiceDoneAfterTheShelfMovedOnLeavesTheNewListAlone() async throws {
