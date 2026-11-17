@@ -57,6 +57,9 @@ struct CaptureTextParagraphsTests {
         #expect(CaptureTextParagraphs.reflowed("shows the contents of a computer display.!2] It is created")
                 == "shows the contents of a computer display. It is created")
         #expect(CaptureTextParagraphs.reflowed("as a camera[3] would") == "as a camera would")
+        // Vision's reading of "display.[2]" in the VM check (2026-11-17), at a line's end and mid-line.
+        #expect(CaptureTextParagraphs.reflowed("that powers the display. [2]") == "that powers the display.")
+        #expect(CaptureTextParagraphs.reflowed("the display. [2] It is") == "the display. It is")
         // A bracket that isn't a footnote mark stays.
         #expect(CaptureTextParagraphs.reflowed("array [2] of items") == "array [2] of items")
     }

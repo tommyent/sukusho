@@ -170,8 +170,10 @@ nonisolated enum CaptureTextParagraphs {
     }
 
     /// Footnote marks the recognizer misread, where it's safe to say so: "[2]" or "!2]" stuck to the end of a word or
-    /// sentence goes (Fable saw "!2]" in Wikipedia text). Anything less certain is left as read.
+    /// sentence goes (Fable saw "!2]" in Wikipedia text), and so does one a space after a sentence's punctuation, as
+    /// Vision reads "display.[2]" ("display. [2]"). After a plain word with a space ("array [2]") it stays.
     private static func cleaned(_ text: String) -> String {
-        text.replacingOccurrences(of: #"(?<=[\p{L}.,;:)”"])[\[!|]\d{1,3}\]"#, with: "", options: .regularExpression)
+        text.replacingOccurrences(of: #"(?<=[\p{L}.,;:)”"])[\[!|]\d{1,3}\]|(?<=[.,;:)”"]) [\[!|]\d{1,3}\]"#, with: "",
+                                  options: .regularExpression)
     }
 }
