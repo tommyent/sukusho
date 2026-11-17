@@ -145,7 +145,7 @@ final class LikesLibraryModel {
     func perform(_ action: CaptureLibraryAction) {
         switch action {
         case .edit: if let like = selectedLikes.first { open(like) }
-        case .copy: copyLinks(selectedLikes)
+        case .copy, .copyOriginal: copyLinks(selectedLikes)
         case .preview, .rename, .export, .share, .reveal, .trash: break
         }
     }

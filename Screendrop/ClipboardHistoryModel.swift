@@ -160,6 +160,11 @@ final class ClipboardHistoryModel {
         }
     }
 
+    /// The clip as it was first copied: its oldest version, when it was optimized or rewritten since.
+    func original(_ entry: ClipboardEntry) -> ClipboardEntry {
+        entry.earlierVersions.last.map { self.entry(entry, at: $0) } ?? entry
+    }
+
     /// The card as it was at an earlier version: that version's image and Library link, for Copy and Quick Look.
     func entry(_ entry: ClipboardEntry, at version: ClipboardEntryVersion) -> ClipboardEntry {
         var earlier = entry

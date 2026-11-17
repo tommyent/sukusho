@@ -55,6 +55,25 @@ nonisolated struct ImageOptimizationResult: Sendable {
     func discard() {
         if let ownedFolder { try? FileManager.default.removeItem(at: ownedFolder) }
     }
+
+    /// The file as it is, for a caller that stopped waiting for a result.
+    static func original(_ url: URL) -> ImageOptimizationResult {
+        let bytes = Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+        return ImageOptimizationResult(url: url, outcome: .timedOut, originalByteCount: bytes, resultByteCount: bytes, ownedFolder: nil)
+    }
+
+    /// "↓18%".
+    static func saving(from original: Int64, to result: Int64) -> String {
+        guard original > 0 else { return "" }
+        return "↓\(max(0, Int((100 - 100 * Double(result) / Double(original)).rounded())))%"
+    }
+
+    /// "1.3 MB → 1.1 MB · ↓18%".
+    var sizeSummary: String {
+        let before = ByteCountFormatter.string(fromByteCount: originalByteCount, countStyle: .file)
+        let after = ByteCountFormatter.string(fromByteCount: resultByteCount, countStyle: .file)
+        return "\(before) → \(after) · \(Self.saving(from: originalByteCount, to: resultByteCount))"
+    }
 }
 
 nonisolated struct ImageOptimizer: Sendable {

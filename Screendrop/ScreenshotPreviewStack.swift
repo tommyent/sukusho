@@ -493,14 +493,14 @@ final class ScreenshotPreviewStack {
         }
     }
 
-    func copyToClipboard(id: ScreenshotPreviewItem.ID) {
+    func copyToClipboard(id: ScreenshotPreviewItem.ID, original: Bool = false) {
         guard !preparingItemIDs.contains(id), let item = items.first(where: { $0.id == id }) else { return }
         switch item.kind {
         case .image:
             Task {
-                guard await copyURLToClipboard(item.url) else { return }
+                guard await copyURLToClipboard(item.url, original: original) else { return }
                 dismiss(id: id)
-                showDone("Copied", detail: "The screenshot is on the clipboard.")
+                showDone(original ? "Copied Original" : "Copied", detail: "The screenshot is on the clipboard.")
             }
         case .video:
             // Flattening can take a moment, so the card stays up showing
@@ -925,9 +925,9 @@ final class ScreenshotPreviewStack {
         compressionResultBadges.removeAll()
     }
 
-    private func copyURLToClipboard(_ url: URL) async -> Bool {
+    private func copyURLToClipboard(_ url: URL, original: Bool = false) async -> Bool {
         do {
-            try await copyImage(url)
+            if original { try await ScreenshotFileActions.copyImageToClipboard(from: url, original: true) } else { try await copyImage(url) }
             return true
         } catch {
             print("Failed to copy screenshot: \(error)")

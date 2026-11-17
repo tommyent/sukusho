@@ -15,20 +15,27 @@ final class OptimizedImageCopy {
 
     /// Counts the copies asked for; only the newest may write.
     private var latest = 0
+    private var inFlight: Task<ImageOptimizationResult, Error>?
 
     /// Optimizes `url`, then writes the pasteboard item made from the result. Returns nil, and writes
     /// nothing, when something newer reached the pasteboard while optimizing: a later copy from here,
-    /// or anything copied in another app. `optimize` falls back to the original by itself
-    /// (see `ImageOptimizer.optimize`), so a failed or slow optimization still copies.
+    /// which also stops this one's optimizing, or anything copied in another app. `optimize` falls back
+    /// to the original by itself (see `ImageOptimizer.optimize`), so a failed optimization still copies.
     func copy(_ url: URL, to pasteboard: NSPasteboard = .general,
-              optimize: (URL) async throws -> ImageOptimizationResult,
+              optimize: @escaping (URL) async throws -> ImageOptimizationResult,
               item: (URL) async throws -> NSPasteboardItem) async throws -> ImageOptimizationResult? {
         latest += 1
         let mine = latest
         let countAtStart = pasteboard.changeCount
-        // shortcut: a copy that is overtaken finishes optimizing before it is dropped; cancel it here if
-        // copies ever run without a time limit.
-        let result = try await optimize(url)
+        inFlight?.cancel()
+        let work = Task { try await optimize(url) }
+        inFlight = work
+        let result: ImageOptimizationResult
+        do {
+            result = try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
+        } catch is CancellationError where mine != latest {
+            return nil
+        }
         let item = try await item(result.url)
         // No suspension between this check and the write, so nothing can slip in between them.
         guard mine == latest, pasteboard.changeCount == countAtStart else {

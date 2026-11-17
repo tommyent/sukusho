@@ -248,7 +248,7 @@ final class CloudLibraryModel {
         case .edit:
             if let upload = shared.first { open(upload) }
             FileRequestsModel.shared.download(received)
-        case .copy: copyLinks(shared)
+        case .copy, .copyOriginal: copyLinks(shared)
         case .trash: pendingDelete = selectedUploads
         case .share: LibrarySharing.show(CloudShareLinks.links(shared.map { ($0.url, $0.encrypted == true) }).compactMap(URL.init(string:)))
         case .rename, .export, .reveal: break

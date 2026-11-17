@@ -24,11 +24,14 @@ extension CaptureLibraryModel {
         case .rename:
             guard selected.count == 1, let item = selected.first else { return }
             beginRename(item, at: .card)
-        case .copy:
+        case .copy, .copyOriginal:
             run("Copying \(selected.count == 1 ? "capture" : "captures")…") {
                 StudioProjectRegistry.shared.flushDrafts()
                 if selected.count == 1, let item = selected.first, !item.isVideo {
-                    try await ScreenshotFileActions.copyImageToClipboard(from: item.fileURL)
+                    let original = action == .copyOriginal
+                    let saving = try await ScreenshotFileActions.copyImageToClipboard(from: item.fileURL, original: original)
+                    self.actionFeedback.show(original ? "Copied Original" : saving.map { "Copied · \($0)" } ?? "Copied")
+                    return
                 } else {
                     var urls: [URL] = []
                     for item in selected {
@@ -475,7 +478,7 @@ extension CaptureLibraryModel {
         }
     }
 
-    private func run(_ title: String, operation: @escaping @MainActor () async throws -> Void) {
+    func run(_ title: String, operation: @escaping @MainActor () async throws -> Void) {
         guard !isBusy else { return }
         operationTitle = title
         Task {

@@ -168,7 +168,8 @@ struct PreviewWindowView: View {
                         previewStack.deleteScreenshot(id: item.id)
                     },
                     onCopy: {
-                        previewStack.copyToClipboard(id: item.id)
+                        // Shift-click copies the capture as it is, as ⇧⌘C does elsewhere: the card takes no key commands of its own.
+                        previewStack.copyToClipboard(id: item.id, original: NSEvent.modifierFlags.contains(.shift))
                     },
                     onSave: {
                         previewStack.save(id: item.id)

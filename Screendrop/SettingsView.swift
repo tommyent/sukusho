@@ -12,6 +12,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     case screenshots
     case video
     case overlay
+    case optimize
     case library
     case clipboard
     case cloud
@@ -29,6 +30,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .screenshots: "Screenshots"
         case .video: "Screen Recordings"
         case .overlay: "Overlay"
+        case .optimize: "Optimize"
         case .cloud: "Cloud"
         case .agents: "Agents"
         case .about: "About"
@@ -44,6 +46,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .screenshots: "photo.on.rectangle.angled"
         case .video: "video"
         case .overlay: "square.on.square"
+        case .optimize: "arrow.down.right.and.arrow.up.left"
         case .cloud: "cloud"
         case .agents: "terminal"
         case .about: "info.circle"
@@ -238,6 +241,8 @@ private struct SettingsDetailView: View {
                 VideoSettingsPane()
             case .overlay:
                 OverlaySettingsPane()
+            case .optimize:
+                OptimizeSettingsPane()
             case .cloud:
                 CloudSettingsPane()
             case .agents:
