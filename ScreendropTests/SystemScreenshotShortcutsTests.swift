@@ -89,20 +89,52 @@ struct SystemScreenshotShortcutsTests {
         #expect([CaptureHotkeyAction.fullscreen, .window, .screenRecording].allSatisfy {
             SystemScreenshotShortcuts.outcome(for: $0) == .both })
 
-        #expect(SystemScreenshotShortcuts.warning(for: .textCapture, shortcut: shift5, entry: 184)
-            .hasPrefix("On ⇧⌘5, macOS opens its Screenshot toolbar instead, so Capture Text doesn’t run."))
-        #expect(SystemScreenshotShortcuts.warning(for: .area, shortcut: shift3, entry: 28)
-            .hasPrefix("On ⇧⌘3, macOS takes its own screenshot instead, so Area doesn’t run."))
+        // The summary: Sukusho's defaults, keys in order whatever order the actions come in.
+        let defaults: [SystemScreenshotShortcuts.Clash] = [(.textCapture, shift5), (.scrollingCapture, shift4), (.area, shift3)]
+        #expect(SystemScreenshotShortcuts.summary(defaults)
+            == "On ⇧⌘3, ⇧⌘4, and ⇧⌘5, macOS takes its own screenshot, so Sukusho’s Area, Scrolling Capture, and Capture Text don’t run.")
         // Fullscreen recorded onto ⇧⌘3: both run.
-        #expect(SystemScreenshotShortcuts.warning(for: .fullscreen, shortcut: shift3, entry: 28)
-            .hasPrefix("On ⇧⌘3, macOS also takes its own screenshot, so one press does both."))
+        #expect(SystemScreenshotShortcuts.summary([(.fullscreen, shift3)])
+            == "On ⇧⌘3, macOS takes its own screenshot as well as Sukusho’s Fullscreen.")
 
-        // The notice: Sukusho's defaults, keys in order whatever order the actions come in.
-        let notice = SystemScreenshotShortcuts.noticeText([(.textCapture, shift5, 184), (.scrollingCapture, shift4, 30),
-                                                           (.area, shift3, 28)])
-        #expect(notice.hasPrefix("On ⇧⌘3, ⇧⌘4, and ⇧⌘5, only macOS’s own screenshot runs, so Sukusho’s Area, Scrolling Capture, and Capture Text don’t."))
-        #expect(!notice.contains("as well"))
-        let single = SystemScreenshotShortcuts.noticeText([(.fullscreen, shift3, 28)])
-        #expect(single.hasPrefix("On ⇧⌘3, macOS’s screenshot runs as well as Sukusho’s Fullscreen."))
+        // The notice names the keys Use Other Keys would pick, and leaves the sentence out when there are none.
+        let moved: [CaptureHotkeyAction: HotkeyShortcut] = [.area: altShift(20), .scrollingCapture: altShift(21), .textCapture: altShift(23)]
+        #expect(SystemScreenshotShortcuts.noticeText(defaults, otherKeys: moved)
+            .hasSuffix("Use Other Keys moves them to ⌥⇧⌘3, ⌥⇧⌘4, and ⌥⇧⌘5. Or turn macOS’s off in Keyboard Shortcuts."))
+        #expect(!SystemScreenshotShortcuts.noticeText(defaults, otherKeys: [:]).contains("Use Other Keys"))
+    }
+
+    private func altShift(_ keyCode: Int) -> HotkeyShortcut { HotkeyShortcut(modifiers: [.option, .shift, .command], keyCode: keyCode) }
+
+    /// The owner, 2026-11-17: Use Other Keys moves each clashing shortcut to the same digit with ⌥⇧⌘, else ⌃⌥⌘, never
+    /// onto anything macOS has on or another Sukusho action uses, and leaves the rest alone.
+    @Test func useOtherKeysPicksFreeKeys() {
+        let sukusho = CaptureHotkeyAction.allCases.reduce(into: [CaptureHotkeyAction: HotkeyShortcut]()) { $0[$1] = $1.defaultShortcut }
+        let clashing: [CaptureHotkeyAction] = [.area, .textCapture, .scrollingCapture]
+        let system = SystemScreenshotShortcuts.enabled(in: [:])
+        let moved = SystemScreenshotShortcuts.otherKeys(for: clashing, shortcuts: sukusho, system: system)
+        #expect(moved == [.area: altShift(20), .scrollingCapture: altShift(21), .textCapture: altShift(23)])
+        #expect(moved[.fullscreen] == nil)
+
+        // macOS has ⌥⇧⌘3 on (some user's own shortcut): Area falls back to ⌃⌥⌘3.
+        let withOption3 = system.union([altShift(20)])
+        #expect(SystemScreenshotShortcuts.otherKeys(for: [.area], shortcuts: sukusho, system: withOption3)[.area]
+            == HotkeyShortcut(modifiers: [.control, .option, .command], keyCode: 20))
+
+        // Another Sukusho action already on ⌥⇧⌘5 and ⌃⌥⌘5: Capture Text has no free key and stays out.
+        var taken = sukusho
+        taken[.library] = altShift(23)
+        taken[.window] = HotkeyShortcut(modifiers: [.control, .option, .command], keyCode: 23)
+        #expect(SystemScreenshotShortcuts.otherKeys(for: [.textCapture], shortcuts: taken, system: system).isEmpty)
+
+        // Every enabled entry in the file counts, not only the screenshot ones; disabled and unbound ones don't.
+        let hotkeys: [String: Any] = [
+            "79": entry(true, character: 51, keyCode: 20, flags: 0x180000 | 0x20000),    // ⌥⇧⌘3 on
+            "80": entry(false, character: 52, keyCode: 21, flags: 0x180000 | 0x20000),   // ⌥⇧⌘4 off
+            "81": entry(true, character: 65535, keyCode: 65535, flags: 0),                // nothing bound
+        ]
+        let all = SystemScreenshotShortcuts.allEnabled(in: hotkeys)
+        #expect(all.contains(altShift(20)) && !all.contains(altShift(21)))
+        #expect(all.isSuperset(of: system))
     }
 }

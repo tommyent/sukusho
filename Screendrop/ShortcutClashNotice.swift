@@ -5,34 +5,56 @@
 
 import AppKit
 
+extension SystemScreenshotShortcuts {
+    /// Sukusho's clashing shortcuts now, with their keys.
+    static func currentClashPairs() -> [Clash] {
+        let shortcuts = CaptureHotkeyPreferences.shortcuts()
+        return currentClashes().compactMap { action in shortcuts[action].map { (action, $0) } }
+    }
+
+    /// Use Other Keys, as it would run now.
+    static func currentOtherKeys() -> [CaptureHotkeyAction: HotkeyShortcut] {
+        otherKeys(for: currentClashes(), shortcuts: CaptureHotkeyPreferences.shortcuts(), system: currentAllEnabled())
+    }
+
+    /// Moves each clashing shortcut to its other keys and registers it (the owner, 2026-11-17). Returns the actions whose
+    /// new keys couldn't be registered, because another app holds them; those keep their old shortcut.
+    @discardableResult static func useOtherKeys() -> [CaptureHotkeyAction] {
+        var failed: [CaptureHotkeyAction] = []
+        for (action, shortcut) in currentOtherKeys().sorted(by: { $0.key.hotKeyID < $1.key.hotKeyID }) {
+            do { try HotkeyManager.shared.setShortcut(shortcut, for: action) } catch { failed.append(action) }
+        }
+        return failed
+    }
+}
+
 /// Once, at launch, when a Sukusho shortcut is one of macOS's screenshot shortcuts that is still on (the owner,
-/// 2026-11-17: beta 1). It says per key what one press does now (`SystemScreenshotShortcuts.noticeText`); Keep Both
-/// leaves exactly that. Settings › Shortcuts keeps a warning under each one for as long as it lasts; this notice never
-/// comes back.
+/// 2026-11-17: beta 1). It says what one press does now and offers Use Other Keys, Open Keyboard Shortcuts… or Not Now.
+/// Settings › Shortcuts keeps the same line and buttons for as long as the clash lasts; this notice never comes back.
 enum ShortcutClashNotice {
     static let shownKey = "shortcutClashNotice.shown"
 
     static func showIfNeeded(defaults: UserDefaults = .standard) {
         guard !defaults.bool(forKey: shownKey) else { return }
-        let entries = SystemScreenshotShortcuts.currentEntries()
-        let clashes = SystemScreenshotShortcuts.clashes(CaptureHotkeyPreferences.shortcuts(), with: Set(entries.values))
-            .compactMap { action -> (action: CaptureHotkeyAction, shortcut: HotkeyShortcut, entry: Int)? in
-                guard let shortcut = CaptureHotkeyPreferences.shortcut(for: action),
-                      let entry = SystemScreenshotShortcuts.entry(for: shortcut, in: entries) else { return nil }
-                return (action, shortcut, entry)
-            }
+        let clashes = SystemScreenshotShortcuts.currentClashPairs()
         guard !clashes.isEmpty else { return }
         defaults.set(true, forKey: shownKey)
 
+        let otherKeys = SystemScreenshotShortcuts.currentOtherKeys()
         let alert = NSAlert()
         alert.alertStyle = .informational
         alert.messageText = "macOS also uses some of Sukusho’s shortcuts"
-        alert.informativeText = SystemScreenshotShortcuts.noticeText(clashes)
+        alert.informativeText = SystemScreenshotShortcuts.noticeText(clashes, otherKeys: otherKeys)
+        if !otherKeys.isEmpty { alert.addButton(withTitle: "Use Other Keys") }
         alert.addButton(withTitle: "Open Keyboard Shortcuts…")
-        alert.addButton(withTitle: "Keep Both")
+        alert.addButton(withTitle: "Not Now")
         NSApp.activate()
-        if alert.runModal() == .alertFirstButtonReturn {
-            SystemScreenshotShortcuts.openKeyboardSettings()
+        let response = alert.runModal()
+        let first = NSApplication.ModalResponse.alertFirstButtonReturn
+        switch (otherKeys.isEmpty, response) {
+        case (false, first): SystemScreenshotShortcuts.useOtherKeys()
+        case (false, .alertSecondButtonReturn), (true, first): SystemScreenshotShortcuts.openKeyboardSettings()
+        default: break
         }
     }
 }

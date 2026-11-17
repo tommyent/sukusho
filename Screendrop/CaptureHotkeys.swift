@@ -369,15 +369,6 @@ enum SystemScreenshotShortcuts {
         }
     }
 
-    /// What macOS does on its entry's keys, for the sentence that says so.
-    static func macOSDoes(_ entry: Int) -> String {
-        switch entry {
-        case 28, 29: "takes its own screenshot"
-        case 30, 31: "starts its own area screenshot"
-        default: "opens its Screenshot toolbar"
-        }
-    }
-
     /// The screenshot shortcuts macOS has on, by entry number, from its AppleSymbolicHotKeys dictionary.
     static func enabledEntries(in hotkeys: [String: Any]?) -> [Int: HotkeyShortcut] {
         defaults.reduce(into: [:]) { result, item in
@@ -426,33 +417,79 @@ enum SystemScreenshotShortcuts {
         NSWorkspace.shared.open(url)
     }
 
-    /// The line Settings shows under a clashing shortcut: what one press does now, and the way out.
-    static func warning(for action: CaptureHotkeyAction, shortcut: HotkeyShortcut, entry: Int) -> String {
-        let keys = shortcut.displayTokens.joined()
-        let now = switch outcome(for: action) {
-        case .both: "On \(keys), macOS also \(macOSDoes(entry)), so one press does both."
-        case .macOSOnly: "On \(keys), macOS \(macOSDoes(entry)) instead, so \(action.title) doesn’t run."
-        }
-        return "\(now) Turn macOS’s off in System Settings › \(settingsPath), or pick another key."
+    typealias Clash = (action: CaptureHotkeyAction, shortcut: HotkeyShortcut)
+
+    private static func list(_ items: [String]) -> String { ListFormatter.localizedString(byJoining: items) }
+
+    private static func inKeyOrder(_ clashes: [Clash]) -> [Clash] {
+        clashes.sorted { ($0.shortcut.keyCode, $0.shortcut.modifiers.rawValue) < ($1.shortcut.keyCode, $1.shortcut.modifiers.rawValue) }
     }
 
-    /// The launch notice's text for these clashes, the keys in order: what one press does now, and the way out.
-    static func noticeText(_ clashes: [(action: CaptureHotkeyAction, shortcut: HotkeyShortcut, entry: Int)]) -> String {
-        let sorted = clashes.sorted { ($0.shortcut.keyCode, $0.shortcut.modifiers.rawValue) < ($1.shortcut.keyCode, $1.shortcut.modifiers.rawValue) }
-        let list = { (items: [String]) in ListFormatter.localizedString(byJoining: items) }
+    /// What one press does now on the clashing keys, in key order: the line above Settings' list and the notice's start.
+    static func summary(_ clashes: [Clash]) -> String {
+        let sorted = inKeyOrder(clashes)
         let macOSOnly = sorted.filter { outcome(for: $0.action) == .macOSOnly }
         let both = sorted.filter { outcome(for: $0.action) == .both }
         var lines: [String] = []
         if !macOSOnly.isEmpty {
-            let keys = list(macOSOnly.map { $0.shortcut.displayTokens.joined() })
-            let actions = list(macOSOnly.map(\.action.title))
-            lines.append("On \(keys), only macOS’s own screenshot runs, so Sukusho’s \(actions) \(macOSOnly.count == 1 ? "doesn’t" : "don’t").")
+            lines.append("On \(list(macOSOnly.map { $0.shortcut.displayTokens.joined() })), macOS takes its own screenshot, "
+                + "so Sukusho’s \(list(macOSOnly.map(\.action.title))) \(macOSOnly.count == 1 ? "doesn’t" : "don’t") run.")
         }
         if !both.isEmpty {
-            let keys = list(both.map { $0.shortcut.displayTokens.joined() })
-            lines.append("On \(keys), macOS’s screenshot runs as well as Sukusho’s \(list(both.map(\.action.title))).")
+            lines.append("On \(list(both.map { $0.shortcut.displayTokens.joined() })), macOS takes its own screenshot "
+                + "as well as Sukusho’s \(list(both.map(\.action.title))).")
         }
-        lines.append("To use Sukusho’s, turn macOS’s off in System Settings › \(settingsPath), or pick other keys in Settings › Shortcuts.")
         return lines.joined(separator: " ")
+    }
+
+    /// The launch notice: what happens, and the two ways out, naming the keys Use Other Keys would pick.
+    static func noticeText(_ clashes: [Clash], otherKeys: [CaptureHotkeyAction: HotkeyShortcut]) -> String {
+        let moves = inKeyOrder(clashes).compactMap { otherKeys[$0.action]?.displayTokens.joined() }
+        let use = moves.isEmpty ? "" : "Use Other Keys moves them to \(list(moves)). "
+        return "\(summary(clashes)) \(use)Or turn macOS’s off in Keyboard Shortcuts."
+    }
+
+    // MARK: - Use Other Keys
+
+    /// Every shortcut macOS has on in AppleSymbolicHotKeys, not only the screenshot ones; an entry never changed isn't in
+    /// the file, so macOS's other defaults are covered by the choice of candidates (`candidates`).
+    static func allEnabled(in hotkeys: [String: Any]?) -> Set<HotkeyShortcut> {
+        var result = enabled(in: hotkeys)
+        for case let entry as [String: Any] in (hotkeys ?? [:]).values {
+            guard (entry["enabled"] as? Bool) ?? (entry["enabled"] as? NSNumber)?.boolValue ?? false,
+                  let parameters = (entry["value"] as? [String: Any])?["parameters"] as? [NSNumber], parameters.count >= 3,
+                  parameters[1].intValue != 0xFFFF else { continue }
+            let flags = NSEvent.ModifierFlags(rawValue: parameters[2].uintValue)
+            result.insert(HotkeyShortcut(modifiers: HotkeyShortcut.Modifiers(from: flags), keyCode: parameters[1].intValue))
+        }
+        return result
+    }
+
+    static func currentAllEnabled() -> Set<HotkeyShortcut> {
+        CFPreferencesAppSynchronize(domain as CFString)
+        return allEnabled(in: CFPreferencesCopyAppValue(key as CFString, domain as CFString) as? [String: Any])
+    }
+
+    /// The keys tried for a clashing shortcut, in order: the same key with ⌥⇧⌘, then ⌃⌥⌘. Neither is on Apple's list of
+    /// Mac shortcuts for 3, 4 or 5 (support.apple.com/102650, read 2026-11-17: ⌃⌥⌘ only 8, comma and period), and the
+    /// same digit keeps each action on its number. ⌃⇧⌘3 and ⌃⇧⌘4 are macOS's own copy-to-clipboard screenshots.
+    static func candidates(for shortcut: HotkeyShortcut) -> [HotkeyShortcut] {
+        [HotkeyShortcut(modifiers: [.option, .shift, .command], keyCode: shortcut.keyCode),
+         HotkeyShortcut(modifiers: [.control, .option, .command], keyCode: shortcut.keyCode)]
+    }
+
+    /// New keys for the clashing actions: the first candidate macOS doesn't have on and no other Sukusho action uses,
+    /// counting the keys already chosen here. An action with no free candidate is left out.
+    static func otherKeys(for clashing: [CaptureHotkeyAction], shortcuts: [CaptureHotkeyAction: HotkeyShortcut],
+                          system: Set<HotkeyShortcut>) -> [CaptureHotkeyAction: HotkeyShortcut] {
+        var taken = Set(shortcuts.filter { !clashing.contains($0.key) }.values)
+        var result: [CaptureHotkeyAction: HotkeyShortcut] = [:]
+        for action in clashing {
+            guard let shortcut = shortcuts[action],
+                  let free = candidates(for: shortcut).first(where: { !system.contains($0) && !taken.contains($0) }) else { continue }
+            result[action] = free
+            taken.insert(free)
+        }
+        return result
     }
 }

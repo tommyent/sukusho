@@ -18,9 +18,19 @@ struct CaptureHotkeySettingsSection: View {
     @State private var errorMessage: String?
     /// macOS's screenshot shortcuts that are on, by entry, read again whenever they could have changed.
     @State private var systemEntries: [Int: HotkeyShortcut] = [:]
+    /// Every shortcut macOS has on, for Use Other Keys to stay clear of.
+    @State private var systemAll: Set<HotkeyShortcut> = []
+
+    /// This section's shortcuts that macOS's screenshot shortcuts also use.
+    private var clashes: [SystemScreenshotShortcuts.Clash] {
+        actions.compactMap { action in
+            shortcuts[action].flatMap { SystemScreenshotShortcuts.entry(for: $0, in: systemEntries) == nil ? nil : (action, $0) }
+        }
+    }
 
     var body: some View {
         Section {
+            if !clashes.isEmpty { clashSummary }
             ForEach(actions) { action in
                 LabeledContent(action.title) {
                     HStack(spacing: DS.Space.m) {
@@ -41,8 +51,9 @@ struct CaptureHotkeySettingsSection: View {
                             .help("Remove this shortcut")
                     }
                 }
-                if let shortcut = shortcuts[action], let entry = SystemScreenshotShortcuts.entry(for: shortcut, in: systemEntries) {
-                    clashWarning(for: action, shortcut: shortcut, entry: entry)
+                if clashes.contains(where: { $0.action == action }) {
+                    warningLabel("Also macOS’s")
+                        .accessibilityLabel("\(action.title)’s shortcut is also one of macOS’s")
                 }
             }
 
@@ -70,18 +81,39 @@ struct CaptureHotkeySettingsSection: View {
         }
     }
 
-    /// Under a shortcut macOS also uses: what happens, where to turn macOS's off, and a way there.
-    private func clashWarning(for action: CaptureHotkeyAction, shortcut: HotkeyShortcut, entry: Int) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: DS.Space.m) {
-            Label(SystemScreenshotShortcuts.warning(for: action, shortcut: shortcut, entry: entry),
-                  systemImage: "exclamationmark.triangle.fill")
-                .font(.caption)
-                .foregroundStyle(.orange)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-            Button("Open Keyboard Shortcuts…") { SystemScreenshotShortcuts.openKeyboardSettings() }
-                .controlSize(.small)
+    /// Above the list while shortcuts clash (the owner's layout B): what one press does now, and the two ways out.
+    private var clashSummary: some View {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
+            warningLabel(SystemScreenshotShortcuts.summary(clashes))
+            HStack(spacing: DS.Space.m) {
+                Spacer(minLength: 0)
+                Button("Use Other Keys") { useOtherKeys() }
+                    .controlSize(.small)
+                    .disabled(SystemScreenshotShortcuts.otherKeys(for: clashes.map(\.action), shortcuts: shortcuts,
+                                                                  system: systemAll).isEmpty)
+                    .help("Move these to keys macOS doesn’t use")
+                Button("Open Keyboard Shortcuts…") { SystemScreenshotShortcuts.openKeyboardSettings() }
+                    .controlSize(.small)
+                    .help("Turn macOS’s off in Keyboard Shortcuts › Screenshots")
+            }
         }
+    }
+
+    /// A warning in the system's own colors: the multicolor triangle, the text as secondary labels are.
+    private func warningLabel(_ text: String) -> some View {
+        Label {
+            Text(text).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: "exclamationmark.triangle.fill").symbolRenderingMode(.multicolor)
+        }
+        .font(.caption)
+    }
+
+    private func useOtherKeys() {
+        let failed = SystemScreenshotShortcuts.useOtherKeys()
+        reloadShortcuts()
+        errorMessage = failed.isEmpty ? nil
+            : "\(failed.map(\.title).joined(separator: ", ")) kept \(failed.count == 1 ? "its" : "their") keys: another app uses the new ones."
     }
 
     /// The keys themselves are the control: a click records new ones.
@@ -216,6 +248,7 @@ struct CaptureHotkeySettingsSection: View {
 
     private func reloadClashes() {
         systemEntries = SystemScreenshotShortcuts.currentEntries()
+        systemAll = SystemScreenshotShortcuts.currentAllEnabled()
     }
 }
 
