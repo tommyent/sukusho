@@ -402,6 +402,64 @@ private func isRunning(_ text: String) -> Bool {
         }
     }
 
+    /// Astra OR3: an encoder that exits cleanly with another picture of the same size, or with a file ImageIO
+    /// calls complete that decodes to nothing, must not count as optimized or converted.
+    @Test func aResultThatIsNotTheSourcesPictureIsRefused() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let source = try bench.file("Noise.png", Sample.noise(width: 64, height: 64))
+        let before = try Data(contentsOf: source)
+
+        let red = try #require(CGContext(data: nil, width: 64, height: 64, bitsPerComponent: 8, bytesPerRow: 0,
+                                         space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+        red.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        red.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
+        let different = try bench.file("standins/different.png", try #require(red.makeImage()))
+        #expect(size(different) < before.count)   // smaller, so only the picture check can stop it
+        // 64 by 64, 8-bit RGB: a correct PNG container around data that is no image stream.
+        let hex = "89504e470d0a1a0a0000000d4948445200000040000000400802000000250be689000000174944415"
+            + "46e6f742061207a6c696220696d6167652073747265616d7d024fc00000000049454e44ae426082"
+        var bytes = Data()
+        var index = hex.startIndex
+        while index < hex.endIndex {
+            let next = hex.index(index, offsetBy: 2)
+            bytes.append(try #require(UInt8(hex[index..<next], radix: 16)))
+            index = next
+        }
+        #expect(bytes.count == 80)
+        let bad = bench.folder.appending(path: "standins/bad.png")
+        try bytes.write(to: bad)
+
+        for (standIn, tool, flag, target) in [
+            (different, "oxipng", "--out", ImageOptimizationTarget.lossless),
+            (bad, "oxipng", "--out", .lossless),
+            (bad, "cjpeg", "-outfile", .jpeg(quality: 80)),
+        ] {
+            let tools = FileManager.default.temporaryDirectory.appending(path: "SukushoStandIn-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: tools, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: tools) }
+            let script = """
+            #!/bin/sh
+            while [ $# -gt 0 ]; do
+              if [ "$1" = "\(flag)" ]; then out="$2"; fi
+              shift
+            done
+            cp "\(standIn.path)" "$out"
+            """
+            try Data(script.utf8).write(to: tools.appending(path: tool))
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tools.appending(path: tool).path)
+
+            let result = try await ImageOptimizer(toolsDirectory: tools, outputDirectory: bench.output).optimize(source, to: target)
+            guard case .failed = result.outcome else {
+                Issue.record("\(standIn.lastPathComponent) from \(tool): \(result.outcome)")
+                continue
+            }
+            #expect(result.url == source)
+            #expect(try Data(contentsOf: source) == before)
+            #expect(bench.leftovers.isEmpty, "\(standIn.lastPathComponent): \(bench.leftovers)")
+        }
+    }
+
     @Test func anOutputFolderThatCannotBeWrittenFallsBackToTheOriginal() async throws {
         let bench = try Bench()
         defer { bench.remove() }

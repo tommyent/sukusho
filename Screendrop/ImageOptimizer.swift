@@ -250,6 +250,8 @@ nonisolated struct ImageOptimizer: Sendable {
               let madeSize = Self.uprightPixelSize(check), madeSize == size else {
             throw Failure("The optimized file didn't come out right, so the original is used.")
         }
+        // The encoder's word isn't taken for it: the result is decoded and held against the source.
+        try Self.verify(check, against: imageSource, target: target)
         let folder = outputDirectory.appending(path: id, directoryHint: .isDirectory)
         let name = source.deletingPathExtension().lastPathComponent
         let fileExtension = target == .lossless ? source.pathExtension : made.pathExtension
@@ -340,11 +342,11 @@ nonisolated struct ImageOptimizer: Sendable {
     /// own RGB color space, whose profile goes to `profile` unless it is plain sRGB. Without `keepsAlpha`,
     /// transparency is flattened on white.
     private static func writePixels(of source: CGImageSource, to url: URL, keepsAlpha: Bool, profile: URL) throws -> (url: URL, hasProfile: Bool) {
+        guard let size = uprightPixelSize(source), Int(size.width) * Int(size.height) <= pixelBudget else {
+            throw Failure("The image is too large to convert.")
+        }
         guard let image = uprightImage(source) else { throw Failure("The file isn't an image Sukusho can read.") }
-        let sRGB = CGColorSpace(name: CGColorSpace.sRGB)!
-        // A palette image's colors are in the palette's space.
-        let own = image.colorSpace.map { $0.model == .indexed ? $0.baseColorSpace ?? $0 : $0 }
-        let space = own.flatMap { $0.model == .rgb && $0.copyICCData() != nil ? $0 : nil } ?? sRGB
+        let space = rgbSpace(of: image)
         guard var format = vImage_CGImageFormat(bitsPerComponent: 8, bitsPerPixel: 32, colorSpace: space,
                                                 bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue)) else {
             throw Failure("The image's colors couldn't be read.")
@@ -392,6 +394,93 @@ nonisolated struct ImageOptimizer: Sendable {
         } catch {
             throw Failure("The optimized file couldn't be written. \(Self.reason(error))")
         }
+    }
+
+    /// The most pixels an image may have to be decoded here: whole bitmaps are held in memory, two of them
+    /// while a result is checked. Larger images are left as they are.
+    static let pixelBudget = 100_000_000
+
+    /// The RGB space an image's pixels are read in: its own when it has one with a profile, else sRGB.
+    private static func rgbSpace(of image: CGImage) -> CGColorSpace {
+        // A palette image's colors are in the palette's space.
+        let own = image.colorSpace.map { $0.model == .indexed ? $0.baseColorSpace ?? $0 : $0 }
+        return own.flatMap { $0.model == .rgb && $0.copyICCData() != nil ? $0 : nil } ?? CGColorSpace(name: CGColorSpace.sRGB)!
+    }
+
+    /// The image as RGBA rows in `space`, 8 or 16 bits a channel, without row padding.
+    private static func bitmap(_ image: CGImage, in space: CGColorSpace, bits: Int, premultiplied: Bool) -> Data? {
+        let alpha: CGImageAlphaInfo = premultiplied ? .premultipliedLast : .last
+        let info = CGBitmapInfo(rawValue: alpha.rawValue | (bits == 16 ? CGBitmapInfo.byteOrder16Little.rawValue : 0))
+        guard var format = vImage_CGImageFormat(bitsPerComponent: bits, bitsPerPixel: bits * 4, colorSpace: space, bitmapInfo: info) else {
+            return nil
+        }
+        var buffer = vImage_Buffer()
+        guard vImageBuffer_InitWithCGImage(&buffer, &format, nil, image, vImage_Flags(kvImageNoFlags)) == kvImageNoError,
+              let rows = buffer.data else { return nil }
+        defer { free(rows) }
+        let rowLength = Int(buffer.width) * 4 * bits / 8
+        var data = Data(capacity: rowLength * Int(buffer.height))
+        for row in 0..<Int(buffer.height) {
+            data.append(UnsafeBufferPointer(start: (rows + row * buffer.rowBytes).assumingMemoryBound(to: UInt8.self), count: rowLength))
+        }
+        return data
+    }
+
+    /// Stops a result that isn't the source's picture. An encoder can exit cleanly and leave another image, or
+    /// a file ImageIO calls complete that decodes to nothing; either would otherwise replace the original.
+    private static func verify(_ result: CGImageSource, against source: CGImageSource, target: ImageOptimizationTarget) throws {
+        guard let original = uprightImage(source), let candidate = uprightImage(result) else {
+            throw Failure("The optimized file didn't come out right, so the original is used.")
+        }
+        guard original.width * original.height <= pixelBudget else {
+            throw Failure("The image is too large to check, so the original is used.")
+        }
+        // Both are read into the source's color space, so a lost or changed profile shows as changed pixels.
+        let space = rgbSpace(of: original)
+        switch target {
+        case .lossless:
+            // The same pixels at the source's own depth, never premultiplied, and the same orientation.
+            let bits = original.bitsPerComponent > 8 ? 16 : 8
+            guard orientation(source) == orientation(result),
+                  let before = bitmap(original, in: space, bits: bits, premultiplied: false),
+                  let after = bitmap(candidate, in: space, bits: bits, premultiplied: false), before == after else {
+                throw Failure("The optimized file didn't keep the picture exactly, so the original is used.")
+            }
+        case .webP(quality: nil):
+            // WebP holds 8 bits a channel and may drop the color under fully transparent pixels; premultiplying
+            // makes those zero on both sides, so what is compared is what can be seen.
+            guard let before = bitmap(original, in: space, bits: 8, premultiplied: true),
+                  let after = bitmap(candidate, in: space, bits: 8, premultiplied: true), before == after else {
+                throw Failure("The WebP file didn't keep the picture exactly, so it wasn't kept.")
+            }
+        case .webP, .jpeg:
+            // A smaller, lossy file can't be the same pixels, but it has to decode in full and look like the source.
+            guard bitmap(candidate, in: space, bits: 8, premultiplied: true) != nil, resembles(original, candidate) else {
+                throw Failure("The converted file doesn't show the picture, so it wasn't kept.")
+            }
+        }
+    }
+
+    /// Whether two images show the same picture, roughly: both drawn small on white, their colors may differ by
+    /// a sixth of the range on average. Any quality setting passes; another picture, or a blank one, doesn't.
+    private static func resembles(_ first: CGImage, _ second: CGImage) -> Bool {
+        let side = 64
+        func small(_ image: CGImage) -> [UInt8]? {
+            guard let context = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: side * 4,
+                                          space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue),
+                  let data = context.data else { return nil }
+            let frame = CGRect(x: 0, y: 0, width: side, height: side)
+            context.setFillColor(CGColor.white)
+            context.fill(frame)
+            context.draw(image, in: frame)
+            return Array(UnsafeBufferPointer(start: data.assumingMemoryBound(to: UInt8.self), count: side * side * 4))
+        }
+        guard let one = small(first), let two = small(second) else { return false }
+        var difference = 0
+        for index in stride(from: 0, to: one.count, by: 4) {
+            for channel in 0..<3 { difference += abs(Int(one[index + channel]) - Int(two[index + channel])) }
+        }
+        return difference / (side * side * 3) < 42
     }
 
     /// The first image, turned the way its orientation says. An image already upright is decoded as it is,
