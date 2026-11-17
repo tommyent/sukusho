@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		0F7100000000000000000005 /* Screendrop/OptimizedMark.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F7100000000000000000006 /* Screendrop/OptimizedMark.swift */; };
+		0F7100000000000000000007 /* Screendrop/ShelfFileSave.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F7100000000000000000008 /* Screendrop/ShelfFileSave.swift */; };
 		0F7100000000000000000001 /* Screendrop/ImageOptimizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F7100000000000000000002 /* Screendrop/ImageOptimizer.swift */; };
 		0F7100000000000000000003 /* Screendrop/OptimizedImageCopy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F7100000000000000000004 /* Screendrop/OptimizedImageCopy.swift */; };
 		0F7100000000000000000011 /* oxipng in Embed Helpers */ = {isa = PBXBuildFile; fileRef = 0F7100000000000000000012 /* oxipng */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
@@ -193,6 +194,7 @@
 /* Begin PBXFileReference section */
 		AB0C00000000000000000001 /* sukusho-mcp */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = "sukusho-mcp"; sourceTree = BUILT_PRODUCTS_DIR; };
 		0F7100000000000000000006 /* Screendrop/OptimizedMark.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/OptimizedMark.swift; sourceTree = SOURCE_ROOT; };
+		0F7100000000000000000008 /* Screendrop/ShelfFileSave.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ShelfFileSave.swift; sourceTree = SOURCE_ROOT; };
 		0F7100000000000000000002 /* Screendrop/ImageOptimizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ImageOptimizer.swift; sourceTree = SOURCE_ROOT; };
 		0F7100000000000000000004 /* Screendrop/OptimizedImageCopy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/OptimizedImageCopy.swift; sourceTree = SOURCE_ROOT; };
 		0F7100000000000000000012 /* oxipng */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; name = oxipng; path = Vendor/optimizers/oxipng; sourceTree = SOURCE_ROOT; };
@@ -429,6 +431,7 @@
 			isa = PBXGroup;
 			children = (
 				0F7100000000000000000006 /* Screendrop/OptimizedMark.swift */,
+				0F7100000000000000000008 /* Screendrop/ShelfFileSave.swift */,
 				0F7100000000000000000002 /* Screendrop/ImageOptimizer.swift */,
 				0F7100000000000000000004 /* Screendrop/OptimizedImageCopy.swift */,
 				AFAC00000000000000000002 /* Screendrop/Engine/AnnoEditorClipboard.swift */,
@@ -745,6 +748,7 @@
 				AF1100000000000000000001 /* Screendrop/RecordingDesktopFilter.swift in Sources */,
 				AA6100000000000000000064 /* Screendrop/Engine/AnnoEditor.swift in Sources */,
 				0F7100000000000000000005 /* Screendrop/OptimizedMark.swift in Sources */,
+				0F7100000000000000000007 /* Screendrop/ShelfFileSave.swift in Sources */,
 				0F7100000000000000000001 /* Screendrop/ImageOptimizer.swift in Sources */,
 				0F7100000000000000000003 /* Screendrop/OptimizedImageCopy.swift in Sources */,
 				AFAC00000000000000000001 /* Screendrop/Engine/AnnoEditorClipboard.swift in Sources */,

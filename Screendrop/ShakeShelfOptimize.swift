@@ -39,6 +39,15 @@ final class ShelfOptimization {
         let file: URL
         let bytes: Int64
         var result: ImageOptimizationResult?
+        /// What the file was when the optimizer read it.
+        var identity: FileIdentity?
+
+        /// The result, while the file it was made from hasn't been changed since: the shelf can sit for a
+        /// while, and an older result must not stand in for a newer file.
+        var currentResult: ImageOptimizationResult? {
+            guard let result, let identity, identity == FileIdentity(file) else { return nil }
+            return result
+        }
     }
 
     private(set) var rows: [Row]
@@ -57,7 +66,7 @@ final class ShelfOptimization {
     /// The row being worked on.
     var currentIndex: Int? { isWorking ? rows.firstIndex { $0.result == nil } : nil }
     /// What goes on from the shelf: each file's result, or the file itself where there is none.
-    var files: [URL] { rows.map { $0.result?.url ?? $0.file } }
+    var files: [URL] { rows.map { $0.currentResult?.url ?? $0.file } }
     var originalBytes: Int64 { rows.reduce(0) { $0 + $1.bytes } }
     var resultBytes: Int64 { rows.reduce(0) { $0 + ($1.result?.resultByteCount ?? $1.bytes) } }
 
@@ -88,12 +97,14 @@ final class ShelfOptimization {
         // One file at a time: each encoder already uses every core.
         task = Task { [weak self, optimizer] in
             while let file = self?.rows.first(where: { $0.result == nil })?.file {
+                let identity = FileIdentity(file)
                 guard let result = try? await optimizer.optimize(file, to: target, effort: effort) else { return }
                 // Stopped, or run again in another format, while this one was finishing.
                 guard !Task.isCancelled, let self, let index = self.rows.firstIndex(where: { $0.file == file && $0.result == nil }) else {
                     result.discard()
                     return
                 }
+                self.rows[index].identity = identity
                 self.rows[index].result = result
             }
             self?.isWorking = false

@@ -294,33 +294,31 @@ final class ShakeToUpload {
         }
     }
 
-    /// Writes each new file beside its original, as "name optimized.png" or "name.webp". With `replacing`,
-    /// the original goes to the Trash and the new file takes its name.
+    /// Writes each new file beside its original, as "name optimized.png" or "name.webp", or with `replacing`
+    /// in its place, with the original in the Trash (ShelfFileSave). A file changed since it was optimized
+    /// is left exactly as it is.
     private func save(_ holding: ShelfOptimization, replacing: Bool) {
         var saved: [URL] = []
+        var changed = 0
         var failure: String?
         for row in holding.rows {
             guard let result = row.result, result.outcome == .optimized || result.outcome == .converted else { continue }
-            let base = row.file.deletingPathExtension().lastPathComponent
-            let sameFormat = result.url.pathExtension.lowercased() == row.file.pathExtension.lowercased()
-            do {
-                if replacing { try FileManager.default.trashItem(at: row.file, resultingItemURL: nil) }
-                let name = (replacing || !sameFormat ? base : "\(base) optimized") + "." + result.url.pathExtension
-                let destination = ScreenshotFileNaming.uniqueURL(for: name, in: row.file.deletingLastPathComponent())
-                try FileManager.default.copyItem(at: result.url, to: destination)
-                saved.append(destination)
-            } catch {
-                failure = error.localizedDescription
+            switch ShelfFileSave.save(result.url, of: row.file, identity: row.identity, replacing: replacing) {
+            case .saved(let file): saved.append(file)
+            case .changed: changed += 1
+            case .failed(let reason): failure = reason
             }
         }
         let toast = CaptureTextFeedbackPresenter.shared
+        let skipped = changed == 0 ? nil : changed == 1 ? "1 file changed since it was optimized and was left alone."
+            : "\(changed) files changed since they were optimized and were left alone."
         if let failure {
             toast.showDone("Couldn’t Save", detail: failure, symbol: "exclamationmark.triangle", displayID: Self.display)
         } else if saved.isEmpty {
-            toast.showDone("Nothing to Save", detail: "No file came out smaller.", symbol: "equal.circle", displayID: Self.display)
+            toast.showDone("Nothing to Save", detail: skipped ?? "No file came out smaller.", symbol: "equal.circle", displayID: Self.display)
         } else {
             toast.showDone(saved.count == 1 ? "Saved" : "\(saved.count) Files Saved",
-                           detail: replacing ? "The originals are in the Trash." : "Beside the originals", displayID: Self.display)
+                           detail: skipped ?? (replacing ? "The originals are in the Trash." : "Beside the originals"), displayID: Self.display)
         }
         if !saved.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(saved) }
     }
