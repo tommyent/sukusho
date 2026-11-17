@@ -56,6 +56,19 @@ nonisolated enum OptimizedMark {
                 ByteCountFormatter.string(fromByteCount: original, countStyle: .file))
     }
 
+    /// The inspector's size rows. A capture with edits keeps its base, its original and its edit history beside the
+    /// image, so its size on disk is several times the image's: the saving belongs to the image, on a row of its own,
+    /// not beside the total (Fable 15 #1: "5.2 MB ↓31%" for a 1.3 MB file). `original` is the size before optimizing.
+    static func sizeRows(total: Int64, image: Int64, keepsEdits: Bool, original: Int64?) -> [(label: String, value: String, help: String)] {
+        let format = { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
+        let saving = original.flatMap { $0 > image ? $0 : nil }
+        let percent = saving.map { " " + ImageOptimizationResult.saving(from: $0, to: image) } ?? ""
+        let from = saving.map { "Optimized from \(format($0))" } ?? ""
+        guard keepsEdits else { return [("Size on disk", format(total) + percent, from)] }
+        return [("Image", format(image) + percent, from),
+                ("Size on disk", format(total), "With the original and the edit history that Revert To… uses")]
+    }
+
     private static func note(of url: URL) -> Note? {
         var buffer = [CChar](repeating: 0, count: 256)
         guard getxattr(url.path, name, &buffer, buffer.count - 1, 0, 0) > 0 else { return nil }

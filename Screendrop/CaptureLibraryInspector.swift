@@ -4,6 +4,8 @@ import SwiftUI
 struct CaptureLibraryInspector: View {
     let model: CaptureLibraryModel
     @State private var byteCount: Int64?
+    /// One screenshot's own image size, and whether edit files sit beside it.
+    @State private var imageSize: (bytes: Int64, keepsEdits: Bool)?
     @State private var showsAllText = false
     @State private var textCopied = ActionFeedback()
     private var items: [CaptureLibraryItem] { model.selectedItems }
@@ -40,16 +42,27 @@ struct CaptureLibraryInspector: View {
         }
         .task(id: items.map(\.thumbnailKey)) {
             byteCount = nil
+            imageSize = nil
             showsAllText = false
             let urls = items.flatMap(\.ownedFileURLs)
+            let image = items.count == 1 && items[0].session == nil && !items[0].isVideo ? items[0].fileURL : nil
             let scan = Task.detached(priority: .utility) {
-                urls.reduce(Int64(0)) { total, url in
+                let total = urls.reduce(Int64(0)) { total, url in
                     Task.isCancelled ? total : total + CaptureLibraryScanner.sizeOnDisk(of: url)
                 }
+                let own = image.flatMap { url in
+                    (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber).map { size in
+                        (bytes: size.int64Value, keepsEdits: ScreenshotHistoryStore.companionURLs(for: url).contains {
+                            FileManager.default.fileExists(atPath: $0.path)
+                        })
+                    }
+                }
+                return (total, own)
             }
-            let size = await withTaskCancellationHandler { await scan.value } onCancel: { scan.cancel() }
+            let (size, own) = await withTaskCancellationHandler { await scan.value } onCancel: { scan.cancel() }
             guard !Task.isCancelled else { return }
             byteCount = size
+            imageSize = own
         }
     }
 
@@ -113,9 +126,15 @@ struct CaptureLibraryInspector: View {
                     .help(item.ownedURL.lastPathComponent)
                 detailRow("Dimensions", value: item.dimensions)
                 if item.isVideo { detailRow("Duration", value: item.durationText) }
-                // An optimized capture keeps its saving here: "1.1 MB ↓18%".
-                detailRow("Size on disk", value: OptimizedMark.saving(of: item.fileURL).map { "\(sizeText) \($0.percent)" } ?? sizeText)
-                    .help(OptimizedMark.saving(of: item.fileURL).map { "Optimized from \($0.original)" } ?? "")
+                // An optimized capture keeps its saving here: "1.1 MB ↓18%", on the image's own row once edits add files.
+                if let total = byteCount {
+                    ForEach(OptimizedMark.sizeRows(total: total, image: imageSize?.bytes ?? total, keepsEdits: imageSize?.keepsEdits ?? false,
+                                                   original: OptimizedMark.originalBytes(of: item.fileURL)), id: \.label) { row in
+                        detailRow(row.label, value: row.value).help(row.help)
+                    }
+                } else {
+                    detailRow("Size on disk", value: sizeText)
+                }
                 detailRow("Created", value: item.createdAt.formatted(date: .abbreviated, time: .shortened))
                 detailRow("Modified", value: item.modifiedAt.formatted(date: .abbreviated, time: .shortened))
                 if let source = item.source {

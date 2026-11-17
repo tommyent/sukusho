@@ -59,4 +59,20 @@ import Testing
         try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: file.path)
         #expect(!OptimizedMark.isCurrent(file))
     }
+
+    /// Fable 15 #1: an edited capture's size on disk counts its base, original and edit history, so the saving goes on
+    /// the image's own row, never beside that total.
+    @Test func theSavingSitsWithTheImageNotTheTotal() {
+        let edited = OptimizedMark.sizeRows(total: 5_200_000, image: 1_282_848, keepsEdits: true, original: 1_900_000)
+        #expect(edited.map(\.label) == ["Image", "Size on disk"])
+        #expect(edited[0].value.hasSuffix("↓32%") && edited[0].help.hasPrefix("Optimized from"))
+        #expect(!edited[1].value.contains("↓"))
+
+        let plain = OptimizedMark.sizeRows(total: 1_282_848, image: 1_282_848, keepsEdits: false, original: 1_900_000)
+        #expect(plain.map(\.label) == ["Size on disk"] && plain[0].value.hasSuffix("↓32%"))
+
+        // Nothing smaller came out, or no note: no saving anywhere.
+        #expect(!OptimizedMark.sizeRows(total: 900, image: 900, keepsEdits: false, original: 900)[0].value.contains("↓"))
+        #expect(OptimizedMark.sizeRows(total: 900, image: 900, keepsEdits: true, original: nil)[0].help.isEmpty)
+    }
 }
