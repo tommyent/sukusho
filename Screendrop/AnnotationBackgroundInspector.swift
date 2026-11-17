@@ -22,7 +22,7 @@ private enum AnnotationBackgroundFillLibrary: CaseIterable, Hashable {
 
 /// The Background section (upstream v0.35's Frame): the fill as one row
 /// that opens the full picker beside the inspector, then the canvas shape,
-/// padding, corners, shadow and alignment.
+/// padding and alignment: where the screenshot sits on the background.
 struct AnnotationBackgroundInspector: View {
     @Binding var settings: AnnotationBackgroundSettings
     @Bindable var wallpaperStore: AnnotationWallpaperStore
@@ -44,16 +44,14 @@ struct AnnotationBackgroundInspector: View {
                 onEndPreview: onEndPreview
             )
 
-            frameControls
-                // Without a canvas there is nothing to shape, pad, round or
-                // shadow. Dimmed rather than hidden, so picking a fill
-                // doesn't shift the list.
+            placementControls
+                // Without a canvas there is nothing to shape, pad or align.
                 .disabled(!settings.requiresCanvasLayout)
                 .opacity(settings.requiresCanvasLayout ? 1 : 0.4)
         }
     }
 
-    private var frameControls: some View {
+    private var placementControls: some View {
         VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
             InspectorSegmented(
                 options: AnnotationBackgroundAspectRatio.allCases,
@@ -70,31 +68,48 @@ struct AnnotationBackgroundInspector: View {
                 }
             )
 
-            // Padding, corners and shadow shape the screenshot on the background.
-            InspectorGroupLabel("Screenshot")
+            InspectorSlider(
+                "Padding",
+                value: $settings.padding,
+                range: 0.04...0.45,
+                format: .percent()
+            )
 
-            InspectorFieldPair {
-                InspectorSlider(
-                    "Padding",
-                    value: $settings.padding,
-                    range: 0.04...0.45,
-                    format: .percent()
+            InspectorRow("Alignment") {
+                AlignmentPositionPicker(
+                    alignment: $settings.alignment,
+                    isEnabled: !settings.camera.hasEffect,
+                    onEditorAction: onEditorAction
                 )
-            } trailing: {
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+        }
+    }
+}
+
+/// The screenshot's own edge on the background: corners and shadow.
+/// Border, which also draws on that edge, follows them in the same section.
+struct AnnotationScreenshotEdgeInspector: View {
+    @Binding var settings: AnnotationBackgroundSettings
+    let onEditorAction: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
+            InspectorFieldPair {
                 InspectorSlider(
                     "Corners",
                     value: $settings.cornerRadius,
                     range: 0...0.12,
                     format: .percent()
                 )
+            } trailing: {
+                InspectorSlider(
+                    "Shadow",
+                    value: $settings.shadow,
+                    range: 0...1,
+                    format: .percent()
+                )
             }
-
-            InspectorSlider(
-                "Shadow",
-                value: $settings.shadow,
-                range: 0...1,
-                format: .percent()
-            )
 
             InspectorSegmented(
                 options: AnnotationShadowStyle.allCases,
@@ -111,15 +126,6 @@ struct AnnotationBackgroundInspector: View {
                 }
             )
             .opacity(settings.shadow > 0 ? 1 : 0.45)
-
-            InspectorRow("Alignment") {
-                AlignmentPositionPicker(
-                    alignment: $settings.alignment,
-                    isEnabled: !settings.camera.hasEffect,
-                    onEditorAction: onEditorAction
-                )
-                .frame(maxWidth: .infinity, alignment: .trailing)
-            }
         }
     }
 }

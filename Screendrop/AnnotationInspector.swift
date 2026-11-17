@@ -62,15 +62,12 @@ struct AnnotationEditorInspector: View {
                 InspectorSection(
                     "Background",
                     accessory: {
-                        if !usesDefaultFrame {
-                            InspectorResetButton(help: "Reset padding, corners, shadow and alignment") {
+                        if !usesDefaultPlacement {
+                            InspectorResetButton(help: "Reset padding and alignment") {
                                 onEditorAction()
                                 withAnimation(sectionAnimation) {
                                     let defaults = AnnotationBackgroundSettings()
                                     model.backgroundSettings.padding = defaults.padding
-                                    model.backgroundSettings.cornerRadius = defaults.cornerRadius
-                                    model.backgroundSettings.shadow = defaults.shadow
-                                    model.backgroundSettings.shadowStyle = defaults.shadowStyle
                                     model.backgroundSettings.alignment = defaults.alignment
                                 }
                             }
@@ -84,10 +81,7 @@ struct AnnotationEditorInspector: View {
                     }
                 ) {
                     AnnotationBackgroundInspector(
-                        settings: Binding(
-                            get: { model.backgroundSettings },
-                            set: { model.backgroundSettings = $0 }
-                        ),
+                        settings: backgroundBinding,
                         wallpaperStore: wallpaperStore,
                         onEditorAction: onEditorAction,
                         onPickWallpaper: onPickWallpaper,
@@ -96,27 +90,50 @@ struct AnnotationEditorInspector: View {
                     )
                 }
 
+                // The screenshot's edge: corners, shadow and border all draw on it.
                 InspectorSection(
-                    "Border",
-                    summary: AnnotationInspectorSummary.border(model.backgroundSettings.border),
-                    isOn: featureBinding(\.border.isEnabled),
-                    toggleTitle: "Enable border",
+                    "Screenshot",
                     accessory: {
-                        if model.backgroundSettings.border.isEnabled,
-                           model.backgroundSettings.border != AnnotationScreenshotBorderSettings(isEnabled: true) {
-                            sectionResetButton("Reset border") {
-                                model.backgroundSettings.border = AnnotationScreenshotBorderSettings(isEnabled: true)
+                        if !usesDefaultEdge {
+                            sectionResetButton("Reset corners, shadow and border") {
+                                let defaults = AnnotationBackgroundSettings()
+                                model.backgroundSettings.cornerRadius = defaults.cornerRadius
+                                model.backgroundSettings.shadow = defaults.shadow
+                                model.backgroundSettings.shadowStyle = defaults.shadowStyle
+                                model.backgroundSettings.border = AnnotationScreenshotBorderSettings(
+                                    isEnabled: model.backgroundSettings.border.isEnabled
+                                )
                             }
                         }
                     }
                 ) {
-                    AnnotationScreenshotBorderInspector(
-                        settings: Binding(
-                            get: { model.backgroundSettings.border },
-                            set: { model.backgroundSettings.border = $0 }
-                        ),
+                    AnnotationScreenshotEdgeInspector(
+                        settings: backgroundBinding,
                         onEditorAction: onEditorAction
                     )
+                    .disabled(!model.backgroundSettings.requiresCanvasLayout)
+                    .opacity(model.backgroundSettings.requiresCanvasLayout ? 1 : 0.4)
+
+                    InspectorToggleRow("Border", isOn: Binding(
+                        get: { model.backgroundSettings.border.isEnabled },
+                        set: { value in
+                            onEditorAction()
+                            withAnimation(sectionAnimation) {
+                                model.backgroundSettings.border.isEnabled = value
+                            }
+                        }
+                    ))
+
+                    if model.backgroundSettings.border.isEnabled {
+                        AnnotationScreenshotBorderInspector(
+                            settings: Binding(
+                                get: { model.backgroundSettings.border },
+                                set: { model.backgroundSettings.border = $0 }
+                            ),
+                            onEditorAction: onEditorAction
+                        )
+                        .transition(.opacity)
+                    }
                 }
 
                 InspectorGroupBreak()
@@ -227,14 +244,26 @@ struct AnnotationEditorInspector: View {
         model.sourceURL.map(ScreenshotHistoryStore.shared.isHistoryURL) ?? false
     }
 
-    private var usesDefaultFrame: Bool {
+    private var backgroundBinding: Binding<AnnotationBackgroundSettings> {
+        Binding(
+            get: { model.backgroundSettings },
+            set: { model.backgroundSettings = $0 }
+        )
+    }
+
+    private var usesDefaultPlacement: Bool {
         let settings = model.backgroundSettings
         let defaults = AnnotationBackgroundSettings()
-        return settings.padding == defaults.padding
-            && settings.cornerRadius == defaults.cornerRadius
+        return settings.padding == defaults.padding && settings.alignment == defaults.alignment
+    }
+
+    private var usesDefaultEdge: Bool {
+        let settings = model.backgroundSettings
+        let defaults = AnnotationBackgroundSettings()
+        return settings.cornerRadius == defaults.cornerRadius
             && settings.shadow == defaults.shadow
             && settings.shadowStyle == defaults.shadowStyle
-            && settings.alignment == defaults.alignment
+            && settings.border == AnnotationScreenshotBorderSettings(isEnabled: settings.border.isEnabled)
     }
 
     private var sectionAnimation: Animation? {
@@ -390,12 +419,6 @@ struct AnnotationEditorInspector: View {
 /// One-line readouts for collapsed section headers. `nil` means the section
 /// has nothing active worth announcing.
 private enum AnnotationInspectorSummary {
-    static func border(_ settings: AnnotationScreenshotBorderSettings) -> String? {
-        guard settings.isEnabled else { return nil }
-        let thickness = InspectorValueFormat.percent(fractionDigits: 1).displayString(for: settings.thickness)
-        return "\(settings.color.title) · \(thickness)"
-    }
-
     static func camera(_ settings: AnnotationCameraSettings) -> String? {
         guard !settings.isDefault else { return nil }
         var parts: [String] = []
