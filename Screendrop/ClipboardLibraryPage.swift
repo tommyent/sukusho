@@ -586,7 +586,9 @@ private struct ClipboardVersionList: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.s) {
             Text("Versions").font(DS.TypeScale.labelSemibold).foregroundStyle(.secondary)
-            Text("Another app put a re-encoded copy back on the clipboard. The newest is shown and pasted; the earlier one is kept.")
+            Text(entry.isOptimizedHere
+                 ? "Optimized here, with the same pixels. The smaller copy is shown and pasted; the original is kept."
+                 : "Another app put a re-encoded copy back on the clipboard. The newest is shown and pasted; the earlier one is kept.")
                 .font(DS.TypeScale.label).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             ForEach(Array(entry.earlierVersions.enumerated()), id: \.element.hash) { index, version in
                 let earlier = model.entry(entry, at: version)

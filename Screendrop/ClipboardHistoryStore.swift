@@ -35,6 +35,8 @@ nonisolated struct ClipboardEntry: Sendable, Equatable, Identifiable {
     /// Versions this card held before an optimiser's re-encode stacked a newer one on it, newest first. Each keeps
     /// its own hash, image and Library link (owner, 2026-11-16: two versions on one card, nothing deleted).
     var earlierVersions: [ClipboardEntryVersion] = []
+    /// The newest version is Sukusho's own Optimize, not another app's re-encode (Fable 15 #3).
+    var isOptimizedHere = false
 }
 
 /// An earlier version of an image entry: what was copied before an optimiser put its re-encode back.
@@ -144,7 +146,7 @@ actor ClipboardHistoryStore {
             """)
         // Histories from before the image descriptions get their columns; on a newer one each is a duplicate.
         for column in ["read_text TEXT", "model_title TEXT", "model_keywords TEXT", "model_category TEXT",
-                       "described INTEGER NOT NULL DEFAULT 0"] {
+                       "described INTEGER NOT NULL DEFAULT 0", "optimized_here INTEGER NOT NULL DEFAULT 0"] {
             try? Self.execute(handle, "ALTER TABLE entries ADD COLUMN \(column)")
         }
     }
@@ -169,7 +171,7 @@ actor ClipboardHistoryStore {
             }
             let blob = try writeBlob(of: capture)
             if let rewritten = try rewrittenEntry(by: capture, at: date) {
-                try stack(capture, blob: blob, on: rewritten, at: date)
+                try stack(capture, blob: blob, on: rewritten, at: date, here: false)
                 return .stacked(rewritten.id)
             }
             let id = UUID().uuidString
@@ -202,13 +204,13 @@ actor ClipboardHistoryStore {
             guard let current = rows.first, current.hash != capture.hash else { return true }
             let blob = try writeBlob(of: capture)
             try stack(capture, blob: blob, on: (id, current.hash, current.blob == nil ? current.libraryPath : nil),
-                      at: Date(timeIntervalSince1970: current.copiedAt))
+                      at: Date(timeIntervalSince1970: current.copiedAt), here: true)
             return true
         }
     }
 
     private func stack(_ capture: ClipboardCapture, blob: String?, on rewritten: (id: String, hash: String, libraryPath: String?),
-                       at date: Date) throws {
+                       at date: Date, here: Bool) throws {
         // The card's current version, with its own hash, image and Library link, becomes an earlier one; the
         // new copy is the newest, shown and pasted. The card keeps its source and first copy time.
         try run("""
@@ -225,9 +227,9 @@ actor ClipboardHistoryStore {
         try run("""
             UPDATE entries SET hash = ?, blob = ?, library_path = ?, byte_size = ?, stored_bytes = ?,
                 last_copied_at = ?, change_seq = ?, read_text = NULL, model_title = NULL, model_keywords = NULL,
-                model_category = NULL, described = 0 WHERE id = ?
+                model_category = NULL, described = 0, optimized_here = ? WHERE id = ?
             """, [capture.hash, blob, capture.libraryPath, capture.byteSize, capture.storedBytes,
-                  date.timeIntervalSince1970, try nextChange(), rewritten.id])
+                  date.timeIntervalSince1970, try nextChange(), here ? 1 : 0, rewritten.id])
     }
 
     /// A saved text snippet. Snippets never expire and are never de-duplicated.
@@ -334,7 +336,7 @@ actor ClipboardHistoryStore {
         return try query("""
             SELECT id, kind, text, title, blob, library_path, byte_size, pixel_width, pixel_height, source_bundle_id,
                 is_remote, first_copied_at, last_copied_at, times_copied, pinned_at,
-                read_text, model_title, model_keywords, model_category, described, hash
+                read_text, model_title, model_keywords, model_category, described, hash, optimized_here
             FROM entries ORDER BY last_copied_at DESC LIMIT ? OFFSET ?
             """, [limit, offset]) { row in
             ClipboardEntry(
@@ -359,7 +361,8 @@ actor ClipboardHistoryStore {
                 category: row.text(18),
                 isDescribed: row.int(19) != 0,
                 hash: row.text(20) ?? "",
-                earlierVersions: versions[row.text(0) ?? ""] ?? []
+                earlierVersions: versions[row.text(0) ?? ""] ?? [],
+                isOptimizedHere: row.int(21) != 0
             )
         }
     }

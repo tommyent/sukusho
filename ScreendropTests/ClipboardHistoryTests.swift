@@ -229,6 +229,7 @@ struct ClipboardHistoryStoreTests {
         #expect(card.earlierVersions.count == 1)
         #expect(card.earlierVersions.first?.byteSize == 400)
         #expect(card.lastCopiedAt == start)
+        #expect(card.isOptimizedHere)   // Fable 15 #3: Sukusho's own Optimize, said as such
         #expect(entries.first?.id != id)   // the text copied later is still on top
 
         // Astra OR4: optimized a second time, at another effort. The versions keep the order they were made
@@ -415,6 +416,7 @@ struct ClipboardHistoryStoreTests {
         #expect(entries.count == 1)
         let entry = try #require(entries.first)
         #expect(entry.hash == rewrite.hash && entry.byteSize == rewrite.byteSize)
+        #expect(!entry.isOptimizedHere)   // another app's re-encode
         #expect(entry.libraryPath == nil)
         #expect(entry.sourceBundleID == "com.tommyent.Sukusho")
         #expect(entry.timesCopied == 1)
