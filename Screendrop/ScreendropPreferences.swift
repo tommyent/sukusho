@@ -89,7 +89,7 @@ enum ScreendropPreferences {
         return Int64(max(megabytes, 1)) * 1024 * 1024
     }
 
-    /// Bundle IDs whose copies are never kept; edited in Settings › Library.
+    /// Bundle IDs whose copies are never kept; edited in Settings › Clipboard.
     static var clipboardIgnoredApps: [String] {
         get { UserDefaults.standard.stringArray(forKey: clipboardIgnoredAppsKey) ?? ClipboardCapturePolicy.defaultIgnoredApps }
         set { UserDefaults.standard.set(newValue, forKey: clipboardIgnoredAppsKey) }

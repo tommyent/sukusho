@@ -13,6 +13,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     case video
     case overlay
     case library
+    case clipboard
     case cloud
     case agents
     case about
@@ -24,6 +25,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .general: "General"
         case .shortcuts: "Shortcuts"
         case .library: "Library"
+        case .clipboard: "Clipboard"
         case .screenshots: "Screenshots"
         case .video: "Screen Recordings"
         case .overlay: "Overlay"
@@ -38,6 +40,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .general: "gearshape"
         case .shortcuts: "keyboard"
         case .library: "square.grid.2x2"
+        case .clipboard: "doc.on.clipboard"
         case .screenshots: "photo.on.rectangle.angled"
         case .video: "video"
         case .overlay: "square.on.square"
@@ -227,6 +230,8 @@ private struct SettingsDetailView: View {
                 ShortcutsSettingsPane()
             case .library:
                 LibrarySettingsPane()
+            case .clipboard:
+                ClipboardSettingsPane()
             case .screenshots:
                 ScreenshotsSettingsPane()
             case .video:

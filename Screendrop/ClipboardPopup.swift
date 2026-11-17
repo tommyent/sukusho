@@ -280,7 +280,7 @@ struct ClipboardPopupView: View {
 
     private var emptyList: some View {
         Text(!model.hasLoaded ? "Loading…" : !ScreendropPreferences.clipboardHistoryEnabled
-             ? "Clipboard history is off. Turn it on in Settings › Library."
+             ? "Clipboard history is off. Turn it on in Settings › Clipboard."
              : state.query.isEmpty ? "Nothing here yet. Copy something." : "No matches.")
             .font(DS.TypeScale.body).foregroundStyle(.secondary)
             .padding(DS.Space.ml)

@@ -332,7 +332,7 @@ struct ClipboardSetupSteps: View {
     var body: some View {
         VStack(spacing: 0) {
             step(done: true, "Private items are skipped",
-                 "Concealed copies and copies from password apps are never kept. Settings › Library lists the apps to ignore.")
+                 "Concealed copies and copies from password apps are never kept. Settings › Clipboard lists the apps to ignore.")
             Divider()
             step(done: access == .alwaysAllow, "Clipboard access", accessDetail) {
                 if access != .alwaysAllow {
