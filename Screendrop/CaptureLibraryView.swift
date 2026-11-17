@@ -235,6 +235,8 @@ struct CaptureLibraryView: View {
                 leading: columnVisibility != .detailOnly,
                 trailing: inspectorVisible
             ))
+            // New Snippet's editor is in the inspector: show it, or the typing has nowhere to go (VM check, 2026-11-17).
+            .onChange(of: clipboard.snippetAwaitingFocus) { _, id in if id != nil { inspectorVisible = true } }
             // Inside the detail column the inspector sits under the toolbar,
             // so the toolbar runs unbroken across it.
             .inspector(isPresented: $inspectorVisible) {
