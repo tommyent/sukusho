@@ -3535,6 +3535,13 @@ private struct StudioInspector: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
+                // The footer starts at a hairline, as the Revert To bar does, so the rows
+                // scrolling under it end at an edge instead of being cut (Fable pass 3, #4).
+                Rectangle()
+                    .fill(Palette.hairline)
+                    .frame(height: 0.5)
+                    .accessibilityHidden(true)
+
                 Group {
                     if model.isExportingAgentPrompt, case .exporting(let progress) = model.exportState {
                         HStack(spacing: 6) {
