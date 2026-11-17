@@ -27,7 +27,7 @@ final class ClipboardDescriber {
         let describes = CaptureInsightRules.runs(modelAvailable: CaptureIntelligence.isModelAvailable,
                                                  enabled: ScreendropPreferences.libraryUsesIntelligence, readsText: reads)
         guard let entry = entries.first(where: { entry in
-            entry.kind == .image && entry.libraryPath == nil && entry.imageURL != nil && !skipped.contains(entry.id)
+            entry.kind == .image && entry.libraryPath == nil && entry.imageURL != nil && !skipped.contains(entry.hash)
                 && ((reads && entry.readText == nil) || (describes && !entry.isDescribed))
         }), let url = entry.imageURL else { return }
         let source = ClipboardHistoryModel.shared.appName(entry.sourceBundleID)
@@ -46,7 +46,7 @@ final class ClipboardDescriber {
                 _ = await ImageTextWarmUp.shared.waitUntilReady()
                 guard let read = await Self.readText(at: url) else {
                     logger.error("Clipboard image text couldn't be read")
-                    skipped.insert(entry.id)
+                    skipped.insert(entry.hash)
                     return
                 }
                 text = read
@@ -60,7 +60,7 @@ final class ClipboardDescriber {
             }.value
             switch outcome {
             case .later:
-                skipped.insert(entry.id)
+                skipped.insert(entry.hash)
             case .insight(let insight):
                 try? await store.setDescription(entry.id, title: insight.declined ? nil : insight.title,
                                                 keywords: insight.keywords, category: insight.category, forHash: entry.hash)

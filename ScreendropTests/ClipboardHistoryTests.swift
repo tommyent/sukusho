@@ -490,6 +490,25 @@ struct ClipboardHistoryStoreTests {
         #expect(try await store.totalBytes() == Int64(a.storedBytes))
     }
 
+    /// Astra L3: what was read or said about the earlier image doesn't stay on the newest version, and an answer about
+    /// the earlier image that arrives after the stack isn't written onto it.
+    @Test func aStackedVersionIsReadAfresh() async throws {
+        let store = try store()
+        guard case .inserted(let id) = try await store.record(picture(10), at: start) else { return }
+        let first = try #require(try await store.entries().first).hash
+        try await store.setReadText(id, "Approved", forHash: first)
+        try await store.setDescription(id, title: "Approved request", keywords: ["approved"], category: "Status", forHash: first)
+        #expect(try await store.record(picture(10, reencoded: true), at: start + 0.5) == .stacked(id))
+        var entry = try #require(try await store.entries().first)
+        #expect(entry.readText == nil && entry.modelTitle == nil && entry.keywords.isEmpty && entry.category == nil)
+        #expect(!entry.isDescribed)
+        // Late: an answer asked about the first image lands after the stack.
+        try await store.setReadText(id, "Approved", forHash: first)
+        try await store.setDescription(id, title: "Approved request", keywords: [], category: nil, forHash: first)
+        entry = try #require(try await store.entries().first)
+        #expect(entry.readText == nil && entry.modelTitle == nil && !entry.isDescribed)
+    }
+
     /// The bump branch (Astra C1): a lookalike whose content history already holds bumps that card and leaves the fresh
     /// copy before it alone, rather than deleting it.
     @Test func aLookalikeAlreadyInHistoryDeletesNothing() async throws {
