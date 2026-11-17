@@ -102,7 +102,12 @@ enum TextMeasure {
             // Re-assert the weight. SF is a variable font, and a descriptor round trip through a
             // design or an optical size can re-resolve it from the family and drop the `wght`
             // variation that `systemFont(ofSize:weight:)` applied - silently leaving Regular.
-            .traits: [NSFontDescriptor.TraitKey.weight: weight.rawValue],
+            // This dictionary replaces the descriptor's traits, so it carries the symbolic ones
+            // (italic) too, or italic text drew upright (sd-3zwn).
+            .traits: [
+                NSFontDescriptor.TraitKey.weight: weight.rawValue,
+                NSFontDescriptor.TraitKey.symbolic: descriptor.symbolicTraits.rawValue,
+            ],
         ])
         return NSFont(descriptor: descriptor, size: size) ?? base
     }
