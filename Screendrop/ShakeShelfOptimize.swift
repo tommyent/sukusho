@@ -25,6 +25,16 @@ final class ShelfOptimization {
             }
         }
 
+        /// On the list's popup, beside the files: what will be done, so a bare "JPEG" or "WebP" there isn't
+        /// read as the kind of file that was dropped.
+        var actionTitle: String {
+            switch self {
+            case .same: "Same Format"
+            case .webP: "To WebP"
+            case .jpeg: "To JPEG"
+            }
+        }
+
         var target: ImageOptimizationTarget {
             switch self {
             case .same: .lossless
@@ -157,7 +167,7 @@ struct ShakeShelfHolding: View {
                 Button("Stop") { model.stop() }
                     .help("Keep what's finished; the rest go on as they are")
             } else {
-                Menu(model.format.title) {
+                Menu(model.format.actionTitle) {
                     ForEach(ShelfOptimization.Format.allCases, id: \.self) { format in
                         Toggle(format.title, isOn: Binding(get: { model.format == format },
                                                            set: { if $0, model.format != format { model.rerun(as: format) } }))
