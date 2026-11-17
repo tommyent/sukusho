@@ -119,6 +119,17 @@ struct EditorInspectorTests {
         #expect(!opened.isPresented && narrow.isFolded)
     }
 
+    /// ⌘S saves; ⌃⌘S is View › Show Sidebar and must not save too (Astra E3), and ⇧⌘S is Save As.
+    @Test static func onlyPlainCommandSSaves() {
+        #expect(EditorKeyChords.isSave([.command], characters: "s"))
+        #expect(EditorKeyChords.isSave([.command, .capsLock], characters: "S"))
+        #expect(!EditorKeyChords.isSave([.command, .control], characters: "s"))
+        #expect(!EditorKeyChords.isSave([.command, .shift], characters: "s"))
+        #expect(!EditorKeyChords.isSave([.command, .option], characters: "s"))
+        #expect(!EditorKeyChords.isSave([], characters: "s"))
+        #expect(!EditorKeyChords.isSave([.command], characters: "d"))
+    }
+
     /// A capture saved with a camera tilt opens with the switch on.
     @Test static func aSavedTiltOpensWithTheSwitchOn() {
         var settings = AnnotationBackgroundSettings()

@@ -366,10 +366,7 @@ final class AnnotationKeyCommandHandlerView: NSView {
     /// because the caret happened to be in the inspector is exactly what this
     /// shortcut exists to prevent.
     private static func isSave(_ event: NSEvent) -> Bool {
-        event.modifierFlags.contains(.command)
-            && !event.modifierFlags.contains(.shift)
-            && !event.modifierFlags.contains(.option)
-            && event.charactersIgnoringModifiers?.lowercased() == "s"
+        EditorKeyChords.isSave(event.modifierFlags, characters: event.charactersIgnoringModifiers)
     }
 
     /// Only reached when no text is being edited, so Cmd-C in a text
