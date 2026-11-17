@@ -312,14 +312,18 @@ struct BarActionLabel: View {
     let hover: BarHover
     let systemImage: String
     var tint: Color = BarMetrics.activeTint
+    /// A filled circle behind a white glyph, for the one action a state leads to (Resume).
+    var filled: Color? = nil
 
     @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
-        BarControlChrome(id: id, hover: hover) {
+        BarControlChrome(id: id, hover: hover, showsPuck: filled == nil) {
             Image(systemName: systemImage)
-                .font(.system(size: 17, weight: .regular))
-                .foregroundStyle(isEnabled ? tint : BarMetrics.unavailableTint)
+                .font(.system(size: filled == nil ? 17 : 14, weight: filled == nil ? .regular : .bold))
+                .foregroundStyle(filled != nil ? .white : isEnabled ? tint : BarMetrics.unavailableTint)
+                .frame(width: BarMetrics.chipHeight + 2, height: BarMetrics.chipHeight + 2)
+                .background { if let filled { Circle().fill(filled) } }
                 .frame(width: BarMetrics.controlSize, height: BarMetrics.controlSize)
         }
     }
@@ -344,6 +348,7 @@ struct BarActionButton: View {
     let hover: BarHover
     let systemImage: String
     var tint: Color = BarMetrics.activeTint
+    var filled: Color? = nil
     /// Only worth setting where the tooltip leaves something out - the device
     /// a control is bound to, what a destructive action destroys.
     var accessibility: String?
@@ -356,7 +361,7 @@ struct BarActionButton: View {
             tooltip?.dismiss()
             action()
         } label: {
-            BarActionLabel(id: id, hover: hover, systemImage: systemImage, tint: tint)
+            BarActionLabel(id: id, hover: hover, systemImage: systemImage, tint: tint, filled: filled)
         }
         .buttonStyle(BarButtonStyle())
         .accessibilityLabel(accessibility ?? hover.title)

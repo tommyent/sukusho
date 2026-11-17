@@ -34,7 +34,7 @@ struct RecordingSessionControls: View {
         HStack(spacing: BarMetrics.itemSpacing) {
             elapsed
 
-            MicrophoneMeter()
+            RecordingInputChips()
 
             BarDivider()
 
@@ -43,7 +43,8 @@ struct RecordingSessionControls: View {
                 hover: ink.isPenOn ? BarHover("Stop drawing", "Esc · ⌘Z undoes the last stroke")
                     : BarHover("Draw on screen", "Drags draw instead of clicking"),
                 systemImage: "pencil.tip",
-                tint: ink.isPenOn ? BarMetrics.recordTint : BarMetrics.activeTint,
+                // A helper, so soft blue when on: red is for recording alone.
+                tint: ink.isPenOn ? BarMetrics.helperOn : BarMetrics.activeTint,
                 accessibility: ink.isPenOn
                     ? "Stop drawing. Escape also stops, and Command-Z undoes the last stroke."
                     : "Draw on screen. Drags draw instead of clicking until you stop drawing."
@@ -55,7 +56,9 @@ struct RecordingSessionControls: View {
             BarActionButton(
                 id: .pauseResume,
                 hover: isPaused ? BarHover("Resume", "Recording is paused") : BarHover("Pause", "The take keeps its place"),
-                systemImage: isPaused ? "play.fill" : "pause.fill"
+                systemImage: isPaused ? "play.fill" : "pause.fill",
+                // Resume is the way back in, a filled green circle while paused.
+                filled: isPaused ? BarMetrics.cameraOn : nil
             ) {
                 if isPaused {
                     manager.resumeRecording()
@@ -108,24 +111,31 @@ struct RecordingSessionControls: View {
         .onChange(of: manager.state) { _, _ in showsDiscardConfirmation = false }
     }
 
+    /// Red while recording - the only red besides Stop - and amber while paused.
     private var elapsed: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(BarMetrics.recordTint)
-                .frame(width: 8, height: 8)
-                .opacity(isPaused ? 0.35 : 1)
-
-            Text(manager.formattedElapsedTime)
-                .font(.system(size: 16, weight: .medium, design: .monospaced))
+        HStack(spacing: 7) {
+            if isPaused {
+                Image(systemName: "pause.fill")
+                    .font(.system(size: 11, weight: .bold))
+            } else {
+                Circle()
+                    .frame(width: 8, height: 8)
+            }
+            Text(isPaused ? "Paused · \(manager.formattedElapsedTime)" : manager.formattedElapsedTime)
+                .font(.system(size: 15, weight: .semibold, design: .monospaced))
                 .monospacedDigit()
-                .foregroundStyle(BarMetrics.activeTint)
                 // Fixed width so the clock ticking over from 9:59 to 10:00
                 // doesn't nudge the whole bar sideways.
-                .frame(minWidth: 56, alignment: .leading)
+                .frame(minWidth: 52, alignment: .leading)
         }
-        .padding(.leading, 8)
+        .foregroundStyle(isPaused ? Color.black.opacity(0.85) : .white)
+        .padding(.horizontal, 12)
+        .frame(height: BarMetrics.chipHeight + 2)
+        .background(Capsule().fill(isPaused ? BarMetrics.caution : BarMetrics.recordTint))
+        .padding(.leading, 4)
         .padding(.trailing, 2)
         .frame(height: BarMetrics.controlSize)
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: isPaused)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
             isPaused
@@ -135,33 +145,42 @@ struct RecordingSessionControls: View {
     }
 }
 
-/// A thin level bar beside the clock while the take has a microphone, red
-/// for a moment after it clips. Its own view so the ~20 level updates a
-/// second redraw only the bar, not the transport.
-private struct MicrophoneMeter: View {
+/// The inputs going into the take, as the same filled chips the picker shows, so you can see the
+/// microphone is live while you talk. The microphone's chip carries its live level, red for a
+/// moment after it clips; paused, the chips dim. Its own view so the ~20 level updates a second
+/// redraw only the chips, not the transport.
+struct RecordingInputChips: View {
     @State private var manager = ScreenRecordingManager.shared
 
-    private static let height: CGFloat = 18
-
     var body: some View {
-        if let level = manager.microphoneLevel {
-            Capsule()
-                .fill(BarMetrics.activeTint.opacity(0.15))
-                .overlay(alignment: .bottom) {
-                    Rectangle()
-                        .fill(manager.isMicrophoneClipping ? BarMetrics.recordTint : BarMetrics.activeTint)
-                        .frame(height: Self.height * level)
+        let inputs = manager.takeInputs
+        HStack(spacing: 0) {
+            if inputs.camera {
+                chip(.camera, BarHover("Camera is recording"), "video.fill", BarMetrics.cameraOn) {
+                    BarCameraThumbnail()
                 }
-                .clipShape(Capsule())
-                .frame(width: 4, height: Self.height)
-                .animation(.linear(duration: 0.05), value: level)
-                .padding(.horizontal, 6)
-                .frame(height: BarMetrics.controlSize)
-                .accessibilityElement()
-                .accessibilityLabel("Microphone level")
-                .accessibilityValue(
-                    manager.isMicrophoneClipping ? "Too loud" : "\(Int((level * 100).rounded())) percent"
-                )
+            }
+            if inputs.microphone {
+                chip(.microphone, BarHover("Microphone is recording", manager.isMicrophoneClipping ? "Too loud" : nil),
+                     "mic.fill", BarMetrics.microphoneOn) {
+                    BarLevelMeter(level: manager.state == .paused ? 0 : manager.microphoneLevel ?? 0,
+                                  isClipping: manager.isMicrophoneClipping)
+                }
+            }
+            if inputs.systemAudio {
+                chip(.systemAudio, BarHover("System audio is recording"), "speaker.wave.2.fill", BarMetrics.systemAudioOn) {
+                    BarAudioGlyph()
+                }
+            }
         }
+        .opacity(manager.state == .paused ? 0.5 : 1)
+    }
+
+    private func chip<Proof: View>(_ id: BarTooltipID, _ hover: BarHover, _ symbol: String, _ color: Color,
+                                   @ViewBuilder proof: @escaping () -> Proof) -> some View {
+        BarToggleLabel(id: id, state: .on, hover: hover, offSymbol: symbol, onSymbol: symbol,
+                       look: .input(color), proof: proof)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(hover.title)
     }
 }
