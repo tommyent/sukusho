@@ -341,8 +341,9 @@ nonisolated struct ImageOptimizer: Sendable {
     private func requireIntact(_ url: URL, type: UTType, scratch: URL) async throws {
         if type.conforms(to: .jpeg) {
             // MozJPEG reads every coefficient back; with -strict any warning, such as data cut short, fails it.
+            // -revert, so it doesn't also work out the best progressive scans for a file nobody keeps.
             do {
-                try await run("jpegtran", ["-strict", "-copy", "none", "-outfile", "/dev/null", url.path],
+                try await run("jpegtran", ["-revert", "-strict", "-copy", "none", "-outfile", "/dev/null", url.path],
                               log: scratch.appending(path: "check.txt"))
             } catch is Failure {
                 throw Self.broken
