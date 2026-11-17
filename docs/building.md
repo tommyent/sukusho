@@ -1,6 +1,6 @@
 # Building from source
 
-The Xcode project sets a macOS 27.0 deployment target. To build this source tree, use:
+The Xcode project sets a macOS 26.0 deployment target, so the app opens on macOS 26 too. Anything newer is used behind `#available` checks, and a launch notice on macOS 26 says some features may be missing. To build this source tree, use:
 
 - Xcode 27, with its Metal Toolchain for Studio's motion-blur shader:
 
