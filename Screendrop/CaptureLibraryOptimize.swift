@@ -28,16 +28,16 @@ enum CaptureOptimizer {
             return .failed("Close the capture's editor before optimizing it.")
         }
         guard !OptimizedMark.isCurrent(url) else { return .alreadyOptimized }
-        // From the file system, not the URL, which keeps the dates it has read.
-        func modified() -> Date? { try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date }
-        let stamp = modified()
+        // What the file is now. Either outcome below marks or replaces it only if it is still this.
+        let stamp = FileIdentity(url)
+        func unchanged() -> Bool {
+            stamp != nil && FileIdentity(url) == stamp && (whileEditing || !CaptureLibraryOpenEditors.isEditing(url))
+        }
         guard let result = try? await ImageOptimizer.shared.optimize(url, effort: effort) else { return .failed("Optimizing was stopped.") }
         defer { result.discard() }
         switch result.outcome {
         case .optimized:
-            guard modified() == stamp, whileEditing || !CaptureLibraryOpenEditors.isEditing(url) else {
-                return .failed("The capture changed while it was being optimized.")
-            }
+            guard unchanged() else { return .failed("The capture changed while it was being optimized.") }
             do {
                 try ScreenshotEditFileTransaction.apply(replacements: [(result.url, url)])
             } catch {
@@ -46,7 +46,9 @@ enum CaptureOptimizer {
             OptimizedMark.set(result.originalByteCount, on: url)
             return .optimized(result)
         case .alreadyOptimized:
-            // Nothing smaller came out: remembered, so the next pass doesn't run the encoder again.
+            // Nothing smaller came out: remembered, so the next pass doesn't run the encoder again. Not for a
+            // file saved meanwhile, which the encoder never saw.
+            guard unchanged() else { return .failed("The capture changed while it was being optimized.") }
             OptimizedMark.set(result.originalByteCount, on: url)
             return .alreadyOptimized
         case .converted, .timedOut:
