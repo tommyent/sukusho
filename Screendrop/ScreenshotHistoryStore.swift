@@ -247,6 +247,9 @@ final class ScreenshotHistoryStore {
 
     /// Keyed by the outside file's standardized path.
     @ObservationIgnored private var pendingImports: [String: PendingImport] = [:]
+    /// The capture each outside file became on its first saved edit. The editor keeps the outside file open and saves
+    /// again (by itself, after a pause), and each of those saves goes to that capture rather than importing it again.
+    @ObservationIgnored private var importedOutsideFiles: [String: URL] = [:]
 
     func registerPendingImport(_ pending: PendingImport, for fileURL: URL) {
         pendingImports[fileURL.standardizedFileURL.path] = pending
@@ -392,13 +395,18 @@ final class ScreenshotHistoryStore {
     ) throws -> URL {
         _ = try loadEditDocument(for: displayURL)
         guard isHistoryURL(displayURL) else {
+            let key = displayURL.standardizedFileURL.path
+            if let imported = importedOutsideFiles[key], FileManager.default.fileExists(atPath: imported.path) {
+                return try commitAnnotations(displayURL: imported, baseURL: baseURL, renderedURL: renderedURL, document: document)
+            }
             // The file as opened, not a crop of it, so History keeps the original, and its name. A clipboard image keeps
             // its own date and app instead, and its clip is linked to the new capture.
-            let pending = pendingImports.removeValue(forKey: displayURL.standardizedFileURL.path)
+            let pending = pendingImports.removeValue(forKey: key)
             let imported = importScreenshot(from: displayURL, source: pending?.source,
                                             title: pending == nil ? displayURL.deletingPathExtension().lastPathComponent : pending?.title,
                                             createdAt: pending?.createdAt)
             guard isHistoryURL(imported) else { throw CocoaError(.fileWriteUnknown) }
+            importedOutsideFiles[key] = imported
             pending?.onImport(imported)
             return try commitAnnotations(displayURL: imported, baseURL: baseURL,
                                          renderedURL: renderedURL, document: document)
