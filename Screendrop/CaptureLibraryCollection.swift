@@ -337,13 +337,14 @@ final class LibraryCollectionLayout: NSCollectionViewFlowLayout {
         minimumInteritemSpacing = 16
         minimumLineSpacing = displayLayout == .grid ? 16 : 6
         if displayLayout == .grid {
-            // LibraryGridMetrics: one card width, gaps up to 32 pt, the rest to centred margins.
+            // LibraryGridMetrics: one card width, Finder-like gaps, the rest to centred margins.
             // A part-filled last row keeps to the same columns.
             let metrics = LibraryGridMetrics(width: width, cardWidth: cardWidth)
-            itemSize = CGSize(width: metrics.cellWidth, height: floor(metrics.cellWidth * 0.625) + 62)
+            itemSize = CGSize(width: metrics.cellWidth, height: metrics.cardHeight)
             minimumInteritemSpacing = metrics.spacing
-            sectionInset.left = metrics.leftInset
-            sectionInset.right = metrics.rightInset
+            minimumLineSpacing = metrics.lineSpacing
+            sectionInset = NSEdgeInsets(top: LibraryGridMetrics.edgeMargin, left: metrics.leftInset,
+                                        bottom: LibraryGridMetrics.edgeMargin, right: metrics.rightInset)
         } else {
             itemSize = CGSize(width: width - 32, height: 76)
         }
@@ -419,12 +420,14 @@ struct LibraryCellContent: View {
     var body: some View {
         Group {
             if let item {
-                VStack(alignment: .leading, spacing: 8) {
+                // Finder-like: the picture floats inside the card with room around it, the caption centred below.
+                VStack(spacing: 8) {
                     thumbnail(item)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding([.top, .horizontal], LibraryGridMetrics.pictureInset)
                     labels(item)
                         .padding(.horizontal, 10)
-                        .padding(.bottom, 10)
+                        .padding(.bottom, 9)
                 }
                 .background(
                     Color.primary.opacity(selected ? 0.075 : isHovering ? 0.035 : 0.012),
@@ -489,18 +492,19 @@ struct LibraryCellContent: View {
     }
 
     private func labels(_ item: CaptureLibraryItem) -> some View {
-        HStack(spacing: 6) {
-            titleAndSubtitle(item)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            if item.session != nil {
-                // A reused cell must not animate the last capture's circle into this one.
-                AgentPromptCardMark(item: item).id(item.id)
+        titleAndSubtitle(item)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, item.session != nil ? 22 : 0)
+            .overlay(alignment: .trailing) {
+                if item.session != nil {
+                    // A reused cell must not animate the last capture's circle into this one.
+                    AgentPromptCardMark(item: item).id(item.id)
+                }
             }
-        }
     }
 
     private func titleAndSubtitle(_ item: CaptureLibraryItem) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .center, spacing: 3) {
             HStack(spacing: 5) {
                 if isRenaming(item) {
                     CaptureNameField(id: item.id, location: .card, font: .system(size: 13, weight: .medium), placeholder: item.automaticTitle)
@@ -510,14 +514,14 @@ struct LibraryCellContent: View {
                 }
                 if item.hasDraft { Image(systemName: "circle.fill").font(.system(size: 6)).foregroundStyle(.orange) }
             }
-            Text(item.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            Text(item.subtitle).font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
         }
     }
 
     private func thumbnail(_ item: CaptureLibraryItem) -> some View {
         CaptureLibraryThumbnail(item: item, showsTopOfTall: true)
-            .clipShape(libraryCardImageShape)
-            .overlay { libraryCardImageShape.strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5) }
+            .clipShape(libraryCardPictureShape)
+            .overlay { libraryCardPictureShape.strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5) }
             .overlay(alignment: .topLeading) {
                 if let tag = item.tags.first(where: { CaptureTagStyles.shared.color(for: $0) != nil }) ?? item.tags.first {
                     // One small badge rather than a mark per tag, so small
@@ -745,8 +749,12 @@ extension View {
 }
 
 /// A card's image runs edge to edge: the card's own corners at the top,
-/// square where it meets the title. Shared by capture and upload cards.
+/// square where it meets the title. Used by upload cards.
 let libraryCardImageShape = UnevenRoundedRectangle(topLeadingRadius: DS.Radius.card, topTrailingRadius: DS.Radius.card, style: .continuous)
+
+/// A picture inset in its card (`LibraryGridMetrics.pictureInset`), rounded on every corner so it floats on the
+/// card's surface, as Finder shows a thumbnail. Shared by capture and clipboard cards.
+let libraryCardPictureShape = RoundedRectangle(cornerRadius: max(4, DS.Radius.card - LibraryGridMetrics.pictureInset), style: .continuous)
 
 /// A Library card's border: a 2 pt accent ring when selected, grey while
 /// the window isn't key, as Finder does; a hairline otherwise (design pass

@@ -766,7 +766,8 @@ struct ClipboardImageMatchTests {
     }
 }
 
-/// The captures grid's layout, which the clipboard grid now shares (Astra B2: a strip was left on the right).
+/// The Library grids' layout, shared by captures and clipboard: Finder-like gaps that grow with the cards
+/// (owner, 2026-11-16), and even margins rather than a strip on one side (Astra B2).
 @Suite
 struct LibraryGridMetricsTests {
     @Test func spareWidthGoesToGapsThenEvenMargins() {
@@ -775,7 +776,10 @@ struct LibraryGridMetricsTests {
                 let grid = LibraryGridMetrics(width: width, cardWidth: card)
                 let row = CGFloat(grid.columns) * grid.cellWidth + CGFloat(grid.columns - 1) * grid.spacing
                 #expect(grid.leftInset + row + grid.rightInset <= width, "\(width) \(card)")
-                #expect(grid.spacing >= 16 && grid.spacing <= 32)
+                if grid.columns > 1 {
+                    #expect(grid.spacing >= LibraryGridMetrics.minimumGap(for: grid.cellWidth))
+                    #expect(grid.spacing <= LibraryGridMetrics.maximumGap(for: grid.cellWidth))
+                }
                 // No room for another card is left over, and the margins differ by at most a point.
                 #expect(width - row - grid.leftInset - grid.rightInset < grid.cellWidth + grid.spacing)
                 #expect(abs(grid.leftInset - grid.rightInset) <= 1, "\(width) \(card)")
@@ -783,11 +787,12 @@ struct LibraryGridMetricsTests {
         }
     }
 
-    @Test func astrasCaseFitsTwoCardsCentred() {
-        // About 600 pt of grid at a medium card size: two cards, the leftover split evenly, not a strip on the right.
-        let grid = LibraryGridMetrics(width: 600, cardWidth: 192)
-        #expect(grid.columns == 2)
-        #expect(grid.spacing == 32)
-        #expect(grid.leftInset == 92)
+    @Test func gapsGrowWithTheCards() {
+        // Finder leaves room between items at every size: a fifth of a card at least, half a card at most.
+        let small = LibraryGridMetrics(width: 900, cardWidth: 140), large = LibraryGridMetrics(width: 900, cardWidth: 320)
+        #expect(small.spacing >= 28 && large.spacing >= 64)
+        #expect(large.spacing > small.spacing)
+        #expect(large.cardHeight == LibraryGridMetrics.pictureInset + large.pictureHeight + LibraryGridMetrics.captionHeight)
+        #expect(large.pictureHeight == ((320 - 16) * 0.625).rounded(.down))
     }
 }

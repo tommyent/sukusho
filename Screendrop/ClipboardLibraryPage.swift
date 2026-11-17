@@ -42,10 +42,10 @@ struct ClipboardLibraryPage: View {
                                         .workspaceTextPlate(capsule: true)
                                     LazyVGrid(columns: Array(repeating: GridItem(.fixed(grid.cellWidth), spacing: grid.spacing),
                                                              count: grid.columns),
-                                              alignment: .leading, spacing: LibraryGridMetrics.minimumGap) {
+                                              alignment: .leading, spacing: grid.lineSpacing) {
                                         ForEach(section.entries) { entry in
                                             // The captures grid's proportions: a 16:10 picture over the labels.
-                                            ClipboardCard(entry: entry, model: model, faceHeight: (grid.cellWidth * 0.625).rounded(.down),
+                                            ClipboardCard(entry: entry, model: model, faceHeight: grid.pictureHeight,
                                                           isSelected: model.librarySelection == entry.id)
                                                 .id(entry.id)
                                         }
@@ -53,7 +53,7 @@ struct ClipboardLibraryPage: View {
                                 }
                             }
                             .padding(.leading, grid.leftInset).padding(.trailing, grid.rightInset)
-                            .padding(.vertical, DS.Space.xl)
+                            .padding(.vertical, LibraryGridMetrics.edgeMargin)
                             // A click on any card, the selected one too, gives the grid the keyboard, so arrows and
                             // Space work on the cards rather than the sidebar or the search field (Astra, 2026-11-16).
                             .simultaneousGesture(TapGesture().onEnded { gridFocused = true })
@@ -165,26 +165,29 @@ private struct ClipboardCard: View {
     /// edge at the top, the same border and selection ring. Without the backing, the workspace wallpaper
     /// showed through the cards (owner, 2026-11-16).
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        // Finder-like, as capture cards: the picture floats inside the card, the caption centred below.
+        VStack(spacing: 8) {
             face
                 .frame(maxWidth: .infinity)
                 .frame(height: faceHeight)
-                .clipShape(libraryCardImageShape)
-                .overlay { libraryCardImageShape.strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5) }
+                .clipShape(libraryCardPictureShape)
+                .overlay { libraryCardPictureShape.strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5) }
                 .overlay(alignment: .bottomLeading) {
                     if entry.libraryPath != nil { Text("In Library").cardPill().padding(6) }
                 }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(ClipboardList.title(of: entry)).font(DS.TypeScale.labelMedium).lineLimit(1)
+                .padding([.top, .horizontal], LibraryGridMetrics.pictureInset)
+            VStack(spacing: 3) {
+                Text(ClipboardList.title(of: entry)).font(.system(size: 13, weight: .medium)).lineLimit(1)
                 HStack(spacing: DS.Space.xs) {
-                    if let icon = model.appIcon(entry.sourceBundleID) { Image(nsImage: icon).resizable().frame(width: 14, height: 14) }
+                    if let icon = model.appIcon(entry.sourceBundleID) { Image(nsImage: icon).resizable().frame(width: 12, height: 12) }
                     Text([model.appName(entry.sourceBundleID), entry.kind == .snippet ? nil : ClipboardInfo.when(entry.lastCopiedAt)]
                         .compactMap { $0 }.joined(separator: " · "))
-                    if entry.pinnedAt != nil { Image(systemName: "pin.fill").font(.system(size: 9)) }
+                    if entry.pinnedAt != nil { Image(systemName: "pin.fill").font(.system(size: 8)) }
                 }
-                .font(DS.TypeScale.label).foregroundStyle(.secondary).lineLimit(1)
+                .font(.system(size: 10.5)).foregroundStyle(.secondary).lineLimit(1)
             }
-            .padding(.horizontal, 10).padding(.bottom, 10)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 10).padding(.bottom, 9)
         }
         .background(Color.primary.opacity(isSelected ? 0.075 : isHovering ? 0.035 : 0.012),
                     in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
