@@ -141,7 +141,8 @@ nonisolated enum CaptureTextParagraphs {
         let lines = text.components(separatedBy: "\n")
         let nonBlank = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
         // Code keeps every line.
-        guard nonBlank.count > 1, nonBlank.filter(looksLikeCode).count * 3 < nonBlank.count else { return cleaned(text) }
+        guard nonBlank.count > 1 else { return cleaned(text) }
+        guard nonBlank.filter(looksLikeCode).count * 3 < nonBlank.count else { return text }
         let longest = nonBlank.map { $0.trimmingCharacters(in: .whitespaces).count }.max() ?? 0
         var out: [String] = []
         for raw in lines {
@@ -186,11 +187,19 @@ nonisolated enum CaptureTextParagraphs {
             || ["func ", "let ", "var ", "const ", "def ", "return ", "import ", "#include"].contains { line.hasPrefix($0) }
     }
 
-    /// Footnote marks the recognizer misread, where it's safe to say so: "[2]" or "!2]" stuck to the end of a word or
-    /// sentence goes (Fable saw "!2]" in Wikipedia text), and so does one a space after a sentence's punctuation, as
-    /// Vision reads "display.[2]" ("display. [2]"). After a plain word with a space ("array [2]") it stays.
+    /// Footnote marks, where the text says they are ones (Astra R5-3, 2026-11-17: "array[2]" lost its index):
+    /// a misread "!2]" or "|2]" (Fable saw "!2]" in Wikipedia text); "[2]" right after a sentence's punctuation, or a
+    /// space after it, as Vision reads "display.[2]" ("display. [2]"); and "[2]" stuck to a word when prose goes on
+    /// after it ("a camera[3] would"). An index at a line's end, or on a line with code in it, stays.
     private static func cleaned(_ text: String) -> String {
-        text.replacingOccurrences(of: #"(?<=[\p{L}.,;:)”"])[\[!|]\d{1,3}\]|(?<=[.,;:)”"]) [\[!|]\d{1,3}\]"#, with: "",
-                                  options: .regularExpression)
+        text.components(separatedBy: "\n").map { line in
+            var line = line.replacingOccurrences(
+                of: #"(?<=[\p{L}.,;:)”"])[!|]\d{1,3}\]|(?<=[.,;:”"])\[\d{1,3}\]|(?<=[.,;:)”"]) [\[!|]\d{1,3}\]"#, with: "",
+                options: .regularExpression)
+            if !looksLikeCode(line), !line.contains("=") {
+                line = line.replacingOccurrences(of: #"(?<=\p{L})\[\d{1,3}\](?= \p{L})"#, with: "", options: .regularExpression)
+            }
+            return line
+        }.joined(separator: "\n")
     }
 }

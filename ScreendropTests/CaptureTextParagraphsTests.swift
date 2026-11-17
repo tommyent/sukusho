@@ -63,6 +63,15 @@ struct CaptureTextParagraphsTests {
         #expect(CaptureTextParagraphs.reflowed("the display. [2] It is") == "the display. It is")
         // A bracket that isn't a footnote mark stays.
         #expect(CaptureTextParagraphs.reflowed("array [2] of items") == "array [2] of items")
+        #expect(CaptureTextParagraphs.reflowed("the display.[2] It is") == "the display. It is")
+    }
+
+    /// Astra R5-3: an index in code isn't a footnote mark.
+    @Test func codeSubscriptsStay() {
+        #expect(CaptureTextParagraphs.reflowed("let value = array[2]\nreturn value") == "let value = array[2]\nreturn value")
+        #expect(CaptureTextParagraphs.reflowed("result = matrix[12]") == "result = matrix[12]")
+        #expect(CaptureTextParagraphs.reflowed("the first is items[0]") == "the first is items[0]")
+        #expect(CaptureTextParagraphs.reflowed("if x[2] > 0 then") == "if x[2] > 0 then")
     }
 
     /// Fable live check C: 10 pt text captured at 1× lost "Uses"; read at 2× it didn't.
