@@ -328,8 +328,7 @@ private struct RecordingBarView: View {
         .background(alignment: .bottom) {
             if presenter.mode == .picker && includeAppWindowsInCaptures {
                 visibilityBanner
-                    .padding(.horizontal, BarMetrics.visibilityBannerInset)
-                    .offset(y: BarMetrics.visibilityBannerHeight - BarMetrics.visibilityBannerOverlap)
+                    .offset(y: BarMetrics.visibilityBannerHeight + BarMetrics.visibilityBannerGap)
             }
         }
         .coordinateSpace(.named(BarCoordinateSpace.bar))
@@ -342,45 +341,37 @@ private struct RecordingBarView: View {
         }
     }
 
+    /// Amber is caution: Sukusho's own windows will be in this recording. The switch turns that
+    /// off without opening Settings.
     private var visibilityBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(Color(nsColor: .systemOrange))
+                .foregroundStyle(BarMetrics.caution)
                 .accessibilityHidden(true)
             Text("Sukusho windows will be captured")
                 .foregroundStyle(BarMetrics.activeTint)
-            Spacer(minLength: 8)
             Toggle("Include Sukusho windows in captures", isOn: $includeAppWindowsInCaptures)
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.mini)
-                .accessibilityHint("Turn off to hide Sukusho windows from screenshots and recordings")
+                .tint(BarMetrics.caution)
+                .accessibilityHint("Turn off to hide Sukusho windows from Sukusho's screenshots and recordings")
         }
-        .font(.system(size: 11, weight: .medium))
-        .padding(.horizontal, 12)
-        .padding(.top, BarMetrics.visibilityBannerOverlap)
-        .frame(maxWidth: .infinity)
+        .font(.system(size: 12, weight: .semibold))
+        .padding(.leading, 12)
+        .padding(.trailing, 8)
         .frame(height: BarMetrics.visibilityBannerHeight)
-        .glassEffect(.regular, in: visibilityBannerShape)
+        .fixedSize()
+        .background(Capsule().fill(BarMetrics.caution.opacity(0.2)))
+        .glassEffect(.regular, in: Capsule())
         .overlay {
-            visibilityBannerShape
-                .strokeBorder(BarMetrics.edge, lineWidth: 0.5)
+            Capsule().strokeBorder(BarMetrics.caution.opacity(0.5), lineWidth: 1)
         }
         .onGeometryChange(for: CGRect.self) {
             $0.frame(in: .named(BarCoordinateSpace.panel))
         } action: {
             presenter.visibilityBannerFrameInPanel = $0
         }
-    }
-
-    private var visibilityBannerShape: UnevenRoundedRectangle {
-        UnevenRoundedRectangle(
-            topLeadingRadius: 0,
-            bottomLeadingRadius: 12,
-            bottomTrailingRadius: 12,
-            topTrailingRadius: 0,
-            style: .continuous
-        )
     }
 
     /// Positioned off the hovered control's measured frame rather than a

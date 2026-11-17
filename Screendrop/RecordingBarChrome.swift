@@ -26,12 +26,12 @@ enum BarMetrics {
     /// exactly this much so the bar itself doesn't move.
     static let shadowSlack: CGFloat = 28
 
-    /// The reminder tucks behind the bar while keeping its controls below it.
-    static let visibilityBannerHeight: CGFloat = 36
-    static let visibilityBannerOverlap: CGFloat = 8
-    static let visibilityBannerInset: CGFloat = 14
+    /// The "Sukusho windows will be captured" strip: an amber pill just under the bar
+    /// (direction B's mockup).
+    static let visibilityBannerHeight: CGFloat = 30
+    static let visibilityBannerGap: CGFloat = 8
     static var bottomSlack: CGFloat {
-        shadowSlack + visibilityBannerHeight - visibilityBannerOverlap
+        shadowSlack + visibilityBannerHeight + visibilityBannerGap
     }
 
     /// The panel is a fixed size that both modes sit centred inside, so
