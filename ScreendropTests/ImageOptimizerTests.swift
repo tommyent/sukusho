@@ -132,6 +132,27 @@ private func profile(at url: URL) throws -> Data? {
 
 private func size(_ url: URL) -> Int { (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1 }
 
+private final class OptimizerFixtureBundle: NSObject {}
+
+/// A crop of a real screenshot of the app's Library (Fixtures/capture-library-light.md): mostly neutral,
+/// with small colored parts.
+private func realCapture() throws -> URL {
+    try #require(Bundle(for: OptimizerFixtureBundle.self).url(forResource: "capture-library-light", withExtension: "png"))
+}
+
+/// Whether a JPEG's frame header is the progressive one (SOF2).
+private func isProgressive(_ url: URL) throws -> Bool {
+    let data = try Data(contentsOf: url)
+    var offset = 2
+    while offset + 4 <= data.count, data[offset] == 0xFF {
+        let marker = data[offset + 1]
+        if marker == 0xC2 { return true }
+        if marker == 0xC0 || marker == 0xC1 || marker == 0xDA { return false }
+        offset += marker == 0xFF ? 1 : 2 + (Int(data[offset + 2]) << 8 | Int(data[offset + 3]))
+    }
+    return false
+}
+
 /// Astra's 80-byte file: 64 by 64, 8-bit RGB, a correct PNG container around data that is no image stream.
 private func corruptPNG() throws -> Data {
     let hex = "89504e470d0a1a0a0000000d4948445200000040000000400802000000250be689000000174944415"
@@ -238,6 +259,48 @@ private func isRunning(_ text: String) -> Bool {
         #expect(try pixels(at: result.url) == pixels(at: source))
         #expect(try profile(at: source) != nil)
         #expect(try profile(at: result.url) == profile(at: source))
+    }
+
+    /// editor-opus M2: from a million pixels up, ImageIO decodes baseline and progressive JPEGs with different
+    /// code, so a baseline capture repacked as progressive never matched and Optimize always failed. The
+    /// smaller sample above couldn't show it. Here: a drawn capture and a real one, both over a million pixels.
+    @Test func aJPEGOverAMillionPixelsIsRepackedInItsOwnKind() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let real = try image(at: realCapture())
+        let enlarged = try #require(CGContext(data: nil, width: 1100, height: 1034, bitsPerComponent: 8, bytesPerRow: 0,
+                                              space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+        enlarged.interpolationQuality = .high
+        enlarged.draw(real, in: CGRect(x: 0, y: 0, width: 1100, height: 1034))
+        let captures = [("Drawn.jpg", Sample.screenshot(width: 1280, height: 800, seed: 5)), ("Real.jpg", try #require(enlarged.makeImage()))]
+        for (name, picture) in captures {
+            #expect(picture.width * picture.height > 1_000_000)
+            // Baseline, as ImageIO and most cameras and apps write a JPEG.
+            let baseline = try bench.file(name, picture, as: .jpeg, quality: 0.8)
+            let result = try await bench.optimizer.optimize(baseline)
+            #expect(result.outcome == .optimized, "\(name): \(result.outcome)")
+            #expect(result.resultByteCount < result.originalByteCount)
+            #expect(try pixels(at: result.url) == pixels(at: baseline))
+            #expect(try profile(at: result.url) == profile(at: baseline))
+            #expect(try !isProgressive(result.url))
+
+            // The same picture as a plain progressive JPEG: it stays progressive, and the same pixels.
+            let progressive = bench.folder.appending(path: "progressive/\(name)")
+            try FileManager.default.createDirectory(at: progressive.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let made = Process()
+            made.executableURL = Bench.tools.appending(path: "jpegtran")
+            made.arguments = ["-revert", "-progressive", "-copy", "all", "-outfile", progressive.path, baseline.path]
+            try made.run()
+            made.waitUntilExit()
+            try #require(made.terminationStatus == 0)
+            #expect(try isProgressive(progressive))
+            let again = try await bench.optimizer.optimize(progressive)
+            #expect(again.outcome == .optimized, "progressive \(name): \(again.outcome)")
+            #expect(try pixels(at: again.url) == pixels(at: progressive))
+            #expect(try isProgressive(again.url))
+            result.discard()
+            again.discard()
+        }
     }
 
     @Test func aResultThatIsNotSmallerKeepsTheOriginal() async throws {

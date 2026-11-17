@@ -244,8 +244,12 @@ nonisolated struct ImageOptimizer: Sendable {
             if !files.fileExists(atPath: made.path) { return nil }
         case .lossless where type?.conforms(to: .jpeg) == true:
             made = scratch.appending(path: "out.jpg")
-            // Repacks the coefficients; the pixels and every marker (EXIF, color profile) stay.
-            try await run("jpegtran", ["-copy", "all", "-optimize", "-progressive", "-outfile", made.path, source.path], log: log)
+            // Repacks the coefficients; the pixels and every marker (EXIF, color profile) stay. The file keeps
+            // its kind, baseline (-revert: not MozJPEG's progressive default) or progressive: from a million
+            // pixels up ImageIO decodes the two with different code, to slightly different pixels, so a
+            // baseline JPEG repacked as progressive would never pass the comparison below.
+            let kind = Self.jpegIsProgressive(source) ? "-progressive" : "-revert"
+            try await run("jpegtran", [kind, "-copy", "all", "-optimize", "-outfile", made.path, source.path], log: log)
         case .lossless:
             throw Failure("Only PNG and JPEG images can be made smaller without converting them.")
         case .webP(let quality):
@@ -312,6 +316,21 @@ nonisolated struct ImageOptimizer: Sendable {
             throw Failure("The optimized file couldn't be written. \(Self.reason(error))")
         }
         return output
+    }
+
+    /// Whether a JPEG is progressive: the frame header that comes before its first scan is SOF2.
+    private static func jpegIsProgressive(_ url: URL) -> Bool {
+        guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return false }
+        var offset = 2
+        while offset + 4 <= data.count, data[offset] == 0xFF {
+            switch data[offset + 1] {
+            case 0xFF: offset += 1   // padding before a marker
+            case 0xC2: return true
+            case 0xC0, 0xC1, 0xDA: return false
+            default: offset += 2 + (Int(data[offset + 2]) << 8 | Int(data[offset + 3]))
+            }
+        }
+        return false
     }
 
     // MARK: - Whether a result is a whole file
