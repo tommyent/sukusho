@@ -46,6 +46,17 @@ nonisolated struct ClipboardEntryVersion: Sendable, Equatable {
     let copiedAt: Date
 }
 
+extension ClipboardEntry {
+    /// The size to show. A clip of a Sukusho capture keeps no copy of its own: it is the capture's file, which the
+    /// optimizer or an edit may have rewritten since, and that file is what pastes (Fable 15 #2: "1.9 MB" for a
+    /// 1.3 MB file after the copy-after-capture swap).
+    nonisolated var shownByteSize: Int {
+        guard kind == .image, imageURL == nil, let path = libraryPath,
+              let size = (try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? NSNumber else { return byteSize }
+        return size.intValue
+    }
+}
+
 /// Clipboard history on disk: one SQLite database for entries, and images as
 /// files named by their hash. Entries carry a UUID, the Mac they came from and
 /// a change number, so sync between Macs can come later without a migration.

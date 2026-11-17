@@ -173,7 +173,7 @@ struct ClipboardInfo: View {
                 case .plain: textRows
                 case nil: EmptyView()
                 }
-                row("Size") { Text(entry.byteSize.formatted(.byteCount(style: .file))) }
+                row("Size") { Text(entry.shownByteSize.formatted(.byteCount(style: .file))) }
                 row("Times copied") { Text(entry.timesCopied, format: .number) }
                 row("First copied") { Text(Self.when(entry.firstCopiedAt)) }
                 if entry.lastCopiedAt != entry.firstCopiedAt { row("Last copied") { Text(Self.when(entry.lastCopiedAt)) } }

@@ -891,6 +891,24 @@ struct ClipboardWriterTests {
                        firstCopiedAt: .now, lastCopiedAt: .now, timesCopied: 1, pinnedAt: nil)
     }
 
+    /// Fable 15 #2: a capture's clip shows its file as it is now, after the optimizer rewrote it; a clip with its own
+    /// copy keeps the size it was copied at.
+    @Test func aCapturesClipShowsItsFileAsItIsNow() throws {
+        let file = FileManager.default.temporaryDirectory.appending(path: "SukushoClipSize-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: file) }
+        try Data(repeating: 1, count: 1_300).write(to: file)
+        var clip = entry(.image, nil)
+        clip.byteSize = 1_900
+        clip.libraryPath = file.path
+        #expect(clip.shownByteSize == 1_300)
+
+        clip.imageURL = file   // its own kept copy: the recorded size stands
+        #expect(clip.shownByteSize == 1_900)
+        clip.imageURL = nil
+        clip.libraryPath = file.path + ".gone"   // the capture is gone: the recorded size stands
+        #expect(clip.shownByteSize == 1_900)
+    }
+
     private func withPasteboard(_ body: (NSPasteboard) throws -> Void) rethrows {
         let pasteboard = NSPasteboard(name: .init("SukushoClipboardTest-\(UUID().uuidString)"))
         defer { pasteboard.releaseGlobally() }
