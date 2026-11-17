@@ -59,16 +59,22 @@ struct CaptureTextParagraphsTests {
     @Test func misreadFootnoteMarksGo() {
         #expect(CaptureTextParagraphs.reflowed("shows the contents of a computer display.!2] It is created")
                 == "shows the contents of a computer display. It is created")
-        // A mark stuck to a word goes when the text has a sure one too, and stays on its own (it may be an index).
-        #expect(CaptureTextParagraphs.reflowed("the display.!2] Tokyo[3] is big") == "the display. Tokyo is big")
-        #expect(CaptureTextParagraphs.reflowed("the display.[2] Tokyo[3] is big") == "the display. Tokyo[3] is big")
+        #expect(CaptureTextParagraphs.reflowed("a display|3] then more") == "a display then more")
+        // Only the misread mark itself: it never makes another mark disposable.
+        #expect(CaptureTextParagraphs.reflowed("the display.!2] Tokyo[3] is big") == "the display. Tokyo[3] is big")
+    }
+
+    /// Sol, round 6: every literal "[n]" stays, real footnotes included, since text can't tell one from an index.
+    @Test func literalMarksStay() {
+        #expect(CaptureTextParagraphs.reflowed("the display.[2] It is") == "the display.[2] It is")
+        #expect(CaptureTextParagraphs.reflowed("that powers the display. [2]") == "that powers the display. [2]")
+        #expect(CaptureTextParagraphs.reflowed("the display. [2] It is") == "the display. [2] It is")
         #expect(CaptureTextParagraphs.reflowed("as a camera[3] would") == "as a camera[3] would")
-        // Vision's reading of "display.[2]" in the VM check (2026-11-17), at a line's end and mid-line.
-        #expect(CaptureTextParagraphs.reflowed("that powers the display. [2]") == "that powers the display.")
-        #expect(CaptureTextParagraphs.reflowed("the display. [2] It is") == "the display. It is")
-        // A bracket that isn't a footnote mark stays.
         #expect(CaptureTextParagraphs.reflowed("array [2] of items") == "array [2] of items")
-        #expect(CaptureTextParagraphs.reflowed("the display.[2] It is") == "the display. It is")
+        #expect(CaptureTextParagraphs.reflowed("echo capture complete. [2]") == "echo capture complete. [2]")
+        #expect(CaptureTextParagraphs.reflowed("A computer display.!2] This is prose.\n\nalpha[2] and beta[3]")
+                == "A computer display. This is prose.\n\nalpha[2] and beta[3]")
+        #expect(CaptureTextParagraphs.reflowed("alpha[2] and beta[3] # note.!2]") == "alpha[2] and beta[3] # note.")
     }
 
     /// Astra R5-3: an index in code isn't a footnote mark.

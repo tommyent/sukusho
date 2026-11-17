@@ -210,48 +210,11 @@ nonisolated enum CaptureTextParagraphs {
             || ["func ", "let ", "var ", "const ", "def ", "return ", "import ", "#include"].contains { line.hasPrefix($0) }
     }
 
-    /// Footnote marks, removed only where the line plainly reads as prose; when in doubt a "[n]" stays (Astra and Sol,
-    /// 2026-11-17: indices in "array[2]", "[[1],[2]]", "print([1],[2], [3])", "[1], [2], [3]", "\"abc\"[2]",
-    /// "items?.[2]" and "value![2]" were eaten one rule after another). Three kinds go:
-    /// - a misread "!2]" or "|2]" after a letter or a full stop (Fable saw "display.!2]" in Wikipedia text);
-    /// - "[2]" right after a full stop or a closing ” that ends a plain word, or a space after one, as Vision reads
-    ///   "display.[2]" ("display. [2]"), when a new sentence or the line's end follows;
-    /// - "[2]" stuck to a word ("Tokyo[3]"), only when the text also has a misread mark.
-    /// Each must be followed by whitespace or the line's end, outside any open bracket, on a prose line.
+    /// Only a misread footnote mark goes: "!2]" or "|2]" after a letter or a full stop, before whitespace or the end
+    /// (Fable saw "display.!2]" in Wikipedia text). Every literal "[n]" stays, real footnotes such as "display.[2]"
+    /// included: text alone can't tell a citation from an index ("alpha[2]", "items?.[2]", "echo done. [2]"), and one
+    /// mark never makes another disposable (Astra and Sol, six rounds on 2026-11-17).
     private static func cleaned(_ text: String) -> String {
-        let misread = #"(?<=[\p{L}.])[!|]\d{1,3}\](?=\s|$)"#
-        // A full stop that ends a plain word ("large.", not "obj.method." or "\"abc\"."), then a new sentence or the end.
-        let marked = misread + #"|(?<=(?:^|\s)\p{L}[\p{L}'’-]{0,40}(?:\.|\.”|”)) ?\[\d{1,3}\](?=$|\s+[\p{Lu}“"])"#
-        let attached = #"(?<=\p{L})\[\d{1,3}\](?=\s|$)"#
-        let lines = text.components(separatedBy: "\n")
-        let hasMarks = lines.contains { readsAsProse($0) && !topLevelMatches(of: misread, in: $0).isEmpty }
-        return lines.map { line in
-            guard readsAsProse(line) else { return line }
-            var line = line
-            for range in topLevelMatches(of: marked, in: line).reversed() { line.removeSubrange(range) }
-            if hasMarks {
-                for range in topLevelMatches(of: attached, in: line).reversed() { line.removeSubrange(range) }
-            }
-            return line
-        }.joined(separator: "\n")
-    }
-
-    /// Three or more words of letters, and nothing code has: no = ; { } ( ) < > \ ` and no ?. => -> ::.
-    private static func readsAsProse(_ line: String) -> Bool {
-        guard !looksLikeCode(line), !line.contains(where: { "=;{}()<>\\`".contains($0) }),
-              !["?.", "=>", "->", "::"].contains(where: line.contains) else { return false }
-        return line.split(whereSeparator: { $0.isWhitespace }).filter { $0.filter(\.isLetter).count >= 2 }.count >= 3
-    }
-
-    /// Where `pattern` matches in `line` outside any open ( [ or {.
-    private static func topLevelMatches(of pattern: String, in line: String) -> [Range<String.Index>] {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
-        return regex.matches(in: line, range: NSRange(line.startIndex..., in: line)).compactMap { match in
-            guard let range = Range(match.range, in: line) else { return nil }
-            let depth = line[..<range.lowerBound].reduce(0) { depth, character in
-                "([{".contains(character) ? depth + 1 : ")]}".contains(character) ? max(depth - 1, 0) : depth
-            }
-            return depth == 0 ? range : nil
-        }
+        text.replacingOccurrences(of: #"(?<=[\p{L}.])[!|]\d{1,3}\](?=\s|$)"#, with: "", options: .regularExpression)
     }
 }
