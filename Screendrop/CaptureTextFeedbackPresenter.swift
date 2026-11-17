@@ -39,14 +39,12 @@ final class CaptureTextFeedbackPresenter {
     /// Confirms the copy, previewing the text itself so the user can tell at a
     /// glance that the right region was read.
     func showCopied(text: String, displayID: CGDirectDisplayID?) {
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: true)
-        let title = lines.count == 1
-            ? "Copied 1 line"
-            : "Copied \(lines.count) lines"
+        // What was copied, by its first words, so it's clear it worked and what's on the clipboard.
+        let words = CaptureTextParagraphs.wordCount(of: text)
         present(
             symbol: "text.viewfinder",
-            title: title,
-            detail: lines.first.map(String.init) ?? text,
+            title: words == 1 ? "Copied 1 word" : "Copied \(words) words",
+            detail: CaptureTextParagraphs.firstWords(of: text),
             displayID: displayID
         )
     }

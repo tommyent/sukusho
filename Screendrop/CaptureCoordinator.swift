@@ -206,8 +206,16 @@ final class CaptureCoordinator {
         // A table or a list keeps its shape; anything else is read line by line, as always.
         var blocks: [CapturedTextBlock]?
         if let image = ScreenshotImageLoader.uprightImage(at: url) { blocks = await CapturedDocumentText.structuredBlocks(in: image) }
+        // Paragraphs rather than the screen's lines, unless the user keeps them (Settings › Screenshots).
+        let keepsLines = ScreendropPreferences.captureTextKeepsLineBreaks
+        if !keepsLines { blocks = blocks.map(CaptureTextParagraphs.reflowed) }
         let text: String
-        if let blocks { text = CapturedDocumentText.plainText(blocks) } else { text = await ImageTextRecognizer.recognizeText(at: url) }
+        if let blocks {
+            text = CapturedDocumentText.plainText(blocks)
+        } else {
+            let read = await ImageTextRecognizer.recognizeText(at: url)
+            text = keepsLines ? read : CaptureTextParagraphs.reflowed(read)
+        }
 
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             CaptureTextFeedbackPresenter.shared.showNoTextFound(displayID: displayID)

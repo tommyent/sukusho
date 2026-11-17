@@ -31,6 +31,8 @@ enum ScreendropPreferences {
     static let showMenuBarIconKey = "showMenuBarIcon"
     static let includeAppWindowsInCapturesKey = "includeAppWindowsInCaptures"
     static let captureWindowShadowKey = "captureWindowShadow"
+    /// Capture Text keeps the screen's line breaks instead of joining wrapped lines into paragraphs. Off by default.
+    static let captureTextKeepsLineBreaksKey = "captureTextKeepsLineBreaks"
     static let captureDelaySecondsKey = "captureDelaySeconds"
     /// Hidden: `defaults write <bundle id> areaCaptureUsesSystemPicker -bool YES`
     /// brings back the system crosshair for the Area screenshot and Capture Text.
@@ -236,6 +238,10 @@ enum ScreendropPreferences {
 
     /// Whether captured windows include their drop shadow. Defaults to off
     /// (tighter, shadow-free crops).
+    static var captureTextKeepsLineBreaks: Bool {
+        UserDefaults.standard.bool(forKey: captureTextKeepsLineBreaksKey)
+    }
+
     static var captureWindowShadow: Bool {
         UserDefaults.standard.bool(forKey: captureWindowShadowKey)
     }

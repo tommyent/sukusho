@@ -10,6 +10,7 @@ struct ScreenshotsSettingsPane: View {
     @AppStorage(ScreendropPreferences.exportFormatKey) private var exportFormatRawValue = ""
     @AppStorage(ScreendropPreferences.compressionQualityKey) private var compressionQuality = 0.8
     @AppStorage(ScreendropPreferences.captureWindowShadowKey) private var captureWindowShadow = false
+    @AppStorage(ScreendropPreferences.captureTextKeepsLineBreaksKey) private var captureTextKeepsLineBreaks = false
     @AppStorage(ScreendropPreferences.captureDelaySecondsKey) private var captureDelaySeconds = 0
     @AppStorage(ScreendropPreferences.lowResolutionEditorPreviewKey) private var lowResolutionEditorPreview = true
     @AppStorage(ScreendropPreferences.trimFullscreenMenuBarKey) private var trimFullscreenMenuBar = true
@@ -56,6 +57,14 @@ struct ScreenshotsSettingsPane: View {
                     detail: "On notched Macs, removes the empty black bar at the top of a fullscreen capture. A visible menu bar is kept."
                 ).control { label in
                     Toggle(isOn: $trimFullscreenMenuBar) { label }
+                }
+                .toggleStyle(.switch)
+
+                SettingsControlLabel(
+                    "Keep line breaks in Capture Text",
+                    detail: "Copy text line by line as it appears on screen. When off, lines that wrap mid-sentence are joined into paragraphs."
+                ).control { label in
+                    Toggle(isOn: $captureTextKeepsLineBreaks) { label }
                 }
                 .toggleStyle(.switch)
             }

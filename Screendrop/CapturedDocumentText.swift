@@ -106,3 +106,72 @@ nonisolated enum CapturedDocumentText {
         return blocks.isEmpty ? nil : blocks
     }
 }
+
+/// Capture Text's paragraphs: lines the screen wrapped mid-sentence are joined, and everything else keeps its breaks
+/// (owner, 2026-11-17: paragraphs by default, with a setting to keep the screen's lines).
+nonisolated enum CaptureTextParagraphs {
+    static func reflowed(_ blocks: [CapturedTextBlock]) -> [CapturedTextBlock] {
+        blocks.map { block in
+            if case let .paragraph(text) = block { return .paragraph(reflowed(text)) }
+            return block
+        }
+    }
+
+    /// Joins a line to the next when the sentence runs on: the line doesn't end a sentence, the next isn't a list item,
+    /// and either the next starts in lowercase or the line is about as long as the longest (it wrapped rather than
+    /// ended). Blank lines, list items, headings and code keep their breaks; a word split by a hyphen is joined whole.
+    static func reflowed(_ text: String) -> String {
+        let lines = text.components(separatedBy: "\n")
+        let nonBlank = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        // Code keeps every line.
+        guard nonBlank.count > 1, nonBlank.filter(looksLikeCode).count * 3 < nonBlank.count else { return cleaned(text) }
+        let longest = nonBlank.map { $0.trimmingCharacters(in: .whitespaces).count }.max() ?? 0
+        var out: [String] = []
+        for raw in lines {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            guard let last = out.last, !line.isEmpty, !last.isEmpty, joins(last, line, longest: longest) else {
+                out.append(line)
+                continue
+            }
+            out[out.count - 1] = last.hasSuffix("-") && line.first?.isLowercase == true && last.dropLast().last?.isLetter == true
+                ? String(last.dropLast()) + line
+                : last + " " + line
+        }
+        return cleaned(out.joined(separator: "\n"))
+    }
+
+    /// The first words of what was copied, for the message that says it's on the clipboard.
+    static func firstWords(of text: String, limit: Int = 8) -> String {
+        let words = text.split(whereSeparator: { $0.isWhitespace })
+        let shown = words.prefix(limit).joined(separator: " ")
+        return words.count > limit ? shown + "…" : shown
+    }
+
+    static func wordCount(of text: String) -> Int {
+        text.split(whereSeparator: { $0.isWhitespace }).count
+    }
+
+    private static func joins(_ line: String, _ next: String, longest: Int) -> Bool {
+        guard !isListItem(next), !isListItem(line) || !next.isEmpty else { return false }
+        if let end = line.last, ".!?:;\"”)".contains(end) { return false }
+        if next.first?.isLowercase == true { return true }
+        // Long enough to have reached the edge, so it wrapped; a short line without an ending is a heading.
+        return Double(line.count) >= Double(longest) * 0.7 && !isListItem(line)
+    }
+
+    private static func isListItem(_ line: String) -> Bool {
+        line.range(of: #"^([•◦▪‣\-–—*·]|\d{1,3}[.)]|[a-zA-Z][.)])\s"#, options: .regularExpression) != nil
+    }
+
+    private static func looksLikeCode(_ line: String) -> Bool {
+        let line = line.trimmingCharacters(in: .whitespaces)
+        return line.hasSuffix("{") || line.hasSuffix("}") || line.hasSuffix(";") || line.hasPrefix("//")
+            || ["func ", "let ", "var ", "const ", "def ", "return ", "import ", "#include"].contains { line.hasPrefix($0) }
+    }
+
+    /// Footnote marks the recognizer misread, where it's safe to say so: "[2]" or "!2]" stuck to the end of a word or
+    /// sentence goes (Fable saw "!2]" in Wikipedia text). Anything less certain is left as read.
+    private static func cleaned(_ text: String) -> String {
+        text.replacingOccurrences(of: #"(?<=[\p{L}.,;:)”"])[\[!|]\d{1,3}\]"#, with: "", options: .regularExpression)
+    }
+}
