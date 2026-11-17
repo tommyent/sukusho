@@ -114,7 +114,9 @@ nonisolated enum CapturedDocumentText {
             placed.append(Placed(block: .list(items), box: list.boundingRegion.boundingBox.cgRect))
         }
         for paragraph in document.paragraphs {
-            let text = paragraph.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Its screen lines, not its transcript (which Vision has already joined): Capture Text joins them itself,
+            // unless "Keep line breaks" is on (Fable live check B, 2026-11-17).
+            let text = paragraph.lines.map(\.transcript).joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
             if !text.isEmpty { placed.append(Placed(block: .paragraph(text), box: paragraph.boundingRegion.boundingBox.cgRect)) }
         }
         let blocks = ordered(placed)
