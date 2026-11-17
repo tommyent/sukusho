@@ -171,7 +171,10 @@ nonisolated enum CaptureTextParagraphs {
 
     private static func joins(_ line: String, _ next: String, longest: Int) -> Bool {
         guard !isListItem(next), !isListItem(line) || !next.isEmpty else { return false }
-        if let end = line.last, ".!?:;\"”)".contains(end) { return false }
+        // Any script's sentence end (Astra R5-5: Arabic "؟" ran on into the next sentence), or a clause's.
+        if let end = line.last, end.unicodeScalars.last?.properties.isSentenceTerminal == true || ":;؛\"”»)".contains(end) {
+            return false
+        }
         if next.first?.isLowercase == true { return true }
         // Long enough to have reached the edge, so it wrapped; a short line without an ending is a heading.
         return Double(line.count) >= Double(longest) * 0.7 && !isListItem(line)

@@ -92,4 +92,12 @@ struct CaptureTextParagraphsTests {
         #expect(CaptureTextParagraphs.firstWords(of: "Two words") == "Two words")
         #expect(CaptureTextParagraphs.wordCount(of: "One two\nthree") == 3)
     }
+
+    /// Astra R5-5: a sentence ends a line in any script.
+    @Test func sentenceEndsInOtherScriptsKeepTheirLines() {
+        #expect(CaptureTextParagraphs.reflowed("هل هذا صحيح؟\nهذا سطر مستقل.") == "هل هذا صحيح؟\nهذا سطر مستقل.")
+        #expect(CaptureTextParagraphs.reflowed("هذه جملة طويلة تكمل في السطر\nالتالي من النص.") == "هذه جملة طويلة تكمل في السطر التالي من النص.")
+        #expect(CaptureTextParagraphs.reflowed("यह एक वाक्य है।\nयह दूसरा है।") == "यह एक वाक्य है।\nयह दूसरा है।")
+        #expect(CaptureTextParagraphs.reflowed("これは文です。\nこれも文です。") == "これは文です。\nこれも文です。")
+    }
 }
