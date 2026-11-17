@@ -124,6 +124,34 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
         #expect(try FileManager.default.contentsOfDirectory(atPath: desk.trash.path).isEmpty)
     }
 
+    /// Astra's second review: when the new file can't be put in place and the original can't be put back
+    /// either, the failure says so and says where the original is.
+    @Test func aReplaceThatCannotBeUndoneSaysWhereTheOriginalIs() throws {
+        let desk = try Desk()
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: desk.folder.path)
+            desk.remove()
+        }
+        let original = try desk.file("shot.png", "original pixels, long")
+        let result = try desk.file("shot.png", "smaller", in: desk.results)
+        let retired = desk.trash.appending(path: "shot.png")
+
+        // The folder stops taking files right after the original has left it.
+        let outcome = ShelfFileSave.save(result, of: original, identity: FileIdentity(original), replacing: true) { url in
+            let destination = try desk.retire(url)
+            try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: desk.folder.path)
+            return destination
+        }
+        guard case .failed(let reason) = outcome else {
+            Issue.record("a replace that could not finish: \(outcome)")
+            return
+        }
+        #expect(reason.contains("put back"))
+        #expect(reason.contains(retired.path))
+        #expect(!FileManager.default.fileExists(atPath: original.path))
+        #expect(desk.text(retired) == "original pixels, long")
+    }
+
     /// Astra OR2: the original must not be gone when the new file can't be put in place.
     @Test func aFailedReplaceLeavesTheOriginalWhereItWas() throws {
         let desk = try Desk()

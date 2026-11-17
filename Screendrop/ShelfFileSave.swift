@@ -50,7 +50,12 @@ nonisolated enum ShelfFileSave {
                 do {
                     try files.moveItem(at: staged, to: original)
                 } catch {
-                    try? files.moveItem(at: retired, to: original)
+                    do {
+                        try files.moveItem(at: retired, to: original)
+                    } catch {
+                        // Neither file is in place now. The original is whole where `retire` put it, so say where.
+                        return .failed("The file could not be replaced or put back. The original is kept at \(retired.path).")
+                    }
                     throw error
                 }
                 return .saved(original)
