@@ -53,7 +53,7 @@ struct CaptureTextParagraphsTests {
     /// loses it too: telling the two apart needs a dictionary, and the split word is the common case.
     @Test func aHyphenatedWordIsJoinedWhole() {
         #expect(CaptureTextParagraphs.reflowed("The capture is taken with a timer and an exam-\nple of the screen.")
-                == "The capture is taken with a timer and an example of the screen.")
+                == "The capture is taken with a timer and an exam-ple of the screen.")
     }
 
     /// Capture Text never deletes characters by pattern, footnote marks or anything that looks like an OCR slip: in
@@ -80,6 +80,15 @@ struct CaptureTextParagraphsTests {
             "const pattern = /[a|2] b/",
         ]
         for text in unchanged { #expect(CaptureTextParagraphs.reflowed(text) == text) }
+    }
+
+    /// Sol, round 8 on R5A: joining keeps a line's last hyphen, since it may be a minus or part of the word.
+    @Test func aHyphenAtALinesEndStays() {
+        #expect(CaptureTextParagraphs.reflowed("(total-\nrefund)") == "(total-refund)")
+        #expect(CaptureTextParagraphs.reflowed("total-\nrefund") == "total-refund")
+        #expect(CaptureTextParagraphs.reflowed("Please re-\nsign the contract.") == "Please re-sign the contract.")
+        #expect(CaptureTextParagraphs.reflowed("a well-\nknown tool") == "a well-known tool")
+        #expect(CaptureTextParagraphs.reflowed("a state-of-the-\nart design") == "a state-of-the-art design")
     }
 
     /// Astra R5-3: an index in code isn't a footnote mark.

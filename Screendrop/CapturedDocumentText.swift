@@ -156,7 +156,7 @@ nonisolated enum CaptureTextParagraphs {
 
     /// Joins a line to the next when the sentence runs on: the line doesn't end a sentence, the next isn't a list item,
     /// and either the next starts in lowercase or the line is about as long as the longest (it wrapped rather than
-    /// ended). Blank lines, list items, headings and code keep their breaks; a word split by a hyphen is joined whole.
+    /// ended). Blank lines, list items, headings and code keep their breaks; a line ending in a hyphen keeps it.
     static func reflowed(_ text: String) -> String {
         let lines = text.components(separatedBy: "\n")
         let nonBlank = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -171,8 +171,10 @@ nonisolated enum CaptureTextParagraphs {
                 out.append(line)
                 continue
             }
+            // A line ending in a hyphen joins the next with the hyphen kept: it may be "re-sign", "well-known" or a
+            // minus, not a word broken for the margin (Sol, round 8 on R5A: "total-refund" became "totalrefund").
             out[out.count - 1] = last.hasSuffix("-") && line.first?.isLowercase == true && last.dropLast().last?.isLetter == true
-                ? String(last.dropLast()) + line
+                ? last + line
                 : last + " " + line
         }
         return out.joined(separator: "\n")
