@@ -977,6 +977,90 @@ private func isRunning(_ text: String) -> Bool {
         #expect(bench.leftovers.count == 1)
     }
 
+    /// Astra's second review: several files copied at once follow the rule one file does.
+    @Test func aLateBatchNeverReplacesANewerCopy() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let first = try bench.file("First.png", Sample.screenshot(width: 640, height: 400, seed: 35))
+        let second = try bench.file("Second.png", Sample.screenshot(width: 640, height: 400, seed: 36))
+        let quick = try bench.file("Quick.png", Sample.screenshot(width: 320, height: 200, seed: 37))
+        let optimizer = bench.optimizer
+        let copier = OptimizedImageCopy()
+        func write(to board: NSPasteboard) -> ([URL]) throws -> Void {
+            { urls in
+                board.clearContents()
+                guard board.writeObjects(urls.map { $0 as NSURL }) else { throw CocoaError(.fileWriteUnknown) }
+            }
+        }
+        func files(on board: NSPasteboard) -> [String] {
+            ((board.readObjects(forClasses: [NSURL.self]) as? [URL]) ?? []).map(\.lastPathComponent)
+        }
+
+        // In time: both files, optimized, in one write.
+        do {
+            let board = pasteboard()
+            defer { board.releaseGlobally() }
+            let count = board.changeCount
+            let copied = try #require(try await copier.copyAll([first, second], to: board, ready: { try await optimizer.optimize($0) },
+                                                               write: write(to: board)))
+            #expect(copied.map(\.outcome) == [.optimized, .optimized])
+            #expect(files(on: board) == ["First.png", "Second.png"])
+            #expect(board.changeCount == count + 1)
+            copied.forEach { $0.discard() }
+        }
+
+        // Something copied in another app while the second file was still being optimized.
+        do {
+            let board = pasteboard()
+            defer { board.releaseGlobally() }
+            let (started, didStart) = AsyncStream<Void>.makeStream()
+            let (release, doRelease) = AsyncStream<Void>.makeStream()
+            let late = Task {
+                try await copier.copyAll([first, second], to: board, ready: { url in
+                    if url == second {
+                        didStart.yield()
+                        for await _ in release { break }
+                    }
+                    return try await optimizer.optimize(url)
+                }, write: write(to: board))
+            }
+            for await _ in started { break }
+            board.clearContents()
+            board.setString("copied elsewhere", forType: .string)
+            let count = board.changeCount
+            doRelease.yield()
+            #expect(try await late.value == nil)
+            #expect(board.string(forType: .string) == "copied elsewhere")
+            #expect(board.changeCount == count)
+        }
+
+        // A single copy from Sukusho that finished first.
+        do {
+            let board = pasteboard()
+            defer { board.releaseGlobally() }
+            let (started, didStart) = AsyncStream<Void>.makeStream()
+            let (release, doRelease) = AsyncStream<Void>.makeStream()
+            let late = Task {
+                try await copier.copyAll([first, second], to: board, ready: { url in
+                    if url == second {
+                        didStart.yield()
+                        for await _ in release { break }
+                    }
+                    return try await optimizer.optimize(url)
+                }, write: write(to: board))
+            }
+            for await _ in started { break }
+            let newer = try #require(try await copier.copy(quick, to: board, optimize: { try await optimizer.optimize($0) }, item: item))
+            let count = board.changeCount
+            doRelease.yield()
+            #expect(try await late.value == nil)
+            #expect(board.data(forType: .png) == (try Data(contentsOf: newer.url)))
+            #expect(board.changeCount == count)
+        }
+        // Every dropped result was deleted; only the single copy's is kept.
+        #expect(bench.leftovers.count == 1)
+    }
+
     @Test func aFailedOptimizationStillCopiesTheOriginalOnce() async throws {
         let bench = try Bench()
         defer { bench.remove() }

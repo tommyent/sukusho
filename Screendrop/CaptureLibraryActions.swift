@@ -35,22 +35,17 @@ extension CaptureLibraryModel {
                 } else {
                     // Several captures go to the clipboard as files, in one write. Screenshots are optimized
                     // first, as a single one is; ⇧⌘C copies them as they are. Recordings go as rendered.
+                    // Getting them ready takes a while, so the write follows the single copy's rule: it doesn't
+                    // happen when something newer reached the clipboard meanwhile, from here or another app.
                     let optimizes = action == .copy && OptimizePreferences.whenCopying
-                    var urls: [URL] = []
-                    var results: [ImageOptimizationResult] = []
-                    defer { results.forEach { $0.discard() } }   // the clipboard gets its own copies of the files
-                    for item in selected {
-                        if item.isVideo {
-                            urls.append(try await RecordingDeliverable.resolve(for: item.fileURL))
-                        } else if optimizes {
-                            let result = try await ScreenshotFileActions.optimizedForCopy(item.fileURL)
-                            results.append(result)
-                            urls.append(result.url)
-                        } else {
-                            urls.append(item.fileURL)
-                        }
-                    }
-                    try VideoFileActions.copyFilesToClipboard(from: urls)
+                    let recordings = Set(selected.filter(\.isVideo).map(\.fileURL))
+                    let copied = try await OptimizedImageCopy.shared.copyAll(selected.map(\.fileURL), ready: { url in
+                        if recordings.contains(url) { return .original(try await RecordingDeliverable.resolve(for: url)) }
+                        return optimizes ? try await ScreenshotFileActions.optimizedForCopy(url) : .original(url)
+                    }, write: { try VideoFileActions.copyFilesToClipboard(from: $0) })
+                    // Nothing was copied, so nothing is said.
+                    guard let copied else { return }
+                    copied.forEach { $0.discard() }   // the clipboard has its own copies of the files
                 }
                 self.actionFeedback.show(selected.count == 1 ? "Copied" : "\(selected.count) Captures Copied")
             }
