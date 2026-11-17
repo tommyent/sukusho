@@ -3,6 +3,8 @@ import SwiftUI
 
 struct CaptureLibraryInspector: View {
     let model: CaptureLibraryModel
+    /// What the empty inspector asks for: Saved holds clips as well as captures (Fable 15).
+    var emptyMessage = "Select a screenshot or recording\nto take a closer look."
     @State private var byteCount: Int64?
     /// One screenshot's own image size, and whether edit files sit beside it.
     @State private var imageSize: (bytes: Int64, keepsEdits: Bool)?
@@ -15,7 +17,7 @@ struct CaptureLibraryInspector: View {
             if items.isEmpty {
                 LibraryInspectorPlaceholder(
                     symbol: "photo.on.rectangle.angled", title: "Capture details",
-                    message: "Select a screenshot or recording\nto take a closer look."
+                    message: emptyMessage
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {

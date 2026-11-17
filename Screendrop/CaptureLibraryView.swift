@@ -244,7 +244,7 @@ struct CaptureLibraryView: View {
                     if saved.isShown, clipboard.librarySelection != nil {
                         ClipboardLibraryInspector(model: clipboard)
                     } else if saved.isShown {
-                        CaptureLibraryInspector(model: model)
+                        CaptureLibraryInspector(model: model, emptyMessage: "Select a capture or clip\nto take a closer look.")
                     } else if clipboard.isShown {
                         ClipboardLibraryInspector(model: clipboard)
                     } else if comments.isShown {
