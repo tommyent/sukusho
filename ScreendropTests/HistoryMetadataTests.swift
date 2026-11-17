@@ -69,4 +69,33 @@ struct HistoryMetadataTests {
             #expect(index.load(from: url).isEmpty && !index.isReadOnly)
         }
     }
+
+    /// An older build rewrites history.json with only the keys it knows. The Saved marks live in their own file, so
+    /// they're still there afterwards; marks a row still carried from before move into that file.
+    @Test func savedMarksOutliveAnOlderBuildRewritingHistory() throws {
+        try withIndex { url in
+            let marksURL = url.deletingLastPathComponent().appendingPathComponent("library-saved.json")
+            let saved = UUID(), legacy = UUID(), plain = UUID()
+            let savedAt = Date(timeIntervalSinceReferenceDate: 800_000_000), legacyAt = Date(timeIntervalSinceReferenceDate: 800_000_100)
+            // A row from this branch before the move still carries its mark in history.json.
+            let rows: [[String: Any]] = [["id": saved.uuidString, "name": "saved"],
+                                         ["id": legacy.uuidString, "name": "legacy", "librarySavedAt": legacyAt.timeIntervalSinceReferenceDate],
+                                         ["id": plain.uuidString, "name": "plain"]]
+            try JSONSerialization.data(withJSONObject: rows).write(to: url)
+            try CaptureSavedMarks.save([saved: savedAt], to: marksURL)
+            struct LegacyRow: Decodable { let id: UUID; let librarySavedAt: Date? }
+            let read = try JSONDecoder().decode([LegacyRow].self, from: Data(contentsOf: url))
+            var marks = CaptureSavedMarks.merged(file: CaptureSavedMarks.load(from: marksURL), rows: read.map { ($0.id, $0.librarySavedAt) })
+            #expect(marks == [saved: savedAt, legacy: legacyAt])
+            try CaptureSavedMarks.save(marks, to: marksURL)
+            // An older build's encoder: the shape it knows, nothing else.
+            struct OldRow: Codable { let id: UUID; let name: String }
+            try JSONEncoder().encode([OldRow(id: saved, name: "saved"), OldRow(id: legacy, name: "legacy"),
+                                      OldRow(id: plain, name: "plain")]).write(to: url)
+            #expect(!(String(data: try Data(contentsOf: url), encoding: .utf8) ?? "").contains("librarySavedAt"))
+            let after = try JSONDecoder().decode([LegacyRow].self, from: Data(contentsOf: url))
+            marks = CaptureSavedMarks.merged(file: CaptureSavedMarks.load(from: marksURL), rows: after.map { ($0.id, $0.librarySavedAt) })
+            #expect(marks == [saved: savedAt, legacy: legacyAt])
+        }
+    }
 }

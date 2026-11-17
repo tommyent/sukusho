@@ -52,3 +52,29 @@ struct ScreenshotHistoryMetadata<Row: Codable> {
         try data.write(to: url, options: .atomic)
     }
 }
+
+/// Saved (★) marks for History rows, in their own file beside history.json and keyed by capture ID. Builds from before
+/// Saved rewrite history.json with only the keys they know, which dropped a `librarySavedAt` kept in the rows (VM,
+/// 2026-11-16); this file is one they never open.
+nonisolated enum CaptureSavedMarks {
+    /// Nil when there's no file, or it can't be read.
+    static func load(from url: URL) -> [UUID: Date]? {
+        guard let data = try? Data(contentsOf: url), let raw = try? JSONDecoder().decode([String: Date].self, from: data) else {
+            return nil
+        }
+        return Dictionary(raw.compactMap { key, date in UUID(uuidString: key).map { ($0, date) } }, uniquingKeysWith: max)
+    }
+
+    static func save(_ marks: [UUID: Date], to url: URL) throws {
+        let data = try JSONEncoder().encode(Dictionary(uniqueKeysWithValues: marks.map { ($0.key.uuidString, $0.value) }))
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url, options: .atomic)
+    }
+
+    /// The file's marks, plus any a row still carries from when they lived in history.json and the file doesn't have.
+    static func merged(file: [UUID: Date]?, rows: [(id: UUID, savedAt: Date?)]) -> [UUID: Date] {
+        var marks = file ?? [:]
+        for row in rows { if let date = row.savedAt, marks[row.id] == nil { marks[row.id] = date } }
+        return marks
+    }
+}

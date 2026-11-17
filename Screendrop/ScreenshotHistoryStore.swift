@@ -33,9 +33,18 @@ struct ScreenshotHistoryItem: Identifiable, Codable, Equatable {
     /// The app and window it was taken from. Nil for older rows, and when
     /// no window could be named. Stays on this Mac.
     var source: CaptureSource?
-    /// When it was saved (★) to Library › Saved, by hand or by naming, tagging or sharing it. Saved
-    /// captures are what the Library keeps; nil for older rows (option A, sd-ogtp.1.1).
+    /// When it was saved (★) to Library › Saved, by hand or by naming, tagging or sharing it. Kept in
+    /// `CaptureSavedMarks`' file, not in history.json, which older builds rewrite without it; read from a row only to
+    /// move it there.
     var librarySavedAt: Date?
+
+    /// Every key but `librarySavedAt`, so history.json no longer carries it.
+    enum CodingKeys: String, CodingKey {
+        case id, createdAt, updatedAt, fileName, pixelWidth, pixelHeight, kind, duration, cloudURL, cloudRedactions,
+             hasEdits, recordingSessionPath, displayName, tags, source
+    }
+
+    private enum LegacyKeys: String, CodingKey { case librarySavedAt }
 
     var recordingSession: RecordingSession? {
         guard let recordingSessionPath else { return nil }
@@ -77,7 +86,7 @@ struct ScreenshotHistoryItem: Identifiable, Codable, Equatable {
         displayName = try container.decodeIfPresent(String.self, forKey: .displayName)
         tags = try container.decodeIfPresent([String].self, forKey: .tags) ?? []
         source = try container.decodeIfPresent(CaptureSource.self, forKey: .source)
-        librarySavedAt = try container.decodeIfPresent(Date.self, forKey: .librarySavedAt)
+        librarySavedAt = try decoder.container(keyedBy: LegacyKeys.self).decodeIfPresent(Date.self, forKey: .librarySavedAt)
     }
 
     init(
@@ -122,6 +131,10 @@ final class ScreenshotHistoryStore {
 
     private static var metadataURL: URL {
         ScreendropStorage.applicationSupportDirectory.appendingPathComponent("history.json")
+    }
+
+    private static var savedMarksURL: URL {
+        ScreendropStorage.applicationSupportDirectory.appendingPathComponent("library-saved.json")
     }
 
     /// Location of the editable annotation sidecar document for a display image,
@@ -566,7 +579,13 @@ final class ScreenshotHistoryStore {
     }
 
     private func load() {
-        items = metadata.load(from: Self.metadataURL)
+        var rows = metadata.load(from: Self.metadataURL)
+        let file = CaptureSavedMarks.load(from: Self.savedMarksURL)
+        let marks = CaptureSavedMarks.merged(file: file, rows: rows.map { ($0.id, $0.librarySavedAt) })
+        // Marks still in history.json from before move to the file now, before an older build can drop them.
+        if marks != file ?? [:] { try? CaptureSavedMarks.save(marks, to: Self.savedMarksURL) }
+        for index in rows.indices { rows[index].librarySavedAt = marks[rows[index].id] }
+        items = rows
             .filter { FileManager.default.fileExists(atPath: $0.url.path) }
             .sorted { $0.createdAt > $1.createdAt }
     }
@@ -574,6 +593,10 @@ final class ScreenshotHistoryStore {
     private func saveMetadata() {
         do {
             try metadata.save(items, to: Self.metadataURL)
+            // Only after History saved: a History that couldn't be fully read holds rows `items` doesn't, whose
+            // marks must stay.
+            try CaptureSavedMarks.save(Dictionary(items.compactMap { item in item.librarySavedAt.map { (item.id, $0) } },
+                                                  uniquingKeysWith: max), to: Self.savedMarksURL)
         } catch {
             print("Failed to save screenshot history: \(error)")
         }
