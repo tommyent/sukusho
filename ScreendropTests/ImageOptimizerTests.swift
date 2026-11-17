@@ -402,6 +402,28 @@ private func isRunning(_ text: String) -> Bool {
         }
     }
 
+    /// An image over the pixel budget comes back as it is, for every target, before any encoder runs.
+    @Test func anImageOverThePixelBudgetIsLeftAlone() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let source = try bench.file("Page.png", Sample.screenshot(width: 64, height: 40, seed: 31))
+        var optimizer = bench.optimizer
+        optimizer.pixelBudget = 64 * 40 - 1
+
+        for target in [ImageOptimizationTarget.lossless, .webP(quality: nil), .jpeg(quality: 80)] {
+            let result = try await optimizer.optimize(source, to: target)
+            guard case .failed(let reason) = result.outcome else {
+                Issue.record("\(target): \(result.outcome)")
+                continue
+            }
+            #expect(reason.contains("too large"))
+            #expect(result.url == source)
+            #expect(bench.leftovers.isEmpty)
+        }
+        optimizer.pixelBudget = 64 * 40
+        #expect(try await optimizer.optimize(source).outcome != .failed("The image is too large to optimize, so the original is used."))
+    }
+
     /// Astra OR3: an encoder that exits cleanly with another picture of the same size, or with a file ImageIO
     /// calls complete that decodes to nothing, must not count as optimized or converted.
     @Test func aResultThatIsNotTheSourcesPictureIsRefused() async throws {

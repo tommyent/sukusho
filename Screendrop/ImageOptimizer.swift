@@ -82,6 +82,10 @@ nonisolated struct ImageOptimizer: Sendable {
     /// Every result gets a folder of its own in here, so two images with one name never meet.
     var outputDirectory: URL
 
+    /// The most pixels an image may have: whole bitmaps are held in memory to convert an image and to check a
+    /// result, two of them at once. Larger images are left as they are.
+    var pixelBudget = 100_000_000
+
     static let shared = ImageOptimizer(
         toolsDirectory: Bundle.main.bundleURL.appending(path: "Contents/Helpers"),
         outputDirectory: URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
@@ -177,6 +181,10 @@ nonisolated struct ImageOptimizer: Sendable {
         guard let imageSource = CGImageSourceCreateWithURL(source as CFURL, nil),
               let size = Self.uprightPixelSize(imageSource) else {
             throw Failure("The file isn't an image Sukusho can read.")
+        }
+        // Read from the file's header: nothing is decoded and no encoder runs for an image over the budget.
+        guard Int(size.width) * Int(size.height) <= pixelBudget else {
+            throw Failure("The image is too large to optimize, so the original is used.")
         }
         let type = (CGImageSourceGetType(imageSource) as String?).flatMap { UTType($0) }
         let id = UUID().uuidString
@@ -355,9 +363,6 @@ nonisolated struct ImageOptimizer: Sendable {
     /// own RGB color space, whose profile goes to `profile` unless it is plain sRGB. Without `keepsAlpha`,
     /// transparency is flattened on white.
     private static func writePixels(of source: CGImageSource, to url: URL, keepsAlpha: Bool, profile: URL) throws -> (url: URL, hasProfile: Bool) {
-        guard let size = uprightPixelSize(source), Int(size.width) * Int(size.height) <= pixelBudget else {
-            throw Failure("The image is too large to convert.")
-        }
         guard let image = uprightImage(source) else { throw Failure("The file isn't an image Sukusho can read.") }
         let space = rgbSpace(of: image)
         guard var format = vImage_CGImageFormat(bitsPerComponent: 8, bitsPerPixel: 32, colorSpace: space,
@@ -409,10 +414,6 @@ nonisolated struct ImageOptimizer: Sendable {
         }
     }
 
-    /// The most pixels an image may have to be decoded here: whole bitmaps are held in memory, two of them
-    /// while a result is checked. Larger images are left as they are.
-    static let pixelBudget = 100_000_000
-
     /// The RGB space an image's pixels are read in: its own when it has one with a profile, else sRGB.
     private static func rgbSpace(of image: CGImage) -> CGColorSpace {
         // A palette image's colors are in the palette's space.
@@ -444,9 +445,6 @@ nonisolated struct ImageOptimizer: Sendable {
     private static func verify(_ result: CGImageSource, against source: CGImageSource, target: ImageOptimizationTarget) throws {
         guard let original = uprightImage(source), let candidate = uprightImage(result) else {
             throw Failure("The optimized file didn't come out right, so the original is used.")
-        }
-        guard original.width * original.height <= pixelBudget else {
-            throw Failure("The image is too large to check, so the original is used.")
         }
         // Both are read into the source's color space, so a lost or changed profile shows as changed pixels.
         let space = rgbSpace(of: original)
