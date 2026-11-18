@@ -208,6 +208,8 @@ struct CaptureHotkeySettingsSection: View {
     }
 
     private static let recordingHint = "Type the new shortcut, or tap a modifier key such as right ⌥ once or twice. Press Esc to cancel."
+    /// Until the recorder has seen the keyboard quiet, a tap isn't recorded; this says so instead of ignoring it.
+    private static let waitingHint = "Type the new shortcut. To tap a modifier key such as right ⌥, wait a moment with no other key held. Press Esc to cancel."
 
     private func errorText(_ text: String) -> some View {
         Text(text).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
@@ -216,7 +218,9 @@ struct CaptureHotkeySettingsSection: View {
     /// What's said right under a row: while it records, how to or why the keys were turned down; after a change to it
     /// failed, why.
     private func rowMessage(for action: CaptureHotkeyAction) -> (text: String, isError: Bool)? {
-        if isRecording(action) { return (recorder.rejection ?? Self.recordingHint, recorder.rejection != nil) }
+        if isRecording(action) {
+            return (recorder.rejection ?? (recorder.canRecordTaps ? Self.recordingHint : Self.waitingHint), recorder.rejection != nil)
+        }
         guard errorAction == action, let errorMessage else { return nil }
         return (errorMessage, true)
     }

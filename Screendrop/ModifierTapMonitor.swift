@@ -11,6 +11,35 @@ import Carbon.HIToolbox
 /// up, or a click or scroll happened, never which key. Nothing typed is read, logged or kept. macOS gives such a tap
 /// modifier and key events only with Input Monitoring (or Accessibility), so it runs only while some action has such a
 /// shortcut.
+/// Arms a detector after missed events: once its events show the keyboard quiet for the stretch, one reading of
+/// whether any other key is down (`ModifierTapDetector.otherKeyDown`); when none is, gestures pressed after that reading
+/// count. While a key is down it reads again a quarter of a second later.
+@MainActor
+final class ModifierTapArming {
+    private var task: Task<Void, Never>?
+
+    /// `detector` gives the detector as it is now (nil when its owner is gone); `arm` arms it at the reading's time.
+    func start(_ detector: @escaping () -> ModifierTapDetector?, arm: @escaping (TimeInterval) -> Void) {
+        task?.cancel()
+        task = Task {
+            while !Task.isCancelled, let current = detector(), current.isUnsure {
+                let now = ProcessInfo.processInfo.systemUptime
+                guard current.canArm(at: now) else {
+                    try? await Task.sleep(for: .seconds(max(current.quietEnds - now, 0.1)))
+                    continue
+                }
+                guard ModifierTapDetector.otherKeyDown() else { return arm(now) }
+                try? await Task.sleep(for: .seconds(0.25))
+            }
+        }
+    }
+
+    func stop() {
+        task?.cancel()
+        task = nil
+    }
+}
+
 @MainActor
 final class ModifierTapMonitor {
     private var tap: CFMachPort?
@@ -22,6 +51,7 @@ final class ModifierTapMonitor {
     /// Bumped at every break in the events, so a tap queued before it doesn't run.
     private var generation = 0
     private var activationObserver: NSObjectProtocol?
+    private let arming = ModifierTapArming()
 
     /// Privacy & Security › Input Monitoring: `Privacy_ListenEvent` is that page's anchor in System Settings' own search
     /// (PrivacySecurity.searchTerms on macOS 26.5.1 and 27.3, read 2026-11-17).
@@ -76,6 +106,11 @@ final class ModifierTapMonitor {
         detector.quiet = ModifierTapDetector.quietTime()
         detector.eventsMissed(at: time)
         generation += 1
+        armWhenQuiet()
+    }
+
+    private func armWhenQuiet() {
+        arming.start({ [weak self] in self?.detector }, arm: { [weak self] in self?.detector.arm(at: $0) })
     }
 
     /// Something broke the gesture without events being missed (another app came forward): what was under way and what
@@ -96,6 +131,7 @@ final class ModifierTapMonitor {
         onTap = nil
         onStop = nil
         generation += 1
+        arming.stop()
         activationObserver.map(NSWorkspace.shared.notificationCenter.removeObserver)
         activationObserver = nil
     }
@@ -131,7 +167,10 @@ final class ModifierTapMonitor {
         // queued from before the keyboard was seen quiet are judged by when they happened.
         let time = NSEvent(cgEvent: event)?.timestamp ?? now
         // Secure input came or went: keys typed meanwhile never reached the tap.
-        if detector.secureInput(IsSecureEventInputEnabled(), at: time) { generation += 1 }
+        if detector.secureInput(IsSecureEventInputEnabled(), at: time) {
+            generation += 1
+            armWhenQuiet()
+        }
         switch type {
         case .flagsChanged:
             detector.interval = NSEvent.doubleClickInterval

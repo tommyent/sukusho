@@ -17,12 +17,15 @@ final class HotkeyShortcutRecorder {
     /// Why the last keys were turned down; cleared when recording starts,
     /// stops or succeeds.
     private(set) var rejection: String?
+    /// Whether a modifier tap can be recorded yet: not until the keyboard has been seen quiet, with no other key down.
+    private(set) var canRecordTaps = false
 
     @ObservationIgnored private var monitor: Any?
     /// Settings stopped being the key window (another window or app came forward): the recording ends there.
     @ObservationIgnored private var resignObserver: NSObjectProtocol?
     @ObservationIgnored private var taps = ModifierTapDetector()
     @ObservationIgnored private var pendingTap: Task<Void, Never>?
+    @ObservationIgnored private let arming = ModifierTapArming()
     @ObservationIgnored var onShortcutRecorded: ((HotkeyShortcut) -> Void)?
     @ObservationIgnored var onCancel: (() -> Void)?
 
@@ -39,6 +42,11 @@ final class HotkeyShortcutRecorder {
         rejection = nil
         // Like the event tap: a key held since before Record was clicked was never seen going down (Sol's re-review).
         taps = .startingAt(ProcessInfo.processInfo.systemUptime)
+        canRecordTaps = false
+        arming.start({ [weak self] in self?.taps }, arm: { [weak self] time in
+            self?.taps.arm(at: time)
+            self?.canRecordTaps = true
+        })
         HotkeyManager.shared.pauseForRecording { [weak self] in self?.stop() }
         resignObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didResignKeyNotification, object: nil, queue: .main
@@ -57,6 +65,8 @@ final class HotkeyShortcutRecorder {
         rejection = nil
         pendingTap?.cancel()
         pendingTap = nil
+        arming.stop()
+        canRecordTaps = false
 
         if let monitor {
             NSEvent.removeMonitor(monitor)

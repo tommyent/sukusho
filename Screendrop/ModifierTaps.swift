@@ -54,11 +54,13 @@ struct ModifierTapDetector {
     /// How many other keys are down, from their down and up events: a count, never which keys.
     private var keysDown = 0
     /// After events were missed (watching just started, or macOS withheld some), a key can be down that was never seen
-    /// going down. Nothing taps until the events themselves have shown the keyboard quiet: no key down, repeat or up for
-    /// `quiet`, counted in the events' own times, so events still queued from before that point never count.
+    /// going down. Nothing taps until the caller arms it (`arm`): once the events show the keyboard quiet for `quiet`
+    /// (`canArm`), it asks macOS once whether any other key is down, a yes or no (`otherKeyDown`), and arms at that
+    /// moment when none is. Only gestures pressed after it count, so events still queued from before never do.
     private(set) var isUnsure = false
     /// Long enough for a key held through missed events to show itself by repeating (`quietTime`).
     var quiet: TimeInterval = 0.7
+    private var armedAt: TimeInterval = -.infinity
     /// When events were last missed: a key event stamped earlier, delivered late, is from before the gap and never
     /// moves the quiet stretch (Sol's round 7 probe: a key-up stamped 9.00 after a reset at 10.00).
     private var missedAt: TimeInterval = -.infinity
@@ -67,7 +69,7 @@ struct ModifierTapDetector {
     private(set) var isSecure = false
 
     /// The key-repeat delay and two repeats (0.67 s at macOS's defaults), at most 2.5 s. With key repeat off a held key
-    /// sends nothing at all, which no event can show; then it's the 2.5 s.
+    /// sends nothing at all; the reading before arming is what sees it then.
     static func quietTime(repeatDelay: TimeInterval = NSEvent.keyRepeatDelay,
                           repeatInterval: TimeInterval = NSEvent.keyRepeatInterval) -> TimeInterval {
         min(repeatDelay + 2 * repeatInterval, 2.5)
@@ -79,6 +81,31 @@ struct ModifierTapDetector {
         detector.quiet = quiet
         detector.eventsMissed(at: time)
         return detector
+    }
+
+    /// When the events will have shown the keyboard quiet for the stretch, if no other key event comes first.
+    var quietEnds: TimeInterval { lastKeyEvent + quiet }
+
+    /// Whether the events show the keyboard quiet for the stretch by `time`, with no key known to be down: then the
+    /// caller asks macOS (`otherKeyDown`) before arming.
+    func canArm(at time: TimeInterval) -> Bool {
+        isUnsure && keysDown == 0 && time >= quietEnds
+    }
+
+    /// macOS said no other key was down at `time`: from then on, gestures count again.
+    mutating func arm(at time: TimeInterval) {
+        isUnsure = false
+        armedAt = time
+    }
+
+    /// One reading of whether any key other than a modifier is down, reduced at once to a yes or no: which key is never
+    /// kept, logged or used. Read only to arm (desk-lead, 2026-11-18: one yes-or-no reading at the end of the quiet
+    /// stretch, since with key repeat off a held key sends no event at all).
+    static func otherKeyDown() -> Bool {
+        (0..<128).contains { code in
+            ModifierKeys.keys[code] == nil && code != kVK_Function && code != kVK_CapsLock
+                && CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(code))
+        }
     }
 
     /// Something else happened (a key, a click, a scroll, a shortcut): neither the modifier held now nor a first tap counts.
@@ -123,7 +150,6 @@ struct ModifierTapDetector {
 
     /// One flags-changed event: the key that changed and the flags after it. Returns the taps it completes.
     mutating func flagsChanged(keyCode: Int, flags: UInt64, at time: TimeInterval) -> [Tap] {
-        if isUnsure, keysDown == 0, time - lastKeyEvent >= quiet { isUnsure = false }
         // fn or Caps Lock; or secure input, where other keys may not arrive, so a chord could look like a tap.
         guard let key = ModifierKeys.keys[keyCode], !isSecure else {
             interrupt()
@@ -138,7 +164,7 @@ struct ModifierTapDetector {
         let nothingElseDown = keysDown == 0 && !isUnsure && !fn
 
         if isDown {
-            if pressed == nil, nothingElseDown, families == key.family, devices == 0 || devices == key.deviceBit {
+            if pressed == nil, nothingElseDown, time > armedAt, families == key.family, devices == 0 || devices == key.deviceBit {
                 pressed = (keyCode, time)
             } else {
                 interrupt()  // with another modifier or key down: a chord, not a tap

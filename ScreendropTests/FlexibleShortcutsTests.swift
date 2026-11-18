@@ -205,29 +205,60 @@ struct FlexibleShortcutsTests {
         #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 2.1) == [.once(keyCode: kVK_RightOption)])
     }
 
+    /// What the event tap and the recorder do once the stretch is quiet, when macOS's one reading says no other key is
+    /// down: arm, from that moment.
+    private func armIfQuiet(_ detector: inout ModifierTapDetector, at time: TimeInterval) {
+        if detector.canArm(at: time) { detector.arm(at: time) }
+    }
+
     /// Sol's re-review, blocker 1: watching starts while E is held, Sukusho is busy, and Right ⌥ goes down and up, then E
-    /// up, before the callbacks catch up. Judged in the events' own order and times, the ⌥ press came before the keyboard
-    /// was seen quiet, so it isn't a tap, whatever the keyboard is like by the time it's processed.
-    @Test func eventsQueuedBeforeTheKeyboardWasSeenQuietNeverTap() {
-        var detector = ModifierTapDetector()
-        detector.quiet = 0.7
-        detector.eventsMissed(at: 10)
+    /// up, before the callbacks catch up. The arming reading comes later than those queued events, so they never count,
+    /// however late they're processed.
+    @Test func eventsQueuedBeforeArmingNeverTap() {
+        var detector = ModifierTapDetector.startingAt(10, quiet: 0.7)
         _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 10.1)
-        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 10.2).isEmpty)
-        detector.keyUp(at: 10.3)   // E, never seen going down
-        // E repeating instead: it shows within the quiet stretch, so a later press doesn't count either.
-        detector.eventsMissed(at: 20)
-        detector.keyDown(isRepeat: true, at: 20.5)
-        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 20.8)
-        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 20.9).isEmpty)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 10.2).isEmpty, "not armed")
+        detector.arm(at: 11)
+        // Stamped before the arming, processed after it.
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 10.4)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 10.5).isEmpty)
+        detector.keyUp(at: 10.6)
+        // Pressed before the arming and released after it.
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 10.95)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 11.05).isEmpty)
+        // Pressed after it.
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 11.2)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 11.25) == [.once(keyCode: kVK_RightOption)])
+    }
+
+    /// Round 8 (desk-lead's decision): with key repeat off, E held from before sends nothing at all. The events go quiet,
+    /// but the one reading says a key is down, so nothing arms and no tap counts, however long. Once E comes up and the
+    /// stretch is quiet again, it arms.
+    @Test func withKeyRepeatOffNothingArmsWhileAKeyIsHeld() {
+        var detector = ModifierTapDetector.startingAt(5, quiet: 0.7)
+        #expect(detector.canArm(at: 5.8), "quiet by its events…")
+        // …but macOS says a key is down, so the caller doesn't arm.
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 6)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 6.1).isEmpty)
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 20)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 20.1).isEmpty)
         detector.keyUp(at: 21)
-        // Quiet for less than the stretch since E came up: still nothing.
-        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 21.4)
-        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 21.5).isEmpty)
-        // Quiet for the stretch: taps again.
-        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 21.8)
-        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 21.9) == [.once(keyCode: kVK_RightOption)])
-        #expect(!detector.isUnsure)
+        #expect(!detector.canArm(at: 21.5))
+        armIfQuiet(&detector, at: 21.8)
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 22)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 22.1) == [.once(keyCode: kVK_RightOption)])
+    }
+
+    /// While the events show a key down, or repeating, the stretch isn't quiet.
+    @Test func aKeyDownOrRepeatingKeepsTheStretchFromBeingQuiet() {
+        var detector = ModifierTapDetector.startingAt(5, quiet: 0.7)
+        detector.keyDown(isRepeat: false, at: 5.1)
+        #expect(!detector.canArm(at: 9))
+        detector.keyUp(at: 9.1)
+        #expect(!detector.canArm(at: 9.5))
+        #expect(detector.canArm(at: 9.8))
+        detector.keyDown(isRepeat: true, at: 9.9)
+        #expect(!detector.canArm(at: 12))
     }
 
     /// Sol's round 7 probe: recovery starts at 10.00, a key-up stamped 9.00 is delivered late, then Right ⌥ is tapped at
@@ -237,18 +268,21 @@ struct FlexibleShortcutsTests {
         detector.quiet = 0.7
         detector.eventsMissed(at: 10)
         detector.keyUp(at: 9)
+        #expect(abs(detector.quietEnds - 10.7) < 0.001)
+        armIfQuiet(&detector, at: 10.05)
         _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 10.05)
         #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 10.1).isEmpty)
         #expect(detector.isUnsure)
         // A late older key-down doesn't count as held either: what's down now is judged from events after the gap.
         detector.keyDown(isRepeat: false, at: 9.5)
+        armIfQuiet(&detector, at: 10.75)
         _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 10.8)
         #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 10.9) == [.once(keyCode: kVK_RightOption)])
     }
 
-    /// After missed events a press before them doesn't finish a tap, a first tap before them doesn't pair with one after,
-    /// and with nothing held the first tap after the quiet stretch counts.
-    @Test func afterMissedEventsTheKeyboardMustBeSeenQuiet() {
+    /// After missed events a press before them doesn't finish a tap, nothing taps until armed, and a first tap before
+    /// them doesn't pair with one after.
+    @Test func afterMissedEventsNothingTapsUntilArmed() {
         var detector = ModifierTapDetector()
         detector.quiet = 0.7
         detector.keyDown(isRepeat: false, at: 0.9)
@@ -256,22 +290,25 @@ struct FlexibleShortcutsTests {
         detector.eventsMissed(at: 1.05)
         #expect(detector.isUnsure)
         #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 1.1).isEmpty, "the press came before the gap")
-        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 1.5)
-        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 1.6).isEmpty, "not quiet long enough yet")
+        armIfQuiet(&detector, at: 1.5)
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 1.6)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 1.65).isEmpty, "not quiet long enough to arm")
+        armIfQuiet(&detector, at: 1.8)
         _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 3)
         #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 3.1) == [.once(keyCode: kVK_RightOption)],
                 "the key seen going down before the gap, whose release was missed, no longer counts")
         // A short stretch, so the next press is within the double-tap interval of that tap: it still doesn't pair.
         detector.quiet = 0.1
         detector.eventsMissed(at: 3.15)
+        armIfQuiet(&detector, at: 3.26)
         _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 3.3)
         #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 3.35) == [.once(keyCode: kVK_RightOption)],
                 "no double tap across the gap")
     }
 
-    /// Sol's re-review, 2: Settings' recorder starts knowing nothing too. E held since before Record was clicked: a
-    /// Right ⌥ tap before the keyboard is seen quiet isn't recorded, nor one after E has repeated. With key repeat off E
-    /// sends nothing at all, so a tap after the stretch is recorded: no event can show that E is down.
+    /// Sol's re-review, 2: Settings' recorder starts knowing nothing too, so with E held since before Record was clicked
+    /// a Right ⌥ tap isn't recorded: not before arming, nor once E has repeated. With key repeat off, the arming's
+    /// reading is what sees E (`withKeyRepeatOffNothingArmsWhileAKeyIsHeld`).
     @Test func theRecorderStartsWithoutKnowingWhatsDown() {
         var detector = ModifierTapDetector.startingAt(5, quiet: 0.7)
         #expect(detector.isUnsure)
@@ -280,16 +317,14 @@ struct FlexibleShortcutsTests {
 
         var repeating = ModifierTapDetector.startingAt(5, quiet: 0.7)
         repeating.keyDown(isRepeat: true, at: 5.5)
+        armIfQuiet(&repeating, at: 5.8)
         _ = repeating.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 5.8)
         #expect(repeating.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 5.9).isEmpty)
-
-        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 5.8)
-        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 5.9) == [.once(keyCode: kVK_RightOption)])
     }
 
     /// Sol's re-review, 4: secure input found on, or found off again, at the next event (with no callback in between)
-    /// drops the gesture under way, and the keyboard must be seen quiet again; while it's on nothing taps. A secure
-    /// stretch that starts and ends between two events is invisible to the sample, so it isn't claimed.
+    /// drops the gesture under way, and nothing taps until armed again; while it's on nothing taps. A secure stretch that
+    /// starts and ends between two samples is invisible, so it isn't claimed.
     @Test func secureInputComingOrGoingIsAGap() {
         var detector = ModifierTapDetector()
         detector.quiet = 0.7
@@ -305,6 +340,7 @@ struct FlexibleShortcutsTests {
         #expect(wentOff)
         _ = detector.flagsChanged(keyCode: kVK_Command, flags: command | leftCommandBit, at: 1.3)
         #expect(detector.flagsChanged(keyCode: kVK_Command, flags: 0, at: 1.35).isEmpty, "no ⌘ ⌘ with the first tap")
+        armIfQuiet(&detector, at: 2.1)
         _ = detector.flagsChanged(keyCode: kVK_Command, flags: command | leftCommandBit, at: 2.2)
         #expect(detector.flagsChanged(keyCode: kVK_Command, flags: 0, at: 2.25) == [.once(keyCode: kVK_Command)])
         let stillOff = detector.secureInput(false, at: 3)
