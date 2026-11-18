@@ -77,7 +77,7 @@ struct LibraryGridCard<Picture: View, Caption: View>: View {
         case .duration(let time): Label(time, systemImage: "play.fill").cardPill().monospacedDigit()
         case .kind(let kind):
             Image(systemName: kind.symbol)
-                .cardPill(fill: colorScheme == .dark ? Color(red: 0.8, green: 0.8, blue: 0.8) : CardMark.fill)
+                .cardPill(fill: colorScheme == .dark ? CardMark.darkKindFill : CardMark.fill)
                 .accessibilityLabel(kind.rawValue).help(kind.rawValue.capitalized)
         case .gallery(let n): Label("\(n)", systemImage: "photo.stack").cardPill().help("\(n) images")
         }
@@ -119,7 +119,7 @@ struct LibraryGridCaption<Title: View>: View {
                     Button(action: saveAction) {
                         Image(systemName: "star")
                             .font(.system(size: 11, weight: hoveringStar ? .semibold : .regular))
-                            .foregroundStyle(.secondary.opacity(hoveringStar ? 1 : 0.8))
+                            .foregroundStyle(hoveringStar ? Color.primary : Color.secondary)
                             .frame(width: 22, height: 22)
                             .contentShape(Rectangle())
                     }
