@@ -210,6 +210,26 @@ enum AppRelaunch {
         CFPreferencesAppSynchronize(app)
         return Date().timeIntervalSince1970 - requestedAt < 120
     }
+
+    /// When this run started from Relaunch Sukusho and showed Shortcuts.
+    private static var landedAt: TimeInterval?
+
+    /// At launch, before any reopen can arrive: whether Relaunch Sukusho asked for Settings › Shortcuts.
+    static func takeLaunchRequest() -> Bool {
+        guard takeShowShortcutsRequest() else { return false }
+        landedAt = ProcessInfo.processInfo.systemUptime
+        return true
+    }
+
+    /// At a reopen: Shortcuts when Relaunch asked for it now (a copy already running got the helper's open), or when
+    /// this run landed from Relaunch in the last few seconds. Then the reopen is the helper's own open after another
+    /// open won the race and launched this copy, or a Dock click during the relaunch, and the Library mustn't come up
+    /// over Shortcuts (VM, keys-vm4 F1).
+    static func reopenShowsShortcuts() -> Bool {
+        if takeShowShortcutsRequest() { return true }
+        guard let landedAt else { return false }
+        return ProcessInfo.processInfo.systemUptime - landedAt < 5
+    }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -266,12 +286,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let launchedInBackground = launchReason == keyAELaunchedAsLogInItem
             || launchReason == keyAELaunchedAsServiceItem
             || CommandLine.arguments.contains(AgentAccess.launchArgument)
+        // Taken now, so a reopen that arrives before the block below still knows this run came from Relaunch.
+        let relaunched = AppRelaunch.takeLaunchRequest()
         // Let Finder's open-file event reach its editor without also opening a
         // Library. Login/service launches keep the existing quiet menu-bar mode.
         DispatchQueue.main.async { [weak self] in
             guard let self, !launchedInBackground, !self.openedFilesAtLaunch else { return }
             // Relaunched from Settings › Shortcuts: back where the user was.
-            if AppRelaunch.takeShowShortcutsRequest() { return SettingsWindowController.show(tab: .shortcuts) }
+            if relaunched { return SettingsWindowController.show(tab: .shortcuts) }
             CaptureLibraryModel.shared.show()
         }
         // Below the macOS this build is tested on, say so, in front of the Library and before
@@ -302,8 +324,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Finder, Spotlight and the Dock all reopen the same Library window.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
-        // Relaunch Sukusho's open reached this copy, already running, instead of starting one.
-        if AppRelaunch.takeShowShortcutsRequest() {
+        // Relaunch Sukusho's open reached this copy, already running, or this copy has only just landed from it.
+        if AppRelaunch.reopenShowsShortcuts() {
             SettingsWindowController.show(tab: .shortcuts)
             return false
         }
