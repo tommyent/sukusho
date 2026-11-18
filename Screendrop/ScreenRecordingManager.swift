@@ -154,19 +154,6 @@ final class ScreenRecordingManager {
     /// had already started.
     private var isStartCancelled = false
     private var currentSource: ScreenRecordingSource?
-    /// A new number for every take, so a request begun in one take can't act on the next (CVR2-1).
-    private var takeNumber = 0
-    /// The running take's installed filter: what it leaves out of the private windows, the inclusion
-    /// policy it was built with, how to rebuild it, and the stream it went to. Set only once that
-    /// stream is running (CVR2-2).
-    private var installedFilter: InstalledFilter?
-    private struct InstalledFilter {
-        let take: Int
-        var coverage: PrivateWindowCoverage
-        let source: ScreenRecordingSource
-        let options: ScreenRecordingCaptureOptions
-        let stream: ObjectIdentifier?
-    }
     private var activityToken: NSObjectProtocol?
     private var terminationCompletion: ((RecordingSession?) -> Void)?
 
@@ -269,8 +256,6 @@ final class ScreenRecordingManager {
                         && RecordingInkPresenter.shared.windowID == nil
                 )
                 guard try isStarting(session: session) else { return }
-                takeNumber += 1
-                let take = takeNumber
                 let target = try Self.captureTarget(for: source, content: content, options: options,
                                                     includesAppWindows: PreviewWindowCaptureExclusion.includesAppWindowsInCaptures)
 
@@ -328,12 +313,6 @@ final class ScreenRecordingManager {
                 // screen stream begins, so setup UI is never baked into video.
                 try await capture.startCapture(filter: target.filter, configuration: target.configuration)
                 guard try isStarting(session: session) else { return }
-                // The coverage the running filter really has: the policy and IDs it was built with.
-                if take == takeNumber {
-                    installedFilter = InstalledFilter(take: take, coverage: target.coverage, source: source,
-                                                      options: options, stream: capture.streamToken)
-                }
-
                 manifest = CaptureManifest()
                 manifest.pixelWidth = target.width
                 manifest.pixelHeight = target.height
@@ -855,7 +834,6 @@ final class ScreenRecordingManager {
         session = nil
         displayID = nil
         currentSource = nil
-        installedFilter = nil
         startedAt = nil
         pausedAt = nil
         accumulatedPauseDuration = 0
@@ -869,45 +847,6 @@ final class ScreenRecordingManager {
         state = .idle
     }
 
-    /// Makes the running take leave out a private window before it is shown (Sol, CVR-2, CVR2-1/2):
-    /// its filter is rebuilt, with the policy it was built with, from content that includes off-screen
-    /// windows, and given to the same stream. True when the window can be shown.
-    func excludeFromRecording(windowID: CGWindowID) async -> Bool {
-        await PrivateWindowExclusion.request(
-            windowID: windowID,
-            current: { [weak self] in
-                guard let self, self.isActive else { return nil }
-                guard let installed = self.installedFilter, installed.take == self.takeNumber else {
-                    // Starting, or the filter isn't known: nothing to go on, so the window waits.
-                    return PrivateWindowExclusion.Take(id: self.takeNumber, coverage: nil)
-                }
-                return PrivateWindowExclusion.Take(id: installed.take, coverage: installed.coverage)
-            },
-            update: { [weak self] take in
-                guard let self, let installed = self.installedFilter, installed.take == take.id,
-                      let content = try? await ScreenRecordingCapture.availableContent(onScreenWindowsOnly: false),
-                      content.windows.contains(where: { $0.windowID == windowID }),
-                      let target = try? Self.captureTarget(for: installed.source, content: content, options: installed.options,
-                                                          includesAppWindows: installed.coverage.includesAppWindows),
-                      target.coverage.excludedIDs.contains(windowID),
-                      // Revalidated after the wait: still this take, on this stream.
-                      self.installedFilter?.take == take.id, let stream = installed.stream else { return false }
-                do {
-                    try await self.capture.updateFilter(target.filter, onStream: stream)
-                } catch {
-                    return false
-                }
-                return true
-            },
-            covered: { [weak self] take in
-                guard let self, self.installedFilter?.take == take.id else { return }
-                self.installedFilter?.coverage.excludedIDs.insert(windowID)
-            }
-        )
-    }
-
-    /// `includesAppWindows` is the policy the filter is built with, taken once by the caller, so the
-    /// target's coverage says what this filter does whatever the preference becomes (CVR2-2).
     private static func captureTarget(
         for source: ScreenRecordingSource,
         content: SCShareableContent,
@@ -920,8 +859,7 @@ final class ScreenRecordingManager {
         let captureRect: CGRect
         let displayID: CGDirectDisplayID?
         let tracksDynamicGeometry: Bool
-        let privateIDs = PreviewWindowCaptureExclusion.shared.privateWindowIDs
-        let overlayWindowIDs = privateIDs.union([CameraRecordingManager.shared.previewWindowID,
+        let overlayWindowIDs = Set([CameraRecordingManager.shared.previewWindowID,
                                     RecordingInkPresenter.shared.windowID].compactMap { $0 })
 
         switch source.kind {
@@ -991,15 +929,7 @@ final class ScreenRecordingManager {
             pixelWidth: width,
             pixelHeight: height
         )
-        let recordsDisplay: Bool = switch source.kind {
-        case .fullscreen, .area: true
-        case .window: false
-        }
-        let present = Set(content.windows.map(\.windowID))
-        let coverage = PrivateWindowCoverage(recordsDisplay: recordsDisplay, includesAppWindows: includesAppWindows,
-                                             excludedIDs: privateIDs.intersection(present))
         return ScreenRecordingCaptureTarget(
-            coverage: coverage,
             filter: filter,
             configuration: configuration,
             width: width,
@@ -1089,8 +1019,6 @@ final class ScreenRecordingManager {
 }
 
 private struct ScreenRecordingCaptureTarget {
-    /// What this filter leaves out of the private windows, with the policy it was built with.
-    let coverage: PrivateWindowCoverage
     let filter: SCContentFilter
     let configuration: SCStreamConfiguration
     let width: Int
@@ -1134,17 +1062,6 @@ nonisolated final class ScreenRecordingCapture: NSObject, SCStreamOutput, SCStre
         }
         try await stream.startCapture()
         self.stream = stream
-    }
-
-    /// Replaces the running stream's filter; throws when there is no stream or ScreenCaptureKit refuses.
-    /// The running stream, to tell one take's stream from the next.
-    var streamToken: ObjectIdentifier? { stream.map(ObjectIdentifier.init) }
-
-    /// Replaces the running stream's filter, only if it is still `expected`; throws otherwise, or
-    /// when ScreenCaptureKit refuses.
-    func updateFilter(_ filter: SCContentFilter, onStream expected: ObjectIdentifier) async throws {
-        guard let stream, ObjectIdentifier(stream) == expected else { throw CancellationError() }
-        try await stream.updateContentFilter(filter)
     }
 
     func stopCapture() async throws {

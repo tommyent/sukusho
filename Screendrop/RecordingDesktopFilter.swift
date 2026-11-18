@@ -2,53 +2,6 @@ import CoreGraphics
 import Foundation
 import ScreenCaptureKit
 
-/// Whether a running recording must change its filter before a private window (the clipboard
-/// popup) may appear. A display or area recording that includes Sukusho's windows captures any new
-/// window of the app unless the filter names it; a window recording captures only its window, and a
-/// recording that leaves the whole app out needs nothing (Sol, CVR-2).
-nonisolated struct PrivateWindowCoverage: Equatable {
-    var recordsDisplay: Bool
-    var includesAppWindows: Bool
-    var excludedIDs: Set<CGWindowID>
-
-    func needsFilterUpdate(for windowID: CGWindowID) -> Bool {
-        recordsDisplay && includesAppWindows && !excludedIDs.contains(windowID)
-    }
-}
-
-/// One request to leave a private window out of whatever recording is running, sequenced so it can
-/// only ever change the filter of the take it was checked against (Sol, CVR2-1).
-@MainActor
-enum PrivateWindowExclusion {
-    /// A running take as the request sees it: its id (new for every take) and the coverage its
-    /// installed filter has, nil until that filter is running.
-    struct Take: Equatable {
-        let id: Int
-        let coverage: PrivateWindowCoverage?
-    }
-
-    /// True when the window may be shown: no take is running, the running take can't see it, or its
-    /// filter now names it. `current` reads the running take; `update` rebuilds and installs that
-    /// take's filter naming the window and must refuse (false) if its take is no longer current;
-    /// `covered` records the success on that take. A take that changed while `update` waited is
-    /// tried afresh; a take whose coverage isn't known yet fails closed.
-    static func request(windowID: CGWindowID, current: () -> Take?, update: (Take) async -> Bool,
-                        covered: (Take) -> Void, attempts: Int = 3) async -> Bool {
-        for _ in 0..<attempts {
-            guard let take = current() else { return true }
-            guard let coverage = take.coverage else { return false }
-            guard coverage.needsFilterUpdate(for: windowID) else { return true }
-            let updated = await update(take)
-            // Whatever happened, it counts only for the take that is still running.
-            guard current()?.id == take.id else { continue }
-            guard updated else { return false }
-            covered(take)
-            return true
-        }
-        return false
-    }
-}
-
 nonisolated struct RecordingDesktopFilter {
     let cleanDesktop: Bool
     let excludedApplications: [SCRunningApplication]

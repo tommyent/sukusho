@@ -58,9 +58,6 @@ final class ClipboardPopupPresenter {
     private init() {}
 
     var isVisible: Bool { panel?.isVisible == true }
-    /// Waiting for a recording to leave the popup out before it appears.
-    private var isOpening = false
-
     func toggle() {
         isVisible ? close() : show()
     }
@@ -68,25 +65,7 @@ final class ClipboardPopupPresenter {
     func show() {
         let panel = panel ?? makePanel()
         self.panel = panel
-        // A recording that includes Sukusho's windows must leave the popup out before it appears; the
-        // panel exists now, so its window can be named to the recording's filter (Sol, CVR-2).
-        let windowID = CGWindowID(panel.windowNumber)
-        guard ScreenRecordingManager.shared.isActive else { return present(panel) }
-        guard !isOpening else { return }
-        isOpening = true
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer { self.isOpening = false }
-            if await ScreenRecordingManager.shared.excludeFromRecording(windowID: windowID) {
-                self.present(panel)
-            } else {
-                NSSound.beep()
-                CaptureTextFeedbackPresenter.shared.showDone(
-                    "Clipboard History Didn’t Open",
-                    detail: "The recording couldn’t be told to leave it out yet. Try again in a moment, or after the recording.",
-                    symbol: "eye.slash", displayID: nil)
-            }
-        }
+        present(panel)
     }
 
     private func present(_ panel: ClipboardPopupPanel) {
@@ -138,8 +117,6 @@ final class ClipboardPopupPresenter {
         let panel = ClipboardPopupPanel(size: Self.size)
         panel.contentView = NSHostingView(rootView: ClipboardPopupView(state: state, presenter: self))
         panel.onResign = { [weak self] in self?.close() }
-        // Private copies: out of Sukusho's own captures whatever the setting, and macOS is asked to hide it
-        // from other apps, which it may not do everywhere (owner, 2026-11-17; Sol, CVR-1).
         PreviewWindowCaptureExclusion.shared.registerPrivate(window: panel)
         return panel
     }
