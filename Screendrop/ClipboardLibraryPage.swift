@@ -105,7 +105,11 @@ struct ClipboardLibraryPage: View {
             ContentUnavailableView {
                 Label("No Snippets", systemImage: "text.badge.star")
             } description: {
-                Text("Save text you paste often. Paste a snippet from the clipboard popup (⌃⌘V) like any copy.")
+                if let shortcut = CaptureHotkeyPreferences.shortcut(for: .clipboardHistory) {
+                    Text("Save text you paste often. Open the clipboard popup with \(shortcut.displayTokens.joined()) to paste a snippet.")
+                } else {
+                    Text("Save text you paste often. Paste a snippet from the clipboard popup like any copy.")
+                }
             } actions: {
                 Button("New Snippet") { Task { await model.newSnippet() } }
                     .buttonStyle(.borderedProminent)
