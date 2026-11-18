@@ -89,6 +89,13 @@ struct HotkeyShortcut: Codable, Equatable, Hashable {
             : "\(displayString) also types a character. While it’s Sukusho’s shortcut, you can’t type it."
     }
 
+    /// A menu item's title with a shortcut its shortcut column can't show (a modifier key on its own, a function key
+    /// alone) after it, as "Capture Area (Right ⌥)". A title reads the same in every menu on every macOS; SwiftUI drops a
+    /// subtitle given inside a Label (checked on macOS 27.3).
+    static func menuTitle(_ title: String, adding shortcut: HotkeyShortcut?) -> String {
+        shortcut.map { "\(title) (\($0.displayString))" } ?? title
+    }
+
     /// Whether one press would set off both: the same shortcut, or a tap and a double tap of one pair (Right ⌥ and ⌥ ⌥),
     /// since every double tap starts with a tap.
     func overlaps(_ other: HotkeyShortcut) -> Bool {

@@ -34,13 +34,7 @@ struct ScreendropApp: App {
                 Button("About Sukusho") { AboutWindowController.show() }
                 CheckForUpdatesCommand()
             }
-            CommandGroup(after: .newItem) {
-                Button { CaptureLibraryModel.shared.show() } label: {
-                    Text("Show Library")
-                    if let subtitle = MenuBarView.subtitle(for: .library) { Text(subtitle) }
-                }
-                .keyboardShortcut(MenuBarView.shortcut(for: .library))
-            }
+            CommandGroup(after: .newItem) { ShowLibraryCommand() }
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") { SettingsWindowController.show(tab: .general) }
                     .keyboardShortcut(",", modifiers: .command)

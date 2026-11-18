@@ -271,8 +271,8 @@ struct MenuBarView: View {
     }
 }
 
-/// A command's menu title and icon, with its shortcut as the item's subtitle when the menu's shortcut column can't show
-/// it: a modifier key on its own (Right ⌥, ⌥ ⌥) or a function key alone. A second Text is a menu item's subtitle.
+/// A command's menu title and icon, with its shortcut after the title when the menu's shortcut column can't show it: a
+/// modifier key on its own (Right ⌥, ⌥ ⌥) or a function key alone.
 struct CaptureMenuLabel: View {
     let title: String
     let systemImage: String
@@ -285,20 +285,23 @@ struct CaptureMenuLabel: View {
     }
 
     var body: some View {
-        Label {
-            Text(title)
-            if let subtitle = MenuBarView.subtitle(for: action) { Text(subtitle) }
-        } icon: {
-            Image(systemName: systemImage)
-        }
+        Label(MenuBarView.title(title, for: action), systemImage: systemImage)
+    }
+}
+
+/// File › Show Library, re-read when a shortcut changes, as the Capture menu is.
+struct ShowLibraryCommand: View {
+    var body: some View {
+        let _ = HotkeyManager.shared.revision
+        Button(MenuBarView.title("Show Library", for: .library)) { CaptureLibraryModel.shared.show() }
+            .keyboardShortcut(MenuBarView.shortcut(for: .library))
     }
 }
 
 extension MenuBarView {
-    /// The action's shortcut when `shortcut(for:)` can't show it in the shortcut column, for the item's subtitle.
-    static func subtitle(for action: CaptureHotkeyAction) -> String? {
-        guard shortcut(for: action) == nil else { return nil }
-        return CaptureHotkeyPreferences.shortcut(for: action)?.displayString
+    /// The item's title, with the action's shortcut after it when `shortcut(for:)` can't show it in the shortcut column.
+    static func title(_ title: String, for action: CaptureHotkeyAction) -> String {
+        HotkeyShortcut.menuTitle(title, adding: shortcut(for: action) == nil ? CaptureHotkeyPreferences.shortcut(for: action) : nil)
     }
 
     /// The action's global shortcut, shown beside its menu item so it can

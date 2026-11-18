@@ -175,6 +175,19 @@ struct FlexibleShortcutsTests {
                                                            defaults: defaults) == .window)
     }
 
+    // MARK: - Menus
+
+    /// Round 2 (VM, 27.2.1): a subtitle given inside a Label never showed, so a shortcut the menu's shortcut column
+    /// can't show goes after the title.
+    @Test func aMenuTitleCarriesAShortcutItsColumnCantShow() {
+        #expect(HotkeyShortcut.menuTitle("Capture Area", adding: HotkeyShortcut(.once(keyCode: kVK_RightOption)))
+            == "Capture Area (Right ⌥)")
+        #expect(HotkeyShortcut.menuTitle("Capture Window", adding: HotkeyShortcut(.twice(keyCode: kVK_Command)))
+            == "Capture Window (⌘ ⌘)")
+        #expect(HotkeyShortcut.menuTitle("Show Library", adding: chord([], kVK_F5)) == "Show Library (F5)")
+        #expect(HotkeyShortcut.menuTitle("Capture Area", adding: nil) == "Capture Area")
+    }
+
     // MARK: - Saved shortcuts
 
     @Test func shortcutsSavedByBeta1LoadUnchanged() throws {
