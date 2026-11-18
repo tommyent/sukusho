@@ -221,6 +221,7 @@ struct ClipboardCard: View {
                     let shrinksOnly = !tall && natural.width > 0 && natural.height > 0
                     ClipboardThumbnail(url: url, maxPixelSize: tall ? Self.tallPixelSize(entry) : 640,
                                        contentMode: tall ? .fill : .fit)
+                        .id(CaptureLibraryModel.shared.contentRevision)
                         .frame(maxWidth: shrinksOnly ? min(geometry.size.width, natural.width) : .infinity,
                                maxHeight: shrinksOnly ? min(geometry.size.height, natural.height) : .infinity)
                         .frame(width: geometry.size.width, height: geometry.size.height, alignment: tall ? .top : .center)
@@ -263,7 +264,8 @@ struct ClipboardListRow: View {
 
     var body: some View {
         HStack(spacing: DS.Space.ml) {
-            ClipboardRowTile(entry: entry, size: 24)
+            ClipboardRowTile(entry: entry, size: 24, imageURL: entry.libraryImageURL)
+                .id(CaptureLibraryModel.shared.contentRevision)
             Text(ClipboardList.cardTitle(of: entry) ?? ClipboardList.title(of: entry))
                 .font(ClipboardList.looksLikeCode(entry) ? .system(size: 12.5, design: .monospaced) : .system(size: 13))
                 .lineLimit(1)
@@ -308,7 +310,11 @@ struct ClipboardLibraryInspector: View {
                         SnippetEditor(entry: entry, model: model)
                     } else {
                         // Clicking the picture opens Quick Look, as in a capture's inspector.
-                        Button { model.quickLook(entry) } label: { ClipboardPreview(entry: entry).frame(height: 220) }
+                        Button { model.quickLook(entry) } label: {
+                            ClipboardPreview(entry: entry, imageURL: entry.libraryImageURL)
+                                .id(CaptureLibraryModel.shared.contentRevision)
+                                .frame(height: 220)
+                        }
                             .buttonStyle(.plain)
                             .help("Quick Look")
                         HStack {

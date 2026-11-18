@@ -43,10 +43,11 @@ struct ClipboardThumbnail: View {
 struct ClipboardRowTile: View {
     let entry: ClipboardEntry
     var size: CGFloat = 24
+    var imageURL: URL?
 
     var body: some View {
         Group {
-            if entry.kind == .image, let url = entry.imageFileURL {
+            if entry.kind == .image, let url = imageURL ?? entry.imageFileURL {
                 ClipboardThumbnail(url: url, maxPixelSize: Int(size * 2))
             } else if case .color(let hex) = ClipboardList.textForm(of: entry), let color = Color(clipboardHex: hex) {
                 color.overlay(RoundedRectangle(cornerRadius: DS.Radius.s).strokeBorder(.black.opacity(0.15), lineWidth: 0.5))
@@ -80,11 +81,12 @@ struct ClipboardRowTile: View {
 /// The big preview: the picture, a colour's swatch, the text, a link or the files.
 struct ClipboardPreview: View {
     let entry: ClipboardEntry
+    var imageURL: URL?
 
     var body: some View {
         switch entry.kind {
         case .image:
-            if let url = entry.imageFileURL {
+            if let url = imageURL ?? entry.imageFileURL {
                 ClipboardThumbnail(url: url, maxPixelSize: 1080, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: DS.Radius.l))
                     .shadow(color: .black.opacity(0.18), radius: 9, y: 4)
