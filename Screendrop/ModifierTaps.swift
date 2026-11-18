@@ -91,9 +91,10 @@ struct ModifierTapDetector {
     var quietEnds: TimeInterval { lastKeyEvent + quiet }
 
     /// Whether the events show the keyboard quiet for the stretch by `time`, with no key known to be down: then the
-    /// caller asks macOS (`otherKeyDown`) before arming.
+    /// caller asks macOS (`otherKeyDown`) before arming. Never while secure input is on: the keys aren't read then, and
+    /// watching stays passive until it ends.
     func canArm(at time: TimeInterval) -> Bool {
-        isUnsure && keysDown == 0 && time >= quietEnds
+        isUnsure && !isSecure && keysDown == 0 && time >= quietEnds
     }
 
     /// The read from `start` to `end` found no other key down: gestures pressed after `end`, when the read was complete,

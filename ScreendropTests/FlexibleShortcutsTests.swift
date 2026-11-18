@@ -399,6 +399,19 @@ struct FlexibleShortcutsTests {
         #expect(!stillOff)
     }
 
+    /// Sol's round 8 hardening: while secure input is on the keys aren't read, so nothing arms, however quiet; once it's
+    /// found off, the stretch starts again from then.
+    @Test func nothingArmsWhileSecureInputIsOn() {
+        var detector = ModifierTapDetector.startingAt(1, quiet: 0.7)
+        let cameOn = detector.secureInput(true, at: 1.2)
+        #expect(cameOn)
+        #expect(!detector.canArm(at: 5))
+        let wentOff = detector.secureInput(false, at: 6)
+        #expect(wentOff)
+        #expect(!detector.canArm(at: 6.5))
+        #expect(detector.canArm(at: 6.7))
+    }
+
     /// The stretch is the key-repeat delay and two repeats, so a held key has repeated by then; with key repeat off (or
     /// nearly) it's 2.5 s.
     @Test func theQuietStretchFollowsKeyRepeat() {
