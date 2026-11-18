@@ -137,7 +137,7 @@ nonisolated struct SavedMarksFile {
 /// Change only the Saved field. Other Studio metadata, including keys from newer builds, stays in the project.
 enum RecordingLibraryMark {
     @discardableResult
-    static func change(at url: URL, from expected: Date?, to newDate: Date?) throws -> Bool {
+    static func change(at url: URL, from expected: Date?, to newDate: Date?, removeWhenEmpty: Bool = false) throws -> Bool {
         var project: [String: Any]
         var original: stat?
         do {
@@ -160,6 +160,10 @@ enum RecordingLibraryMark {
             guard let expected, stamp == formatter.string(from: expected) else { return false }
         } else if expected != nil { return false }
         project["librarySavedAt"] = newDate.map { formatter.string(from: $0) }
+        if removeWhenEmpty && project.isEmpty {
+            try FileManager.default.removeItem(at: url)
+            return true
+        }
         let data = try JSONSerialization.data(withJSONObject: project, options: [.prettyPrinted, .sortedKeys])
         // Modified order includes project.json. Saving a card isn't a content edit.
         let temporary = url.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString).tmp")
@@ -255,7 +259,59 @@ struct MarkedHistory<Row: SavedMarkRow> {
     }
 }
 
+struct CaptureSavedTargets {
+    var ids: Set<UUID> = []
+    var projects: Set<URL> = []
+    var createdProjects: Set<URL> = []
+    var isEmpty: Bool { ids.isEmpty && projects.isEmpty }
+}
+
+extension UndoManager {
+    @MainActor
+    func registerMoveToSaved(nextSaved: Bool = false, apply: @escaping @MainActor (Bool) -> Void) {
+        registerUndo(withTarget: self) { manager in
+            MainActor.assumeIsolated {
+                apply(nextSaved)
+                manager.registerMoveToSaved(nextSaved: !nextSaved, apply: apply)
+            }
+        }
+        setActionName("Move to Saved")
+    }
+}
+
 extension MarkedHistory where Row == ScreenshotHistoryItem {
+    func changeSaved(_ targets: CaptureSavedTargets, rows: inout [Row],
+                     from expected: Date?, to date: Date?) throws -> CaptureSavedTargets {
+        guard !history.isReadOnly, !historyHoldsMarks else { throw CocoaError(.fileReadCorruptFile) }
+        var file = marks
+        var values = file.load()
+        guard file.state != .unreadable else { throw CocoaError(.fileReadCorruptFile) }
+        var changed = CaptureSavedTargets()
+        for row in rows where targets.ids.contains(row.id) && row.librarySavedAt == expected && values[row.id] == expected {
+            values[row.id] = date
+            changed.ids.insert(row.id)
+        }
+        do {
+            for project in targets.projects {
+                let missing = !FileManager.default.fileExists(atPath: project.path)
+                if try RecordingLibraryMark.change(at: project, from: expected, to: date,
+                                                   removeWhenEmpty: targets.createdProjects.contains(project)) {
+                    changed.projects.insert(project)
+                    if missing { changed.createdProjects.insert(project) }
+                }
+            }
+            if !changed.ids.isEmpty { try file.write(values) }
+        } catch {
+            for project in changed.projects {
+                try RecordingLibraryMark.change(at: project, from: date, to: expected,
+                                                removeWhenEmpty: changed.createdProjects.contains(project))
+            }
+            throw error
+        }
+        for i in rows.indices where changed.ids.contains(rows[i].id) { rows[i].librarySavedAt = date }
+        return changed
+    }
+
     /// Run before the first scan. Keep the sidecar marks until both embedded copies are cleared, so a failed
     /// write can retry on the next launch without losing the IDs it still has to process.
     mutating func clearBetaOneUploadMarks(in rows: inout [Row], defaults: UserDefaults) throws {

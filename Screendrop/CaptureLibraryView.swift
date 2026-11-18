@@ -298,6 +298,7 @@ struct CaptureLibraryView: View {
         .onDisappear { AppActivationPolicy.leave() }
         .onWindowChange { window in
             libraryWindow = window
+            model.savedUndoManager = window?.undoManager
             PreviewWindowCaptureExclusion.shared.register(window: window)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in

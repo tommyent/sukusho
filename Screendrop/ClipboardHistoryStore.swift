@@ -332,16 +332,35 @@ actor ClipboardHistoryStore {
 
     /// Saving a copy that only refers to a capture file snapshots that file, so the Saved card keeps its picture when
     /// the capture is edited or trashed (Astra L1). The capture link stays as it was.
-    func moveToSaved(ids: [String], at date: Date = .now) throws {
+    @discardableResult
+    func moveToSaved(ids: [String], at date: Date = .now) throws -> [String] {
         try transaction {
+            var changed: [String] = []
             for id in ids {
                 try run("UPDATE entries SET pinned_at = ?, change_seq = ? WHERE id = ? AND kind != 'snippet' AND pinned_at IS NULL",
                         [date.timeIntervalSince1970, try nextChange(), id])
-                guard sqlite3_changes(db) > 0, let reference = try query(
+                guard sqlite3_changes(db) > 0 else { continue }
+                changed.append(id)
+                guard let reference = try query(
                     "SELECT library_path, hash FROM entries WHERE id = ? AND blob IS NULL AND library_path IS NOT NULL", [id],
                     { ($0.text(0), $0.text(1) ?? "") }).first,
                       let owned = try snapshot(reference.0, hash: reference.1) else { continue }
                 try run("UPDATE entries SET blob = ?, stored_bytes = ? WHERE id = ?", [owned.blob, owned.bytes, id])
+            }
+            return changed
+        }
+    }
+
+    func undoMoveToSaved(ids: [String], at date: Date) throws {
+        try transaction {
+            for id in ids {
+                do {
+                    try run("UPDATE entries SET pinned_at = NULL, change_seq = ? WHERE id = ? AND pinned_at = ? AND kind != 'snippet'",
+                            [try nextChange(), id, date.timeIntervalSince1970])
+                } catch where sqlite3_errcode(db) == SQLITE_CONSTRAINT {
+                    throw NSError(domain: "Sukusho.SavedMarks", code: 3, userInfo: [NSLocalizedDescriptionKey:
+                        "A clip in this selection was copied again after it was saved. Both copies have been kept."])
+                }
             }
         }
     }

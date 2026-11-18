@@ -629,6 +629,32 @@ struct ClipboardHistoryStoreTests {
         #expect(snippet.id == id && snippet.text == "Hello" && snippet.pinnedAt == nil)
     }
 
+    @Test func undoAndRedoAClipSelectionKeepItsDatesAndOrder() async throws {
+        let store = try store()
+        try await store.record(text("first"), at: start)
+        try await store.record(text("second"), at: start + 2)
+        try await store.record(text("already saved"), at: start + 4)
+        let archived = try #require(try await store.entries().first?.id)
+        try await store.moveToSaved(ids: [archived], at: start + 10)
+        let before = try await store.entries()
+        let mark = start + 20
+        let changed = try await store.moveToSaved(ids: before.map(\.id), at: mark)
+        #expect(changed.count == 2 && !changed.contains(archived))
+        let saved = try await store.entries()
+        #expect(saved.allSatisfy { $0.isArchived })
+        try await store.undoMoveToSaved(ids: changed, at: mark)
+        #expect(try await store.entries() == before)
+        try await store.moveToSaved(ids: changed, at: mark)
+        #expect(try await store.entries() == saved)
+
+        // A fresh copy can now own the active hash. A failed undo keeps the whole selection and the fresh clip.
+        try await store.record(text("first"), at: mark + 1)
+        await #expect(throws: (any Error).self) { try await store.undoMoveToSaved(ids: changed, at: mark) }
+        let afterConflict = try await store.entries()
+        #expect(afterConflict.filter(\.isArchived) == saved)
+        #expect(afterConflict.filter { !$0.isArchived }.map(\.text) == ["first"])
+    }
+
     @Test func moveSelectionArchivesEveryEligibleClipWithoutRemarkingOldOnes() async throws {
         let store = try store()
         for body in ["old", "first", "second"] { try await store.record(text(body), at: start) }

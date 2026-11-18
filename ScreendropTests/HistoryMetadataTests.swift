@@ -102,6 +102,50 @@ struct HistoryMetadataTests {
         }
     }
 
+    @Test func oneUndoRestoresCaptureSelectionAndRecordingProject() throws {
+        try withIndex { history in
+            let folder = history.deletingLastPathComponent()
+            let project = folder.appendingPathComponent("project.json")
+            let originalProject = Data(#"{"displayName":"Recording","future":17}"#.utf8)
+            try originalProject.write(to: project)
+            let existingMtime = try project.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+            let date = Date(timeIntervalSince1970: 1_800_000_000)
+            let items = [false, true].enumerated().map { i, recording in
+                ScreenshotHistoryItem(id: UUID(), createdAt: date + Double(i), updatedAt: date + Double(i),
+                    fileName: "fixture-\(i)", pixelWidth: 8, pixelHeight: 8, kind: recording ? .video : .image,
+                    recordingSessionPath: recording ? folder.path : nil)
+            }
+            try JSONEncoder().encode(items).write(to: history)
+            var files = MarkedHistory<ScreenshotHistoryItem>(historyURL: history,
+                marksURL: folder.appendingPathComponent("library-saved.json"))
+            var rows = files.load()
+            let newProject = folder.appendingPathComponent("PreviouslyMissing.json")
+            let targets = CaptureSavedTargets(ids: Set(items.map(\.id)), projects: [project, newProject])
+            let manager = UndoManager()
+            manager.groupsByEvent = false
+            let changed = try files.changeSaved(targets, rows: &rows, from: nil, to: date)
+            manager.beginUndoGrouping()
+            manager.registerMoveToSaved { saved in
+                do { _ = try files.changeSaved(changed, rows: &rows, from: saved ? nil : date, to: saved ? date : nil) }
+                catch { Issue.record(error) }
+            }
+            manager.endUndoGrouping()
+            #expect(rows.allSatisfy { $0.librarySavedAt == date })
+            #expect(manager.undoActionName == "Move to Saved")
+            manager.undo()
+            #expect(!manager.canUndo && manager.redoActionName == "Move to Saved")
+            #expect(!FileManager.default.fileExists(atPath: newProject.path))
+            #expect(rows == items && files.load() == items)
+            let restored = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: project)) as? NSDictionary)
+            #expect(restored == (try JSONSerialization.jsonObject(with: originalProject) as? NSDictionary))
+            #expect(try project.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate == existingMtime)
+            manager.redo()
+            #expect(files.load().allSatisfy { $0.librarySavedAt == date })
+            let redone = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: project)) as? [String: Any])
+            #expect(redone["librarySavedAt"] as? String == ISO8601DateFormatter().string(from: date))
+        }
+    }
+
     @Test func oneFutureRowKeepsReadableRowsAndCannotRewriteOriginal() throws {
         try withIndex { url in
             let good = (0..<1000).map { Row(name: "capture-\($0)") }

@@ -470,22 +470,12 @@ final class ScreenshotHistoryStore {
         saveMetadata()
     }
 
-    /// Throws, and leaves the marks as they were, when they couldn't be kept on disk: a Save that didn't stick isn't
-    /// shown as saved (Astra M2).
-    func moveToSaved(ids: Set<UUID>, at date: Date) throws {
-        guard !ids.isEmpty else { return }
-        let before = items
-        for index in items.indices where ids.contains(items[index].id) {
-            items[index].librarySavedAt = items[index].librarySavedAt ?? date
-        }
+    func changeSaved(_ targets: CaptureSavedTargets, from expected: Date?, to date: Date?) throws -> CaptureSavedTargets {
         do {
-            guard try files.save(items) else {
-                throw NSError(domain: "Sukusho.SavedMarks", code: 2, userInfo: [
-                    NSLocalizedDescriptionKey: files.problem ?? "Saved marks couldn't be written."])
-            }
+            let changed = try files.changeSaved(targets, rows: &items, from: expected, to: date)
             savedMarksProblem = files.problem
+            return changed
         } catch {
-            items = before
             savedMarksProblem = files.problem ?? error.localizedDescription
             throw error
         }

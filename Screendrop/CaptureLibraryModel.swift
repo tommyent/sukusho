@@ -208,6 +208,21 @@ final class CaptureLibraryModel {
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private var searchTask: Task<Void, Never>?
     @ObservationIgnored private var visibleIndices: [String: Int] = [:]
+    @ObservationIgnored weak var savedUndoManager: UndoManager? {
+        didSet {
+            guard let savedUndoManager else { return }
+            for action in pendingSavedUndo { savedUndoManager.registerMoveToSaved(apply: action) }
+            pendingSavedUndo.removeAll()
+        }
+    }
+    // The popup can save a clip before the Library window first opens.
+    @ObservationIgnored private var pendingSavedUndo: [@MainActor (Bool) -> Void] = []
+
+    func registerSavedUndo(_ action: @escaping @MainActor (Bool) -> Void) {
+        if let savedUndoManager { savedUndoManager.registerMoveToSaved(apply: action) }
+        else { pendingSavedUndo.append(action) }
+    }
+
     @ObservationIgnored var openWindow: (() -> Void)?
     @ObservationIgnored private var pendingOpen = false
 

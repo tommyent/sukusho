@@ -163,29 +163,21 @@ extension CaptureLibraryModel {
 
     func moveToSaved() {
         guard !isBusy else { return }
-        // Recording metadata persists dates at whole-second precision.
+        let targets = selectedItems.filter { !$0.isSaved }
+        let requested = CaptureSavedTargets(ids: Set(targets.flatMap(\.historyIDs)),
+                                            projects: Set(targets.compactMap { $0.session?.projectMetadataURL }))
         let date = Date(timeIntervalSince1970: Date.now.timeIntervalSince1970.rounded(.down))
-        var failures: [String] = []
-        for item in selectedItems where !item.isSaved {
-            var priorMark: Date?
-            do {
-                try item.session?.updateProjectMetadata { metadata in
-                    priorMark = metadata.librarySavedAt
-                    metadata.librarySavedAt = priorMark ?? date
-                }
+        do {
+            let changed = try ScreenshotHistoryStore.shared.changeSaved(requested, from: nil, to: date)
+            guard !changed.isEmpty else { return }
+            registerSavedUndo { [weak self] saved in
                 do {
-                    try ScreenshotHistoryStore.shared.moveToSaved(ids: item.historyIDs, at: date)
-                } catch {
-                    // A failed history write must not leave only the project marked.
-                    try item.session?.updateProjectMetadata { metadata in
-                        if metadata.librarySavedAt == date { metadata.librarySavedAt = priorMark }
-                    }
-                    throw error
-                }
-            } catch { failures.append("\(item.title): \(error.localizedDescription)") }
-        }
-        if !failures.isEmpty { errorMessage = failures.joined(separator: "\n") }
-        refresh()
+                    _ = try ScreenshotHistoryStore.shared.changeSaved(changed, from: saved ? nil : date, to: saved ? date : nil)
+                } catch { self?.errorMessage = error.localizedDescription }
+                self?.refresh()
+            }
+            refresh()
+        } catch { errorMessage = error.localizedDescription }
     }
 
     /// The captures' right-click menu: the shared actions, then the

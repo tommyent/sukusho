@@ -36,6 +36,7 @@ final class ClipboardHistoryModel {
     @ObservationIgnored private var appIcons: [String: NSImage] = [:]
     @ObservationIgnored private var appIconLightness: [String: Bool] = [:]
     @ObservationIgnored private var loading: Task<Void, Never>?
+    @ObservationIgnored private var savedChange: Task<Void, Never>?
     @ObservationIgnored private let logger = Logger(subsystem: "com.tommyent.Sukusho", category: "Clipboard")
 
     private init() {}
@@ -262,13 +263,33 @@ final class ClipboardHistoryModel {
     func moveToSaved(_ entries: [ClipboardEntry]) {
         let ids = entries.filter(\.canMoveToSaved).map(\.id)
         guard !ids.isEmpty, let store else { return }
-        Task {
+        let date = Date()
+        enqueueSavedChange { [weak self] in
+            guard let self else { return }
             do {
-                try await store.moveToSaved(ids: ids)
-                librarySelectionIDs.subtract(ids)
-            }
-            catch { feedback.show(error.localizedDescription) }
-            refresh()
+                let changed = try await store.moveToSaved(ids: ids, at: date)
+                guard !changed.isEmpty else { return }
+                self.librarySelectionIDs.subtract(changed)
+                CaptureLibraryModel.shared.registerSavedUndo { [weak self] saved in
+                    self?.enqueueSavedChange {
+                        do {
+                            if saved { try await store.moveToSaved(ids: changed, at: date) }
+                            else { try await store.undoMoveToSaved(ids: changed, at: date) }
+                        } catch { self?.feedback.show(error.localizedDescription) }
+                        self?.refresh()
+                    }
+                }
+            } catch { self.feedback.show(error.localizedDescription) }
+            self.refresh()
+        }
+    }
+
+    /// Keep rapid Undo/Redo commands in menu order across the store actor hop.
+    private func enqueueSavedChange(_ operation: @escaping @MainActor () async -> Void) {
+        let previous = savedChange
+        savedChange = Task {
+            await previous?.value
+            await operation()
         }
     }
 
