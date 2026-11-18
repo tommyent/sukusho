@@ -106,20 +106,32 @@ extension CaptureLibraryModel {
         renameSession = nil
     }
 
-    func deleteSelection(_ cards: [LibrarySavedCard]) {
-        if cards.contains(where: { $0.captureID != nil }) { pendingTrash = cards }
-        else { ClipboardHistoryModel.shared.delete(cards.compactMap(\.clipEntry)) }
+    func deleteSelection(_ cards: [LibrarySavedCard], in window: NSWindow? = nil,
+                         finished: @escaping () -> Void = {}) {
+        guard !isBusy, let window = window ?? NSApp.keyWindow, window.attachedSheet == nil, !cards.isEmpty else { finished(); return }
+        let captureCount = cards.count { $0.captureID != nil }
+        let prompt = LibraryDeletionPrompt(captures: captureCount, clips: cards.count - captureCount)
+        let alert = NSAlert()
+        alert.messageText = prompt.title
+        alert.informativeText = prompt.message
+        if cards.compactMap(\.captureItem).contains(where: { AgentPromptIndex.shared.state(for: $0) != nil }) {
+            alert.informativeText += " Associated bug reports will also move to Trash."
+        }
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: prompt.action).hasDestructiveAction = true
+        alert.beginSheetModal(for: window) { response in
+            if response == .alertSecondButtonReturn { self.deleteConfirmed(cards) }
+            finished()
+        }
     }
 
-    var trashConfirmationTitle: String {
-        if pendingTrash.contains(where: { $0.clipID != nil }) { return "Delete \(pendingTrash.count) selected items?" }
-        return pendingTrash.count == 1 ? "Move capture to Trash?" : "Move \(pendingTrash.count) captures to Trash?"
-    }
-
-    func movePendingItemsToTrash() {
-        let targets = pendingTrash.compactMap(\.captureItem)
-        ClipboardHistoryModel.shared.delete(pendingTrash.compactMap(\.clipEntry))
-        pendingTrash = []
+    private func deleteConfirmed(_ cards: [LibrarySavedCard]) {
+        guard !isBusy else {
+            errorMessage = "Wait for the current Library operation to finish, then try deleting again."
+            return
+        }
+        let targets = cards.compactMap(\.captureItem)
+        ClipboardHistoryModel.shared.delete(cards.compactMap(\.clipEntry))
         guard !targets.isEmpty else { return }
         run("Moving to Trash…") {
             QuickLookPreviewPresenter.dismiss()

@@ -111,7 +111,7 @@ struct LibraryClipCollection: View {
                 clipboard.toggleSaved(entry)
             })
         }
-        items.append(LibraryMenuItem(title: selected.contains { $0.captureID != nil } ? "Delete…" : "Delete", startsGroup: true) { perform(.trash) })
+        items.append(LibraryMenuItem(title: "Delete…", startsGroup: true) { perform(.trash) })
         return items
     }
 }

@@ -195,7 +195,6 @@ final class CaptureLibraryModel {
     /// Every save starts a scan, and the one that lands replaces these with
     /// the current names, so a failed save can't linger here.
     @ObservationIgnored var savedNames: [String: String] = [:]
-    var pendingTrash: [LibrarySavedCard] = []
     /// A capture waiting on the Share to Cloud options sheet.
     var pendingCloudUpload: CaptureLibraryItem?
     /// The captures behind an open Convert to WebP… or Convert to JPEG… sheet.

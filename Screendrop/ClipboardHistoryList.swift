@@ -227,3 +227,23 @@ nonisolated enum ClipboardList {
         }
     }
 }
+
+nonisolated struct LibraryDeletionPrompt {
+    let captures: Int
+    let clips: Int
+
+    var action: String { clips == 0 ? "Move to Trash" : "Delete" }
+
+    var title: String {
+        if clips == 0 { return captures == 1 ? "Move capture to Trash?" : "Move \(captures) captures to Trash?" }
+        if captures == 0 { return clips == 1 ? "Delete this clipboard entry?" : "Delete \(clips) clipboard entries?" }
+        return "Delete \(captures + clips) selected items?"
+    }
+
+    var message: String {
+        var parts: [String] = []
+        if clips > 0 { parts.append("Selected entries will be deleted from clipboard history.") }
+        if captures > 0 { parts.append("Selected captures and their edits will move to Trash. Exported copies and cloud links will remain available.") }
+        return parts.joined(separator: " ")
+    }
+}

@@ -318,24 +318,6 @@ struct CaptureLibraryView: View {
         .onChange(of: history.items) { _, _ in model.refresh() }
         .onChange(of: projects.projects) { _, _ in model.refresh() }
         .onChange(of: model.sortOrder) { _, value in savedSort = value }
-        .alert(model.trashConfirmationTitle, isPresented: Binding(
-            get: { !model.pendingTrash.isEmpty },
-            set: { if !$0 { model.pendingTrash = [] } }
-        )) {
-            Button(model.pendingTrash.contains { $0.clipID != nil } ? "Delete" : "Move to Trash", role: .destructive) { model.movePendingItemsToTrash() }
-            Button("Cancel", role: .cancel) { model.pendingTrash = [] }
-        } message: {
-            if model.pendingTrash.contains(where: { $0.clipID != nil }) {
-                Text("Selected clips will be deleted from clipboard history. Any selected captures and their edits will move to Trash.")
-            } else if model.pendingTrash.contains(where: {
-                if case .capture(let item) = $0 { return AgentPromptIndex.shared.state(for: item) != nil }
-                return false
-            }) {
-                Text("The local files, their edits and their bug reports will move to Trash. Other exported copies and cloud links will remain available.")
-            } else {
-                Text("The local files and their edits will move to Trash. Exported copies and cloud links will remain available.")
-            }
-        }
         .sheet(item: $model.pendingConversion) { conversion in
             ImageConversionSheet(conversion: conversion) { model.actionFeedback.show($0) }
         }

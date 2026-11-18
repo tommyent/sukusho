@@ -735,6 +735,13 @@ struct ClipboardHistoryStoreTests {
 
 @Suite
 struct ClipboardListTests {
+    @Test func deletionRequestsConfirmationForEachSelectionKind() {
+        #expect(LibraryDeletionPrompt(captures: 1, clips: 0).action == "Move to Trash")
+        #expect(LibraryDeletionPrompt(captures: 0, clips: 1).title == "Delete this clipboard entry?")
+        #expect(LibraryDeletionPrompt(captures: 1, clips: 2).title == "Delete 3 selected items?")
+        #expect(LibraryDeletionPrompt(captures: 0, clips: 2).message.contains("clipboard history"))
+    }
+
     @Test func emptyResultsDescribeTheActiveQueryOrFilter() {
         #expect(ClipboardList.emptyResultsTitle(filter: nil, query: "") == nil)
         #expect(ClipboardList.emptyResultsTitle(filter: "Images", query: "") == "No images")

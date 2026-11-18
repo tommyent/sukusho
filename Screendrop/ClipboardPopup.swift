@@ -54,6 +54,7 @@ final class ClipboardPopupPresenter {
     private(set) var target: NSRunningApplication?
     private var panel: ClipboardPopupPanel?
     private var keyMonitor: Any?
+    private var confirmingDeletion = false
 
     private init() {}
 
@@ -113,10 +114,22 @@ final class ClipboardPopupPresenter {
         ClipboardHistoryModel.shared.deliver(entry, as: delivery, to: target) { [weak self] in self?.close() }
     }
 
+    private func confirmDelete(_ entry: ClipboardEntry) {
+        guard let panel, !confirmingDeletion else { return }
+        confirmingDeletion = true
+        CaptureLibraryModel.shared.deleteSelection([.clip(entry)], in: panel) { [weak self] in
+            self?.confirmingDeletion = false
+            self?.focusSearchField()
+        }
+    }
+
     private func makePanel() -> ClipboardPopupPanel {
         let panel = ClipboardPopupPanel(size: Self.size)
         panel.contentView = NSHostingView(rootView: ClipboardPopupView(state: state, presenter: self))
-        panel.onResign = { [weak self] in self?.close() }
+        panel.onResign = { [weak self] in
+            guard let self, !confirmingDeletion else { return }
+            close()
+        }
         PreviewWindowCaptureExclusion.shared.registerPrivate(window: panel)
         return panel
     }
@@ -125,7 +138,7 @@ final class ClipboardPopupPresenter {
     private func installKeyMonitor() {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, event.window === panel else { return event }
+            guard let self, !confirmingDeletion, event.window === panel else { return event }
             guard handle(event) else {
                 // A keystroke the popup doesn't handle is typing: it goes to the search field, focused first if
                 // something took the focus away, so a quick first word isn't lost.
@@ -148,7 +161,7 @@ final class ClipboardPopupPresenter {
         case (kVK_ANSI_C, [.command, .shift]): deliver(state.selected.map(ClipboardHistoryModel.shared.original), as: .copy)
         case (kVK_Return, [.control, .command]): deliver(state.selected, as: .pastePlain)
         case (kVK_ANSI_Period, [.command]): if let entry = state.selected { ClipboardHistoryModel.shared.toggleSaved(entry) }
-        case (kVK_ANSI_X, [.control]): if let entry = state.selected { ClipboardHistoryModel.shared.delete(entry) }
+        case (kVK_ANSI_X, [.control]), (kVK_Delete, [.command]): if let entry = state.selected { confirmDelete(entry) }
         case (kVK_ANSI_K, [.command]): showActions()
         default:
             let digits = [kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3, kVK_ANSI_4, kVK_ANSI_5,
@@ -182,7 +195,7 @@ final class ClipboardPopupPresenter {
         if entry.kind == .image { add("Open in Editor") { [weak self] in self?.close(); model.openInEditor(entry) } }
         if entry.kind == .text { add("Save as Snippet") { model.saveAsSnippet(entry) } }
         menu.addItem(.separator())
-        add("Delete Entry", "x", .control) { model.delete(entry) }
+        add("Delete Entry…", "x", .control) { [weak self] in self?.confirmDelete(entry) }
         // The point is the menu's top-left: put its bottom just above the 46 pt footer, its right edge
         // under the Actions button's, so it opens upward inside the popup.
         let top = 46 + 4 + menu.size.height
