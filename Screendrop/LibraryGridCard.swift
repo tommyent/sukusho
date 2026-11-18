@@ -76,8 +76,9 @@ struct LibraryGridCard<Picture: View, Caption: View>: View {
         case .versions(let n): compactLabel("\(n)", symbol: "square.stack", density: density).cardPill().help("\(n) versions")
         case .duration(let time): Label(time, systemImage: "play.fill").cardPill().monospacedDigit()
         case .kind(let kind):
+            let colors = CardMark.kindColors(in: colorScheme)
             Image(systemName: kind.symbol)
-                .cardPill(fill: colorScheme == .dark ? CardMark.darkKindFill : CardMark.fill)
+                .cardPill(colors.symbol, fill: colors.fill)
                 .accessibilityLabel(kind.rawValue).help(kind.rawValue.capitalized)
         case .gallery(let n): Label("\(n)", systemImage: "photo.stack").cardPill().help("\(n) images")
         }

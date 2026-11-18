@@ -4,15 +4,22 @@
 //
 
 import AppKit
+import SwiftUI
 
-/// Below the macOS Sukusho is built and tested on, launch says so once, as Transmit and other
-/// Mac apps do: the app still runs, and features newer than that macOS may be missing. Never
-/// shown on the tested macOS or later, and never refuses to launch (the owner, 2026-11-16).
+/// A modeless notice leaves the Library and clipboard monitor available while it is open.
 enum UnsupportedOSNotice {
+    private final class Panel: NSPanel {
+        override func close() {
+            super.close()
+            UnsupportedOSNotice.panel = nil
+        }
+    }
+
+    private static var panel: Panel?
     static let dismissedKey = "unsupportedOSNotice.dismissedForVersion"
     #if DEBUG
     /// A Debug build pretends to run on this version, so the notice can be seen on macOS 27:
-    /// `defaults write <bundle id> unsupportedOSNotice.previewVersion 26.5.1`.
+    /// `defaults write <bundle id> unsupportedOSNotice.previewVersion 26.5.0`.
     static let previewKey = "unsupportedOSNotice.previewVersion"
     #endif
 
@@ -21,18 +28,43 @@ enum UnsupportedOSNotice {
         guard AppVersion.showsUnsupportedNotice(on: version, dismissedFor: defaults.string(forKey: dismissedKey)) else {
             return
         }
-        let name = AppVersion.macOSString(version)
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "Sukusho is built and tested on macOS \(AppVersion.testedMacOSMajor)"
-        alert.informativeText = "You’re running macOS \(name), so some features may be missing or may not work."
-        alert.addButton(withTitle: "OK")
-        alert.showsSuppressionButton = true
-        alert.suppressionButton?.title = "Don’t show again for macOS \(version.majorVersion)"
-        NSApp.activate()
-        alert.runModal()
-        if alert.suppressionButton?.state == .on {
-            defaults.set("\(version.majorVersion)", forKey: dismissedKey)
+        guard panel == nil else { return }
+        let window = Panel(contentRect: .zero, styleMask: [.titled, .closable], backing: .buffered, defer: true)
+        window.title = "Unsupported macOS version"
+        window.isReleasedWhenClosed = false
+        window.contentViewController = NSHostingController(rootView: Notice(version: version, defaults: defaults) {
+            [weak window] in window?.close()
+        })
+        window.center()
+        panel = window
+        window.orderFront(nil)
+    }
+
+    private struct Notice: View {
+        let version: OperatingSystemVersion
+        let defaults: UserDefaults
+        let close: () -> Void
+        @State private var suppress = false
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Sukusho has been tested on macOS \(AppVersion.testedMacOS.map(AppVersion.macOSString).formatted(.list(type: .and))).")
+                    .font(.headline)
+                Text("You’re running macOS \(AppVersion.macOSString(version)). Some features may be unavailable.")
+                Toggle("Don’t show again for macOS \(version.majorVersion)", isOn: $suppress)
+                    .toggleStyle(.checkbox)
+                    .onChange(of: suppress) { _, checked in
+                        if checked { defaults.set(String(version.majorVersion), forKey: UnsupportedOSNotice.dismissedKey) }
+                        else { defaults.removeObject(forKey: UnsupportedOSNotice.dismissedKey) }
+                    }
+                HStack {
+                    Spacer()
+                    Button("OK", action: close).keyboardShortcut(.defaultAction)
+                }
+            }
+            .frame(width: 330, alignment: .leading)
+            .padding(20)
+            .fixedSize()
         }
     }
 

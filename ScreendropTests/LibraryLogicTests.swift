@@ -1,7 +1,20 @@
 import Foundation
+import SwiftUI
 import Testing
 
 struct LibraryLogicTests {
+    @Test func clipboardKindPillsHaveContrastingSymbolsInBothAppearances() {
+        func luminance(_ color: Color) -> Float {
+            let c = color.resolve(in: EnvironmentValues())
+            return 0.2126 * c.linearRed + 0.7152 * c.linearGreen + 0.0722 * c.linearBlue
+        }
+        let dark = CardMark.kindColors(in: .dark)
+        let light = CardMark.kindColors(in: .light)
+        #expect((luminance(dark.symbol) + 0.05) / (luminance(dark.fill) + 0.05) >= 3)
+        #expect((luminance(light.fill) + 0.05) / (luminance(light.symbol) + 0.05) >= 3)
+        #expect(light.fill == CardMark.fill && light.symbol == CardMark.text)
+    }
+
     @Test func clipboardKindSymbolsKeepTheirSpokenNames() {
         for (kind, word, symbol): (LibraryClipKind, String, String) in [
             (.text, "text", "textformat"), (.code, "code", "chevron.left.forwardslash.chevron.right"), (.link, "link", "link")

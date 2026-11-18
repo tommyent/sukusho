@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 /// How the Library's grids lay out cards, Finder-style: cards keep one width and a wider window fits more
 /// columns. The gaps grow with the cards, from a fifth to half a card's width, so cards breathe at every slider
@@ -75,6 +76,21 @@ nonisolated struct LibraryDisplayOrder {
         guard path.count == 2, starts.indices.contains(path.section) else { return nil }
         let index = starts[path.section] + path.item
         return paths.indices.contains(index) && paths[index] == path ? index : nil
+    }
+}
+
+/// Badge style B (owner’s choice, 2026-10-13) uses a near-opaque white ground,
+/// a hairline and a small shadow to keep marks visible over thumbnails.
+/// In dark appearance, the clipboard kind pill uses a dark gray ground and a near-white symbol.
+enum CardMark {
+    static let fill = Color.white.opacity(0.94)
+    static let text = Color(red: 0x1D / 255, green: 0x1D / 255, blue: 0x1F / 255)
+    static let idle = Color(red: 0x48 / 255, green: 0x48 / 255, blue: 0x4A / 255)
+    /// #1E9E4A: 3.5:1 on the white ground, where systemGreen is 2.2:1.
+    static let green = Color(red: 0x1E / 255, green: 0x9E / 255, blue: 0x4A / 255)
+
+    static func kindColors(in appearance: ColorScheme) -> (symbol: Color, fill: Color) {
+        appearance == .dark ? (Color(white: 0.96), idle) : (text, fill)
     }
 }
 

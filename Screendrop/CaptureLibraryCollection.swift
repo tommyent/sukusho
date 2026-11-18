@@ -788,18 +788,6 @@ struct CardCloudBadge: View {
     }
 }
 
-/// Badge style B (owner’s choice, 2026-10-13) uses a near-opaque white ground,
-/// a hairline and a small shadow to keep marks visible over thumbnails.
-/// In dark appearance, the clipboard kind pill uses light gray.
-enum CardMark {
-    static let fill = Color.white.opacity(0.94)
-    static let darkKindFill = Color(red: 0.8, green: 0.8, blue: 0.8)
-    static let text = Color(red: 0x1D / 255, green: 0x1D / 255, blue: 0x1F / 255)
-    static let idle = Color(red: 0x48 / 255, green: 0x48 / 255, blue: 0x4A / 255)
-    /// #1E9E4A: 3.5:1 on the white ground, where systemGreen is 2.2:1.
-    static let green = Color(red: 0x1E / 255, green: 0x9E / 255, blue: 0x4A / 255)
-}
-
 extension View {
     func cardMark<S: InsettableShape>(_ shape: S, fill: Color = CardMark.fill) -> some View {
         environment(\.colorScheme, .light)
