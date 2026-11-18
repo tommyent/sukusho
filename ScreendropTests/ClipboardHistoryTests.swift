@@ -535,6 +535,61 @@ struct ClipboardHistoryStoreTests {
         guard case .bumped = try await upgraded.record(image(bytes, width: 400, height: 240)) else {
             Issue.record("Identical pixels should reuse the indexed copy"); return
         }
+        let blob = try #require(migrated.first?.imageURL)
+        try await upgraded.delete(migrated[0].id)
+        let survivor = try #require(try await upgraded.entries().first)
+        #expect(survivor.id == migrated[1].id && survivor.imageURL == blob)
+        #expect(try Data(contentsOf: blob) == bytes)
+        try await upgraded.delete(survivor.id)
+        #expect(!FileManager.default.fileExists(atPath: blob.path))
+    }
+
+    @Test func upgradeKeepsSavedReferencesArchivedWithIndependentBytes() async throws {
+        let old = try store()
+        let reference = try capture(6, named: "Saved.png")
+        try await old.record(reference, at: start)
+        try executeLegacySQL("UPDATE entries SET pinned_at = 1234; PRAGMA user_version = 1;")
+        let legacy = try #require(try await old.entries().first)
+        #expect(legacy.pinnedAt != nil && legacy.imageURL == nil)
+
+        let upgraded = try store()
+        #expect(try await upgraded.sweep(now: start + day, retention: 1, maxBytes: 0) == 0)
+        let saved = try #require(try await upgraded.entries().first)
+        #expect(saved.id == legacy.id && saved.pinnedAt == legacy.pinnedAt)
+        #expect(saved.libraryPath == reference.libraryPath && saved.hash == reference.hash)
+        try Self.picture(7).write(to: URL(fileURLWithPath: try #require(saved.libraryPath)))
+        #expect(try Data(contentsOf: #require(saved.imageURL)) == Self.picture(6))
+        #expect(try await upgraded.totalBytes() == 0)
+    }
+
+    @Test func collidingVersionHashesKeepBothVersionsAndTheirOrder() async throws {
+        let old = try store()
+        let reference = try capture(5, named: "Capture.png")
+        try await old.record(reference)
+        let path = try #require(reference.libraryPath)
+        let bytes = Self.picture(9)
+        for suffix in [".a.png", ".b.png"] {
+            try bytes.write(to: URL(fileURLWithPath: path + suffix))
+        }
+        try executeLegacySQL("""
+            INSERT INTO versions(entry_id, hash, library_path, copied_at)
+            SELECT id, 'old-a', library_path || '.a.png', 1 FROM entries;
+            INSERT INTO versions(entry_id, hash, library_path, copied_at)
+            SELECT id, 'old-b', library_path || '.b.png', 2 FROM entries;
+            PRAGMA user_version = 1;
+            """)
+
+        let upgraded = try store()
+        let versions = try #require(try await upgraded.entries().first).earlierVersions
+        #expect(versions.map(\.libraryPath) == [path + ".b.png", path + ".a.png"])
+        #expect(versions.map(\.copiedAt) == [Date(timeIntervalSince1970: 2), Date(timeIntervalSince1970: 1)])
+        #expect(Set(versions.map(\.hash)).count == 2)
+        #expect(versions.contains { $0.hash == ClipboardPasteboardReader.digest(bytes) })
+        let blob = try #require(versions.first?.imageURL)
+        #expect(versions.allSatisfy { $0.imageURL == blob && $0.byteSize == bytes.count })
+        #expect(try Data(contentsOf: blob) == bytes)
+        let reopened = try store()
+        #expect(try await reopened.entries().first?.earlierVersions == versions)
     }
 
     @Test func copyingTheSameImageFromHistoryAddsItsEditorLink() async throws {
