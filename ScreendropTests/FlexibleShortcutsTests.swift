@@ -253,6 +253,24 @@ struct FlexibleShortcutsTests {
                 "no double tap across the gap")
     }
 
+    /// Sol's re-review, 2: Settings' recorder starts knowing nothing too. E held since before Record was clicked: a
+    /// Right ⌥ tap before the keyboard is seen quiet isn't recorded, nor one after E has repeated. With key repeat off E
+    /// sends nothing at all, so a tap after the stretch is recorded: no event can show that E is down.
+    @Test func theRecorderStartsWithoutKnowingWhatsDown() {
+        var detector = ModifierTapDetector.startingAt(5, quiet: 0.7)
+        #expect(detector.isUnsure)
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 5.3)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 5.4).isEmpty)
+
+        var repeating = ModifierTapDetector.startingAt(5, quiet: 0.7)
+        repeating.keyDown(isRepeat: true, at: 5.5)
+        _ = repeating.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 5.8)
+        #expect(repeating.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 5.9).isEmpty)
+
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 5.8)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 5.9) == [.once(keyCode: kVK_RightOption)])
+    }
+
     /// The stretch is the key-repeat delay and two repeats, so a held key has repeated by then; with key repeat off (or
     /// nearly) it's 2.5 s.
     @Test func theQuietStretchFollowsKeyRepeat() {

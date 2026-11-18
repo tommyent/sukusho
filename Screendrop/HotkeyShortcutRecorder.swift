@@ -37,7 +37,8 @@ final class HotkeyShortcutRecorder {
         stop()
         isRecording = true
         rejection = nil
-        taps = ModifierTapDetector()
+        // Like the event tap: a key held since before Record was clicked was never seen going down (Sol's re-review).
+        taps = .startingAt(ProcessInfo.processInfo.systemUptime)
         HotkeyManager.shared.pauseForRecording { [weak self] in self?.stop() }
         resignObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didResignKeyNotification, object: nil, queue: .main

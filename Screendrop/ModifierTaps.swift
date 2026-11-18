@@ -68,6 +68,14 @@ struct ModifierTapDetector {
         min(repeatDelay + 2 * repeatInterval, 2.5)
     }
 
+    /// Watching from `time`, with nothing known of what's down: how the event tap and the Settings recorder both start.
+    static func startingAt(_ time: TimeInterval, quiet: TimeInterval = quietTime()) -> ModifierTapDetector {
+        var detector = ModifierTapDetector()
+        detector.quiet = quiet
+        detector.eventsMissed(at: time)
+        return detector
+    }
+
     /// Something else happened (a key, a click, a scroll, a shortcut): neither the modifier held now nor a first tap counts.
     mutating func interrupt() {
         pressed = nil
