@@ -522,7 +522,8 @@ struct LibraryCellContent: View {
                             CaptureLibraryThumbnail(item: item, showsTopOfTall: true)
                         } caption: {
                             LibraryGridCaption(date: item.createdAt, bundleID: item.source?.bundleIdentifier,
-                                               saveAction: item.isSaved ? nil : { CaptureLibraryModel.shared.moveToSaved([item]) }, capture: item) {
+                                               saveAction: item.isSaved ? nil : { CaptureLibraryModel.shared.moveToSaved([item]) },
+                                               saveDisabled: CaptureLibraryModel.shared.isBusy, capture: item) {
                                 if isRenaming(item) {
                                     CaptureNameField(id: item.id, location: .card, font: .system(size: 13, weight: .medium),
                                                      placeholder: item.gridTitle)
@@ -559,7 +560,7 @@ struct LibraryCellContent: View {
                 .accessibilityActions {
                     Button("Open") { act(.edit, on: item) }
                     Button("Quick Look") { act(.preview, on: item) }
-                    if layout == .grid, !item.isSaved {
+                    if layout == .grid, !item.isSaved, !CaptureLibraryModel.shared.isBusy {
                         Button("Move to Saved") { CaptureLibraryModel.shared.moveToSaved([item]) }
                     }
                     Button("Rename") { CaptureLibraryModel.shared.beginRename(item, at: .card) }

@@ -94,6 +94,7 @@ struct LibraryGridCaption<Title: View>: View {
     let date: Date
     var bundleID: String?
     var saveAction: (() -> Void)?
+    var saveDisabled = false
     @State private var hoveringStar = false
     var capture: CaptureLibraryItem?
     @ViewBuilder let title: () -> Title
@@ -124,6 +125,7 @@ struct LibraryGridCaption<Title: View>: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .disabled(saveDisabled)
                     .onHover { hoveringStar = $0 }
                     .help("Move to Saved")
                     .accessibilityLabel("Move to Saved")
