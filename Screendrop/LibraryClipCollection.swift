@@ -43,21 +43,22 @@ struct LibraryClipCollection: View {
                 case .clip(let entry):
                     AnyView(clipView(entry, selected: selected))
                 }
-            }, menu: { _ in menu() }, onAction: perform)
+            }, menu: { _ in menu() }, onReturn: {
+                perform(chosen.contains { $0.clipID != nil } ? .copy : .rename)
+            }, onAction: perform)
             .onChange(of: selection.wrappedValue) { _, _ in
                 if QuickLookPreviewPresenter.followsLibrary { QuickLookPreviewPresenter.follow(urls: chosen.flatMap(\.previewURLs)) }
             }
     }
 
     @ViewBuilder private func clipView(_ entry: ClipboardEntry, selected: Bool) -> some View {
-        let pick = { selection.wrappedValue = ["clip:\(entry.id)"] }
         if layout == .list {
-            ClipboardListRow(entry: entry, model: clipboard, isSelected: selected, select: pick)
+            ClipboardListRow(entry: entry, model: clipboard, isSelected: selected)
         } else {
             GeometryReader { geometry in
                 ClipboardCard(entry: entry, model: clipboard,
                               faceHeight: max(1, geometry.size.height - LibraryGridMetrics.pictureInset - LibraryGridMetrics.captionHeight),
-                              isSelected: selected, select: pick)
+                              isSelected: selected)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
@@ -75,7 +76,9 @@ struct LibraryClipCollection: View {
         case .edit:
             guard selected.count == 1 else { return }
             switch selected[0] {
-            case .clip(let entry): clipboard.openLibraryEntry(entry)
+            case .clip(let entry):
+                if entry.kind == .image { clipboard.openInEditor(entry) }
+                else { library.copySelection(selected) }
             case .capture: library.perform(.edit)
             }
         case .copy, .copyOriginal:
@@ -101,7 +104,7 @@ struct LibraryClipCollection: View {
                           LibraryMenuItem(title: "Convert to JPEG…") { clipboard.convert(entry, to: .jpeg) }]
             }
             if entry.kind == .text {
-                items.append(LibraryMenuItem(title: "Copy as Plain Text") { clipboard.deliver(entry, as: .copyPlain, to: nil) })
+                items.append(LibraryMenuItem(title: "Copy as Plain Text") { library.copySelection([.clip(entry)], plain: true) })
                 items.append(LibraryMenuItem(title: "Save as Snippet") { clipboard.saveAsSnippet(entry) })
             }
             items.append(LibraryMenuItem(title: entry.pinnedAt == nil ? "Save" : "Remove from Saved", startsGroup: true) {

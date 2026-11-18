@@ -973,7 +973,7 @@ struct ClipboardWriterTests {
         }
     }
 
-    @Test func mixedClipPayloadKeepsOrderAndImageHasFileAndPixels() throws {
+    @Test func mixedClipPayloadKeepsOrderAndImageHasFileAndPixels() async throws {
         let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -981,7 +981,10 @@ struct ClipboardWriterTests {
         let pixels = ClipboardHistoryStoreTests.picture(2)
         try pixels.write(to: image)
         let entries = [entry(.snippet, "Snippet"), entry(.image, nil, image: image), entry(.files, "/tmp/a\n/tmp/b")]
-        let items = try entries.flatMap { try #require(ClipboardWriter.items(for: $0, richText: [:], plain: false)) }
+        var items: [NSPasteboardItem] = []
+        for entry in entries {
+            items += try await ClipboardWriter.libraryItems(for: entry, richText: [:], plain: false, includeTIFF: false)
+        }
         try withPasteboard { board in
             #expect(board.writeObjects(items))
             let written = try #require(board.pasteboardItems)
@@ -992,6 +995,17 @@ struct ClipboardWriterTests {
             #expect(written[2].string(forType: .fileURL) == URL(fileURLWithPath: "/tmp/a").absoluteString)
             #expect(written[3].string(forType: .fileURL) == URL(fileURLWithPath: "/tmp/b").absoluteString)
         }
+    }
+
+    @Test func libraryImageUsesSavedEditsAndFallsBackToItsClipboardCopy() throws {
+        let original = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        let edited = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        var clip = entry(.image, nil, image: original)
+        clip.libraryPath = edited.path
+        #expect(clip.libraryImageURL == original)
+        try Data().write(to: edited)
+        defer { try? FileManager.default.removeItem(at: edited) }
+        #expect(clip.libraryImageURL == edited)
     }
 
     @Test func aMissingImageFileIsNotWritten() {

@@ -49,6 +49,13 @@ nonisolated struct ClipboardEntryVersion: Sendable, Equatable {
 }
 
 extension ClipboardEntry {
+    /// The Library opens the editable capture once a clip has been imported. Its original blob
+    /// still serves popup paste-back, and is the fallback if the capture was later removed.
+    nonisolated var libraryImageURL: URL? {
+        if let libraryPath, FileManager.default.fileExists(atPath: libraryPath) { return URL(fileURLWithPath: libraryPath) }
+        return imageURL
+    }
+
     /// The size to show. A clip of a Sukusho capture keeps no copy of its own: it is the capture's file, which the
     /// optimizer or an edit may have rewritten since, and that file is what pastes (Fable 15 #2: "1.9 MB" for a
     /// 1.3 MB file after the copy-after-capture swap).

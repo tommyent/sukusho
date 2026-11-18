@@ -128,7 +128,7 @@ struct ClipboardCard: View {
     let model: ClipboardHistoryModel
     let faceHeight: CGFloat
     let isSelected: Bool
-    let select: () -> Void
+    @Environment(\.selectLibraryCell) private var select
     @State private var isHovering = false
     @Environment(\.displayScale) private var displayScale
 
@@ -195,7 +195,7 @@ struct ClipboardCard: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { select() }
-        .accessibilityAction(named: "Copy") { model.deliver(entry, as: .copy, to: nil) }
+        .accessibilityAction(named: "Copy") { select(); CaptureLibraryModel.shared.copySelection([.clip(entry)]) }
         .accessibilityAction(named: "Quick Look") {
             let followed = QuickLookPreviewPresenter.followsLibrary && !isSelected
             select()
@@ -211,7 +211,7 @@ struct ClipboardCard: View {
     @ViewBuilder private var face: some View {
         switch entry.kind {
         case .image:
-            if let url = entry.imageFileURL {
+            if let url = entry.libraryImageURL {
                 // Whole, as capture cards show an image: filling cropped the sides off text (owner, 2026-11-16).
                 // A much taller one shows its top at full width instead of a thin strip.
                 let tall = TallCapture.isTall(width: entry.pixelWidth, height: entry.pixelHeight)
@@ -258,7 +258,7 @@ struct ClipboardListRow: View {
     let entry: ClipboardEntry
     let model: ClipboardHistoryModel
     let isSelected: Bool
-    let select: () -> Void
+    @Environment(\.selectLibraryCell) private var select
     @State private var isHovering = false
 
     var body: some View {
@@ -284,7 +284,7 @@ struct ClipboardListRow: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { select() }
-        .accessibilityAction(named: "Copy") { model.deliver(entry, as: .copy, to: nil) }
+        .accessibilityAction(named: "Copy") { select(); CaptureLibraryModel.shared.copySelection([.clip(entry)]) }
         .accessibilityAction(named: "Quick Look") {
             let followed = QuickLookPreviewPresenter.followsLibrary && !isSelected
             select()
@@ -312,7 +312,7 @@ struct ClipboardLibraryInspector: View {
                             .buttonStyle(.plain)
                             .help("Quick Look")
                         HStack {
-                            Button("Copy") { model.deliver(entry, as: .copy, to: nil) }.buttonStyle(.borderedProminent)
+                            Button("Copy") { CaptureLibraryModel.shared.copySelection([.clip(entry)]) }.buttonStyle(.borderedProminent)
                             Button(entry.pinnedAt == nil ? "Save" : "Saved", systemImage: entry.pinnedAt == nil ? "star" : "star.fill") {
                                 model.toggleSaved(entry)
                             }
@@ -363,7 +363,7 @@ private struct SnippetEditor: View {
                 .background(.background, in: RoundedRectangle(cornerRadius: DS.Radius.m))
                 .overlay(RoundedRectangle(cornerRadius: DS.Radius.m).strokeBorder(.separator, lineWidth: 0.5))
             HStack {
-                Button("Copy") { model.deliver(entry, as: .copy, to: nil) }.buttonStyle(.borderedProminent)
+                Button("Copy") { CaptureLibraryModel.shared.copySelection([.clip(entry)]) }.buttonStyle(.borderedProminent)
                 Spacer()
                 Button("Delete", role: .destructive) { CaptureLibraryModel.shared.deleteSelection([.clip(entry)]) }
             }
@@ -530,7 +530,7 @@ private struct ClipboardVersionList: View {
                             .font(DS.TypeScale.label).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer(minLength: 0)
-                    Button("Copy") { model.deliver(earlier, as: .copy, to: nil) }.controlSize(.small)
+                    Button("Copy") { CaptureLibraryModel.shared.copySelection([.clip(earlier)]) }.controlSize(.small)
                 }
             }
         }

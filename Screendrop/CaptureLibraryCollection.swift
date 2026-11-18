@@ -58,6 +58,7 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
     let menu: (Int) -> [LibraryMenuItem]
     /// The menu for a right-click between the cards, like Finder's.
     var backgroundMenu: () -> [LibraryMenuItem] = { [] }
+    var onReturn: (() -> Void)? = nil
     let onAction: (CaptureLibraryAction) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -81,6 +82,11 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
             guard let coordinator, !coordinator.parent.isBusy else { return }
             if action == .edit { coordinator.selectionChanged() }
             coordinator.parent.onAction(action)
+        }
+        collection.returnPressed = { [weak coordinator = context.coordinator] in
+            guard let coordinator, !coordinator.parent.isBusy else { return }
+            if let onReturn = coordinator.parent.onReturn { onReturn() }
+            else { coordinator.parent.onAction(.rename) }
         }
         collection.contextMenuProvider = { [weak coordinator = context.coordinator] event in
             coordinator?.menu(for: event)
@@ -167,7 +173,14 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
             guard let cell = item as? LibraryCollectionItem, let index = order.index(at: indexPath), parent.items.indices.contains(index) else { return }
             let entry = parent.items[index]
             let draw = parent.cell
-            cell.configure { selected, onTitleFrame in draw(entry, selected, onTitleFrame) }
+            cell.configure { [weak self] selected, onTitleFrame in
+                AnyView(draw(entry, selected, onTitleFrame).environment(\.selectLibraryCell) { [weak self] in
+                    guard let self, let collection, let index = indices[entry.id] else { return }
+                    collection.window?.makeFirstResponder(collection)
+                    collection.selectionIndexPaths = [order.paths[index]]
+                    selectionChanged()
+                })
+            }
         }
 
         func collectionView(_ collectionView: NSCollectionView, didSelectItemsAt indexPaths: Set<IndexPath>) {
@@ -267,6 +280,7 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
 }
 
 final class LibraryCollectionView: NSCollectionView, NSUserInterfaceValidations {
+    var returnPressed: (() -> Void)?
     var command: ((CaptureLibraryAction) -> Void)?
     var contextMenuProvider: ((NSEvent) -> NSMenu?)?
     var mouseSelectionHandler: ((NSEvent) -> Void)?
@@ -291,10 +305,12 @@ final class LibraryCollectionView: NSCollectionView, NSUserInterfaceValidations 
     /// Finder. It waits out the double-click interval first, so a double
     /// click still opens the editor, and a click that selects a capture never does.
     override func mouseDown(with event: NSEvent) {
+        guard visibleRect.contains(convert(event.locationInWindow, from: nil)) else { return }
         pendingRename?.cancel()
         pendingRename = nil
         let clicked = indexPathForItem(at: convert(event.locationInWindow, from: nil))
         let wasOnlySelection = clicked.map { selectionIndexPaths == [$0] } ?? false
+        window?.makeFirstResponder(self)
         mouseSelectionHandler?(event)
         super.mouseDown(with: event)
         if event.clickCount == 2 {
@@ -333,7 +349,7 @@ final class LibraryCollectionView: NSCollectionView, NSUserInterfaceValidations 
         if flags.isDisjoint(with: [.control, .option]), event.keyCode == 51 { command?(.trash); return }
         if !flags.contains(.command), !flags.contains(.control), !flags.contains(.option) {
             if event.keyCode == 49 { command?(.preview); return }
-            if event.keyCode == 36 { command?(.rename); return }
+            if event.keyCode == 36 || event.keyCode == 76 { returnPressed?(); return }
         }
         super.keyDown(with: event)
     }
@@ -461,7 +477,12 @@ final class LibraryCollectionItem: NSCollectionViewItem {
     }
 }
 
+extension EnvironmentValues {
+    @Entry var selectLibraryCell: () -> Void = {}
+}
+
 struct LibraryCellContent: View {
+    @Environment(\.selectLibraryCell) private var selectCell
     let item: CaptureLibraryItem?
     let selected: Bool
     var onTitleFrame: (CGRect) -> Void = { _ in }
@@ -500,6 +521,7 @@ struct LibraryCellContent: View {
                     + (item.tags.isEmpty ? "" : ", tags: \(item.tags.joined(separator: ", "))")
                     + agentPromptDescription(item))
                 .accessibilityAddTraits(selected ? [.isSelected] : [])
+                .accessibilityAction { selectCell() }
                 .accessibilityActions {
                     Button("Open") { act(.edit, on: item) }
                     Button("Quick Look") { act(.preview, on: item) }
@@ -523,8 +545,8 @@ struct LibraryCellContent: View {
 
     private func act(_ action: CaptureLibraryAction, on item: CaptureLibraryItem) {
         let model = CaptureLibraryModel.shared
-        if LibrarySavedModel.shared.isShown { ClipboardHistoryModel.shared.librarySelectionIDs = [] }
         let followed = QuickLookPreviewPresenter.followsLibrary && model.selection != [item.id]
+        selectCell()
         model.selection = [item.id]
         // An open Quick Look has already followed the selection; .preview would toggle it closed.
         if action == .preview, followed { return }

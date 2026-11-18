@@ -330,7 +330,7 @@ final class ClipboardHistoryModel {
             .replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
         switch entry.kind {
         case .image:
-            guard let url = entry.imageFileURL else { return [] }
+            guard let url = entry.libraryImageURL else { return [] }
             // A Library capture's own name is shown as it is. History keeps images under their hash, which
             // Quick Look would put in its title bar: a link named after the entry shows its title instead.
             guard entry.libraryPath == nil else { return [url] }
@@ -387,12 +387,6 @@ final class ClipboardHistoryModel {
     /// outside the Library, which becomes a capture only on its first saved edit, dated when it was copied and
     /// credited to its app, and the clip is linked to it then (Fable #5: opening alone added it to the Library, dated
     /// the moment Edit was clicked).
-    func openLibraryEntry(_ entry: ClipboardEntry) {
-        librarySelection = entry.id
-        if entry.kind == .image { openInEditor(entry) }
-        else { deliver(entry, as: .copy, to: nil) }
-    }
-
     func openInEditor(_ entry: ClipboardEntry) {
         guard entry.kind == .image else { return }
         if let capture = entry.libraryPath.map({ URL(fileURLWithPath: $0) }),

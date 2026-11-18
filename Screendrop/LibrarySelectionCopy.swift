@@ -2,7 +2,7 @@ import AppKit
 
 extension CaptureLibraryModel {
     /// Preserve display order through preparation. One selection publishes once, including mixed Saved cards.
-    func copySelection(_ cards: [LibrarySavedCard], original: Bool) {
+    func copySelection(_ cards: [LibrarySavedCard], original: Bool = false, plain: Bool = false) {
         guard !cards.isEmpty else { return }
         let initialChange = NSPasteboard.general.changeCount
         run("Copying…") {
@@ -18,18 +18,9 @@ extension CaptureLibraryModel {
                 switch card {
                 case .capture(let capture): captures.append(capture)
                 case .clip(let entry):
-                    if entry.kind == .image, let url = entry.imageFileURL {
-                        let item = try await ScreenshotClipboardImage.item(from: url, dataType: ClipboardWriter.imageType(for: url),
-                                                                          includeTIFF: ScreendropPreferences.copyTIFF && cards.count == 1)
-                        ClipboardWriter.mark(item, source: entry.sourceBundleID)
-                        clipItems[card.id] = [item]
-                    } else {
-                        let rich = try await ClipboardMonitor.shared.store?.richText(for: entry.id) ?? [:]
-                        guard let items = ClipboardWriter.items(for: entry, richText: rich, plain: false) else {
-                            throw CocoaError(.fileNoSuchFile)
-                        }
-                        clipItems[card.id] = items
-                    }
+                    let rich = try await ClipboardMonitor.shared.store?.richText(for: entry.id) ?? [:]
+                    clipItems[card.id] = try await ClipboardWriter.libraryItems(for: entry, richText: rich, plain: plain,
+                        includeTIFF: ScreendropPreferences.copyTIFF && cards.count == 1)
                 }
             }
             guard NSPasteboard.general.changeCount == initialChange else { return }
