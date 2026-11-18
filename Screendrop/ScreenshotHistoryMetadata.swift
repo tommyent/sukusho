@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Keep an index this build cannot fully read intact, even when later mutations try to save it.
@@ -133,6 +134,49 @@ nonisolated struct SavedMarksFile {
     }
 }
 
+/// Change only the Saved field. Other Studio metadata, including keys from newer builds, stays in the project.
+enum RecordingLibraryMark {
+    @discardableResult
+    static func change(at url: URL, from expected: Date?, to newDate: Date?) throws -> Bool {
+        var project: [String: Any]
+        var original: stat?
+        do {
+            let data = try Data(contentsOf: url)
+            guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            project = object
+            var attributes = stat()
+            guard stat(url.path, &attributes) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+            original = attributes
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            guard newDate != nil else { return false }
+            project = [:]
+        }
+        let formatter = ISO8601DateFormatter()
+        // Studio writes whole seconds. An explicitly different project mark belongs to another save.
+        if let value = project["librarySavedAt"] {
+            guard let stamp = value as? String else { throw CocoaError(.fileReadCorruptFile) }
+            guard let expected, stamp == formatter.string(from: expected) else { return false }
+        } else if expected != nil { return false }
+        project["librarySavedAt"] = newDate.map { formatter.string(from: $0) }
+        let data = try JSONSerialization.data(withJSONObject: project, options: [.prettyPrinted, .sortedKeys])
+        // Modified order includes project.json. Saving a card isn't a content edit.
+        let temporary = url.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString).tmp")
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        if original != nil { try FileManager.default.copyItem(at: url, to: temporary) }
+        try data.write(to: temporary)
+        let times = [original?.st_atimespec ?? timespec(), original?.st_mtimespec ?? timespec()]
+        guard utimensat(AT_FDCWD, temporary.path, times, 0) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        if original != nil {
+            guard rename(temporary.path, url.path) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        } else {
+            try FileManager.default.moveItem(at: temporary, to: url)
+        }
+        return true
+    }
+}
+
 /// History and its Saved marks, read and written together.
 struct MarkedHistory<Row: SavedMarkRow> {
     let historyURL: URL
@@ -208,5 +252,47 @@ struct MarkedHistory<Row: SavedMarkRow> {
 
     private static func problem(_ error: any Error) -> String {
         "Saved marks couldn't be written (\(error.localizedDescription)). Saved changes aren't kept until that's fixed."
+    }
+}
+
+extension MarkedHistory where Row == ScreenshotHistoryItem {
+    /// Run before the first scan. Keep the sidecar marks until both embedded copies are cleared, so a failed
+    /// write can retry on the next launch without losing the IDs it still has to process.
+    mutating func clearBetaOneUploadMarks(in rows: inout [Row], defaults: UserDefaults) throws {
+        let key = "libraryClearedBetaOneUploadMarks.v1"
+        guard !defaults.bool(forKey: key), !history.isReadOnly, marks.state != .unreadable, problem == nil else { return }
+        let matching = rows.filter { row in
+            guard let mark = row.librarySavedAt, let link = row.cloudURL, !link.isEmpty else { return false }
+            return abs(mark.timeIntervalSince(row.updatedAt)) <= 1
+        }
+        if !matching.isEmpty {
+            let ids = Set(matching.map(\.id))
+            var sidecar = marks.load()
+            guard marks.state == .loaded else { throw CocoaError(.fileReadCorruptFile) }
+            for row in matching {
+                if row.isVideo, let path = row.recordingSessionPath {
+                    let project = URL(fileURLWithPath: path).appendingPathComponent("project.json")
+                    try RecordingLibraryMark.change(at: project, from: row.librarySavedAt, to: nil)
+                }
+                sidecar.removeValue(forKey: row.id)
+            }
+            // A legacy copy of a mark in history.json would otherwise be imported again on the next open.
+            let data = try Data(contentsOf: historyURL)
+            guard var raw = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            var changed = false
+            for i in raw.indices {
+                if let key = raw[i]["id"] as? String, let id = UUID(uuidString: key), ids.contains(id),
+                   raw[i].removeValue(forKey: "librarySavedAt") != nil { changed = true }
+            }
+            if changed { try JSONSerialization.data(withJSONObject: raw).write(to: historyURL, options: .atomic) }
+            try marks.write(sidecar)
+            for i in rows.indices where ids.contains(rows[i].id) {
+                rows[i].librarySavedAt = nil
+                NSLog("[Sukusho] Cleared beta 1 upload-only Saved mark %@", rows[i].id.uuidString)
+            }
+        }
+        defaults.set(true, forKey: key)
     }
 }

@@ -18,6 +18,90 @@ struct HistoryMetadataTests {
         try body(folder.appendingPathComponent("history.json"))
     }
 
+    @Test func failedUploadCleanupRetriesWithoutLosingLegacyOrUnrelatedFields() throws {
+        try withIndex { history in
+            let folder = history.deletingLastPathComponent()
+            let suite = "UploadRetry-\(UUID())"
+            let defaults = try #require(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+            let date = Date(timeIntervalSinceReferenceDate: 1234)
+            let row = ScreenshotHistoryItem(id: UUID(), createdAt: date, updatedAt: date, fileName: "demo.mov",
+                pixelWidth: 1, pixelHeight: 1, kind: .video, cloudURL: "https://example.invalid/clip",
+                recordingSessionPath: folder.path)
+            var raw = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(row)) as? [String: Any])
+            raw["librarySavedAt"] = 1234
+            raw["future"] = "keep me"
+            let original = try JSONSerialization.data(withJSONObject: [raw])
+            try original.write(to: history)
+            let project = folder.appendingPathComponent("project.json")
+            try Data("corrupt".utf8).write(to: project)
+            var files = MarkedHistory<ScreenshotHistoryItem>(historyURL: history,
+                marksURL: folder.appendingPathComponent("library-saved.json"))
+            var rows = files.load()
+            #expect(throws: (any Error).self) { try files.clearBetaOneUploadMarks(in: &rows, defaults: defaults) }
+            #expect(rows.first?.librarySavedAt == date)
+            #expect(try Data(contentsOf: history) == original)
+
+            let explicit = ISO8601DateFormatter().string(from: date + 203)
+            let fixed = try JSONSerialization.data(withJSONObject: ["librarySavedAt": explicit])
+            try fixed.write(to: project)
+            try files.clearBetaOneUploadMarks(in: &rows, defaults: defaults)
+            #expect(files.load().first?.librarySavedAt == nil)
+            #expect(try Data(contentsOf: project) == fixed)
+            let rewritten = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: history)) as? [[String: Any]])
+            #expect(rewritten.first?["future"] as? String == "keep me" && rewritten.first?["librarySavedAt"] == nil)
+        }
+    }
+
+    @Test func betaOneUploadMarksClearOnceBeforeTheLibraryScan() throws {
+        try withIndex { history in
+            let folder = history.deletingLastPathComponent()
+            let marksURL = folder.appendingPathComponent("library-saved.json")
+            let ids = ["2E8CC7B6", "2D69D162", "12C68304", "12345678", "12345679"].map {
+                UUID(uuidString: $0 + "-0000-0000-0000-000000000000")!
+            }
+            let base = try #require(ISO8601DateFormatter().date(from: "2026-11-18T05:01:00Z"))
+            let marks = [base + 8.564, base + 30.874, base + 203, base, base + 203]
+            let updated = [base + 8.572, base + 30.884, base, base, base]
+            var source: [ScreenshotHistoryItem] = []
+            for i in ids.indices {
+                let package = folder.appendingPathComponent(ids[i].uuidString)
+                if i < 2 {
+                    try FileManager.default.createDirectory(at: package, withIntermediateDirectories: true)
+                    let project: [String: Any] = ["librarySavedAt": ISO8601DateFormatter().string(from: marks[i]),
+                                                  "futureKey": ["unchanged"], "displayName": "Demo"]
+                    try JSONSerialization.data(withJSONObject: project).write(to: package.appendingPathComponent("project.json"))
+                }
+                source.append(ScreenshotHistoryItem(id: ids[i], createdAt: base, updatedAt: updated[i],
+                    fileName: "fixture", pixelWidth: 10, pixelHeight: 10, kind: i < 2 ? .video : .image,
+                    cloudURL: [0, 1, 4].contains(i) ? "https://example.invalid/test" : nil,
+                    recordingSessionPath: i < 2 ? package.path : nil))
+            }
+            let original = try JSONEncoder().encode(source)
+            try original.write(to: history)
+            var files = MarkedHistory<ScreenshotHistoryItem>(historyURL: history, marksURL: marksURL)
+            try files.marks.write(Dictionary(uniqueKeysWithValues: zip(ids, marks)))
+            let suite = "SavedMigrationTest-\(UUID())"
+            let defaults = try #require(UserDefaults(suiteName: suite))
+            defer { defaults.removePersistentDomain(forName: suite) }
+            var rows = files.load()
+            try files.clearBetaOneUploadMarks(in: &rows, defaults: defaults)
+            #expect(rows.map(\.librarySavedAt) == [nil, nil, marks[2], marks[3], marks[4]])
+            #expect(files.load() == rows)
+            #expect(try Data(contentsOf: history) == original)
+            for i in 0..<2 {
+                let project = folder.appendingPathComponent(ids[i].uuidString).appendingPathComponent("project.json")
+                let object = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: project)) as? [String: Any])
+                #expect(object["librarySavedAt"] == nil && object["futureKey"] as? [String] == ["unchanged"])
+                #expect(object["displayName"] as? String == "Demo")
+            }
+            try files.marks.write(Dictionary(uniqueKeysWithValues: zip(ids, marks)))
+            rows = files.load()
+            try files.clearBetaOneUploadMarks(in: &rows, defaults: defaults)
+            #expect(rows.map(\.librarySavedAt) == marks.map(Optional.some))
+        }
+    }
+
     @Test func oneFutureRowKeepsReadableRowsAndCannotRewriteOriginal() throws {
         try withIndex { url in
             let good = (0..<1000).map { Row(name: "capture-\($0)") }

@@ -521,10 +521,15 @@ final class ScreenshotHistoryStore {
     }
 
     private func load(launchDefaults: UserDefaults? = nil) {
-        items = files.load(launchDefaults: launchDefaults)
-            .filter { FileManager.default.fileExists(atPath: $0.url.path) }
+        var loaded = files.load(launchDefaults: launchDefaults)
+        var migrationProblem: String?
+        if let launchDefaults {
+            do { try files.clearBetaOneUploadMarks(in: &loaded, defaults: launchDefaults) }
+            catch { migrationProblem = "Couldn’t clear beta 1 upload marks: \(error.localizedDescription)" }
+        }
+        items = loaded.filter { FileManager.default.fileExists(atPath: $0.url.path) }
             .sorted { $0.createdAt > $1.createdAt }
-        savedMarksProblem = files.problem
+        savedMarksProblem = migrationProblem ?? files.problem
     }
 
     private func saveMetadata() {
