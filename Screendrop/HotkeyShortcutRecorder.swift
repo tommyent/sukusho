@@ -19,6 +19,8 @@ final class HotkeyShortcutRecorder {
     private(set) var rejection: String?
 
     @ObservationIgnored private var monitor: Any?
+    /// Settings stopped being the key window (another window or app came forward): the recording ends there.
+    @ObservationIgnored private var resignObserver: NSObjectProtocol?
     @ObservationIgnored private var taps = ModifierTapDetector()
     @ObservationIgnored private var pendingTap: Task<Void, Never>?
     @ObservationIgnored var onShortcutRecorded: ((HotkeyShortcut) -> Void)?
@@ -28,6 +30,7 @@ final class HotkeyShortcutRecorder {
         if let monitor {
             NSEvent.removeMonitor(monitor)
         }
+        resignObserver.map(NotificationCenter.default.removeObserver)
     }
 
     func start() {
@@ -35,7 +38,10 @@ final class HotkeyShortcutRecorder {
         isRecording = true
         rejection = nil
         taps = ModifierTapDetector()
-        HotkeyManager.shared.pauseForRecording()
+        HotkeyManager.shared.pauseForRecording { [weak self] in self?.stop() }
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification, object: nil, queue: .main
+        ) { [weak self] _ in MainActor.assumeIsolated { self?.cancel() } }
 
         let types: NSEvent.EventTypeMask = [.keyDown, .keyUp, .flagsChanged, .leftMouseDown, .rightMouseDown, .otherMouseDown]
         monitor = NSEvent.addLocalMonitorForEvents(matching: types) { [weak self] event in
@@ -54,6 +60,8 @@ final class HotkeyShortcutRecorder {
             NSEvent.removeMonitor(monitor)
             self.monitor = nil
         }
+        resignObserver.map(NotificationCenter.default.removeObserver)
+        resignObserver = nil
         HotkeyManager.shared.resumeAfterRecording()
     }
 
@@ -113,6 +121,7 @@ final class HotkeyShortcutRecorder {
     }
 
     private func cancel() {
+        guard isRecording else { return }
         onCancel?()
         stop()
     }

@@ -22,7 +22,8 @@ final class HotkeyManager {
     private(set) var registrationErrors: [CaptureHotkeyAction: String] = [:]
     /// Keys that exist only while something is on screen, such as the
     /// recording pen's Esc and ⌘Z. Their IDs start above the actions'.
-    @ObservationIgnored private var temporaryHotKeys: [UInt32: (ref: EventHotKeyRef, action: () -> Void)] = [:]
+    /// No ref while Settings records a shortcut: they're suspended too.
+    @ObservationIgnored private var temporaryHotKeys: [UInt32: (ref: EventHotKeyRef?, shortcut: HotkeyShortcut, action: () -> Void)] = [:]
     @ObservationIgnored private var nextTemporaryHotKeyID: UInt32 = 1000
     /// Bumped whenever a shortcut changes, so the menu shows the current ones.
     private(set) var revision = 0
@@ -36,6 +37,8 @@ final class HotkeyManager {
     var keptKeys: [CaptureHotkeyAction] = []
     /// While Settings records a shortcut nothing fires, so keys that are already Sukusho's reach the recorder.
     @ObservationIgnored private var isPaused = false
+    /// Ends that recording: any other change to a shortcut ends it first, so nothing stays paused.
+    @ObservationIgnored private var endRecording: (() -> Void)?
     /// Actions on a modifier key alone, which the event tap watches for instead of Carbon.
     @ObservationIgnored private var tapActions: [HotkeyShortcut: CaptureHotkeyAction] = [:]
     @ObservationIgnored private let modifierTaps = ModifierTapMonitor()
@@ -130,15 +133,25 @@ final class HotkeyManager {
         revision += 1
     }
 
-    /// Settings records a shortcut: nothing fires until `resumeAfterRecording`.
-    func pauseForRecording() {
+    /// Settings records a shortcut: nothing fires, not even a temporary key such as Scrolling Capture's Space, until
+    /// `resumeAfterRecording`. `end` stops that recording.
+    func pauseForRecording(until end: @escaping () -> Void) {
+        endRecording = end
         isPaused = true
         unregisterHotkeys()
+        for (id, entry) in temporaryHotKeys {
+            entry.ref.map { _ = UnregisterEventHotKey($0) }
+            temporaryHotKeys[id]?.ref = nil
+        }
     }
 
     func resumeAfterRecording() {
         guard isPaused else { return }
         isPaused = false
+        endRecording = nil
+        for (id, entry) in temporaryHotKeys where entry.ref == nil {
+            temporaryHotKeys[id]?.ref = registerCarbonHotKey(entry.shortcut, id: id)
+        }
         reloadHotkeys()
     }
 
@@ -172,12 +185,14 @@ final class HotkeyManager {
     /// Puts every given action back on its default and registers again,
     /// all at once, so defaults never collide with each other mid-way.
     func restoreDefaults(for actions: [CaptureHotkeyAction]) {
+        endRecording?()
         actions.forEach { CaptureHotkeyPreferences.resetToDefault($0) }
         reloadHotkeys()
     }
 
     /// Nil clears the action's shortcut and releases its binding.
     func setShortcut(_ shortcut: HotkeyShortcut?, for action: CaptureHotkeyAction) throws {
+        endRecording?()
         defer { revision += 1 }
         guard let shortcut else {
             if let oldRef = hotKeyRefs.removeValue(forKey: action) { UnregisterEventHotKey(oldRef) }
@@ -241,24 +256,30 @@ final class HotkeyManager {
         modifierTaps.stop()
     }
     
-    /// Nil when the key is taken; the caller goes on without it.
+    /// Nil when the key is taken; the caller goes on without it. While Settings records a shortcut, it's registered when
+    /// the recording ends.
     func registerTemporaryHotKey(_ shortcut: HotkeyShortcut, action: @escaping () -> Void) -> UInt32? {
         installEventHandlerIfNeeded()
         let id = nextTemporaryHotKeyID
         nextTemporaryHotKeyID &+= 1
+        let ref = isPaused ? nil : registerCarbonHotKey(shortcut, id: id)
+        guard isPaused || ref != nil else { return nil }
+        temporaryHotKeys[id] = (ref, shortcut, action)
+        return id
+    }
+
+    private func registerCarbonHotKey(_ shortcut: HotkeyShortcut, id: UInt32) -> EventHotKeyRef? {
         var hotKeyRef: EventHotKeyRef?
         let status = RegisterEventHotKey(
             UInt32(shortcut.keyCode), shortcut.modifiers.carbonEventModifiers,
             EventHotKeyID(signature: Self.hotKeySignature, id: id), GetApplicationEventTarget(), 0, &hotKeyRef
         )
-        guard status == noErr, let hotKeyRef else { return nil }
-        temporaryHotKeys[id] = (hotKeyRef, action)
-        return id
+        return status == noErr ? hotKeyRef : nil
     }
 
     func unregisterTemporaryHotKey(_ id: UInt32) {
         guard let entry = temporaryHotKeys.removeValue(forKey: id) else { return }
-        UnregisterEventHotKey(entry.ref)
+        entry.ref.map { _ = UnregisterEventHotKey($0) }
         // A capture shortcut set to this key while it was taken failed to
         // register; with the key free again, try once more.
         if !registrationErrors.isEmpty { reloadHotkeys() }
