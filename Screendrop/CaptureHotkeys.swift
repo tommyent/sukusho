@@ -322,8 +322,25 @@ enum CaptureHotkeyPreferences {
     /// Stored for an action the user cleared, so it has no shortcut at all.
     private static let clearedValue = "none"
 
+    /// A shortcut with no modifier (a modifier key on its own, a function key alone) is kept here, with the action's own
+    /// key saying cleared. Beta 1 can't read one: in its own key it would fall back to the default, which beta 1's launch
+    /// cleanup then forgets, so a trip to beta 1 lost it (Sol's review). Here beta 1 never looks, and shows the row as
+    /// None. It counts only while the own key still says cleared: when beta 1 records, resets or restores that row, what
+    /// beta 1 saved wins.
+    private static func noModifiersKey(_ action: CaptureHotkeyAction) -> String { action.preferencesKey + ".noModifiers" }
+
+    private static func noModifiersShortcut(for action: CaptureHotkeyAction, defaults: UserDefaults) -> HotkeyShortcut? {
+        guard defaults.string(forKey: action.preferencesKey) == clearedValue,
+              let data = defaults.data(forKey: noModifiersKey(action)),
+              let shortcut = try? JSONDecoder().decode(HotkeyShortcut.self, from: data),
+              shortcut.isValid, shortcut.modifiers.isEmpty
+        else { return nil }
+        return shortcut
+    }
+
     /// The action's shortcut: recorded, else the default; nil once cleared.
     static func shortcut(for action: CaptureHotkeyAction, defaults: UserDefaults = .standard) -> HotkeyShortcut? {
+        if let shortcut = noModifiersShortcut(for: action, defaults: defaults) { return shortcut }
         if defaults.string(forKey: action.preferencesKey) == clearedValue { return nil }
         guard
             let data = defaults.data(forKey: action.preferencesKey),
@@ -343,6 +360,7 @@ enum CaptureHotkeyPreferences {
         for action: CaptureHotkeyAction,
         defaults: UserDefaults = .standard
     ) {
+        defaults.removeObject(forKey: noModifiersKey(action))
         guard let shortcut else {
             defaults.set(clearedValue, forKey: action.preferencesKey)
             return
@@ -353,12 +371,18 @@ enum CaptureHotkeyPreferences {
         }
 
         guard let data = try? JSONEncoder().encode(shortcut) else { return }
-        defaults.set(data, forKey: action.preferencesKey)
+        if shortcut.modifiers.isEmpty {
+            defaults.set(data, forKey: noModifiersKey(action))
+            defaults.set(clearedValue, forKey: action.preferencesKey)
+        } else {
+            defaults.set(data, forKey: action.preferencesKey)
+        }
     }
 
     /// Forgets what the user recorded or cleared, so the default applies.
     static func resetToDefault(_ action: CaptureHotkeyAction, defaults: UserDefaults = .standard) {
         defaults.removeObject(forKey: action.preferencesKey)
+        defaults.removeObject(forKey: noModifiersKey(action))
     }
 
     /// Whether the action has its default shortcut: nothing stored, or a stored shortcut that equals the default. An
@@ -373,8 +397,18 @@ enum CaptureHotkeyPreferences {
     /// Forgets stored shortcuts that equal their action's default, or its default before beta 1, so a change of a
     /// default reaches them, as it does everyone who never recorded one: an older build stored defaults, and without this
     /// a stored old ⇧⌘5 for Capture Text would collide with Recording's new ⇧⌘5. Cleared and changed shortcuts stay.
-    /// Run at launch.
+    /// Run at launch. It also moves a shortcut with no modifier that an earlier build of this one kept in the action's
+    /// own key to where beta 1 can't lose it, and forgets one that beta 1 has since replaced.
     static func dropStoredDefaults(defaults: UserDefaults = .standard) {
+        for action in CaptureHotkeyAction.allCases {
+            if noModifiersShortcut(for: action, defaults: defaults) == nil {
+                defaults.removeObject(forKey: noModifiersKey(action))
+            }
+            if let data = defaults.data(forKey: action.preferencesKey),
+               let stored = try? JSONDecoder().decode(HotkeyShortcut.self, from: data), stored.isValid, stored.modifiers.isEmpty {
+                saveShortcut(stored, for: action, defaults: defaults)
+            }
+        }
         for action in CaptureHotkeyAction.allCases where defaults.data(forKey: action.preferencesKey) != nil {
             let stored = shortcut(for: action, defaults: defaults)
             if isDefault(action, defaults: defaults) || (stored != nil && stored == action.previousDefaultShortcut) {

@@ -329,13 +329,66 @@ struct FlexibleShortcutsTests {
         }
     }
 
-    /// Going back to beta 1: it reads a tap's JSON as a shortcut with no modifiers, which it treats as invalid, so the
-    /// action falls back to its default rather than to a key alone.
-    @Test func beta1ReadsANewShortcutAsNoShortcut() throws {
-        struct Beta1Shortcut: Decodable { let modifiers: Int; let keyCode: Int }
-        for shortcut in [HotkeyShortcut(.once(keyCode: kVK_RightOption)), HotkeyShortcut(.twice(keyCode: kVK_Option)), chord([], kVK_F5)] {
-            let old = try JSONDecoder().decode(Beta1Shortcut.self, from: try JSONEncoder().encode(shortcut))
-            #expect(old.modifiers == 0)
+    /// Sol's review, blocker 3: saved in this build, through beta 1's launch cleanup and back, every kind is still there,
+    /// and beta 1 shows the kinds it can't read as None rather than taking their default.
+    @Test func aTripThroughBeta1KeepsEveryKind() {
+        let defaults = suite()
+        let saved: [CaptureHotkeyAction: HotkeyShortcut?] = [
+            .area: HotkeyShortcut(.once(keyCode: kVK_RightOption)),
+            .window: HotkeyShortcut(.twice(keyCode: kVK_Command)),
+            .library: chord([], kVK_F5),
+            .fullscreen: chord([.command], kVK_ANSI_K),
+            .textCapture: nil,
+        ]
+        for (action, shortcut) in saved { CaptureHotkeyPreferences.saveShortcut(shortcut, for: action, defaults: defaults) }
+
+        Beta1CaptureHotkeyPreferences.dropStoredDefaults(defaults: defaults)
+        for action in [CaptureHotkeyAction.area, .window, .library, .textCapture] {
+            #expect(Beta1CaptureHotkeyPreferences.shortcut(for: action, defaults: defaults) == nil, "\(action)")
         }
+        #expect(Beta1CaptureHotkeyPreferences.shortcut(for: .fullscreen, defaults: defaults)
+            == Beta1HotkeyShortcut(chord([.command], kVK_ANSI_K)))
+        #expect(Beta1CaptureHotkeyPreferences.shortcut(for: .scrollingCapture, defaults: defaults)
+            == CaptureHotkeyAction.scrollingCapture.beta1DefaultShortcut)
+
+        CaptureHotkeyPreferences.dropStoredDefaults(defaults: defaults)
+        for (action, shortcut) in saved {
+            #expect(CaptureHotkeyPreferences.shortcut(for: action, defaults: defaults) == shortcut, "\(action)")
+        }
+        #expect(CaptureHotkeyPreferences.isDefault(.scrollingCapture, defaults: defaults))
+    }
+
+    /// A row beta 1 changes keeps beta 1's change: a shortcut recorded there, or Reset. Clear changes nothing, since beta 1
+    /// already showed that row as None.
+    @Test func aRowBeta1ChangesKeepsBeta1sChange() {
+        let defaults = suite()
+        CaptureHotkeyPreferences.saveShortcut(HotkeyShortcut(.once(keyCode: kVK_RightOption)), for: .area, defaults: defaults)
+        CaptureHotkeyPreferences.saveShortcut(HotkeyShortcut(.twice(keyCode: kVK_Option)), for: .window, defaults: defaults)
+        CaptureHotkeyPreferences.saveShortcut(chord([], kVK_F5), for: .library, defaults: defaults)
+
+        Beta1CaptureHotkeyPreferences.dropStoredDefaults(defaults: defaults)
+        Beta1CaptureHotkeyPreferences.saveShortcut(Beta1HotkeyShortcut(chord([.command, .shift], kVK_ANSI_7)), for: .area, defaults: defaults)
+        Beta1CaptureHotkeyPreferences.resetToDefault(.window, defaults: defaults)
+        Beta1CaptureHotkeyPreferences.saveShortcut(nil, for: .library, defaults: defaults)
+
+        CaptureHotkeyPreferences.dropStoredDefaults(defaults: defaults)
+        #expect(CaptureHotkeyPreferences.shortcut(for: .area, defaults: defaults) == chord([.command, .shift], kVK_ANSI_7))
+        #expect(CaptureHotkeyPreferences.shortcut(for: .window, defaults: defaults) == CaptureHotkeyAction.window.defaultShortcut)
+        #expect(CaptureHotkeyPreferences.isDefault(.window, defaults: defaults))
+        #expect(CaptureHotkeyPreferences.shortcut(for: .library, defaults: defaults) == chord([], kVK_F5))
+        // Cleared here later, the row stays cleared: no old tap comes back.
+        CaptureHotkeyPreferences.saveShortcut(nil, for: .library, defaults: defaults)
+        #expect(CaptureHotkeyPreferences.shortcut(for: .library, defaults: defaults) == nil)
+    }
+
+    /// Earlier builds of this branch (the Dev zips) kept a tap in the action's own key; the first launch of this build
+    /// moves it, so a trip through beta 1 keeps it too.
+    @Test func aTapAnEarlierBuildSavedMovesWhereBeta1CantLoseIt() {
+        let defaults = suite()
+        defaults.set(Data(#"{"modifiers":0,"keyCode":61,"taps":1}"#.utf8), forKey: CaptureHotkeyAction.area.preferencesKey)
+        CaptureHotkeyPreferences.dropStoredDefaults(defaults: defaults)
+        Beta1CaptureHotkeyPreferences.dropStoredDefaults(defaults: defaults)
+        CaptureHotkeyPreferences.dropStoredDefaults(defaults: defaults)
+        #expect(CaptureHotkeyPreferences.shortcut(for: .area, defaults: defaults) == HotkeyShortcut(.once(keyCode: kVK_RightOption)))
     }
 }
