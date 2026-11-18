@@ -2,18 +2,25 @@ import AppKit
 import ImageIO
 
 enum ScreenshotClipboardImage {
-    static func item(from url: URL, dataType: NSPasteboard.PasteboardType, includeTIFF: Bool) async throws -> NSPasteboardItem {
+    static func item(from url: URL, dataType: NSPasteboard.PasteboardType, includeTIFF: Bool,
+                     snapshotName: String? = nil) async throws -> NSPasteboardItem {
         try Task.checkCancellation()
-        let (data, tiff) = try await Task.detached(priority: .userInitiated) {
-            try autoreleasepool {
-                let data = try Data(contentsOf: url)
-                return (data, includeTIFF ? Self.tiffData(from: data) : nil)
+        let (publishedURL, data, tiff) = try await Task.detached(priority: .userInitiated) {
+            func read(_ file: URL) throws -> (URL, Data, Data?) {
+                try autoreleasepool {
+                    let data = try Data(contentsOf: file)
+                    return (file, data, includeTIFF ? Self.tiffData(from: data) : nil)
+                }
             }
+            if let snapshotName {
+                return try ClipboardFiles.withClipboardSnapshots(of: [url], name: { _ in snapshotName }) { try read($0[0]) }
+            }
+            return try read(url)
         }.value
         try Task.checkCancellation()
 
         let item = NSPasteboardItem()
-        item.setString(url.absoluteString, forType: .fileURL)
+        item.setString(publishedURL.absoluteString, forType: .fileURL)
         item.setData(data, forType: dataType)
         if let tiff { item.setData(tiff, forType: .tiff) }
         // nspasteboard.org's source marker, so clipboard history apps credit Sukusho, not the frontmost app.

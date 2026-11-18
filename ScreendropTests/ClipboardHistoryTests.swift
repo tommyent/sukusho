@@ -1074,7 +1074,9 @@ struct ClipboardWriterTests {
         let image = dir.appending(path: "blue.png")
         let pixels = ClipboardHistoryStoreTests.picture(2)
         try pixels.write(to: image)
-        let entries = [entry(.snippet, "Snippet"), entry(.image, nil, image: image), entry(.files, "/tmp/a\n/tmp/b")]
+        var clip = entry(.image, nil, image: image)
+        clip.modelTitle = "Palette: blue/green"
+        let entries = [entry(.snippet, "Snippet"), clip, entry(.files, "/tmp/a\n/tmp/b")]
         var items: [NSPasteboardItem] = []
         for entry in entries {
             items += try await ClipboardWriter.libraryItems(for: entry, richText: [:], plain: false, includeTIFF: false)
@@ -1085,7 +1087,12 @@ struct ClipboardWriterTests {
             #expect(written.count == 4)
             #expect(written[0].string(forType: .string) == "Snippet")
             #expect(written[1].data(forType: .png) == pixels)
-            #expect(written[1].string(forType: .fileURL) == image.absoluteString)
+            let snapshot = try #require(written[1].string(forType: .fileURL).flatMap(URL.init(string:)))
+            #expect(snapshot != image && snapshot.lastPathComponent == "Palette- blue-green.png")
+            #expect(try Data(contentsOf: snapshot) == pixels)
+            try Data([0xff]).write(to: snapshot)
+            #expect(try Data(contentsOf: image) == pixels)
+            try FileManager.default.removeItem(at: snapshot)
             #expect(written[2].string(forType: .fileURL) == URL(fileURLWithPath: "/tmp/a").absoluteString)
             #expect(written[3].string(forType: .fileURL) == URL(fileURLWithPath: "/tmp/b").absoluteString)
         }

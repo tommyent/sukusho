@@ -344,8 +344,7 @@ final class ClipboardHistoryModel {
         // Per version too: a link made for the original must not show again for the newer version stacked on it.
         let folder = Self.quickLookFolder.appendingPathComponent(entry.id, isDirectory: true)
             .appendingPathComponent(String(entry.hash.prefix(16)), isDirectory: true)
-        let name = String(ClipboardList.title(of: entry).prefix(60))
-            .replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+        let name = ClipboardList.fileTitle(of: entry)
         switch entry.kind {
         case .image:
             guard let url = entry.libraryImageURL else { return [] }
@@ -454,8 +453,7 @@ final class ClipboardHistoryModel {
     /// A copy of a clip's image to edit, named as the clip is so the editor's title says what it is. History's own
     /// blob is never edited in place.
     private func editableCopy(of entry: ClipboardEntry, from image: URL) -> URL? {
-        let name = String(ClipboardList.title(of: entry).prefix(60))
-            .replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+        let name = ClipboardList.fileTitle(of: entry)
         return Self.editCopies.copy(of: image, named: (name.isEmpty ? "Clipboard image" : name) + "." + image.pathExtension,
                                     entryID: entry.id, inUse: Self.editCopyInUse)
     }

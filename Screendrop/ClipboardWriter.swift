@@ -27,7 +27,11 @@ nonisolated enum ClipboardWriter {
             guard let url = entry.libraryImageURL else {
                 throw CocoaError(.fileNoSuchFile)
             }
-            let item = try await ScreenshotClipboardImage.item(from: url, dataType: imageType(for: url), includeTIFF: includeTIFF)
+            let title = ClipboardList.fileTitle(of: entry)
+            let ext = url.pathExtension
+            let name = ext.isEmpty || title.lowercased().hasSuffix("." + ext.lowercased()) ? title : title + "." + ext
+            let item = try await ScreenshotClipboardImage.item(from: url, dataType: imageType(for: url),
+                                                               includeTIFF: includeTIFF, snapshotName: name)
             mark(item, source: entry.sourceBundleID)
             return [item]
         }

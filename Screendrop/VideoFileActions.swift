@@ -90,34 +90,13 @@ enum VideoFileActions {
 
     static func copyFilesToClipboard(from urls: [URL]) throws {
         guard !urls.isEmpty else { return }
-        try withClipboardSnapshots(of: urls) { snapshots in
+        try ClipboardFiles.withClipboardSnapshots(of: urls) { snapshots in
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
             guard pasteboard.writeObjects(snapshots as [NSURL]) else { throw CocoaError(.fileWriteUnknown) }
         }
     }
 
-    static func withClipboardSnapshots(of urls: [URL], write: ([URL]) throws -> Void) throws {
-        let files = FileManager.default
-        let directory = files.temporaryDirectory
-            .appendingPathComponent("\(ScreendropStorage.directoryName)/Clipboard", isDirectory: true)
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        do {
-            var snapshots: [URL] = []
-            for (index, url) in urls.enumerated() {
-                let folder = directory.appendingPathComponent(String(index), isDirectory: true)
-                try files.createDirectory(at: folder, withIntermediateDirectories: true)
-                let snapshot = folder.appendingPathComponent(url.lastPathComponent)
-                try files.copyItem(at: url, to: snapshot)
-                snapshots.append(snapshot)
-            }
-            try write(snapshots)
-            // ponytail: published files live until OS temp cleanup; add an expiry policy if storage grows.
-        } catch {
-            try? files.removeItem(at: directory)
-            throw error
-        }
-    }
 
     @discardableResult
     static func saveToDefaultLocation(from url: URL, suggestedFileName: String? = nil) async throws -> URL {

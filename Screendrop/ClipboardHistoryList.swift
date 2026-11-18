@@ -148,6 +148,10 @@ nonisolated enum ClipboardList {
         }
     }
 
+    static func fileTitle(of entry: ClipboardEntry) -> String {
+        String(title(of: entry).prefix(60)).replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+    }
+
     /// Terminals and code editors: their text shows in a monospaced face.
     static let codeApps: Set<String> = [
         "com.superlogical.rex", "com.mitchellh.ghostty", "com.apple.Terminal", "com.googlecode.iterm2",
