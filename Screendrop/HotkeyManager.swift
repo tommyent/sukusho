@@ -205,8 +205,11 @@ final class HotkeyManager {
             // Nothing to register with macOS: saved, then watched for by the event tap.
             CaptureHotkeyPreferences.saveShortcut(shortcut, for: action)
             reloadHotkeys()
-            // macOS's own prompt, once per app, only when a recorded tap needs it; Settings offers the pane after that.
-            if !CGPreflightListenEventAccess(), !AXIsProcessTrusted() { _ = CGRequestListenEventAccess() }
+            // macOS's own prompt, once per app, only when a recorded tap needs it: its action is watched for (not an off
+            // Clipboard History, not one that clashes). Settings offers the pane after that.
+            if tapActions.values.contains(action), !CGPreflightListenEventAccess(), !AXIsProcessTrusted() {
+                _ = CGRequestListenEventAccess()
+            }
             return
         }
         if shortcut == CaptureHotkeyPreferences.shortcut(for: action), hotKeyRefs[action] != nil { return }
