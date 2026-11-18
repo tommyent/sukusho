@@ -787,11 +787,8 @@ struct CardCloudBadge: View {
     }
 }
 
-/// Badge style B (the user's pick, 2026-10-13): every mark on a card
-/// thumbnail sits on a near-opaque white ground with a hairline and a small
-/// shadow, in light and dark appearance alike, so none blends into the
-/// screenshot under it.
 enum CardMark {
+    static let fill = Color.white.opacity(0.94)
     static let text = Color(red: 0x1D / 255, green: 0x1D / 255, blue: 0x1F / 255)
     static let idle = Color(red: 0x48 / 255, green: 0x48 / 255, blue: 0x4A / 255)
     /// #1E9E4A: 3.5:1 on the white ground, where systemGreen is 2.2:1.
@@ -799,20 +796,18 @@ enum CardMark {
 }
 
 extension View {
-    /// A disc or pill of the card marks' white ground. Its contents draw for
-    /// light appearance, since the ground is white either way.
-    func cardMark<S: InsettableShape>(_ shape: S) -> some View {
+    func cardMark<S: InsettableShape>(_ shape: S, fill: Color = CardMark.fill) -> some View {
         environment(\.colorScheme, .light)
-            .background { shape.fill(.white.opacity(0.94)).shadow(color: .black.opacity(0.25), radius: 1.5, y: 1) }
+            .background { shape.fill(fill).shadow(color: .black.opacity(0.25), radius: 1.5, y: 1) }
             .overlay { shape.strokeBorder(.black.opacity(0.15), lineWidth: 0.5) }
     }
 
     /// A small pill of dark text on that ground, such as a video's length.
-    func cardPill(_ tint: Color = CardMark.text) -> some View {
+    func cardPill(_ tint: Color = CardMark.text, fill: Color = CardMark.fill) -> some View {
         font(.system(size: 10, weight: .semibold))
             .padding(.horizontal, 6).padding(.vertical, 3)
             .foregroundStyle(tint)
-            .cardMark(Capsule())
+            .cardMark(Capsule(), fill: fill)
     }
 }
 

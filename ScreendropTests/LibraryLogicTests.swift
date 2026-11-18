@@ -2,6 +2,15 @@ import Foundation
 import Testing
 
 struct LibraryLogicTests {
+    @Test func clipboardKindSymbolsKeepTheirSpokenNames() {
+        for (kind, word, symbol): (LibraryClipKind, String, String) in [
+            (.text, "text", "textformat"), (.code, "code", "chevron.left.forwardslash.chevron.right"), (.link, "link", "link")
+        ] {
+            #expect(kind.rawValue == word)
+            #expect(kind.symbol == symbol)
+        }
+    }
+
     @Test func cardsUseTheCloudAndContentSlotsForTheirKind() {
         let url = "https://example.invalid/clip"
         func upload(_ kind: String) -> CloudUpload {
@@ -22,9 +31,9 @@ struct LibraryLogicTests {
         let received = LibraryCardMarks(upload: file, tall: false, localLength: nil)
         #expect(received.cloud == .received && received.content.isEmpty)
         for (kind, body, title, mark): (ClipboardEntryKind, String, String, LibraryCardMarks.Pill?) in [
-            (.text, "let x = 42", "let x = 42", .kind("code")),
-            (.text, "https://example.org/path/end", "example.org/end", .kind("link")),
-            (.text, "#FBCA44", "#FBCA44", nil), (.text, "Meeting notes", "Meeting notes", .kind("text")),
+            (.text, "let x = 42", "let x = 42", .kind(.code)),
+            (.text, "https://example.org/path/end", "example.org/end", .kind(.link)),
+            (.text, "#FBCA44", "#FBCA44", nil), (.text, "Meeting notes", "Meeting notes", .kind(.text)),
             (.snippet, "Greeting\nBody", "Greeting", nil), (.files, "/tmp/Notes.pdf", "Notes.pdf", nil),
             (.image, "", "1440 × 900", nil)
         ] {

@@ -1497,15 +1497,15 @@ struct LibraryGridMetricsTests {
         upload.expiresAt = expires
         upload.commentCount = 3
         upload.likeCount = 2
-        let shared = LibraryCardMarks(cloud: .shared, upload: upload, tall: true, versions: 2, content: .kind("text"))
+        let shared = LibraryCardMarks(cloud: .shared, upload: upload, tall: true, versions: 2, content: .kind(.text))
         #expect(shared.settings == [.encrypted, .password, .expiry(expires)])
         #expect(shared.social == [.comments(3), .likes(2)])
-        #expect(shared.content == [.tall, .versions(2), .kind("text")])
+        #expect(shared.content == [.tall, .versions(2), .kind(.text)])
         let clip = ClipboardEntry(id: "clip", kind: .text, text: "plain text", title: nil, imageURL: nil,
                                   libraryPath: nil, byteSize: 10, pixelWidth: 0, pixelHeight: 0, sourceBundleID: nil,
                                   isRemote: false, firstCopiedAt: .now, lastCopiedAt: .now, timesCopied: 1, pinnedAt: nil)
         #expect(LibraryCardMarks(clip: clip, upload: nil).cloud == nil)
-        #expect(LibraryCardMarks(clip: clip, upload: nil).content == [.kind("text")])
+        #expect(LibraryCardMarks(clip: clip, upload: nil).content == [.kind(.text)])
     }
 
     @Test func spareWidthGoesToGapsThenEvenMargins() {
@@ -1563,12 +1563,12 @@ struct ClipboardCardTextTests {
 
     @Test func textIsSaidOnceAndNamedByKind() {
         #expect(ClipboardList.cardTitle(of: text("Meeting moved to 3pm")) == nil)
-        #expect(ClipboardList.kindWord(of: text("Meeting moved to 3pm")) == "text")
+        #expect(ClipboardList.kindPill(of: text("Meeting moved to 3pm")) == .text)
         #expect(ClipboardList.cardTitle(of: text("https://nspasteboard.org/")) == nil)
-        #expect(ClipboardList.kindWord(of: text("https://nspasteboard.org/")) == "link")
+        #expect(ClipboardList.kindPill(of: text("https://nspasteboard.org/")) == .link)
         // A color keeps a title, as copied; its face is the swatch.
         #expect(ClipboardList.cardTitle(of: text(" #ff6363 ")) == "#ff6363")
-        #expect(ClipboardList.kindWord(of: text("#ff6363")) == nil)
+        #expect(ClipboardList.kindPill(of: text("#ff6363")) == nil)
     }
 
     @Test func codeIsRecognizedByWhatItSays() {
@@ -1584,7 +1584,7 @@ struct ClipboardCardTextTests {
         #expect(!ClipboardList.isCodeLike("[Meeting notes] tomorrow"))
         #expect(ClipboardList.isCodeLike(swift))
         #expect(ClipboardList.isCodeLike("func tailPath(radius r: CGFloat, tip d: CGFloat) -> CGPath {"))
-        #expect(ClipboardList.kindWord(of: text(swift, from: "com.tommyent.Sukusho.dev")) == "code")
+        #expect(ClipboardList.kindPill(of: text(swift, from: "com.tommyent.Sukusho.dev")) == .code)
         #expect(!ClipboardList.isCodeLike("Meeting moved to 3pm"))
         // Astra R2: prose that starts with a keyword or ends in a semicolon isn't code.
         for prose in ["Please send the revised draft;", "return home before dinner", "let me know tomorrow",
@@ -1601,7 +1601,7 @@ struct ClipboardCardTextTests {
         #expect(!ClipboardList.isCodeLike("Let me know if the fix works.\nThanks!"))
         #expect(!ClipboardList.isCodeLike("hello@example.com"))
         // From a code app, any plain text counts, as before.
-        #expect(ClipboardList.kindWord(of: text("ls -la", from: "com.apple.Terminal")) == "code")
+        #expect(ClipboardList.kindPill(of: text("ls -la", from: "com.apple.Terminal")) == .code)
     }
 
     /// Fable #3: rgb() and hsl() get a swatch, as hex does.

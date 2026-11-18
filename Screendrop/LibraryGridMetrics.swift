@@ -78,12 +78,24 @@ nonisolated struct LibraryDisplayOrder {
     }
 }
 
+nonisolated enum LibraryClipKind: String {
+    case text, code, link
+
+    var symbol: String {
+        switch self {
+        case .text: "textformat"
+        case .code: "chevron.left.forwardslash.chevron.right"
+        case .link: "link"
+        }
+    }
+}
+
 /// The pills read left to right within each corner of the picture.
 nonisolated struct LibraryCardMarks {
     enum CloudState { case unshared, shared, received }
     enum Pill: Equatable {
         case encrypted, password, expiry(Date), comments(Int), likes(Int), tall, versions(Int)
-        case duration(String), kind(String), gallery(Int)
+        case duration(String), kind(LibraryClipKind), gallery(Int)
     }
     let cloud: CloudState?
     var settings: [Pill] = []
@@ -125,7 +137,7 @@ nonisolated struct LibraryCardMarks {
     init(clip: ClipboardEntry, upload: CloudUpload?) {
         self.init(cloud: clip.cloudLinks.isEmpty ? nil : .shared, upload: upload,
                   tall: clip.kind == .image && TallCapture.isTall(width: clip.pixelWidth, height: clip.pixelHeight),
-                  versions: clip.earlierVersions.count + 1, content: ClipboardList.kindWord(of: clip).map(Pill.kind))
+                  versions: clip.earlierVersions.count + 1, content: ClipboardList.kindPill(of: clip).map(Pill.kind))
     }
 }
 

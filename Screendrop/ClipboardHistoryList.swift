@@ -248,11 +248,10 @@ nonisolated enum ClipboardList {
         }
     }
 
-    /// The small word in the corner of a card that shows its text: what kind of text it is.
-    static func kindWord(of entry: ClipboardEntry) -> String? {
+    static func kindPill(of entry: ClipboardEntry) -> LibraryClipKind? {
         switch textForm(of: entry) {
-        case .plain: looksLikeCode(entry) ? "code" : "text"
-        case .link: "link"
+        case .plain: looksLikeCode(entry) ? .code : .text
+        case .link: .link
         default: nil
         }
     }
