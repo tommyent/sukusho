@@ -96,7 +96,7 @@ final class HotkeyShortcutRecorder {
             }
             return event
         case .keyDown:
-            taps.keyDown(isRepeat: event.isARepeat)
+            taps.keyDown(isRepeat: event.isARepeat, at: event.timestamp)
             if event.keyCode == UInt16(kVK_Escape) {
                 cancel()
                 return nil
@@ -113,7 +113,7 @@ final class HotkeyShortcutRecorder {
             finish(with: shortcut)
             return nil
         case .keyUp:
-            taps.keyUp()
+            taps.keyUp(at: event.timestamp)
             return event
         default:
             // A click or a scroll isn't part of a shortcut, and ends a tap; it still does what it does.

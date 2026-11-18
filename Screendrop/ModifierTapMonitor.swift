@@ -7,9 +7,8 @@ import AppKit
 import Carbon.HIToolbox
 
 /// Watches for shortcuts that are a modifier key on its own (Right ⌥, ⌥ ⌥), which Carbon hot keys can't be. A
-/// listen-only event tap reads which modifiers go down and up, and only that some other key went down or up, or a click
-/// or scroll happened, never which key; when it can't tell from those (it just started, or missed events), it asks
-/// macOS whether any other key is down, a yes or no. Nothing typed is read, logged or kept. macOS gives such a tap
+/// listen-only event tap reads which modifiers go down and up, and only that some other key went down, repeated or went
+/// up, or a click or scroll happened, never which key. Nothing typed is read, logged or kept. macOS gives such a tap
 /// modifier and key events only with Input Monitoring (or Accessibility), so it runs only while some action has such a
 /// shortcut.
 @MainActor
@@ -63,7 +62,7 @@ final class ModifierTapMonitor {
         tap = port
         self.source = source
         detector = ModifierTapDetector()
-        missEvents()
+        missEvents(at: ProcessInfo.processInfo.systemUptime)
         // Another app came to the front without a key or click Sukusho saw: a first tap before it doesn't pair with one
         // after.
         activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
@@ -72,9 +71,11 @@ final class ModifierTapMonitor {
         return true
     }
 
-    /// Events were missed, or watching starts: no gesture begun before counts, and no tap queued before runs.
-    private func missEvents() {
-        detector.eventsMissed()
+    /// Events were missed, or watching starts: no gesture begun before counts, no tap queued before runs, and a tap waits
+    /// for the keyboard to show itself quiet.
+    private func missEvents(at time: TimeInterval) {
+        detector.quiet = ModifierTapDetector.quietTime()
+        detector.eventsMissed(at: time)
         generation += 1
         wasSecure = IsSecureEventInputEnabled()
     }
@@ -107,25 +108,30 @@ final class ModifierTapMonitor {
     }
 
     private func handle(_ type: CGEventType, _ event: CGEvent) {
-        // Secure input came or went: keys typed meanwhile never reached the tap.
-        if IsSecureEventInputEnabled() != wasSecure { missEvents() }
+        let now = ProcessInfo.processInfo.systemUptime
         switch type {
         case .tapDisabledByTimeout:
             // Sukusho took too long over an event: on again while macOS still allows it, else stopped and said so.
-            missEvents()
+            missEvents(at: now)
             if let tap, CGPreflightListenEventAccess() || AXIsProcessTrusted() { CGEvent.tapEnable(tap: tap, enable: true) }
             if let tap, CGEvent.tapIsEnabled(tap: tap) { return }
-            stopForGood()
+            return stopForGood()
         case .tapDisabledByUserInput:
             // Turned off on the user's behalf: it stays off, and the shortcuts say so.
-            stopForGood()
+            return stopForGood()
+        default:
+            break
+        }
+        // The event's own time (NSEvent converts it to uptime): a busy main thread doesn't stretch a tap, and events still
+        // queued from before the keyboard was seen quiet are judged by when they happened.
+        let time = NSEvent(cgEvent: event)?.timestamp ?? now
+        // Secure input came or went: keys typed meanwhile never reached the tap.
+        if IsSecureEventInputEnabled() != wasSecure { missEvents(at: time) }
+        switch type {
         case .flagsChanged:
             detector.interval = NSEvent.doubleClickInterval
-            if detector.isUnsure, !Self.otherKeyDown() { detector.noKeysDown() }
-            // The event's own time (NSEvent converts it to uptime), so a busy main thread doesn't stretch a tap.
             var taps = detector.flagsChanged(
-                keyCode: Int(event.getIntegerValueField(.keyboardEventKeycode)),
-                flags: event.flags.rawValue, at: NSEvent(cgEvent: event)?.timestamp ?? ProcessInfo.processInfo.systemUptime
+                keyCode: Int(event.getIntegerValueField(.keyboardEventKeycode)), flags: event.flags.rawValue, at: time
             )
             // A modifier pressed or released with a mouse button down is part of a drag or a click.
             if NSEvent.pressedMouseButtons != 0 {
@@ -142,20 +148,11 @@ final class ModifierTapMonitor {
                 taps.forEach { self.onTap?($0) }
             }
         case .keyDown:
-            detector.keyDown(isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0)
+            detector.keyDown(isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0, at: time)
         case .keyUp:
-            detector.keyUp()
+            detector.keyUp(at: time)
         default:
             detector.interrupt()
-        }
-    }
-
-    /// Whether a key other than a modifier is down, for when the detector can't know from the events it saw. Only the
-    /// answer is used: which key is never kept.
-    private static func otherKeyDown() -> Bool {
-        (0..<128).contains { code in
-            ModifierKeys.keys[code] == nil && code != kVK_Function && code != kVK_CapsLock
-                && CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(code))
         }
     }
 }

@@ -54,8 +54,19 @@ struct ModifierTapDetector {
     /// How many other keys are down, from their down and up events: a count, never which keys.
     private var keysDown = 0
     /// After events were missed (watching just started, or macOS withheld some), a key can be down that was never seen
-    /// going down: nothing taps until the caller has checked that none is (`noKeysDown`).
+    /// going down. Nothing taps until the events themselves have shown the keyboard quiet: no key down, repeat or up for
+    /// `quiet`, counted in the events' own times, so events still queued from before that point never count.
     private(set) var isUnsure = false
+    /// Long enough for a key held through missed events to show itself by repeating (`quietTime`).
+    var quiet: TimeInterval = 0.7
+    private var lastKeyEvent: TimeInterval = 0
+
+    /// The key-repeat delay and two repeats (0.67 s at macOS's defaults), at most 2.5 s. With key repeat off a held key
+    /// sends nothing at all, which no event can show; then it's the 2.5 s.
+    static func quietTime(repeatDelay: TimeInterval = NSEvent.keyRepeatDelay,
+                          repeatInterval: TimeInterval = NSEvent.keyRepeatInterval) -> TimeInterval {
+        min(repeatDelay + 2 * repeatInterval, 2.5)
+    }
 
     /// Something else happened (a key, a click, a scroll, a shortcut): neither the modifier held now nor a first tap counts.
     mutating func interrupt() {
@@ -63,32 +74,30 @@ struct ModifierTapDetector {
         lastTap = nil
     }
 
-    /// Events were missed, or watching starts now: nothing seen before counts, and what's down isn't known.
-    mutating func eventsMissed() {
+    /// Events were missed, or watching starts now (`time`): nothing seen before counts, and what's down isn't known.
+    mutating func eventsMissed(at time: TimeInterval) {
         interrupt()
         keysDown = 0
         isUnsure = true
-    }
-
-    /// The caller asked macOS: no key other than a modifier is down.
-    mutating func noKeysDown() {
-        keysDown = 0
-        isUnsure = false
+        lastKeyEvent = time
     }
 
     /// Some other key went down. A repeat means one is held, even if it went down before watching started.
-    mutating func keyDown(isRepeat: Bool) {
+    mutating func keyDown(isRepeat: Bool, at time: TimeInterval) {
         interrupt()
         keysDown = isRepeat ? max(keysDown, 1) : keysDown + 1
+        lastKeyEvent = time
     }
 
-    mutating func keyUp() {
+    mutating func keyUp(at time: TimeInterval) {
         interrupt()
         keysDown = max(keysDown - 1, 0)
+        lastKeyEvent = time
     }
 
     /// One flags-changed event: the key that changed and the flags after it. Returns the taps it completes.
     mutating func flagsChanged(keyCode: Int, flags: UInt64, at time: TimeInterval) -> [Tap] {
+        if isUnsure, keysDown == 0, time - lastKeyEvent >= quiet { isUnsure = false }
         guard let key = ModifierKeys.keys[keyCode] else {
             interrupt()  // fn or Caps Lock
             return []
