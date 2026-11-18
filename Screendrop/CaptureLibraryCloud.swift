@@ -823,8 +823,8 @@ private struct CloudUploadCard: View {
                 }
                 .padding(.horizontal, 12)
             } else {
-                LibraryGridCard(marks: LibraryCardMarks(cloud: upload.isReceived ? .received : .shared, upload: upload,
-                    tall: local?.isTall == true, content: contentMark), cloudAction: {
+                LibraryGridCard(marks: LibraryCardMarks(upload: upload, tall: local?.isTall == true,
+                                                       localLength: local?.durationText), cloudAction: {
                         act { _ in
                             if upload.isReceived { FileRequestsModel.shared.download([upload]) }
                             else { CloudShareLinks.copy([(upload.url, upload.encrypted == true)]) }
@@ -861,12 +861,18 @@ private struct CloudUploadCard: View {
         }
         .accessibilityAction(named: "Copy Link") { if !upload.isReceived { CloudLibraryModel.shared.copyLinks([upload]) } }
         .accessibilityAction(named: "Delete from Cloud") { CloudLibraryModel.shared.pendingDelete = [upload] }
+        .accessibilityActions {
+            if layout == .grid, let local, let state = AgentPromptIndex.shared.state(for: local) {
+                Button(state.accessibilityAction) { CaptureLibraryModel.shared.useAgentPrompt(local) }
+            }
+        }
     }
 
     /// The card reads as one element, so this says what its pills show.
     private var spokenLabel: String {
         let parts: [String?] = [
-            layout == .grid ? CloudUploadText.gridTitle(upload, local: local) : CloudUploadText.title(upload, local: local), upload.kindTitle, CloudUploadText.subtitle(upload, local: local),
+            layout == .grid ? CloudUploadText.gridTitle(upload, local: local) : CloudUploadText.title(upload, local: local), upload.kindTitle,
+            layout == .grid ? CaptureLibraryItem.dateTitle(local?.createdAt ?? upload.createdAt) : CloudUploadText.subtitle(upload, local: local),
             upload.isVideo ? upload.duration.map(CloudUploadText.duration) : nil,
             CloudUploadText.comments(upload.commentCount), CloudUploadText.likes(upload.likeCount),
             upload.hasPassword == true ? "password protected" : nil,
@@ -891,11 +897,7 @@ private struct CloudUploadCard: View {
         }
     }
 
-    private var contentMark: LibraryCardMarks.Pill? {
-        if let ids = upload.galleryItemIDs { return .gallery(ids.count) }
-        if upload.isVideo { return .duration(upload.duration.map(CloudUploadText.duration) ?? local?.durationText ?? "—") }
-        return nil
-    }
+
 }
 
 /// Over a thumbnail while Quick Look downloads that upload: a ring with the
@@ -1045,12 +1047,7 @@ nonisolated enum CloudUploadText {
         (date <= now ? "Expired " : "Expires ") + date.formatted(date: .abbreviated, time: .shortened)
     }
 
-    static func duration(_ seconds: Double) -> String {
-        guard seconds.isFinite, seconds >= 0 else { return "—" }
-        let whole = Int(min(seconds.rounded(), Double(Int.max / 2)))
-        if whole >= 3600 { return String(format: "%d:%02d:%02d", whole / 3600, whole / 60 % 60, whole % 60) }
-        return String(format: "%d:%02d", whole / 60, whole % 60)
-    }
+    static func duration(_ seconds: Double) -> String { LibraryCardMarks.duration(seconds) }
 }
 
 struct CloudUploadThumbnail: View {

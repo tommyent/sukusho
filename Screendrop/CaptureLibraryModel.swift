@@ -116,14 +116,7 @@ nonisolated struct CaptureLibraryItem: Identifiable, Equatable, Sendable {
         let thisYear = Calendar.current.isDate(date, equalTo: .now, toGranularity: .year)
         return date.formatted(thisYear ? day : day.year()) + ", " + date.formatted(date: .omitted, time: .shortened)
     }
-    var durationText: String {
-        guard let duration, duration.isFinite, duration >= 0 else { return "—" }
-        let seconds = Int(min(duration.rounded(), Double(Int.max / 2)))
-        if seconds >= 3600 {
-            return String(format: "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60)
-        }
-        return String(format: "%d:%02d", seconds / 60, seconds % 60)
-    }
+    var durationText: String { duration.map(LibraryCardMarks.duration) ?? "—" }
 }
 
 nonisolated struct CaptureLibraryHistorySnapshot: Sendable {

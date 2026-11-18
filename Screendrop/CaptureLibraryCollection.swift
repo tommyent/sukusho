@@ -510,9 +510,9 @@ struct LibraryCellContent: View {
                         }
                         .padding(.horizontal, 12)
                     } else {
-                        LibraryGridCard(marks: LibraryCardMarks(cloud: item.cloudURL == nil ? .unshared : .shared,
+                        LibraryGridCard(marks: LibraryCardMarks(captureLink: item.cloudURL,
                             upload: CloudLibraryModel.shared.upload(for: item.cloudURL), tall: item.isTall,
-                            content: item.isVideo ? .duration(item.durationText) : nil),
+                            recordingLength: item.isVideo ? item.durationText : nil),
                             cloudAction: {
                                 let model = CaptureLibraryModel.shared
                                 model.selection = [item.id]
@@ -549,10 +549,10 @@ struct LibraryCellContent: View {
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: selected)
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: isHovering)
                 .accessibilityElement(children: isRenaming(item) ? .contain : .ignore)
-                .accessibilityLabel("\(layout == .grid ? item.gridTitle : item.title), \(item.kindTitle), \(item.subtitle)"
+                .accessibilityLabel("\(layout == .grid ? item.gridTitle : item.title), \(item.kindTitle), \(layout == .grid ? item.dateTitle : item.subtitle)"
                     + (item.isVideo ? ", \(item.durationText)" : "")
                     + (item.cloudURL != nil ? ", shared" : "")
-                    + (item.tags.isEmpty ? "" : ", tags: \(item.tags.joined(separator: ", "))")
+                    + (layout == .grid || item.tags.isEmpty ? "" : ", tags: \(item.tags.joined(separator: ", "))")
                     + agentPromptDescription(item))
                 .accessibilityAddTraits(selected ? [.isSelected] : [])
                 .accessibilityAction { selectCell() }

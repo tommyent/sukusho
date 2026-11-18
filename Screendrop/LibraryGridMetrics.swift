@@ -102,6 +102,26 @@ nonisolated struct LibraryCardMarks {
         if let last { content.append(last) }
     }
 
+    init(captureLink: String?, upload: CloudUpload?, tall: Bool, recordingLength: String?) {
+        self.init(cloud: captureLink == nil ? .unshared : .shared, upload: upload,
+                  tall: tall, content: recordingLength.map(Pill.duration))
+    }
+
+    init(upload: CloudUpload, tall: Bool, localLength: String?) {
+        let last: Pill?
+        if let ids = upload.galleryItemIDs { last = .gallery(ids.count) }
+        else if upload.isVideo { last = .duration(upload.duration.map(Self.duration) ?? localLength ?? "—") }
+        else { last = nil }
+        self.init(cloud: upload.isReceived ? .received : .shared, upload: upload, tall: tall, content: last)
+    }
+
+    static func duration(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "—" }
+        let whole = Int(min(seconds.rounded(), Double(Int.max / 2)))
+        if whole >= 3600 { return String(format: "%d:%02d:%02d", whole / 3600, whole / 60 % 60, whole % 60) }
+        return String(format: "%d:%02d", whole / 60, whole % 60)
+    }
+
     init(clip: ClipboardEntry, upload: CloudUpload?) {
         self.init(cloud: clip.cloudLinks.isEmpty ? nil : .shared, upload: upload,
                   tall: clip.kind == .image && TallCapture.isTall(width: clip.pixelWidth, height: clip.pixelHeight),

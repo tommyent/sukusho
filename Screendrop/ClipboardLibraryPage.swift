@@ -145,6 +145,11 @@ struct ClipboardCard: View {
         .accessibilityAction { select() }
         .accessibilityAction(named: "Copy") { select(); CaptureLibraryModel.shared.copySelection([.clip(entry)]) }
         .accessibilityAction(named: "Share") { select(); CaptureLibraryModel.shared.shareSelection([.clip(entry)]) }
+        .accessibilityActions {
+            if !entry.cloudLinks.isEmpty {
+                Button("Copy Cloud Link") { select(); CloudShareLinks.copy(entry.cloudLinks) }
+            }
+        }
         .accessibilityAction(named: "Export") { select(); CaptureLibraryModel.shared.export([.clip(entry)]) }
         .accessibilityAction(named: "Quick Look") {
             let followed = QuickLookPreviewPresenter.followsLibrary && !isSelected

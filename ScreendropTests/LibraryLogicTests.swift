@@ -2,6 +2,43 @@ import Foundation
 import Testing
 
 struct LibraryLogicTests {
+    @Test func cardsUseTheCloudAndContentSlotsForTheirKind() {
+        let url = "https://example.invalid/clip"
+        func upload(_ kind: String) -> CloudUpload {
+            CloudUpload(id: "clip", url: url, title: nil, filename: "Example", mediaType: kind, size: nil,
+                        duration: kind == "video" ? 61 : nil, createdAt: .now, views: nil, thumbnailUrl: nil)
+        }
+        let screenshot = LibraryCardMarks(captureLink: nil, upload: nil, tall: true, recordingLength: nil)
+        #expect(screenshot.cloud == .unshared && screenshot.content == [.tall])
+        let recording = LibraryCardMarks(captureLink: url, upload: nil, tall: false, recordingLength: "1:01")
+        #expect(recording.cloud == .shared && recording.content == [.duration("1:01")])
+        #expect(LibraryCardMarks(upload: upload("video"), tall: false, localLength: nil).content == recording.content)
+        var gallery = upload("gallery")
+        gallery.galleryItemIDs = ["a", "b"]
+        #expect(LibraryCardMarks(upload: gallery, tall: false, localLength: nil).content == [.gallery(2)])
+        var file = upload("file")
+        #expect(LibraryCardMarks(upload: file, tall: false, localLength: nil).cloud == .shared)
+        file.requestId = "request"
+        let received = LibraryCardMarks(upload: file, tall: false, localLength: nil)
+        #expect(received.cloud == .received && received.content.isEmpty)
+        for (kind, body, title, mark): (ClipboardEntryKind, String, String, LibraryCardMarks.Pill?) in [
+            (.text, "let x = 42", "let x = 42", .kind("code")),
+            (.text, "https://example.org/path/end", "example.org/end", .kind("link")),
+            (.text, "#FBCA44", "#FBCA44", nil), (.text, "Meeting notes", "Meeting notes", .kind("text")),
+            (.snippet, "Greeting\nBody", "Greeting", nil), (.files, "/tmp/Notes.pdf", "Notes.pdf", nil),
+            (.image, "", "Copied Image", nil)
+        ] {
+            var clip = ClipboardEntry(id: "fixture", kind: kind, text: body, title: nil, imageURL: nil, libraryPath: nil,
+                byteSize: 0, pixelWidth: 1, pixelHeight: 1, sourceBundleID: nil, isRemote: false, firstCopiedAt: .now,
+                lastCopiedAt: .now, timesCopied: 1, pinnedAt: .now)
+            #expect(ClipboardList.gridTitle(of: clip) == title)
+            let marks = LibraryCardMarks(clip: clip, upload: nil)
+            #expect(marks.cloud == nil && marks.content == [mark].compactMap { $0 })
+            clip.cloudLinks = [url]
+            #expect(LibraryCardMarks(clip: clip, upload: nil).cloud == .shared)
+        }
+    }
+
     @Test func cloudMediaRevisionSurvivesListingAndKeysPreviewRequests() throws {
         let data = Data("""
         {"uploads":[{"id":"abcd1234","url":"https://share.example.invalid/abcd1234","filename":"clip.mp4","mediaType":"video","createdAt":"2026-10-15T00:00:00Z","mediaKey":"uploads/abcd1234/media-new"}]}
