@@ -76,7 +76,7 @@ nonisolated enum ClipboardPasteboardReader {
     }
 
     static func archiveCopy(_ entry: ClipboardEntry, items: [NSPasteboardItem], historyDirectory: URL) -> ClipboardCapture? {
-        guard entry.pinnedAt != nil, let first = items.first else { return nil }
+        guard entry.isArchived, let first = items.first else { return nil }
         let types = first.types.map(\.rawValue)
         let kind: ClipboardCapturePolicy.Content
         if entry.kind == .image { kind = .image }

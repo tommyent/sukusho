@@ -102,8 +102,8 @@ final class ClipboardHistoryModel {
     }
 
     var historyCount: Int { entries.count { $0.kind != .snippet && $0.pinnedAt == nil } }
-    var snippetCount: Int { entries.count { $0.kind == .snippet && $0.pinnedAt == nil } }
-    var savedCount: Int { entries.count { $0.pinnedAt != nil } }
+    var snippetCount: Int { entries.count { $0.kind == .snippet } }
+    var savedCount: Int { entries.count { $0.isArchived } }
 
     func entry(_ id: ClipboardEntry.ID?) -> ClipboardEntry? {
         id.flatMap { id in entries.first { $0.id == id } }

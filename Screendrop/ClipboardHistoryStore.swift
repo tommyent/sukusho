@@ -22,6 +22,7 @@ nonisolated struct ClipboardEntry: Sendable, Equatable, Identifiable {
     let timesCopied: Int
     /// When the copy was saved (★, Library › Saved); stored as pinned_at, the name it had before option A.
     let pinnedAt: Date?
+    var isArchived: Bool { kind != .snippet && pinnedAt != nil }
     /// An image's text, read on this Mac as the Library reads captures'; nil until read.
     var readText: String? = nil
     /// Apple Intelligence's title, keywords and category for an image, as the Library has for captures.
@@ -177,6 +178,22 @@ actor ClipboardHistoryStore {
         } else if indexStatus != SQLITE_DONE {
             throw StoreError(description: String(cString: sqlite3_errmsg(handle)))
         }
+        var version: OpaquePointer?
+        guard sqlite3_prepare_v2(handle, "PRAGMA user_version", -1, &version, nil) == SQLITE_OK else {
+            throw StoreError(description: String(cString: sqlite3_errmsg(handle)))
+        }
+        let status = sqlite3_step(version)
+        let schemaVersion = sqlite3_column_int(version, 0)
+        sqlite3_finalize(version)
+        guard status == SQLITE_ROW else { throw StoreError(description: String(cString: sqlite3_errmsg(handle))) }
+        if schemaVersion == 0 {
+            try Self.execute(handle, """
+                BEGIN IMMEDIATE;
+                UPDATE entries SET pinned_at = NULL WHERE kind = 'snippet' AND pinned_at IS NOT NULL;
+                PRAGMA user_version = 1;
+                COMMIT;
+                """)
+        }
         // Histories from before the image descriptions get their columns; on a newer one each is a duplicate.
         for column in ["read_text TEXT", "model_title TEXT", "model_keywords TEXT", "model_category TEXT",
                        "described INTEGER NOT NULL DEFAULT 0", "optimized_here INTEGER NOT NULL DEFAULT 0"] {
@@ -290,7 +307,7 @@ actor ClipboardHistoryStore {
     /// the capture is edited or trashed (Astra L1). The capture link stays as it was.
     func setPinned(_ id: String, _ pinned: Bool, at date: Date = .now) throws {
         try transaction {
-            try run("UPDATE entries SET pinned_at = ?, change_seq = ? WHERE id = ?",
+            try run("UPDATE entries SET pinned_at = ?, change_seq = ? WHERE id = ? AND kind != 'snippet'",
                     [pinned ? date.timeIntervalSince1970 : nil, try nextChange(), id])
             guard pinned, let reference = try query(
                 "SELECT library_path, hash FROM entries WHERE id = ? AND blob IS NULL AND library_path IS NOT NULL", [id],

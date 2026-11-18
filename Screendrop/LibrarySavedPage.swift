@@ -58,7 +58,7 @@ enum LibrarySavedCard: Identifiable {
     /// mockup's chips; Recordings are their own filter.
     static func cards(captures: [CaptureLibraryItem], clips: [ClipboardEntry], filter: LibrarySavedFilter) -> [Self] {
         let captures = captures.filter { $0.isSaved && (filter == .all || filter == (($0.isVideo) ? .recordings : .captures)) }
-        let clips = filter == .all || filter == .clips ? clips.filter { $0.pinnedAt != nil } : []
+        let clips = filter == .all || filter == .clips ? clips.filter { $0.isArchived } : []
         return (captures.map(Self.capture) + clips.map(Self.clip)).sorted {
             $0.savedAt != $1.savedAt ? $0.savedAt > $1.savedAt : $0.id < $1.id
         }

@@ -59,7 +59,7 @@ nonisolated enum ClipboardList {
         case .links: textForm(of: entry) == .link
         case .colors: if case .color = textForm(of: entry) { true } else { false }
         case .files: entry.kind == .files
-        case .saved: entry.pinnedAt != nil
+        case .saved: entry.isArchived
         case .snippets: entry.kind == .snippet
         }
     }
@@ -92,8 +92,8 @@ nonisolated enum ClipboardList {
         calendar: Calendar = .current
     ) -> [Section] {
         let shown = entries.filter { matches($0, filter: filter) && matches($0, query: query, appName: appName($0.sourceBundleID)) }
-        let pinned = shown.filter { $0.pinnedAt != nil }.sorted { $0.pinnedAt! > $1.pinnedAt! }
-        let rest = shown.filter { $0.pinnedAt == nil }.sorted { $0.lastCopiedAt > $1.lastCopiedAt }
+        let pinned = shown.filter { $0.isArchived }.sorted { $0.pinnedAt! > $1.pinnedAt! }
+        let rest = shown.filter { !$0.isArchived }.sorted { $0.lastCopiedAt > $1.lastCopiedAt }
         var sections = pinned.isEmpty ? [] : [Section(title: "Saved", entries: pinned)]
         if filter == .saved { return sections }
         if !includesSnippets { sections = [] }

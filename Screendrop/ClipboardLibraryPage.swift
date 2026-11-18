@@ -175,7 +175,7 @@ struct ClipboardCard: View {
                         }
                         Text(app).truncationMode(.tail).libraryRaisedText()
                     }
-                    if entry.pinnedAt != nil { Image(systemName: "star.fill").font(.system(size: 8)).foregroundStyle(.yellow) }
+                    if entry.isArchived { Image(systemName: "star.fill").font(.system(size: 8)).foregroundStyle(.yellow) }
                 }
                 .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
@@ -270,7 +270,7 @@ struct ClipboardListRow: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: DS.Space.m)
-            if entry.pinnedAt != nil { Image(systemName: "star.fill").font(.system(size: 9)).foregroundStyle(.yellow) }
+            if entry.isArchived { Image(systemName: "star.fill").font(.system(size: 9)).foregroundStyle(.yellow) }
             Text(entry.kind == .snippet ? (model.appName(entry.sourceBundleID) ?? "") : ClipboardInfo.shortWhen(entry.lastCopiedAt))
                 .font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
         }

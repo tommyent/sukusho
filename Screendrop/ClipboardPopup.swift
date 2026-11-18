@@ -344,7 +344,7 @@ struct ClipboardPopupView: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 0)
-            if entry.pinnedAt != nil { Image(systemName: "star.fill").accessibilityLabel("Saved") }
+            if entry.isArchived { Image(systemName: "star.fill").accessibilityLabel("Saved") }
             if let pinNumber { Text("⌘\(pinNumber)").font(DS.TypeScale.label).foregroundStyle(.tertiary) }
         }
         .padding(.horizontal, DS.Space.ml)

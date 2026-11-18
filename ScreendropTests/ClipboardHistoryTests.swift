@@ -334,6 +334,23 @@ struct ClipboardHistoryStoreTests {
         #expect(try await store.entries().isEmpty)
     }
 
+    @Test func betaOnePinnedSnippetStaysInSnippets() async throws {
+        let original = try store()
+        let id = try await original.addSnippet(title: "Greeting", text: "Hello")
+        var db: OpaquePointer?
+        try #require(sqlite3_open(directory.appendingPathComponent("clipboard.sqlite").path, &db) == SQLITE_OK)
+        defer { sqlite3_close(db) }
+        try #require(sqlite3_exec(db, "PRAGMA user_version = 0; UPDATE entries SET pinned_at = 1 WHERE kind = 'snippet'", nil, nil, nil) == SQLITE_OK)
+        let legacy = try #require(try await original.entries().first)
+        #expect(legacy.pinnedAt != nil)
+        #expect(!ClipboardList.matches(legacy, filter: .saved))
+        #expect(ClipboardList.sections([legacy], filter: .snippets, query: CaptureLibraryQuery("")).flatMap(\.entries).map(\.id) == [id])
+        let reopened = try store()
+        try await reopened.setPinned(id, true)
+        let snippet = try #require(try await reopened.entries().first)
+        #expect(snippet.id == id && snippet.text == "Hello" && snippet.pinnedAt == nil)
+    }
+
     @Test func betaOneCanReopenAnArchiveWithAnIdenticalHistoryCopy() async throws {
         let original = try store()
         guard case .inserted(let saved) = try await original.record(text("same"), at: start) else {
