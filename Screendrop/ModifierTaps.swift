@@ -60,6 +60,8 @@ struct ModifierTapDetector {
     /// Long enough for a key held through missed events to show itself by repeating (`quietTime`).
     var quiet: TimeInterval = 0.7
     private var lastKeyEvent: TimeInterval = 0
+    /// Secure input (a password field) as the last event found it: while it's on, macOS withholds other keys.
+    private(set) var isSecure = false
 
     /// The key-repeat delay and two repeats (0.67 s at macOS's defaults), at most 2.5 s. With key repeat off a held key
     /// sends nothing at all, which no event can show; then it's the 2.5 s.
@@ -90,6 +92,16 @@ struct ModifierTapDetector {
         lastKeyEvent = time
     }
 
+    /// Secure input as this event finds it. A change either way means keys were withheld meanwhile: events missed.
+    /// Returns whether it changed. It's a sample, so a password field that takes the keyboard and lets it go between two
+    /// events can't be seen.
+    mutating func secureInput(_ isOn: Bool, at time: TimeInterval) -> Bool {
+        guard isOn != isSecure else { return false }
+        isSecure = isOn
+        eventsMissed(at: time)
+        return true
+    }
+
     /// Some other key went down. A repeat means one is held, even if it went down before watching started.
     mutating func keyDown(isRepeat: Bool, at time: TimeInterval) {
         interrupt()
@@ -106,8 +118,9 @@ struct ModifierTapDetector {
     /// One flags-changed event: the key that changed and the flags after it. Returns the taps it completes.
     mutating func flagsChanged(keyCode: Int, flags: UInt64, at time: TimeInterval) -> [Tap] {
         if isUnsure, keysDown == 0, time - lastKeyEvent >= quiet { isUnsure = false }
-        guard let key = ModifierKeys.keys[keyCode] else {
-            interrupt()  // fn or Caps Lock
+        // fn or Caps Lock; or secure input, where other keys may not arrive, so a chord could look like a tap.
+        guard let key = ModifierKeys.keys[keyCode], !isSecure else {
+            interrupt()
             return []
         }
         let families = HotkeyShortcut.Modifiers(from: NSEvent.ModifierFlags(rawValue: UInt(flags & 0xFFFF_0000)))

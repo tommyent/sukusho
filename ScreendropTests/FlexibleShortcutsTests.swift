@@ -271,6 +271,30 @@ struct FlexibleShortcutsTests {
         #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 5.9) == [.once(keyCode: kVK_RightOption)])
     }
 
+    /// Sol's re-review, 4: secure input found on, or found off again, at the next event (with no callback in between)
+    /// drops the gesture under way, and the keyboard must be seen quiet again; while it's on nothing taps. A secure
+    /// stretch that starts and ends between two events is invisible to the sample, so it isn't claimed.
+    @Test func secureInputComingOrGoingIsAGap() {
+        var detector = ModifierTapDetector()
+        detector.quiet = 0.7
+        let offFromTheStart = detector.secureInput(false, at: 1)
+        #expect(!offFromTheStart)
+        _ = detector.flagsChanged(keyCode: kVK_Command, flags: command | leftCommandBit, at: 1)
+        #expect(detector.flagsChanged(keyCode: kVK_Command, flags: 0, at: 1.05) == [.once(keyCode: kVK_Command)])
+        let cameOn = detector.secureInput(true, at: 1.2)
+        #expect(cameOn)
+        _ = detector.flagsChanged(keyCode: kVK_Command, flags: command | leftCommandBit, at: 1.2)
+        #expect(detector.flagsChanged(keyCode: kVK_Command, flags: 0, at: 1.25).isEmpty, "secure input on")
+        let wentOff = detector.secureInput(false, at: 1.3)
+        #expect(wentOff)
+        _ = detector.flagsChanged(keyCode: kVK_Command, flags: command | leftCommandBit, at: 1.3)
+        #expect(detector.flagsChanged(keyCode: kVK_Command, flags: 0, at: 1.35).isEmpty, "no ⌘ ⌘ with the first tap")
+        _ = detector.flagsChanged(keyCode: kVK_Command, flags: command | leftCommandBit, at: 2.2)
+        #expect(detector.flagsChanged(keyCode: kVK_Command, flags: 0, at: 2.25) == [.once(keyCode: kVK_Command)])
+        let stillOff = detector.secureInput(false, at: 3)
+        #expect(!stillOff)
+    }
+
     /// The stretch is the key-repeat delay and two repeats, so a held key has repeated by then; with key repeat off (or
     /// nearly) it's 2.5 s.
     @Test func theQuietStretchFollowsKeyRepeat() {

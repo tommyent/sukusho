@@ -18,10 +18,8 @@ final class ModifierTapMonitor {
     private var detector = ModifierTapDetector()
     private var onTap: ((ModifierTapDetector.Tap) -> Void)?
     private var onStop: (() -> Void)?
-    /// Bumped when events are missed, so a tap queued before then doesn't run.
+    /// Bumped at every break in the events, so a tap queued before it doesn't run.
     private var generation = 0
-    /// Secure input (a password field) as the last event found it: macOS withholds keys from the tap while it's on.
-    private var wasSecure = false
     private var activationObserver: NSObjectProtocol?
 
     /// Privacy & Security › Input Monitoring: `Privacy_ListenEvent` is that page's anchor in System Settings' own search
@@ -67,7 +65,7 @@ final class ModifierTapMonitor {
         // after.
         activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
-        ) { [weak self] _ in MainActor.assumeIsolated { self?.detector.interrupt() } }
+        ) { [weak self] _ in MainActor.assumeIsolated { self?.invalidate() } }
         return true
     }
 
@@ -77,7 +75,13 @@ final class ModifierTapMonitor {
         detector.quiet = ModifierTapDetector.quietTime()
         detector.eventsMissed(at: time)
         generation += 1
-        wasSecure = IsSecureEventInputEnabled()
+    }
+
+    /// Something broke the gesture without events being missed (another app came forward): what was under way and what
+    /// was queued both go.
+    private func invalidate() {
+        detector.interrupt()
+        generation += 1
     }
 
     func stop() {
@@ -126,7 +130,7 @@ final class ModifierTapMonitor {
         // queued from before the keyboard was seen quiet are judged by when they happened.
         let time = NSEvent(cgEvent: event)?.timestamp ?? now
         // Secure input came or went: keys typed meanwhile never reached the tap.
-        if IsSecureEventInputEnabled() != wasSecure { missEvents(at: time) }
+        if detector.secureInput(IsSecureEventInputEnabled(), at: time) { generation += 1 }
         switch type {
         case .flagsChanged:
             detector.interval = NSEvent.doubleClickInterval
@@ -138,8 +142,7 @@ final class ModifierTapMonitor {
                 detector.interrupt()
                 taps = []
             }
-            // In a password field (secure input) other keys may not reach the tap, so a chord could look like a tap.
-            guard !taps.isEmpty, !wasSecure else { return }
+            guard !taps.isEmpty else { return }
             // After the callback returns: a capture starting here shouldn't hold up the event tap. By then events may
             // have been missed, or a password field taken the keyboard.
             let queued = generation
