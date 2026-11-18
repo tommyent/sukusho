@@ -145,6 +145,18 @@ struct ClipboardPasteboardReaderTests {
         }
     }
 
+    @Test func optimizedCaptureRetainsEditorAssociationAndOnlyItsCopiedBytes() throws {
+        let png = try image(width: 8, height: 8, as: .png)
+        for (name, expected) in [("Source.png", history.appendingPathComponent("Source.png").path), ("../other.png", nil)] {
+            let values = [ClipboardCapturePolicy.captureNameType: name, ClipboardCapturePolicy.fileURLType: "file:///tmp/optimized.png"]
+            withPasteboard([item(values, data: ["public.png": png])]) { board in
+                guard case .captured(let captured) = read(board) else { Issue.record("Missing image"); return }
+                #expect(captured.libraryPath == expected)
+                #expect(captured.image == png)
+            }
+        }
+    }
+
     @Test func concealedCopiesAreNeverRead() throws {
         withPasteboard([item(["public.utf8-plain-text": "hunter2", "org.nspasteboard.ConcealedType": ""])]) { pasteboard in
             #expect(read(pasteboard) == .skipped(.privateType("org.nspasteboard.ConcealedType")))
@@ -328,6 +340,7 @@ struct ClipboardHistoryStoreTests {
         let pixels = Self.picture(3)
         try pixels.write(to: file)
         var reference = image(100)
+        let beforeEdit = reference
         reference.image = nil
         reference.libraryPath = file.path
         try await old.record(reference)
@@ -349,6 +362,8 @@ struct ClipboardHistoryStoreTests {
         let kept = try #require(entries.first { $0.libraryPath == file.path })
         let blob = try #require(kept.imageURL)
         #expect(blob != file && kept.byteSize == pixels.count)
+        #expect(kept.pixelWidth == 400 && kept.pixelHeight == 240)
+        #expect(kept.hash == ClipboardPasteboardReader.digest(pixels))
         #expect(kept.earlierVersions.first?.imageURL == blob)
         #expect(try Data(contentsOf: file) == pixels)
         try Self.picture(9).write(to: file)
@@ -358,10 +373,53 @@ struct ClipboardHistoryStoreTests {
         #expect(try await reopened.entries() == entries)
         #expect(entries.first { $0.libraryPath == missing.libraryPath }?.imageURL == nil)
         #expect(try Data(contentsOf: blob) == pixels)
+        guard case .inserted = try await reopened.record(beforeEdit) else { Issue.record("Original copy was lost"); return }
+        let recopy = try #require(try await reopened.entries().first { $0.hash == beforeEdit.hash })
+        let recopyURL = try #require(recopy.imageURL)
+        #expect(try Data(contentsOf: recopyURL) == beforeEdit.image)
         let snapshot = try kept.imageSnapshot()
         #expect(snapshot != blob && snapshot.pathExtension == "png")
         try Data().write(to: snapshot)
         #expect(try Data(contentsOf: blob) == pixels)
+    }
+
+    @Test func migrationRetainsBothHistoriesWhenTwoCaptureFilesBecameIdentical() async throws {
+        let old = try store()
+        let bytes = Self.picture(8)
+        var ids = Set<String>()
+        for name in ["First.png", "Second.png"] {
+            let file = directory.appendingPathComponent(name)
+            try bytes.write(to: file)
+            var reference = image(150)
+            reference.image = nil
+            reference.libraryPath = file.path
+            guard case .inserted(let id) = try await old.record(reference) else { Issue.record("Missing entry"); return }
+            ids.insert(id)
+        }
+        var handle: OpaquePointer?
+        try #require(sqlite3_open(directory.appendingPathComponent("clipboard.sqlite").path, &handle) == SQLITE_OK)
+        defer { sqlite3_close(handle) }
+        try #require(sqlite3_exec(handle, "PRAGMA user_version = 1", nil, nil, nil) == SQLITE_OK)
+        let upgraded = try store()
+        let migrated = try await upgraded.entries()
+        #expect(Set(migrated.map(\.id)) == ids)
+        #expect(Set(migrated.compactMap(\.imageURL)).count == 1)
+        #expect(migrated.filter { $0.hash == ClipboardPasteboardReader.digest(bytes) }.count == 1)
+        guard case .bumped = try await upgraded.record(image(bytes, width: 400, height: 240)) else {
+            Issue.record("Identical pixels should reuse the indexed copy"); return
+        }
+    }
+
+    @Test func copyingTheSameImageFromHistoryAddsItsEditorLink() async throws {
+        let store = try store()
+        var incoming = image(180)
+        try await store.record(incoming, at: start)
+        let original = try #require(try await store.entries().first)
+        incoming.libraryPath = directory.appendingPathComponent("History/capture.png").path
+        #expect(try await store.record(incoming, at: start + 1) == .bumped(original.id))
+        let updated = try #require(try await store.entries().first)
+        #expect(updated.imageURL == original.imageURL)
+        #expect(updated.libraryPath == incoming.libraryPath)
     }
 
     @Test func snippetEditDateSurvivesLaterCopies() async throws {

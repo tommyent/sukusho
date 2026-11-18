@@ -84,6 +84,7 @@ nonisolated enum ClipboardPasteboardReader {
         else { kind = .text }
         var copy = capture(kind, items: items, types: types, historyDirectory: historyDirectory)
         copy?.sourceBundleID = entry.sourceBundleID
+        if entry.kind == .image { copy?.libraryPath = entry.libraryPath }
         return copy
     }
 
@@ -116,6 +117,12 @@ nonisolated enum ClipboardPasteboardReader {
                                            pixelHeight: size.height, byteSize: data.count)
             let fileURL = item.string(forType: .fileURL).flatMap(URL.init(string:))
             capture.libraryPath = ClipboardCapturePolicy.libraryPath(of: fileURL, historyDirectory: historyDirectory)
+            if capture.libraryPath == nil,
+               let name = item.string(forType: .init(ClipboardCapturePolicy.captureNameType)),
+               !name.isEmpty, name != ".", name != "..", !name.contains("/") {
+                capture.libraryPath = ClipboardCapturePolicy.libraryPath(of: historyDirectory.appendingPathComponent(name),
+                                                                         historyDirectory: historyDirectory)
+            }
             if type == "public.tiff" {
                 guard let png = png(from: data) else { return nil }
                 capture.image = png

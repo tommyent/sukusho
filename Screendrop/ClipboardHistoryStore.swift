@@ -183,18 +183,32 @@ actor ClipboardHistoryStore {
             do {
                 for table in ["entries", "versions"] {
                     let rows = try Self.query(handle, """
-                        SELECT rowid, library_path FROM \(table) WHERE library_path IS NOT NULL AND blob IS NULL
-                        """, []) { ($0.int(0), $0.text(1)!) }
-                    for (row, path) in rows {
+                        SELECT rowid, library_path, hash FROM \(table) WHERE library_path IS NOT NULL AND blob IS NULL
+                        """, []) { ($0.int(0), $0.text(1)!, $0.text(2)!) }
+                    for (row, path, previousHash) in rows {
                         let file = URL(fileURLWithPath: path)
                         let data: Data
                         do { data = try Data(contentsOf: file) }
                         catch let error as CocoaError where error.code == .fileReadNoSuchFile { continue }
-                        let blob = try Self.writeBlob(data, hash: ClipboardPasteboardReader.digest(data),
+                        let hash = ClipboardPasteboardReader.digest(data)
+                        let blob = try Self.writeBlob(data, hash: hash,
                                                       ext: file.pathExtension, in: directory)
                         _ = try Self.query(handle, """
                             UPDATE \(table) SET blob = ?, stored_bytes = ?, byte_size = ? WHERE rowid = ?
                             """, [blob, data.count, data.count, row]) { _ in () }
+                        if table == "entries", let size = ClipboardPasteboardReader.pixelSize(of: data) {
+                            _ = try Self.query(handle, "UPDATE entries SET pixel_width = ?, pixel_height = ? WHERE rowid = ?",
+                                               [size.width, size.height, row]) { _ in () }
+                        }
+                        if hash != previousHash {
+                            // A pre-upgrade edit changed the bytes. A new copy of the old bytes must get its own card.
+                            _ = try Self.query(handle, "UPDATE OR IGNORE \(table) SET hash = ? WHERE rowid = ?", [hash, row]) { _ in () }
+                            if sqlite3_changes(handle) == 0 {
+                                // Another row already indexes these bytes. Keep both histories and one canonical copy target.
+                                _ = try Self.query(handle, "UPDATE \(table) SET hash = ? WHERE rowid = ?",
+                                                   ["legacy-\(row)-\(hash)", row]) { _ in () }
+                            }
+                        }
                     }
                 }
                 try Self.execute(handle, "PRAGMA user_version = 2; COMMIT")
@@ -229,8 +243,10 @@ actor ClipboardHistoryStore {
                             [blob, capture.storedBytes, capture.byteSize, id])
                 }
                 // Content history already holds: that card goes to the top. A fresh copy it looks like stays as it is.
-                try run("UPDATE entries SET last_copied_at = ?, times_copied = times_copied + 1, change_seq = ? WHERE id = ?",
-                        [date.timeIntervalSince1970, try nextChange(), id])
+                try run("""
+                    UPDATE entries SET last_copied_at = ?, times_copied = times_copied + 1,
+                        library_path = COALESCE(?, library_path), change_seq = ? WHERE id = ?
+                    """, [date.timeIntervalSince1970, capture.libraryPath, try nextChange(), id])
                 return .bumped(id)
             }
             let blob = try writeBlob(of: capture)

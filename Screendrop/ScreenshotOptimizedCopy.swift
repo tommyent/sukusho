@@ -27,7 +27,12 @@ extension ScreenshotFileActions {
             return nil
         }
         let copied = try await OptimizedImageCopy.shared.copy(url, optimize: { try await optimizedForCopy($0) }) {
-            try await clipboardItem(for: $0)
+            let item = try await clipboardItem(for: $0)
+            if $0 != url, ClipboardCapturePolicy.libraryPath(of: url, historyDirectory: ScreenshotHistoryStore.historyDirectory) != nil {
+                // The optimized file is temporary. Keep the capture name for the editor without publishing its path.
+                item.setString(url.lastPathComponent, forType: .init(ClipboardCapturePolicy.captureNameType))
+            }
+            return item
         }
         guard let copied, copied.outcome == .optimized else { return nil }
         let size = ByteCountFormatter.string(fromByteCount: copied.resultByteCount, countStyle: .file)

@@ -26,6 +26,7 @@ nonisolated enum ClipboardCapturePolicy {
     static let defaultIgnoredApps = ["com.apple.keychainaccess", "com.apple.Passwords", "com.1password.1password"]
     static let sourceType = "org.nspasteboard.source"
     /// Stamped on what Sukusho writes from history, so the monitor doesn't record it again.
+    static let captureNameType = "com.tommyent.Sukusho.capture-name"
     static let ownType = "com.tommyent.Sukusho.clipboard-history"
     /// Universal Clipboard's marker (community-documented, not Apple API).
     static let remoteType = "com.apple.is-remote-clipboard"
@@ -154,7 +155,7 @@ nonisolated enum ClipboardCapturePolicy {
     }
 
     /// The capture's path when a copied file is one of Sukusho's own History
-    /// files, so the entry points at the Library instead of keeping a copy.
+    /// files, so double-click can reopen that capture in the editor.
     static func libraryPath(of fileURL: URL?, historyDirectory: URL) -> String? {
         guard let path = fileURL?.standardizedFileURL.path else { return nil }
         let prefix = historyDirectory.standardizedFileURL.path + "/"
