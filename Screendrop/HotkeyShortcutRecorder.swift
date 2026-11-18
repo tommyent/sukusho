@@ -42,11 +42,7 @@ final class HotkeyShortcutRecorder {
         rejection = nil
         // Like the event tap: a key held since before Record was clicked was never seen going down (Sol's re-review).
         taps = .startingAt(ProcessInfo.processInfo.systemUptime)
-        canRecordTaps = false
-        arming.start({ [weak self] in self?.taps }, arm: { [weak self] time in
-            self?.taps.arm(at: time)
-            self?.canRecordTaps = true
-        })
+        armWhenQuiet()
         HotkeyManager.shared.pauseForRecording { [weak self] in self?.stop() }
         resignObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didResignKeyNotification, object: nil, queue: .main
@@ -107,7 +103,7 @@ final class HotkeyShortcutRecorder {
             }
             return event
         case .keyDown:
-            taps.keyDown(isRepeat: event.isARepeat, at: event.timestamp)
+            if taps.keyDown(isRepeat: event.isARepeat, at: event.timestamp) { armWhenQuiet() }
             if event.keyCode == UInt16(kVK_Escape) {
                 cancel()
                 return nil
@@ -124,13 +120,21 @@ final class HotkeyShortcutRecorder {
             finish(with: shortcut)
             return nil
         case .keyUp:
-            taps.keyUp(at: event.timestamp)
+            if taps.keyUp(at: event.timestamp) { armWhenQuiet() }
             return event
         default:
             // A click or a scroll isn't part of a shortcut, and ends a tap; it still does what it does.
             taps.interrupt()
             return event
         }
+    }
+
+    private func armWhenQuiet() {
+        canRecordTaps = false
+        arming.start({ [weak self] in self?.taps }, arm: { [weak self] start, end in
+            self?.taps.arm(readFrom: start, to: end)
+            self?.canRecordTaps = true
+        })
     }
 
     private func finish(with shortcut: HotkeyShortcut) {

@@ -61,6 +61,10 @@ struct ModifierTapDetector {
     /// Long enough for a key held through missed events to show itself by repeating (`quietTime`).
     var quiet: TimeInterval = 0.7
     private var armedAt: TimeInterval = -.infinity
+    /// The last arming read, from when it started to when it ended. An ordinary key event stamped inside it, arriving
+    /// later, means a key changed while the keys were being read, so the read may have missed one (Sol's round 8
+    /// rollover: A read as up, then A down and E up, then E read as up), and that arming is void.
+    private var armingRead: ClosedRange<TimeInterval>?
     /// When events were last missed: a key event stamped earlier, delivered late, is from before the gap and never
     /// moves the quiet stretch (Sol's round 7 probe: a key-up stamped 9.00 after a reset at 10.00).
     private var missedAt: TimeInterval = -.infinity
@@ -92,10 +96,20 @@ struct ModifierTapDetector {
         isUnsure && keysDown == 0 && time >= quietEnds
     }
 
-    /// macOS said no other key was down at `time`: from then on, gestures count again.
-    mutating func arm(at time: TimeInterval) {
+    /// The read from `start` to `end` found no other key down: gestures pressed after `end`, when the read was complete,
+    /// count again, unless a key event from inside the read turns up (`keyDown`, `keyUp`).
+    mutating func arm(readFrom start: TimeInterval, to end: TimeInterval) {
         isUnsure = false
-        armedAt = time
+        armedAt = end
+        armingRead = start...end
+    }
+
+    /// True when the event voids the last arming: it's stamped inside that read.
+    private mutating func voidsArming(_ time: TimeInterval) -> Bool {
+        guard let read = armingRead, read.contains(time) else { return false }
+        armingRead = nil
+        isUnsure = true
+        return true
     }
 
     /// One reading of whether any key other than a modifier is down, reduced at once to a yes or no: which key is never
@@ -121,6 +135,7 @@ struct ModifierTapDetector {
         isUnsure = true
         missedAt = time
         lastKeyEvent = time
+        armingRead = nil
     }
 
     /// Secure input as this event finds it. A change either way means keys were withheld meanwhile: events missed.
@@ -133,19 +148,24 @@ struct ModifierTapDetector {
         return true
     }
 
-    /// Some other key went down. A repeat means one is held, even if it went down before watching started.
-    mutating func keyDown(isRepeat: Bool, at time: TimeInterval) {
+    /// Some other key went down. A repeat means one is held, even if it went down before watching started. Returns true
+    /// when it voided the last arming, so the caller arms again.
+    @discardableResult
+    mutating func keyDown(isRepeat: Bool, at time: TimeInterval) -> Bool {
         interrupt()
-        guard time >= missedAt else { return }
+        guard time >= missedAt else { return false }
         keysDown = isRepeat ? max(keysDown, 1) : keysDown + 1
         lastKeyEvent = max(lastKeyEvent, time)
+        return voidsArming(time)
     }
 
-    mutating func keyUp(at time: TimeInterval) {
+    @discardableResult
+    mutating func keyUp(at time: TimeInterval) -> Bool {
         interrupt()
-        guard time >= missedAt else { return }
+        guard time >= missedAt else { return false }
         keysDown = max(keysDown - 1, 0)
         lastKeyEvent = max(lastKeyEvent, time)
+        return voidsArming(time)
     }
 
     /// One flags-changed event: the key that changed and the flags after it. Returns the taps it completes.

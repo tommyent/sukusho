@@ -208,7 +208,7 @@ struct FlexibleShortcutsTests {
     /// What the event tap and the recorder do once the stretch is quiet, when macOS's one reading says no other key is
     /// down: arm, from that moment.
     private func armIfQuiet(_ detector: inout ModifierTapDetector, at time: TimeInterval) {
-        if detector.canArm(at: time) { detector.arm(at: time) }
+        if detector.canArm(at: time) { detector.arm(readFrom: time, to: time) }
     }
 
     /// Sol's re-review, blocker 1: watching starts while E is held, Sukusho is busy, and Right ⌥ goes down and up, then E
@@ -218,7 +218,7 @@ struct FlexibleShortcutsTests {
         var detector = ModifierTapDetector.startingAt(10, quiet: 0.7)
         _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 10.1)
         #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 10.2).isEmpty, "not armed")
-        detector.arm(at: 11)
+        detector.arm(readFrom: 11, to: 11)
         // Stamped before the arming, processed after it.
         _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 10.4)
         #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 10.5).isEmpty)
@@ -229,6 +229,58 @@ struct FlexibleShortcutsTests {
         // Pressed after it.
         _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 11.2)
         #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 11.25) == [.once(keyCode: kVK_RightOption)])
+    }
+
+    /// Sol's round 8 probe, first order: the read starts at 11.00 and is complete at 11.09. E, held since before watching
+    /// started, and a Right ⌥ tap at 11.02–11.06 happen while it reads, then E comes up at 11.08 before the read reaches
+    /// E. The tap was pressed before the read was complete, so it doesn't count; and the E-up stamped inside the read
+    /// voids the arming. (Armed at the read's start, as in round 8, that tap opened Area.)
+    @Test func aTapDuringTheArmingReadDoesntCount() {
+        var detector = ModifierTapDetector.startingAt(10, quiet: 0.7)
+        #expect(detector.canArm(at: 11))
+        detector.arm(readFrom: 11, to: 11.09)
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 11.02)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 11.06).isEmpty)
+        let voided = detector.keyUp(at: 11.08)
+        #expect(voided, "a key changed while the keys were read")
+        #expect(detector.isUnsure)
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 11.3)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 11.35).isEmpty, "armed again only after a new read")
+    }
+
+    /// Sol's round 8 probe, rollover: the read finds A up, then A goes down (11.02) and E, held from before, comes up
+    /// (11.06), then the read finds E up, and it's complete at 11.09. A is held, but the count says nothing is (A down,
+    /// E up). The events stamped inside the read void that arming, so a later Right ⌥ with A held doesn't count; the next
+    /// read, after a quiet stretch, sees A down.
+    @Test func aKeyChangingDuringTheArmingReadVoidsIt() {
+        var detector = ModifierTapDetector.startingAt(10, quiet: 0.7)
+        detector.arm(readFrom: 11, to: 11.09)
+        let aDownVoids = detector.keyDown(isRepeat: false, at: 11.02)
+        #expect(aDownVoids)
+        let eUpVoidsAgain = detector.keyUp(at: 11.06)
+        #expect(!eUpVoidsAgain, "already void")
+        #expect(detector.isUnsure)
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 11.2)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 11.25).isEmpty)
+        #expect(detector.canArm(at: 11.8), "quiet again by its events, so the caller reads the keys again")
+    }
+
+    /// Key events from before the read started, or after it was complete, don't void it: the read saw the first kind,
+    /// and the count follows the second.
+    @Test func keyEventsOutsideTheArmingReadDontVoidIt() {
+        var detector = ModifierTapDetector.startingAt(10, quiet: 0.7)
+        detector.arm(readFrom: 11, to: 11.09)
+        let before = detector.keyUp(at: 10.95)
+        let after = detector.keyDown(isRepeat: false, at: 11.2)
+        #expect(!before)
+        #expect(!after)
+        #expect(!detector.isUnsure)
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 11.3)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 11.35).isEmpty, "a key is down")
+        let laterUp = detector.keyUp(at: 11.4)
+        #expect(!laterUp)
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 11.5)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 11.55) == [.once(keyCode: kVK_RightOption)])
     }
 
     /// Round 8 (desk-lead's decision): with key repeat off, E held from before sends nothing at all. The events go quiet,

@@ -18,8 +18,9 @@ import Carbon.HIToolbox
 final class ModifierTapArming {
     private var task: Task<Void, Never>?
 
-    /// `detector` gives the detector as it is now (nil when its owner is gone); `arm` arms it at the reading's time.
-    func start(_ detector: @escaping () -> ModifierTapDetector?, arm: @escaping (TimeInterval) -> Void) {
+    /// `detector` gives the detector as it is now (nil when its owner is gone); `arm` arms it with when the reading
+    /// started and when it was complete.
+    func start(_ detector: @escaping () -> ModifierTapDetector?, arm: @escaping (TimeInterval, TimeInterval) -> Void) {
         task?.cancel()
         task = Task {
             while !Task.isCancelled, let current = detector(), current.isUnsure {
@@ -28,7 +29,8 @@ final class ModifierTapArming {
                     try? await Task.sleep(for: .seconds(max(current.quietEnds - now, 0.1)))
                     continue
                 }
-                guard ModifierTapDetector.otherKeyDown() else { return arm(now) }
+                let keyDown = ModifierTapDetector.otherKeyDown()
+                guard keyDown else { return arm(now, ProcessInfo.processInfo.systemUptime) }
                 try? await Task.sleep(for: .seconds(0.25))
             }
         }
@@ -123,7 +125,7 @@ final class ModifierTapMonitor {
     }
 
     private func armWhenQuiet() {
-        arming.start({ [weak self] in self?.detector }, arm: { [weak self] in self?.detector.arm(at: $0) })
+        arming.start({ [weak self] in self?.detector }, arm: { [weak self] in self?.detector.arm(readFrom: $0, to: $1) })
     }
 
     /// Something broke the gesture without events being missed (another app came forward): what was under way and what
@@ -203,9 +205,9 @@ final class ModifierTapMonitor {
                 taps.forEach { self.onTap?($0) }
             }
         case .keyDown:
-            detector.keyDown(isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0, at: time)
+            if detector.keyDown(isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0, at: time) { armWhenQuiet() }
         case .keyUp:
-            detector.keyUp(at: time)
+            if detector.keyUp(at: time) { armWhenQuiet() }
         default:
             detector.interrupt()
         }
