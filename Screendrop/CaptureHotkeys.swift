@@ -308,14 +308,6 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
             ScreendropPreferences.clipboardHistoryHotkeyKey
         }
     }
-
-    init?(hotKeyID: UInt32) {
-        guard let action = Self.allCases.first(where: { $0.hotKeyID == hotKeyID }) else {
-            return nil
-        }
-
-        self = action
-    }
 }
 
 enum CaptureHotkeyPreferences {

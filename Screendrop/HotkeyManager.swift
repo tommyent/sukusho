@@ -18,13 +18,18 @@ final class HotkeyManager {
     private static let hotKeySignature = OSType(0x4F53_4854)
 
     private var eventHandlerRef: EventHandlerRef?
-    private var hotKeyRefs: [CaptureHotkeyAction: EventHotKeyRef] = [:]
+    /// Each with the Carbon ID of its own registration (`newHotKeyID`).
+    private var hotKeyRefs: [CaptureHotkeyAction: (ref: EventHotKeyRef, id: UInt32)] = [:]
     private(set) var registrationErrors: [CaptureHotkeyAction: String] = [:]
     /// Keys that exist only while something is on screen, such as the
     /// recording pen's Esc and ⌘Z. Their IDs start above the actions'.
-    /// No ref while Settings records a shortcut: they're suspended too.
-    @ObservationIgnored private var temporaryHotKeys: [UInt32: (ref: EventHotKeyRef?, shortcut: HotkeyShortcut, action: () -> Void)] = [:]
-    @ObservationIgnored private var nextTemporaryHotKeyID: UInt32 = 1000
+    /// No ref while Settings records a shortcut: they're suspended too. Keyed by the handle the caller keeps; each
+    /// registration has its own Carbon ID.
+    @ObservationIgnored private var temporaryHotKeys: [UInt32: (ref: EventHotKeyRef?, carbonID: UInt32, shortcut: HotkeyShortcut,
+                                                                action: () -> Void)] = [:]
+    /// A new Carbon ID for every registration, so a press macOS queued for an older one (before a pause, a resume or a
+    /// rebind) matches nothing registered now (Sol's round 7 re-review).
+    @ObservationIgnored private var nextHotKeyID: UInt32 = 1
     /// Bumped whenever a shortcut changes, so the menu shows the current ones.
     private(set) var revision = 0
     /// What an action on a modifier key alone still needs from macOS: Input Monitoring, or a relaunch once it's on.
@@ -161,8 +166,10 @@ final class HotkeyManager {
         guard isPaused else { return }
         isPaused = false
         endRecording = nil
-        for (id, entry) in temporaryHotKeys where entry.ref == nil {
-            temporaryHotKeys[id]?.ref = registerCarbonHotKey(entry.shortcut, id: id)
+        for (handle, entry) in temporaryHotKeys where entry.ref == nil {
+            let id = newHotKeyID()
+            temporaryHotKeys[handle]?.carbonID = id
+            temporaryHotKeys[handle]?.ref = registerCarbonHotKey(entry.shortcut, id: id)
         }
         reloadHotkeys()
     }
@@ -207,7 +214,7 @@ final class HotkeyManager {
         endRecording?()
         defer { revision += 1 }
         guard let shortcut else {
-            if let oldRef = hotKeyRefs.removeValue(forKey: action) { UnregisterEventHotKey(oldRef) }
+            if let old = hotKeyRefs.removeValue(forKey: action) { UnregisterEventHotKey(old.ref) }
             CaptureHotkeyPreferences.saveShortcut(nil, for: action)
             registrationErrors[action] = nil
             stopWatchingTap(for: action)
@@ -227,7 +234,7 @@ final class HotkeyManager {
         if shortcut == CaptureHotkeyPreferences.shortcut(for: action), hotKeyRefs[action] != nil { return }
         installEventHandlerIfNeeded()
         let newRef = try registerHotKey(action: action, shortcut: shortcut)
-        if let oldRef = hotKeyRefs[action] { UnregisterEventHotKey(oldRef) }
+        if let old = hotKeyRefs[action] { UnregisterEventHotKey(old.ref) }
         hotKeyRefs[action] = newRef
         CaptureHotkeyPreferences.saveShortcut(shortcut, for: action)
         registrationErrors[action] = nil
@@ -241,13 +248,19 @@ final class HotkeyManager {
         watchModifierTaps()
     }
 
-    private func registerHotKey(action: CaptureHotkeyAction, shortcut: HotkeyShortcut) throws -> EventHotKeyRef {
+    private func newHotKeyID() -> UInt32 {
+        defer { nextHotKeyID &+= 1 }
+        return nextHotKeyID
+    }
+
+    private func registerHotKey(action: CaptureHotkeyAction, shortcut: HotkeyShortcut) throws -> (ref: EventHotKeyRef, id: UInt32) {
         guard eventHandlerRef != nil else {
             throw NSError(domain: "Screendrop.Hotkeys", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: "Keyboard shortcuts could not be initialized. Try reopening Sukusho."
             ])
         }
-        let hotKeyID = EventHotKeyID(signature: Self.hotKeySignature, id: action.hotKeyID)
+        let id = newHotKeyID()
+        let hotKeyID = EventHotKeyID(signature: Self.hotKeySignature, id: id)
         var hotKeyRef: EventHotKeyRef?
         let status = RegisterEventHotKey(
             UInt32(shortcut.keyCode), shortcut.modifiers.carbonEventModifiers,
@@ -258,12 +271,12 @@ final class HotkeyManager {
                 NSLocalizedDescriptionKey: "\(shortcut.displayString) could not be registered. It may be used by another app. Choose a different shortcut."
             ])
         }
-        return hotKeyRef
+        return (hotKeyRef, id)
     }
 
     private func unregisterHotkeys() {
-        for hotKeyRef in hotKeyRefs.values {
-            UnregisterEventHotKey(hotKeyRef)
+        for entry in hotKeyRefs.values {
+            UnregisterEventHotKey(entry.ref)
         }
 
         hotKeyRefs.removeAll()
@@ -275,12 +288,12 @@ final class HotkeyManager {
     /// the recording ends.
     func registerTemporaryHotKey(_ shortcut: HotkeyShortcut, action: @escaping () -> Void) -> UInt32? {
         installEventHandlerIfNeeded()
-        let id = nextTemporaryHotKeyID
-        nextTemporaryHotKeyID &+= 1
+        let handle = newHotKeyID()
+        let id = newHotKeyID()
         let ref = isPaused ? nil : registerCarbonHotKey(shortcut, id: id)
         guard isPaused || ref != nil else { return nil }
-        temporaryHotKeys[id] = (ref, shortcut, action)
-        return id
+        temporaryHotKeys[handle] = (ref, id, shortcut, action)
+        return handle
     }
 
     private func registerCarbonHotKey(_ shortcut: HotkeyShortcut, id: UInt32) -> EventHotKeyRef? {
@@ -306,12 +319,8 @@ final class HotkeyManager {
         // A press macOS queued before Settings started recording, or before this key was let go of, isn't Sukusho's now:
         // only what's registered at this moment runs.
         guard !isPaused else { return }
-        if let entry = temporaryHotKeys[id] {
-            if entry.ref != nil { entry.action() }
-            return
-        }
-        guard let action = CaptureHotkeyAction(hotKeyID: id), hotKeyRefs[action] != nil else { return }
-        action.perform()
+        if let entry = temporaryHotKeys.values.first(where: { $0.ref != nil && $0.carbonID == id }) { return entry.action() }
+        hotKeyRefs.first { $0.value.id == id }?.key.perform()
     }
 }
 
