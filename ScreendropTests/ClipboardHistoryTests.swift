@@ -299,7 +299,7 @@ struct ClipboardHistoryStoreTests {
         let store = try store()
         try await store.record(text("old"), at: start)
         guard case .inserted(let pinned) = try await store.record(text("old pinned"), at: start) else { return }
-        try await store.setPinned(pinned, true)
+        try await store.moveToSaved(ids: [pinned])
         try await store.addSnippet(title: "Bug report", text: "Steps:", at: start)
         try await store.record(text("recent"), at: start + 40 * day)
         let dropped = try await store.sweep(now: start + 41 * day, retention: 30 * day, maxBytes: .max)
@@ -311,7 +311,7 @@ struct ClipboardHistoryStoreTests {
         let store = try store()
         // Different sizes, so none of them counts as a rewrite of the one before.
         guard case .inserted(let oldest) = try await store.record(image(1000, width: 1), at: start) else { return }
-        try await store.setPinned(oldest, true)
+        try await store.moveToSaved(ids: [oldest])
         try await store.record(image(1000, width: 2), at: start + 1)
         guard case .inserted(let newest) = try await store.record(image(1000, width: 3), at: start + 2) else { return }
         #expect(try await store.totalBytes() == 2000)
@@ -346,9 +346,24 @@ struct ClipboardHistoryStoreTests {
         #expect(!ClipboardList.matches(legacy, filter: .saved))
         #expect(ClipboardList.sections([legacy], filter: .snippets, query: CaptureLibraryQuery("")).flatMap(\.entries).map(\.id) == [id])
         let reopened = try store()
-        try await reopened.setPinned(id, true)
+        try await reopened.moveToSaved(ids: [id])
         let snippet = try #require(try await reopened.entries().first)
         #expect(snippet.id == id && snippet.text == "Hello" && snippet.pinnedAt == nil)
+    }
+
+    @Test func moveSelectionArchivesEveryEligibleClipWithoutRemarkingOldOnes() async throws {
+        let store = try store()
+        for body in ["old", "first", "second"] { try await store.record(text(body), at: start) }
+        let old = try #require(try await store.entries().first { $0.text == "old" }?.id)
+        try await store.moveToSaved(ids: [old], at: start)
+        let snippet = try await store.addSnippet(title: "Snippet", text: "body")
+        let all = try await store.entries()
+        #expect(Set(all.filter(\.canMoveToSaved).compactMap(\.text)) == ["first", "second"])
+        try await store.moveToSaved(ids: all.map(\.id), at: start + 20)
+        let after = try await store.entries()
+        #expect(after.first { $0.id == old }?.pinnedAt == start)
+        #expect(after.first { $0.id == snippet }?.pinnedAt == nil)
+        #expect(Set(after.filter { $0.pinnedAt == start + 20 }.compactMap(\.text)) == ["first", "second"])
     }
 
     @Test func betaOneCanReopenAnArchiveWithAnIdenticalHistoryCopy() async throws {
@@ -361,7 +376,7 @@ struct ClipboardHistoryStoreTests {
         defer { sqlite3_close(db) }
         let legacyIndex = "CREATE UNIQUE INDEX IF NOT EXISTS entries_kind_hash ON entries(kind, hash) WHERE kind != 'snippet';"
         try #require(sqlite3_exec(db, "DROP INDEX entries_kind_hash; " + legacyIndex, nil, nil, nil) == SQLITE_OK)
-        try await original.setPinned(saved, true, at: start)
+        try await original.moveToSaved(ids: [saved], at: start)
         let upgraded = try store()
         guard case .inserted(let fresh) = try await upgraded.record(text("same"), at: start + 1) else {
             Issue.record("the archive absorbed the new copy"); return
@@ -396,7 +411,7 @@ struct ClipboardHistoryStoreTests {
         try await store.record(image(500), at: start)
         try await store.record(text("gone"), at: start)
         guard case .inserted(let saved) = try await store.record(text("saved"), at: start) else { return }
-        try await store.setPinned(saved, true)
+        try await store.moveToSaved(ids: [saved])
         try await store.addSnippet(title: "Kept", text: "body", at: start)
         try await store.deleteHistory()
         #expect(Set(try await store.entries().compactMap(\.text)) == ["saved", "body"])
@@ -537,7 +552,7 @@ struct ClipboardHistoryStoreTests {
         #expect(try await store.record(picture(5, reencoded: true), at: start + 0.5) == .stacked(stack))
         let reference = try capture(6, named: "saved.png")
         guard case .inserted(let saved) = try await store.record(reference, at: start + 30) else { Issue.record("not inserted"); return }
-        try await store.setPinned(saved, true)
+        try await store.moveToSaved(ids: [saved])
         func bytes(_ url: URL?) throws -> Data { try Data(contentsOf: try #require(url)) }
         for name in ["stacked.png", "saved.png"] { try Self.picture(9).write(to: directory.appendingPathComponent(name)) }
         var entries = try await store.entries()
@@ -559,7 +574,7 @@ struct ClipboardHistoryStoreTests {
         let reference = try capture(7, named: "gone.png")
         guard case .inserted(let saved) = try await store.record(reference, at: start) else { return }
         try FileManager.default.removeItem(at: directory.appendingPathComponent("gone.png"))
-        try await store.setPinned(saved, true)
+        try await store.moveToSaved(ids: [saved])
         try await store.sweep(now: start + 60, retention: nil, maxBytes: .max)
         #expect(try await store.entries().map(\.id) == [saved])
     }
@@ -680,7 +695,7 @@ struct ClipboardHistoryStoreTests {
         let pinnedStore = try ClipboardHistoryStore(
             directory: directory.appendingPathComponent("pinned", isDirectory: true), deviceID: "test-mac")
         guard case .inserted(let pinned) = try await pinnedStore.record(picture(1), at: start) else { return }
-        try await pinnedStore.setPinned(pinned, true)
+        try await pinnedStore.moveToSaved(ids: [pinned])
         try await pinnedStore.record(picture(1, reencoded: true), at: start + 1)
         #expect(try await pinnedStore.entries().count == 2)
     }

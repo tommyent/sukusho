@@ -321,7 +321,7 @@ struct ClipboardLibraryInspector: View {
                         HStack {
                             Button("Copy") { CaptureLibraryModel.shared.copySelection([.clip(entry)]) }.buttonStyle(.borderedProminent)
                             if entry.pinnedAt == nil {
-                                Button("Move to Saved", systemImage: "star") { model.moveToSaved(entry) }
+                                Button("Move to Saved", systemImage: "star") { model.moveToSaved([entry]) }
                             } else {
                                 Button("Delete…", systemImage: "trash") { CaptureLibraryModel.shared.deleteSelection([.clip(entry)]) }
                             }

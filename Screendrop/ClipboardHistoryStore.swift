@@ -23,6 +23,7 @@ nonisolated struct ClipboardEntry: Sendable, Equatable, Identifiable {
     /// When the copy was saved (★, Library › Saved); stored as pinned_at, the name it had before option A.
     let pinnedAt: Date?
     var isArchived: Bool { kind != .snippet && pinnedAt != nil }
+    var canMoveToSaved: Bool { kind != .snippet && pinnedAt == nil }
     /// An image's text, read on this Mac as the Library reads captures'; nil until read.
     var readText: String? = nil
     /// Apple Intelligence's title, keywords and category for an image, as the Library has for captures.
@@ -305,15 +306,17 @@ actor ClipboardHistoryStore {
 
     /// Saving a copy that only refers to a capture file snapshots that file, so the Saved card keeps its picture when
     /// the capture is edited or trashed (Astra L1). The capture link stays as it was.
-    func setPinned(_ id: String, _ pinned: Bool, at date: Date = .now) throws {
+    func moveToSaved(ids: [String], at date: Date = .now) throws {
         try transaction {
-            try run("UPDATE entries SET pinned_at = ?, change_seq = ? WHERE id = ? AND kind != 'snippet'",
-                    [pinned ? date.timeIntervalSince1970 : nil, try nextChange(), id])
-            guard pinned, let reference = try query(
-                "SELECT library_path, hash FROM entries WHERE id = ? AND blob IS NULL AND library_path IS NOT NULL", [id],
-                { ($0.text(0), $0.text(1) ?? "") }).first,
-                  let owned = try snapshot(reference.0, hash: reference.1) else { return }
-            try run("UPDATE entries SET blob = ?, stored_bytes = ? WHERE id = ?", [owned.blob, owned.bytes, id])
+            for id in ids {
+                try run("UPDATE entries SET pinned_at = ?, change_seq = ? WHERE id = ? AND kind != 'snippet' AND pinned_at IS NULL",
+                        [date.timeIntervalSince1970, try nextChange(), id])
+                guard sqlite3_changes(db) > 0, let reference = try query(
+                    "SELECT library_path, hash FROM entries WHERE id = ? AND blob IS NULL AND library_path IS NOT NULL", [id],
+                    { ($0.text(0), $0.text(1) ?? "") }).first,
+                      let owned = try snapshot(reference.0, hash: reference.1) else { continue }
+                try run("UPDATE entries SET blob = ?, stored_bytes = ? WHERE id = ?", [owned.blob, owned.bytes, id])
+            }
         }
     }
 

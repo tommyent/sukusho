@@ -156,7 +156,7 @@ final class ClipboardPopupPresenter {
         // ⇧⌘C: the clip as it was first copied, before it was optimized.
         case (kVK_ANSI_C, [.command, .shift]): deliver(state.selected.map(ClipboardHistoryModel.shared.original), as: .copy)
         case (kVK_Return, [.control, .command]): deliver(state.selected, as: .pastePlain)
-        case (kVK_ANSI_Period, [.command]): if let entry = state.selected { ClipboardHistoryModel.shared.moveToSaved(entry) }
+        case (kVK_ANSI_Period, [.command]): if let entry = state.selected { ClipboardHistoryModel.shared.moveToSaved([entry]) }
         case (kVK_ANSI_X, [.control]), (kVK_Delete, [.command]): if let entry = state.selected { confirmDelete(entry) }
         case (kVK_ANSI_K, [.command]): showActions()
         default:
@@ -189,8 +189,8 @@ final class ClipboardPopupPresenter {
             add("Paste as Plain Text", "\r", [.control, .command]) { [weak self] in self?.deliver(entry, as: .pastePlain) }
         }
         menu.addItem(.separator())
-        if entry.pinnedAt == nil, entry.kind != .snippet {
-            add("Move to Saved", ".", .command) { model.moveToSaved(entry) }
+        if entry.canMoveToSaved {
+            add("Move to Saved", ".", .command) { model.moveToSaved([entry]) }
         }
         if entry.kind == .image { add("Open in Editor") { [weak self] in self?.close(); model.openInEditor(entry) } }
         if entry.kind == .text { add("Save as Snippet") { model.saveAsSnippet(entry) } }

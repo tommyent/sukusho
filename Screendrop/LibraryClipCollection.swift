@@ -126,9 +126,10 @@ struct LibraryClipCollection: View {
                 }
                 items.append(LibraryMenuItem(title: "Save as Snippet") { clipboard.saveAsSnippet(entry) })
             }
-            if entry.kind != .snippet, entry.pinnedAt == nil {
-                items.append(LibraryMenuItem(title: "Move to Saved", startsGroup: true) { clipboard.moveToSaved(entry) })
-            }
+        }
+        let clips = selected.compactMap(\.clipEntry)
+        if clips.contains(where: \.canMoveToSaved) {
+            items.append(LibraryMenuItem(title: "Move to Saved", startsGroup: true) { clipboard.moveToSaved(clips) })
         }
         if CloudUploader.shared.isConfigured {
             items.append(LibraryMenuItem(title: "Share to Cloud…", isEnabled: CloudLibraryModel.shared.fileUploads == nil) {
