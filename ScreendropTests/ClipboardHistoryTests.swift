@@ -1186,6 +1186,26 @@ struct ClipboardImageMatchTests {
 /// (owner, 2026-11-16), and even margins rather than a strip on one side (Astra B2).
 @Suite
 struct LibraryGridMetricsTests {
+    @Test func marksStayInTheirOwnCorners() {
+        var upload = CloudUpload(id: "sample", url: "https://example.invalid/sample", title: nil, filename: "sky.png",
+                                 mediaType: "image", size: nil, duration: nil, createdAt: .now, views: nil, thumbnailUrl: nil)
+        let expires = Date.now
+        upload.encrypted = true
+        upload.hasPassword = true
+        upload.expiresAt = expires
+        upload.commentCount = 3
+        upload.likeCount = 2
+        let shared = LibraryCardMarks(cloud: .shared, upload: upload, tall: true, versions: 2, content: .kind("text"))
+        #expect(shared.settings == [.encrypted, .password, .expiry(expires)])
+        #expect(shared.social == [.comments(3), .likes(2)])
+        #expect(shared.content == [.tall, .versions(2), .kind("text")])
+        let clip = ClipboardEntry(id: "clip", kind: .text, text: "plain text", title: nil, imageURL: nil,
+                                  libraryPath: nil, byteSize: 10, pixelWidth: 0, pixelHeight: 0, sourceBundleID: nil,
+                                  isRemote: false, firstCopiedAt: .now, lastCopiedAt: .now, timesCopied: 1, pinnedAt: nil)
+        #expect(LibraryCardMarks(clip: clip, upload: nil).cloud == nil)
+        #expect(LibraryCardMarks(clip: clip, upload: nil).content == [.kind("text")])
+    }
+
     @Test func spareWidthGoesToGapsThenEvenMargins() {
         for width in stride(from: 220.0, through: 1600, by: 37) {
             for card in [140.0, 192, 220, 320] {

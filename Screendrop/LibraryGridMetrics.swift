@@ -77,3 +77,40 @@ nonisolated struct LibraryDisplayOrder {
         return paths.indices.contains(index) && paths[index] == path ? index : nil
     }
 }
+
+/// The pills read left to right within each corner of the picture.
+nonisolated struct LibraryCardMarks {
+    enum CloudState { case unshared, shared, received }
+    enum Pill: Equatable {
+        case encrypted, password, expiry(Date), comments(Int), likes(Int), tall, versions(Int)
+        case duration(String), kind(String), gallery(Int)
+    }
+    let cloud: CloudState?
+    var settings: [Pill] = []
+    var social: [Pill] = []
+    var content: [Pill] = []
+
+    init(cloud: CloudState?, upload: CloudUpload?, tall: Bool, versions: Int = 1, content last: Pill? = nil) {
+        self.cloud = cloud
+        if upload?.encrypted == true { settings.append(.encrypted) }
+        if upload?.hasPassword == true { settings.append(.password) }
+        if let expires = upload?.expiresAt { settings.append(.expiry(expires)) }
+        if let n = upload?.commentCount, n > 0 { social.append(.comments(n)) }
+        if let n = upload?.likeCount, n > 0 { social.append(.likes(n)) }
+        if tall { content.append(.tall) }
+        if versions > 1 { content.append(.versions(versions)) }
+        if let last { content.append(last) }
+    }
+
+    init(clip: ClipboardEntry, upload: CloudUpload?) {
+        self.init(cloud: clip.cloudLinks.isEmpty ? nil : .shared, upload: upload,
+                  tall: clip.kind == .image && TallCapture.isTall(width: clip.pixelWidth, height: clip.pixelHeight),
+                  versions: clip.earlierVersions.count + 1, content: ClipboardList.kindWord(of: clip).map(Pill.kind))
+    }
+}
+
+nonisolated enum TallCapture {
+    static func isTall(width: Int, height: Int) -> Bool {
+        width > 0 && Double(height) > Double(width) * 2.5
+    }
+}

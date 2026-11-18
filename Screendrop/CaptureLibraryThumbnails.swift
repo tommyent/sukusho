@@ -205,11 +205,7 @@ struct CaptureLibraryThumbnail: View {
 
 /// Captures much taller than wide, such as scrolling captures, which a
 /// fitted thumbnail shrinks to a strip (sd-7ym).
-nonisolated enum TallCapture {
-    static func isTall(width: Int, height: Int) -> Bool {
-        width > 0 && Double(height) > Double(width) * 2.5
-    }
-
+extension TallCapture {
     /// The image's top square, `width` px wide. Decoded at that width with
     /// the long side capped, never at full size, and redrawn so the cached
     /// square doesn't keep the strip's pixels.

@@ -510,14 +510,17 @@ struct LibraryCellContent: View {
                         }
                         .padding(.horizontal, 12)
                     } else {
-                        VStack(alignment: .leading, spacing: 8) {
-                    thumbnail(item)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .padding([.top, .horizontal], LibraryGridMetrics.pictureInset)
-                    labels(item)
-                        .padding(.horizontal, LibraryGridMetrics.pictureInset)
-                        .padding(.bottom, 10)
-                        }
+                        LibraryGridCard(marks: LibraryCardMarks(cloud: item.cloudURL == nil ? .unshared : .shared,
+                            upload: CloudLibraryModel.shared.upload(for: item.cloudURL), tall: item.isTall,
+                            content: item.isVideo ? .duration(item.durationText) : nil),
+                            cloudAction: {
+                                let model = CaptureLibraryModel.shared
+                                model.selection = [item.id]
+                                if let link = item.cloudURL { CloudShareLinks.copy([link]) }
+                                else { model.pendingCloudUpload = item }
+                            }, cloudEnabled: item.cloudURL != nil || CloudUploader.shared.isConfigured) {
+                            CaptureLibraryThumbnail(item: item, showsTopOfTall: true)
+                        } caption: { labels(item) }
                     }
                 }
                 .background(
@@ -621,43 +624,6 @@ struct LibraryCellContent: View {
         }
     }
 
-    private func thumbnail(_ item: CaptureLibraryItem) -> some View {
-        CaptureLibraryThumbnail(item: item, showsTopOfTall: true)
-            .libraryCardChip()
-            .overlay(alignment: .topLeading) {
-                if let tag = item.tags.first(where: { CaptureTagStyles.shared.color(for: $0) != nil }) ?? item.tags.first {
-                    // One small badge rather than a mark per tag, so small
-                    // cards keep room for their titles. The names are in the
-                    // tooltip, the inspector and the accessibility label.
-                    HStack(spacing: 3) {
-                        CaptureTagIcon(tag: tag)
-                        if item.tags.count > 1 {
-                            Text("\(item.tags.count)")
-                        }
-                    }
-                    .cardPill()
-                    .padding(6)
-                    .help(item.tags.joined(separator: ", "))
-                }
-            }
-            .overlay(alignment: .topTrailing) {
-                // Reused cells keep @State; the id gives each capture its own tick.
-                LibraryCloudBadge(item: item)
-                    .id(item.id)
-            }
-            // The free corner: tag top left, cloud top right, a video's length bottom right.
-            .overlay(alignment: .bottomLeading) {
-                if item.isTall { TallCapture.badge.padding(6) }
-            }
-            .overlay(alignment: .bottomTrailing) {
-                if item.isVideo {
-                    Label(item.durationText, systemImage: "play.fill")
-                        .cardPill()
-                        .monospacedDigit()
-                        .padding(7)
-                }
-            }
-    }
 }
 
 /// A recording's Agent Prompt circle, at the right of its card's title, where
@@ -779,21 +745,6 @@ extension AgentPromptIndex.State {
 
 /// A capture card's cloud badge. A click shares it, or copies its link once
 /// it's up; the right-click menu has the same actions.
-private struct LibraryCloudBadge: View {
-    let item: CaptureLibraryItem
-
-    var body: some View {
-        if item.cloudURL != nil || CloudUploader.shared.isConfigured {
-            CardCloudBadge(isShared: item.cloudURL != nil) {
-                let model = CaptureLibraryModel.shared
-                model.selection = [item.id]
-                // The badge shows its own checkmark, so not copyLink's status bar mark.
-                if let link = item.cloudURL { CloudShareLinks.copy([link]) } else { model.pendingCloudUpload = item }
-            }
-        }
-    }
-}
-
 /// The cloud badge on Library and Uploads cards: a grey outline cloud until
 /// it's shared, a green cloud with a tick once it is, and a plain tick for
 /// a moment after a click copies the link.
@@ -815,7 +766,6 @@ struct CardCloudBadge: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .padding(6)
         .actionFeedback(copied, label: isShared ? "Copy cloud link" : "Share to Cloud",
                         help: isShared ? "Shared to the cloud. Click to copy its link." : nil)
     }
@@ -849,10 +799,6 @@ extension View {
             .cardMark(Capsule())
     }
 }
-
-/// A card's image runs edge to edge: the card's own corners at the top,
-/// square where it meets the title. Used by upload cards.
-let libraryCardImageShape = UnevenRoundedRectangle(topLeadingRadius: DS.Radius.card, topTrailingRadius: DS.Radius.card, style: .continuous)
 
 /// A picture inset in its card (`LibraryGridMetrics.pictureInset`) as a chip, its corners concentric with the
 /// card's. Shared by capture and clipboard cards.

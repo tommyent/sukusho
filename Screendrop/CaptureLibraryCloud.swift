@@ -35,7 +35,16 @@ final class CloudLibraryModel {
     }
     /// Waiting for the Delete from Cloud confirmation.
     var pendingDelete: [CloudUpload] = []
-    private(set) var uploads: [CloudUpload] = []
+    private(set) var uploads: [CloudUpload] = [] {
+        didSet { uploadsByLink = Dictionary(uploads.map { ($0.url, $0) }, uniquingKeysWith: { first, _ in first }) }
+    }
+    private var uploadsByLink: [String: CloudUpload] = [:]
+
+    func upload(for link: String?) -> CloudUpload? {
+        guard let link else { return nil }
+        return uploadsByLink[String(link.prefix { $0 != "#" })]
+    }
+
     /// Listed from History because the Worker can't list uploads.
     private(set) var isHistoryFallback = false
     private(set) var hasLoaded = false
@@ -803,8 +812,6 @@ private struct CloudUploadCard: View {
     let deleting: Bool
     let layout: CaptureLibraryLayout
     @State private var isHovering = false
-    /// The duration pill's width, kept clear by the comment and like badges.
-    @State private var durationWidth: CGFloat = 0
 
     var body: some View {
         Group {
@@ -816,10 +823,16 @@ private struct CloudUploadCard: View {
                 }
                 .padding(.horizontal, 12)
             } else {
-                VStack(alignment: .leading, spacing: 8) {
-                    thumbnail.frame(maxWidth: .infinity, maxHeight: .infinity)
-                    labels.padding(.horizontal, 10).padding(.bottom, 10)
-                }
+                LibraryGridCard(marks: LibraryCardMarks(cloud: upload.isReceived ? .received : .shared, upload: upload,
+                    tall: local?.isTall == true, content: contentMark), cloudAction: {
+                        act { _ in
+                            if upload.isReceived { FileRequestsModel.shared.download([upload]) }
+                            else { CloudShareLinks.copy([(upload.url, upload.encrypted == true)]) }
+                        }
+                    }) {
+                        CloudUploadThumbnail(upload: upload, local: local, showsTopOfTall: true)
+                            .overlay { CloudFetchOverlay(uploadID: upload.id) }
+                    } caption: { labels }
             }
         }
         .background(
@@ -873,78 +886,10 @@ private struct CloudUploadCard: View {
         }
     }
 
-    private var thumbnail: some View {
-        CloudUploadThumbnail(upload: upload, local: local, showsTopOfTall: true)
-            .overlay { CloudFetchOverlay(uploadID: upload.id) }
-            .clipShape(libraryCardImageShape)
-            .overlay { libraryCardImageShape.strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5) }
-            // Bottom left, clear of the pills above. Side by side when they fit
-            // beside the duration, stacked when the card is too small.
-            .overlay(alignment: .bottomLeading) {
-                if (upload.commentCount ?? 0) > 0 || (upload.likeCount ?? 0) > 0 || local?.isTall == true {
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 4) { socialPills }
-                        VStack(alignment: .leading, spacing: 4) { socialPills }
-                    }
-                    .padding(7)
-                    .padding(.trailing, upload.isVideo ? durationWidth + 4 : 0)
-                }
-            }
-            .overlay(alignment: .topLeading) {
-                // The card marks' pills, so they read on any thumbnail.
-                if upload.hasPassword == true || upload.encrypted == true || upload.expiresAt != nil {
-                    HStack(spacing: 4) {
-                        if upload.encrypted == true {
-                            Image(systemName: "lock.shield.fill")
-                                .cardPill()
-                                .help("End-to-end encrypted: only the full link opens it")
-                        }
-                        if upload.hasPassword == true {
-                            Image(systemName: "lock.fill")
-                                .cardPill()
-                                .help("Password protected")
-                        }
-                        if let expiresAt = upload.expiresAt {
-                            // An expired link's pill turns red.
-                            Label(CloudUploadText.expiryShort(expiresAt), systemImage: "hourglass")
-                                .cardPill(expiresAt <= .now ? .red : CardMark.text)
-                                .help(CloudUploadText.expiryDate(expiresAt))
-                        }
-                    }
-                    .padding(7)
-                }
-            }
-            // Every upload but a received file is shared: a click copies its link, as on Library cards.
-            .overlay(alignment: .topTrailing) {
-                if !upload.isReceived {
-                    // The badge shows its own checkmark, so not copyLinks' status bar mark.
-                    CardCloudBadge(isShared: true) { act { _ in CloudShareLinks.copy([(upload.url, upload.encrypted == true)]) } }
-                        .id(upload.id)
-                }
-            }
-            .overlay(alignment: .bottomTrailing) {
-                if upload.isVideo, let duration = upload.duration {
-                    Label(CloudUploadText.duration(duration), systemImage: "play.fill")
-                        .cardPill()
-                        .monospacedDigit()
-                        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { durationWidth = $0 }
-                        .padding(7)
-                }
-            }
-    }
-
-    @ViewBuilder private var socialPills: some View {
-        if local?.isTall == true { TallCapture.badge }
-        if let count = upload.commentCount, count > 0 {
-            Label { Text(count.formatted()) } icon: { Image(systemName: "bubble.left.fill").foregroundStyle(.blue) }
-                .cardPill()
-                .help(CloudUploadText.comments(count) ?? "")
-        }
-        if let count = upload.likeCount, count > 0 {
-            Label { Text(count.formatted()) } icon: { Image(systemName: "heart.fill").foregroundStyle(.red) }
-                .cardPill()
-                .help(CloudUploadText.likes(count) ?? "")
-        }
+    private var contentMark: LibraryCardMarks.Pill? {
+        if let ids = upload.galleryItemIDs { return .gallery(ids.count) }
+        if upload.isVideo { return .duration(upload.duration.map(CloudUploadText.duration) ?? local?.durationText ?? "—") }
+        return nil
     }
 }
 

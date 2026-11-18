@@ -67,12 +67,7 @@ struct LibraryClipCollection: View {
         if layout == .list {
             ClipboardListRow(entry: entry, model: clipboard, isSelected: selected)
         } else {
-            GeometryReader { geometry in
-                ClipboardCard(entry: entry, model: clipboard,
-                              faceHeight: max(1, geometry.size.height - LibraryGridMetrics.pictureInset - LibraryGridMetrics.captionHeight),
-                              isSelected: selected)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
+            ClipboardCard(entry: entry, model: clipboard, isSelected: selected)
         }
     }
 

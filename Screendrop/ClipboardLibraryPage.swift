@@ -118,45 +118,17 @@ struct ClipboardLibraryPage: View {
 struct ClipboardCard: View {
     let entry: ClipboardEntry
     let model: ClipboardHistoryModel
-    let faceHeight: CGFloat
     let isSelected: Bool
     @Environment(\.selectLibraryCell) private var select
     @State private var isHovering = false
     @Environment(\.displayScale) private var displayScale
 
-    /// Built like a capture card (LibraryCellContent): a solid backing in the chrome color, the picture as a raised
-    /// chip, the same border and selection ring. Without the backing, the workspace wallpaper
-    /// showed through the cards (owner, 2026-11-16).
-    /// The title line, and the gap under it: a card without one gives the room to its face, so every card in a row
-    /// is as tall as the others.
-    private static let titleRow: CGFloat = 16 + 3
-
     var body: some View {
         let title = ClipboardList.cardTitle(of: entry)
-        // As capture cards: the picture as a chip on the card, the caption under it, lined up with its left edge.
-        VStack(alignment: .leading, spacing: 8) {
+        LibraryGridCard(marks: LibraryCardMarks(clip: entry, upload: CloudLibraryModel.shared.upload(for: entry.cloudLinks.first)),
+                        cloudAction: { select(); CloudShareLinks.copy(entry.cloudLinks) }) {
             face
-                .frame(maxWidth: .infinity)
-                .frame(height: faceHeight + (title == nil ? Self.titleRow : 0))
-                .overlay(alignment: .bottomTrailing) {
-                    if let word = ClipboardList.kindWord(of: entry) {
-                        Text(word).font(.system(size: 10)).foregroundStyle(.tertiary).padding(.horizontal, 8).padding(.vertical, 6)
-                    }
-                }
-                .libraryCardChip()
-                .overlay(alignment: .bottomLeading) {
-                    if entry.kind == .image, TallCapture.isTall(width: entry.pixelWidth, height: entry.pixelHeight) {
-                        TallCapture.badge.padding(6)
-                    }
-                }
-                .overlay(alignment: .topTrailing) {
-                    // A re-encode another app put back (such as Clop's) stacked on this card; the inspector has the rest.
-                    if !entry.earlierVersions.isEmpty {
-                        Label("\(entry.earlierVersions.count + 1)", systemImage: "square.stack").cardPill().padding(6)
-                            .help("\(entry.earlierVersions.count + 1) versions: the newest is shown and pasted")
-                    }
-                }
-                .padding([.top, .horizontal], LibraryGridMetrics.pictureInset)
+        } caption: {
             VStack(alignment: .leading, spacing: 3) {
                 if let title { Text(title).font(.system(size: 13, weight: .medium)).lineLimit(1).libraryRaisedText().frame(height: 16) }
                 // The time first: it's what differs between cards, so a narrow card cuts the app rather than the time.
@@ -175,7 +147,6 @@ struct ClipboardCard: View {
                 .font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, LibraryGridMetrics.pictureInset).padding(.bottom, 10)
         }
         .background(Color.primary.opacity(isSelected ? 0.075 : isHovering ? 0.035 : 0.012),
                     in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
