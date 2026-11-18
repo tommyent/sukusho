@@ -66,3 +66,34 @@ struct LibraryGridCard<Picture: View, Caption: View>: View {
         }
     }
 }
+
+struct LibraryGridCaption<Title: View>: View {
+    let date: Date
+    var bundleID: String?
+    var saved = false
+    var capture: CaptureLibraryItem?
+    @ViewBuilder let title: () -> Title
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 4) {
+                title()
+                    .font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.tail).libraryRaisedText()
+                Spacer(minLength: 0)
+                if capture?.hasDraft == true { Image(systemName: "circle.fill").font(.system(size: 6)).foregroundStyle(.orange) }
+                if let capture, capture.session != nil { AgentPromptCardMark(item: capture, size: 16).id(capture.id).fixedSize() }
+            }
+            .frame(height: 16)
+            HStack(spacing: 4) {
+                if let icon = ClipboardHistoryModel.shared.appIcon(bundleID) {
+                    Image(nsImage: icon).resizable().frame(width: 13, height: 13)
+                        .libraryRaisedIcon(ringed: ClipboardHistoryModel.shared.appIconIsLight(bundleID))
+                }
+                Text(CaptureLibraryItem.dateTitle(date)).lineLimit(1).libraryRaisedText()
+                Spacer(minLength: 0)
+                if saved { Image(systemName: "star.fill").font(.system(size: 9)).foregroundStyle(.yellow).accessibilityLabel("Saved") }
+            }
+            .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}

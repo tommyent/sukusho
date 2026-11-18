@@ -40,6 +40,7 @@ nonisolated struct ClipboardEntry: Sendable, Equatable, Identifiable {
     /// The newest version is Sukusho's own Optimize, not another app's re-encode (Fable 15 #3).
     var isOptimizedHere = false
     var cloudLinks: [String] = []
+    var snippetEditedAt: Date? = nil
 }
 
 /// An earlier version of an image entry: what was copied before an optimiser put its re-encode back.
@@ -204,7 +205,7 @@ actor ClipboardHistoryStore {
         }
         // Histories from before the image descriptions get their columns; on a newer one each is a duplicate.
         for column in ["read_text TEXT", "model_title TEXT", "model_keywords TEXT", "model_category TEXT",
-                       "described INTEGER NOT NULL DEFAULT 0", "optimized_here INTEGER NOT NULL DEFAULT 0"] {
+                       "described INTEGER NOT NULL DEFAULT 0", "optimized_here INTEGER NOT NULL DEFAULT 0", "snippet_edited_at REAL"] {
             try? Self.execute(handle, "ALTER TABLE entries ADD COLUMN \(column)")
         }
     }
@@ -310,9 +311,9 @@ actor ClipboardHistoryStore {
         return id
     }
 
-    func updateSnippet(_ id: String, title: String, text: String) throws {
-        try run("UPDATE entries SET title = ?, text = ?, byte_size = ?, stored_bytes = ?, change_seq = ? WHERE id = ? AND kind = 'snippet'",
-                [title, text, text.utf8.count, text.utf8.count, try nextChange(), id])
+    func updateSnippet(_ id: String, title: String, text: String, at date: Date = .now) throws {
+        try run("UPDATE entries SET title = ?, text = ?, byte_size = ?, stored_bytes = ?, snippet_edited_at = ?, change_seq = ? WHERE id = ? AND kind = 'snippet'",
+                [title, text, text.utf8.count, text.utf8.count, date.timeIntervalSince1970, try nextChange(), id])
     }
 
     /// Saving a copy that only refers to a capture file snapshots that file, so the Saved card keeps its picture when
@@ -405,7 +406,7 @@ actor ClipboardHistoryStore {
         return try query("""
             SELECT id, kind, text, title, blob, library_path, byte_size, pixel_width, pixel_height, source_bundle_id,
                 is_remote, first_copied_at, last_copied_at, times_copied, pinned_at,
-                read_text, model_title, model_keywords, model_category, described, hash, optimized_here
+                read_text, model_title, model_keywords, model_category, described, hash, optimized_here, snippet_edited_at
             FROM entries \(page)
             """, [limit, offset]) { row in
             ClipboardEntry(
@@ -432,7 +433,8 @@ actor ClipboardHistoryStore {
                 hash: row.text(20) ?? "",
                 earlierVersions: versions[row.text(0) ?? ""] ?? [],
                 isOptimizedHere: row.int(21) != 0,
-                cloudLinks: links[row.text(0) ?? ""] ?? []
+                cloudLinks: links[row.text(0) ?? ""] ?? [],
+                snippetEditedAt: row.isNull(22) ? nil : Date(timeIntervalSince1970: row.double(22))
             )
         }
     }

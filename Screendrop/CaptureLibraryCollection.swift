@@ -520,7 +520,19 @@ struct LibraryCellContent: View {
                                 else { model.pendingCloudUpload = item }
                             }, cloudEnabled: item.cloudURL != nil || CloudUploader.shared.isConfigured) {
                             CaptureLibraryThumbnail(item: item, showsTopOfTall: true)
-                        } caption: { labels(item) }
+                        } caption: {
+                            LibraryGridCaption(date: item.createdAt, bundleID: item.source?.bundleIdentifier,
+                                               saved: item.isSaved, capture: item) {
+                                if isRenaming(item) {
+                                    CaptureNameField(id: item.id, location: .card, font: .system(size: 13, weight: .medium),
+                                                     placeholder: item.gridTitle)
+                                } else {
+                                    Text(item.gridTitle).onGeometryChange(for: CGRect.self) {
+                                        $0.frame(in: .named(Self.cellSpace))
+                                    } action: { onTitleFrame($0) }
+                                }
+                            }
+                        }
                     }
                 }
                 .background(
@@ -537,7 +549,7 @@ struct LibraryCellContent: View {
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: selected)
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: isHovering)
                 .accessibilityElement(children: isRenaming(item) ? .contain : .ignore)
-                .accessibilityLabel("\(item.title), \(item.kindTitle), \(item.subtitle)"
+                .accessibilityLabel("\(layout == .grid ? item.gridTitle : item.title), \(item.kindTitle), \(item.subtitle)"
                     + (item.isVideo ? ", \(item.durationText)" : "")
                     + (item.cloudURL != nil ? ", shared" : "")
                     + (item.tags.isEmpty ? "" : ", tags: \(item.tags.joined(separator: ", "))")
@@ -631,8 +643,9 @@ struct LibraryCellContent: View {
 /// exporting, sparkles in a green circle for the prompt Rex's ⌃⌥⌘P sends, in an
 /// outline for one it doesn't (a click makes it the one), amber once the recording
 /// was edited since (a click exports again).
-private struct AgentPromptCardMark: View {
+struct AgentPromptCardMark: View {
     let item: CaptureLibraryItem
+    var size: CGFloat = 19
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Clicks that copied the Read line; each one shows "Copied" for a moment.
     @State private var copies = 0
@@ -648,7 +661,7 @@ private struct AgentPromptCardMark: View {
                     Text("\(Int((progress * 100).rounded()))%")
                         .font(.system(size: 11, weight: .semibold).monospacedDigit())
                         .contentTransition(.numericText())
-                    StudioProgressRing(progress: progress, size: 17, tint: CardMark.green, lineWidth: 2.5)
+                    StudioProgressRing(progress: progress, size: min(size, 17), tint: CardMark.green, lineWidth: 2.5)
                 }
                 .foregroundStyle(CardMark.green)
                 .help("Exporting bug report")
@@ -668,7 +681,7 @@ private struct AgentPromptCardMark: View {
                                 .foregroundStyle(CardMark.green)
                                 .transition(.opacity)
                         }
-                        AgentPromptGlyph(state: state)
+                        AgentPromptGlyph(state: state, size: size)
                             .symbolEffect(.bounce, value: reduceMotion ? nil : state)
                             .symbolEffect(.bounce, value: reduceMotion ? 0 : copies)
                             .contentShape(Circle())
@@ -699,18 +712,19 @@ private struct AgentPromptCardMark: View {
 /// recording keeps the refresh arrow, since a click exports it again.
 private struct AgentPromptGlyph: View {
     let state: AgentPromptIndex.State
+    let size: CGFloat
 
     var body: some View {
         if state == .stale {
             Image(systemName: "arrow.clockwise.circle.fill")
-                .font(.system(size: 19, weight: .medium))
+                .font(.system(size: size, weight: .medium))
                 .foregroundStyle(.orange)
         } else {
             let isCurrent = state == .current
             Image(systemName: "sparkles")
                 .font(.system(size: 10, weight: .bold))
                 .foregroundStyle(isCurrent ? Color.white : Color.secondary)
-                .frame(width: 19, height: 19)
+                .frame(width: size, height: size)
                 .background(Circle().fill(isCurrent ? CardMark.green : Color.clear))
                 .overlay(Circle().strokeBorder(isCurrent ? Color.clear : Color.secondary, lineWidth: 1.5))
         }

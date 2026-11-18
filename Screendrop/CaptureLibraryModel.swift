@@ -100,6 +100,11 @@ nonisolated struct CaptureLibraryItem: Identifiable, Equatable, Sendable {
                                   sourceTitle: CaptureInsightRules.sourceTitle(appName: source?.appName, windowTitle: source?.windowTitle),
                                   dateTitle: dateTitle)
     }
+    var gridTitle: String {
+        CaptureInsightRules.gridTitle(name: customName, model: modelTitle, app: source?.appName,
+                                      window: source?.windowTitle, fallback: isVideo ? "Recording" : "Screenshot")
+    }
+
     var dateTitle: String { Self.dateTitle(createdAt) }
     /// Under the title: the date once a name or model title has taken its
     /// place, else the dimensions. A video's pill shows its length.

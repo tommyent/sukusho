@@ -832,7 +832,12 @@ private struct CloudUploadCard: View {
                     }) {
                         CloudUploadThumbnail(upload: upload, local: local, showsTopOfTall: true)
                             .overlay { CloudFetchOverlay(uploadID: upload.id) }
-                    } caption: { labels }
+                    } caption: {
+                        LibraryGridCaption(date: local?.createdAt ?? upload.createdAt, bundleID: local?.source?.bundleIdentifier,
+                                           saved: local?.isSaved == true, capture: local) {
+                            Text(CloudUploadText.gridTitle(upload, local: local))
+                        }
+                    }
             }
         }
         .background(
@@ -861,7 +866,7 @@ private struct CloudUploadCard: View {
     /// The card reads as one element, so this says what its pills show.
     private var spokenLabel: String {
         let parts: [String?] = [
-            CloudUploadText.title(upload, local: local), upload.kindTitle, CloudUploadText.subtitle(upload, local: local),
+            layout == .grid ? CloudUploadText.gridTitle(upload, local: local) : CloudUploadText.title(upload, local: local), upload.kindTitle, CloudUploadText.subtitle(upload, local: local),
             upload.isVideo ? upload.duration.map(CloudUploadText.duration) : nil,
             CloudUploadText.comments(upload.commentCount), CloudUploadText.likes(upload.likeCount),
             upload.hasPassword == true ? "password protected" : nil,
@@ -977,6 +982,11 @@ nonisolated enum CloudUploadText {
     static func title(_ upload: CloudUpload, local: CaptureLibraryItem?) -> String {
         customTitle(upload, local: local) ?? local?.dateTitle
             ?? (upload.isFile ? upload.filename : upload.galleryItemIDs.map(images) ?? CaptureLibraryItem.dateTitle(upload.createdAt))
+    }
+
+    static func gridTitle(_ upload: CloudUpload, local: CaptureLibraryItem?) -> String {
+        customTitle(upload, local: local) ?? local?.gridTitle
+            ?? (upload.filename.isEmpty || upload.isGallery ? upload.kindTitle : upload.filename)
     }
 
     /// "3 images", a gallery's title when it has none.

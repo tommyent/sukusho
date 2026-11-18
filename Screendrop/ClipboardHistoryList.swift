@@ -211,6 +211,39 @@ nonisolated enum ClipboardList {
         }
     }
 
+    static func gridTitle(of entry: ClipboardEntry) -> String {
+        for candidate in [entry.title, entry.modelTitle] {
+            if let name = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty { return name }
+        }
+        let body = (entry.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        switch entry.kind {
+        case .image: return "Copied Image"
+        case .snippet: return title(of: entry)
+        case .files:
+            return body.split(whereSeparator: \.isNewline).first.map { (String($0) as NSString).lastPathComponent } ?? "File"
+        case .text:
+            switch textForm(of: entry) {
+            case .color: return body
+            case .link:
+                if let url = URL(string: body), let host = url.host {
+                    let tail = url.lastPathComponent
+                    return tail.isEmpty || tail == "/" ? host : host + "/" + tail
+                }
+            default: break
+            }
+            let lines = body.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+            if looksLikeCode(entry) {
+                let declaration = #"^(?:(?:public|private|open|final|static|async|export|internal)\s+)*(?:func|def|class|struct|enum|interface|protocol|function|fn|let|var|const|type|actor)\s+\S"#
+                if let line = lines.first(where: { $0.range(of: declaration, options: .regularExpression) != nil }) {
+                    return String(line.prefix(300))
+                }
+            }
+            let first = lines.first ?? "Text"
+            let heading = first.replacingOccurrences(of: #"^#{1,6}\s+"#, with: "", options: .regularExpression)
+            return String(heading.prefix(300))
+        }
+    }
+
     /// The small word in the corner of a card that shows its text: what kind of text it is.
     static func kindWord(of entry: ClipboardEntry) -> String? {
         switch textForm(of: entry) {

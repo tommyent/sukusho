@@ -364,6 +364,14 @@ struct ClipboardHistoryStoreTests {
         #expect(try Data(contentsOf: blob) == pixels)
     }
 
+    @Test func snippetEditDateSurvivesLaterCopies() async throws {
+        let store = try store()
+        let id = try await store.addSnippet(title: "", text: "First", at: start)
+        try await store.updateSnippet(id, title: "", text: "Second", at: start + 1)
+        try await store.touch(id, at: start + 30)
+        #expect(try await store.entries().first?.snippetEditedAt == start + 1)
+    }
+
     @Test func betaOnePinnedSnippetStaysInSnippets() async throws {
         let original = try store()
         let id = try await original.addSnippet(title: "Greeting", text: "Hello")
@@ -1244,6 +1252,19 @@ struct ClipboardCardTextTests {
         ClipboardEntry(id: UUID().uuidString, kind: .text, text: value, title: nil, imageURL: nil, libraryPath: nil, byteSize: value.utf8.count,
                        pixelWidth: 0, pixelHeight: 0, sourceBundleID: app, isRemote: false, firstCopiedAt: .now, lastCopiedAt: .now,
                        timesCopied: 1, pinnedAt: nil)
+    }
+
+    @Test func gridTitlesIdentifyContentWithoutUsingTheDate() {
+        let code = text("// helpers\nimport Foundation\npublic func preview() {}", from: "com.apple.dt.Xcode")
+        #expect(ClipboardList.gridTitle(of: code) == "public func preview() {}")
+        #expect(ClipboardList.gridTitle(of: text("## Team meeting\nDetails")) == "Team meeting")
+        #expect(ClipboardList.gridTitle(of: text("https://example.org/first/last?q=1")) == "example.org/last")
+        #expect(ClipboardList.gridTitle(of: text(" #ff6363 ")) == "#ff6363")
+        let fallback = "Screenshot"
+        #expect(CaptureInsightRules.gridTitle(name: nil, model: nil, app: nil, window: nil, fallback: fallback) == "Screenshot")
+        #expect(CaptureInsightRules.gridTitle(name: nil, model: nil, app: "Mail", window: "Inbox", fallback: fallback) == "Mail: Inbox")
+        #expect(CaptureInsightRules.gridTitle(name: nil, model: "Unread", app: "Mail", window: "Inbox", fallback: fallback) == "Unread")
+        #expect(CaptureInsightRules.gridTitle(name: "Mine", model: "Unread", app: nil, window: nil, fallback: fallback) == "Mine")
     }
 
     @Test func textIsSaidOnceAndNamedByKind() {

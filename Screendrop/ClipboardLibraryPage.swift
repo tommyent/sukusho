@@ -124,29 +124,14 @@ struct ClipboardCard: View {
     @Environment(\.displayScale) private var displayScale
 
     var body: some View {
-        let title = ClipboardList.cardTitle(of: entry)
         LibraryGridCard(marks: LibraryCardMarks(clip: entry, upload: CloudLibraryModel.shared.upload(for: entry.cloudLinks.first)),
                         cloudAction: { select(); CloudShareLinks.copy(entry.cloudLinks) }) {
             face
         } caption: {
-            VStack(alignment: .leading, spacing: 3) {
-                if let title { Text(title).font(.system(size: 13, weight: .medium)).lineLimit(1).libraryRaisedText().frame(height: 16) }
-                // The time first: it's what differs between cards, so a narrow card cuts the app rather than the time.
-                HStack(spacing: 3) {
-                    if entry.kind != .snippet { Text(ClipboardInfo.shortWhen(entry.lastCopiedAt)).layoutPriority(1).libraryRaisedText() }
-                    if let app = model.appName(entry.sourceBundleID) {
-                        if entry.kind != .snippet { Text("·").libraryRaisedText() }
-                        if let icon = model.appIcon(entry.sourceBundleID) {
-                            Image(nsImage: icon).resizable().frame(width: 13, height: 13)
-                                .libraryRaisedIcon(ringed: model.appIconIsLight(entry.sourceBundleID))
-                        }
-                        Text(app).truncationMode(.tail).libraryRaisedText()
-                    }
-                    if entry.isArchived { Image(systemName: "star.fill").font(.system(size: 8)).foregroundStyle(.yellow) }
-                }
-                .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            LibraryGridCaption(date: entry.kind == .snippet ? entry.snippetEditedAt ?? entry.firstCopiedAt : entry.lastCopiedAt,
+                               bundleID: entry.sourceBundleID, saved: entry.isArchived) {
+                Text(ClipboardList.gridTitle(of: entry))
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .background(Color.primary.opacity(isSelected ? 0.075 : isHovering ? 0.035 : 0.012),
                     in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))

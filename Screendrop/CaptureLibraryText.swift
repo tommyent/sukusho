@@ -77,6 +77,12 @@ nonisolated enum CaptureInsightRules {
         customName ?? modelTitle ?? sourceTitle ?? dateTitle
     }
 
+    static func gridTitle(name: String?, model: String?, app: String?, window: String?, fallback: String) -> String {
+        [name, model, sourceTitle(appName: app, windowTitle: window), app]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty } ?? fallback
+    }
+
     /// "Safari: Screenshot - Wikipedia", when the window has a title; nil without one, since an app's name alone
     /// says less than the time.
     static func sourceTitle(appName: String?, windowTitle: String?) -> String? {
