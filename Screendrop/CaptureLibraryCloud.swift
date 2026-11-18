@@ -859,9 +859,11 @@ private struct CloudUploadCard: View {
         .accessibilityAction(named: upload.isReceived ? "Download" : "Open Link") {
             if upload.isReceived { FileRequestsModel.shared.download([upload]) } else { CloudLibraryModel.shared.open(upload) }
         }
-        .accessibilityAction(named: "Copy Link") { if !upload.isReceived { CloudLibraryModel.shared.copyLinks([upload]) } }
         .accessibilityAction(named: "Delete from Cloud") { CloudLibraryModel.shared.pendingDelete = [upload] }
         .accessibilityActions {
+            if !upload.isReceived {
+                Button("Copy Link") { CloudLibraryModel.shared.copyLinks([upload]) }
+            }
             if layout == .grid, let local, let state = AgentPromptIndex.shared.state(for: local) {
                 Button(state.accessibilityAction) { CaptureLibraryModel.shared.useAgentPrompt(local) }
             }
