@@ -26,10 +26,10 @@ struct LibraryLogicTests {
             (.text, "https://example.org/path/end", "example.org/end", .kind("link")),
             (.text, "#FBCA44", "#FBCA44", nil), (.text, "Meeting notes", "Meeting notes", .kind("text")),
             (.snippet, "Greeting\nBody", "Greeting", nil), (.files, "/tmp/Notes.pdf", "Notes.pdf", nil),
-            (.image, "", "Copied Image", nil)
+            (.image, "", "1440 × 900", nil)
         ] {
             var clip = ClipboardEntry(id: "fixture", kind: kind, text: body, title: nil, imageURL: nil, libraryPath: nil,
-                byteSize: 0, pixelWidth: 1, pixelHeight: 1, sourceBundleID: nil, isRemote: false, firstCopiedAt: .now,
+                byteSize: 0, pixelWidth: 1440, pixelHeight: 900, sourceBundleID: nil, isRemote: false, firstCopiedAt: .now,
                 lastCopiedAt: .now, timesCopied: 1, pinnedAt: .now)
             #expect(ClipboardList.gridTitle(of: clip) == title)
             let marks = LibraryCardMarks(clip: clip, upload: nil)
@@ -37,6 +37,20 @@ struct LibraryLogicTests {
             clip.cloudLinks = [url]
             #expect(LibraryCardMarks(clip: clip, upload: nil).cloud == .shared)
         }
+    }
+
+    @Test func imageGridTitleUsesItsNameThenDescriptionThenDimensions() {
+        func title(_ name: String?, _ description: String?, width: Int = 1440, height: Int = 900) -> String {
+            var clip = ClipboardEntry(id: "image", kind: .image, text: nil, title: name, imageURL: nil,
+                libraryPath: nil, byteSize: 0, pixelWidth: width, pixelHeight: height, sourceBundleID: nil,
+                isRemote: false, firstCopiedAt: .now, lastCopiedAt: .now, timesCopied: 1, pinnedAt: nil)
+            clip.modelTitle = description
+            return ClipboardList.gridTitle(of: clip)
+        }
+        #expect(title("My screenshot", "Inbox") == "My screenshot")
+        #expect(title(nil, "Inbox") == "Inbox")
+        #expect(title(" ", nil) == "1440 × 900")
+        #expect(title(nil, nil, width: 0, height: 0) == "Image")
     }
 
     @Test func cloudMediaRevisionSurvivesListingAndKeysPreviewRequests() throws {

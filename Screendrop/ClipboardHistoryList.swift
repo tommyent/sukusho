@@ -205,10 +205,14 @@ nonisolated enum ClipboardList {
             return nil
         case .image:
             if let title = entry.modelTitle, !title.isEmpty { return title }
-            return entry.pixelWidth > 0 ? "\(entry.pixelWidth) × \(entry.pixelHeight)" : "Image"
+            return imageSizeTitle(of: entry)
         case .files, .snippet:
             return title(of: entry)
         }
+    }
+
+    private static func imageSizeTitle(of entry: ClipboardEntry) -> String {
+        entry.pixelWidth > 0 ? "\(entry.pixelWidth) × \(entry.pixelHeight)" : "Image"
     }
 
     static func gridTitle(of entry: ClipboardEntry) -> String {
@@ -217,7 +221,7 @@ nonisolated enum ClipboardList {
         }
         let body = (entry.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         switch entry.kind {
-        case .image: return "Copied Image"
+        case .image: return imageSizeTitle(of: entry)
         case .snippet: return title(of: entry)
         case .files:
             return body.split(whereSeparator: \.isNewline).first.map { (String($0) as NSString).lastPathComponent } ?? "File"
