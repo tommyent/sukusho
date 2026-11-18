@@ -52,6 +52,9 @@ final class ModifierTapMonitor {
     private var generation = 0
     private var activationObserver: NSObjectProtocol?
     private let arming = ModifierTapArming()
+    /// macOS turned the tap off on the user's behalf: it stays off for the rest of this run, whoever asks to start it.
+    /// Set the moment macOS says so; only the notice to the manager waits.
+    private(set) var isTurnedOff = false
 
     /// Privacy & Security › Input Monitoring: `Privacy_ListenEvent` is that page's anchor in System Settings' own search
     /// (PrivacySecurity.searchTerms on macOS 26.5.1 and 27.3, read 2026-11-17).
@@ -65,6 +68,7 @@ final class ModifierTapMonitor {
     func start(onTap: @escaping (ModifierTapDetector.Tap) -> Void, onStop: @escaping (_ retryable: Bool) -> Void) -> Bool {
         self.onTap = onTap
         self.onStop = onStop
+        guard !isTurnedOff else { return false }
         if tap != nil { return true }
         // Without either permission, creating the tap would raise macOS's prompt at launch; it's asked for on recording.
         guard CGPreflightListenEventAccess() || AXIsProcessTrusted() else { return false }
@@ -146,6 +150,7 @@ final class ModifierTapMonitor {
     }
 
     private func stopForGood(retryable: Bool) {
+        if !retryable { isTurnedOff = true }
         let onStop = onStop
         stop()
         // After the callback returns, like a tap.

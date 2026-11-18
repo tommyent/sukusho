@@ -32,8 +32,6 @@ final class HotkeyManager {
     var needsInputMonitoring: Bool { inputMonitoring != .none }
     /// macOS turned the event tap off and it couldn't come back on: modifier-key shortcuts wait for the next reload.
     @ObservationIgnored private var modifierTapsStopped = false
-    /// macOS turned the event tap off on the user's behalf: it stays off until Sukusho relaunches.
-    @ObservationIgnored private var modifierTapsTurnedOff = false
     /// The clashing actions Use Other Keys left on their keys, because another app holds the new ones: Settings names
     /// them, whether Use Other Keys ran there or from the launch notice.
     var keptKeys: [CaptureHotkeyAction] = []
@@ -106,7 +104,8 @@ final class HotkeyManager {
             inputMonitoring = .none
             return
         }
-        guard !modifierTapsTurnedOff else {
+        // macOS turned it off on the user's behalf: the monitor won't start again this run.
+        guard !modifierTaps.isTurnedOff else {
             inputMonitoring = .turnedOff
             for (shortcut, action) in tapActions {
                 registrationErrors[action] = "\(shortcut.displayString) is off until Sukusho relaunches: macOS turned off its watching."
@@ -137,10 +136,8 @@ final class HotkeyManager {
     /// turned off for the user, it stays off until Sukusho relaunches.
     private func modifierTapsDidStop(retryable: Bool) {
         NSLog("[Sukusho] macOS turned off the modifier-key shortcuts' event tap (%@)", retryable ? "timeout" : "user input")
-        guard retryable else {
-            modifierTapsTurnedOff = true
-            return reloadHotkeys()
-        }
+        // Already latched in the monitor; this only brings Settings up to date.
+        guard retryable else { return reloadHotkeys() }
         modifierTapsStopped = true
         for (shortcut, action) in tapActions {
             registrationErrors[action] = "macOS stopped Sukusho noticing \(shortcut.displayString). It starts again when you next switch to Sukusho."
