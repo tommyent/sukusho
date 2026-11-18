@@ -211,6 +211,16 @@ struct ClipboardHistoryStoreTests {
     }
 
     /// Optimize on a clip: the smaller file goes on top of the same card, which keeps its place in history.
+    @Test func uploadedFileLinksStayInClipOrder() async throws {
+        let store = try store()
+        let id = try await store.addSnippet(title: "fixture", text: "test")
+        try await store.setCloudLink("https://example.invalid/two", entry: id, position: 1)
+        try await store.setCloudLink("https://example.invalid/one", entry: id, position: 0)
+        #expect(try await store.entries().first?.cloudLinks == ["https://example.invalid/one", "https://example.invalid/two"])
+        try await store.removeCloudLink("https://example.invalid/one")
+        #expect(try await store.entries().first?.cloudLinks == ["https://example.invalid/two"])
+    }
+
     @Test func anOptimizedVersionStacksOnItsOwnCard() async throws {
         let store = try store()
         guard case .inserted(let id) = try await store.record(image(400, width: 4, height: 4), at: start) else {

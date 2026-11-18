@@ -193,6 +193,8 @@ struct ClipboardCard: View {
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { select() }
         .accessibilityAction(named: "Copy") { select(); CaptureLibraryModel.shared.copySelection([.clip(entry)]) }
+        .accessibilityAction(named: "Share") { select(); CaptureLibraryModel.shared.shareSelection([.clip(entry)]) }
+        .accessibilityAction(named: "Export") { select(); CaptureLibraryModel.shared.export([.clip(entry)]) }
         .accessibilityAction(named: "Quick Look") {
             let followed = QuickLookPreviewPresenter.followsLibrary && !isSelected
             select()
@@ -284,6 +286,8 @@ struct ClipboardListRow: View {
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { select() }
         .accessibilityAction(named: "Copy") { select(); CaptureLibraryModel.shared.copySelection([.clip(entry)]) }
+        .accessibilityAction(named: "Share") { select(); CaptureLibraryModel.shared.shareSelection([.clip(entry)]) }
+        .accessibilityAction(named: "Export") { select(); CaptureLibraryModel.shared.export([.clip(entry)]) }
         .accessibilityAction(named: "Quick Look") {
             let followed = QuickLookPreviewPresenter.followsLibrary && !isSelected
             select()

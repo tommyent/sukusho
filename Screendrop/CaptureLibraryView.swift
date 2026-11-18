@@ -327,6 +327,12 @@ struct CaptureLibraryView: View {
         .sheet(item: $model.pendingConversion) { conversion in
             ImageConversionSheet(conversion: conversion) { model.actionFeedback.show($0) }
         }
+        .sheet(item: $model.pendingClipUpload) { batch in
+            CloudUploadOptionsPopover(showsTitle: batch.files.count == 1,
+                                      encryptionUnavailable: CloudShareSeal.unavailableReason(fileURLs: batch.files)) { options in
+                batch.upload(options: options)
+            }
+        }
         .sheet(item: $model.pendingCloudUpload) { item in
             // The card's own name: yours, else Apple Intelligence's, else the date; never the file name.
             CloudUploadOptionsPopover(suggestedTitle: item.title,

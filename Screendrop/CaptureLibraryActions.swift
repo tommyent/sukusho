@@ -21,19 +21,9 @@ extension CaptureLibraryModel {
         case .copy, .copyOriginal:
             copySelection(selected.map(LibrarySavedCard.capture), original: action == .copyOriginal)
         case .export:
-            export(selected)
+            export(selected.map(LibrarySavedCard.capture))
         case .share:
-            run("Preparing share…") {
-                StudioProjectRegistry.shared.flushDrafts()
-                var urls: [URL] = []
-                for item in selected {
-                    let url = item.isVideo ? try await RecordingDeliverable.resolve(for: item.fileURL) : item.fileURL
-                    urls.append(url)
-                }
-                // Saved once the chosen service says it shared them, not when the picker opens (Astra L5).
-                // A completion records a share that already happened, so it isn't dropped while another operation runs.
-                LibrarySharing.show(urls) { self.setSaved(true, items: selected, request: .completion) }
-            }
+            shareSelection(selected.map(LibrarySavedCard.capture))
         case .reveal:
             NSWorkspace.shared.activateFileViewerSelecting(selected.map(\.ownedURL))
         case .trash:
@@ -365,10 +355,10 @@ extension CaptureLibraryModel {
         }
     }
 
-    private func export(_ items: [CaptureLibraryItem]) {
+    func export(_ items: [LibrarySavedCard]) {
         let panel = NSOpenPanel()
-        panel.title = "Export Captures"
-        panel.message = "Choose a folder for \(items.count == 1 ? "this capture" : "these \(items.count) captures")."
+        panel.title = "Export"
+        panel.message = "Choose a folder for \(items.count == 1 ? "this item" : "these \(items.count) items")."
         panel.prompt = "Export"
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -382,13 +372,11 @@ extension CaptureLibraryModel {
                 var failures: [String] = []
                 for item in items {
                     do {
-                        let source = item.isVideo ? try await RecordingDeliverable.resolve(for: item.fileURL) : item.fileURL
-                        let destination = try await Task.detached(priority: .userInitiated) {
-                            try CaptureLibraryFiles.export(source, name: item.name, to: directory)
-                        }.value
-                        exported.append(destination)
-                        if item.isVideo { ScreenshotPreviewStack.shared.dismissVideo(for: item.ownedURL) }
-                    } catch { failures.append("\(item.title): \(error.localizedDescription)") }
+                        for value in try await item.transferValues() {
+                            exported.append(try await Task.detached(priority: .userInitiated) { try value.write(to: directory) }.value)
+                        }
+                        if let capture = item.captureItem, capture.isVideo { ScreenshotPreviewStack.shared.dismissVideo(for: capture.ownedURL) }
+                    } catch { failures.append(error.localizedDescription) }
                 }
                 if !exported.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(exported) }
                 if !failures.isEmpty { self.errorMessage = failures.joined(separator: "\n\n") }
@@ -493,16 +481,21 @@ extension CaptureLibraryModel {
 
 nonisolated enum CaptureLibraryFiles {
     static func export(_ source: URL, name: String, to directory: URL) throws -> URL {
+        try export(name: name, ext: source.pathExtension, to: directory) {
+            try FileManager.default.copyItem(at: source, to: $0)
+        }
+    }
+
+    static func export(name: String, ext: String, to directory: URL, write: (URL) throws -> Void) throws -> URL {
         let safe = name.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
-        let ext = source.pathExtension
         let stem = (safe as NSString).pathExtension.lowercased() == ext.lowercased()
             ? (safe as NSString).deletingPathExtension : safe
-        let base = stem.isEmpty ? "Capture" : stem
+        let base = stem.isEmpty || stem == "." || stem == ".." ? "Untitled" : stem
         for suffix in 0..<10_000 {
             let name = suffix == 0 ? base : "\(base) \(suffix)"
-            let destination = directory.appendingPathComponent(name).appendingPathExtension(ext)
+            let destination = directory.appendingPathComponent(ext.isEmpty ? name : name + "." + ext)
             if FileManager.default.fileExists(atPath: destination.path) { continue }
-            try FileManager.default.copyItem(at: source, to: destination)
+            try write(destination)
             return destination
         }
         throw CocoaError(.fileWriteFileExists)
@@ -633,7 +626,7 @@ enum LibrarySharing {
     private static var current: Delegate?
 
     /// `onShared` runs when the chosen service reports it finished sharing: not on picking one, nor on a cancel.
-    static func show(_ items: [URL], onShared: @escaping () -> Void = {}) {
+    static func show(_ items: [Any], onShared: @escaping () -> Void = {}) {
         guard !items.isEmpty, let window = NSApp.keyWindow, let view = window.contentView else { return }
         let point = view.convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil)
         let picker = NSSharingServicePicker(items: items)

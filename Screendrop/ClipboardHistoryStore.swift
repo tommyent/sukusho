@@ -37,6 +37,7 @@ nonisolated struct ClipboardEntry: Sendable, Equatable, Identifiable {
     var earlierVersions: [ClipboardEntryVersion] = []
     /// The newest version is Sukusho's own Optimize, not another app's re-encode (Fable 15 #3).
     var isOptimizedHere = false
+    var cloudLinks: [String] = []
 }
 
 /// An earlier version of an image entry: what was copied before an optimiser put its re-encode back.
@@ -134,6 +135,12 @@ actor ClipboardHistoryStore {
             );
             CREATE UNIQUE INDEX IF NOT EXISTS entries_kind_hash ON entries(kind, hash) WHERE kind != 'snippet';
             CREATE INDEX IF NOT EXISTS entries_last_copied ON entries(last_copied_at);
+            CREATE TABLE IF NOT EXISTS clip_cloud_links (
+                entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+                position INTEGER NOT NULL,
+                url TEXT NOT NULL,
+                PRIMARY KEY(entry_id, position)
+            );
             CREATE TABLE IF NOT EXISTS rich_text (
                 entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
                 type TEXT NOT NULL,
@@ -340,6 +347,9 @@ actor ClipboardHistoryStore {
                                                        libraryPath: row.text(3), byteSize: row.int(4),
                                                        copiedAt: Date(timeIntervalSince1970: row.double(5))))
         }, by: \.0).mapValues { $0.map(\.1) }
+        let links = Dictionary(grouping: try query("SELECT entry_id, url FROM clip_cloud_links ORDER BY position", []) {
+            ($0.text(0) ?? "", $0.text(1) ?? "")
+        }, by: \.0).mapValues { $0.map(\.1) }
         return try query("""
             SELECT id, kind, text, title, blob, library_path, byte_size, pixel_width, pixel_height, source_bundle_id,
                 is_remote, first_copied_at, last_copied_at, times_copied, pinned_at,
@@ -369,7 +379,8 @@ actor ClipboardHistoryStore {
                 isDescribed: row.int(19) != 0,
                 hash: row.text(20) ?? "",
                 earlierVersions: versions[row.text(0) ?? ""] ?? [],
-                isOptimizedHere: row.int(21) != 0
+                isOptimizedHere: row.int(21) != 0,
+                cloudLinks: links[row.text(0) ?? ""] ?? []
             )
         }
     }
@@ -389,6 +400,14 @@ actor ClipboardHistoryStore {
             UPDATE entries SET model_title = ?, model_keywords = ?, model_category = ?, described = 1, change_seq = ?
             WHERE id = ? AND (? IS NULL OR hash = ?)
             """, [title, keywords.isEmpty ? nil : keywords.joined(separator: "\n"), category, try nextChange(), id, hash, hash])
+    }
+
+    func setCloudLink(_ url: String, entry: String, position: Int) throws {
+        try run("INSERT OR REPLACE INTO clip_cloud_links(entry_id, position, url) VALUES(?, ?, ?)", [entry, position, url])
+    }
+
+    func removeCloudLink(_ url: String) throws {
+        try run("DELETE FROM clip_cloud_links WHERE url = ?", [url])
     }
 
     func richText(for id: String) throws -> [String: Data] {

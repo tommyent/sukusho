@@ -91,6 +91,8 @@ struct LibraryClipCollection: View {
                 else { library.copySelection(selected) }
             case .capture: library.perform(.edit)
             }
+        case .share: library.shareSelection(selected)
+        case .export: library.export(selected)
         case .copy, .copyOriginal:
             library.copySelection(selected, original: action == .copyOriginal)
         default:
@@ -106,6 +108,17 @@ struct LibraryClipCollection: View {
                 + [LibraryMenuItem(title: "Remove from Saved", startsGroup: true) { library.setSaved(false) }]
         }
         var items = [LibraryMenuItem(title: "Copy") { perform(.copy) }, LibraryMenuItem(title: "Quick Look") { perform(.preview) }]
+        items += [LibraryMenuItem(title: "Export…") { perform(.export) },
+                  LibraryMenuItem(title: "Share…") { perform(.share) }]
+        if CloudUploader.shared.isConfigured {
+            items.append(LibraryMenuItem(title: "Share to Cloud…", isEnabled: CloudLibraryModel.shared.fileUploads == nil) {
+                library.prepareClipUpload(selected)
+            })
+        }
+        let links = selected.flatMap { $0.clipEntry?.cloudLinks ?? $0.captureItem?.cloudURL.map { [$0] } ?? [] }
+        if !links.isEmpty {
+            items.append(LibraryMenuItem(title: links.count == 1 ? "Copy Link" : "Copy Links") { CloudShareLinks.copy(links) })
+        }
         if selected.count == 1, case .clip(let entry) = selected[0] {
             if entry.kind == .image {
                 items += [LibraryMenuItem(title: "Open in Editor") { clipboard.openInEditor(entry) },

@@ -196,6 +196,7 @@ final class CaptureLibraryModel {
     /// the current names, so a failed save can't linger here.
     @ObservationIgnored var savedNames: [String: String] = [:]
     /// A capture waiting on the Share to Cloud options sheet.
+    var pendingClipUpload: LibraryClipUpload?
     var pendingCloudUpload: CaptureLibraryItem?
     /// The captures behind an open Convert to WebP… or Convert to JPEG… sheet.
     var pendingConversion: ImageConversion?

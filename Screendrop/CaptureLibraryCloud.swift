@@ -426,7 +426,7 @@ final class CloudLibraryModel {
 
     /// Uploads files one after another as the Files page does, copies their links, and
     /// says how many it copied and whether any failed, which the Library's alert tells.
-    func uploadFiles(_ files: [URL], options: CloudUploadOptions, finished: @escaping (_ copied: Int, _ failed: Bool) -> Void) {
+    func uploadFiles(_ files: [URL], options: CloudUploadOptions, didUpload: @escaping (URL, String) async throws -> Void = { _, _ in }, finished: @escaping (_ copied: Int, _ failed: Bool) -> Void) {
         guard !files.isEmpty, fileUploads == nil else { return }
         fileUploads = FileUploads(total: files.count)
         fileUploadTask = Task {
@@ -450,6 +450,7 @@ final class CloudLibraryModel {
                         asFile: true, encrypt: options.encrypted
                     )
                     links.append(result.url)
+                    try await didUpload(file, result.url)
                 } catch is CancellationError {
                     break
                 } catch {
@@ -560,6 +561,10 @@ final class CloudLibraryModel {
                         history.setLibraryCloudURL(id: item.id, cloudURL: nil)
                     }
                     uploads.removeAll { removed.contains($0.id) }
+                    if let store = ClipboardMonitor.shared.store {
+                        try await store.removeCloudLink(upload.url)
+                        ClipboardHistoryModel.shared.refresh()
+                    }
                     selection.remove(upload.id)
                     for id in removed { CloudPreviewCache.shared.remove(id) }
                 } catch {
