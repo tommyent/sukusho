@@ -201,6 +201,20 @@ enum AppRelaunch {
         defaults.removeObject(forKey: reopenKey)
         return Date().timeIntervalSince1970 - requestedAt < 120
     }
+
+    /// One Sukusho at a time: a second copy of the same app (from another folder, or opened while a relaunch waited)
+    /// would answer every shortcut twice. It brings the running one forward and quits before starting anything.
+    static func quitIfAnotherCopyIsRunning() {
+        let me = ProcessInfo.processInfo.processIdentifier
+        guard let id = Bundle.main.bundleIdentifier,
+              let other = NSRunningApplication.runningApplications(withBundleIdentifier: id).first(where: {
+                  $0.processIdentifier != me && !$0.isTerminated && kill($0.processIdentifier, 0) == 0
+              })
+        else { return }
+        NSLog("[Sukusho] Another copy is running (pid %d); this one quits", other.processIdentifier)
+        other.activate()
+        exit(0)
+    }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -236,6 +250,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #if DEBUG
         if RecordingExportBenchmark.runIfRequested() { return }
         #endif
+        AppRelaunch.quitIfAnotherCopyIsRunning()
         HotkeyManager.shared.registerHotkeys()
         // The Library's Grid/List choice, saved before List view went (sd-vkd).
         UserDefaults.standard.removeObject(forKey: "captureLibrary.layout")
