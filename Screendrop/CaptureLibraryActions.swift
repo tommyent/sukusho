@@ -98,7 +98,7 @@ extension CaptureLibraryModel {
                          finished: @escaping () -> Void = {}) {
         guard !isBusy, let window = window ?? NSApp.keyWindow, window.attachedSheet == nil, !cards.isEmpty else { finished(); return }
         let captureCount = cards.count { $0.captureID != nil }
-        let prompt = LibraryDeletionPrompt(captures: captureCount, clips: cards.count - captureCount)
+        let prompt = LibraryDeletionPrompt(captures: captureCount, entries: cards.compactMap(\.clipEntry))
         let alert = NSAlert()
         alert.messageText = prompt.title
         alert.informativeText = prompt.message

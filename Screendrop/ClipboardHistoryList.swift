@@ -243,19 +243,29 @@ nonisolated enum ClipboardList {
 
 nonisolated struct LibraryDeletionPrompt {
     let captures: Int
-    let clips: Int
+    let entries: [ClipboardEntry]
 
-    var action: String { clips == 0 ? "Move to Trash" : "Delete" }
+    private var snippets: Int { entries.count { $0.kind == .snippet } }
+    private var archived: Int { entries.count(where: \.isArchived) }
+    private var history: Int { entries.count - snippets - archived }
+
+    var action: String { entries.isEmpty ? "Move to Trash" : "Delete" }
 
     var title: String {
-        if clips == 0 { return captures == 1 ? "Move capture to Trash?" : "Move \(captures) captures to Trash?" }
-        if captures == 0 { return clips == 1 ? "Delete this clipboard entry?" : "Delete \(clips) clipboard entries?" }
-        return "Delete \(captures + clips) selected items?"
+        if entries.isEmpty { return captures == 1 ? "Move capture to Trash?" : "Move \(captures) captures to Trash?" }
+        if captures == 0 {
+            if snippets == entries.count { return snippets == 1 ? "Delete this snippet?" : "Delete \(snippets) snippets?" }
+            if archived == entries.count { return archived == 1 ? "Delete this clip from Saved?" : "Delete \(archived) clips from Saved?" }
+            if history == entries.count { return history == 1 ? "Delete this clipboard entry?" : "Delete \(history) clipboard entries?" }
+        }
+        return "Delete \(captures + entries.count) selected items?"
     }
 
     var message: String {
         var parts: [String] = []
-        if clips > 0 { parts.append("Selected entries will be deleted from clipboard history.") }
+        if snippets > 0 { parts.append(snippets == 1 ? "The snippet will be permanently deleted from Snippets." : "The snippets will be permanently deleted from Snippets.") }
+        if archived > 0 { parts.append(archived == 1 ? "The clip will be permanently deleted from Saved." : "The clips will be permanently deleted from Saved.") }
+        if history > 0 { parts.append("Selected entries will be deleted from clipboard history.") }
         if captures > 0 { parts.append("Selected captures and their edits will move to Trash. Exported copies and cloud links will remain available.") }
         return parts.joined(separator: " ")
     }

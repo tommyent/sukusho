@@ -802,10 +802,18 @@ struct ClipboardHistoryStoreTests {
 @Suite
 struct ClipboardListTests {
     @Test func deletionRequestsConfirmationForEachSelectionKind() {
-        #expect(LibraryDeletionPrompt(captures: 1, clips: 0).action == "Move to Trash")
-        #expect(LibraryDeletionPrompt(captures: 0, clips: 1).title == "Delete this clipboard entry?")
-        #expect(LibraryDeletionPrompt(captures: 1, clips: 2).title == "Delete 3 selected items?")
-        #expect(LibraryDeletionPrompt(captures: 0, clips: 2).message.contains("clipboard history"))
+        let ordinary = entry(.text, "ordinary")
+        let saved = entry(.text, "saved", pinnedAgo: 1)
+        let snippet = entry(.snippet, "snippet", pinnedAgo: 1)
+        #expect(LibraryDeletionPrompt(captures: 1, entries: []).action == "Move to Trash")
+        #expect(LibraryDeletionPrompt(captures: 0, entries: [ordinary]).title == "Delete this clipboard entry?")
+        let fromSnippets = LibraryDeletionPrompt(captures: 0, entries: [snippet])
+        #expect(fromSnippets.title == "Delete this snippet?" && !fromSnippets.message.contains("clipboard history"))
+        let fromSaved = LibraryDeletionPrompt(captures: 0, entries: [saved])
+        #expect(fromSaved.title == "Delete this clip from Saved?" && !fromSaved.message.contains("clipboard history"))
+        let mixed = LibraryDeletionPrompt(captures: 1, entries: [saved, ordinary, snippet])
+        #expect(mixed.title == "Delete 4 selected items?")
+        for location in ["Saved", "clipboard history", "Snippets", "Trash"] { #expect(mixed.message.contains(location)) }
     }
 
     @Test func savedHasOnePopupControl() {
