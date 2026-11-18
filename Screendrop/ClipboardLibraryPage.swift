@@ -63,7 +63,7 @@ struct ClipboardLibraryPage: View {
 
     private var filterChips: some View {
         HStack(spacing: DS.Space.m) {
-            ForEach(ClipboardFilter.allCases.filter { $0 != .snippets }) { item in
+            ForEach(ClipboardFilter.allCases.filter { $0 != .snippets && $0 != .saved }) { item in
                 Button { model.libraryFilter = item } label: {
                     Label(item == .all ? "All" : item.title, systemImage: item.symbol)
                         .labelStyle(.titleAndIcon)
@@ -304,7 +304,7 @@ struct ClipboardLibraryInspector: View {
 
     var body: some View {
         // History's selection doesn't show on Snippets, nor the other way round.
-        if let entry = model.entry(model.librarySelection), (entry.kind == .snippet) == model.showsSnippets {
+        if let entry = model.entry(model.librarySelection), (entry.kind == .snippet) == model.showsSnippets || LibrarySavedModel.shared.isShown {
             ScrollView {
                 VStack(alignment: .leading, spacing: DS.Space.l) {
                     if entry.kind == .snippet {
@@ -320,10 +320,11 @@ struct ClipboardLibraryInspector: View {
                             .help("Quick Look")
                         HStack {
                             Button("Copy") { CaptureLibraryModel.shared.copySelection([.clip(entry)]) }.buttonStyle(.borderedProminent)
-                            Button(entry.pinnedAt == nil ? "Save" : "Saved", systemImage: entry.pinnedAt == nil ? "star" : "star.fill") {
-                                model.toggleSaved(entry)
+                            if entry.pinnedAt == nil {
+                                Button("Move to Saved", systemImage: "star") { model.moveToSaved(entry) }
+                            } else {
+                                Button("Delete…", systemImage: "trash") { CaptureLibraryModel.shared.deleteSelection([.clip(entry)]) }
                             }
-                            .help(entry.pinnedAt == nil ? "Keep it in Library › Saved" : "Remove from Saved")
                             if entry.kind == .image { Button("Edit") { model.openInEditor(entry) }.help("Open in the editor") }
                         }
                         .controlSize(.small)

@@ -51,7 +51,7 @@ final class ClipboardHistoryModel {
         loading?.cancel()
         loading = Task {
             do {
-                let loaded = try await store.entries(limit: 3000)
+                let loaded = try await store.entries(limit: 3000, includeArchive: true)
                 guard !Task.isCancelled else { return }
                 let updated = presented(loaded)
                 if updated != entries {
@@ -101,9 +101,9 @@ final class ClipboardHistoryModel {
         sections(filter: showsSnippets ? .snippets : libraryFilter, query: query)
     }
 
-    var historyCount: Int { entries.count { $0.kind != .snippet } }
-    var snippetCount: Int { entries.count { $0.kind == .snippet } }
-    var savedCount: Int { entries.count { $0.kind != .snippet && $0.pinnedAt != nil } }
+    var historyCount: Int { entries.count { $0.kind != .snippet && $0.pinnedAt == nil } }
+    var snippetCount: Int { entries.count { $0.kind == .snippet && $0.pinnedAt == nil } }
+    var savedCount: Int { entries.count { $0.pinnedAt != nil } }
 
     func entry(_ id: ClipboardEntry.ID?) -> ClipboardEntry? {
         id.flatMap { id in entries.first { $0.id == id } }
@@ -163,11 +163,19 @@ final class ClipboardHistoryModel {
                  beforePaste: @escaping () -> Void = {}) {
         Task {
             let richText = delivery.isPlain ? [:] : ((try? await store?.richText(for: entry.id)) ?? [:])
-            guard ClipboardWriter.write(entry, richText: richText, plain: delivery.isPlain) else {
+            var archivedCopy: ClipboardCapture?
+            guard ClipboardWriter.write(entry, richText: richText, plain: delivery.isPlain, didWrite: { items in
+                archivedCopy = ClipboardPasteboardReader.archiveCopy(entry, items: items, historyDirectory: ScreenshotHistoryStore.historyDirectory)
+            }) else {
                 feedback.show("This entry's file is gone")
                 return
             }
-            if let store { try? await store.touch(entry.id) }
+            if let store {
+                do {
+                    if let archivedCopy { try await store.record(archivedCopy) }
+                    else if entry.pinnedAt == nil { try await store.touch(entry.id) }
+                } catch { logger.error("Could not update clipboard history: \(error.localizedDescription)") }
+            }
             refresh()
             guard !delivery.isCopy else {
                 feedback.show("Copied")
@@ -253,9 +261,14 @@ final class ClipboardHistoryModel {
 
     /// Save (★) keeps a copy in Library › Saved, never aged out or swept, and out of Delete History. It's the
     /// store's pinned flag, so clips pinned before option A are saved (sd-ogtp.1.1).
-    func toggleSaved(_ entry: ClipboardEntry) {
+    func moveToSaved(_ entry: ClipboardEntry) {
+        guard entry.kind != .snippet, entry.pinnedAt == nil, let store else { return }
         Task {
-            try? await store?.setPinned(entry.id, entry.pinnedAt == nil)
+            do {
+                try await store.setPinned(entry.id, true)
+                librarySelectionIDs.remove(entry.id)
+            }
+            catch { feedback.show(error.localizedDescription) }
             refresh()
         }
     }

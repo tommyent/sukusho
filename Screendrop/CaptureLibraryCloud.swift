@@ -501,6 +501,9 @@ final class CloudLibraryModel {
     /// Selects the upload's capture in All Captures.
     func showInLibrary(_ item: CaptureLibraryItem) {
         isShown = false
+        LibrarySavedModel.shared.isShown = item.isSaved
+        LibrarySavedModel.shared.filter = .all
+        ClipboardHistoryModel.shared.isShown = false
         let library = CaptureLibraryModel.shared
         library.tagFilter = nil
         library.searchText = ""

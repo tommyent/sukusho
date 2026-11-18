@@ -58,7 +58,7 @@ enum LibrarySavedCard: Identifiable {
     /// mockup's chips; Recordings are their own filter.
     static func cards(captures: [CaptureLibraryItem], clips: [ClipboardEntry], filter: LibrarySavedFilter) -> [Self] {
         let captures = captures.filter { $0.isSaved && (filter == .all || filter == (($0.isVideo) ? .recordings : .captures)) }
-        let clips = filter == .all || filter == .clips ? clips.filter { $0.pinnedAt != nil && $0.kind != .snippet } : []
+        let clips = filter == .all || filter == .clips ? clips.filter { $0.pinnedAt != nil } : []
         return (captures.map(Self.capture) + clips.map(Self.clip)).sorted {
             $0.savedAt != $1.savedAt ? $0.savedAt > $1.savedAt : $0.id < $1.id
         }
@@ -78,7 +78,7 @@ enum LibrarySavedCard: Identifiable {
     /// Clipboard page's Saved section lists them.
     var cards: [LibrarySavedCard] {
         let library = CaptureLibraryModel.shared
-        let clips = ClipboardHistoryModel.shared.sections(filter: .all, query: library.searchText)
+        let clips = ClipboardHistoryModel.shared.sections(filter: .saved, query: library.searchText)
             .first { $0.title == "Saved" }?.entries ?? []
         return LibrarySavedCard.cards(captures: library.visibleItems, clips: clips, filter: filter)
     }
@@ -157,7 +157,7 @@ struct LibrarySavedPage: View {
             ContentUnavailableView {
                 Label("Nothing Saved Yet", systemImage: "star")
             } description: {
-                Text("Save a capture or a copy with ★ to keep it here. Naming, tagging or sharing a capture saves it too. Saved items are never cleared out.")
+                Text("Choose Move to Saved on a capture or clipboard entry to keep it here.")
             }
             .workspaceTextPlate()
         }

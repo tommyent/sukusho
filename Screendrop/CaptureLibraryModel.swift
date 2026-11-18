@@ -175,6 +175,7 @@ final class CaptureLibraryModel {
     private(set) var items: [CaptureLibraryItem] = []
     private(set) var visibleItems: [CaptureLibraryItem] = []
     private(set) var contentRevision = 0
+    private(set) var everydayCount = 0
     private(set) var screenshotCount = 0
     private(set) var isLoading = false
     /// The first scan has finished; later refreshes show only the status bar's spinner.
@@ -245,9 +246,9 @@ final class CaptureLibraryModel {
 
     func count(for filter: CaptureLibraryFilter) -> Int {
         switch filter {
-        case .all: items.count
+        case .all: everydayCount
         case .screenshots: screenshotCount
-        case .recordings: items.count - screenshotCount
+        case .recordings: everydayCount - screenshotCount
         }
     }
 
@@ -273,8 +274,10 @@ final class CaptureLibraryModel {
             AgentPromptIndex.shared.reload()
             items = Self.titled(result)
             savedNames.removeAll()
-            screenshotCount = result.lazy.filter { !$0.isVideo }.count
-            tagCounts = result.reduce(into: [:]) { counts, item in
+            let everyday = result.filter { !$0.isSaved }
+            everydayCount = everyday.count
+            screenshotCount = everyday.lazy.filter { !$0.isVideo }.count
+            tagCounts = everyday.reduce(into: [:]) { counts, item in
                 for tag in item.tags { counts[tag, default: 0] += 1 }
             }
             tags = tagCounts.keys.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
@@ -320,6 +323,7 @@ final class CaptureLibraryModel {
         let filter = filter ?? .all
         let text = CaptureLibraryIndex.shared.foldedText
         let visible = items.filter { item in
+            guard LibraryArchive.includes(isSaved: item.isSaved, inSavedPage: LibrarySavedModel.shared.isShown) else { return false }
             let matchesKind = filter == .all || (filter == .recordings ? item.isVideo : !item.isVideo)
             let matchesTag = tagFilter.map(item.tags.contains) ?? true
             let fields = [item.name, item.title, item.fileURL.lastPathComponent, item.source?.appName, item.source?.windowTitle]

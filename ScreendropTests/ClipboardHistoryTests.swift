@@ -314,10 +314,10 @@ struct ClipboardHistoryStoreTests {
         try await store.setPinned(oldest, true)
         try await store.record(image(1000, width: 2), at: start + 1)
         guard case .inserted(let newest) = try await store.record(image(1000, width: 3), at: start + 2) else { return }
-        #expect(try await store.totalBytes() == 3000)
-        try await store.sweep(now: start + 3, retention: nil, maxBytes: 2000)
-        #expect(Set(try await store.entries().map(\.id)) == [oldest, newest])
         #expect(try await store.totalBytes() == 2000)
+        try await store.sweep(now: start + 3, retention: nil, maxBytes: 1000)
+        #expect(Set(try await store.entries().map(\.id)) == [oldest, newest])
+        #expect(try await store.totalBytes() == 1000)
     }
 
     @Test func aDeletedLibraryCaptureTakesItsEntry() async throws {
@@ -332,6 +332,30 @@ struct ClipboardHistoryStoreTests {
         try FileManager.default.removeItem(at: file)
         #expect(try await store.sweep(now: start, retention: nil, maxBytes: .max) == 1)
         #expect(try await store.entries().isEmpty)
+    }
+
+    @Test func betaOneCanReopenAnArchiveWithAnIdenticalHistoryCopy() async throws {
+        let original = try store()
+        guard case .inserted(let saved) = try await original.record(text("same"), at: start) else {
+            Issue.record("expected initial copy"); return
+        }
+        var db: OpaquePointer?
+        try #require(sqlite3_open(directory.appendingPathComponent("clipboard.sqlite").path, &db) == SQLITE_OK)
+        defer { sqlite3_close(db) }
+        let legacyIndex = "CREATE UNIQUE INDEX IF NOT EXISTS entries_kind_hash ON entries(kind, hash) WHERE kind != 'snippet';"
+        try #require(sqlite3_exec(db, "DROP INDEX entries_kind_hash; " + legacyIndex, nil, nil, nil) == SQLITE_OK)
+        try await original.setPinned(saved, true, at: start)
+        let upgraded = try store()
+        guard case .inserted(let fresh) = try await upgraded.record(text("same"), at: start + 1) else {
+            Issue.record("the archive absorbed the new copy"); return
+        }
+        #expect(try await upgraded.record(text("same"), at: start + 2) == .bumped(fresh))
+        try #require(sqlite3_exec(db, legacyIndex, nil, nil, nil) == SQLITE_OK)
+        let entries = try await store().entries(limit: 1, includeArchive: true)
+        #expect(entries.map(\.id) == [fresh, saved])
+        #expect(entries.map(\.pinnedAt) == [nil, start])
+        #expect(entries.map(\.timesCopied) == [2, 1])
+        #expect(try await upgraded.totalBytes() == 4)
     }
 
     @Test func entriesSurviveReopening() async throws {
@@ -359,7 +383,7 @@ struct ClipboardHistoryStoreTests {
         try await store.addSnippet(title: "Kept", text: "body", at: start)
         try await store.deleteHistory()
         #expect(Set(try await store.entries().compactMap(\.text)) == ["saved", "body"])
-        #expect(try await store.totalBytes() == 9)
+        #expect(try await store.totalBytes() == 0)
     }
 
     /// A screenshot-like PNG: a light page with dark lines of "text" whose lengths come from `seed`, and a
@@ -776,9 +800,9 @@ struct ClipboardListTests {
     }
 
     @Test func previewSelectionUsesDisplayedSectionsAndSurvivesAnImageEdit() {
-        let saved = entry(.image, pinnedAgo: 1, image: "red.png")
-        let recent = entry(.text, "recent", ago: 10)
-        var edited = entry(.image, ago: 60, image: "blue.png")
+        let saved = entry(.image, image: "red.png")
+        let recent = entry(.text, "recent", ago: 86_400)
+        var edited = entry(.image, ago: 86_460, image: "blue.png")
         let selection = Set([edited.id, saved.id])
         func displayed() -> [ClipboardEntry] {
             ClipboardList.sections([edited, saved, recent], filter: .all, query: CaptureLibraryQuery(""), now: now,
@@ -835,7 +859,7 @@ struct ClipboardListTests {
         #expect(ClipboardList.matches(described, query: CaptureLibraryQuery("xcode"), appName: nil))
     }
 
-    @Test func pinnedThenTodayYesterdayEarlier() {
+    @Test func archiveAndEverydaySectionsHaveSeparateMembership() {
         let entries = [
             entry(.text, "this morning", ago: 3600),
             entry(.text, "yesterday", ago: 86_400),
@@ -844,8 +868,17 @@ struct ClipboardListTests {
             entry(.snippet, "body", title: "A snippet"),
         ]
         let sections = ClipboardList.sections(entries, filter: .all, query: CaptureLibraryQuery(""), now: now, calendar: calendar)
-        #expect(sections.map(\.title) == ["Saved", "Today", "Yesterday", "Earlier"])
-        #expect(sections.map { $0.entries.map(\.text) } == [["pinned long ago"], ["this morning"], ["yesterday"], ["last week"]])
+        #expect(sections.map(\.title) == ["Today", "Yesterday", "Earlier"])
+        #expect(sections.map { $0.entries.map(\.text) } == [["this morning"], ["yesterday"], ["last week"]])
+        let archive = ClipboardList.sections(entries, filter: .saved, query: CaptureLibraryQuery(""))
+        #expect(archive.flatMap(\.entries).map(\.id) == [entries[3].id])
+        let search = ClipboardList.sections(entries, filter: .all, query: CaptureLibraryQuery("pinned"), includesSnippets: true)
+        #expect(search.flatMap(\.entries).map(\.id) == [entries[3].id])
+        #expect(ClipboardList.numberedEntries(sections).map(\.id) == Array(entries.prefix(3)).map(\.id))
+        let many = (0..<12).map { entry(.text, "entry \($0)") }
+        #expect(ClipboardList.numberedEntries([.init(title: "First", entries: Array(many.prefix(4))),
+                                               .init(title: "Next", entries: Array(many.dropFirst(4)))]).map(\.id)
+                == Array(many.prefix(10)).map(\.id))
     }
 
     @Test func filtersByWhatTheTextIs() {
@@ -933,10 +966,10 @@ struct ClipboardOwnWriteTests {
 @Suite
 struct ClipboardWriterTests {
     private func entry(_ kind: ClipboardEntryKind, _ text: String?, source: String? = "com.google.Chrome",
-                       image: URL? = nil) -> ClipboardEntry {
+                       image: URL? = nil, pinnedAt: Date? = nil) -> ClipboardEntry {
         ClipboardEntry(id: "1", kind: kind, text: text, title: nil, imageURL: image, libraryPath: nil, byteSize: 0,
                        pixelWidth: 0, pixelHeight: 0, sourceBundleID: source, isRemote: false,
-                       firstCopiedAt: .now, lastCopiedAt: .now, timesCopied: 1, pinnedAt: nil)
+                       firstCopiedAt: .now, lastCopiedAt: .now, timesCopied: 1, pinnedAt: pinnedAt)
     }
 
     /// Fable 15 #2: a capture's clip shows its file as it is now, after the optimizer rewrote it; a clip with its own
@@ -977,6 +1010,27 @@ struct ClipboardWriterTests {
             let outcome = ClipboardPasteboardReader.read(pasteboard, changeCount: pasteboard.changeCount, frontmostBundleID: nil,
                                                          ignoredApps: [], historyDirectory: URL(fileURLWithPath: "/tmp/History")).outcome
             #expect(outcome == .skipped(.ownWrite))
+        }
+    }
+
+    @Test func copyingFromSavedRecordsTheWrittenFormatAndLeavesOrdinaryCopiesAlone() throws {
+        let paths = "/tmp/first.txt\n/tmp/second.txt"
+        let archived = entry(.files, paths, pinnedAt: .now)
+        let ordinary = entry(.files, paths)
+        try withPasteboard { board in
+            for plain in [false, true] {
+                var captured: ClipboardCapture?
+                var capturedOrdinary: ClipboardCapture?
+                try #require(ClipboardWriter.write(archived, richText: [:], plain: plain, to: board) { items in
+                    let history = URL(fileURLWithPath: "/tmp/History")
+                    captured = ClipboardPasteboardReader.archiveCopy(archived, items: items, historyDirectory: history)
+                    capturedOrdinary = ClipboardPasteboardReader.archiveCopy(ordinary, items: items, historyDirectory: history)
+                })
+                #expect(captured?.text == paths)
+                #expect(captured?.kind == (plain ? .text : .files))
+                #expect(captured?.sourceBundleID == archived.sourceBundleID)
+                #expect(capturedOrdinary == nil)
+            }
         }
     }
 

@@ -211,36 +211,10 @@ struct HistoryMetadataTests {
         }
     }
 
-    /// Naming or tagging a recording marks its History rows, found by package path however it's written.
-    @Test func aRecordingsRowsAreFoundByItsPackage() {
-        let first = UUID(), second = UUID(), other = UUID(), screenshot = UUID()
-        let rows: [(id: UUID, sessionPath: String?)] = [(first, "/Library/Sukusho/Recordings/a.sukushorec"),
-                                                        (second, "/Library/Sukusho/Recordings/./a.sukushorec/"),
-                                                        (other, "/Library/Sukusho/Recordings/b.sukushorec"),
-                                                        (screenshot, nil)]
-        #expect(CaptureSavedMarks.rows(ofRecordingAt: "/Library/Sukusho/Recordings/a.sukushorec", in: rows) == [first, second])
-        #expect(CaptureSavedMarks.rows(ofRecordingAt: "/Library/Sukusho/Recordings/c.sukushorec", in: rows).isEmpty)
-    }
-
-    /// Astra M3: a share that finishes while another Library operation runs still saves what it shared; the user's
-    /// own Save waits for the operation, as every command does.
-    @Test func aCompletedShareSavesEvenWhileTheLibraryIsBusy() {
-        // Share started, then an export began, then the share's service reported it was done.
-        #expect(LibrarySaveRequest.completion.applies(whileBusy: true))
-        #expect(LibrarySaveRequest.completion.applies(whileBusy: false))
-        #expect(!LibrarySaveRequest.command.applies(whileBusy: true))
-        #expect(LibrarySaveRequest.command.applies(whileBusy: false))
-    }
-
-    /// The owner's one-time retro-save: captures named, tagged or shared before Saved are marked, dated by their last
-    /// change; others aren't, and a mark already there keeps its date. Running it again changes nothing.
-    @Test func retroSaveMarksNamedTaggedAndSharedCapturesOnce() {
-        let named = UUID(), plainRow = UUID(), alreadySaved = UUID()
-        let changed = Date(timeIntervalSinceReferenceDate: 790_000_000), savedBefore = Date(timeIntervalSinceReferenceDate: 795_000_000)
-        let rows: [(id: UUID, isNamedTaggedOrShared: Bool, updatedAt: Date)] =
-            [(named, true, changed), (plainRow, false, changed), (alreadySaved, true, changed)]
-        let once = CaptureSavedMarks.retroSaved(rows, into: [alreadySaved: savedBefore])
-        #expect(once == [named: changed, alreadySaved: savedBefore])
-        #expect(CaptureSavedMarks.retroSaved(rows, into: once) == once)
+    @Test func onlyMarkedCapturesAppearInSaved() {
+        for mark in [false, true] {
+            #expect(LibraryArchive.includes(isSaved: mark, inSavedPage: true) == mark)
+            #expect(LibraryArchive.includes(isSaved: mark, inSavedPage: false) != mark)
+        }
     }
 }

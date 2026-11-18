@@ -126,9 +126,9 @@ struct LibraryClipCollection: View {
                 }
                 items.append(LibraryMenuItem(title: "Save as Snippet") { clipboard.saveAsSnippet(entry) })
             }
-            items.append(LibraryMenuItem(title: entry.pinnedAt == nil ? "Save" : "Remove from Saved", startsGroup: true) {
-                clipboard.toggleSaved(entry)
-            })
+            if entry.kind != .snippet, entry.pinnedAt == nil {
+                items.append(LibraryMenuItem(title: "Move to Saved", startsGroup: true) { clipboard.moveToSaved(entry) })
+            }
         }
         if CloudUploader.shared.isConfigured {
             items.append(LibraryMenuItem(title: "Share to Cloud…", isEnabled: CloudLibraryModel.shared.fileUploads == nil) {

@@ -133,7 +133,8 @@ actor ClipboardHistoryStore {
                 model_category TEXT,
                 described INTEGER NOT NULL DEFAULT 0
             );
-            CREATE UNIQUE INDEX IF NOT EXISTS entries_kind_hash ON entries(kind, hash) WHERE kind != 'snippet';
+            CREATE UNIQUE INDEX IF NOT EXISTS entries_kind_hash ON entries(kind, hash) WHERE kind != 'snippet' AND pinned_at IS NULL;
+            CREATE INDEX IF NOT EXISTS entries_saved_hash ON entries(kind, hash) WHERE pinned_at IS NOT NULL;
             CREATE INDEX IF NOT EXISTS entries_last_copied ON entries(last_copied_at);
             CREATE TABLE IF NOT EXISTS clip_cloud_links (
                 entry_id TEXT NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
@@ -158,6 +159,24 @@ actor ClipboardHistoryStore {
                 PRIMARY KEY (entry_id, hash)
             );
             """)
+        // Keep the index name beta 1 checks, so it can reopen an archive containing identical copies.
+        var definition: OpaquePointer?
+        let lookup = "SELECT 1 FROM sqlite_master WHERE name = 'entries_kind_hash' AND sql NOT LIKE '%pinned_at IS NULL%'"
+        guard sqlite3_prepare_v2(handle, lookup, -1, &definition, nil) == SQLITE_OK else {
+            throw StoreError(description: String(cString: sqlite3_errmsg(handle)))
+        }
+        let indexStatus = sqlite3_step(definition)
+        sqlite3_finalize(definition)
+        if indexStatus == SQLITE_ROW {
+            try Self.execute(handle, """
+                BEGIN IMMEDIATE;
+                DROP INDEX entries_kind_hash;
+                CREATE UNIQUE INDEX entries_kind_hash ON entries(kind, hash) WHERE kind != 'snippet' AND pinned_at IS NULL;
+                COMMIT;
+                """)
+        } else if indexStatus != SQLITE_DONE {
+            throw StoreError(description: String(cString: sqlite3_errmsg(handle)))
+        }
         // Histories from before the image descriptions get their columns; on a newer one each is a duplicate.
         for column in ["read_text TEXT", "model_title TEXT", "model_keywords TEXT", "model_category TEXT",
                        "described INTEGER NOT NULL DEFAULT 0", "optimized_here INTEGER NOT NULL DEFAULT 0"] {
@@ -175,8 +194,9 @@ actor ClipboardHistoryStore {
     @discardableResult
     func record(_ capture: ClipboardCapture, at date: Date = .now) throws -> RecordOutcome {
         try transaction {
-            let existing = try query("SELECT id FROM entries WHERE kind = ? AND hash = ?",
-                                     [capture.kind.rawValue, capture.hash]) { $0.text(0) }.first
+            let key = [capture.kind.rawValue, capture.hash]
+            let existing = try query("SELECT id FROM entries WHERE kind != 'snippet' AND kind = ? AND hash = ? AND pinned_at IS NULL",
+                                     key) { $0.text(0) }.first
             if let id = existing ?? nil {
                 // Content history already holds: that card goes to the top. A fresh copy it looks like stays as it is.
                 try run("UPDATE entries SET last_copied_at = ?, times_copied = times_copied + 1, change_seq = ? WHERE id = ?",
@@ -184,7 +204,9 @@ actor ClipboardHistoryStore {
                 return .bumped(id)
             }
             let blob = try writeBlob(of: capture)
-            if let rewritten = try rewrittenEntry(by: capture, at: date) {
+            let archivedImage = try capture.kind == .image && (query(
+                "SELECT 1 FROM entries WHERE kind = ? AND hash = ? AND pinned_at IS NOT NULL LIMIT 1", key) { $0.int(0) }.first != nil)
+            if !archivedImage, let rewritten = try rewrittenEntry(by: capture, at: date) {
                 try stack(capture, blob: blob, on: rewritten, at: date, here: false)
                 return .stacked(rewritten.id)
             }
@@ -210,7 +232,7 @@ actor ClipboardHistoryStore {
     @discardableResult
     func stack(_ capture: ClipboardCapture, on id: String) throws -> Bool {
         try transaction {
-            let elsewhere = try query("SELECT id FROM entries WHERE kind = 'image' AND hash = ? AND id != ?", [capture.hash, id]) { $0.text(0) }
+            let elsewhere = try query("SELECT id FROM entries WHERE kind = 'image' AND hash = ? AND id != ? AND pinned_at IS NULL", [capture.hash, id]) { $0.text(0) }
             guard elsewhere.isEmpty else { return false }
             let rows = try query("SELECT hash, blob, library_path, last_copied_at FROM entries WHERE id = ? AND kind = 'image'", [id]) { row in
                 (hash: row.text(0) ?? "", blob: row.text(1), libraryPath: row.text(2), copiedAt: row.double(3))
@@ -336,7 +358,7 @@ actor ClipboardHistoryStore {
     // MARK: - Reading
 
     /// Newest first, each with its earlier versions.
-    func entries(limit: Int = 500, offset: Int = 0) throws -> [ClipboardEntry] {
+    func entries(limit: Int = 500, offset: Int = 0, includeArchive: Bool = false) throws -> [ClipboardEntry] {
         // Versions come newest first, in the order they were set aside (the table's row order), not by their
         // copy times: Optimize keeps a card's copy time, so those can all be equal, and the last one must be
         // the original.
@@ -350,11 +372,18 @@ actor ClipboardHistoryStore {
         let links = Dictionary(grouping: try query("SELECT entry_id, url FROM clip_cloud_links ORDER BY position", []) {
             ($0.text(0) ?? "", $0.text(1) ?? "")
         }, by: \.0).mapValues { $0.map(\.1) }
+        let page = includeArchive
+            ? """
+              WHERE pinned_at IS NOT NULL OR kind = 'snippet' OR id IN (
+                  SELECT id FROM entries WHERE pinned_at IS NULL AND kind != 'snippet' ORDER BY last_copied_at DESC LIMIT ? OFFSET ?)
+              ORDER BY last_copied_at DESC
+              """
+            : "ORDER BY last_copied_at DESC LIMIT ? OFFSET ?"
         return try query("""
             SELECT id, kind, text, title, blob, library_path, byte_size, pixel_width, pixel_height, source_bundle_id,
                 is_remote, first_copied_at, last_copied_at, times_copied, pinned_at,
                 read_text, model_title, model_keywords, model_category, described, hash, optimized_here
-            FROM entries ORDER BY last_copied_at DESC LIMIT ? OFFSET ?
+            FROM entries \(page)
             """, [limit, offset]) { row in
             ClipboardEntry(
                 id: row.text(0) ?? "",
@@ -419,13 +448,15 @@ actor ClipboardHistoryStore {
     func totalBytes() throws -> Int64 {
         // Each image file once, however many entries and versions share it, plus what's kept in the database itself.
         Int64(try query("""
+            WITH history AS (SELECT * FROM entries WHERE pinned_at IS NULL AND kind != 'snippet'),
+                 history_versions AS (SELECT v.* FROM versions v JOIN history h ON h.id = v.entry_id)
             SELECT COALESCE((SELECT SUM(bytes) FROM (
                        SELECT MAX(stored_bytes) AS bytes FROM (
-                           SELECT blob, stored_bytes FROM entries WHERE blob IS NOT NULL
-                           UNION ALL SELECT blob, stored_bytes FROM versions WHERE blob IS NOT NULL)
+                           SELECT blob, stored_bytes FROM history WHERE blob IS NOT NULL
+                           UNION ALL SELECT blob, stored_bytes FROM history_versions WHERE blob IS NOT NULL)
                        GROUP BY blob)), 0)
-                 + COALESCE((SELECT SUM(stored_bytes) FROM entries WHERE blob IS NULL), 0)
-                 + COALESCE((SELECT SUM(stored_bytes) FROM versions WHERE blob IS NULL), 0)
+                 + COALESCE((SELECT SUM(stored_bytes) FROM history WHERE blob IS NULL), 0)
+                 + COALESCE((SELECT SUM(stored_bytes) FROM history_versions WHERE blob IS NULL), 0)
             """, []) { $0.int(0) }.first ?? 0)
     }
 

@@ -62,7 +62,8 @@ nonisolated enum ClipboardPasteboardReader {
         case .skip(let reason):
             outcome = .skipped(reason)
         case .read(let content):
-            if var capture = capture(content, from: pasteboard, types: types, historyDirectory: historyDirectory) {
+            if var capture = capture(content, items: pasteboard.pasteboardItems ?? [], types: types, historyDirectory: historyDirectory,
+                                     color: { NSColor(from: pasteboard).flatMap(hex) }) {
                 capture.sourceBundleID = source
                 capture.isRemote = types.contains(ClipboardCapturePolicy.remoteType)
                 outcome = .captured(capture)
@@ -74,16 +75,29 @@ nonisolated enum ClipboardPasteboardReader {
         return (pasteboard.changeCount == changeCount ? outcome : .changed, types)
     }
 
+    static func archiveCopy(_ entry: ClipboardEntry, items: [NSPasteboardItem], historyDirectory: URL) -> ClipboardCapture? {
+        guard entry.pinnedAt != nil, let first = items.first else { return nil }
+        let types = first.types.map(\.rawValue)
+        let kind: ClipboardCapturePolicy.Content
+        if entry.kind == .image { kind = .image }
+        else if types.contains(ClipboardCapturePolicy.fileURLType) { kind = .files }
+        else { kind = .text }
+        var copy = capture(kind, items: items, types: types, historyDirectory: historyDirectory)
+        copy?.sourceBundleID = entry.sourceBundleID
+        return copy
+    }
+
     private static func capture(
         _ content: ClipboardCapturePolicy.Content,
-        from pasteboard: NSPasteboard,
+        items: [NSPasteboardItem],
         types: [String],
-        historyDirectory: URL
+        historyDirectory: URL,
+        color: () -> String? = { nil }
     ) -> ClipboardCapture? {
-        guard let item = pasteboard.pasteboardItems?.first else { return nil }
+        guard let item = items.first else { return nil }
         switch content {
         case .files:
-            let paths = (pasteboard.pasteboardItems ?? []).prefix(ClipboardCapturePolicy.maxFiles).compactMap { item -> String? in
+            let paths = items.prefix(ClipboardCapturePolicy.maxFiles).compactMap { item -> String? in
                 guard let raw = item.string(forType: .fileURL), let url = URL(string: raw) else { return nil }
                 // Finder hands out file reference URLs (file:///.file/id=…); resolve them to paths.
                 return ((url as NSURL).filePathURL ?? url).path
@@ -115,7 +129,7 @@ nonisolated enum ClipboardPasteboardReader {
 
         case .text:
             let string = item.string(forType: .string) ?? item.string(forType: .URL)
-                ?? (types.contains(ClipboardCapturePolicy.colorType) ? NSColor(from: pasteboard).flatMap(hex) : nil)
+                ?? (types.contains(ClipboardCapturePolicy.colorType) ? color() : nil)
             guard let string, !string.isEmpty, string.utf8.count <= ClipboardCapturePolicy.maxTextBytes else { return nil }
             var richText: [String: Data] = [:]
             for type in ClipboardCapturePolicy.richTextTypes where types.contains(type) {

@@ -33,7 +33,7 @@ struct ScreenshotHistoryItem: Identifiable, Codable, Equatable, SavedMarkRow {
     /// The app and window it was taken from. Nil for older rows, and when
     /// no window could be named. Stays on this Mac.
     var source: CaptureSource?
-    /// When it was saved (★) to Library › Saved, by hand or by naming, tagging or sharing it. Kept in
+    /// When it was saved (★) to Library › Saved, by the Move to Saved command. Kept in
     /// `CaptureSavedMarks`' file, not in history.json, which older builds rewrite without it; read from a row only to
     /// move it there.
     var librarySavedAt: Date?
@@ -199,40 +199,8 @@ final class ScreenshotHistoryStore {
 
     private init() {
         load()
-        retroSaveOnce()
-    }
-
-    /// Set once captures named, tagged or shared before Saved have been marked, so it happens once.
-    static let retroSaveDoneKey = "libraryRetroSave.v1"
-
-    /// The owner's one-time retro-save, at the first launch of a build with Saved. It waits for a launch where History
-    /// and the marks file are fully readable, and counts as done only once the marks are on disk.
-    private func retroSaveOnce() {
-        guard !UserDefaults.standard.bool(forKey: Self.retroSaveDoneKey), isFullyLoaded,
-              files.marks.state != .unreadable else { return }
-        let rows = items.map { item -> (id: UUID, isNamedTaggedOrShared: Bool, updatedAt: Date) in
-            // A recording keeps its name and tags in its own project.
-            let project = item.recordingSession?.loadProjectMetadata()
-            let named = item.displayName != nil || project?.displayName?.isEmpty == false
-            let tagged = !item.tags.isEmpty || project?.tags?.isEmpty == false
-            return (item.id, named || tagged || item.cloudURL != nil, item.updatedAt)
-        }
-        let current = Dictionary(items.compactMap { item in item.librarySavedAt.map { (item.id, $0) } }, uniquingKeysWith: max)
-        let marks = CaptureSavedMarks.retroSaved(rows, into: current)
-        guard marks != current else {
-            UserDefaults.standard.set(true, forKey: Self.retroSaveDoneKey)
-            return
-        }
-        let before = items
-        for index in items.indices { items[index].librarySavedAt = marks[items[index].id] }
-        do {
-            guard try files.save(items) else { throw CocoaError(.fileWriteUnknown) }
-            UserDefaults.standard.set(true, forKey: Self.retroSaveDoneKey)
-        } catch {
-            items = before
-            print("Retro-save of named, tagged and shared captures failed; it'll be tried at the next launch: \(error)")
-        }
-        savedMarksProblem = files.problem
+        // Prevent beta 1 from automatically marking captures if this Library is opened there later.
+        UserDefaults.standard.set(true, forKey: "libraryRetroSave.v1")
     }
 
     /// An outside file open in the editor that becomes a capture on its first saved edit, with these details rather
@@ -593,28 +561,17 @@ final class ScreenshotHistoryStore {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         items[index].displayName = trimmed.isEmpty ? nil : trimmed
-        // Naming a capture says it's worth keeping (Fable's critique, 2026-11-16).
-        if !trimmed.isEmpty, items[index].librarySavedAt == nil { items[index].librarySavedAt = Date() }
         items[index].updatedAt = Date()
         saveMetadata()
     }
 
-    /// Saves the items to Library › Saved, or takes them out. Leaves `updatedAt` alone, as tagging does.
-    /// Marks a recording's History rows saved, so the marks file covers it too: its project.json mark alone can be
-    /// dropped by an older Studio re-saving the project. For naming and tagging, which write only the project.
-    func markRecordingSaved(_ session: RecordingSession) {
-        // The project keeps its own mark; a failure here shows on the Saved page.
-        try? setLibrarySaved(true, ids: CaptureSavedMarks.rows(ofRecordingAt: session.directoryURL.path,
-                                                               in: items.map { ($0.id, $0.recordingSessionPath) }))
-    }
-
     /// Throws, and leaves the marks as they were, when they couldn't be kept on disk: a Save that didn't stick isn't
     /// shown as saved (Astra M2).
-    func setLibrarySaved(_ saved: Bool, ids: Set<UUID>) throws {
+    func moveToSaved(ids: Set<UUID>, at date: Date) throws {
         guard !ids.isEmpty else { return }
         let before = items
         for index in items.indices where ids.contains(items[index].id) {
-            items[index].librarySavedAt = saved ? (items[index].librarySavedAt ?? Date()) : nil
+            items[index].librarySavedAt = items[index].librarySavedAt ?? date
         }
         do {
             guard try files.save(items) else {
@@ -636,8 +593,6 @@ final class ScreenshotHistoryStore {
         for index in items.indices where ids.contains(items[index].id) {
             items[index].tags.removeAll { $0.caseInsensitiveCompare(tag) == .orderedSame }
             if applied { items[index].tags.append(tag) }
-            // So does tagging it.
-            if applied, items[index].librarySavedAt == nil { items[index].librarySavedAt = Date() }
         }
         saveMetadata()
     }
@@ -653,24 +608,14 @@ final class ScreenshotHistoryStore {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         if items[index].cloudURL != cloudURL { items[index].cloudRedactions = nil }
         items[index].cloudURL = cloudURL
-        // And sharing it.
-        if cloudURL != nil { markShared(index) }
         items[index].updatedAt = Date()
         saveMetadata()
-    }
-
-    /// A shared capture is saved: on its History row, and for a recording in its own project.json too, as an explicit
-    /// Save writes it (Astra L5). That's `librarySavedAt`, apart from Studio's `savedAt`.
-    private func markShared(_ index: Int) {
-        if items[index].librarySavedAt == nil { items[index].librarySavedAt = Date() }
-        try? items[index].recordingSession?.updateProjectMetadata { $0.librarySavedAt = $0.librarySavedAt ?? Date() }
     }
 
     func recordCloudUpload(id: UUID, cloudURL: String, redactions: [RecordingRedaction]?) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         items[index].cloudURL = cloudURL
         items[index].cloudRedactions = redactions
-        markShared(index)
         items[index].updatedAt = Date()
         saveMetadata()
     }

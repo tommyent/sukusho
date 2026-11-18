@@ -2,7 +2,7 @@ import Foundation
 
 /// What the popup's and the Library page's type menu shows.
 nonisolated enum ClipboardFilter: String, CaseIterable, Identifiable, Sendable {
-    case all, images, text, links, colors, files, snippets
+    case all, images, text, links, colors, files, snippets, saved
 
     var id: Self { self }
 
@@ -14,6 +14,7 @@ nonisolated enum ClipboardFilter: String, CaseIterable, Identifiable, Sendable {
         case .links: "Links"
         case .colors: "Colors"
         case .files: "Files"
+        case .saved: "Saved"
         case .snippets: "Snippets"
         }
     }
@@ -26,6 +27,7 @@ nonisolated enum ClipboardFilter: String, CaseIterable, Identifiable, Sendable {
         case .links: "link"
         case .colors: "paintpalette"
         case .files: "doc"
+        case .saved: "star"
         case .snippets: "text.badge.star"
         }
     }
@@ -57,6 +59,7 @@ nonisolated enum ClipboardList {
         case .links: textForm(of: entry) == .link
         case .colors: if case .color = textForm(of: entry) { true } else { false }
         case .files: entry.kind == .files
+        case .saved: entry.pinnedAt != nil
         case .snippets: entry.kind == .snippet
         }
     }
@@ -79,9 +82,6 @@ nonisolated enum ClipboardList {
                              foldedText: nil, source: source)
     }
 
-    /// Saved first, in the order they were saved; then Today, Yesterday and
-    /// Earlier, newest first. Snippets have their own list; `includesSnippets` adds the ones that match
-    /// to All, after the copies, for a search that covers everything (the popup's All Types).
     static func sections(
         _ entries: [ClipboardEntry],
         filter: ClipboardFilter,
@@ -95,6 +95,8 @@ nonisolated enum ClipboardList {
         let pinned = shown.filter { $0.pinnedAt != nil }.sorted { $0.pinnedAt! > $1.pinnedAt! }
         let rest = shown.filter { $0.pinnedAt == nil }.sorted { $0.lastCopiedAt > $1.lastCopiedAt }
         var sections = pinned.isEmpty ? [] : [Section(title: "Saved", entries: pinned)]
+        if filter == .saved { return sections }
+        if !includesSnippets { sections = [] }
         if filter == .snippets {
             if !rest.isEmpty { sections.append(Section(title: "Snippets", entries: rest.sorted { title(of: $0) < title(of: $1) })) }
             return sections
@@ -115,6 +117,10 @@ nonisolated enum ClipboardList {
             if !snippets.isEmpty { sections.append(Section(title: "Snippets", entries: snippets.sorted { title(of: $0) < title(of: $1) })) }
         }
         return sections
+    }
+
+    static func numberedEntries(_ sections: [Section]) -> [ClipboardEntry] {
+        Array(sections.lazy.flatMap(\.entries).prefix(10))
     }
 
     /// One line for the list: "Image (2880×1800)", a colour's hex, a text's

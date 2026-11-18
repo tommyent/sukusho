@@ -89,9 +89,7 @@ extension CaptureLibraryModel {
             StudioProjectRegistry.shared.flushDrafts()
             var values: [LibraryTransferValue] = []
             for card in cards { values += try await card.transferValues() }
-            LibrarySharing.show(values.map(\.sharingItem)) {
-                self.setSaved(true, items: cards.compactMap(\.captureItem), request: .completion)
-            }
+            LibrarySharing.show(values.map(\.sharingItem))
         }
     }
 

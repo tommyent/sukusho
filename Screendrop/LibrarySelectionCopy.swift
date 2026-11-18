@@ -50,6 +50,15 @@ extension CaptureLibraryModel {
             })
             guard let copied else { return }
             copied.forEach { $0.discard() }
+            if cards.contains(where: { $0.clipEntry?.pinnedAt != nil }), let store = ClipboardMonitor.shared.store {
+                for card in cards {
+                    if let entry = card.clipEntry, let items = clipItems[card.id],
+                       let replay = ClipboardPasteboardReader.archiveCopy(entry, items: items, historyDirectory: ScreenshotHistoryStore.historyDirectory) {
+                        try await store.record(replay)
+                    }
+                }
+                ClipboardHistoryModel.shared.refresh()
+            }
             self.actionFeedback.show(cards.count == 1 ? "Copied" : "\(cards.count) Items Copied")
         }
     }

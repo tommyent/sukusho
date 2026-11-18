@@ -46,9 +46,7 @@ extension CaptureLibraryModel {
                     var tags = (metadata.tags ?? []).filter { $0.caseInsensitiveCompare(name) != .orderedSame }
                     if applied { tags.append(name) }
                     metadata.tags = tags.isEmpty ? nil : tags
-                    if applied, metadata.librarySavedAt == nil { metadata.librarySavedAt = Date() }
                 }
-                if applied { ScreenshotHistoryStore.shared.markRecordingSaved(session) }
             } else {
                 historyIDs.formUnion(item.historyIDs)
             }
@@ -163,24 +161,30 @@ extension CaptureLibraryModel {
         } + [LibraryMenuItem(title: "Refresh", startsGroup: true, perform: refresh)]
     }
 
-    /// Saves the selected captures to Library › Saved (★), or takes them out. Recordings keep the flag in
-    /// their own project, screenshots in the Library history, as tags do.
-    func setSaved(_ saved: Bool, items: [CaptureLibraryItem]? = nil, request: LibrarySaveRequest = .command) {
-        guard request.applies(whileBusy: isBusy) else { return }
-        var historyIDs = Set<UUID>()
-        for item in items ?? selectedItems {
-            if let session = item.session {
-                try? session.updateProjectMetadata { $0.librarySavedAt = saved ? ($0.librarySavedAt ?? Date()) : nil }
-            }
-            // A recording shared before its project could be saved carries the flag on its History row too.
-            historyIDs.formUnion(item.historyIDs)
+    func moveToSaved() {
+        guard !isBusy else { return }
+        // Recording metadata persists dates at whole-second precision.
+        let date = Date(timeIntervalSince1970: Date.now.timeIntervalSince1970.rounded(.down))
+        var failures: [String] = []
+        for item in selectedItems where !item.isSaved {
+            var priorMark: Date?
+            do {
+                try item.session?.updateProjectMetadata { metadata in
+                    priorMark = metadata.librarySavedAt
+                    metadata.librarySavedAt = priorMark ?? date
+                }
+                do {
+                    try ScreenshotHistoryStore.shared.moveToSaved(ids: item.historyIDs, at: date)
+                } catch {
+                    // A failed history write must not leave only the project marked.
+                    try item.session?.updateProjectMetadata { metadata in
+                        if metadata.librarySavedAt == date { metadata.librarySavedAt = priorMark }
+                    }
+                    throw error
+                }
+            } catch { failures.append("\(item.title): \(error.localizedDescription)") }
         }
-        do {
-            try ScreenshotHistoryStore.shared.setLibrarySaved(saved, ids: historyIDs)
-        } catch {
-            errorMessage = (saved ? "The capture couldn't be saved. " : "The capture couldn't be removed from Saved. ")
-                + error.localizedDescription
-        }
+        if !failures.isEmpty { errorMessage = failures.joined(separator: "\n") }
         refresh()
     }
 
@@ -208,9 +212,9 @@ extension CaptureLibraryModel {
         }
         let trash = items.removeLast()
         items += optimizeMenuItems()
-        let saved = !selectedItems.isEmpty && selectedItems.allSatisfy(\.isSaved)
-        items.append(LibraryMenuItem(title: saved ? "Remove from Saved" : "Save", isEnabled: count > 0 && !isBusy,
-                                     startsGroup: true) { self.setSaved(!saved) })
+        if selectedItems.contains(where: { !$0.isSaved }) {
+            items.append(LibraryMenuItem(title: "Move to Saved", isEnabled: !isBusy, startsGroup: true) { self.moveToSaved() })
+        }
         items += cloudMenuItems()
         items.append(trash)
         return items
@@ -622,38 +626,11 @@ struct CaptureNameField: View {
 /// The system Share sheet for Library items, opened from a right-click
 /// menu, so it appears beside the pointer.
 enum LibrarySharing {
-    /// The open picker's delegate; the picker holds it weakly.
-    private static var current: Delegate?
-
-    /// `onShared` runs when the chosen service reports it finished sharing: not on picking one, nor on a cancel.
-    static func show(_ items: [Any], onShared: @escaping () -> Void = {}) {
+    static func show(_ items: [Any]) {
         guard !items.isEmpty, let window = NSApp.keyWindow, let view = window.contentView else { return }
         let point = view.convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil)
         let picker = NSSharingServicePicker(items: items)
-        let delegate = Delegate(onShared: onShared)
-        current = delegate
-        picker.delegate = delegate
         picker.show(relativeTo: NSRect(origin: point, size: .zero), of: view, preferredEdge: .minY)
     }
 
-    private final class Delegate: NSObject, NSSharingServicePickerDelegate, NSSharingServiceDelegate {
-        let onShared: () -> Void
-        init(onShared: @escaping () -> Void) { self.onShared = onShared }
-
-        func sharingServicePicker(_ picker: NSSharingServicePicker,
-                                  delegateFor sharingService: NSSharingService) -> (any NSSharingServiceDelegate)? { self }
-
-        func sharingServicePicker(_ picker: NSSharingServicePicker, didChoose service: NSSharingService?) {
-            if service == nil { LibrarySharing.current = nil }
-        }
-
-        func sharingService(_ sharingService: NSSharingService, didShareItems items: [Any]) {
-            onShared()
-            LibrarySharing.current = nil
-        }
-
-        func sharingService(_ sharingService: NSSharingService, didFailToShareItems items: [Any], error: any Error) {
-            LibrarySharing.current = nil
-        }
-    }
 }

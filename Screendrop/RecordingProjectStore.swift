@@ -73,9 +73,7 @@ final class RecordingProjectStore {
         try? session.updateProjectMetadata { metadata in
             metadata.displayName = name.isEmpty ? nil : name
             // Naming a recording saves it to the Library, as naming a screenshot does.
-            if !name.isEmpty, metadata.librarySavedAt == nil { metadata.librarySavedAt = Date() }
         }
-        if !name.isEmpty { ScreenshotHistoryStore.shared.markRecordingSaved(session) }
         reload()
     }
 

@@ -13,10 +13,12 @@ nonisolated enum ClipboardWriter {
     /// False when an image's file is gone or the pasteboard refused the write.
     @discardableResult
     static func write(_ entry: ClipboardEntry, richText: [String: Data], plain: Bool,
-                      to pasteboard: NSPasteboard = .general) -> Bool {
+                      to pasteboard: NSPasteboard = .general, didWrite: ([NSPasteboardItem]) -> Void = { _ in }) -> Bool {
         guard let items = items(for: entry, richText: richText, plain: plain) else { return false }
         pasteboard.clearContents()
-        return pasteboard.writeObjects(items)
+        guard pasteboard.writeObjects(items) else { return false }
+        didWrite(items)
+        return true
     }
 
     static func libraryItems(for entry: ClipboardEntry, richText: [String: Data], plain: Bool,

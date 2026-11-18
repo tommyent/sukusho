@@ -105,13 +105,13 @@ struct CaptureLibraryInspector: View {
                         statusBadge("Edited", symbol: "slider.horizontal.3")
                     }
                     Spacer(minLength: 0)
-                    // Save (★): kept in Library › Saved. Naming, tagging or sharing saves it too.
-                    Button(item.isSaved ? "Saved" : "Save", systemImage: item.isSaved ? "star.fill" : "star") {
-                        model.setSaved(!item.isSaved)
+                    if item.isSaved {
+                        Button("Move to Trash…", systemImage: "trash") { model.deleteSelection([.capture(item)]) }
+                            .controlSize(.small).disabled(model.isBusy)
+                    } else {
+                        Button("Move to Saved", systemImage: "star") { model.moveToSaved() }
+                            .controlSize(.small).disabled(model.isBusy)
                     }
-                    .controlSize(.small)
-                    .disabled(model.isBusy)
-                    .help(item.isSaved ? "Remove from Saved" : "Keep it in Library › Saved")
                 }
             }
         }

@@ -35,11 +35,7 @@ final class ClipboardPopupState {
         selection = entries[min(max(current + offset, 0), entries.count - 1)].id
     }
 
-    /// ⌘1…⌘0: the saved entries, in their order.
-    func pinned(_ number: Int) -> ClipboardEntry? {
-        let pinned = sections.first { $0.title == "Saved" }?.entries ?? []
-        return pinned.indices.contains(number - 1) ? pinned[number - 1] : nil
-    }
+
 }
 
 /// The clipboard popup on its shortcut: a panel that takes the keyboard
@@ -160,14 +156,16 @@ final class ClipboardPopupPresenter {
         // ⇧⌘C: the clip as it was first copied, before it was optimized.
         case (kVK_ANSI_C, [.command, .shift]): deliver(state.selected.map(ClipboardHistoryModel.shared.original), as: .copy)
         case (kVK_Return, [.control, .command]): deliver(state.selected, as: .pastePlain)
-        case (kVK_ANSI_Period, [.command]): if let entry = state.selected { ClipboardHistoryModel.shared.toggleSaved(entry) }
+        case (kVK_ANSI_Period, [.command]): if let entry = state.selected { ClipboardHistoryModel.shared.moveToSaved(entry) }
         case (kVK_ANSI_X, [.control]), (kVK_Delete, [.command]): if let entry = state.selected { confirmDelete(entry) }
         case (kVK_ANSI_K, [.command]): showActions()
         default:
             let digits = [kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3, kVK_ANSI_4, kVK_ANSI_5,
                           kVK_ANSI_6, kVK_ANSI_7, kVK_ANSI_8, kVK_ANSI_9, kVK_ANSI_0]
             guard flags == [.command], let index = digits.firstIndex(of: Int(event.keyCode)) else { return false }
-            deliver(state.pinned(index + 1), as: .paste)
+            let entries = ClipboardList.numberedEntries(state.sections)
+            guard entries.indices.contains(index) else { return false }
+            deliver(entries[index], as: .paste)
         }
         return true
     }
@@ -191,7 +189,9 @@ final class ClipboardPopupPresenter {
             add("Paste as Plain Text", "\r", [.control, .command]) { [weak self] in self?.deliver(entry, as: .pastePlain) }
         }
         menu.addItem(.separator())
-        add(entry.pinnedAt == nil ? "Save" : "Remove from Saved", ".", .command) { model.toggleSaved(entry) }
+        if entry.pinnedAt == nil, entry.kind != .snippet {
+            add("Move to Saved", ".", .command) { model.moveToSaved(entry) }
+        }
         if entry.kind == .image { add("Open in Editor") { [weak self] in self?.close(); model.openInEditor(entry) } }
         if entry.kind == .text { add("Save as Snippet") { model.saveAsSnippet(entry) } }
         menu.addItem(.separator())
@@ -278,6 +278,12 @@ struct ClipboardPopupView: View {
                 .font(.system(size: 17))
                 .focused($searchFocused)
                 .onChange(of: state.query) { _, _ in state.selection = nil }
+            Button {
+                state.filter = state.filter == .saved ? .all : .saved
+            } label: {
+                Label("Saved", systemImage: state.filter == .saved ? "star.fill" : "star")
+            }
+            .accessibilityAddTraits(state.filter == .saved ? .isSelected : [])
             Menu {
                 Picker("Type", selection: $state.filter) {
                     ForEach(ClipboardFilter.allCases) { filter in
@@ -298,7 +304,8 @@ struct ClipboardPopupView: View {
     }
 
     private func list(_ sections: [ClipboardList.Section], selected: ClipboardEntry?) -> some View {
-        ScrollViewReader { proxy in
+        let numbered = ClipboardList.numberedEntries(sections).map(\.id)
+        return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 1) {
                     if sections.isEmpty { emptyList }
@@ -306,9 +313,9 @@ struct ClipboardPopupView: View {
                         Text(section.title)
                             .font(DS.TypeScale.labelSemibold).foregroundStyle(.secondary)
                             .padding(.horizontal, DS.Space.ml).padding(.top, DS.Space.ml).padding(.bottom, DS.Space.xs)
-                        ForEach(Array(section.entries.enumerated()), id: \.element.id) { index, entry in
+                        ForEach(section.entries) { entry in
                             row(entry, isSelected: entry.id == selected?.id,
-                                pinNumber: section.title == "Saved" && index < 10 ? (index + 1) % 10 : nil)
+                                pinNumber: numbered.firstIndex(of: entry.id).map { ($0 + 1) % 10 })
                                 .id(entry.id)
                         }
                     }
@@ -337,6 +344,7 @@ struct ClipboardPopupView: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: 0)
+            if entry.pinnedAt != nil { Image(systemName: "star.fill").accessibilityLabel("Saved") }
             if let pinNumber { Text("⌘\(pinNumber)").font(DS.TypeScale.label).foregroundStyle(.tertiary) }
         }
         .padding(.horizontal, DS.Space.ml)
@@ -368,7 +376,7 @@ struct ClipboardPopupView: View {
             if let message = model.feedback.message {
                 Label(message, systemImage: "checkmark.circle").foregroundStyle(.secondary)
             } else {
-                Text("⌘1–⌘0 saved").foregroundStyle(.tertiary)
+                Text("⌘1–⌘0 paste by position").foregroundStyle(.tertiary)
             }
             Spacer()
             Button { presenter.deliver(entry, as: .paste) } label: {
