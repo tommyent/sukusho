@@ -272,7 +272,7 @@ struct MenuBarView: View {
 }
 
 /// A command's menu title and icon, with its shortcut as the item's subtitle when the menu's shortcut column can't show
-/// it, such as a function key alone. A second Text is a menu item's subtitle.
+/// it: a modifier key on its own (Right ⌥, ⌥ ⌥) or a function key alone. A second Text is a menu item's subtitle.
 struct CaptureMenuLabel: View {
     let title: String
     let systemImage: String

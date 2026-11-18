@@ -2,9 +2,15 @@ import AppKit
 import Carbon.HIToolbox
 import Testing
 
-/// The owner, 2026-11-17 (beta 1): "You should not be required to use three keys." Any modifier with a key, and a
-/// function key alone, are shortcuts now.
+/// The owner, 2026-11-17 (beta 1): "You should not be required to use three keys." Two keys, a function key alone, a
+/// modifier key tapped on its own (Right ⌥) and a double tap of one (⌥ ⌥, ⌘ ⌘) are all shortcuts now.
 struct FlexibleShortcutsTests {
+    private let option = UInt64(NSEvent.ModifierFlags.option.rawValue)
+    private let command = UInt64(NSEvent.ModifierFlags.command.rawValue)
+    private let rightOptionBit: UInt64 = 0x40
+    private let leftOptionBit: UInt64 = 0x20
+    private let leftCommandBit: UInt64 = 0x08
+
     private func suite() -> UserDefaults {
         UserDefaults(suiteName: "FlexibleShortcutsTests-\(UUID().uuidString)")!
     }
@@ -47,6 +53,128 @@ struct FlexibleShortcutsTests {
         #expect(!chord([], kVK_ANSI_A).isValid, "a stored lone letter falls back to the default")
     }
 
+    // MARK: - Modifier keys on their own
+
+    @Test func tapsShowTheirSideAndDoubleTapsTheirPair() {
+        #expect(HotkeyShortcut(.once(keyCode: kVK_RightOption)).displayString == "Right ⌥")
+        #expect(HotkeyShortcut(.once(keyCode: kVK_Command)).displayString == "Left ⌘")
+        #expect(HotkeyShortcut(.once(keyCode: kVK_RightControl)).displayTokens == ["Right ⌃"])
+        #expect(HotkeyShortcut(.twice(keyCode: kVK_Option)).displayString == "⌥ ⌥")
+        #expect(HotkeyShortcut(.twice(keyCode: kVK_Command)).displayTokens == ["⌘ ⌘"])
+        #expect(HotkeyShortcut(.twice(keyCode: kVK_Shift)).displayTokens.joined() == "⇧ ⇧")
+        #expect(HotkeyShortcut(.once(keyCode: kVK_RightOption)) != HotkeyShortcut(.once(keyCode: kVK_Option)))
+        for tap in [ModifierTapDetector.Tap.once(keyCode: kVK_RightShift), .twice(keyCode: kVK_Control)] {
+            #expect(HotkeyShortcut(tap).isValid)
+            #expect(HotkeyShortcut(tap).refusal == nil)
+            #expect(HotkeyShortcut(tap).typingWarning == nil)
+        }
+        #expect(!HotkeyShortcut(modifiers: [], keyCode: kVK_ANSI_A, taps: 1).isValid, "only modifier keys tap")
+        #expect(!HotkeyShortcut(modifiers: [], keyCode: kVK_Option, taps: 3).isValid)
+    }
+
+    @Test func aTapIsOneModifierPressedAndReleasedAlone() {
+        var detector = ModifierTapDetector()
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 10).isEmpty)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 10.1) == [.once(keyCode: kVK_RightOption)])
+        #expect(detector.flagsChanged(keyCode: kVK_Option, flags: option | leftOptionBit, at: 20).isEmpty)
+        #expect(detector.flagsChanged(keyCode: kVK_Option, flags: 0, at: 20.1) == [.once(keyCode: kVK_Option)], "left is its own key")
+    }
+
+    @Test func aChordNeverTaps() {
+        var detector = ModifierTapDetector()
+        // ⌥ held while a key is typed: the key interrupts.
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 1)
+        detector.interrupt()
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 1.1).isEmpty)
+        // ⌥ and ⌘ together, released in either order.
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 2)
+        _ = detector.flagsChanged(keyCode: kVK_Command, flags: option | command | rightOptionBit | leftCommandBit, at: 2.05)
+        #expect(detector.flagsChanged(keyCode: kVK_Command, flags: option | rightOptionBit, at: 2.1).isEmpty)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 2.15).isEmpty)
+        // Both ⌥ keys.
+        _ = detector.flagsChanged(keyCode: kVK_Option, flags: option | leftOptionBit, at: 3)
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | leftOptionBit | rightOptionBit, at: 3.05)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: option | leftOptionBit, at: 3.1).isEmpty)
+        #expect(detector.flagsChanged(keyCode: kVK_Option, flags: 0, at: 3.15).isEmpty)
+        // fn pressed while ⌥ is held.
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 4)
+        _ = detector.flagsChanged(keyCode: kVK_Function, flags: option | rightOptionBit | UInt64(NSEvent.ModifierFlags.function.rawValue), at: 4.05)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 4.1).isEmpty)
+    }
+
+    @Test func aHoldLongerThanTheIntervalIsNoTap() {
+        var detector = ModifierTapDetector()
+        detector.interval = 0.5
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 1)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 1.6).isEmpty)
+    }
+
+    @Test func twoTapsWithinTheIntervalAreADoubleTapOfEitherKey() {
+        var detector = ModifierTapDetector()
+        detector.interval = 0.5
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 1)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 1.08) == [.once(keyCode: kVK_RightOption)])
+        _ = detector.flagsChanged(keyCode: kVK_Option, flags: option | leftOptionBit, at: 1.5)   // 0.42 s after the release
+        #expect(detector.flagsChanged(keyCode: kVK_Option, flags: 0, at: 1.58)
+            == [.once(keyCode: kVK_Option), .twice(keyCode: kVK_Option)])
+        // A third tap starts a new pair rather than making a second double tap.
+        _ = detector.flagsChanged(keyCode: kVK_Option, flags: option | leftOptionBit, at: 1.7)
+        #expect(detector.flagsChanged(keyCode: kVK_Option, flags: 0, at: 1.78) == [.once(keyCode: kVK_Option)])
+    }
+
+    @Test func slowSpoiltOrMixedTapsAreNoDoubleTap() {
+        var detector = ModifierTapDetector()
+        detector.interval = 0.3
+        func tap(_ keyCode: Int, _ flags: UInt64, at time: TimeInterval) -> [ModifierTapDetector.Tap] {
+            _ = detector.flagsChanged(keyCode: keyCode, flags: flags, at: time)
+            return detector.flagsChanged(keyCode: keyCode, flags: 0, at: time + 0.05)
+        }
+        _ = tap(kVK_Command, command | leftCommandBit, at: 1)
+        #expect(tap(kVK_Command, command | leftCommandBit, at: 1.45) == [.once(keyCode: kVK_Command)], "0.4 s gap, interval 0.3")
+        _ = tap(kVK_Command, command | leftCommandBit, at: 2)
+        detector.interrupt()   // a click between the taps
+        #expect(tap(kVK_Command, command | leftCommandBit, at: 2.15) == [.once(keyCode: kVK_Command)])
+        _ = tap(kVK_Option, option | leftOptionBit, at: 3)
+        #expect(tap(kVK_Command, command | leftCommandBit, at: 3.15) == [.once(keyCode: kVK_Command)], "⌥ then ⌘ isn't a pair")
+    }
+
+    @Test func keyboardsWithoutDeviceBitsStillTap() {
+        var detector = ModifierTapDetector()
+        _ = detector.flagsChanged(keyCode: kVK_RightCommand, flags: command, at: 1)
+        #expect(detector.flagsChanged(keyCode: kVK_RightCommand, flags: 0, at: 1.1) == [.once(keyCode: kVK_RightCommand)])
+    }
+
+    // MARK: - Clashes between kinds
+
+    @Test func aTapAndADoubleTapOfOnePairOverlap() {
+        let rightOption = HotkeyShortcut(.once(keyCode: kVK_RightOption))
+        let leftOption = HotkeyShortcut(.once(keyCode: kVK_Option))
+        let optionTwice = HotkeyShortcut(.twice(keyCode: kVK_Option))
+        let commandTwice = HotkeyShortcut(.twice(keyCode: kVK_Command))
+        #expect(optionTwice.overlaps(rightOption))
+        #expect(rightOption.overlaps(optionTwice))
+        #expect(leftOption.overlaps(optionTwice))
+        #expect(optionTwice.overlaps(optionTwice))
+        #expect(!rightOption.overlaps(leftOption))
+        #expect(!optionTwice.overlaps(commandTwice))
+        #expect(!optionTwice.overlaps(chord([.option], kVK_ANSI_1)))
+        #expect(chord([.command], kVK_ANSI_K).overlaps(chord([.command], kVK_ANSI_K)))
+        #expect(!chord([.command], kVK_ANSI_K).overlaps(chord([.option], kVK_ANSI_K)))
+    }
+
+    @Test func conflictsAreFoundAcrossKinds() {
+        let defaults = suite()
+        CaptureHotkeyPreferences.saveShortcut(HotkeyShortcut(.once(keyCode: kVK_RightOption)), for: .library, defaults: defaults)
+        #expect(CaptureHotkeyPreferences.conflictingAction(for: HotkeyShortcut(.twice(keyCode: kVK_Option)), excluding: .area,
+                                                           defaults: defaults) == .library)
+        #expect(CaptureHotkeyPreferences.conflictingAction(for: HotkeyShortcut(.once(keyCode: kVK_Option)), excluding: .area,
+                                                           defaults: defaults) == nil)
+        #expect(CaptureHotkeyPreferences.conflictingAction(for: HotkeyShortcut(.twice(keyCode: kVK_Option)), excluding: .library,
+                                                           defaults: defaults) == nil, "an action doesn't clash with itself")
+        #expect(CaptureHotkeyPreferences.conflictingAction(for: CaptureHotkeyAction.window.defaultShortcut, excluding: .area,
+                                                           defaults: defaults) == .window)
+    }
+
     // MARK: - Saved shortcuts
 
     @Test func shortcutsSavedByBeta1LoadUnchanged() throws {
@@ -61,6 +189,7 @@ struct FlexibleShortcutsTests {
         #expect(CaptureHotkeyPreferences.shortcut(for: .area, defaults: defaults) == chord([.option, .shift], kVK_ANSI_A))
         #expect(CaptureHotkeyPreferences.shortcut(for: .window, defaults: defaults) == nil)
         #expect(CaptureHotkeyPreferences.shortcut(for: .fullscreen, defaults: defaults) == CaptureHotkeyAction.fullscreen.defaultShortcut)
+        #expect(CaptureHotkeyPreferences.shortcut(for: .textCapture, defaults: defaults)?.taps == nil)
 
         // Saved again, a key chord's JSON has beta 1's two keys and no others.
         CaptureHotkeyPreferences.saveShortcut(chord([.option], kVK_ANSI_1), for: .area, defaults: defaults)
@@ -72,6 +201,8 @@ struct FlexibleShortcutsTests {
     @Test func eachKindSavesAndLoads() {
         let defaults = suite()
         let kinds: [CaptureHotkeyAction: HotkeyShortcut] = [
+            .area: HotkeyShortcut(.once(keyCode: kVK_RightOption)),
+            .window: HotkeyShortcut(.twice(keyCode: kVK_Command)),
             .fullscreen: chord([], kVK_F5),
             .library: chord([.option], kVK_ANSI_1),
         ]
@@ -85,11 +216,11 @@ struct FlexibleShortcutsTests {
         }
     }
 
-    /// Going back to beta 1: it reads a function key's JSON as a shortcut with no modifiers, which it treats as invalid, so the
+    /// Going back to beta 1: it reads a tap's JSON as a shortcut with no modifiers, which it treats as invalid, so the
     /// action falls back to its default rather than to a key alone.
     @Test func beta1ReadsANewShortcutAsNoShortcut() throws {
         struct Beta1Shortcut: Decodable { let modifiers: Int; let keyCode: Int }
-        for shortcut in [chord([], kVK_F5)] {
+        for shortcut in [HotkeyShortcut(.once(keyCode: kVK_RightOption)), HotkeyShortcut(.twice(keyCode: kVK_Option)), chord([], kVK_F5)] {
             let old = try JSONDecoder().decode(Beta1Shortcut.self, from: try JSONEncoder().encode(shortcut))
             #expect(old.modifiers == 0)
         }

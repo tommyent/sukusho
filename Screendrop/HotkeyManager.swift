@@ -26,9 +26,16 @@ final class HotkeyManager {
     @ObservationIgnored private var nextTemporaryHotKeyID: UInt32 = 1000
     /// Bumped whenever a shortcut changes, so the menu shows the current ones.
     private(set) var revision = 0
+    /// Some action is a modifier key on its own and macOS doesn't let Sukusho watch for it: no Input Monitoring.
+    private(set) var needsInputMonitoring = false
     /// The clashing actions Use Other Keys left on their keys, because another app holds the new ones: Settings names
     /// them, whether Use Other Keys ran there or from the launch notice.
     var keptKeys: [CaptureHotkeyAction] = []
+    /// While Settings records a shortcut nothing fires, so keys that are already Sukusho's reach the recorder.
+    @ObservationIgnored private var isPaused = false
+    /// Actions on a modifier key alone, which the event tap watches for instead of Carbon.
+    @ObservationIgnored private var tapActions: [HotkeyShortcut: CaptureHotkeyAction] = [:]
+    @ObservationIgnored private let modifierTaps = ModifierTapMonitor()
     
     private init() {}
 
@@ -44,20 +51,32 @@ final class HotkeyManager {
         installEventHandlerIfNeeded()
         CaptureHotkeyPreferences.dropStoredDefaults()
         reloadHotkeys()
+        // Back from System Settings with Input Monitoring on: the waiting shortcuts start working.
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
+            MainActor.assumeIsolated {
+                if HotkeyManager.shared.needsInputMonitoring { HotkeyManager.shared.reloadHotkeys() }
+            }
+        }
     }
 
     func reloadHotkeys() {
         defer { revision += 1 }
         unregisterHotkeys()
         registrationErrors.removeAll()
+        guard !isPaused else { return }
 
-        var registeredShortcuts: Set<HotkeyShortcut> = []
+        var registeredShortcuts: [HotkeyShortcut] = []
         for action in CaptureHotkeyAction.allCases {
             guard let shortcut = CaptureHotkeyPreferences.shortcut(for: action) else { continue }
             // An off feature mustn't take ⌃⌘V from other apps.
             if action == .clipboardHistory, !ScreendropPreferences.clipboardHistoryEnabled { continue }
-            guard registeredShortcuts.insert(shortcut).inserted else {
+            guard !registeredShortcuts.contains(where: shortcut.overlaps) else {
                 registrationErrors[action] = "\(shortcut.displayString) is already used by another action."
+                continue
+            }
+            registeredShortcuts.append(shortcut)
+            if shortcut.taps != nil {
+                tapActions[shortcut] = action
                 continue
             }
 
@@ -67,6 +86,35 @@ final class HotkeyManager {
                 registrationErrors[action] = error.localizedDescription
             }
         }
+        watchModifierTaps()
+    }
+
+    /// Runs the event tap while some action is a modifier key on its own; without Input Monitoring those actions say so.
+    private func watchModifierTaps() {
+        guard !tapActions.isEmpty else {
+            modifierTaps.stop()
+            needsInputMonitoring = false
+            return
+        }
+        needsInputMonitoring = !modifierTaps.start { [weak self] tap in
+            self?.tapActions[HotkeyShortcut(tap)]?.perform()
+        }
+        guard needsInputMonitoring else { return }
+        for (shortcut, action) in tapActions {
+            registrationErrors[action] = "\(shortcut.displayString) needs Input Monitoring."
+        }
+    }
+
+    /// Settings records a shortcut: nothing fires until `resumeAfterRecording`.
+    func pauseForRecording() {
+        isPaused = true
+        unregisterHotkeys()
+    }
+
+    func resumeAfterRecording() {
+        guard isPaused else { return }
+        isPaused = false
+        reloadHotkeys()
     }
 
     private func installEventHandlerIfNeeded() {
@@ -110,6 +158,15 @@ final class HotkeyManager {
             if let oldRef = hotKeyRefs.removeValue(forKey: action) { UnregisterEventHotKey(oldRef) }
             CaptureHotkeyPreferences.saveShortcut(nil, for: action)
             registrationErrors[action] = nil
+            stopWatchingTap(for: action)
+            return
+        }
+        if shortcut.taps != nil {
+            // Nothing to register with macOS: saved, then watched for by the event tap.
+            CaptureHotkeyPreferences.saveShortcut(shortcut, for: action)
+            reloadHotkeys()
+            // macOS's own prompt, once per app, only when a recorded tap needs it; Settings offers the pane after that.
+            if !CGPreflightListenEventAccess(), !AXIsProcessTrusted() { _ = CGRequestListenEventAccess() }
             return
         }
         if shortcut == CaptureHotkeyPreferences.shortcut(for: action), hotKeyRefs[action] != nil { return }
@@ -119,6 +176,14 @@ final class HotkeyManager {
         hotKeyRefs[action] = newRef
         CaptureHotkeyPreferences.saveShortcut(shortcut, for: action)
         registrationErrors[action] = nil
+        stopWatchingTap(for: action)
+    }
+
+    /// The action's shortcut is no longer a modifier tap.
+    private func stopWatchingTap(for action: CaptureHotkeyAction) {
+        guard let old = tapActions.first(where: { $0.value == action })?.key else { return }
+        tapActions[old] = nil
+        watchModifierTaps()
     }
 
     private func registerHotKey(action: CaptureHotkeyAction, shortcut: HotkeyShortcut) throws -> EventHotKeyRef {
@@ -147,6 +212,8 @@ final class HotkeyManager {
         }
 
         hotKeyRefs.removeAll()
+        tapActions.removeAll()
+        modifierTaps.stop()
     }
     
     /// Nil when the key is taken; the caller goes on without it.
@@ -173,6 +240,8 @@ final class HotkeyManager {
     }
 
     func handleHotKey(id: UInt32) {
+        // The key went to this shortcut, so the modifier held for it isn't a tap, whether or not the tap saw the key.
+        modifierTaps.interrupt()
         if let action = temporaryHotKeys[id]?.action { return action() }
         CaptureHotkeyAction(hotKeyID: id)?.perform()
     }

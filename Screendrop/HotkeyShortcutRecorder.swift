@@ -7,6 +7,9 @@ import AppKit
 import Carbon.HIToolbox
 import Observation
 
+/// Records a shortcut in Settings: keys with any modifier, a function key alone, or a modifier key tapped once (that key,
+/// such as Right ⌥) or twice (⌥ ⌥). A single tap is kept after the double-click interval passes without a second one.
+/// It watches Sukusho's own events only, so recording needs no permission.
 @MainActor
 @Observable
 final class HotkeyShortcutRecorder {
@@ -16,6 +19,8 @@ final class HotkeyShortcutRecorder {
     private(set) var rejection: String?
 
     @ObservationIgnored private var monitor: Any?
+    @ObservationIgnored private var taps = ModifierTapDetector()
+    @ObservationIgnored private var pendingTap: Task<Void, Never>?
     @ObservationIgnored var onShortcutRecorded: ((HotkeyShortcut) -> Void)?
     @ObservationIgnored var onCancel: (() -> Void)?
 
@@ -29,8 +34,11 @@ final class HotkeyShortcutRecorder {
         stop()
         isRecording = true
         rejection = nil
+        taps = ModifierTapDetector()
+        HotkeyManager.shared.pauseForRecording()
 
-        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+        let types: NSEvent.EventTypeMask = [.keyDown, .flagsChanged, .leftMouseDown, .rightMouseDown, .otherMouseDown]
+        monitor = NSEvent.addLocalMonitorForEvents(matching: types) { [weak self] event in
             guard let self else { return event }
             return self.handle(event)
         }
@@ -39,33 +47,61 @@ final class HotkeyShortcutRecorder {
     func stop() {
         isRecording = false
         rejection = nil
+        pendingTap?.cancel()
+        pendingTap = nil
 
         if let monitor {
             NSEvent.removeMonitor(monitor)
             self.monitor = nil
         }
+        HotkeyManager.shared.resumeAfterRecording()
     }
 
     private func handle(_ event: NSEvent) -> NSEvent? {
         guard isRecording else { return event }
+        pendingTap?.cancel()
+        pendingTap = nil
 
-        if event.keyCode == UInt16(kVK_Escape) {
-            cancel()
+        switch event.type {
+        case .flagsChanged:
+            taps.interval = NSEvent.doubleClickInterval
+            let found = taps.flagsChanged(
+                keyCode: Int(event.keyCode), flags: UInt64(event.modifierFlags.rawValue), at: event.timestamp
+            )
+            if let double = found.first(where: { if case .twice = $0 { true } else { false } }) {
+                finish(with: HotkeyShortcut(double))
+            } else if let single = found.first {
+                // Kept unless a second tap follows within the interval.
+                let interval = taps.interval
+                pendingTap = Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(interval))
+                    guard !Task.isCancelled, let self, self.isRecording else { return }
+                    self.finish(with: HotkeyShortcut(single))
+                }
+            }
+            return event
+        case .keyDown:
+            taps.interrupt()
+            if event.keyCode == UInt16(kVK_Escape) {
+                cancel()
+                return nil
+            }
+            let shortcut = HotkeyShortcut(
+                modifiers: HotkeyShortcut.Modifiers(from: event.modifierFlags),
+                keyCode: Int(event.keyCode)
+            )
+            if let refusal = shortcut.refusal {
+                NSSound.beep()
+                rejection = refusal
+                return nil
+            }
+            finish(with: shortcut)
             return nil
+        default:
+            // A click isn't part of a shortcut; it still does what it does.
+            taps.interrupt()
+            return event
         }
-
-        let shortcut = HotkeyShortcut(
-            modifiers: HotkeyShortcut.Modifiers(from: event.modifierFlags),
-            keyCode: Int(event.keyCode)
-        )
-        if let refusal = shortcut.refusal {
-            NSSound.beep()
-            rejection = refusal
-            return nil
-        }
-
-        finish(with: shortcut)
-        return nil
     }
 
     private func finish(with shortcut: HotkeyShortcut) {

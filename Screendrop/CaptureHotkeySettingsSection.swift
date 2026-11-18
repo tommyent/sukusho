@@ -59,6 +59,7 @@ struct CaptureHotkeySettingsSection: View {
                     warningLabel(warning)
                 }
             }
+            if HotkeyManager.shared.needsInputMonitoring { inputMonitoringNotice }
 
             messages
         } header: {
@@ -113,6 +114,19 @@ struct CaptureHotkeySettingsSection: View {
             Image(systemName: "exclamationmark.triangle.fill").symbolRenderingMode(.multicolor)
         }
         .font(.caption)
+    }
+
+    /// A shortcut that is a modifier key on its own works only with Input Monitoring: why, and the way to it.
+    private var inputMonitoringNotice: some View {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
+            warningLabel("A modifier key on its own needs Input Monitoring, so Sukusho can notice it in other apps. Sukusho never records what you type.")
+            HStack {
+                Spacer(minLength: 0)
+                Button("Open Input Monitoring…") { ModifierTapMonitor.openInputMonitoringSettings() }
+                    .controlSize(.small)
+                    .help("Turn on Sukusho in Privacy & Security › Input Monitoring")
+            }
+        }
     }
 
     private func useOtherKeys() {
@@ -181,7 +195,7 @@ struct CaptureHotkeySettingsSection: View {
         }
 
         if recordingAction != nil, recorder.rejection == nil {
-            Text("Type the new shortcut. Press Esc to cancel.")
+            Text("Type the new shortcut, or tap a modifier key such as right ⌥ once or twice. Press Esc to cancel.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -225,7 +239,11 @@ struct CaptureHotkeySettingsSection: View {
     private func apply(_ shortcut: HotkeyShortcut?, to action: CaptureHotkeyAction) {
         HotkeyManager.shared.keptKeys = []
         if let shortcut, let conflict = CaptureHotkeyPreferences.conflictingAction(for: shortcut, excluding: action) {
-            errorMessage = "\(shortcut.displayString) is already assigned to \(conflict.title)."
+            if let theirs = CaptureHotkeyPreferences.shortcut(for: conflict), theirs != shortcut {
+                errorMessage = "\(shortcut.displayString) can’t be a shortcut while \(conflict.title) is \(theirs.displayString): a double tap starts with a tap."
+            } else {
+                errorMessage = "\(shortcut.displayString) is already assigned to \(conflict.title)."
+            }
             NSSound.beep()
             recorder.stop()
             recordingAction = nil
@@ -267,9 +285,14 @@ struct CaptureHotkeySettingsSection: View {
 private struct HotkeyShortcutDisplay: View {
     let shortcut: HotkeyShortcut
 
+    /// ⌥ ⌥ is two keycaps of one token; tokens can repeat, so they're told apart by place.
+    private var caps: [String] {
+        shortcut.taps == 2 ? shortcut.displayTokens.flatMap { $0.split(separator: " ").map(String.init) } : shortcut.displayTokens
+    }
+
     var body: some View {
         HStack(spacing: 3) {
-            ForEach(shortcut.displayTokens, id: \.self) { token in
+            ForEach(Array(caps.enumerated()), id: \.offset) { _, token in
                 HotkeyKeyCap(token: token)
             }
         }

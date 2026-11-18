@@ -151,6 +151,7 @@
 		ED2A00000000000000000007 /* Screendrop/EditorKeyChords.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED2A00000000000000000008 /* Screendrop/EditorKeyChords.swift */; };
 		C11B00000000000000000011 /* Screendrop/AreaHandle.swift in Sources */ = {isa = PBXBuildFile; fileRef = C11B00000000000000000012 /* Screendrop/AreaHandle.swift */; };
 		C11B00000000000000000013 /* Screendrop/CaptureHotkeys.swift in Sources */ = {isa = PBXBuildFile; fileRef = C11B00000000000000000014 /* Screendrop/CaptureHotkeys.swift */; };
+		D5AF00000000000000000001 /* Screendrop/ModifierTaps.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5AF00000000000000000002 /* Screendrop/ModifierTaps.swift */; };
 		C11B00000000000000000015 /* Screendrop/DockProgressPacer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C11B00000000000000000016 /* Screendrop/DockProgressPacer.swift */; };
 		C11B00000000000000000017 /* Screendrop/PreviewAutoCloseClock.swift in Sources */ = {isa = PBXBuildFile; fileRef = C11B00000000000000000018 /* Screendrop/PreviewAutoCloseClock.swift */; };
 		C11B00000000000000000019 /* Screendrop/EditorSaveIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = C11B0000000000000000001A /* Screendrop/EditorSaveIdentity.swift */; };
@@ -358,6 +359,7 @@
 		ED2A00000000000000000008 /* Screendrop/EditorKeyChords.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/EditorKeyChords.swift; sourceTree = SOURCE_ROOT; };
 		C11B00000000000000000012 /* Screendrop/AreaHandle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AreaHandle.swift; sourceTree = SOURCE_ROOT; };
 		C11B00000000000000000014 /* Screendrop/CaptureHotkeys.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/CaptureHotkeys.swift; sourceTree = SOURCE_ROOT; };
+		D5AF00000000000000000002 /* Screendrop/ModifierTaps.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ModifierTaps.swift; sourceTree = SOURCE_ROOT; };
 		C11B00000000000000000016 /* Screendrop/DockProgressPacer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/DockProgressPacer.swift; sourceTree = SOURCE_ROOT; };
 		C11B00000000000000000018 /* Screendrop/PreviewAutoCloseClock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/PreviewAutoCloseClock.swift; sourceTree = SOURCE_ROOT; };
 		C11B0000000000000000001A /* Screendrop/EditorSaveIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/EditorSaveIdentity.swift; sourceTree = SOURCE_ROOT; };
@@ -607,6 +609,7 @@
 				ED2A00000000000000000008 /* Screendrop/EditorKeyChords.swift */,
 				C11B00000000000000000012 /* Screendrop/AreaHandle.swift */,
 				C11B00000000000000000014 /* Screendrop/CaptureHotkeys.swift */,
+				D5AF00000000000000000002 /* Screendrop/ModifierTaps.swift */,
 				C11B00000000000000000016 /* Screendrop/DockProgressPacer.swift */,
 				C11B00000000000000000018 /* Screendrop/PreviewAutoCloseClock.swift */,
 				C11B0000000000000000001A /* Screendrop/EditorSaveIdentity.swift */,
@@ -902,6 +905,7 @@
 				ED2A00000000000000000007 /* Screendrop/EditorKeyChords.swift in Sources */,
 				C11B00000000000000000011 /* Screendrop/AreaHandle.swift in Sources */,
 				C11B00000000000000000013 /* Screendrop/CaptureHotkeys.swift in Sources */,
+				D5AF00000000000000000001 /* Screendrop/ModifierTaps.swift in Sources */,
 				C11B00000000000000000015 /* Screendrop/DockProgressPacer.swift in Sources */,
 				C11B00000000000000000017 /* Screendrop/PreviewAutoCloseClock.swift in Sources */,
 				C11B00000000000000000019 /* Screendrop/EditorSaveIdentity.swift in Sources */,

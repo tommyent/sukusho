@@ -50,9 +50,17 @@ struct HotkeyShortcut: Codable, Equatable, Hashable {
 
     let modifiers: Modifiers
     let keyCode: Int
+    /// For a modifier key on its own, whose code `keyCode` is: 1 for a tap of that key (Right ⌥), 2 for two taps of
+    /// either key of its pair (⌥ ⌥, stored as the left key). Nil for every other shortcut, and then left out of the saved
+    /// JSON, so shortcuts saved before it load and save as they were.
+    var taps: Int? = nil
 
+    /// One token per keycap: "Right ⌥" and "⌥ ⌥" are one token each, so every joined form reads the same.
     var displayTokens: [String] {
-        modifiers.symbols + [Self.keyLabel(for: keyCode)]
+        guard let taps, let key = ModifierKeys.keys[keyCode], let symbol = key.family.symbols.first else {
+            return modifiers.symbols + [Self.keyLabel(for: keyCode)]
+        }
+        return [taps == 2 ? "\(symbol) \(symbol)" : "\(key.isRight ? "Right" : "Left") \(symbol)"]
     }
 
     var displayString: String {
@@ -60,24 +68,34 @@ struct HotkeyShortcut: Codable, Equatable, Hashable {
     }
 
     var isValid: Bool {
-        !modifiers.isEmpty || Self.functionKeyCodes.contains(keyCode)
+        if let taps { return modifiers.isEmpty && ModifierKeys.keys[keyCode] != nil && (taps == 1 || taps == 2) }
+        return !modifiers.isEmpty || Self.functionKeyCodes.contains(keyCode)
     }
 
     /// Why the recorder turns these keys down, in one line; nil when they can be a shortcut. Any modifier with any key
     /// can, and so can F1 to F20 alone; another key alone would stop working in every app.
     var refusal: String? {
-        guard modifiers.isEmpty, !Self.functionKeyCodes.contains(keyCode) else { return nil }
+        guard taps == nil, modifiers.isEmpty, !Self.functionKeyCodes.contains(keyCode) else { return nil }
         return "\(Self.keyLabel(for: keyCode)) on its own would stop working in every app. Add ⌘, ⌥, ⌃ or ⇧, or use F1 to F20."
     }
 
     /// With ⌥ or ⇧ but neither ⌘ nor ⌃, the keys also type or edit in text fields, and while they're Sukusho's no app
     /// gets them. They're allowed (the owner wants the choice, 2026-11-17), with this warning.
     var typingWarning: String? {
-        guard !modifiers.isEmpty, modifiers.isDisjoint(with: [.command, .control]),
+        guard taps == nil, !modifiers.isEmpty, modifiers.isDisjoint(with: [.command, .control]),
               !Self.functionKeyCodes.contains(keyCode) else { return nil }
         return Self.editingKeyCodes.contains(keyCode)
             ? "\(displayString) also works in text fields. While it’s Sukusho’s shortcut, no app gets it."
             : "\(displayString) also types a character. While it’s Sukusho’s shortcut, you can’t type it."
+    }
+
+    /// Whether one press would set off both: the same shortcut, or a tap and a double tap of one pair (Right ⌥ and ⌥ ⌥),
+    /// since every double tap starts with a tap.
+    func overlaps(_ other: HotkeyShortcut) -> Bool {
+        if self == other { return true }
+        guard let taps, let otherTaps = other.taps, taps == 2 || otherTaps == 2,
+              let family = ModifierKeys.keys[keyCode]?.family else { return false }
+        return ModifierKeys.keys[other.keyCode]?.family == family
     }
 
     /// F1 to F20, the keys that can be a shortcut on their own.
@@ -374,7 +392,7 @@ enum CaptureHotkeyPreferences {
         defaults: UserDefaults = .standard
     ) -> CaptureHotkeyAction? {
         CaptureHotkeyAction.allCases.first { candidate in
-            candidate != action && self.shortcut(for: candidate, defaults: defaults) == shortcut
+            candidate != action && self.shortcut(for: candidate, defaults: defaults)?.overlaps(shortcut) == true
         }
     }
 }
