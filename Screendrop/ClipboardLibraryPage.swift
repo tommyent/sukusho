@@ -99,8 +99,12 @@ struct ClipboardLibraryPage: View {
     /// A search with no match says so, on Snippets too, rather than saying there are none (Astra, 2026-11-16).
     @ViewBuilder
     private var emptyPage: some View {
-        if !library.searchText.isEmpty {
-            ContentUnavailableView.search(text: library.searchText).workspaceTextPlate()
+        if let title = ClipboardList.emptyResultsTitle(filter: model.showsSnippets || model.libraryFilter == .all ? nil : model.libraryFilter.title,
+                                                      query: library.searchText) {
+            LibraryEmptyResults(title: title) {
+                library.searchText = ""
+                model.libraryFilter = .all
+            }
         } else if model.showsSnippets {
             ContentUnavailableView {
                 Label("No Snippets", systemImage: "text.badge.star")
@@ -549,5 +553,19 @@ private struct ClipboardVersionList: View {
                 }
             }
         }
+    }
+}
+
+struct LibraryEmptyResults: View {
+    let title: String
+    let clear: () -> Void
+
+    var body: some View {
+        ContentUnavailableView {
+            Label(title, systemImage: "line.3.horizontal.decrease")
+        } actions: {
+            Button("Clear Filters", action: clear)
+        }
+        .workspaceTextPlate()
     }
 }

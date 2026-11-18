@@ -34,6 +34,11 @@ nonisolated enum ClipboardFilter: String, CaseIterable, Identifiable, Sendable {
 /// Sorting, grouping, naming and searching entries, kept apart from AppKit
 /// so tests can check them.
 nonisolated enum ClipboardList {
+    static func emptyResultsTitle(filter: String?, query: String) -> String? {
+        if !query.isEmpty { return "No matches for “\(query)”" }
+        return filter.map { "No \($0.lowercased())" }
+    }
+
     struct Section: Identifiable, Equatable, Sendable {
         let title: String
         let entries: [ClipboardEntry]

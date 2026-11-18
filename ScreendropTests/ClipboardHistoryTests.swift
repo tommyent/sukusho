@@ -735,6 +735,12 @@ struct ClipboardHistoryStoreTests {
 
 @Suite
 struct ClipboardListTests {
+    @Test func emptyResultsDescribeTheActiveQueryOrFilter() {
+        #expect(ClipboardList.emptyResultsTitle(filter: nil, query: "") == nil)
+        #expect(ClipboardList.emptyResultsTitle(filter: "Images", query: "") == "No images")
+        #expect(ClipboardList.emptyResultsTitle(filter: "Recordings", query: "talk") == "No matches for “talk”")
+    }
+
     private var calendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "UTC")!

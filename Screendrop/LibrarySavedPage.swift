@@ -147,8 +147,11 @@ struct LibrarySavedPage: View {
     }
 
     @ViewBuilder private var emptyPage: some View {
-        if !library.searchText.isEmpty {
-            ContentUnavailableView.search(text: library.searchText).workspaceTextPlate()
+        if let title = ClipboardList.emptyResultsTitle(filter: saved.filter == .all ? nil : saved.filter.title, query: library.searchText) {
+            LibraryEmptyResults(title: title) {
+                saved.filter = .all
+                library.searchText = ""
+            }
         } else {
             ContentUnavailableView {
                 Label("Nothing Saved Yet", systemImage: "star")
