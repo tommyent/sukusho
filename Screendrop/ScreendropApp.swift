@@ -162,22 +162,28 @@ struct ScreendropApp: App {
 enum AppRelaunch {
     /// Opens Settings › Shortcuts instead of the Library when Sukusho comes back.
     static let argument = "--reopen-shortcut-settings"
-    private static var requestedAt: Date?
+    /// Belongs to the quit `request` starts: every way that quit is cancelled clears it (`cancel`).
+    private static var isRequested = false
 
     /// Quits as Quit does, so unsaved work is asked about first; a quit that's cancelled reopens nothing.
     static func request() {
-        requestedAt = Date()
+        isRequested = true
         NSApp.terminate(nil)
     }
 
-    /// From applicationWillTerminate: a shell waits up to a minute for this process to end, then opens the app again.
-    /// A request older than two minutes, from a quit that was cancelled then, is ignored.
+    /// The quit was cancelled, so a later Quit only quits.
+    static func cancel() {
+        isRequested = false
+    }
+
+    /// From applicationWillTerminate: a shell waits up to a minute for this process to end, then opens the app again as
+    /// a new instance (`-n`), so the argument reaches it; if this process is still running by then, it opens nothing.
     static func reopenIfRequested() {
-        guard let requestedAt, Date().timeIntervalSince(requestedAt) < 120 else { return }
+        guard isRequested else { return }
         let reopen = Process()
         reopen.executableURL = URL(fileURLWithPath: "/bin/sh")
         reopen.arguments = [
-            "-c", "i=0; while kill -0 \"$1\" 2>/dev/null && [ $i -lt 300 ]; do sleep 0.2; i=$((i+1)); done; exec /usr/bin/open \"$2\" --args \"$3\"",
+            "-c", "i=0; while kill -0 \"$1\" 2>/dev/null; do [ $i -ge 300 ] && exit 1; sleep 0.2; i=$((i+1)); done; exec /usr/bin/open -n \"$2\" --args \"$3\"",
             "sh", String(ProcessInfo.processInfo.processIdentifier), Bundle.main.bundleURL.path, argument,
         ]
         try? reopen.run()
@@ -283,6 +289,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// temporary directory, so quitting discards them. Warn before that
     /// happens.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let reply = quitReply(sender)
+        if reply == .terminateCancel { AppRelaunch.cancel() }
+        return reply
+    }
+
+    private func quitReply(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // Saved Studio projects save without closing first, so the review
         // below finds only failed ones and an export still gets its prompt.
         StudioProjectRegistry.shared.autosaveAll()
@@ -291,6 +303,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // this again for the checks below; it replies itself if it defers.
         if EditorCloseGuard.reviewBeforeQuit(completion: { approved in
             let reply = approved ? self.applicationShouldTerminate(sender) : .terminateCancel
+            if reply == .terminateCancel { AppRelaunch.cancel() }
             if reply != .terminateLater {
                 sender.reply(toApplicationShouldTerminate: reply == .terminateNow)
             }
