@@ -230,6 +230,22 @@ struct FlexibleShortcutsTests {
         #expect(!detector.isUnsure)
     }
 
+    /// Sol's round 7 probe: recovery starts at 10.00, a key-up stamped 9.00 is delivered late, then Right ⌥ is tapped at
+    /// 10.05–10.10. The old key-up is from before the gap, so it can't move the quiet stretch back: no tap.
+    @Test func aLateOlderKeyUpDoesntShortenRecovery() {
+        var detector = ModifierTapDetector()
+        detector.quiet = 0.7
+        detector.eventsMissed(at: 10)
+        detector.keyUp(at: 9)
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 10.05)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 10.1).isEmpty)
+        #expect(detector.isUnsure)
+        // A late older key-down doesn't count as held either: what's down now is judged from events after the gap.
+        detector.keyDown(isRepeat: false, at: 9.5)
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 10.8)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 10.9) == [.once(keyCode: kVK_RightOption)])
+    }
+
     /// After missed events a press before them doesn't finish a tap, a first tap before them doesn't pair with one after,
     /// and with nothing held the first tap after the quiet stretch counts.
     @Test func afterMissedEventsTheKeyboardMustBeSeenQuiet() {

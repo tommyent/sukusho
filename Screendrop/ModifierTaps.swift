@@ -59,7 +59,10 @@ struct ModifierTapDetector {
     private(set) var isUnsure = false
     /// Long enough for a key held through missed events to show itself by repeating (`quietTime`).
     var quiet: TimeInterval = 0.7
-    private var lastKeyEvent: TimeInterval = 0
+    /// When events were last missed: a key event stamped earlier, delivered late, is from before the gap and never
+    /// moves the quiet stretch (Sol's round 7 probe: a key-up stamped 9.00 after a reset at 10.00).
+    private var missedAt: TimeInterval = -.infinity
+    private var lastKeyEvent: TimeInterval = -.infinity
     /// Secure input (a password field) as the last event found it: while it's on, macOS withholds other keys.
     private(set) var isSecure = false
 
@@ -89,6 +92,7 @@ struct ModifierTapDetector {
         interrupt()
         keysDown = 0
         isUnsure = true
+        missedAt = time
         lastKeyEvent = time
     }
 
@@ -105,14 +109,16 @@ struct ModifierTapDetector {
     /// Some other key went down. A repeat means one is held, even if it went down before watching started.
     mutating func keyDown(isRepeat: Bool, at time: TimeInterval) {
         interrupt()
+        guard time >= missedAt else { return }
         keysDown = isRepeat ? max(keysDown, 1) : keysDown + 1
-        lastKeyEvent = time
+        lastKeyEvent = max(lastKeyEvent, time)
     }
 
     mutating func keyUp(at time: TimeInterval) {
         interrupt()
+        guard time >= missedAt else { return }
         keysDown = max(keysDown - 1, 0)
-        lastKeyEvent = time
+        lastKeyEvent = max(lastKeyEvent, time)
     }
 
     /// One flags-changed event: the key that changed and the flags after it. Returns the taps it completes.
