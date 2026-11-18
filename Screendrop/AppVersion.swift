@@ -26,9 +26,11 @@ nonisolated enum AppVersion {
         return "Version \(version) (\(build))"
     }
 
-    /// The macOS this build is made and tested on. Below it, launch shows a notice that some
-    /// features may be missing; on it or anything newer, betas included, nothing.
-    static let testedMacOSMajor = 27
+    // The first entry is the oldest tested release and the warning threshold.
+    static let testedMacOS = [
+        OperatingSystemVersion(majorVersion: 26, minorVersion: 5, patchVersion: 1),
+        OperatingSystemVersion(majorVersion: 27, minorVersion: 2, patchVersion: 1)
+    ]
 
     /// "26.5.1", or "26.5" without a patch.
     static func macOSString(_ version: OperatingSystemVersion) -> String {
@@ -39,7 +41,9 @@ nonisolated enum AppVersion {
     /// The notice shows below the tested macOS until it's dismissed for that major version
     /// ("26"); an older saved "26.5.1" counts for 26 too.
     static func showsUnsupportedNotice(on version: OperatingSystemVersion, dismissedFor: String?) -> Bool {
-        version.majorVersion < testedMacOSMajor
+        let minimum = testedMacOS[0]
+        return (version.majorVersion, version.minorVersion, version.patchVersion)
+            < (minimum.majorVersion, minimum.minorVersion, minimum.patchVersion)
             && dismissedFor?.split(separator: ".").first != "\(version.majorVersion)"
     }
 

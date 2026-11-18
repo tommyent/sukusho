@@ -4,7 +4,7 @@
 
 Screendrop is a native macOS screenshot and screen recording tool. Its Library window opens on normal launch; login launches remain in the menu bar (`LSUIElement = YES`). `AppActivationPolicy` uses `.regular` while Library, Settings, or editor windows are open, and returns to `.accessory` when they close. Built with SwiftUI + AppKit with a hostless Swift Testing unit test target.
 
-**Deployment target:** macOS 26.0 for every target, so the app opens on macOS 26 too (the owner, 2026-11-16). Gate anything newer with `#available(macOS 27, *)` and a fallback, never by raising the target or dropping the feature on 27; below 27 a launch notice (`UnsupportedOSNotice`) says some features may be missing. Builds with Xcode 27 (`/Applications/Xcode.app`, 27.2).
+**Deployment target:** macOS 26.0 for every target, so the app opens on macOS 26 too (the owner, 2026-11-16). Gate anything newer with `#available(macOS 27, *)` and a fallback, never by raising the target or dropping the feature on 27; below the oldest release in `AppVersion.testedMacOS` a modeless launch notice (`UnsupportedOSNotice`) says some features may be missing. Builds with Xcode 27 (`/Applications/Xcode.app`, 27.2).
 **App:** Sukusho. **Bundle IDs:** `com.tommyent.Sukusho`, Dev `com.tommyent.Sukusho.dev`. The target, schemes and Swift module keep the name Screendrop.
 
 ## Build
