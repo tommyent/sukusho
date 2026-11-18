@@ -92,6 +92,13 @@ struct HotkeyShortcut: Codable, Equatable, Hashable {
     /// A menu item's title with a shortcut its shortcut column can't show (a modifier key on its own, a function key
     /// alone) after it, as "Capture Area (Right ⌥)". A title reads the same in every menu on every macOS; SwiftUI drops a
     /// subtitle given inside a Label (checked on macOS 27.3).
+    /// What Settings' recorder takes from a key going down: the keys to record (or refuse), or nil for a repeat. A
+    /// repeat is a key held on, often since before recording started, so it only counts as held and never makes a
+    /// chord: E held from before recording, then a Right ⌥ tap, recorded ⌥E (VM, keys-vm4 F2).
+    static func recording(keyCode: Int, flags: NSEvent.ModifierFlags, isRepeat: Bool) -> HotkeyShortcut? {
+        isRepeat ? nil : HotkeyShortcut(modifiers: Modifiers(from: flags), keyCode: keyCode)
+    }
+
     static func menuTitle(_ title: String, adding shortcut: HotkeyShortcut?) -> String {
         shortcut.map { "\(title) (\($0.displayString))" } ?? title
     }

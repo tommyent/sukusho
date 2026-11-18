@@ -374,6 +374,24 @@ struct FlexibleShortcutsTests {
         #expect(repeating.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 5.9).isEmpty)
     }
 
+    /// VM, keys-vm4 F2: E held from before recording repeats, and a Right ⌥ tap while it does recorded ⌥E. A repeat only
+    /// counts as held, so nothing is recorded until E is released; then, once armed, the tap records, and a fresh press
+    /// still makes a chord.
+    @Test func aKeyHeldFromBeforeRecordingRecordsNothing() {
+        var taps = ModifierTapDetector.startingAt(5, quiet: 0.7)
+        taps.keyDown(isRepeat: true, at: 5.3)
+        #expect(HotkeyShortcut.recording(keyCode: kVK_ANSI_E, flags: [], isRepeat: true) == nil, "no refusal for E either")
+        _ = taps.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 5.5)
+        taps.keyDown(isRepeat: true, at: 5.55)
+        #expect(HotkeyShortcut.recording(keyCode: kVK_ANSI_E, flags: .option, isRepeat: true) == nil, "not ⌥E")
+        #expect(taps.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 5.6).isEmpty, "E is down")
+        taps.keyUp(at: 6)
+        armIfQuiet(&taps, at: 6.8)
+        _ = taps.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 7)
+        #expect(taps.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 7.05) == [.once(keyCode: kVK_RightOption)])
+        #expect(HotkeyShortcut.recording(keyCode: kVK_ANSI_E, flags: .option, isRepeat: false) == chord([.option], kVK_ANSI_E))
+    }
+
     /// Sol's re-review, 4: secure input found on, or found off again, at the next event (with no callback in between)
     /// drops the gesture under way, and nothing taps until armed again; while it's on nothing taps. A secure stretch that
     /// starts and ends between two samples is invisible, so it isn't claimed.

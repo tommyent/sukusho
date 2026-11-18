@@ -104,14 +104,14 @@ final class HotkeyShortcutRecorder {
             return event
         case .keyDown:
             if taps.keyDown(isRepeat: event.isARepeat, at: event.timestamp) { armWhenQuiet() }
+            // A repeat only counts as a key held: it never records, refuses or cancels.
+            guard let shortcut = HotkeyShortcut.recording(
+                keyCode: Int(event.keyCode), flags: event.modifierFlags, isRepeat: event.isARepeat
+            ) else { return nil }
             if event.keyCode == UInt16(kVK_Escape) {
                 cancel()
                 return nil
             }
-            let shortcut = HotkeyShortcut(
-                modifiers: HotkeyShortcut.Modifiers(from: event.modifierFlags),
-                keyCode: Int(event.keyCode)
-            )
             if let refusal = shortcut.refusal {
                 NSSound.beep()
                 rejection = refusal
