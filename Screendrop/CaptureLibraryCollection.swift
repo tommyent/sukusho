@@ -14,8 +14,8 @@ enum CaptureLibraryAction: String {
     case trash = "Move to Trash"
 
     /// The captures' context menu, for `count` selected.
-    static func menu(selected count: Int, perform: @escaping (Self) -> Void) -> [LibraryMenuItem] {
-        [Self.preview, .edit, .rename, .copy, .export, .share, .reveal, .trash].map { action in
+    static func menu(selected count: Int, allowing: Set<Self>? = nil, perform: @escaping (Self) -> Void) -> [LibraryMenuItem] {
+        [Self.preview, .edit, .rename, .copy, .export, .share, .reveal, .trash].filter { allowing?.contains($0) ?? true }.map { action in
             LibraryMenuItem(
                 title: action.rawValue,
                 isEnabled: !(action == .rename || action == .edit) || count == 1,

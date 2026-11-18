@@ -50,8 +50,7 @@ struct LibraryClipCollection: View {
                 }]
             }, onReturn: {
                 if let entry = chosen.first?.clipEntry, chosen.count == 1 {
-                    if entry.kind == .snippet { clipboard.snippetAwaitingName = entry.id }
-                    else { perform(.edit) }
+                    perform(entry.kind == .snippet ? .rename : .edit)
                 } else {
                     perform(chosen.contains { $0.clipID != nil } ? .copy : .rename)
                 }
@@ -91,6 +90,12 @@ struct LibraryClipCollection: View {
                 else { library.copySelection(selected) }
             case .capture: library.perform(.edit)
             }
+        case .rename:
+            if selected.count == 1, let entry = selected[0].clipEntry, entry.kind == .snippet {
+                clipboard.snippetAwaitingName = entry.id
+            } else if selected.allSatisfy({ $0.captureID != nil }) {
+                library.perform(.rename)
+            }
         case .share: library.shareSelection(selected)
         case .export: library.export(selected)
         case .copy, .copyOriginal:
@@ -102,14 +107,29 @@ struct LibraryClipCollection: View {
 
     private func menu() -> [LibraryMenuItem] {
         let selected = chosen
-        if selected.count == 1, selected[0].captureID != nil {
-            let actions: [CaptureLibraryAction] = [.preview, .edit, .copy, .reveal]
-            return actions.map { action in LibraryMenuItem(title: action.rawValue) { perform(action) } }
-                + [LibraryMenuItem(title: "Remove from Saved", startsGroup: true) { library.setSaved(false) }]
+        if !selected.isEmpty, selected.allSatisfy({ $0.captureID != nil }) {
+            return library.menuItems(selected: selected.count)
         }
-        var items = [LibraryMenuItem(title: "Copy") { perform(.copy) }, LibraryMenuItem(title: "Quick Look") { perform(.preview) }]
-        items += [LibraryMenuItem(title: "Export…") { perform(.export) },
-                  LibraryMenuItem(title: "Share…") { perform(.share) }]
+        var actions: Set<CaptureLibraryAction> = [.preview, .copy, .export, .share]
+        if selected.count == 1, selected[0].clipEntry?.kind == .image { actions.insert(.edit) }
+        if selected.count == 1, selected[0].clipEntry?.kind == .snippet { actions.insert(.rename) }
+        var items = CaptureLibraryAction.menu(selected: selected.count, allowing: actions, perform: perform)
+        if selected.count == 1, case .clip(let entry) = selected[0] {
+            if entry.kind == .image {
+                items += [LibraryMenuItem(title: "Optimize", startsGroup: true) { clipboard.optimize(entry) },
+                          LibraryMenuItem(title: "Convert to WebP…") { clipboard.convert(entry, to: .webP) },
+                          LibraryMenuItem(title: "Convert to JPEG…") { clipboard.convert(entry, to: .jpeg) }]
+            }
+            if entry.kind == .text {
+                if let copy = items.firstIndex(where: { $0.title == CaptureLibraryAction.copy.rawValue }) {
+                    items.insert(LibraryMenuItem(title: "Copy as Plain Text") { library.copySelection([.clip(entry)], plain: true) }, at: copy + 1)
+                }
+                items.append(LibraryMenuItem(title: "Save as Snippet") { clipboard.saveAsSnippet(entry) })
+            }
+            items.append(LibraryMenuItem(title: entry.pinnedAt == nil ? "Save" : "Remove from Saved", startsGroup: true) {
+                clipboard.toggleSaved(entry)
+            })
+        }
         if CloudUploader.shared.isConfigured {
             items.append(LibraryMenuItem(title: "Share to Cloud…", isEnabled: CloudLibraryModel.shared.fileUploads == nil) {
                 library.prepareClipUpload(selected)
@@ -118,21 +138,6 @@ struct LibraryClipCollection: View {
         let links = selected.flatMap { $0.clipEntry?.cloudLinks ?? $0.captureItem?.cloudURL.map { [$0] } ?? [] }
         if !links.isEmpty {
             items.append(LibraryMenuItem(title: links.count == 1 ? "Copy Link" : "Copy Links") { CloudShareLinks.copy(links) })
-        }
-        if selected.count == 1, case .clip(let entry) = selected[0] {
-            if entry.kind == .image {
-                items += [LibraryMenuItem(title: "Open in Editor") { clipboard.openInEditor(entry) },
-                          LibraryMenuItem(title: "Optimize", startsGroup: true) { clipboard.optimize(entry) },
-                          LibraryMenuItem(title: "Convert to WebP…") { clipboard.convert(entry, to: .webP) },
-                          LibraryMenuItem(title: "Convert to JPEG…") { clipboard.convert(entry, to: .jpeg) }]
-            }
-            if entry.kind == .text {
-                items.append(LibraryMenuItem(title: "Copy as Plain Text") { library.copySelection([.clip(entry)], plain: true) })
-                items.append(LibraryMenuItem(title: "Save as Snippet") { clipboard.saveAsSnippet(entry) })
-            }
-            items.append(LibraryMenuItem(title: entry.pinnedAt == nil ? "Save" : "Remove from Saved", startsGroup: true) {
-                clipboard.toggleSaved(entry)
-            })
         }
         items.append(LibraryMenuItem(title: "Delete…", startsGroup: true) { perform(.trash) })
         return items

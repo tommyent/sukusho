@@ -263,7 +263,7 @@ extension CaptureLibraryModel {
         guard selected.count == 1, let item = selected.first else { return [] }
         if let link = item.cloudURL {
             return [
-                LibraryMenuItem(title: "Copy Cloud Link", startsGroup: true) { self.copyLink(item) },
+                LibraryMenuItem(title: "Copy Link", startsGroup: true) { self.copyLink(item) },
                 LibraryMenuItem(title: "Open Shared Capture", isEnabled: URL(string: link) != nil) {
                     CloudShareLinks.open(link)
                 },
