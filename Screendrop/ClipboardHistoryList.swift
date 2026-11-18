@@ -153,7 +153,10 @@ nonisolated enum ClipboardList {
     /// tomorrow", "return home before dinner" and "Please send the revised draft;" are prose (Astra R2).
     static func isCodeLike(_ text: String) -> Bool {
         let lines = text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-        guard !lines.isEmpty else { return false }
+        guard let first = lines.first else { return false }
+        if first.hasPrefix("#!/") || first.hasPrefix("#! /") { return true }
+        if first.hasPrefix("{") || first.hasPrefix("["),
+           (try? JSONSerialization.jsonObject(with: Data(text.utf8))) != nil { return true }
         return lines.filter(isCodeLine).count * 2 >= lines.count
     }
 

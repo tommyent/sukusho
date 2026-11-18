@@ -152,6 +152,11 @@ struct ClipboardCard: View {
                     }
                 }
                 .libraryCardChip()
+                .overlay(alignment: .bottomLeading) {
+                    if entry.kind == .image, TallCapture.isTall(width: entry.pixelWidth, height: entry.pixelHeight) {
+                        TallCapture.badge.padding(6)
+                    }
+                }
                 .overlay(alignment: .topTrailing) {
                     // A re-encode another app put back (such as Clop's) stacked on this card; the inspector has the rest.
                     if !entry.earlierVersions.isEmpty {

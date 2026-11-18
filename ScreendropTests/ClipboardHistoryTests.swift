@@ -1095,6 +1095,10 @@ struct ClipboardCardTextTests {
                 return path
             }
             """
+        #expect(ClipboardList.isCodeLike("#!/bin/zsh\nfor f in *.png; do\n echo $f\ndone"))
+        #expect(ClipboardList.isCodeLike(#"{"service":"sukusho","enabled":true}"#))
+        #expect(ClipboardList.isCodeLike("[1, 2, 3]"))
+        #expect(!ClipboardList.isCodeLike("[Meeting notes] tomorrow"))
         #expect(ClipboardList.isCodeLike(swift))
         #expect(ClipboardList.isCodeLike("func tailPath(radius r: CGFloat, tip d: CGFloat) -> CGPath {"))
         #expect(ClipboardList.kindWord(of: text(swift, from: "com.tommyent.Sukusho.dev")) == "code")
