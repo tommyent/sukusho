@@ -194,8 +194,8 @@ actor ClipboardHistoryStore {
                         let blob = try Self.writeBlob(data, hash: hash,
                                                       ext: file.pathExtension, in: directory)
                         _ = try Self.query(handle, """
-                            UPDATE \(table) SET blob = ?, stored_bytes = ?, byte_size = ? WHERE rowid = ?
-                            """, [blob, data.count, data.count, row]) { _ in () }
+                            UPDATE \(table) SET blob = ?, byte_size = ? WHERE rowid = ?
+                            """, [blob, data.count, row]) { _ in () }
                         if table == "entries", let size = ClipboardPasteboardReader.pixelSize(of: data) {
                             _ = try Self.query(handle, "UPDATE entries SET pixel_width = ?, pixel_height = ? WHERE rowid = ?",
                                                [size.width, size.height, row]) { _ in () }
@@ -487,7 +487,7 @@ actor ClipboardHistoryStore {
     }
 
     func totalBytes() throws -> Int64 {
-        // Each image file once, however many entries and versions share it, plus what's kept in the database itself.
+        // Count each blob once. Migrated capture references keep their pre-upgrade charge of zero.
         Int64(try query("""
             WITH history AS (SELECT * FROM entries WHERE pinned_at IS NULL AND kind != 'snippet'),
                  history_versions AS (SELECT v.* FROM versions v JOIN history h ON h.id = v.entry_id)

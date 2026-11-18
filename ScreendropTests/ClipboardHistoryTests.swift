@@ -332,6 +332,38 @@ struct ClipboardHistoryStoreTests {
         #expect(try await store.totalBytes() == 1000)
     }
 
+    private func executeLegacySQL(_ sql: String) throws {
+        var db: OpaquePointer?
+        try #require(sqlite3_open(directory.appendingPathComponent("clipboard.sqlite").path, &db) == SQLITE_OK)
+        defer { sqlite3_close(db) }
+        try #require(sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK)
+    }
+
+    @Test func upgradingReferencesKeepsHistoryUnderItsOriginalSizeCap() async throws {
+        let old = try store()
+        let pixels = Data(repeating: 9, count: 5_000)
+        let file = directory.appendingPathComponent("Shot.png")
+        try pixels.write(to: file)
+        var reference = image(pixels, width: 1, height: 1)
+        reference.image = nil
+        reference.libraryPath = file.path
+        try await old.record(image(1_000), at: start)
+        try await old.record(reference, at: start + 60)
+        let before = try await old.totalBytes()
+        let cap = before + 100
+        #expect(before == 1_000)
+        #expect(try await old.sweep(now: start + 120, retention: nil, maxBytes: cap) == 0)
+        try executeLegacySQL("PRAGMA user_version = 1")
+        let upgraded = try store()
+        #expect(try await upgraded.totalBytes() == before)
+        #expect(try await upgraded.sweep(now: start + 120, retention: nil, maxBytes: cap) == 0)
+        let survivors = try await upgraded.entries()
+        #expect(survivors.count == 2)
+        let copy = try #require(survivors.first { $0.libraryPath == file.path })
+        #expect(copy.byteSize == 5_000)
+        #expect(try Data(contentsOf: #require(copy.imageURL)) == pixels)
+    }
+
     @Test func legacyCaptureReferencesAcquireIndependentBytesOnce() async throws {
         let old = try store()
         let history = directory.appendingPathComponent("History")
@@ -357,7 +389,9 @@ struct ClipboardHistoryStoreTests {
             PRAGMA user_version = 1;
             """, nil, nil, nil) == SQLITE_OK)
 
+        let previousTotal = try await old.totalBytes()
         let upgraded = try store()
+        #expect(try await upgraded.totalBytes() == previousTotal)
         let entries = try await upgraded.entries()
         let kept = try #require(entries.first { $0.libraryPath == file.path })
         let blob = try #require(kept.imageURL)
