@@ -21,16 +21,19 @@ struct CaptureLibraryView: View {
     private var activeFilter: CaptureLibraryFilter { model.filter ?? .all }
 
     /// The sidebar picks a kind of capture, the cloud uploads or a tag.
+    private var currentPage: CaptureLibrarySidebarSelection? {
+        if saved.isShown { return .saved }
+        if clipboard.isShown { return clipboard.showsSnippets ? .snippets : .clipboard }
+        if comments.isShown { return .comments }
+        if likes.isShown { return .likes }
+        if cloud.isShown { return cloud.showsReceived ? .received : cloud.showsFiles ? .files : .cloud }
+        if let tag = model.tagFilter { return .tag(tag) }
+        return model.filter.map { .kind($0) }
+    }
+
     private var sidebarSelection: Binding<CaptureLibrarySidebarSelection?> {
-        Binding {
-            if saved.isShown { return .saved }
-            if clipboard.isShown { return clipboard.showsSnippets ? .snippets : .clipboard }
-            if comments.isShown { return .comments }
-            if likes.isShown { return .likes }
-            if cloud.isShown { return cloud.showsReceived ? .received : cloud.showsFiles ? .files : .cloud }
-            if let tag = model.tagFilter { return .tag(tag) }
-            return model.filter.map { .kind($0) }
-        } set: { selection in
+        Binding { currentPage } set: { selection in
+            guard selection != currentPage else { return }
             if QuickLookPreviewPresenter.followsLibrary { QuickLookPreviewPresenter.dismiss() }
             cloud.cancelPreview()
             cloud.isShown = selection == .cloud || selection == .files || selection == .received
@@ -301,6 +304,15 @@ struct CaptureLibraryView: View {
                 // The sidebar's unread counts, whichever page is open. No timer: only here, on open and on ⌘R.
                 comments.refresh()
                 likes.refresh()
+            }
+        }
+        .onChange(of: model.selection) { _, _ in
+            // AppKit can deselect before selecting the next card in the same key event.
+            guard QuickLookPreviewPresenter.followsLibrary else { return }
+            switch currentPage {
+            case .kind, .tag:
+                QuickLookPreviewPresenter.follow(urls: model.selectedItems.map(\.fileURL))
+            default: break
             }
         }
         .onChange(of: history.items) { _, _ in model.refresh() }

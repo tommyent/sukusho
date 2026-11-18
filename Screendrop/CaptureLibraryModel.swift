@@ -171,12 +171,7 @@ final class CaptureLibraryModel {
     private(set) var tagCounts: [String: Int] = [:]
     var searchText = "" { didSet { scheduleSearch() } }
     var sortOrder: CaptureLibrarySort = .newest { didSet { updateVisibleItems() } }
-    var selection: Set<String> = [] {
-        didSet {
-            guard selection != oldValue, !LibrarySavedModel.shared.isShown, QuickLookPreviewPresenter.followsLibrary else { return }
-            QuickLookPreviewPresenter.follow(urls: selectedItems.map(\.fileURL))
-        }
-    }
+    var selection: Set<String> = []
     private(set) var items: [CaptureLibraryItem] = []
     private(set) var visibleItems: [CaptureLibraryItem] = []
     private(set) var contentRevision = 0

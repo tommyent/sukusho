@@ -27,11 +27,11 @@ final class CloudLibraryModel {
     /// The files going up from the Files page, one at a time.
     private(set) var fileUploads: FileUploads?
     private var fileUploadTask: Task<Void, Never>?
-    var selection: Set<String> = [] {
-        didSet {
-            guard selection != oldValue, QuickLookPreviewPresenter.followsLibrary else { return }
-            quickLook(toggling: false, following: true)
-        }
+    var selection: Set<String> = []
+
+    func followPreviewSelection() {
+        let following = QuickLookPreviewPresenter.followsLibrary
+        if following || previewTask != nil { quickLook(toggling: false, following: following) }
     }
     /// Waiting for the Delete from Cloud confirmation.
     var pendingDelete: [CloudUpload] = []
@@ -302,8 +302,11 @@ final class CloudLibraryModel {
         if toggling, QuickLookPreviewPresenter.isShown { QuickLookPreviewPresenter.dismiss(); return }
         // A gallery has no file of its own; Open Link shows it.
         let targets = selectedUploads.filter { !$0.isGallery }
-        guard !targets.isEmpty else { return }
         cancelPreview()
+        guard !targets.isEmpty else {
+            if following { QuickLookPreviewPresenter.dismiss() }
+            return
+        }
         let fetch = PreviewFetch(uploadIDs: targets.map(\.id))
         let fetchID = fetch.id
         previewFetch = fetch
@@ -656,6 +659,7 @@ struct CloudLibraryPage: View {
                 )
             }
         }
+        .onChange(of: cloud.selection) { _, _ in cloud.followPreviewSelection() }
         // Full height, so the bars below sit at the top even over an empty page.
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .topTrailing) {

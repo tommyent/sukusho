@@ -30,9 +30,6 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
         QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared()?.isVisible == true
     }
 
-    /// The first file of the open preview.
-    static var currentURL: URL? { shared.previewURLs.first as URL? }
-    
     private var sourceURLs: [URL] = []
     private weak var libraryWindow: NSWindow?
 
