@@ -29,6 +29,8 @@ final class HotkeyManager {
     /// What an action on a modifier key alone still needs from macOS: Input Monitoring, or a relaunch once it's on.
     private(set) var inputMonitoring = InputMonitoringNeed.none
     var needsInputMonitoring: Bool { inputMonitoring != .none }
+    /// macOS turned the event tap off and it couldn't come back on: modifier-key shortcuts wait for the next reload.
+    @ObservationIgnored private var modifierTapsStopped = false
     /// The clashing actions Use Other Keys left on their keys, because another app holds the new ones: Settings names
     /// them, whether Use Other Keys ran there or from the launch notice.
     var keptKeys: [CaptureHotkeyAction] = []
@@ -55,7 +57,8 @@ final class HotkeyManager {
         // Back from System Settings with Input Monitoring on: the waiting shortcuts start working.
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated {
-                if HotkeyManager.shared.needsInputMonitoring { HotkeyManager.shared.reloadHotkeys() }
+                let manager = HotkeyManager.shared
+                if manager.needsInputMonitoring || manager.modifierTapsStopped { manager.reloadHotkeys() }
             }
         }
     }
@@ -64,6 +67,7 @@ final class HotkeyManager {
         defer { revision += 1 }
         unregisterHotkeys()
         registrationErrors.removeAll()
+        modifierTapsStopped = false
         guard !isPaused else { return }
 
         var registeredShortcuts: [HotkeyShortcut] = []
@@ -97,9 +101,11 @@ final class HotkeyManager {
             inputMonitoring = .none
             return
         }
-        let watching = modifierTaps.start { [weak self] tap in
+        let watching = modifierTaps.start(onTap: { [weak self] tap in
             self?.tapActions[HotkeyShortcut(tap)]?.perform()
-        }
+        }, onStop: { [weak self] in
+            self?.modifierTapsDidStop()
+        })
         // macOS applies a new Input Monitoring grant only when the app next opens (it says so, and taps stay silent
         // until then: VM, 27.2.1), so a grant this run can see but not use means a relaunch.
         let granted = CGPreflightListenEventAccess()
@@ -112,6 +118,16 @@ final class HotkeyManager {
                 ? "\(shortcut.displayString) works once Sukusho relaunches."
                 : "\(shortcut.displayString) needs Input Monitoring."
         }
+    }
+
+    /// Settings says so under each modifier-key shortcut, and switching to Sukusho starts the tap again.
+    private func modifierTapsDidStop() {
+        modifierTapsStopped = true
+        NSLog("[Sukusho] macOS turned off the modifier-key shortcuts' event tap")
+        for (shortcut, action) in tapActions {
+            registrationErrors[action] = "macOS stopped Sukusho noticing \(shortcut.displayString). It starts again when you next switch to Sukusho."
+        }
+        revision += 1
     }
 
     /// Settings records a shortcut: nothing fires until `resumeAfterRecording`.

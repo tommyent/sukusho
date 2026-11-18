@@ -18,6 +18,7 @@ final class ModifierTapMonitor {
     private var source: CFRunLoopSource?
     private var detector = ModifierTapDetector()
     private var onTap: ((ModifierTapDetector.Tap) -> Void)?
+    private var onStop: (() -> Void)?
     /// Bumped when events are missed, so a tap queued before then doesn't run.
     private var generation = 0
     /// Secure input (a password field) as the last event found it: macOS withholds keys from the tap while it's on.
@@ -31,9 +32,11 @@ final class ModifierTapMonitor {
         NSWorkspace.shared.open(url)
     }
 
-    /// False when macOS doesn't let Sukusho watch the keyboard; the caller says so and offers the setting.
-    func start(onTap: @escaping (ModifierTapDetector.Tap) -> Void) -> Bool {
+    /// False when macOS doesn't let Sukusho watch the keyboard; the caller says so and offers the setting. `onStop` runs
+    /// if macOS turns the watching off later and it can't come back on.
+    func start(onTap: @escaping (ModifierTapDetector.Tap) -> Void, onStop: @escaping () -> Void) -> Bool {
         self.onTap = onTap
+        self.onStop = onStop
         if tap != nil { return true }
         // Without either permission, creating the tap would raise macOS's prompt at launch; it's asked for on recording.
         guard CGPreflightListenEventAccess() || AXIsProcessTrusted() else { return false }
@@ -85,9 +88,17 @@ final class ModifierTapMonitor {
         tap = nil
         source = nil
         onTap = nil
+        onStop = nil
         generation += 1
         activationObserver.map(NSWorkspace.shared.notificationCenter.removeObserver)
         activationObserver = nil
+    }
+
+    private func stopForGood() {
+        let onStop = onStop
+        stop()
+        // After the callback returns, like a tap.
+        DispatchQueue.main.async { onStop?() }
     }
 
     /// A Carbon shortcut fired: the modifier held for it isn't a tap.
@@ -99,9 +110,15 @@ final class ModifierTapMonitor {
         // Secure input came or went: keys typed meanwhile never reached the tap.
         if IsSecureEventInputEnabled() != wasSecure { missEvents() }
         switch type {
-        case .tapDisabledByTimeout, .tapDisabledByUserInput:
-            if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
+        case .tapDisabledByTimeout:
+            // Sukusho took too long over an event: on again while macOS still allows it, else stopped and said so.
             missEvents()
+            if let tap, CGPreflightListenEventAccess() || AXIsProcessTrusted() { CGEvent.tapEnable(tap: tap, enable: true) }
+            if let tap, CGEvent.tapIsEnabled(tap: tap) { return }
+            stopForGood()
+        case .tapDisabledByUserInput:
+            // Turned off on the user's behalf: it stays off, and the shortcuts say so.
+            stopForGood()
         case .flagsChanged:
             detector.interval = NSEvent.doubleClickInterval
             if detector.isUnsure, !Self.otherKeyDown() { detector.noKeysDown() }
