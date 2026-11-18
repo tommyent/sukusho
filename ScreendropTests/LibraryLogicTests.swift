@@ -1,7 +1,19 @@
 import Foundation
+import SwiftUI
 import Testing
 
 struct LibraryLogicTests {
+    @Test func cachedShadowMatchesItsRoundedRectangleAfterResizing() {
+        for width: CGFloat in [220, 140, 220] {
+            let bounds = CGRect(x: 2, y: 3, width: width, height: width - 30)
+            for inset: CGFloat in [0, 1, 8, 10] {
+                let shadow = LibraryShadowShape(inset: inset, radius: 14)
+                let shape = RoundedRectangle(cornerRadius: 14, style: .continuous).inset(by: inset)
+                #expect(shadow.path(in: bounds) == shape.path(in: bounds))
+            }
+        }
+    }
+
     @Test func stockCardDepthFollowsPointerAndDeletion() {
         let resting = LibraryCardDepth(hovering: false, pressed: false, deleting: false)
         let hover = LibraryCardDepth(hovering: true, pressed: false, deleting: false)

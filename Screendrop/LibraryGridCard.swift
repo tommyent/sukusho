@@ -148,7 +148,7 @@ struct LibraryCardSurface: ViewModifier {
 
     private func shadow(_ spec: LibraryCardDepth.Shadow, depth: LibraryCardDepth) -> some View {
         let alpha = depth == .pressed ? (dark ? 0.5 : 0.12) : (dark ? 0.65 : 0.18)
-        return shape.inset(by: spec.inset).fill(.black)
+        return LibraryShadowShape(inset: spec.inset, radius: DS.Radius.card).fill(.black)
             .shadow(color: .black.opacity(alpha), radius: spec.blur / 2, y: spec.offset)
     }
 

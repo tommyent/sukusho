@@ -1,4 +1,6 @@
 import AppKit
+import SwiftUI
+import Synchronization
 
 /// How the Library's grids lay out cards, Finder-style: cards keep one width and a wider window fits more
 /// columns. The gaps grow with the cards, from a fifth to half a card's width, so cards breathe at every slider
@@ -96,6 +98,22 @@ nonisolated enum LibraryCardDepth {
         case .resting: Shadow(offset: 16, blur: 28, inset: 8)
         case .hovering: Shadow(offset: 26, blur: 40, inset: 10)
         case .pressed, .deleting: nil
+        }
+    }
+}
+
+/// Cells of a given size share the same shadow outline. Each inset keeps just its latest bounds.
+nonisolated struct LibraryShadowShape: Shape {
+    let inset: CGFloat
+    let radius: CGFloat
+    private static let paths = Mutex<[CGFloat: (bounds: CGRect, radius: CGFloat, path: Path)]>([:])
+
+    func path(in rect: CGRect) -> Path {
+        Self.paths.withLock { paths in
+            if let cached = paths[inset], cached.bounds == rect, cached.radius == radius { return cached.path }
+            let path = RoundedRectangle(cornerRadius: radius, style: .continuous).inset(by: inset).path(in: rect)
+            paths[inset] = (rect, radius, path)
+            return path
         }
     }
 }
