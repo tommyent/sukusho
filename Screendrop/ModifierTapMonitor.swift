@@ -18,6 +18,11 @@ final class ModifierTapMonitor {
     private var source: CFRunLoopSource?
     private var detector = ModifierTapDetector()
     private var onTap: ((ModifierTapDetector.Tap) -> Void)?
+    /// Bumped when events are missed, so a tap queued before then doesn't run.
+    private var generation = 0
+    /// Secure input (a password field) as the last event found it: macOS withholds keys from the tap while it's on.
+    private var wasSecure = false
+    private var activationObserver: NSObjectProtocol?
 
     /// Privacy & Security › Input Monitoring: `Privacy_ListenEvent` is that page's anchor in System Settings' own search
     /// (PrivacySecurity.searchTerms on macOS 26.5.1 and 27.3, read 2026-11-17).
@@ -55,8 +60,20 @@ final class ModifierTapMonitor {
         tap = port
         self.source = source
         detector = ModifierTapDetector()
-        detector.eventsMissed()
+        missEvents()
+        // Another app came to the front without a key or click Sukusho saw: a first tap before it doesn't pair with one
+        // after.
+        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] _ in MainActor.assumeIsolated { self?.detector.interrupt() } }
         return true
+    }
+
+    /// Events were missed, or watching starts: no gesture begun before counts, and no tap queued before runs.
+    private func missEvents() {
+        detector.eventsMissed()
+        generation += 1
+        wasSecure = IsSecureEventInputEnabled()
     }
 
     func stop() {
@@ -68,6 +85,9 @@ final class ModifierTapMonitor {
         tap = nil
         source = nil
         onTap = nil
+        generation += 1
+        activationObserver.map(NSWorkspace.shared.notificationCenter.removeObserver)
+        activationObserver = nil
     }
 
     /// A Carbon shortcut fired: the modifier held for it isn't a tap.
@@ -76,10 +96,12 @@ final class ModifierTapMonitor {
     }
 
     private func handle(_ type: CGEventType, _ event: CGEvent) {
+        // Secure input came or went: keys typed meanwhile never reached the tap.
+        if IsSecureEventInputEnabled() != wasSecure { missEvents() }
         switch type {
         case .tapDisabledByTimeout, .tapDisabledByUserInput:
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
-            detector.eventsMissed()
+            missEvents()
         case .flagsChanged:
             detector.interval = NSEvent.doubleClickInterval
             if detector.isUnsure, !Self.otherKeyDown() { detector.noKeysDown() }
@@ -94,9 +116,14 @@ final class ModifierTapMonitor {
                 taps = []
             }
             // In a password field (secure input) other keys may not reach the tap, so a chord could look like a tap.
-            guard !taps.isEmpty, !IsSecureEventInputEnabled() else { return }
-            // After the callback returns: a capture starting here shouldn't hold up the event tap.
-            DispatchQueue.main.async { [weak self] in taps.forEach { self?.onTap?($0) } }
+            guard !taps.isEmpty, !wasSecure else { return }
+            // After the callback returns: a capture starting here shouldn't hold up the event tap. By then events may
+            // have been missed, or a password field taken the keyboard.
+            let queued = generation
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.generation == queued, !IsSecureEventInputEnabled() else { return }
+                taps.forEach { self.onTap?($0) }
+            }
         case .keyDown:
             detector.keyDown(isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0)
         case .keyUp:
