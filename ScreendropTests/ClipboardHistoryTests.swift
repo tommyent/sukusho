@@ -793,6 +793,12 @@ struct ClipboardListTests {
         #expect(LibraryDeletionPrompt(captures: 0, clips: 2).message.contains("clipboard history"))
     }
 
+    @Test func savedHasOnePopupControl() {
+        #expect(ClipboardFilter.types == [.all, .images, .text, .links, .colors, .files, .snippets])
+        #expect(ClipboardFilter.saved.typeMenuTitle == ClipboardFilter.all.title)
+        #expect(ClipboardFilter.images.typeMenuTitle == "Images")
+    }
+
     @Test func emptyResultsDescribeTheActiveQueryOrFilter() {
         #expect(ClipboardList.emptyResultsTitle(filter: nil, query: "") == nil)
         #expect(ClipboardList.emptyResultsTitle(filter: "Images", query: "") == "No images")

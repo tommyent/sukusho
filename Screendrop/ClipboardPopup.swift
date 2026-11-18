@@ -282,17 +282,19 @@ struct ClipboardPopupView: View {
                 state.filter = state.filter == .saved ? .all : .saved
             } label: {
                 Label("Saved", systemImage: state.filter == .saved ? "star.fill" : "star")
+                    .padding(.horizontal, DS.Space.ml).padding(.vertical, DS.Space.xs)
+                    .background(state.filter == .saved ? AnyShapeStyle(.tint.opacity(0.2)) : AnyShapeStyle(.quaternary), in: Capsule())
             }
+            .buttonStyle(.plain)
             .accessibilityAddTraits(state.filter == .saved ? .isSelected : [])
             Menu {
-                Picker("Type", selection: $state.filter) {
-                    ForEach(ClipboardFilter.allCases) { filter in
-                        Label(filter.title, systemImage: filter.symbol).tag(filter)
+                ForEach(ClipboardFilter.types) { filter in
+                    Toggle(isOn: Binding(get: { state.filter == filter }, set: { _ in state.filter = filter })) {
+                        Label(filter.title, systemImage: filter.symbol)
                     }
                 }
-                .pickerStyle(.inline)
             } label: {
-                Label(state.filter.title, systemImage: "line.3.horizontal.decrease")
+                Label(state.filter.typeMenuTitle, systemImage: "line.3.horizontal.decrease")
             }
             .menuStyle(.button)
             .buttonStyle(.bordered)

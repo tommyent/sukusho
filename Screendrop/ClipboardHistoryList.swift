@@ -4,6 +4,9 @@ import Foundation
 nonisolated enum ClipboardFilter: String, CaseIterable, Identifiable, Sendable {
     case all, images, text, links, colors, files, snippets, saved
 
+    static let types = allCases.filter { $0 != .saved }
+    var typeMenuTitle: String { self == .saved ? Self.all.title : title }
+
     var id: Self { self }
 
     var title: String {

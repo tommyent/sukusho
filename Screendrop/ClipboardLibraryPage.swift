@@ -63,7 +63,7 @@ struct ClipboardLibraryPage: View {
 
     private var filterChips: some View {
         HStack(spacing: DS.Space.m) {
-            ForEach(ClipboardFilter.allCases.filter { $0 != .snippets && $0 != .saved }) { item in
+            ForEach(ClipboardFilter.types.filter { $0 != .snippets }) { item in
                 Button { model.libraryFilter = item } label: {
                     Label(item == .all ? "All" : item.title, systemImage: item.symbol)
                         .labelStyle(.titleAndIcon)
