@@ -6,11 +6,9 @@ struct ClipboardLibraryPage: View {
     @Bindable var model: ClipboardHistoryModel
     /// The status bar's card-size slider, shared with the captures and Cloud grids.
     let cardWidth: CGFloat
+    let layout: CaptureLibraryLayout
     @AppStorage(ScreendropPreferences.clipboardHistoryEnabledKey) private var enabled = false
     @State private var library = CaptureLibraryModel.shared
-    /// Rows like the popup's instead of cards: text scans faster as rows (Fable #3, mockup 08 B).
-    @AppStorage("clipboard.libraryShowsList") private var showsList = false
-
     var body: some View {
         if !enabled {
             ClipboardSetupPage()
@@ -24,7 +22,6 @@ struct ClipboardLibraryPage: View {
                 // On a bar of its own, as the Cloud page's rows are, so the grid scrolls under it, never over it.
                 HStack(spacing: DS.Space.m) {
                     Group { if model.showsSnippets { snippetBar } else { filterBar } }
-                    layoutPicker
                 }
                     .padding(.horizontal, DS.Space.xl).padding(.vertical, DS.Space.m)
                     .frame(maxWidth: .infinity)
@@ -33,7 +30,7 @@ struct ClipboardLibraryPage: View {
                 if sections.isEmpty {
                     emptyPage.frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    LibraryClipCollection(cards: cards, cardWidth: cardWidth, layout: showsList ? .list : .grid,
+                    LibraryClipCollection(cards: cards, cardWidth: cardWidth, layout: layout,
                         sections: model.showsSnippets ? [] : sections.map { LibraryCollectionSection(title: $0.title, count: $0.entries.count) },
                         isSavedPage: false)
                 }
@@ -42,19 +39,6 @@ struct ClipboardLibraryPage: View {
                 model.librarySelectionIDs.formIntersection(sections.flatMap { $0.entries.map(\.id) })
             }
         }
-    }
-
-    private var layoutPicker: some View {
-        Picker("Layout", selection: $showsList) {
-            Label("Grid", systemImage: "square.grid.2x2").tag(false)
-            Label("List", systemImage: "list.bullet").tag(true)
-        }
-        .pickerStyle(.segmented)
-        .labelStyle(.iconOnly)
-        .labelsHidden()
-        .controlSize(.small)
-        .fixedSize()
-        .help(showsList ? "Show as cards" : "Show as a list")
     }
 
     private var snippetBar: some View {

@@ -485,6 +485,7 @@ struct LibraryCellContent: View {
     @Environment(\.selectLibraryCell) private var selectCell
     let item: CaptureLibraryItem?
     let selected: Bool
+    var layout: CaptureLibraryLayout = .grid
     var onTitleFrame: (CGRect) -> Void = { _ in }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
@@ -493,13 +494,24 @@ struct LibraryCellContent: View {
         Group {
             if let item {
                 // The picture as a chip on the card, the caption under it on two lines, lined up with its left edge.
-                VStack(alignment: .leading, spacing: 8) {
+                Group {
+                    if layout == .list {
+                        HStack(spacing: 12) {
+                            CaptureLibraryThumbnail(item: item).frame(width: 84, height: 52)
+                            labels(item)
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 12)
+                    } else {
+                        VStack(alignment: .leading, spacing: 8) {
                     thumbnail(item)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .padding([.top, .horizontal], LibraryGridMetrics.pictureInset)
                     labels(item)
                         .padding(.horizontal, LibraryGridMetrics.pictureInset)
                         .padding(.bottom, 10)
+                        }
+                    }
                 }
                 .background(
                     Color.primary.opacity(selected ? 0.075 : isHovering ? 0.035 : 0.012),

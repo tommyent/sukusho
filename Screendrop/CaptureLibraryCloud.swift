@@ -583,6 +583,7 @@ final class CloudLibraryModel {
 struct CloudLibraryPage: View {
     let cloud: CloudLibraryModel
     let cardWidth: CGFloat
+    let layout: CaptureLibraryLayout
 
     var body: some View {
         let uploads = cloud.visibleUploads
@@ -646,12 +647,12 @@ struct CloudLibraryPage: View {
                 // The Library's own collection, so uploads select, open and
                 // delete as captures do.
                 CaptureLibraryCollection(
-                    items: uploads, revision: revision(uploads, local: local), layout: .grid, cardWidth: cardWidth,
+                    items: uploads, revision: revision(uploads, local: local), layout: layout, cardWidth: cardWidth,
                     selection: Binding { cloud.selection } set: { cloud.selection = $0 },
                     isBusy: cloud.isBusy, accessibilityLabel: "Uploads",
                     cell: { [deleting = cloud.deletingIDs] upload, selected, _ in
                         AnyView(CloudUploadCard(upload: upload, local: local[upload.id],
-                                                selected: selected, deleting: deleting.contains(upload.id)))
+                                                selected: selected, deleting: deleting.contains(upload.id), layout: layout))
                     },
                     menu: { _ in cloud.menuItems() },
                     backgroundMenu: { CaptureLibraryModel.shared.backgroundMenuItems { cloud.refresh() } },
@@ -790,14 +791,26 @@ private struct CloudUploadCard: View {
     let local: CaptureLibraryItem?
     let selected: Bool
     let deleting: Bool
+    let layout: CaptureLibraryLayout
     @State private var isHovering = false
     /// The duration pill's width, kept clear by the comment and like badges.
     @State private var durationWidth: CGFloat = 0
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            thumbnail.frame(maxWidth: .infinity, maxHeight: .infinity)
-            labels.padding(.horizontal, 10).padding(.bottom, 10)
+        Group {
+            if layout == .list {
+                HStack(spacing: 12) {
+                    CloudUploadThumbnail(upload: upload, local: local, showsTopOfTall: true).frame(width: 84, height: 52)
+                    labels
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 12)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    thumbnail.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    labels.padding(.horizontal, 10).padding(.bottom, 10)
+                }
+            }
         }
         .background(
             Color.primary.opacity(selected ? 0.075 : isHovering ? 0.035 : 0.012),

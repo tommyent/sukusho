@@ -86,6 +86,7 @@ enum LibrarySavedCard: Identifiable {
 
 struct LibrarySavedPage: View {
     let cardWidth: CGFloat
+    let layout: CaptureLibraryLayout
     @State private var saved = LibrarySavedModel.shared
     @State private var library = CaptureLibraryModel.shared
     @State private var clipboard = ClipboardHistoryModel.shared
@@ -120,7 +121,7 @@ struct LibrarySavedPage: View {
             if cards.isEmpty {
                 emptyPage.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                LibraryClipCollection(cards: cards, cardWidth: cardWidth, layout: .grid, sections: [], isSavedPage: true)
+                LibraryClipCollection(cards: cards, cardWidth: cardWidth, layout: layout, sections: [], isSavedPage: true)
             }
         }
         .onChange(of: cards.map(\.id)) { _, _ in

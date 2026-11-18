@@ -18,6 +18,9 @@ struct CaptureLibraryView: View {
     @AppStorage("captureLibrary.cardWidth") private var cardWidth = 220.0
     @AppStorage("captureLibrary.sort") private var savedSort: CaptureLibrarySort = .newest
 
+    @AppStorage("clipboard.libraryShowsList") private var showsList = false
+    private var layout: CaptureLibraryLayout { showsList ? .list : .grid }
+
     private var activeFilter: CaptureLibraryFilter { model.filter ?? .all }
 
     /// The sidebar picks a kind of capture, the cloud uploads or a tag.
@@ -370,15 +373,15 @@ struct CaptureLibraryView: View {
 
     @ViewBuilder private var browser: some View {
         if saved.isShown {
-            LibrarySavedPage(cardWidth: cardWidth)
+            LibrarySavedPage(cardWidth: cardWidth, layout: layout)
         } else if clipboard.isShown {
-            ClipboardLibraryPage(model: clipboard, cardWidth: cardWidth)
+            ClipboardLibraryPage(model: clipboard, cardWidth: cardWidth, layout: layout)
         } else if comments.isShown {
             CommentsLibraryPage(comments: comments)
         } else if likes.isShown {
             LikesLibraryPage(likes: likes)
         } else if cloud.isShown {
-            CloudLibraryPage(cloud: cloud, cardWidth: cardWidth)
+            CloudLibraryPage(cloud: cloud, cardWidth: cardWidth, layout: layout)
         } else if !model.hasLoaded {
             ProgressView("Loading Library…").workspaceTextPlate().frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if model.visibleItems.isEmpty {
@@ -423,10 +426,10 @@ struct CaptureLibraryView: View {
                 .workspaceTextPlate()
             }
         } else {
-            CaptureLibraryCollection(items: model.visibleItems, revision: model.contentRevision, layout: .grid,
+            CaptureLibraryCollection(items: model.visibleItems, revision: model.contentRevision, layout: layout,
                 cardWidth: cardWidth, selection: $model.selection, isBusy: model.isBusy,
                 cell: { item, selected, onTitleFrame in
-                    AnyView(LibraryCellContent(item: item, selected: selected, onTitleFrame: onTitleFrame))
+                    AnyView(LibraryCellContent(item: item, selected: selected, layout: layout, onTitleFrame: onTitleFrame))
                 },
                 menu: { [model] in model.menuItems(selected: $0) },
                 backgroundMenu: { [model] in model.backgroundMenuItems { model.refresh() } },
@@ -570,7 +573,13 @@ struct CaptureLibraryView: View {
                     .help(comments.isShown ? "Refreshing comments" : likes.isShown ? "Refreshing likes"
                           : cloud.isShown ? "Refreshing uploads" : "Refreshing Library")
             }
-            if !comments.isShown, !likes.isShown {
+            if !comments.isShown, !likes.isShown, (!clipboard.isShown || clipboardEnabled) {
+                Picker("Layout", selection: $showsList) {
+                    Label("Grid", systemImage: "square.grid.2x2").tag(false)
+                    Label("List", systemImage: "list.bullet").tag(true)
+                }
+                .pickerStyle(.segmented).labelsHidden().labelStyle(.iconOnly).controlSize(.small).fixedSize()
+                if !showsList {
                 // Capped where the 640 px thumbnails stay sharp on Retina.
                 Slider(value: $cardWidth, in: LibraryCardWidth.range) {
                     EmptyView()
@@ -583,6 +592,7 @@ struct CaptureLibraryView: View {
                 .frame(width: 150)
                 .accessibilityLabel("Card size")
                 .help("Card size")
+                }
             }
         }
         .font(.caption)
@@ -602,7 +612,10 @@ struct CaptureLibraryView: View {
     private var refreshShortcut: some View {
         Button("Refresh") {
             if comments.isShown { comments.refresh() } else if likes.isShown { likes.refresh() }
-            else if cloud.isShown { cloud.refresh() } else { model.refresh() }
+            else if cloud.isShown { cloud.refresh() }
+            else if clipboard.isShown { clipboard.refresh() }
+            else if saved.isShown { clipboard.refresh(); history.reload(); model.refresh() }
+            else { history.reload(); model.refresh() }
         }
         .keyboardShortcut("r", modifiers: .command)
         .opacity(0)

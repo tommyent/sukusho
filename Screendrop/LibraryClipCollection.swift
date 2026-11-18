@@ -39,11 +39,16 @@ struct LibraryClipCollection: View {
             sections: sections, cell: { card, selected, titleFrame in
                 switch card {
                 case .capture(let item):
-                    AnyView(LibraryCellContent(item: item, selected: selected, onTitleFrame: titleFrame))
+                    AnyView(LibraryCellContent(item: item, selected: selected, layout: layout, onTitleFrame: titleFrame))
                 case .clip(let entry):
                     AnyView(clipView(entry, selected: selected))
                 }
-            }, menu: { _ in menu() }, onReturn: {
+            }, menu: { _ in menu() }, backgroundMenu: {
+                [LibraryMenuItem(title: "Refresh") {
+                    clipboard.refresh()
+                    if isSavedPage { ScreenshotHistoryStore.shared.reload(); library.refresh() }
+                }]
+            }, onReturn: {
                 perform(chosen.contains { $0.clipID != nil } ? .copy : .rename)
             }, onAction: perform)
             .onChange(of: selection.wrappedValue) { _, _ in
