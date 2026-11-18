@@ -43,7 +43,8 @@ final class HotkeyShortcutRecorder {
             forName: NSWindow.didResignKeyNotification, object: nil, queue: .main
         ) { [weak self] _ in MainActor.assumeIsolated { self?.cancel() } }
 
-        let types: NSEvent.EventTypeMask = [.keyDown, .keyUp, .flagsChanged, .leftMouseDown, .rightMouseDown, .otherMouseDown]
+        let types: NSEvent.EventTypeMask = [.keyDown, .keyUp, .flagsChanged, .leftMouseDown, .rightMouseDown, .otherMouseDown,
+                                            .scrollWheel]
         monitor = NSEvent.addLocalMonitorForEvents(matching: types) { [weak self] event in
             guard let self else { return event }
             return self.handle(event)
@@ -76,6 +77,12 @@ final class HotkeyShortcutRecorder {
             let found = taps.flagsChanged(
                 keyCode: Int(event.keyCode), flags: UInt64(event.modifierFlags.rawValue), at: event.timestamp
             )
+            // As in other apps (ModifierTapMonitor): a modifier pressed or released with a mouse button down is part of a
+            // drag or a click.
+            if NSEvent.pressedMouseButtons != 0 {
+                taps.interrupt()
+                return event
+            }
             if let double = found.first(where: { if case .twice = $0 { true } else { false } }) {
                 finish(with: HotkeyShortcut(double))
             } else if let single = found.first {
@@ -109,7 +116,7 @@ final class HotkeyShortcutRecorder {
             taps.keyUp()
             return event
         default:
-            // A click isn't part of a shortcut; it still does what it does.
+            // A click or a scroll isn't part of a shortcut, and ends a tap; it still does what it does.
             taps.interrupt()
             return event
         }
