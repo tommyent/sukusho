@@ -115,8 +115,12 @@ struct CaptureHotkeySettingsSection: View {
                 }
                 Button("Open Keyboard Shortcuts…") { SystemScreenshotShortcuts.openKeyboardSettings() }
                     .controlSize(.small)
-                    .help("Turn macOS’s off in Keyboard Shortcuts › Screenshots")
+                    .help(SystemScreenshotShortcuts.keyboardShortcutsHint)
             }
+            Text(SystemScreenshotShortcuts.keyboardShortcutsHint)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
     }
 

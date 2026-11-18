@@ -489,6 +489,10 @@ enum SystemScreenshotShortcuts {
         return "\(list(kept.map(\.title))) kept \(kept.count == 1 ? "its" : "their") keys: another app uses the new ones."
     }
 
+    /// Under and on every Open Keyboard Shortcuts… button (the owner, 2026-11-17): the link lands on the sheet's Modifier
+    /// Keys section on macOS 26.5.1 and 27.2.1, one click from Screenshots.
+    static let keyboardShortcutsHint = "Opens Keyboard Shortcuts; choose Screenshots on the left"
+
     /// Opens System Settings at Keyboard › Keyboard Shortcuts…, the nearest a link reaches: `Shortcuts` is the anchor
     /// System Settings' own search uses for "App and system keyboard shortcuts" (Keyboard.searchTerms on macOS 26.5.1
     /// and 27.3, read 2026-11-17); no anchor selects Screenshots in it, one click from there.

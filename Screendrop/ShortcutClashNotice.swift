@@ -48,8 +48,16 @@ enum ShortcutClashNotice {
         alert.messageText = "macOS also uses some of Sukusho’s shortcuts"
         alert.informativeText = SystemScreenshotShortcuts.warning(clashes, canUseOtherKeys: !otherKeys.isEmpty)
         if !otherKeys.isEmpty { alert.addButton(withTitle: "Use Other Keys…") }
-        alert.addButton(withTitle: "Open Keyboard Shortcuts…")
+        alert.addButton(withTitle: "Open Keyboard Shortcuts…").toolTip = SystemScreenshotShortcuts.keyboardShortcutsHint
         alert.addButton(withTitle: "Not Now")
+        // An alert can't put text under one of its buttons, so the line goes just above them, below the warning.
+        let hint = NSTextField(wrappingLabelWithString: SystemScreenshotShortcuts.keyboardShortcutsHint)
+        hint.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        hint.textColor = .secondaryLabelColor
+        hint.alignment = .center
+        hint.preferredMaxLayoutWidth = 220
+        hint.frame.size = hint.fittingSize
+        alert.accessoryView = hint
         NSApp.activate()
         let response = alert.runModal()
         // Shown once it's answered, Not Now included; a notice that never got an answer comes back at the next launch.
