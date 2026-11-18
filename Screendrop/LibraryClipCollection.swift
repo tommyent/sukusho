@@ -92,10 +92,7 @@ struct LibraryClipCollection: View {
             case .capture: library.perform(.edit)
             }
         case .copy, .copyOriginal:
-            if selected.allSatisfy({ $0.captureID != nil }) { library.perform(action) }
-            else if selected.count == 1, case .clip(let entry) = selected[0] {
-                clipboard.deliver(entry, as: .copy, to: nil)
-            }
+            library.copySelection(selected, original: action == .copyOriginal)
         default:
             if selected.allSatisfy({ $0.captureID != nil }) { library.perform(action) }
         }

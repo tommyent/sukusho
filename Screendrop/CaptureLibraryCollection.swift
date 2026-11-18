@@ -76,6 +76,7 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
         collection.configureLayout(layout)
         collection.dataSource = context.coordinator
         collection.delegate = context.coordinator
+        collection.canPerformCommand = { [weak coordinator = context.coordinator] in coordinator?.parent.isBusy == false }
         collection.command = { [weak coordinator = context.coordinator] action in
             guard let coordinator, !coordinator.parent.isBusy else { return }
             if action == .edit { coordinator.selectionChanged() }
@@ -265,7 +266,7 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
     }
 }
 
-final class LibraryCollectionView: NSCollectionView {
+final class LibraryCollectionView: NSCollectionView, NSUserInterfaceValidations {
     var command: ((CaptureLibraryAction) -> Void)?
     var contextMenuProvider: ((NSEvent) -> NSMenu?)?
     var mouseSelectionHandler: ((NSEvent) -> Void)?
@@ -336,6 +337,13 @@ final class LibraryCollectionView: NSCollectionView {
         }
         super.keyDown(with: event)
     }
+
+    func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(copy(_:)) { return !selectionIndexPaths.isEmpty && canPerformCommand?() == true }
+        return responds(to: item.action)
+    }
+
+    var canPerformCommand: (() -> Bool)?
 
     @objc func copy(_ sender: Any?) { command?(.copy) }
 }

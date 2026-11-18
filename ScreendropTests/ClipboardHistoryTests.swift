@@ -973,6 +973,27 @@ struct ClipboardWriterTests {
         }
     }
 
+    @Test func mixedClipPayloadKeepsOrderAndImageHasFileAndPixels() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let image = dir.appending(path: "blue.png")
+        let pixels = ClipboardHistoryStoreTests.picture(2)
+        try pixels.write(to: image)
+        let entries = [entry(.snippet, "Snippet"), entry(.image, nil, image: image), entry(.files, "/tmp/a\n/tmp/b")]
+        let items = try entries.flatMap { try #require(ClipboardWriter.items(for: $0, richText: [:], plain: false)) }
+        try withPasteboard { board in
+            #expect(board.writeObjects(items))
+            let written = try #require(board.pasteboardItems)
+            #expect(written.count == 4)
+            #expect(written[0].string(forType: .string) == "Snippet")
+            #expect(written[1].data(forType: .png) == pixels)
+            #expect(written[1].string(forType: .fileURL) == image.absoluteString)
+            #expect(written[2].string(forType: .fileURL) == URL(fileURLWithPath: "/tmp/a").absoluteString)
+            #expect(written[3].string(forType: .fileURL) == URL(fileURLWithPath: "/tmp/b").absoluteString)
+        }
+    }
+
     @Test func aMissingImageFileIsNotWritten() {
         withPasteboard { pasteboard in
             let gone = URL(fileURLWithPath: "/tmp/SukushoClipboardTest-\(UUID().uuidString).png")
