@@ -109,6 +109,15 @@ final class ModifierTapMonitor {
         armWhenQuiet()
     }
 
+    /// Secure input found changed, at an event or when a queued tap runs: keys were withheld meanwhile, so it's missed
+    /// events either way, and a first tap before it can't pair with one after.
+    private func sampleSecureInput(at time: TimeInterval) -> Bool {
+        guard detector.secureInput(IsSecureEventInputEnabled(), at: time) else { return false }
+        generation += 1
+        armWhenQuiet()
+        return true
+    }
+
     private func armWhenQuiet() {
         arming.start({ [weak self] in self?.detector }, arm: { [weak self] in self?.detector.arm(at: $0) })
     }
@@ -167,10 +176,7 @@ final class ModifierTapMonitor {
         // queued from before the keyboard was seen quiet are judged by when they happened.
         let time = NSEvent(cgEvent: event)?.timestamp ?? now
         // Secure input came or went: keys typed meanwhile never reached the tap.
-        if detector.secureInput(IsSecureEventInputEnabled(), at: time) {
-            generation += 1
-            armWhenQuiet()
-        }
+        _ = sampleSecureInput(at: time)
         switch type {
         case .flagsChanged:
             detector.interval = NSEvent.doubleClickInterval
@@ -187,7 +193,8 @@ final class ModifierTapMonitor {
             // have been missed, or a password field taken the keyboard.
             let queued = generation
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.generation == queued, !IsSecureEventInputEnabled() else { return }
+                guard let self, self.generation == queued,
+                      !self.sampleSecureInput(at: ProcessInfo.processInfo.systemUptime) else { return }
                 taps.forEach { self.onTap?($0) }
             }
         case .keyDown:
