@@ -188,8 +188,10 @@ struct LibraryGridCaption<Title: View>: View {
                 title()
                     .font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.tail).libraryRaisedText()
                 Spacer(minLength: 0)
-                if capture?.hasDraft == true { Image(systemName: "circle.fill").font(.system(size: 6)).foregroundStyle(.orange) }
-                if let capture, capture.session != nil { AgentPromptCardMark(item: capture, size: 16).id(capture.id).fixedSize() }
+                if capture?.hasDraft == true {
+                    Image(systemName: "circle.fill").font(.system(size: 6)).foregroundStyle(.orange).libraryRaisedIcon()
+                }
+                if let capture, capture.session != nil { AgentPromptCardMark(item: capture, size: 16).id(capture.id).fixedSize().libraryRaisedIcon() }
             }
             .frame(height: 16)
             HStack(spacing: 4) {
@@ -204,6 +206,7 @@ struct LibraryGridCaption<Title: View>: View {
                         Image(systemName: "star")
                             .font(.system(size: 11, weight: hoveringStar ? .semibold : .regular))
                             .foregroundStyle(hoveringStar ? Color.primary : Color.secondary)
+                            .libraryRaisedIcon()
                             .frame(width: 22, height: 22)
                             .contentShape(Rectangle())
                     }
