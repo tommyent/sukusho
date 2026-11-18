@@ -58,9 +58,9 @@ final class HotkeyShortcutRecorder {
             modifiers: HotkeyShortcut.Modifiers(from: event.modifierFlags),
             keyCode: Int(event.keyCode)
         )
-        guard shortcut.hasCommandOrControl else {
+        if let refusal = shortcut.refusal {
             NSSound.beep()
-            rejection = "Include ⌘ or ⌃. With ⌥ or ⇧ alone, the keys type a character in other apps."
+            rejection = refusal
             return nil
         }
 

@@ -55,6 +55,9 @@ struct CaptureHotkeySettingsSection: View {
                     warningLabel("Also macOS’s")
                         .accessibilityLabel("\(action.title)’s shortcut is also one of macOS’s")
                 }
+                if let warning = shortcuts[action]?.typingWarning {
+                    warningLabel(warning)
+                }
             }
 
             messages
@@ -178,7 +181,7 @@ struct CaptureHotkeySettingsSection: View {
         }
 
         if recordingAction != nil, recorder.rejection == nil {
-            Text("Type the new shortcut, with ⌘ or ⌃. Press Esc to cancel.")
+            Text("Type the new shortcut. Press Esc to cancel.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

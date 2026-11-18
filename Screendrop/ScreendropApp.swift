@@ -35,8 +35,11 @@ struct ScreendropApp: App {
                 CheckForUpdatesCommand()
             }
             CommandGroup(after: .newItem) {
-                Button("Show Library") { CaptureLibraryModel.shared.show() }
-                    .keyboardShortcut(MenuBarView.shortcut(for: .library))
+                Button { CaptureLibraryModel.shared.show() } label: {
+                    Text("Show Library")
+                    if let subtitle = MenuBarView.subtitle(for: .library) { Text(subtitle) }
+                }
+                .keyboardShortcut(MenuBarView.shortcut(for: .library))
             }
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") { SettingsWindowController.show(tab: .general) }

@@ -60,15 +60,37 @@ struct HotkeyShortcut: Codable, Equatable, Hashable {
     }
 
     var isValid: Bool {
-        !modifiers.isEmpty
+        !modifiers.isEmpty || Self.functionKeyCodes.contains(keyCode)
     }
 
-    /// New shortcuts need ⌘ or ⌃. With ⌥ or ⇧ alone the chord types a
-    /// character, so as a global hotkey it would take that character away
-    /// from every app. Shortcuts recorded before this rule are kept.
-    var hasCommandOrControl: Bool {
-        !modifiers.isDisjoint(with: [.command, .control])
+    /// Why the recorder turns these keys down, in one line; nil when they can be a shortcut. Any modifier with any key
+    /// can, and so can F1 to F20 alone; another key alone would stop working in every app.
+    var refusal: String? {
+        guard modifiers.isEmpty, !Self.functionKeyCodes.contains(keyCode) else { return nil }
+        return "\(Self.keyLabel(for: keyCode)) on its own would stop working in every app. Add ⌘, ⌥, ⌃ or ⇧, or use F1 to F20."
     }
+
+    /// With ⌥ or ⇧ but neither ⌘ nor ⌃, the keys also type or edit in text fields, and while they're Sukusho's no app
+    /// gets them. They're allowed (the owner wants the choice, 2026-11-17), with this warning.
+    var typingWarning: String? {
+        guard !modifiers.isEmpty, modifiers.isDisjoint(with: [.command, .control]),
+              !Self.functionKeyCodes.contains(keyCode) else { return nil }
+        return Self.editingKeyCodes.contains(keyCode)
+            ? "\(displayString) also works in text fields. While it’s Sukusho’s shortcut, no app gets it."
+            : "\(displayString) also types a character. While it’s Sukusho’s shortcut, you can’t type it."
+    }
+
+    /// F1 to F20, the keys that can be a shortcut on their own.
+    static let functionKeyCodes: Set<Int> = [
+        kVK_F1, kVK_F2, kVK_F3, kVK_F4, kVK_F5, kVK_F6, kVK_F7, kVK_F8, kVK_F9, kVK_F10,
+        kVK_F11, kVK_F12, kVK_F13, kVK_F14, kVK_F15, kVK_F16, kVK_F17, kVK_F18, kVK_F19, kVK_F20,
+    ]
+
+    /// Keys that move, select or delete in text fields rather than type a character.
+    private static let editingKeyCodes: Set<Int> = [
+        kVK_Return, kVK_ANSI_KeypadEnter, kVK_Tab, kVK_Delete, kVK_ForwardDelete, kVK_Escape,
+        kVK_LeftArrow, kVK_RightArrow, kVK_UpArrow, kVK_DownArrow, kVK_Home, kVK_End, kVK_PageUp, kVK_PageDown, kVK_Help,
+    ]
 
     private static func keyLabel(for keyCode: Int) -> String {
         switch keyCode {
@@ -94,6 +116,14 @@ struct HotkeyShortcut: Codable, Equatable, Hashable {
         case kVK_F10: return "F10"
         case kVK_F11: return "F11"
         case kVK_F12: return "F12"
+        case kVK_F13: return "F13"
+        case kVK_F14: return "F14"
+        case kVK_F15: return "F15"
+        case kVK_F16: return "F16"
+        case kVK_F17: return "F17"
+        case kVK_F18: return "F18"
+        case kVK_F19: return "F19"
+        case kVK_F20: return "F20"
         default:
             return ansiKeyLabel(for: keyCode) ?? "Key \(keyCode)"
         }
