@@ -262,7 +262,7 @@ struct ClipboardCard: View {
         .overlay { LibraryCardBorder(selected: isSelected) }
         .onHover { isHovering = $0 }
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { model.deliver(entry, as: .copy, to: nil) }
+        .onTapGesture(count: 2) { model.openLibraryEntry(entry) }
         .onTapGesture { model.librarySelection = entry.id }
         .contextMenu { ClipboardEntryMenu(entry: entry, model: model) }
         .accessibilityElement(children: .combine)
@@ -346,7 +346,7 @@ private struct ClipboardListRow: View {
                     in: RoundedRectangle(cornerRadius: 7, style: .continuous))
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
-        .onTapGesture(count: 2) { model.deliver(entry, as: .copy, to: nil) }
+        .onTapGesture(count: 2) { model.openLibraryEntry(entry) }
         .onTapGesture { model.librarySelection = entry.id }
         .contextMenu { ClipboardEntryMenu(entry: entry, model: model) }
         .help(model.appName(entry.sourceBundleID).map { "From \($0)" } ?? "")

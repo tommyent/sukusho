@@ -17,7 +17,13 @@ final class ClipboardHistoryModel {
     var isShown = false
     var showsSnippets = false
     /// The Library page's selected entry.
-    var librarySelection: ClipboardEntry.ID?
+    var librarySelection: ClipboardEntry.ID? {
+        didSet {
+            guard librarySelection != oldValue, isShown || LibrarySavedModel.shared.isShown,
+                  QuickLookPreviewPresenter.followsLibrary, let entry = entry(librarySelection) else { return }
+            QuickLookPreviewPresenter.follow(urls: quickLookURLs(for: entry))
+        }
+    }
     /// A snippet just made with New Snippet, whose editor takes the keyboard so typing goes into it (Astra R3).
     var snippetAwaitingFocus: ClipboardEntry.ID?
     /// The Library page's type filter.
@@ -338,13 +344,7 @@ final class ClipboardHistoryModel {
         // Only the entry being looked at keeps files here, so a deleted copy doesn't linger in them.
         if !QuickLookPreviewPresenter.isShown { Self.clearQuickLookFiles() }
         let urls = quickLookURLs(for: entry)
-        guard let first = urls.first else { return }
-        if QuickLookPreviewPresenter.isShown,
-           QuickLookPreviewPresenter.currentURL?.standardizedFileURL == first.standardizedFileURL {
-            QuickLookPreviewPresenter.dismiss()
-            return
-        }
-        QuickLookPreviewPresenter.show(urls: urls)
+        QuickLookPreviewPresenter.toggleLibrarySelection(urls)
     }
 
     private static let quickLookFolder = FileManager.default.temporaryDirectory
@@ -375,6 +375,12 @@ final class ClipboardHistoryModel {
     /// outside the Library, which becomes a capture only on its first saved edit, dated when it was copied and
     /// credited to its app, and the clip is linked to it then (Fable #5: opening alone added it to the Library, dated
     /// the moment Edit was clicked).
+    func openLibraryEntry(_ entry: ClipboardEntry) {
+        librarySelection = entry.id
+        if entry.kind == .image { openInEditor(entry) }
+        else { deliver(entry, as: .copy, to: nil) }
+    }
+
     func openInEditor(_ entry: ClipboardEntry) {
         guard entry.kind == .image else { return }
         if let capture = entry.libraryPath.map({ URL(fileURLWithPath: $0) }),

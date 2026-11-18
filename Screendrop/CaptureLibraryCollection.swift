@@ -18,7 +18,7 @@ enum CaptureLibraryAction: String {
         [Self.preview, .edit, .rename, .copy, .export, .share, .reveal, .trash].map { action in
             LibraryMenuItem(
                 title: action.rawValue,
-                isEnabled: !(action == .rename || action == .edit || action == .preview) || count == 1,
+                isEnabled: !(action == .rename || action == .edit) || count == 1,
                 startsGroup: action == .copy || action == .trash
             ) { perform(action) }
         }

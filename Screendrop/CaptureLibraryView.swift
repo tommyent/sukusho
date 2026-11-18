@@ -31,6 +31,8 @@ struct CaptureLibraryView: View {
             if let tag = model.tagFilter { return .tag(tag) }
             return model.filter.map { .kind($0) }
         } set: { selection in
+            if QuickLookPreviewPresenter.followsLibrary { QuickLookPreviewPresenter.dismiss() }
+            cloud.cancelPreview()
             cloud.isShown = selection == .cloud || selection == .files || selection == .received
             cloud.showsFiles = selection == .files
             cloud.showsReceived = selection == .received

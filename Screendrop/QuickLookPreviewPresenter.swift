@@ -33,6 +33,17 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
     /// The first file of the open preview.
     static var currentURL: URL? { shared.previewURLs.first as URL? }
     
+    private var sourceURLs: [URL] = []
+    private weak var libraryWindow: NSWindow?
+
+    static func toggleLibrarySelection(_ urls: [URL]) {
+        if shared.openedFromLibrary, shared.sourceURLs == urls {
+            dismiss()
+        } else if !urls.isEmpty {
+            show(urls: urls)
+        }
+    }
+
     /// Pass `collapsingPreviewStack: true` when previewing from the floating
     /// stack, so its cards don't sit on top of the Quick Look window.
     static func show(url: URL, collapsingPreviewStack: Bool = false) {
@@ -46,13 +57,14 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
     }
     
     /// Whether the Library's Quick Look is open, which shows whatever the Library has selected.
-    static var followsLibrary: Bool { isShown && shared.openedFromLibrary }
+    static var followsLibrary: Bool { shared.openedFromLibrary && (isShown || shared.preparationTask != nil) }
 
     /// The Library's selection changed under its open Quick Look: shows it in
     /// the same panel, as Finder does, and leaves the key window alone.
     static func follow(urls: [URL]) {
-        guard followsLibrary, !urls.isEmpty else { return }
-        shared.show(urls: urls, collapsingPreviewStack: false, keepingFocus: true)
+        guard followsLibrary else { return }
+        guard !urls.isEmpty else { dismiss(); return }
+        shared.show(urls: urls, collapsingPreviewStack: false, keepingFocus: isShown)
     }
 
     static func dismiss() {
@@ -71,6 +83,12 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
 
     private func show(urls: [URL], collapsingPreviewStack: Bool, keepingFocus: Bool = false) {
         preparationTask?.cancel()
+        preparationTask = nil
+        sourceURLs = urls
+        openedFromLibrary = !collapsingPreviewStack
+        if openedFromLibrary, !keepingFocus {
+            libraryWindow = NSApp.windows.first { $0.identifier?.rawValue == "CAPTURE_LIBRARY" }
+        }
         if urls.contains(where: { RecordingDeliverable.session(for: $0) != nil }) {
             StudioProjectRegistry.shared.flushDrafts()
         }
@@ -86,9 +104,12 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
                     if let ready { prepared.append(ready) } else { prepared.append(try await RecordingDeliverable.resolve(for: url)) }
                 }
                 guard !Task.isCancelled else { return }
+                self?.preparationTask = nil
                 self?.present(urls: prepared, collapsingPreviewStack: collapsingPreviewStack, keepingFocus: keepingFocus)
             } catch {
                 guard !Task.isCancelled else { return }
+                self?.preparationTask = nil
+                self?.openedFromLibrary = false
                 FailureAlert.present(message: "The recording preview could not be prepared", error: error)
             }
         }
@@ -109,7 +130,7 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
         // Activate the app *before* presenting the panel so macOS considers
         // it the frontmost process. Without this, the QuickLook window opens
         // unfocused and videos won't autoplay until manually clicked.
-        if !keepingFocus { NSApp.activate() }
+        if collapsingPreviewStack, !keepingFocus { NSApp.activate() }
 
         panel.dataSource = self
         panel.delegate = self
@@ -124,10 +145,12 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
         }
         if panel.isVisible {
             panel.refreshCurrentPreviewItem()
+        } else if openedFromLibrary {
+            panel.orderFront(nil)
         } else {
             panel.makeKeyAndOrderFront(nil)
         }
-        guard !keepingFocus else { return }
+        guard !keepingFocus, collapsingPreviewStack else { return }
 
         // Re-assert key status on the next runloop pass. The window server
         // sometimes needs a tick to finish processing the activation, so an
@@ -140,6 +163,8 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
     private func dismiss() {
         preparationTask?.cancel()
         preparationTask = nil
+        sourceURLs = []
+        openedFromLibrary = false
         // Only restore (expand) the overlay if Quick Look is actually on screen.
         // This method doubles as generic cleanup that's called whenever cards are
         // inserted or removed; in those cases there's no Quick Look window to
@@ -160,8 +185,22 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
     /// Fires when Quick Look closes on its own (e.g. the user clicks its close
     /// button or it loses key focus), which bypasses `dismiss()`.
     func windowWillClose(_ notification: Notification) {
+        preparationTask?.cancel()
+        preparationTask = nil
         previewURLs = []
+        sourceURLs = []
+        openedFromLibrary = false
         restorePreviewStack()
+    }
+
+    nonisolated func previewPanel(_ panel: QLPreviewPanel!, handle event: NSEvent!) -> Bool {
+        MainActor.assumeIsolated {
+            guard openedFromLibrary, sourceURLs.count == 1, event.type == .keyDown,
+                  [123, 124, 125, 126].contains(Int(event.keyCode)),
+                  let responder = libraryWindow?.firstResponder else { return false }
+            responder.keyDown(with: event)
+            return true
+        }
     }
 
     /// Expands the stack only if Quick Look tucked it (see `collapsedPreviewStack`).

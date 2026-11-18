@@ -9,13 +9,7 @@ extension CaptureLibraryModel {
         guard !selected.isEmpty else { return }
         switch action {
         case .preview:
-            guard selected.count == 1, let item = selected.first else { return }
-            if QuickLookPreviewPresenter.isShown, let current = QuickLookPreviewPresenter.currentURL {
-                let isSameCapture = current.standardizedFileURL == item.fileURL.standardizedFileURL
-                    || (item.session != nil && current.deletingLastPathComponent().standardizedFileURL.path == item.ownedURL.standardizedFileURL.path)
-                if isSameCapture { QuickLookPreviewPresenter.dismiss(); return }
-            }
-            QuickLookPreviewPresenter.show(url: item.fileURL)
+            QuickLookPreviewPresenter.toggleLibrarySelection(selected.map(\.fileURL))
         case .edit:
             guard selected.count == 1, let item = selected.first else { return }
             QuickLookPreviewPresenter.dismiss()
