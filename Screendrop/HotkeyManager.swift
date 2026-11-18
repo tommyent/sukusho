@@ -126,9 +126,10 @@ final class HotkeyManager {
         NSLog("[Sukusho] Modifier-key shortcuts wait for Input Monitoring: preflight %@, Accessibility %@",
               granted ? "granted" : "not granted", AXIsProcessTrusted() ? "trusted" : "not trusted")
         for (shortcut, action) in tapActions {
+            // Before a relaunch this run may not see a grant at all (VM, 27.2.1), so the row says what is true either way.
             registrationErrors[action] = inputMonitoring == .relaunch
                 ? "\(shortcut.displayString) works once Sukusho relaunches."
-                : "\(shortcut.displayString) needs Input Monitoring."
+                : "\(shortcut.displayString) is off until Sukusho has Input Monitoring and relaunches."
         }
     }
 
