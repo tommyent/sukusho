@@ -264,6 +264,30 @@ struct FlexibleShortcutsTests {
                                                            defaults: defaults) == .window)
     }
 
+    // MARK: - Dictation
+
+    /// VM, macOS 27.2.1: ⌃ ⌃ on Fullscreen also opened Dictation, whose shortcut there was Press Control Key Twice
+    /// (entry 164, type modifier, 262144). The ⌘ variants are read by their ⌘ flag, whatever else the value holds.
+    @Test func aDoubleTapThatIsDictationsShortcutIsFound() {
+        func entry(_ parameters: [Int], type: String = "modifier", enabled: Bool = true) -> [String: Any] {
+            let value: [String: Any] = ["type": type, "parameters": parameters.map { NSNumber(value: $0) }]
+            return ["164": ["enabled": enabled, "value": value] as [String: Any]]
+        }
+        let control = 262_144, command = 1_048_576
+        #expect(SystemScreenshotShortcuts.dictationDoubleTap(in: entry([65535, 65535, control])) == HotkeyShortcut(.twice(keyCode: kVK_Control)))
+        #expect(SystemScreenshotShortcuts.dictationDoubleTap(in: entry([control])) == HotkeyShortcut(.twice(keyCode: kVK_Control)))
+        #expect(SystemScreenshotShortcuts.dictationDoubleTap(in: entry([65535, 65535, command])) == HotkeyShortcut(.twice(keyCode: kVK_Command)))
+        #expect(SystemScreenshotShortcuts.dictationDoubleTap(in: entry([65535, 65535, command | 0x10])) == HotkeyShortcut(.twice(keyCode: kVK_Command)),
+                "a right-⌘-only value still clashes with ⌘ ⌘, which either ⌘ fires")
+        #expect(SystemScreenshotShortcuts.dictationDoubleTap(in: entry([65535, 65535, control], enabled: false)) == nil)
+        #expect(SystemScreenshotShortcuts.dictationDoubleTap(in: entry([65535, 65535, 8_388_608])) == nil, "fn twice")
+        #expect(SystemScreenshotShortcuts.dictationDoubleTap(in: entry([65535, 65535, 0], type: "standard", enabled: false)) == nil,
+                "this Mac's: off")
+        #expect(SystemScreenshotShortcuts.dictationDoubleTap(in: [:]) == nil)
+        #expect(SystemScreenshotShortcuts.dictationWarning(HotkeyShortcut(.twice(keyCode: kVK_Control)))
+            == "⌃ ⌃ also starts macOS Dictation. Pick another shortcut, or change Dictation’s in System Settings › Keyboard › Dictation.")
+    }
+
     // MARK: - Input Monitoring
 
     /// Round 2 (VM, 27.2.1): macOS applies a new Input Monitoring grant only when Sukusho next opens, so a grant this run

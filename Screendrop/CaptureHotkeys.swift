@@ -535,6 +535,33 @@ enum SystemScreenshotShortcuts {
         NSWorkspace.shared.open(url)
     }
 
+    // MARK: - Dictation
+
+    /// macOS Dictation's shortcut when it is a modifier key pressed twice (System Settings › Keyboard › Dictation ›
+    /// Shortcut, such as Press Control Key Twice): entry 164 with type `modifier`, whose parameters hold that key's flags
+    /// (262144, ⌃, on a fresh macOS 27.2.1 in the VM, 2026-11-18). One Sukusho double tap of that pair starts Dictation
+    /// too (seen there). Nil when it's off, fn, or another kind of shortcut.
+    static func dictationDoubleTap(in hotkeys: [String: Any]?) -> HotkeyShortcut? {
+        guard let entry = hotkeys?["164"] as? [String: Any],
+              (entry["enabled"] as? Bool) ?? (entry["enabled"] as? NSNumber)?.boolValue ?? false,
+              let value = entry["value"] as? [String: Any], value["type"] as? String == "modifier",
+              let flags = (value["parameters"] as? [NSNumber])?.map(\.uintValue).first(where: { $0 & 0xFFFF_0000 != 0 }),
+              flags & NSEvent.ModifierFlags.function.rawValue == 0,
+              let left = ModifierKeys.leftKeyCode(of: HotkeyShortcut.Modifiers(from: NSEvent.ModifierFlags(rawValue: flags)))
+        else { return nil }
+        return HotkeyShortcut(.twice(keyCode: left))
+    }
+
+    static func currentDictationDoubleTap() -> HotkeyShortcut? {
+        CFPreferencesAppSynchronize(domain as CFString)
+        return dictationDoubleTap(in: CFPreferencesCopyAppValue(key as CFString, domain as CFString) as? [String: Any])
+    }
+
+    /// Under a row whose double tap is Dictation's shortcut too. The path is Apple's (Use Dictation on Mac, macOS 27).
+    static func dictationWarning(_ shortcut: HotkeyShortcut) -> String {
+        "\(shortcut.displayString) also starts macOS Dictation. Pick another shortcut, or change Dictation’s in System Settings › Keyboard › Dictation."
+    }
+
     // MARK: - Use Other Keys
 
     /// Every shortcut macOS has on in AppleSymbolicHotKeys, not only the screenshot ones; an entry never changed isn't in

@@ -26,6 +26,8 @@ struct CaptureHotkeySettingsSection: View {
     @State private var systemEntries: [Int: HotkeyShortcut] = [:]
     /// Every shortcut macOS has on, for Use Other Keys to stay clear of.
     @State private var systemAll: Set<HotkeyShortcut> = []
+    /// macOS Dictation's shortcut, when it's a modifier key pressed twice.
+    @State private var dictation: HotkeyShortcut?
     /// Once the user has been to Input Monitoring, Relaunch is offered: this run may not see a new grant at all.
     @State private var visitedInputMonitoring = false
 
@@ -71,6 +73,9 @@ struct CaptureHotkeySettingsSection: View {
                 }
                 if let warning = shortcuts[action]?.typingWarning {
                     warningLabel(warning)
+                }
+                if let dictation, shortcuts[action] == dictation {
+                    warningLabel(SystemScreenshotShortcuts.dictationWarning(dictation))
                 }
             }
         } header: {
@@ -338,6 +343,7 @@ struct CaptureHotkeySettingsSection: View {
     private func reloadClashes() {
         systemEntries = SystemScreenshotShortcuts.currentEntries()
         systemAll = SystemScreenshotShortcuts.currentAllEnabled()
+        dictation = SystemScreenshotShortcuts.currentDictationDoubleTap()
     }
 }
 
