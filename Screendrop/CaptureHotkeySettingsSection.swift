@@ -11,11 +11,17 @@ import SwiftUI
 /// removes a shortcut, and Restore Defaults resets them all.
 struct CaptureHotkeySettingsSection: View {
     let actions: [CaptureHotkeyAction]
+    /// The enclosing Form's, so a row's messages can be scrolled into view.
+    var scroller: ScrollViewProxy? = nil
 
     @State private var shortcuts = CaptureHotkeyPreferences.shortcuts()
     @State private var recorder = HotkeyShortcutRecorder()
     @State private var recordingAction: CaptureHotkeyAction?
     @State private var errorMessage: String?
+    /// The row `errorMessage` is about; it shows under that row.
+    @State private var errorAction: CaptureHotkeyAction?
+    /// The row last recorded or changed, where the Input Monitoring notice goes when its shortcut needs it.
+    @State private var lastAction: CaptureHotkeyAction?
     /// macOS's screenshot shortcuts that are on, by entry, read again whenever they could have changed.
     @State private var systemEntries: [Int: HotkeyShortcut] = [:]
     /// Every shortcut macOS has on, for Use Other Keys to stay clear of.
@@ -33,6 +39,9 @@ struct CaptureHotkeySettingsSection: View {
     var body: some View {
         Section {
             if !clashes.isEmpty { clashSummary }
+            if let kept = SystemScreenshotShortcuts.keptKeysMessage(HotkeyManager.shared.keptKeys) {
+                errorText(kept)
+            }
             ForEach(actions) { action in
                 LabeledContent(action.title) {
                     HStack(spacing: DS.Space.m) {
@@ -53,6 +62,9 @@ struct CaptureHotkeySettingsSection: View {
                             .help("Remove this shortcut")
                     }
                 }
+                if hasNotes(action) {
+                    rowNotes(for: action).id(notesID(action))
+                }
                 if clashes.contains(where: { $0.action == action }) {
                     warningLabel("Also macOS’s")
                         .accessibilityLabel("\(action.title)’s shortcut is also one of macOS’s")
@@ -61,9 +73,6 @@ struct CaptureHotkeySettingsSection: View {
                     warningLabel(warning)
                 }
             }
-            if HotkeyManager.shared.needsInputMonitoring { inputMonitoringNotice }
-
-            messages
         } header: {
             HStack {
                 Text("Keyboard Shortcuts")
@@ -80,6 +89,9 @@ struct CaptureHotkeySettingsSection: View {
         .onDisappear {
             recorder.stop()
             recordingAction = nil
+        }
+        .onChange(of: recorder.rejection) {
+            if let recordingAction { reveal(recordingAction) }
         }
         // Back from System Settings with macOS's shortcut turned off: the warning goes without a relaunch.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
@@ -186,34 +198,56 @@ struct CaptureHotkeySettingsSection: View {
         .accessibilityHint("Records a new shortcut")
     }
 
-    @ViewBuilder
-    private var messages: some View {
-        if let rejection = recorder.rejection {
-            Text(rejection)
-                .font(.caption)
-                .foregroundStyle(.red)
-        } else if let errorMessage {
-            Text(errorMessage)
-                .font(.caption)
-                .foregroundStyle(.red)
-        } else if let kept = SystemScreenshotShortcuts.keptKeysMessage(HotkeyManager.shared.keptKeys) {
-            Text(kept)
-                .font(.caption)
-                .foregroundStyle(.red)
-        }
+    private static let recordingHint = "Type the new shortcut, or tap a modifier key such as right ⌥ once or twice. Press Esc to cancel."
 
-        ForEach(actions) { action in
-            if let failure = HotkeyManager.shared.registrationErrors[action] {
-                Text("\(action.title): \(failure)")
+    private func errorText(_ text: String) -> some View {
+        Text(text).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// What's said right under a row: while it records, how to or why the keys were turned down; after a change to it
+    /// failed, why.
+    private func rowMessage(for action: CaptureHotkeyAction) -> (text: String, isError: Bool)? {
+        if isRecording(action) { return (recorder.rejection ?? Self.recordingHint, recorder.rejection != nil) }
+        guard errorAction == action, let errorMessage else { return nil }
+        return (errorMessage, true)
+    }
+
+    /// The row the Input Monitoring notice sits under: the one last changed if its modifier-key shortcut waits for it,
+    /// else the first that does.
+    private var inputMonitoringAction: CaptureHotkeyAction? {
+        guard HotkeyManager.shared.needsInputMonitoring else { return nil }
+        let waiting = actions.filter { shortcuts[$0]?.taps != nil && HotkeyManager.shared.registrationErrors[$0] != nil }
+        return waiting.first { $0 == lastAction } ?? waiting.first
+    }
+
+    private func hasNotes(_ action: CaptureHotkeyAction) -> Bool {
+        rowMessage(for: action) != nil || HotkeyManager.shared.registrationErrors[action] != nil || inputMonitoringAction == action
+    }
+
+    private func notesID(_ action: CaptureHotkeyAction) -> String { "shortcut-notes-\(action.rawValue)" }
+
+    /// A row's messages, under the row, where the user is looking: at the end of the list they were below the fold at
+    /// the default Settings size (m1, 26.5.1).
+    private func rowNotes(for action: CaptureHotkeyAction) -> some View {
+        VStack(alignment: .leading, spacing: DS.Space.s) {
+            if let message = rowMessage(for: action) {
+                Text(message.text)
                     .font(.caption)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(message.isError ? Color.red : Color.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            if let failure = HotkeyManager.shared.registrationErrors[action] { errorText(failure) }
+            if inputMonitoringAction == action { inputMonitoringNotice }
         }
+    }
 
-        if recordingAction != nil, recorder.rejection == nil {
-            Text("Type the new shortcut, or tap a modifier key such as right ⌥ once or twice. Press Esc to cancel.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+    /// Scrolls a row's messages into view by the least needed: the last rows sit at the window's bottom edge.
+    private func reveal(_ action: CaptureHotkeyAction) {
+        lastAction = action
+        Task { @MainActor in
+            // shortcut: a short wait for the messages row to be inserted; a Form row has no did-insert hook.
+            try? await Task.sleep(for: .milliseconds(50))
+            withAnimation { scroller?.scrollTo(notesID(action)) }
         }
     }
 
@@ -238,6 +272,7 @@ struct CaptureHotkeySettingsSection: View {
 
         recordingAction = action
         recorder.start()
+        reveal(action)
     }
 
     private func configureRecorder() {
@@ -260,9 +295,11 @@ struct CaptureHotkeySettingsSection: View {
             } else {
                 errorMessage = "\(shortcut.displayString) is already assigned to \(conflict.title)."
             }
+            errorAction = action
             NSSound.beep()
             recorder.stop()
             recordingAction = nil
+            reveal(action)
             return
         }
 
@@ -273,9 +310,11 @@ struct CaptureHotkeySettingsSection: View {
             errorMessage = nil
         } catch {
             errorMessage = "\(error.localizedDescription) Your previous shortcut has been kept."
+            errorAction = action
             NSSound.beep()
         }
         recordingAction = nil
+        reveal(action)
     }
 
     private func restoreDefaults() {
