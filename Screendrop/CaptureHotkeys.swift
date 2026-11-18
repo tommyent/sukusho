@@ -50,9 +50,17 @@ struct HotkeyShortcut: Codable, Equatable, Hashable {
 
     let modifiers: Modifiers
     let keyCode: Int
+    /// For a modifier key on its own, whose code `keyCode` is: 1 for a tap of that key (Right ⌥), 2 for two taps of
+    /// either key of its pair (⌥ ⌥, stored as the left key). Nil for every other shortcut, and then left out of the saved
+    /// JSON, so shortcuts saved before it load and save as they were.
+    var taps: Int? = nil
 
+    /// One token per keycap: "Right ⌥" and "⌥ ⌥" are one token each, so every joined form reads the same.
     var displayTokens: [String] {
-        modifiers.symbols + [Self.keyLabel(for: keyCode)]
+        guard let taps, let key = ModifierKeys.keys[keyCode], let symbol = key.family.symbols.first else {
+            return modifiers.symbols + [Self.keyLabel(for: keyCode)]
+        }
+        return [taps == 2 ? "\(symbol) \(symbol)" : "\(key.isRight ? "Right" : "Left") \(symbol)"]
     }
 
     var displayString: String {
@@ -60,15 +68,54 @@ struct HotkeyShortcut: Codable, Equatable, Hashable {
     }
 
     var isValid: Bool {
-        !modifiers.isEmpty
+        if let taps { return modifiers.isEmpty && ModifierKeys.keys[keyCode] != nil && (taps == 1 || taps == 2) }
+        return !modifiers.isEmpty || Self.functionKeyCodes.contains(keyCode)
     }
 
-    /// New shortcuts need ⌘ or ⌃. With ⌥ or ⇧ alone the chord types a
-    /// character, so as a global hotkey it would take that character away
-    /// from every app. Shortcuts recorded before this rule are kept.
-    var hasCommandOrControl: Bool {
-        !modifiers.isDisjoint(with: [.command, .control])
+    /// Why the recorder turns these keys down, in one line; nil when they can be a shortcut. Any modifier with any key
+    /// can, and so can F1 to F20 alone; another key alone would stop working in every app.
+    var refusal: String? {
+        guard taps == nil, modifiers.isEmpty, !Self.functionKeyCodes.contains(keyCode) else { return nil }
+        return "\(Self.keyLabel(for: keyCode)) on its own would stop working in every app. Add ⌘, ⌥, ⌃ or ⇧, or use F1 to F20."
     }
+
+    /// With ⌥ or ⇧ but neither ⌘ nor ⌃, the keys also type or edit in text fields, and while they're Sukusho's no app
+    /// gets them. They're allowed (the owner wants the choice, 2026-11-17), with this warning.
+    var typingWarning: String? {
+        guard taps == nil, !modifiers.isEmpty, modifiers.isDisjoint(with: [.command, .control]),
+              !Self.functionKeyCodes.contains(keyCode) else { return nil }
+        return Self.editingKeyCodes.contains(keyCode)
+            ? "\(displayString) also works in text fields. While it’s Sukusho’s shortcut, no app gets it."
+            : "\(displayString) also types a character. While it’s Sukusho’s shortcut, you can’t type it."
+    }
+
+    /// A menu item's title with a shortcut its shortcut column can't show (a modifier key on its own, a function key
+    /// alone) after it, as "Capture Area (Right ⌥)". A title reads the same in every menu on every macOS; SwiftUI drops a
+    /// subtitle given inside a Label (checked on macOS 27.3).
+    static func menuTitle(_ title: String, adding shortcut: HotkeyShortcut?) -> String {
+        shortcut.map { "\(title) (\($0.displayString))" } ?? title
+    }
+
+    /// Whether one press would set off both: the same shortcut, or a tap and a double tap of one pair (Right ⌥ and ⌥ ⌥),
+    /// since every double tap starts with a tap.
+    func overlaps(_ other: HotkeyShortcut) -> Bool {
+        if self == other { return true }
+        guard let taps, let otherTaps = other.taps, taps == 2 || otherTaps == 2,
+              let family = ModifierKeys.keys[keyCode]?.family else { return false }
+        return ModifierKeys.keys[other.keyCode]?.family == family
+    }
+
+    /// F1 to F20, the keys that can be a shortcut on their own.
+    static let functionKeyCodes: Set<Int> = [
+        kVK_F1, kVK_F2, kVK_F3, kVK_F4, kVK_F5, kVK_F6, kVK_F7, kVK_F8, kVK_F9, kVK_F10,
+        kVK_F11, kVK_F12, kVK_F13, kVK_F14, kVK_F15, kVK_F16, kVK_F17, kVK_F18, kVK_F19, kVK_F20,
+    ]
+
+    /// Keys that move, select or delete in text fields rather than type a character.
+    private static let editingKeyCodes: Set<Int> = [
+        kVK_Return, kVK_ANSI_KeypadEnter, kVK_Tab, kVK_Delete, kVK_ForwardDelete, kVK_Escape,
+        kVK_LeftArrow, kVK_RightArrow, kVK_UpArrow, kVK_DownArrow, kVK_Home, kVK_End, kVK_PageUp, kVK_PageDown, kVK_Help,
+    ]
 
     private static func keyLabel(for keyCode: Int) -> String {
         switch keyCode {
@@ -94,6 +141,14 @@ struct HotkeyShortcut: Codable, Equatable, Hashable {
         case kVK_F10: return "F10"
         case kVK_F11: return "F11"
         case kVK_F12: return "F12"
+        case kVK_F13: return "F13"
+        case kVK_F14: return "F14"
+        case kVK_F15: return "F15"
+        case kVK_F16: return "F16"
+        case kVK_F17: return "F17"
+        case kVK_F18: return "F18"
+        case kVK_F19: return "F19"
+        case kVK_F20: return "F20"
         default:
             return ansiKeyLabel(for: keyCode) ?? "Key \(keyCode)"
         }
@@ -253,22 +308,31 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
             ScreendropPreferences.clipboardHistoryHotkeyKey
         }
     }
-
-    init?(hotKeyID: UInt32) {
-        guard let action = Self.allCases.first(where: { $0.hotKeyID == hotKeyID }) else {
-            return nil
-        }
-
-        self = action
-    }
 }
 
 enum CaptureHotkeyPreferences {
     /// Stored for an action the user cleared, so it has no shortcut at all.
     private static let clearedValue = "none"
 
+    /// A shortcut with no modifier (a modifier key on its own, a function key alone) is kept here, with the action's own
+    /// key saying cleared. Beta 1 can't read one: in its own key it would fall back to the default, which beta 1's launch
+    /// cleanup then forgets, so a trip to beta 1 lost it (Sol's review). Here beta 1 never looks, and shows the row as
+    /// None. It counts only while the own key still says cleared: when beta 1 records, resets or restores that row, what
+    /// beta 1 saved wins.
+    private static func noModifiersKey(_ action: CaptureHotkeyAction) -> String { action.preferencesKey + ".noModifiers" }
+
+    private static func noModifiersShortcut(for action: CaptureHotkeyAction, defaults: UserDefaults) -> HotkeyShortcut? {
+        guard defaults.string(forKey: action.preferencesKey) == clearedValue,
+              let data = defaults.data(forKey: noModifiersKey(action)),
+              let shortcut = try? JSONDecoder().decode(HotkeyShortcut.self, from: data),
+              shortcut.isValid, shortcut.modifiers.isEmpty
+        else { return nil }
+        return shortcut
+    }
+
     /// The action's shortcut: recorded, else the default; nil once cleared.
     static func shortcut(for action: CaptureHotkeyAction, defaults: UserDefaults = .standard) -> HotkeyShortcut? {
+        if let shortcut = noModifiersShortcut(for: action, defaults: defaults) { return shortcut }
         if defaults.string(forKey: action.preferencesKey) == clearedValue { return nil }
         guard
             let data = defaults.data(forKey: action.preferencesKey),
@@ -288,6 +352,7 @@ enum CaptureHotkeyPreferences {
         for action: CaptureHotkeyAction,
         defaults: UserDefaults = .standard
     ) {
+        defaults.removeObject(forKey: noModifiersKey(action))
         guard let shortcut else {
             defaults.set(clearedValue, forKey: action.preferencesKey)
             return
@@ -298,12 +363,18 @@ enum CaptureHotkeyPreferences {
         }
 
         guard let data = try? JSONEncoder().encode(shortcut) else { return }
-        defaults.set(data, forKey: action.preferencesKey)
+        if shortcut.modifiers.isEmpty {
+            defaults.set(data, forKey: noModifiersKey(action))
+            defaults.set(clearedValue, forKey: action.preferencesKey)
+        } else {
+            defaults.set(data, forKey: action.preferencesKey)
+        }
     }
 
     /// Forgets what the user recorded or cleared, so the default applies.
     static func resetToDefault(_ action: CaptureHotkeyAction, defaults: UserDefaults = .standard) {
         defaults.removeObject(forKey: action.preferencesKey)
+        defaults.removeObject(forKey: noModifiersKey(action))
     }
 
     /// Whether the action has its default shortcut: nothing stored, or a stored shortcut that equals the default. An
@@ -318,8 +389,18 @@ enum CaptureHotkeyPreferences {
     /// Forgets stored shortcuts that equal their action's default, or its default before beta 1, so a change of a
     /// default reaches them, as it does everyone who never recorded one: an older build stored defaults, and without this
     /// a stored old ⇧⌘5 for Capture Text would collide with Recording's new ⇧⌘5. Cleared and changed shortcuts stay.
-    /// Run at launch.
+    /// Run at launch. It also moves a shortcut with no modifier that an earlier build of this one kept in the action's
+    /// own key to where beta 1 can't lose it, and forgets one that beta 1 has since replaced.
     static func dropStoredDefaults(defaults: UserDefaults = .standard) {
+        for action in CaptureHotkeyAction.allCases {
+            if noModifiersShortcut(for: action, defaults: defaults) == nil {
+                defaults.removeObject(forKey: noModifiersKey(action))
+            }
+            if let data = defaults.data(forKey: action.preferencesKey),
+               let stored = try? JSONDecoder().decode(HotkeyShortcut.self, from: data), stored.isValid, stored.modifiers.isEmpty {
+                saveShortcut(stored, for: action, defaults: defaults)
+            }
+        }
         for action in CaptureHotkeyAction.allCases where defaults.data(forKey: action.preferencesKey) != nil {
             let stored = shortcut(for: action, defaults: defaults)
             if isDefault(action, defaults: defaults) || (stored != nil && stored == action.previousDefaultShortcut) {
@@ -344,7 +425,7 @@ enum CaptureHotkeyPreferences {
         defaults: UserDefaults = .standard
     ) -> CaptureHotkeyAction? {
         CaptureHotkeyAction.allCases.first { candidate in
-            candidate != action && self.shortcut(for: candidate, defaults: defaults) == shortcut
+            candidate != action && self.shortcut(for: candidate, defaults: defaults)?.overlaps(shortcut) == true
         }
     }
 }
@@ -428,11 +509,49 @@ enum SystemScreenshotShortcuts {
         return "\(what) \(ours), or turn macOS’s off in Keyboard Shortcuts › Screenshots."
     }
 
-    /// Opens System Settings at its Keyboard pane, the nearest place a link reaches (checked in the VM); Keyboard
-    /// Shortcuts… › Screenshots is one click and one choice from there.
+    /// Names the actions Use Other Keys left on their keys, the same after the launch notice as in Settings.
+    static func keptKeysMessage(_ kept: [CaptureHotkeyAction]) -> String? {
+        guard !kept.isEmpty else { return nil }
+        return "\(list(kept.map(\.title))) kept \(kept.count == 1 ? "its" : "their") keys: another app uses the new ones."
+    }
+
+    /// Under and on every Open Keyboard Shortcuts… button (the owner, 2026-11-17): the link lands on the sheet's Modifier
+    /// Keys section on macOS 26.5.1 and 27.2.1, one click from Screenshots.
+    static let keyboardShortcutsHint = "Opens Keyboard Shortcuts; choose Screenshots on the left"
+
+    /// Opens System Settings at Keyboard › Keyboard Shortcuts…, the nearest a link reaches: `Shortcuts` is the anchor
+    /// System Settings' own search uses for "App and system keyboard shortcuts" (Keyboard.searchTerms on macOS 26.5.1
+    /// and 27.3, read 2026-11-17); no anchor selects Screenshots in it, one click from there.
     @MainActor static func openKeyboardSettings() {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension") else { return }
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension?Shortcuts") else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    // MARK: - Dictation
+
+    /// macOS Dictation's shortcut when it is a modifier key pressed twice (System Settings › Keyboard › Dictation ›
+    /// Shortcut, such as Press Control Key Twice): entry 164 with type `modifier`, whose parameters hold that key's flags
+    /// (262144, ⌃, on a fresh macOS 27.2.1 in the VM, 2026-11-18). One Sukusho double tap of that pair starts Dictation
+    /// too (seen there). Nil when it's off, fn, or another kind of shortcut.
+    static func dictationDoubleTap(in hotkeys: [String: Any]?) -> HotkeyShortcut? {
+        guard let entry = hotkeys?["164"] as? [String: Any],
+              (entry["enabled"] as? Bool) ?? (entry["enabled"] as? NSNumber)?.boolValue ?? false,
+              let value = entry["value"] as? [String: Any], value["type"] as? String == "modifier",
+              let flags = (value["parameters"] as? [NSNumber])?.map(\.uintValue).first(where: { $0 & 0xFFFF_0000 != 0 }),
+              flags & NSEvent.ModifierFlags.function.rawValue == 0,
+              let left = ModifierKeys.leftKeyCode(of: HotkeyShortcut.Modifiers(from: NSEvent.ModifierFlags(rawValue: flags)))
+        else { return nil }
+        return HotkeyShortcut(.twice(keyCode: left))
+    }
+
+    static func currentDictationDoubleTap() -> HotkeyShortcut? {
+        CFPreferencesAppSynchronize(domain as CFString)
+        return dictationDoubleTap(in: CFPreferencesCopyAppValue(key as CFString, domain as CFString) as? [String: Any])
+    }
+
+    /// Under a row whose double tap is Dictation's shortcut too. The path is Apple's (Use Dictation on Mac, macOS 27).
+    static func dictationWarning(_ shortcut: HotkeyShortcut) -> String {
+        "\(shortcut.displayString) also starts macOS Dictation. Pick another shortcut, or change Dictation’s in System Settings › Keyboard › Dictation."
     }
 
     // MARK: - Use Other Keys

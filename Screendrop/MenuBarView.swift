@@ -19,28 +19,28 @@ struct CaptureMenuItems: View {
         Button {
             CaptureCoordinator.shared.captureFullscreen()
         } label: {
-            Label("Capture Fullscreen", systemImage: "macwindow")
+            Label(MenuBarView.title("Capture Fullscreen", for: .fullscreen), systemImage: "macwindow")
         }
         .keyboardShortcut(MenuBarView.shortcut(for: .fullscreen))
 
         Button {
             CaptureCoordinator.shared.captureWindow()
         } label: {
-            Label("Capture Window", systemImage: "macwindow.on.rectangle")
+            Label(MenuBarView.title("Capture Window", for: .window), systemImage: "macwindow.on.rectangle")
         }
         .keyboardShortcut(MenuBarView.shortcut(for: .window))
 
         Button {
             CaptureCoordinator.shared.captureArea()
         } label: {
-            Label("Capture Area", systemImage: "rectangle.dashed")
+            Label(MenuBarView.title("Capture Area", for: .area), systemImage: "rectangle.dashed")
         }
         .keyboardShortcut(MenuBarView.shortcut(for: .area))
 
         Button {
             CaptureCoordinator.shared.captureText()
         } label: {
-            Label("Capture Text", systemImage: "text.viewfinder")
+            Label(MenuBarView.title("Capture Text", for: .textCapture), systemImage: "text.viewfinder")
         }
         .keyboardShortcut(MenuBarView.shortcut(for: .textCapture))
 
@@ -48,7 +48,8 @@ struct CaptureMenuItems: View {
             CaptureCoordinator.shared.captureScrolling()
         } label: {
             Label(
-                ScrollingCapturePresenter.shared.isRunning ? "Finish Scrolling Capture" : "Scrolling Capture",
+                MenuBarView.title(ScrollingCapturePresenter.shared.isRunning ? "Finish Scrolling Capture" : "Scrolling Capture",
+                                  for: .scrollingCapture),
                 systemImage: "rectangle.expand.vertical"
             )
         }
@@ -70,7 +71,7 @@ struct CaptureMenuItems: View {
             Button {
                 RecordingBarPresenter.shared.showPicker()
             } label: {
-                Label("Record Screen", systemImage: "record.circle")
+                Label(MenuBarView.title("Record Screen", for: .screenRecording), systemImage: "record.circle")
             }
             .keyboardShortcut(MenuBarView.shortcut(for: .screenRecording))
             .disabled(ScrollingCapturePresenter.shared.isRunning)
@@ -93,7 +94,7 @@ struct MenuBarView: View {
             Button {
                 CaptureLibraryModel.shared.show()
             } label: {
-                Label("Show Library", systemImage: "square.grid.2x2")
+                Label(MenuBarView.title("Show Library", for: .library), systemImage: "square.grid.2x2")
             }
             // Shown here, registered system-wide by `HotkeyManager`: a menu's own shortcut
             // only fires while Sukusho is the front app.
@@ -103,7 +104,7 @@ struct MenuBarView: View {
             Button {
                 ClipboardPopupPresenter.shared.show()
             } label: {
-                Label("Clipboard History", systemImage: "list.clipboard")
+                Label(MenuBarView.title("Clipboard History", for: .clipboardHistory), systemImage: "list.clipboard")
             }
             .keyboardShortcut(Self.shortcut(for: .clipboardHistory))
 
@@ -271,7 +272,23 @@ struct MenuBarView: View {
     }
 }
 
+/// File › Show Library, re-read when a shortcut changes, as the Capture menu is.
+struct ShowLibraryCommand: View {
+    var body: some View {
+        let _ = HotkeyManager.shared.revision
+        Button(MenuBarView.title("Show Library", for: .library)) { CaptureLibraryModel.shared.show() }
+            .keyboardShortcut(MenuBarView.shortcut(for: .library))
+    }
+}
+
 extension MenuBarView {
+    /// The item's title, with the action's shortcut after it when `shortcut(for:)` can't show it in the shortcut column.
+    /// Call it in a body that reads `HotkeyManager.shared.revision`: a child view with fixed inputs keeps a stale title
+    /// while the shortcut column moves on (m1, 26.5.1; reproduced headless on 27.3).
+    static func title(_ title: String, for action: CaptureHotkeyAction) -> String {
+        HotkeyShortcut.menuTitle(title, adding: shortcut(for: action) == nil ? CaptureHotkeyPreferences.shortcut(for: action) : nil)
+    }
+
     /// The action's global shortcut, shown beside its menu item so it can
     /// be learnt there (design pass choice 13). Nil when cleared, or for keys
     /// a menu can't show, such as function keys.

@@ -34,10 +34,7 @@ struct ScreendropApp: App {
                 Button("About Sukusho") { AboutWindowController.show() }
                 CheckForUpdatesCommand()
             }
-            CommandGroup(after: .newItem) {
-                Button("Show Library") { CaptureLibraryModel.shared.show() }
-                    .keyboardShortcut(MenuBarView.shortcut(for: .library))
-            }
+            CommandGroup(after: .newItem) { ShowLibraryCommand() }
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") { SettingsWindowController.show(tab: .general) }
                     .keyboardShortcut(",", modifiers: .command)
@@ -166,6 +163,55 @@ struct ScreendropApp: App {
 
 // MARK: - App Delegate
 
+/// Quits Sukusho and opens it again, for permissions macOS applies only at launch, such as Input Monitoring.
+enum AppRelaunch {
+    /// When the quitting copy asked for Settings › Shortcuts, read by whichever copy opens next: a new one at launch, or
+    /// one already running when the helper's open reaches it as a reopen. Two minutes old, it's stale.
+    private static let reopenKey = "appRelaunch.showShortcutsRequestedAt"
+    /// Belongs to the quit `request` starts: every way that quit is cancelled clears it (`cancel`).
+    private static var isRequested = false
+
+    /// Quits as Quit does, so unsaved work is asked about first; a quit that's cancelled reopens nothing.
+    static func request() {
+        isRequested = true
+        NSApp.terminate(nil)
+    }
+
+    /// The quit was cancelled, so a later Quit only quits.
+    static func cancel() {
+        isRequested = false
+    }
+
+    /// From applicationWillTerminate: a shell waits up to a minute for this process to end, then opens the app again; if
+    /// this process is still running by then, it opens nothing. A plain open, so Launch Services reuses a copy that's
+    /// already running (it gets a reopen) rather than starting a second.
+    static func reopenIfRequested() {
+        guard isRequested else { return }
+        CFPreferencesSetAppValue(reopenKey as CFString, Date().timeIntervalSince1970 as CFNumber, kCFPreferencesCurrentApplication)
+        CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication)
+        let reopen = Process()
+        reopen.executableURL = URL(fileURLWithPath: "/bin/sh")
+        reopen.arguments = [
+            "-c", "i=0; while kill -0 \"$1\" 2>/dev/null; do [ $i -ge 300 ] && exit 1; sleep 0.2; i=$((i+1)); done; exec /usr/bin/open \"$2\"",
+            "sh", String(ProcessInfo.processInfo.processIdentifier), Bundle.main.bundleURL.path,
+        ]
+        try? reopen.run()
+    }
+
+    /// True once after Relaunch Sukusho, at the launch or reopen that follows it: then Settings › Shortcuts opens. The
+    /// request comes from another process, the copy that quit, so it's read past this process's cached preferences.
+    /// (In a two-process probe on 27.3 a copy already running saw it even without synchronizing; this doesn't rely on
+    /// that.)
+    static func takeShowShortcutsRequest() -> Bool {
+        let app = kCFPreferencesCurrentApplication
+        CFPreferencesAppSynchronize(app)
+        guard let requestedAt = (CFPreferencesCopyAppValue(reopenKey as CFString, app) as? NSNumber)?.doubleValue else { return false }
+        CFPreferencesSetAppValue(reopenKey as CFString, nil, app)
+        CFPreferencesAppSynchronize(app)
+        return Date().timeIntervalSince1970 - requestedAt < 120
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var openedFilesAtLaunch = false
 
@@ -224,6 +270,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Library. Login/service launches keep the existing quiet menu-bar mode.
         DispatchQueue.main.async { [weak self] in
             guard let self, !launchedInBackground, !self.openedFilesAtLaunch else { return }
+            // Relaunched from Settings › Shortcuts: back where the user was.
+            if AppRelaunch.takeShowShortcutsRequest() { return SettingsWindowController.show(tab: .shortcuts) }
             CaptureLibraryModel.shared.show()
         }
         // Below the macOS this build is tested on, say so, in front of the Library and before
@@ -239,6 +287,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         AgentAccess.shared.stop()
+        AppRelaunch.reopenIfRequested()
     }
 
     /// Finder "Open With" / `open -a Sukusho file.png` entry point.
@@ -253,6 +302,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Finder, Spotlight and the Dock all reopen the same Library window.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        // Relaunch Sukusho's open reached this copy, already running, instead of starting one.
+        if AppRelaunch.takeShowShortcutsRequest() {
+            SettingsWindowController.show(tab: .shortcuts)
+            return false
+        }
         CaptureLibraryModel.shared.show()
         return false
     }
@@ -262,6 +316,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// temporary directory, so quitting discards them. Warn before that
     /// happens.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let reply = quitReply(sender)
+        if reply == .terminateCancel { AppRelaunch.cancel() }
+        return reply
+    }
+
+    private func quitReply(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // Saved Studio projects save without closing first, so the review
         // below finds only failed ones and an export still gets its prompt.
         StudioProjectRegistry.shared.autosaveAll()
@@ -270,6 +330,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // this again for the checks below; it replies itself if it defers.
         if EditorCloseGuard.reviewBeforeQuit(completion: { approved in
             let reply = approved ? self.applicationShouldTerminate(sender) : .terminateCancel
+            if reply == .terminateCancel { AppRelaunch.cancel() }
             if reply != .terminateLater {
                 sender.reply(toApplicationShouldTerminate: reply == .terminateNow)
             }

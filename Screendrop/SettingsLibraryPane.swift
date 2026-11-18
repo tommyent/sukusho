@@ -81,13 +81,17 @@ struct LibrarySettingsPane: View {
 /// (the owner, 2026-11-17).
 struct ShortcutsSettingsPane: View {
     var body: some View {
-        Form {
-            CaptureHotkeySettingsSection(
-                actions: CaptureHotkeyAction.settingsOrder
-            )
+        // The section scrolls a row's messages into view with this.
+        ScrollViewReader { proxy in
+            Form {
+                CaptureHotkeySettingsSection(
+                    actions: CaptureHotkeyAction.settingsOrder,
+                    scroller: proxy
+                )
+            }
+            .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .contentMargins(.top, 8, for: .scrollContent)
         }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
-        .contentMargins(.top, 8, for: .scrollContent)
     }
 }

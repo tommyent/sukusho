@@ -17,13 +17,15 @@ extension SystemScreenshotShortcuts {
         otherKeys(for: currentClashes(), shortcuts: CaptureHotkeyPreferences.shortcuts(), system: currentAllEnabled())
     }
 
-    /// Moves each clashing shortcut to its other keys and registers it (the owner, 2026-11-17). Returns the actions whose
-    /// new keys couldn't be registered, because another app holds them; those keep their old shortcut.
+    /// Moves each clashing shortcut to its other keys and registers it (the owner, 2026-11-17). The actions whose new keys
+    /// couldn't be registered, because another app holds them, keep their old shortcut and are kept in
+    /// `HotkeyManager.keptKeys`, which Settings names, wherever this ran.
     @discardableResult static func useOtherKeys() -> [CaptureHotkeyAction] {
         var failed: [CaptureHotkeyAction] = []
         for (action, shortcut) in currentOtherKeys().sorted(by: { $0.key.hotKeyID < $1.key.hotKeyID }) {
             do { try HotkeyManager.shared.setShortcut(shortcut, for: action) } catch { failed.append(action) }
         }
+        HotkeyManager.shared.keptKeys = failed
         return failed
     }
 }
@@ -39,7 +41,6 @@ enum ShortcutClashNotice {
         guard !defaults.bool(forKey: shownKey) else { return }
         let clashes = SystemScreenshotShortcuts.currentClashPairs()
         guard !clashes.isEmpty else { return }
-        defaults.set(true, forKey: shownKey)
 
         let otherKeys = SystemScreenshotShortcuts.currentOtherKeys()
         let alert = NSAlert()
@@ -47,14 +48,25 @@ enum ShortcutClashNotice {
         alert.messageText = "macOS also uses some of Sukusho’s shortcuts"
         alert.informativeText = SystemScreenshotShortcuts.warning(clashes, canUseOtherKeys: !otherKeys.isEmpty)
         if !otherKeys.isEmpty { alert.addButton(withTitle: "Use Other Keys…") }
-        alert.addButton(withTitle: "Open Keyboard Shortcuts…")
+        alert.addButton(withTitle: "Open Keyboard Shortcuts…").toolTip = SystemScreenshotShortcuts.keyboardShortcutsHint
         alert.addButton(withTitle: "Not Now")
+        // An alert can't put text under one of its buttons, so the line goes just above them, below the warning.
+        let hint = NSTextField(wrappingLabelWithString: SystemScreenshotShortcuts.keyboardShortcutsHint)
+        hint.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        hint.textColor = .secondaryLabelColor
+        hint.alignment = .center
+        hint.preferredMaxLayoutWidth = 220
+        hint.frame.size = hint.fittingSize
+        alert.accessoryView = hint
         NSApp.activate()
         let response = alert.runModal()
+        // Shown once it's answered, Not Now included; a notice that never got an answer comes back at the next launch.
+        defaults.set(true, forKey: shownKey)
         let first = NSApplication.ModalResponse.alertFirstButtonReturn
         switch (otherKeys.isEmpty, response) {
         case (false, first):
-            // One button for "other keys or your own" (the owner): moved, then shown in Settings to change if wanted.
+            // One button for "other keys or your own" (the owner): moved, then shown in Settings to change if wanted,
+            // where any that kept their keys are named, as when Use Other Keys runs in Settings.
             SystemScreenshotShortcuts.useOtherKeys()
             SettingsWindowController.show(tab: .shortcuts)
         case (false, .alertSecondButtonReturn), (true, first): SystemScreenshotShortcuts.openKeyboardSettings()
