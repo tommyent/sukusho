@@ -656,6 +656,7 @@ struct CloudLibraryPage: View {
                     },
                     menu: { _ in cloud.menuItems() },
                     backgroundMenu: { CaptureLibraryModel.shared.backgroundMenuItems { cloud.refresh() } },
+                    onReturn: { cloud.perform(.edit) },
                     onAction: cloud.perform
                 )
             }

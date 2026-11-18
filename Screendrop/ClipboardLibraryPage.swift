@@ -353,10 +353,11 @@ private struct SnippetEditor: View {
     @State private var text = ""
     @State private var saving: Task<Void, Never>?
     @FocusState private var textFocused: Bool
+    @FocusState private var nameFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.m) {
-            TextField("Name", text: $title).textFieldStyle(.roundedBorder).font(DS.TypeScale.title)
+            TextField("Name", text: $title).focused($nameFocused).textFieldStyle(.roundedBorder).font(DS.TypeScale.title)
             TextEditor(text: $text)
                 .focused($textFocused)
                 .font(.system(size: 13))
@@ -380,6 +381,11 @@ private struct SnippetEditor: View {
                 model.snippetAwaitingFocus = nil
                 textFocused = true
             }
+        }
+        .onChange(of: model.snippetAwaitingName, initial: true) { _, id in
+            guard id == entry.id else { return }
+            nameFocused = true
+            model.snippetAwaitingName = nil
         }
         .onChange(of: title) { _, _ in scheduleSave() }
         .onChange(of: text) { _, _ in scheduleSave() }

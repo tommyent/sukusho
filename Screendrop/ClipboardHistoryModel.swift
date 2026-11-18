@@ -24,6 +24,7 @@ final class ClipboardHistoryModel {
     }
     private(set) var contentRevision = 0
     /// A snippet just made with New Snippet, whose editor takes the keyboard so typing goes into it (Astra R3).
+    var snippetAwaitingName: String?
     var snippetAwaitingFocus: ClipboardEntry.ID?
     /// The Library page's type filter.
     var libraryFilter: ClipboardFilter = .all

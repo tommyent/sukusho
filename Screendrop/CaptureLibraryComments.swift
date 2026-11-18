@@ -261,6 +261,7 @@ struct CommentsLibraryPage: View {
                     },
                     menu: { _ in comments.menuItems() },
                     backgroundMenu: { CaptureLibraryModel.shared.backgroundMenuItems { comments.refresh() } },
+                    onReturn: { comments.perform(.edit) },
                     onAction: comments.perform
                 )
             }

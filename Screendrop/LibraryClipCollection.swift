@@ -49,7 +49,12 @@ struct LibraryClipCollection: View {
                     if isSavedPage { ScreenshotHistoryStore.shared.reload(); library.refresh() }
                 }]
             }, onReturn: {
-                perform(chosen.contains { $0.clipID != nil } ? .copy : .rename)
+                if let entry = chosen.first?.clipEntry, chosen.count == 1 {
+                    if entry.kind == .snippet { clipboard.snippetAwaitingName = entry.id }
+                    else { perform(.edit) }
+                } else {
+                    perform(chosen.contains { $0.clipID != nil } ? .copy : .rename)
+                }
             }, onAction: perform)
             .onChange(of: selection.wrappedValue) { _, _ in
                 if QuickLookPreviewPresenter.followsLibrary { QuickLookPreviewPresenter.follow(urls: chosen.flatMap(\.previewURLs)) }

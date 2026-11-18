@@ -320,6 +320,9 @@ struct CaptureLibraryView: View {
         }
         .onChange(of: history.items) { _, _ in model.refresh() }
         .onChange(of: projects.projects) { _, _ in model.refresh() }
+        .onChange(of: clipboard.snippetAwaitingName) { _, id in
+            if id != nil { inspectorVisible = true }
+        }
         .onChange(of: model.sortOrder) { _, value in savedSort = value }
         .sheet(item: $model.pendingConversion) { conversion in
             ImageConversionSheet(conversion: conversion) { model.actionFeedback.show($0) }

@@ -229,7 +229,8 @@ struct LikesLibraryPage: View {
                 },
                 menu: { _ in likes.menuItems() },
                 backgroundMenu: { CaptureLibraryModel.shared.backgroundMenuItems { likes.refresh() } },
-                onAction: likes.perform
+                onReturn: { likes.perform(.edit) },
+                    onAction: likes.perform
             )
         }
     }
