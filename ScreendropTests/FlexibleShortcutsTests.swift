@@ -138,6 +138,95 @@ struct FlexibleShortcutsTests {
         #expect(tap(kVK_Command, command | leftCommandBit, at: 3.15) == [.once(keyCode: kVK_Command)], "⌥ then ⌘ isn't a pair")
     }
 
+    /// Sol's review, blocker 1: a modifier held since before the detector saw it go down, or fn, which it never tracks,
+    /// still shows in the event's flags, so the tap is no tap.
+    @Test func aModifierHeldFromBeforeIsSeenInTheFlags() {
+        let fn = UInt64(NSEvent.ModifierFlags.function.rawValue)
+        var detector = ModifierTapDetector()
+        // Left ⌘ went down before; its event never came.
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: command | option | leftCommandBit | rightOptionBit, at: 1)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: command | leftCommandBit, at: 1.1).isEmpty)
+        // The same without device bits.
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: command | option, at: 2)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: command, at: 2.1).isEmpty)
+        // fn held.
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: fn | option | rightOptionBit, at: 3)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: fn, at: 3.1).isEmpty)
+        // The other ⌥ held, with and without device bits.
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | leftOptionBit | rightOptionBit, at: 4)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: option | leftOptionBit, at: 4.1).isEmpty)
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option, at: 5)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: option, at: 5.1).isEmpty)
+        // ⌘ pressed after ⌥ but released before it: the release still carries ⌥ alone, but the tap was spoilt.
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 6)
+        _ = detector.flagsChanged(keyCode: kVK_Command, flags: option | command | rightOptionBit | leftCommandBit, at: 6.05)
+        _ = detector.flagsChanged(keyCode: kVK_Command, flags: option | rightOptionBit, at: 6.1)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 6.15).isEmpty)
+        // And nothing left over: a clean tap still taps.
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 7)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 7.1) == [.once(keyCode: kVK_RightOption)])
+    }
+
+    /// Sol's review, blocker 2: E held through the whole tap, released after it or during it.
+    @Test func aKeyHeldAcrossTheTapStopsIt() {
+        var detector = ModifierTapDetector()
+        detector.keyDown(isRepeat: false)
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 1)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 1.1).isEmpty)
+        detector.keyUp()
+
+        detector.keyDown(isRepeat: false)
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 2)
+        detector.keyUp()
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 2.1).isEmpty)
+
+        // Two keys down, one up: one is still held.
+        detector.keyDown(isRepeat: false)
+        detector.keyDown(isRepeat: false)
+        detector.keyUp()
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 3)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 3.1).isEmpty)
+        detector.keyUp()
+
+        // Every key up: the next tap taps.
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 4)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 4.1) == [.once(keyCode: kVK_RightOption)])
+    }
+
+    /// A key held since before watching started shows only by repeating; its release brings taps back.
+    @Test func aRepeatingKeyCountsAsHeld() {
+        var detector = ModifierTapDetector()
+        detector.keyDown(isRepeat: true)
+        detector.keyDown(isRepeat: true)
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 1)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 1.1).isEmpty)
+        detector.keyUp()
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 2)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 2.1) == [.once(keyCode: kVK_RightOption)])
+    }
+
+    /// After missed events nothing taps until the caller has asked macOS that no other key is down, and a key seen
+    /// going down before the gap, whose release was missed, no longer counts.
+    @Test func afterMissedEventsNothingTapsUntilChecked() {
+        var detector = ModifierTapDetector()
+        detector.keyDown(isRepeat: false)
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 1)
+        detector.eventsMissed()
+        #expect(detector.isUnsure)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 1.1).isEmpty, "the press came before the gap")
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 2)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 2.1).isEmpty, "unsure")
+        detector.noKeysDown()
+        #expect(!detector.isUnsure)
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 3)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 3.1) == [.once(keyCode: kVK_RightOption)])
+        // A first tap before the gap doesn't pair with one after it.
+        detector.eventsMissed()
+        detector.noKeysDown()
+        _ = detector.flagsChanged(keyCode: kVK_RightOption, flags: option | rightOptionBit, at: 3.3)
+        #expect(detector.flagsChanged(keyCode: kVK_RightOption, flags: 0, at: 3.35) == [.once(keyCode: kVK_RightOption)])
+    }
+
     @Test func keyboardsWithoutDeviceBitsStillTap() {
         var detector = ModifierTapDetector()
         _ = detector.flagsChanged(keyCode: kVK_RightCommand, flags: command, at: 1)

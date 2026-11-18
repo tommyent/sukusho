@@ -34,9 +34,11 @@ enum ModifierKeys {
     }
 }
 
-/// Turns modifier key changes into taps. A tap is a modifier pressed and released on its own within `interval`, with no
-/// other key, click or scroll meanwhile (`interrupt`); two taps of one pair, the second pressed within `interval` of the
-/// first's release, are also a double tap. It is fed key codes and flags only, so nothing typed passes through it.
+/// Turns modifier key changes into taps. A tap is a modifier pressed and released on its own within `interval`: at both
+/// edges the event's own flags show no other modifier and no fn down, no other key is down (`keyDown` and `keyUp` count
+/// them, never saying which), and no key, click or scroll comes in between (`interrupt`). Two taps of one pair, the
+/// second pressed within `interval` of the first's release, are also a double tap. It is fed key codes and flags only,
+/// so nothing typed passes through it.
 struct ModifierTapDetector {
     enum Tap: Equatable {
         case once(keyCode: Int)
@@ -47,9 +49,13 @@ struct ModifierTapDetector {
     /// The longest tap and the longest gap between two taps: the callers pass the system's double-click interval.
     var interval: TimeInterval = 0.5
 
-    private var held: Set<Int> = []
     private var pressed: (keyCode: Int, at: TimeInterval)?
     private var lastTap: (keyCode: Int, releasedAt: TimeInterval)?
+    /// How many other keys are down, from their down and up events: a count, never which keys.
+    private var keysDown = 0
+    /// After events were missed (watching just started, or macOS withheld some), a key can be down that was never seen
+    /// going down: nothing taps until the caller has checked that none is (`noKeysDown`).
+    private(set) var isUnsure = false
 
     /// Something else happened (a key, a click, a scroll, a shortcut): neither the modifier held now nor a first tap counts.
     mutating func interrupt() {
@@ -57,31 +63,55 @@ struct ModifierTapDetector {
         lastTap = nil
     }
 
+    /// Events were missed, or watching starts now: nothing seen before counts, and what's down isn't known.
+    mutating func eventsMissed() {
+        interrupt()
+        keysDown = 0
+        isUnsure = true
+    }
+
+    /// The caller asked macOS: no key other than a modifier is down.
+    mutating func noKeysDown() {
+        keysDown = 0
+        isUnsure = false
+    }
+
+    /// Some other key went down. A repeat means one is held, even if it went down before watching started.
+    mutating func keyDown(isRepeat: Bool) {
+        interrupt()
+        keysDown = isRepeat ? max(keysDown, 1) : keysDown + 1
+    }
+
+    mutating func keyUp() {
+        interrupt()
+        keysDown = max(keysDown - 1, 0)
+    }
+
     /// One flags-changed event: the key that changed and the flags after it. Returns the taps it completes.
     mutating func flagsChanged(keyCode: Int, flags: UInt64, at time: TimeInterval) -> [Tap] {
-        let families = HotkeyShortcut.Modifiers(from: NSEvent.ModifierFlags(rawValue: UInt(flags & 0xFFFF_0000)))
-        // A pair whose flag is off has no key down, even if a release was missed.
-        held = held.filter { ModifierKeys.keys[$0].map { families.contains($0.family) } ?? false }
         guard let key = ModifierKeys.keys[keyCode] else {
             interrupt()  // fn or Caps Lock
             return []
         }
+        let families = HotkeyShortcut.Modifiers(from: NSEvent.ModifierFlags(rawValue: UInt(flags & 0xFFFF_0000)))
+        let fn = flags & UInt64(NSEvent.ModifierFlags.function.rawValue) != 0
+        let devices = flags & ModifierKeys.deviceBits
         // Without device bits (some keyboards and synthetic events) only the pair's flag says whether it's down.
-        let isDown = flags & ModifierKeys.deviceBits != 0 ? flags & key.deviceBit != 0 : families.contains(key.family)
+        let isDown = devices != 0 ? devices & key.deviceBit != 0 : families.contains(key.family)
+        // From the event's flags, not from what was seen going down: a modifier held since before watching started counts.
+        let nothingElseDown = keysDown == 0 && !isUnsure && !fn
 
         if isDown {
-            guard !held.contains(keyCode) else { return [] }
-            if held.isEmpty {
+            if pressed == nil, nothingElseDown, families == key.family, devices == 0 || devices == key.deviceBit {
                 pressed = (keyCode, time)
             } else {
-                interrupt()  // a second modifier: a chord, not a tap
+                interrupt()  // with another modifier or key down: a chord, not a tap
             }
-            held.insert(keyCode)
             return []
         }
 
-        held.remove(keyCode)
-        guard held.isEmpty, let press = pressed, press.keyCode == keyCode, time - press.at <= interval else {
+        guard nothingElseDown, families.isEmpty, devices == 0, let press = pressed, press.keyCode == keyCode,
+              time - press.at <= interval else {
             interrupt()
             return []
         }

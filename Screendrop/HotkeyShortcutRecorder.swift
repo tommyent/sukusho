@@ -37,7 +37,7 @@ final class HotkeyShortcutRecorder {
         taps = ModifierTapDetector()
         HotkeyManager.shared.pauseForRecording()
 
-        let types: NSEvent.EventTypeMask = [.keyDown, .flagsChanged, .leftMouseDown, .rightMouseDown, .otherMouseDown]
+        let types: NSEvent.EventTypeMask = [.keyDown, .keyUp, .flagsChanged, .leftMouseDown, .rightMouseDown, .otherMouseDown]
         monitor = NSEvent.addLocalMonitorForEvents(matching: types) { [weak self] event in
             guard let self else { return event }
             return self.handle(event)
@@ -81,7 +81,7 @@ final class HotkeyShortcutRecorder {
             }
             return event
         case .keyDown:
-            taps.interrupt()
+            taps.keyDown(isRepeat: event.isARepeat)
             if event.keyCode == UInt16(kVK_Escape) {
                 cancel()
                 return nil
@@ -97,6 +97,9 @@ final class HotkeyShortcutRecorder {
             }
             finish(with: shortcut)
             return nil
+        case .keyUp:
+            taps.keyUp()
+            return event
         default:
             // A click isn't part of a shortcut; it still does what it does.
             taps.interrupt()
