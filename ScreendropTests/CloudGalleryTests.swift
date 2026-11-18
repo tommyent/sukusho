@@ -59,6 +59,24 @@ nonisolated private final class GalleryURLProtocol: URLProtocol, @unchecked Send
 
 @Suite(.serialized) @MainActor
 struct CloudGalleryTests {
+    @Test func mixedSelectionKeepsCaptureIdentityAndFileOrder() async throws {
+        let id = UUID()
+        let package = URL(fileURLWithPath: "/tmp/Sample.recording/render.mp4")
+        let clip = URL(fileURLWithPath: "/tmp/Clip.txt")
+        let sources: [LibraryUploadSource<UUID>] = [.file(clip), .capture(id, url: package)]
+        var lookedUp: [UUID] = []
+        var ids: [UUID] = []
+        var fileModes: [Bool] = []
+        for source in sources {
+            let target = await source.identity { lookedUp.append($0); return $0 }
+            ids.append(target.id)
+            fileModes.append(target.asFile)
+        }
+        #expect(sources.map(\.url) == [clip, package])
+        #expect(lookedUp == [id] && ids.last == id && ids.first != id)
+        #expect(fileModes == [true, false])
+    }
+
     private let base = "https://worker.example.invalid"
     nonisolated private static let ids = ["a1b2c3d4e5f60001", "a1b2c3d4e5f60002", "a1b2c3d4e5f60003"]
     nonisolated private static let galleryID = "9f8e7d6c5b4a0001"

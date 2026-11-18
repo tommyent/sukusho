@@ -328,8 +328,8 @@ struct CaptureLibraryView: View {
             ImageConversionSheet(conversion: conversion) { model.actionFeedback.show($0) }
         }
         .sheet(item: $model.pendingClipUpload) { batch in
-            CloudUploadOptionsPopover(showsTitle: batch.files.count == 1,
-                                      encryptionUnavailable: CloudShareSeal.unavailableReason(fileURLs: batch.files)) { options in
+            CloudUploadOptionsPopover(showsTitle: batch.sources.count == 1,
+                                      encryptionUnavailable: CloudShareSeal.unavailableReason(fileURLs: batch.sources.map(\.url), isRecording: batch.includesRecording)) { options in
                 batch.upload(options: options)
             }
         }

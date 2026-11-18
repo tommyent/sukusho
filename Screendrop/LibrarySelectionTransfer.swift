@@ -51,19 +51,25 @@ extension LibrarySavedCard {
 /// Snapshot the files until Share Options is dismissed or the last upload finishes.
 final class LibraryClipUpload: Identifiable {
     let directory: URL
-    private(set) var files: [URL] = []
+    private(set) var sources: [LibraryUploadSource<CaptureLibraryItem>] = []
+    private(set) var includesRecording = false
     private(set) var owners: [URL: (id: String, position: Int)] = [:]
 
     init(cards: [LibrarySavedCard]) async throws {
         directory = FileManager.default.temporaryDirectory.appending(path: "Sukusho-upload-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
         for card in cards {
+            if case .capture(let item) = card {
+                sources.append(.capture(item, url: item.fileURL))
+                includesRecording = includesRecording || item.isVideo
+                continue
+            }
             for (position, value) in try await card.transferValues().enumerated() {
                 if case .file(let url, _) = value, CloudLibraryModel.regularFiles([url]).isEmpty {
                     throw CocoaError(.fileReadUnsupportedScheme, userInfo: [NSLocalizedDescriptionKey: "Choose files inside a folder to upload them."])
                 }
                 let file = try await Task.detached(priority: .userInitiated) { [directory] in try value.write(to: directory) }.value
-                files.append(file)
+                sources.append(.file(file))
                 if let id = card.clipID { owners[file] = (id, position) }
             }
         }
@@ -72,7 +78,8 @@ final class LibraryClipUpload: Identifiable {
     deinit { try? FileManager.default.removeItem(at: directory) }
 
     func upload(options: CloudUploadOptions) {
-        CloudLibraryModel.shared.uploadFiles(files, options: options, didUpload: { [self] file, link in
+        StudioProjectRegistry.shared.flushDrafts()
+        CloudLibraryModel.shared.uploadSelection(sources, options: options, didUpload: { [self] file, link in
             if let owner = owners[file], let store = ClipboardMonitor.shared.store {
                 try await store.setCloudLink(link, entry: owner.id, position: owner.position)
             }

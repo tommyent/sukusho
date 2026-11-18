@@ -292,20 +292,10 @@ extension CaptureLibraryModel {
         guard !isBusy else { return }
         run("Uploading…") {
             StudioProjectRegistry.shared.flushDrafts()
-            if let session = item.session, item.historyIDs.isEmpty {
-                _ = await ScreenshotHistoryStore.shared.importRecordingSession(session)
-            }
-            let id = item.historyIDs.first ?? ScreenshotHistoryStore.shared.items.first {
-                $0.recordingSessionPath == item.session?.directoryURL.standardizedFileURL.path
-            }?.id ?? UUID()
-            let result = try await CloudUploader.shared.upload(itemID: id, fileURL: item.fileURL,
-                title: options.trimmedTitleOrNil, socialEnabled: options.socialEnabled,
-                expiresAt: options.expiry.date(), allowAnonymousComments: options.allowAnonymousComments,
-                password: options.password, encrypt: options.encrypted)
-            ScreenshotHistoryStore.shared.setLibraryCloudURL(id: id, cloudURL: result.url)
-            CloudShareLinks.copy([result.url], message: options.message)
+            let source = LibraryUploadSource.capture(item, url: item.fileURL)
+            let link = try await source.upload(options: options, title: options.trimmedTitleOrNil)
+            CloudShareLinks.copy([link], message: options.message)
             self.actionFeedback.show(ActionFeedback.linksCopied(1))
-            if item.isVideo { ScreenshotPreviewStack.shared.dismissVideo(for: item.ownedURL) }
             self.refresh()
         }
     }
@@ -633,4 +623,27 @@ enum LibrarySharing {
         picker.show(relativeTo: NSRect(origin: point, size: .zero), of: view, preferredEdge: .minY)
     }
 
+}
+
+extension LibraryUploadSource where Capture == CaptureLibraryItem {
+    func upload(options: CloudUploadOptions, title: String?, started: (UUID) -> Void = { _ in }) async throws -> String {
+        let history = ScreenshotHistoryStore.shared
+        let target = try await identity { item in
+            if let id = item.historyIDs.first { return id }
+            if let session = item.session {
+                let file = await history.importRecordingSession(session)
+                if let id = history.item(for: file)?.id { return id }
+            }
+            throw CocoaError(.fileNoSuchFile, userInfo: [NSFilePathErrorKey: item.fileURL.path])
+        }
+        started(target.id)
+        let result = try await CloudUploader.shared.upload(itemID: target.id, fileURL: url, title: title,
+            socialEnabled: options.socialEnabled, expiresAt: options.expiry.date(), allowAnonymousComments: options.allowAnonymousComments,
+            password: options.password, asFile: target.asFile, encrypt: options.encrypted)
+        if case .capture(let item, _) = self {
+            history.setLibraryCloudURL(id: target.id, cloudURL: result.url)
+            if item.isVideo { ScreenshotPreviewStack.shared.dismissVideo(for: item.ownedURL) }
+        }
+        return result.url
+    }
 }

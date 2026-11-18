@@ -426,9 +426,15 @@ final class CloudLibraryModel {
 
     /// Uploads files one after another as the Files page does, copies their links, and
     /// says how many it copied and whether any failed, which the Library's alert tells.
-    func uploadFiles(_ files: [URL], options: CloudUploadOptions, didUpload: @escaping (URL, String) async throws -> Void = { _, _ in }, finished: @escaping (_ copied: Int, _ failed: Bool) -> Void) {
-        guard !files.isEmpty, fileUploads == nil else { return }
-        fileUploads = FileUploads(total: files.count)
+    func uploadFiles(_ files: [URL], options: CloudUploadOptions, finished: @escaping (Int, Bool) -> Void) {
+        uploadSelection(files.map(LibraryUploadSource.file), options: options, finished: finished)
+    }
+
+    func uploadSelection(_ sources: [LibraryUploadSource<CaptureLibraryItem>], options: CloudUploadOptions,
+                         didUpload: @escaping (URL, String) async throws -> Void = { _, _ in },
+                         finished: @escaping (_ copied: Int, _ failed: Bool) -> Void) {
+        guard !sources.isEmpty, fileUploads == nil else { return }
+        fileUploads = FileUploads(total: sources.count)
         fileUploadTask = Task {
             defer {
                 fileUploads = nil
@@ -437,26 +443,21 @@ final class CloudLibraryModel {
             }
             var links: [String] = []
             var failures: [String] = []
-            for file in files {
-                let id = UUID()
-                fileUploads?.current = id
+            for source in sources {
                 do {
-                    let result = try await CloudUploader.shared.upload(
-                        itemID: id, fileURL: file,
-                        // One title can't name several files; each keeps its file name.
-                        title: files.count == 1 ? options.trimmedTitleOrNil : nil,
-                        socialEnabled: options.socialEnabled, expiresAt: options.expiry.date(),
-                        allowAnonymousComments: options.allowAnonymousComments, password: options.password,
-                        asFile: true, encrypt: options.encrypted
-                    )
-                    links.append(result.url)
-                    try await didUpload(file, result.url)
+                    try Task.checkCancellation()
+                    let link = try await source.upload(options: options, title: sources.count == 1 ? options.trimmedTitleOrNil : nil) {
+                        fileUploads?.current = $0
+                    }
+                    links.append(link)
+                    try await didUpload(source.url, link)
                 } catch is CancellationError {
                     break
                 } catch {
-                    failures.append("\(file.lastPathComponent): \(error.localizedDescription)")
+                    failures.append("\(source.url.lastPathComponent): \(error.localizedDescription)")
                 }
-                CloudUploader.shared.clearUploadState(for: id)
+                if let id = fileUploads?.current { CloudUploader.shared.clearUploadState(for: id) }
+                fileUploads?.current = nil
                 fileUploads?.done += 1
             }
             CloudShareLinks.copy(links)

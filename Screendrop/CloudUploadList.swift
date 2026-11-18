@@ -368,3 +368,22 @@ nonisolated struct UploadMetadata: Sendable {
                                            password: password)
     }
 }
+
+/// A capture keeps its History identity and recording package through the upload.
+enum LibraryUploadSource<Capture> {
+    case capture(Capture, url: URL)
+    case file(URL)
+
+    var url: URL {
+        switch self {
+        case .capture(_, let url), .file(let url): url
+        }
+    }
+
+    func identity(historyID: (Capture) async throws -> UUID) async rethrows -> (id: UUID, asFile: Bool) {
+        switch self {
+        case .capture(let capture, _): (try await historyID(capture), false)
+        case .file: (UUID(), true)
+        }
+    }
+}
