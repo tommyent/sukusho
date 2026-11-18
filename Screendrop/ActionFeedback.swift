@@ -46,6 +46,10 @@ final class ActionFeedback {
         }
     }
 
+    func confirmLinkCopy(count: Int, written: Bool) {
+        if written && count > 0 { show(Self.linksCopied(count)) }
+    }
+
     static func linksCopied(_ count: Int) -> String {
         count == 1 ? "Link Copied" : "\(count) Links Copied"
     }

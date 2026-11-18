@@ -276,8 +276,7 @@ extension CaptureLibraryModel {
 
     func copyLink(_ item: CaptureLibraryItem) {
         guard let link = item.cloudURL else { return }
-        CloudShareLinks.copy([link])
-        actionFeedback.show(ActionFeedback.linksCopied(1))
+        CloudShareLinks.copy([link], feedback: actionFeedback)
     }
 
     func upload(_ item: CaptureLibraryItem, options: CloudUploadOptions) {
@@ -286,8 +285,7 @@ extension CaptureLibraryModel {
             StudioProjectRegistry.shared.flushDrafts()
             let source = LibraryUploadSource.capture(item, url: item.fileURL)
             let link = try await source.upload(options: options, title: options.trimmedTitleOrNil)
-            CloudShareLinks.copy([link], message: options.message)
-            self.actionFeedback.show(ActionFeedback.linksCopied(1))
+            CloudShareLinks.copy([link], message: options.message, feedback: self.actionFeedback)
             self.refresh()
         }
     }

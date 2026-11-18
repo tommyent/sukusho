@@ -54,14 +54,15 @@ enum CloudShareLinks {
     }
 
     /// `message`, the note Share Options drafted, goes above the links, so one paste fills the email.
-    static func copy(_ items: [(url: String, encrypted: Bool)], message: String? = nil) {
+    static func copy(_ items: [(url: String, encrypted: Bool)], message: String? = nil, feedback: ActionFeedback? = nil) {
         guard !items.isEmpty else { return }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(clipboardText(links: links(items), message: message), forType: .string)
+        let written = NSPasteboard.general.setString(clipboardText(links: links(items), message: message), forType: .string)
+        feedback?.confirmLinkCopy(count: items.count, written: written)
     }
 
-    static func copy(_ urls: [String], message: String? = nil) {
-        copy(urls.map { ($0, false) }, message: message)
+    static func copy(_ urls: [String], message: String? = nil, feedback: ActionFeedback? = nil) {
+        copy(urls.map { ($0, false) }, message: message, feedback: feedback)
     }
 
     nonisolated static func clipboardText(links: [String], message: String?) -> String {

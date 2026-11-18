@@ -537,7 +537,7 @@ struct CaptureLibraryView: View {
                 .help("Reveal \(folder.lastPathComponent) in Finder")
             } else if let link = model.copiedLink {
                 Button {
-                    CloudShareLinks.copy([link])
+                    CloudShareLinks.copy([link], feedback: model.actionFeedback)
                 } label: {
                     Label("Link Copied", systemImage: "checkmark.icloud")
                         .foregroundStyle(.green)

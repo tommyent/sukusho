@@ -72,6 +72,18 @@ struct ActionFeedbackTests {
         await settle { !feedback.isShowing }
     }
 
+    @Test func onlyPublishedLinksAnnounceTheCopy() {
+        var announced: [String] = []
+        let feedback = ActionFeedback(announce: { announced.append($0) })
+        feedback.confirmLinkCopy(count: 0, written: true)
+        feedback.confirmLinkCopy(count: 1, written: false)
+        #expect(feedback.message == nil && announced.isEmpty)
+        feedback.confirmLinkCopy(count: 1, written: true)
+        #expect(feedback.message == "Link Copied")
+        feedback.confirmLinkCopy(count: 2, written: true)
+        #expect(announced == ["Link Copied", "2 Links Copied"])
+    }
+
     @Test func linkMessagesCount() {
         #expect(ActionFeedback.linksCopied(1) == "Link Copied")
         #expect(ActionFeedback.linksCopied(3) == "3 Links Copied")

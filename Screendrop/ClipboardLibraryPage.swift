@@ -125,7 +125,7 @@ struct ClipboardCard: View {
 
     var body: some View {
         LibraryGridCard(marks: LibraryCardMarks(clip: entry, upload: CloudLibraryModel.shared.upload(for: entry.cloudLinks.first)),
-                        cloudAction: { select(); CloudShareLinks.copy(entry.cloudLinks) }) {
+                        cloudAction: { select(); CloudShareLinks.copy(entry.cloudLinks, feedback: CaptureLibraryModel.shared.actionFeedback) }) {
             face
         } caption: {
             LibraryGridCaption(date: entry.kind == .snippet ? entry.snippetEditedAt ?? entry.firstCopiedAt : entry.lastCopiedAt,
@@ -147,7 +147,7 @@ struct ClipboardCard: View {
         .accessibilityAction(named: "Share") { select(); CaptureLibraryModel.shared.shareSelection([.clip(entry)]) }
         .accessibilityActions {
             if !entry.cloudLinks.isEmpty {
-                Button("Copy Cloud Link") { select(); CloudShareLinks.copy(entry.cloudLinks) }
+                Button("Copy Cloud Link") { select(); CloudShareLinks.copy(entry.cloudLinks, feedback: CaptureLibraryModel.shared.actionFeedback) }
             }
         }
         .accessibilityAction(named: "Export") { select(); CaptureLibraryModel.shared.export([.clip(entry)]) }

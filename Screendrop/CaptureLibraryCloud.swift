@@ -236,8 +236,7 @@ final class CloudLibraryModel {
 
     func copyLinks(_ uploads: [CloudUpload]) {
         guard !uploads.isEmpty else { return }
-        CloudShareLinks.copy(uploads.map { ($0.url, $0.encrypted == true) })
-        CaptureLibraryModel.shared.actionFeedback.show(ActionFeedback.linksCopied(uploads.count))
+        CloudShareLinks.copy(uploads.map { ($0.url, $0.encrypted == true) }, feedback: CaptureLibraryModel.shared.actionFeedback)
     }
 
     /// Whether the Worker says this upload is sealed, so a link without its key needs a warning.
@@ -827,7 +826,7 @@ private struct CloudUploadCard: View {
                                                        localLength: local?.durationText), cloudAction: {
                         act { _ in
                             if upload.isReceived { FileRequestsModel.shared.download([upload]) }
-                            else { CloudShareLinks.copy([(upload.url, upload.encrypted == true)]) }
+                            else { CloudLibraryModel.shared.copyLinks([upload]) }
                         }
                     }) {
                         CloudUploadThumbnail(upload: upload, local: local, showsTopOfTall: true)

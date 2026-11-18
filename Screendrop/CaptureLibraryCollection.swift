@@ -516,7 +516,7 @@ struct LibraryCellContent: View {
                             cloudAction: {
                                 let model = CaptureLibraryModel.shared
                                 model.selection = [item.id]
-                                if let link = item.cloudURL { CloudShareLinks.copy([link]) }
+                                if item.cloudURL != nil { model.copyLink(item) }
                                 else { model.pendingCloudUpload = item }
                             }, cloudEnabled: item.cloudURL != nil || CloudUploader.shared.isConfigured) {
                             CaptureLibraryThumbnail(item: item, showsTopOfTall: true)
@@ -765,7 +765,7 @@ extension AgentPromptIndex.State {
 struct CardCloudBadge: View {
     let isShared: Bool
     let action: () -> Void
-    @State private var copied = ActionFeedback()
+    @State private var copied = ActionFeedback(announce: { _ in })
 
     var body: some View {
         Button {

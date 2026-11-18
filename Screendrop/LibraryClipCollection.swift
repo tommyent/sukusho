@@ -136,7 +136,7 @@ struct LibraryClipCollection: View {
         }
         let links = selected.flatMap { $0.clipEntry?.cloudLinks ?? $0.captureItem?.cloudURL.map { [$0] } ?? [] }
         if !links.isEmpty {
-            items.append(LibraryMenuItem(title: links.count == 1 ? "Copy Link" : "Copy Links") { CloudShareLinks.copy(links) })
+            items.append(LibraryMenuItem(title: links.count == 1 ? "Copy Link" : "Copy Links") { CloudShareLinks.copy(links, feedback: CaptureLibraryModel.shared.actionFeedback) })
         }
         items.append(LibraryMenuItem(title: "Delete…", startsGroup: true) { perform(.trash) })
         return items
