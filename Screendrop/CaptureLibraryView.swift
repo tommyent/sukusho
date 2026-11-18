@@ -484,7 +484,8 @@ struct CaptureLibraryView: View {
     /// The page's capture shortcuts as the user set them, so an empty page
     /// teaches the keys that work from anywhere. Keys that failed to register
     /// are left out, and with none left there's no line at all. Non-breaking
-    /// spaces keep each key with its name, so the line wraps between them.
+    /// spaces keep each key with its name, so the line wraps between them,
+    /// including the space inside a modifier key on its own ("Right ⌥", "⌥ ⌥").
     private var shortcutLine: String? {
         let actions: [(CaptureHotkeyAction, String)] = switch activeFilter {
         case .all: [(.area, "Area"), (.window, "Window"), (.fullscreen, "Fullscreen"), (.screenRecording, "Record")]
@@ -494,7 +495,9 @@ struct CaptureLibraryView: View {
         let keys = actions
             .filter { HotkeyManager.shared.registrationErrors[$0.0] == nil }
             .compactMap { action, name in
-                CaptureHotkeyPreferences.shortcut(for: action).map { $0.displayTokens.joined() + "\u{00A0}" + name }
+                CaptureHotkeyPreferences.shortcut(for: action).map {
+                    $0.displayTokens.joined().replacingOccurrences(of: " ", with: "\u{00A0}") + "\u{00A0}" + name
+                }
             }
         guard !keys.isEmpty else { return nil }
         let heading = keys.count == 1 ? "Shortcut that works anywhere" : "Shortcuts that work anywhere"
