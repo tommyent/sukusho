@@ -142,11 +142,14 @@ struct CaptureHotkeySettingsSection: View {
     /// the list until added with +, and until a relaunch this run couldn't tell it had been turned on: the line is right
     /// either way.
     private var inputMonitoringNotice: some View {
-        let granted = HotkeyManager.shared.inputMonitoring == .relaunch
+        let need = HotkeyManager.shared.inputMonitoring
+        let granted = need == .relaunch
         return VStack(alignment: .leading, spacing: DS.Space.s) {
-            warningLabel(granted
-                ? "Input Monitoring is on. macOS lets Sukusho use it once Sukusho opens again."
-                : "A modifier key on its own needs Input Monitoring, so Sukusho can notice it in other apps; it never records what you type. Turn on Sukusho there, or add it with + if it isn’t listed. If you’ve turned it on, relaunch Sukusho to start using modifier-key shortcuts.")
+            switch need {
+            case .relaunch: warningLabel("Input Monitoring is on. macOS lets Sukusho use it once Sukusho opens again.")
+            case .turnedOff: warningLabel("macOS turned off Sukusho’s watching for modifier keys. It stays off until Sukusho relaunches; if you turned off Input Monitoring for Sukusho, turn it on again first.")
+            default: warningLabel("A modifier key on its own needs Input Monitoring, so Sukusho can notice it in other apps; it never records what you type. Turn on Sukusho there, or add it with + if it isn’t listed. If you’ve turned it on, relaunch Sukusho to start using modifier-key shortcuts.")
+            }
             HStack(spacing: DS.Space.m) {
                 Spacer(minLength: 0)
                 Button("Relaunch Sukusho") { AppRelaunch.request() }

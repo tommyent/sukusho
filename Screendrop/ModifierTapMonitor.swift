@@ -17,7 +17,8 @@ final class ModifierTapMonitor {
     private var source: CFRunLoopSource?
     private var detector = ModifierTapDetector()
     private var onTap: ((ModifierTapDetector.Tap) -> Void)?
-    private var onStop: (() -> Void)?
+    /// True when it may come back on (a timeout it couldn't recover from), false when it was turned off for the user.
+    private var onStop: ((_ retryable: Bool) -> Void)?
     /// Bumped at every break in the events, so a tap queued before it doesn't run.
     private var generation = 0
     private var activationObserver: NSObjectProtocol?
@@ -31,7 +32,7 @@ final class ModifierTapMonitor {
 
     /// False when macOS doesn't let Sukusho watch the keyboard; the caller says so and offers the setting. `onStop` runs
     /// if macOS turns the watching off later and it can't come back on.
-    func start(onTap: @escaping (ModifierTapDetector.Tap) -> Void, onStop: @escaping () -> Void) -> Bool {
+    func start(onTap: @escaping (ModifierTapDetector.Tap) -> Void, onStop: @escaping (_ retryable: Bool) -> Void) -> Bool {
         self.onTap = onTap
         self.onStop = onStop
         if tap != nil { return true }
@@ -99,11 +100,11 @@ final class ModifierTapMonitor {
         activationObserver = nil
     }
 
-    private func stopForGood() {
+    private func stopForGood(retryable: Bool) {
         let onStop = onStop
         stop()
         // After the callback returns, like a tap.
-        DispatchQueue.main.async { onStop?() }
+        DispatchQueue.main.async { onStop?(retryable) }
     }
 
     /// A Carbon shortcut fired: the modifier held for it isn't a tap.
@@ -119,10 +120,10 @@ final class ModifierTapMonitor {
             missEvents(at: now)
             if let tap, CGPreflightListenEventAccess() || AXIsProcessTrusted() { CGEvent.tapEnable(tap: tap, enable: true) }
             if let tap, CGEvent.tapIsEnabled(tap: tap) { return }
-            return stopForGood()
+            return stopForGood(retryable: true)
         case .tapDisabledByUserInput:
-            // Turned off on the user's behalf: it stays off, and the shortcuts say so.
-            return stopForGood()
+            // Turned off on the user's behalf: it stays off until Sukusho relaunches, and the shortcuts say so.
+            return stopForGood(retryable: false)
         default:
             break
         }

@@ -163,6 +163,8 @@ enum InputMonitoringNeed: Equatable {
     case grant
     /// Granted, but this run of Sukusho can't watch yet: macOS applies Input Monitoring when an app next opens.
     case relaunch
+    /// macOS turned the watching off on the user's behalf: off until Sukusho relaunches.
+    case turnedOff
 
     static func of(hasTapShortcuts: Bool, watching: Bool, granted: Bool) -> Self {
         guard hasTapShortcuts, !watching else { return .none }
