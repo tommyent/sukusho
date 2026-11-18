@@ -33,6 +33,10 @@ nonisolated struct RecordingProjectMetadata: Codable, Sendable, Equatable {
     /// Captions translated on this Mac, on the original cues' times.
     var captionTracks: [RecordingCaptionTrack]?
 
+    mutating func rename(to name: String) {
+        displayName = name.isEmpty ? nil : name
+    }
+
     init(
         version: Int? = RecordingProjectMetadata.currentVersion,
         displayName: String? = nil,

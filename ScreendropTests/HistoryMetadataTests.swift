@@ -211,6 +211,43 @@ struct HistoryMetadataTests {
         }
     }
 
+    @Test func editingAndUploadingDoNotArchiveOnDiskOrAfterRelaunch() throws {
+        try withIndex { url in
+            let domain = "Sukusho-HistoryTests-" + UUID().uuidString
+            let defaults = try #require(UserDefaults(suiteName: domain))
+            defer { defaults.removePersistentDomain(forName: domain) }
+            let marks = url.deletingLastPathComponent().appendingPathComponent("library-saved.json")
+            var history = MarkedHistory<ScreenshotHistoryItem>(historyURL: url, marksURL: marks)
+            var row = ScreenshotHistoryItem(id: UUID(), createdAt: .now, updatedAt: .now, fileName: "sample.png", pixelWidth: 2, pixelHeight: 2)
+            _ = history.load()
+            func reopen() throws -> ScreenshotHistoryItem {
+                let saved = try history.save([row])
+                try #require(saved)
+                var reopened = MarkedHistory<ScreenshotHistoryItem>(historyURL: url, marksURL: marks)
+                let stored = try #require(reopened.load(launchDefaults: defaults).first)
+                #expect(stored.librarySavedAt == nil)
+                return stored
+            }
+            row.rename(to: "  Sample  ")
+            #expect(try reopen().displayName == "Sample")
+            row.setTag("Delete later", applied: true)
+            #expect(try reopen().tags == ["Delete later"])
+            row.setLibraryCloudURL("https://example.invalid/first")
+            #expect(try reopen().cloudURL == "https://example.invalid/first")
+            row.recordCloudUpload(url: "https://example.invalid/next", redactions: [])
+            let uploaded = try reopen()
+            #expect(uploaded.cloudURL == "https://example.invalid/next" && uploaded.cloudRedactions == [])
+            #expect(defaults.bool(forKey: "libraryRetroSave.v1"))
+
+            let project = url.deletingLastPathComponent().appendingPathComponent("project.json")
+            var recording = RecordingProjectMetadata()
+            recording.rename(to: "Recording")
+            try JSONEncoder().encode(recording).write(to: project)
+            let stored = try JSONDecoder().decode(RecordingProjectMetadata.self, from: Data(contentsOf: project))
+            #expect(stored.displayName == "Recording" && stored.librarySavedAt == nil)
+        }
+    }
+
     @Test func onlyMarkedCapturesAppearInSaved() {
         for mark in [false, true] {
             #expect(LibraryArchive.includes(isSaved: mark, inSavedPage: true) == mark)

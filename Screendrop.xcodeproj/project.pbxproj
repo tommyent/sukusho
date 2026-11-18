@@ -156,6 +156,8 @@
 		C11B00000000000000000019 /* Screendrop/EditorSaveIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = C11B0000000000000000001A /* Screendrop/EditorSaveIdentity.swift */; };
 		C11B0000000000000000001B /* Screendrop/ClipboardEditCopies.swift in Sources */ = {isa = PBXBuildFile; fileRef = C11B0000000000000000001C /* Screendrop/ClipboardEditCopies.swift */; };
 		AA6200000000000000000001 /* Screendrop/ScreenshotHistoryMetadata.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA6200000000000000000011 /* Screendrop/ScreenshotHistoryMetadata.swift */; };
+		C77100000000000000003001 /* Screendrop/ScreenshotPreviewItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = C77100000000000000003011 /* Screendrop/ScreenshotPreviewItem.swift */; };
+		C77100000000000000001001 /* Screendrop/ScreenshotHistoryItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = C77100000000000000001011 /* Screendrop/ScreenshotHistoryItem.swift */; };
 		AA6200000000000000000002 /* Screendrop/AnnotationDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA6200000000000000000012 /* Screendrop/AnnotationDocument.swift */; };
 		AA6200000000000000000003 /* Screendrop/AnnotationBackground.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA6200000000000000000013 /* Screendrop/AnnotationBackground.swift */; };
 		AA6200000000000000000004 /* Screendrop/AnnotationShadowStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA6200000000000000000014 /* Screendrop/AnnotationShadowStyle.swift */; };
@@ -363,6 +365,8 @@
 		C11B0000000000000000001A /* Screendrop/EditorSaveIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/EditorSaveIdentity.swift; sourceTree = SOURCE_ROOT; };
 		C11B0000000000000000001C /* Screendrop/ClipboardEditCopies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ClipboardEditCopies.swift; sourceTree = SOURCE_ROOT; };
 		AA6200000000000000000011 /* Screendrop/ScreenshotHistoryMetadata.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ScreenshotHistoryMetadata.swift; sourceTree = SOURCE_ROOT; };
+		C77100000000000000003011 /* Screendrop/ScreenshotPreviewItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ScreenshotPreviewItem.swift; sourceTree = SOURCE_ROOT; };
+		C77100000000000000001011 /* Screendrop/ScreenshotHistoryItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ScreenshotHistoryItem.swift; sourceTree = SOURCE_ROOT; };
 		AA6200000000000000000012 /* Screendrop/AnnotationDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AnnotationDocument.swift; sourceTree = SOURCE_ROOT; };
 		AA6200000000000000000013 /* Screendrop/AnnotationBackground.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AnnotationBackground.swift; sourceTree = SOURCE_ROOT; };
 		AA6200000000000000000014 /* Screendrop/AnnotationShadowStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AnnotationShadowStyle.swift; sourceTree = SOURCE_ROOT; };
@@ -501,6 +505,8 @@
 				AF0100000000000000000002 /* Screendrop/ImageTextWarmUp.swift */,
 				AF0F00000000000000000002 /* Screendrop/RecordingMicrophoneLevel.swift */,
 				AA6200000000000000000011 /* Screendrop/ScreenshotHistoryMetadata.swift */,
+				C77100000000000000003011 /* Screendrop/ScreenshotPreviewItem.swift */,
+				C77100000000000000001011 /* Screendrop/ScreenshotHistoryItem.swift */,
 				AA6200000000000000000012 /* Screendrop/AnnotationDocument.swift */,
 				AA6200000000000000000013 /* Screendrop/AnnotationBackground.swift */,
 				AA6200000000000000000014 /* Screendrop/AnnotationShadowStyle.swift */,
@@ -786,6 +792,8 @@
 				AF0100000000000000000001 /* Screendrop/ImageTextWarmUp.swift in Sources */,
 				AF0F00000000000000000001 /* Screendrop/RecordingMicrophoneLevel.swift in Sources */,
 				AA6200000000000000000001 /* Screendrop/ScreenshotHistoryMetadata.swift in Sources */,
+				C77100000000000000003001 /* Screendrop/ScreenshotPreviewItem.swift in Sources */,
+				C77100000000000000001001 /* Screendrop/ScreenshotHistoryItem.swift in Sources */,
 				AA6200000000000000000002 /* Screendrop/AnnotationDocument.swift in Sources */,
 				AA6200000000000000000003 /* Screendrop/AnnotationBackground.swift in Sources */,
 				AA6200000000000000000004 /* Screendrop/AnnotationShadowStyle.swift in Sources */,

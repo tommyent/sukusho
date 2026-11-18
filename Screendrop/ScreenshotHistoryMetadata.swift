@@ -153,7 +153,9 @@ struct MarkedHistory<Row: SavedMarkRow> {
     var problem: String? { marks.problem ?? writeProblem }
 
     /// The rows with their marks. Marks still in History from before the marks file move into it.
-    mutating func load() -> [Row] {
+    mutating func load(launchDefaults: UserDefaults? = nil) -> [Row] {
+        // Disable beta 1’s automatic marks if it opens this Library after a downgrade.
+        launchDefaults?.set(true, forKey: "libraryRetroSave.v1")
         var rows = history.load(from: historyURL)
         let fileMarks = marks.load()
         let merged = CaptureSavedMarks.merged(file: fileMarks, rows: rows.map { ($0.id, $0.librarySavedAt) })
