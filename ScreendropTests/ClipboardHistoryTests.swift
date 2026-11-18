@@ -629,6 +629,24 @@ struct ClipboardHistoryStoreTests {
         #expect(snippet.id == id && snippet.text == "Hello" && snippet.pinnedAt == nil)
     }
 
+    @Test func savingOneCardLeavesItsNeighborsAndSnippetsAlone() async throws {
+        let store = try store()
+        try await store.record(text("selected neighbor"), at: start)
+        try await store.record(text("clicked star"), at: start + 1)
+        _ = try await store.addSnippet(title: "Snippet", text: "saved independently")
+        let before = try await store.entries()
+        let clicked = try #require(before.first { $0.text == "clicked star" })
+        #expect(clicked.canMoveToSaved)
+        #expect(before.first { $0.kind == .snippet }?.canMoveToSaved == false)
+        let changed = try await store.moveToSaved(ids: [clicked.id], at: start + 2)
+        #expect(changed == [clicked.id])
+        let after = try await store.entries()
+        #expect(after.first { $0.id == clicked.id }?.canMoveToSaved == false)
+        #expect(after.filter { $0.id != clicked.id } == before.filter { $0.id != clicked.id })
+        try await store.undoMoveToSaved(ids: changed, at: start + 2)
+        #expect(try await store.entries() == before)
+    }
+
     @Test func undoAndRedoAClipSelectionKeepItsDatesAndOrder() async throws {
         let store = try store()
         try await store.record(text("first"), at: start)

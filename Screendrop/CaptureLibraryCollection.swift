@@ -522,7 +522,7 @@ struct LibraryCellContent: View {
                             CaptureLibraryThumbnail(item: item, showsTopOfTall: true)
                         } caption: {
                             LibraryGridCaption(date: item.createdAt, bundleID: item.source?.bundleIdentifier,
-                                               saved: item.isSaved, capture: item) {
+                                               saveAction: item.isSaved ? nil : { CaptureLibraryModel.shared.moveToSaved([item]) }, capture: item) {
                                 if isRenaming(item) {
                                     CaptureNameField(id: item.id, location: .card, font: .system(size: 13, weight: .medium),
                                                      placeholder: item.gridTitle)
@@ -559,6 +559,9 @@ struct LibraryCellContent: View {
                 .accessibilityActions {
                     Button("Open") { act(.edit, on: item) }
                     Button("Quick Look") { act(.preview, on: item) }
+                    if layout == .grid, !item.isSaved {
+                        Button("Move to Saved") { CaptureLibraryModel.shared.moveToSaved([item]) }
+                    }
                     Button("Rename") { CaptureLibraryModel.shared.beginRename(item, at: .card) }
                     if item.cloudURL != nil {
                         Button("Copy Cloud Link") { CaptureLibraryModel.shared.copyLink(item) }
@@ -630,7 +633,6 @@ struct LibraryCellContent: View {
                         .libraryRaisedIcon(ringed: ClipboardHistoryModel.shared.appIconIsLight(item.source?.bundleIdentifier))
                 }
                 Text(item.subtitle).lineLimit(1).libraryRaisedText()
-                if item.isSaved { Image(systemName: "star.fill").font(.system(size: 8)).foregroundStyle(.yellow) }
             }
             .font(.caption).foregroundStyle(.secondary)
         }

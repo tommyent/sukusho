@@ -94,7 +94,8 @@ struct LibraryGridCaption<Title: View>: View {
     @Environment(\.libraryCardDensity) private var density
     let date: Date
     var bundleID: String?
-    var saved = false
+    var saveAction: (() -> Void)?
+    @State private var hoveringStar = false
     var capture: CaptureLibraryItem?
     @ViewBuilder let title: () -> Title
 
@@ -115,7 +116,19 @@ struct LibraryGridCaption<Title: View>: View {
                 }
                 Text(density.showsFullDate ? CaptureLibraryItem.dateTitle(date) : date.formatted(date: .omitted, time: .shortened)).lineLimit(1).libraryRaisedText()
                 Spacer(minLength: 0)
-                if saved { Image(systemName: "star.fill").font(.system(size: 9)).foregroundStyle(.yellow).accessibilityLabel("Saved") }
+                if let saveAction {
+                    Button(action: saveAction) {
+                        Image(systemName: "star")
+                            .font(.system(size: 11, weight: hoveringStar ? .semibold : .regular))
+                            .foregroundStyle(.secondary.opacity(hoveringStar ? 1 : 0.8))
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { hoveringStar = $0 }
+                    .help("Move to Saved")
+                    .accessibilityLabel("Move to Saved")
+                }
             }
             .font(.caption).foregroundStyle(.secondary)
         }

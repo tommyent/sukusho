@@ -129,7 +129,7 @@ struct ClipboardCard: View {
             face
         } caption: {
             LibraryGridCaption(date: entry.kind == .snippet ? entry.snippetEditedAt ?? entry.firstCopiedAt : entry.lastCopiedAt,
-                               bundleID: entry.sourceBundleID, saved: entry.isArchived) {
+                               bundleID: entry.sourceBundleID, saveAction: entry.canMoveToSaved ? { model.moveToSaved([entry]) } : nil) {
                 Text(ClipboardList.gridTitle(of: entry))
             }
         }
@@ -146,6 +146,7 @@ struct ClipboardCard: View {
         .accessibilityAction(named: "Copy") { select(); CaptureLibraryModel.shared.copySelection([.clip(entry)]) }
         .accessibilityAction(named: "Share") { select(); CaptureLibraryModel.shared.shareSelection([.clip(entry)]) }
         .accessibilityActions {
+            if entry.canMoveToSaved { Button("Move to Saved") { model.moveToSaved([entry]) } }
             if !entry.cloudLinks.isEmpty {
                 Button("Copy Cloud Link") { select(); CloudShareLinks.copy(entry.cloudLinks, feedback: CaptureLibraryModel.shared.actionFeedback) }
             }
@@ -226,7 +227,6 @@ struct ClipboardListRow: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
             Spacer(minLength: DS.Space.m)
-            if entry.isArchived { Image(systemName: "star.fill").font(.system(size: 9)).foregroundStyle(.yellow) }
             Text(entry.kind == .snippet ? (model.appName(entry.sourceBundleID) ?? "") : ClipboardInfo.shortWhen(entry.lastCopiedAt))
                 .font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
         }

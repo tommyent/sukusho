@@ -833,7 +833,7 @@ private struct CloudUploadCard: View {
                             .overlay { CloudFetchOverlay(uploadID: upload.id) }
                     } caption: {
                         LibraryGridCaption(date: local?.createdAt ?? upload.createdAt, bundleID: local?.source?.bundleIdentifier,
-                                           saved: local?.isSaved == true, capture: local) {
+                                           capture: local) {
                             Text(CloudUploadText.gridTitle(upload, local: local))
                         }
                     }

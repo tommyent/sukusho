@@ -161,9 +161,11 @@ extension CaptureLibraryModel {
         } + [LibraryMenuItem(title: "Refresh", startsGroup: true, perform: refresh)]
     }
 
-    func moveToSaved() {
+    func moveToSaved() { moveToSaved(selectedItems) }
+
+    func moveToSaved(_ items: [CaptureLibraryItem]) {
         guard !isBusy else { return }
-        let targets = selectedItems.filter { !$0.isSaved }
+        let targets = items.filter { !$0.isSaved }
         let requested = CaptureSavedTargets(ids: Set(targets.flatMap(\.historyIDs)),
                                             projects: Set(targets.compactMap { $0.session?.projectMetadataURL }))
         let date = Date(timeIntervalSince1970: Date.now.timeIntervalSince1970.rounded(.down))
