@@ -379,6 +379,78 @@ struct ClipboardHistoryStoreTests {
         #expect(try await reopened.entries().count == 1)
     }
 
+    private func schemaVersion() throws -> Int32 {
+        var db: OpaquePointer?
+        try #require(sqlite3_open(directory.appendingPathComponent("clipboard.sqlite").path, &db) == SQLITE_OK)
+        defer { sqlite3_close(db) }
+        var statement: OpaquePointer?
+        try #require(sqlite3_prepare_v2(db, "PRAGMA user_version", -1, &statement, nil) == SQLITE_OK)
+        defer { sqlite3_finalize(statement) }
+        try #require(sqlite3_step(statement) == SQLITE_ROW)
+        return sqlite3_column_int(statement, 0)
+    }
+
+    @Test func unreadableCaptureDoesNotPreventRecordingOrMigratingOtherClips() async throws {
+        let old = try store()
+        let readable = try capture(1, named: "Readable.png")
+        let locked = try capture(2, named: "Locked.png")
+        try await old.record(readable)
+        try await old.record(locked)
+        try executeLegacySQL("PRAGMA user_version = 1")
+        let path = try #require(locked.libraryPath)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: path) }
+
+        let opened = try store()
+        let rows = try await opened.entries()
+        let copied = try #require(rows.first { $0.libraryPath == readable.libraryPath })
+        let blob = try #require(copied.imageURL)
+        #expect(try Data(contentsOf: blob) == Self.picture(1))
+        let files = try FileManager.default.subpathsOfDirectory(atPath: directory.appendingPathComponent("Blobs").path)
+        #expect(files.filter { $0.hasSuffix(".png") }.map { ($0 as NSString).lastPathComponent } == [blob.lastPathComponent])
+        #expect(try schemaVersion() == 2)
+        let pending = try #require(rows.first { $0.libraryPath == path })
+        #expect(pending.imageURL == nil && pending.hash == locked.hash)
+        try await opened.record(text("history is running"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: path)
+        let reopened = try store()
+        let recovered = try #require(try await reopened.entries().first { $0.id == pending.id })
+        #expect(try Data(contentsOf: #require(recovered.imageURL)) == Self.picture(2))
+        #expect(try await reopened.entries().count == 3)
+    }
+
+    @Test func blobWriteFailureRollsBackEntriesAndVersions() async throws {
+        let old = try store()
+        let reference = try capture(3, named: "Original.png")
+        try await old.record(reference)
+        let path = try #require(reference.libraryPath)
+        let version = Data("earlier picture".utf8)
+        try version.write(to: URL(fileURLWithPath: path + ".version"))
+        try executeLegacySQL("""
+            INSERT INTO versions(entry_id, hash, library_path, copied_at)
+            SELECT id, 'previous', library_path || '.version', 0 FROM entries;
+            PRAGMA user_version = 1;
+            """)
+        let versionHash = ClipboardPasteboardReader.digest(version)
+        #expect(reference.hash.prefix(2) != versionHash.prefix(2))
+        let shard = directory.appendingPathComponent("Blobs").appendingPathComponent(String(versionHash.prefix(2)))
+        try FileManager.default.createDirectory(at: shard, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: shard.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shard.path) }
+
+        #expect(throws: (any Error).self) { try store() }
+        #expect(try schemaVersion() == 1)
+        let unchanged = try #require(try await old.entries().first)
+        #expect(unchanged.imageURL == nil && unchanged.libraryPath == path)
+        let earlier = try #require(unchanged.earlierVersions.first)
+        #expect(earlier.imageURL == nil && earlier.hash == "previous")
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shard.path)
+        let recovered = try store()
+        let complete = try #require(try await recovered.entries().first)
+        #expect(try Data(contentsOf: #require(complete.imageURL)) == Self.picture(3))
+        #expect(try Data(contentsOf: #require(complete.earlierVersions.first?.imageURL)) == version)
+    }
+
     @Test func legacyCaptureReferencesAcquireIndependentBytesOnce() async throws {
         let old = try store()
         let history = directory.appendingPathComponent("History")

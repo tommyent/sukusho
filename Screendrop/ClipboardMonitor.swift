@@ -24,6 +24,7 @@ final class ClipboardMonitor {
     private var readToken = 0
     private var isReading = false
     private var defaultsObserver: NSObjectProtocol?
+    private var lastHistoryEnabled: Bool?
     private let logger = Logger(subsystem: "com.tommyent.Sukusho", category: "Clipboard")
 
     private init() {}
@@ -41,12 +42,14 @@ final class ClipboardMonitor {
                 MainActor.assumeIsolated { ClipboardMonitor.shared.update() }
             }
         }
-        ScreendropPreferences.clipboardHistoryEnabled ? start() : stop()
+        let enabled = ScreendropPreferences.clipboardHistoryEnabled
+        guard enabled != lastHistoryEnabled else { return }
+        lastHistoryEnabled = enabled
+        enabled ? start() : stop()
     }
 
     private func start() {
         guard !isRunning else { return }
-        // Set first: making the device ID writes a default, which calls update() again.
         isRunning = true
         do {
             store = try ClipboardHistoryStore(directory: Self.directory, deviceID: ScreendropPreferences.clipboardDeviceID)

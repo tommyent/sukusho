@@ -187,9 +187,7 @@ actor ClipboardHistoryStore {
                     """, []) { ($0.int(0), $0.text(1)!, $0.text(2)!) }
                 for (row, path, previousHash) in rows {
                     let file = URL(fileURLWithPath: path)
-                    let data: Data
-                    do { data = try Data(contentsOf: file) }
-                    catch let error as CocoaError where error.code == .fileReadNoSuchFile { continue }
+                    guard let data = try? Data(contentsOf: file) else { continue }
                     let hash = ClipboardPasteboardReader.digest(data)
                     let blob = try Self.writeBlob(data, hash: hash,
                                                   ext: file.pathExtension, in: directory)
