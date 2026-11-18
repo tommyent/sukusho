@@ -305,8 +305,15 @@ final class HotkeyManager {
     func handleHotKey(id: UInt32) {
         // The key went to this shortcut, so the modifier held for it isn't a tap, whether or not the tap saw the key.
         modifierTaps.interrupt()
-        if let action = temporaryHotKeys[id]?.action { return action() }
-        CaptureHotkeyAction(hotKeyID: id)?.perform()
+        // A press macOS queued before Settings started recording, or before this key was let go of, isn't Sukusho's now:
+        // only what's registered at this moment runs.
+        guard !isPaused else { return }
+        if let entry = temporaryHotKeys[id] {
+            if entry.ref != nil { entry.action() }
+            return
+        }
+        guard let action = CaptureHotkeyAction(hotKeyID: id), hotKeyRefs[action] != nil else { return }
+        action.perform()
     }
 }
 
