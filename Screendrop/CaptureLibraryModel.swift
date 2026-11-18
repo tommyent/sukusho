@@ -173,7 +173,7 @@ final class CaptureLibraryModel {
     var sortOrder: CaptureLibrarySort = .newest { didSet { updateVisibleItems() } }
     var selection: Set<String> = [] {
         didSet {
-            guard selection != oldValue, QuickLookPreviewPresenter.followsLibrary else { return }
+            guard selection != oldValue, !LibrarySavedModel.shared.isShown, QuickLookPreviewPresenter.followsLibrary else { return }
             QuickLookPreviewPresenter.follow(urls: selectedItems.map(\.fileURL))
         }
     }

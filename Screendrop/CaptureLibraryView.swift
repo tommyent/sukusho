@@ -38,6 +38,7 @@ struct CaptureLibraryView: View {
             cloud.showsReceived = selection == .received
             comments.setShown(selection == .comments)
             likes.setShown(selection == .likes)
+            clipboard.librarySelectionIDs = []
             clipboard.isShown = selection == .clipboard || selection == .snippets
             clipboard.showsSnippets = selection == .snippets
             saved.isShown = selection == .saved
@@ -243,7 +244,10 @@ struct CaptureLibraryView: View {
             // so the toolbar runs unbroken across it.
             .inspector(isPresented: $inspectorVisible) {
                 Group {
-                    if saved.isShown, clipboard.librarySelection != nil {
+                    if (saved.isShown || clipboard.isShown), clipboard.librarySelectionIDs.count + model.selection.count > 1 {
+                        Text("\(clipboard.librarySelectionIDs.count + model.selection.count) items selected")
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if saved.isShown, clipboard.librarySelection != nil {
                         ClipboardLibraryInspector(model: clipboard)
                     } else if saved.isShown {
                         CaptureLibraryInspector(model: model, emptyMessage: "Select a capture or clip\nto take a closer look.")
@@ -549,9 +553,12 @@ struct CaptureLibraryView: View {
             } else if saved.isShown {
                 let count = saved.cards.count
                 Text("\(count) saved")
+                let selected = model.selection.count + clipboard.librarySelectionIDs.count
+                if selected > 0 { Text("· \(selected) selected") }
             } else if clipboard.isShown {
                 if clipboardEnabled {
                     let count = clipboard.librarySections(query: model.searchText).reduce(0) { $0 + $1.entries.count }
+                    if !clipboard.librarySelectionIDs.isEmpty { Text("\(clipboard.librarySelectionIDs.count) selected ·") }
                     Text("\(count) \(clipboard.showsSnippets ? (count == 1 ? "snippet" : "snippets") : count == 1 ? "copy" : "copies")")
                 }
             } else {

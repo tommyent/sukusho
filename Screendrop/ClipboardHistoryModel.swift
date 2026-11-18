@@ -17,13 +17,12 @@ final class ClipboardHistoryModel {
     var isShown = false
     var showsSnippets = false
     /// The Library page's selected entry.
-    var librarySelection: ClipboardEntry.ID? {
-        didSet {
-            guard librarySelection != oldValue, isShown || LibrarySavedModel.shared.isShown,
-                  QuickLookPreviewPresenter.followsLibrary, let entry = entry(librarySelection) else { return }
-            QuickLookPreviewPresenter.follow(urls: quickLookURLs(for: entry))
-        }
+    var librarySelectionIDs: Set<String> = []
+    var librarySelection: String? {
+        get { librarySelectionIDs.count == 1 ? librarySelectionIDs.first : nil }
+        set { librarySelectionIDs = Set(newValue.map { [$0] } ?? []) }
     }
+    private(set) var contentRevision = 0
     /// A snippet just made with New Snippet, whose editor takes the keyboard so typing goes into it (Astra R3).
     var snippetAwaitingFocus: ClipboardEntry.ID?
     /// The Library page's type filter.
@@ -53,7 +52,11 @@ final class ClipboardHistoryModel {
             do {
                 let loaded = try await store.entries(limit: 3000)
                 guard !Task.isCancelled else { return }
-                entries = presented(loaded)
+                let updated = presented(loaded)
+                if updated != entries {
+                    entries = updated
+                    contentRevision &+= 1
+                }
                 ClipboardDescriber.shared.update(loaded, store: store)
             } catch {
                 logger.error("Clipboard history can't be read: \(String(describing: error), privacy: .public)")
@@ -257,11 +260,20 @@ final class ClipboardHistoryModel {
     }
 
     func delete(_ entry: ClipboardEntry) {
+        delete([entry])
+    }
+
+    func delete(_ entries: [ClipboardEntry]) {
+        guard !entries.isEmpty, let store else { return }
         Self.clearQuickLookFiles()
         Self.clearEditCopies()
         Task {
-            try? await store?.delete(entry.id)
-            if librarySelection == entry.id { librarySelection = nil }
+            do {
+                for entry in entries {
+                    try await store.delete(entry.id)
+                    librarySelectionIDs.remove(entry.id)
+                }
+            } catch { CaptureLibraryModel.shared.errorMessage = error.localizedDescription }
             refresh()
         }
     }

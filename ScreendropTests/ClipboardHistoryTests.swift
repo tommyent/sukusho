@@ -752,6 +752,29 @@ struct ClipboardListTests {
                        pinnedAt: pinnedAgo.map { now - $0 })
     }
 
+    @Test func previewSelectionUsesDisplayedSectionsAndSurvivesAnImageEdit() {
+        let saved = entry(.image, pinnedAgo: 1, image: "red.png")
+        let recent = entry(.text, "recent", ago: 10)
+        var edited = entry(.image, ago: 60, image: "blue.png")
+        let selection = Set([edited.id, saved.id])
+        func displayed() -> [ClipboardEntry] {
+            ClipboardList.sections([edited, saved, recent], filter: .all, query: CaptureLibraryQuery(""), now: now,
+                                   calendar: calendar).flatMap(\.entries)
+        }
+        let before = displayed().map(\.id)
+        let grid = LibraryDisplayOrder(sectionCounts: [1, 2])
+        #expect(grid.index(at: IndexPath(item: 1, section: 1)) == 2)
+        #expect(grid.index(at: IndexPath(item: 1, section: 0)) == nil)
+        #expect(grid.paths[2] == IndexPath(item: 1, section: 1))
+        edited.libraryPath = "/tmp/edited-blue.png"
+        edited.modelTitle = "Edited image"
+        let after = displayed()
+        #expect(after.map(\.id) == before)
+        let previews = LibraryDisplayOrder.selected(after, ids: selection)
+        #expect(previews.map(\.id) == [saved.id, edited.id])
+        #expect(previews.map { $0.imageURL?.lastPathComponent } == ["red.png", "blue.png"])
+    }
+
     @Test func searchingAllTypesFindsSnippetsToo() {
         let copy = entry(.text, "Thanks for the fix")
         let snippet = entry(.snippet, "Thanks for the report.", title: "Release reply")

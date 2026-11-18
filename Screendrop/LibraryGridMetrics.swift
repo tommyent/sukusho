@@ -1,4 +1,4 @@
-import CoreGraphics
+import AppKit
 
 /// How the Library's grids lay out cards, Finder-style: cards keep one width and a wider window fits more
 /// columns. The gaps grow with the cards, from a fifth to half a card's width, so cards breathe at every slider
@@ -49,4 +49,31 @@ nonisolated struct LibraryGridMetrics: Equatable, Sendable {
     var cardHeight: CGFloat { floor(cellWidth * 0.625) + 62 }
     /// The picture's height inside a card: what the inset and the caption leave.
     var pictureHeight: CGFloat { cardHeight - Self.pictureInset - Self.captionHeight }
+}
+
+/// Index paths and flat positions for the same ordered snapshot of cards.
+nonisolated struct LibraryDisplayOrder {
+    let paths: [IndexPath]
+    private let starts: [Int]
+
+    init(sectionCounts: [Int]) {
+        var paths: [IndexPath] = []
+        var starts: [Int] = []
+        for (section, count) in sectionCounts.enumerated() {
+            starts.append(paths.count)
+            paths += (0..<count).map { IndexPath(item: $0, section: section) }
+        }
+        self.starts = starts
+        self.paths = paths
+    }
+
+    static func selected<Entry: Identifiable>(_ entries: [Entry], ids: Set<Entry.ID>) -> [Entry] {
+        entries.filter { ids.contains($0.id) }
+    }
+
+    func index(at path: IndexPath) -> Int? {
+        guard path.count == 2, starts.indices.contains(path.section) else { return nil }
+        let index = starts[path.section] + path.item
+        return paths.indices.contains(index) && paths[index] == path ? index : nil
+    }
 }

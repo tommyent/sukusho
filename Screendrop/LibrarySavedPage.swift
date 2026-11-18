@@ -27,6 +27,23 @@ enum LibrarySavedCard: Identifiable {
         }
     }
 
+    var clipID: String? {
+        if case .clip(let entry) = self { return entry.id }
+        return nil
+    }
+
+    var captureID: String? {
+        if case .capture(let item) = self { return item.id }
+        return nil
+    }
+
+    var previewURLs: [URL] {
+        switch self {
+        case .capture(let item): [item.fileURL]
+        case .clip(let entry): ClipboardHistoryModel.shared.quickLookURLs(for: entry)
+        }
+    }
+
     var savedAt: Date {
         switch self {
         case .capture(let item): item.savedAt ?? item.createdAt
@@ -70,18 +87,8 @@ struct LibrarySavedPage: View {
     @State private var library = CaptureLibraryModel.shared
     @State private var clipboard = ClipboardHistoryModel.shared
     @State private var history = ScreenshotHistoryStore.shared
-    @State private var gridWidth: CGFloat = 0
-    @FocusState private var gridFocused: Bool
-
-    /// The selected card, whichever kind: a clip's selection is the Clipboard page's, a capture's the captures page's.
-    private var selectedID: String? {
-        if let clip = clipboard.librarySelection { return "clip:\(clip)" }
-        return library.selection.count == 1 ? library.selection.first.map { "capture:\($0)" } : nil
-    }
-
     var body: some View {
         let cards = saved.cards
-        let grid = LibraryGridMetrics(width: gridWidth, cardWidth: cardWidth)
         VStack(spacing: 0) {
             // In a sideways scroll, as the Clipboard page's chips are, so they never set the column's minimum width.
             ScrollView(.horizontal, showsIndicators: false) { filterChips }
@@ -110,92 +117,12 @@ struct LibrarySavedPage: View {
             if cards.isEmpty {
                 emptyPage.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVGrid(columns: Array(repeating: GridItem(.fixed(grid.cellWidth), spacing: grid.spacing), count: grid.columns),
-                                  alignment: .leading, spacing: grid.lineSpacing) {
-                            ForEach(cards) { card in
-                                cardView(card, grid: grid).id(card.id)
-                            }
-                        }
-                        .padding(.leading, grid.leftInset).padding(.trailing, grid.rightInset)
-                        .padding(.vertical, LibraryGridMetrics.edgeMargin)
-                        // No minimum width of its own. The fixed columns, worked out from the last measured width, made
-                        // one: as the window narrowed, the split view's minimum size chased it inside AppKit's
-                        // constraint pass until it crashed (VM, 2026-11-17). The Clipboard page's LazyVStack has none.
-                        .frame(minWidth: 0, maxWidth: .infinity, alignment: .topLeading)
-                        // A click on any card gives the grid the keyboard, as on the Clipboard page (Astra L4).
-                        .simultaneousGesture(TapGesture().onEnded { gridFocused = true })
-                    }
-                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { gridWidth = $0 }
-                    .focusable()
-                    .focusEffectDisabled()
-                    .focused($gridFocused)
-                    .onChange(of: selectedID) { _, selection in if selection != nil { gridFocused = true } }
-                    // Space: Quick Look on the selected card, as in the other grids.
-                    .onKeyPress(.space) {
-                        guard let card = cards.first(where: { $0.id == selectedID }) else { return .ignored }
-                        switch card {
-                        case .capture: library.perform(.preview)
-                        case .clip(let entry): clipboard.quickLook(entry)
-                        }
-                        return .handled
-                    }
-                    .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow]) { press in
-                        let step = press.key == .leftArrow ? -1 : press.key == .rightArrow ? 1
-                            : (press.key == .upArrow ? -1 : 1) * grid.columns
-                        guard let next = ClipboardList.move(from: selectedID, by: step, in: cards.map(\.id)),
-                              let card = cards.first(where: { $0.id == next }) else { return .ignored }
-                        select(card)
-                        withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(next) }
-                        return .handled
-                    }
-                }
+                LibraryClipCollection(cards: cards, cardWidth: cardWidth, layout: .grid, sections: [], isSavedPage: true)
             }
         }
-        // A filter or search that hides the selection clears it, so the inspector never shows what the page doesn't.
-        .onChange(of: cards.map(\.id)) { _, shown in
-            if let id = clipboard.librarySelection, !shown.contains("clip:\(id)") { clipboard.librarySelection = nil }
-            library.selection.formIntersection(Set(shown.compactMap { $0.hasPrefix("capture:") ? String($0.dropFirst(8)) : nil }))
-        }
-    }
-
-    @ViewBuilder private func cardView(_ card: LibrarySavedCard, grid: LibraryGridMetrics) -> some View {
-        switch card {
-        case .capture(let item):
-            // Height only: the grid's fixed columns set the width. A width from the last measurement made the cards
-            // wider than the column for a frame while the window narrowed, and the split view's minimum size looped
-            // in AppKit's constraint pass until it crashed (VM, 2026-11-17).
-            LibraryCellContent(item: item, selected: library.selection == [item.id])
-                .frame(height: grid.cardHeight)
-                .contentShape(Rectangle())
-                .onTapGesture(count: 2) { select(item); library.perform(.edit) }
-                .onTapGesture { select(item) }
-                .contextMenu {
-                    ForEach([CaptureLibraryAction.preview, .edit, .copy, .reveal], id: \.self) { action in
-                        Button(action.rawValue) { select(item); library.perform(action) }
-                    }
-                    Divider()
-                    Button("Remove from Saved") { select(item); library.setSaved(false) }
-                }
-        case .clip(let entry):
-            ClipboardCard(entry: entry, model: clipboard, faceHeight: grid.pictureHeight,
-                          isSelected: clipboard.librarySelection == entry.id)
-                .simultaneousGesture(TapGesture().onEnded { library.selection = [] })
-        }
-    }
-
-    private func select(_ item: CaptureLibraryItem) {
-        clipboard.librarySelection = nil
-        library.selection = [item.id]
-    }
-
-    private func select(_ card: LibrarySavedCard) {
-        switch card {
-        case .capture(let item): select(item)
-        case .clip(let entry):
-            library.selection = []
-            clipboard.librarySelection = entry.id
+        .onChange(of: cards.map(\.id)) { _, _ in
+            clipboard.librarySelectionIDs.formIntersection(cards.compactMap(\.clipID))
+            library.selection.formIntersection(cards.compactMap(\.captureID))
         }
     }
 

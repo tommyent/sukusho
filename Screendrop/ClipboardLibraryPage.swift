@@ -6,9 +6,6 @@ struct ClipboardLibraryPage: View {
     @Bindable var model: ClipboardHistoryModel
     /// The status bar's card-size slider, shared with the captures and Cloud grids.
     let cardWidth: CGFloat
-    @FocusState private var gridFocused: Bool
-    /// The grid's width, for its layout and for how many cards a row holds when Up and Down move the selection.
-    @State private var gridWidth: CGFloat = 0
     @AppStorage(ScreendropPreferences.clipboardHistoryEnabledKey) private var enabled = false
     @State private var library = CaptureLibraryModel.shared
     /// Rows like the popup's instead of cards: text scans faster as rows (Fable #3, mockup 08 B).
@@ -22,7 +19,7 @@ struct ClipboardLibraryPage: View {
         } else {
             let sections = model.librarySections(query: library.searchText)
             // The captures grid's layout: the strip a fixed column count left on the right is shared out instead.
-            let grid = LibraryGridMetrics(width: gridWidth, cardWidth: cardWidth)
+            let cards = sections.flatMap { $0.entries.map(LibrarySavedCard.clip) }
             VStack(spacing: 0) {
                 // On a bar of its own, as the Cloud page's rows are, so the grid scrolls under it, never over it.
                 HStack(spacing: DS.Space.m) {
@@ -36,82 +33,13 @@ struct ClipboardLibraryPage: View {
                 if sections.isEmpty {
                     emptyPage.frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    ScrollViewReader { proxy in
-                        ScrollView {
-                            LazyVStack(alignment: .leading, spacing: DS.Space.l, pinnedViews: []) {
-                                ForEach(sections) { section in
-                                    // A capsule as wide as its words: the page plate is 520 pt wide and drawn past its
-                                    // text, which put a bar over the filters and past the grid (owner, 2026-11-16). On
-                                    // Snippets the one heading would repeat the window's title (Fable #10).
-                                    if !model.showsSnippets {
-                                        Text(section.title).font(DS.TypeScale.labelSemibold).foregroundStyle(.secondary)
-                                            .padding(.horizontal, DS.Space.ml).padding(.vertical, 2)
-                                            .workspaceTextPlate(capsule: true)
-                                    }
-                                    if showsList {
-                                        // One solid panel per section, as the cards are solid, so rows read over any
-                                        // workspace background.
-                                        VStack(spacing: 0) {
-                                            ForEach(section.entries) { entry in
-                                                ClipboardListRow(entry: entry, model: model, isSelected: model.librarySelection == entry.id)
-                                                    .id(entry.id)
-                                            }
-                                        }
-                                        .padding(DS.Space.xs)
-                                        .background(WorkspaceChrome.background, in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
-                                        .overlay { LibraryCardBorder(selected: false) }
-                                    } else {
-                                        LazyVGrid(columns: Array(repeating: GridItem(.fixed(grid.cellWidth), spacing: grid.spacing),
-                                                                 count: grid.columns),
-                                                  alignment: .leading, spacing: grid.lineSpacing) {
-                                            ForEach(section.entries) { entry in
-                                                // The captures grid's proportions: a 16:10 picture over the labels.
-                                                ClipboardCard(entry: entry, model: model, faceHeight: grid.pictureHeight,
-                                                              isSelected: model.librarySelection == entry.id)
-                                                    .id(entry.id)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            .padding(.leading, showsList ? LibraryGridMetrics.edgeMargin : grid.leftInset)
-                            .padding(.trailing, showsList ? LibraryGridMetrics.edgeMargin : grid.rightInset)
-                            .padding(.vertical, LibraryGridMetrics.edgeMargin)
-                            // A click on any card, the selected one too, gives the grid the keyboard, so arrows and
-                            // Space work on the cards rather than the sidebar or the search field (Astra, 2026-11-16).
-                            .simultaneousGesture(TapGesture().onEnded { gridFocused = true })
-                        }
-                        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { gridWidth = $0 }
-                        // Space opens Quick Look on the selected card, as in the captures grid.
-                        .focusable()
-                        .focusEffectDisabled()
-                        .focused($gridFocused)
-                        .onChange(of: model.librarySelection) { _, selection in
-                            // A new snippet's editor takes the keyboard instead.
-                            if selection != nil, selection != model.snippetAwaitingFocus { gridFocused = true }
-                        }
-                        .onKeyPress(.space) {
-                            guard let entry = model.entry(model.librarySelection) else { return .ignored }
-                            model.quickLook(entry)
-                            return .handled
-                        }
-                        .onKeyPress(keys: [.leftArrow, .rightArrow, .upArrow, .downArrow]) { press in
-                            let ids = sections.flatMap { $0.entries.map(\.id) }
-                            let step = press.key == .leftArrow ? -1 : press.key == .rightArrow ? 1
-                                : (press.key == .upArrow ? -1 : 1) * (showsList ? 1 : grid.columns)
-                            guard let next = ClipboardList.move(from: model.librarySelection, by: step, in: ids) else { return .ignored }
-                            model.librarySelection = next
-                            // Only as far as it takes to show the card, as Finder scrolls.
-                            withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(next) }
-                            return .handled
-                        }
-                    }
+                    LibraryClipCollection(cards: cards, cardWidth: cardWidth, layout: showsList ? .list : .grid,
+                        sections: model.showsSnippets ? [] : sections.map { LibraryCollectionSection(title: $0.title, count: $0.entries.count) },
+                        isSavedPage: false)
                 }
             }
-            // A filter or search that hides the selected entry clears it, so the inspector never shows, or
-            // acts on, an entry the page doesn't (Astra, 2026-11-16).
-            .onChange(of: sections.flatMap { $0.entries.map(\.id) }) { _, shown in
-                if let selection = model.librarySelection, !shown.contains(selection) { model.librarySelection = nil }
+            .onChange(of: cards.map(\.id)) { _, _ in
+                model.librarySelectionIDs.formIntersection(sections.flatMap { $0.entries.map(\.id) })
             }
         }
     }
@@ -200,6 +128,7 @@ struct ClipboardCard: View {
     let model: ClipboardHistoryModel
     let faceHeight: CGFloat
     let isSelected: Bool
+    let select: () -> Void
     @State private var isHovering = false
     @Environment(\.displayScale) private var displayScale
 
@@ -262,13 +191,16 @@ struct ClipboardCard: View {
         .overlay { LibraryCardBorder(selected: isSelected) }
         .onHover { isHovering = $0 }
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { model.openLibraryEntry(entry) }
-        .onTapGesture { model.librarySelection = entry.id }
-        .contextMenu { ClipboardEntryMenu(entry: entry, model: model) }
+
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { select() }
         .accessibilityAction(named: "Copy") { model.deliver(entry, as: .copy, to: nil) }
-        .accessibilityAction(named: "Quick Look") { model.quickLook(entry) }
+        .accessibilityAction(named: "Quick Look") {
+            let followed = QuickLookPreviewPresenter.followsLibrary && !isSelected
+            select()
+            if !followed { model.quickLook(entry) }
+        }
     }
 
     /// A tall image's long side, decoded so its width still fills a card sharply.
@@ -322,10 +254,11 @@ struct ClipboardCard: View {
 }
 
 /// One copy as a row of the list view, as the popup lists them: its tile, what it is, and when (mockup 08 B).
-private struct ClipboardListRow: View {
+struct ClipboardListRow: View {
     let entry: ClipboardEntry
     let model: ClipboardHistoryModel
     let isSelected: Bool
+    let select: () -> Void
     @State private var isHovering = false
 
     var body: some View {
@@ -346,41 +279,21 @@ private struct ClipboardListRow: View {
                     in: RoundedRectangle(cornerRadius: 7, style: .continuous))
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
-        .onTapGesture(count: 2) { model.openLibraryEntry(entry) }
-        .onTapGesture { model.librarySelection = entry.id }
-        .contextMenu { ClipboardEntryMenu(entry: entry, model: model) }
+
         .help(model.appName(entry.sourceBundleID).map { "From \($0)" } ?? "")
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction { select() }
         .accessibilityAction(named: "Copy") { model.deliver(entry, as: .copy, to: nil) }
-        .accessibilityAction(named: "Quick Look") { model.quickLook(entry) }
+        .accessibilityAction(named: "Quick Look") {
+            let followed = QuickLookPreviewPresenter.followsLibrary && !isSelected
+            select()
+            if !followed { model.quickLook(entry) }
+        }
     }
 }
 
 /// The same actions in a card's context menu and the inspector.
-struct ClipboardEntryMenu: View {
-    let entry: ClipboardEntry
-    let model: ClipboardHistoryModel
-
-    var body: some View {
-        Button("Copy") { model.deliver(entry, as: .copy, to: nil) }
-        Button("Quick Look") { model.quickLook(entry) }
-        if entry.kind == .image { Button("Open in Editor") { model.openInEditor(entry) } }
-        if entry.kind == .text { Button("Copy as Plain Text") { model.deliver(entry, as: .copyPlain, to: nil) } }
-        if entry.kind == .image {
-            Divider()
-            Button("Optimize") { model.optimize(entry) }
-            Button("Convert to WebP…") { model.convert(entry, to: .webP) }
-            Button("Convert to JPEG…") { model.convert(entry, to: .jpeg) }
-        }
-        Divider()
-        Button(entry.pinnedAt == nil ? "Save" : "Remove from Saved") { model.toggleSaved(entry) }
-        if entry.kind == .text { Button("Save as Snippet") { model.saveAsSnippet(entry) } }
-        Divider()
-        Button("Delete", role: .destructive) { model.delete(entry) }
-    }
-}
-
 /// The inspector beside the Clipboard page: the preview and Information,
 /// and for a snippet, its name and text to edit.
 struct ClipboardLibraryInspector: View {

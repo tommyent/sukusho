@@ -52,6 +52,7 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
     var accessibilityLabel = "Captures"
     /// The card for an entry, given whether it's selected and a callback for
     /// where its title is drawn (clicking the title renames).
+    var sections: [LibraryCollectionSection] = []
     let cell: (Entry, Bool, @escaping (CGRect) -> Void) -> AnyView
     /// The context menu, for the number of selected entries.
     let menu: (Int) -> [LibraryMenuItem]
@@ -98,11 +99,12 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
         guard let collection = coordinator.collection else { return }
         coordinator.updating = true
         defer { coordinator.updating = false }
-        if old.revision != revision || old.layout != layout || coordinator.initialLoad {
+        if old.revision != revision || old.layout != layout || old.sections != sections || coordinator.initialLoad {
             // The same entries in the same order, such as after a new title or tag, only need
             // their cards redrawn: a reload rebuilds every card and blanks its thumbnail (sd-mtnc).
-            let inPlace = !coordinator.initialLoad && old.layout == layout && old.items.map(\.id) == items.map(\.id)
+            let inPlace = !coordinator.initialLoad && old.layout == layout && old.sections == sections && old.items.map(\.id) == items.map(\.id)
             coordinator.initialLoad = false
+            coordinator.order = LibraryDisplayOrder(sectionCounts: sections.isEmpty ? [items.count] : sections.map(\.count))
             coordinator.indices = Dictionary(items.enumerated().map { ($0.element.id, $0.offset) }, uniquingKeysWith: { first, _ in first })
             if inPlace {
                 for path in collection.indexPathsForVisibleItems() {
@@ -110,6 +112,8 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
                 }
             } else {
                 (collection.collectionViewLayout as? LibraryCollectionLayout)?.displayLayout = layout
+                (collection.collectionViewLayout as? LibraryCollectionLayout)?.headerReferenceSize =
+                    sections.isEmpty ? .zero : NSSize(width: 1, height: 28)
                 collection.reloadData()
                 collection.collectionViewLayout?.invalidateLayout()
             }
@@ -119,7 +123,7 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
             flow.invalidateLayout()
         }
         let paths = Set(selection.compactMap { id in
-            coordinator.indices[id].map { IndexPath(item: $0, section: 0) }
+            coordinator.indices[id].map { coordinator.order.paths[$0] }
         })
         if collection.selectionIndexPaths != paths { collection.selectionIndexPaths = paths }
     }
@@ -129,6 +133,7 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
         weak var collection: LibraryCollectionView?
         var updating = false
         var initialLoad = true
+        var order = LibraryDisplayOrder(sectionCounts: [])
         var indices: [String: Int] = [:]
         private var selectionAnchorID: String?
         private var pendingRange: (anchor: String, end: String)?
@@ -136,8 +141,19 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
 
         init(_ parent: CaptureLibraryCollection) { self.parent = parent }
 
+        func numberOfSections(in collectionView: NSCollectionView) -> Int {
+            max(1, parent.sections.count)
+        }
+
+        func collectionView(_ collectionView: NSCollectionView, viewForSupplementaryElementOfKind kind: NSCollectionView.SupplementaryElementKind,
+                            at indexPath: IndexPath) -> NSView {
+            let header = collectionView.makeSupplementaryView(ofKind: kind, withIdentifier: LibrarySectionHeader.identifier, for: indexPath) as! LibrarySectionHeader
+            header.title.stringValue = parent.sections[indexPath.section].title
+            return header
+        }
+
         func collectionView(_ collectionView: NSCollectionView, numberOfItemsInSection section: Int) -> Int {
-            parent.items.count
+            parent.sections.isEmpty ? parent.items.count : parent.sections[section].count
         }
 
         func collectionView(_ collectionView: NSCollectionView, itemForRepresentedObjectAt indexPath: IndexPath) -> NSCollectionViewItem {
@@ -147,8 +163,8 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
         }
 
         func configure(_ item: NSCollectionViewItem, at indexPath: IndexPath) {
-            guard let cell = item as? LibraryCollectionItem, parent.items.indices.contains(indexPath.item) else { return }
-            let entry = parent.items[indexPath.item]
+            guard let cell = item as? LibraryCollectionItem, let index = order.index(at: indexPath), parent.items.indices.contains(index) else { return }
+            let entry = parent.items[index]
             let draw = parent.cell
             cell.configure { selected, onTitleFrame in draw(entry, selected, onTitleFrame) }
         }
@@ -172,7 +188,7 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
         fileprivate func selectionChanged() {
             guard !updating, let collection else { return }
             parent.selection = Set(collection.selectionIndexPaths.compactMap {
-                parent.items.indices.contains($0.item) ? parent.items[$0.item].id : nil
+                order.index(at: $0).map { parent.items[$0].id }
             })
             if parent.selection.count == 1 { selectionAnchorID = parent.selection.first }
         }
@@ -184,22 +200,22 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
                 pendingRange = nil
                 let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
                 guard flags.contains(.shift), flags.isDisjoint(with: [.command, .control, .option]),
-                      let path, parent.items.indices.contains(path.item) else { return }
+                      let path, let index = order.index(at: path) else { return }
                 let anchor = selectionAnchorID.flatMap { indices[$0] }
-                    .map { IndexPath(item: $0, section: 0) }
+                    .map { order.paths[$0] }
                     .flatMap { collection.selectionIndexPaths.contains($0) ? $0 : nil }
                     ?? collection.selectionIndexPaths.min()
-                if let anchor, parent.items.indices.contains(anchor.item) {
-                    pendingRange = (parent.items[anchor.item].id, parent.items[path.item].id)
+                if let anchor, let start = order.index(at: anchor) {
+                    pendingRange = (parent.items[start].id, parent.items[index].id)
                 }
             } else if event.type == .leftMouseUp {
                 let range = pendingRange
                 pendingRange = nil
-                guard let path, parent.items.indices.contains(path.item) else {
+                guard let path, let index = order.index(at: path) else {
                     selectionAnchorID = nil
                     return
                 }
-                let clickedID = parent.items[path.item].id
+                let clickedID = parent.items[index].id
                 guard let range else {
                     selectionAnchorID = collection.selectionIndexPaths.contains(path) ? clickedID : nil
                     return
@@ -208,7 +224,7 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
                 // display order. Resolve IDs again in case a refresh reordered items.
                 guard clickedID == range.end, let start = indices[range.anchor], let end = indices[range.end] else { return }
                 collection.selectionIndexPaths = Set((min(start, end)...max(start, end)).map {
-                    IndexPath(item: $0, section: 0)
+                    order.paths[$0]
                 })
                 selectionAnchorID = range.anchor
                 selectionChanged()
@@ -261,6 +277,8 @@ final class LibraryCollectionView: NSCollectionView {
         // Registering first loses the class registration and makes the first
         // dequeue fall back to a nonexistent CaptureLibraryCell nib.
         collectionViewLayout = flow
+        register(LibrarySectionHeader.self, forSupplementaryViewOfKind: NSCollectionView.elementKindSectionHeader,
+                 withIdentifier: LibrarySectionHeader.identifier)
         register(LibraryCollectionItem.self, forItemWithIdentifier: LibraryCollectionItem.identifier)
     }
 
@@ -311,7 +329,7 @@ final class LibraryCollectionView: NSCollectionView {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if flags.contains(.command), event.charactersIgnoringModifiers == "c" { command?(.copy); return }
         if flags.contains([.command, .shift]), event.charactersIgnoringModifiers?.lowercased() == "c" { command?(.copyOriginal); return }
-        if flags.contains(.command), event.keyCode == 51 { command?(.trash); return }
+        if flags.isDisjoint(with: [.control, .option]), event.keyCode == 51 { command?(.trash); return }
         if !flags.contains(.command), !flags.contains(.control), !flags.contains(.option) {
             if event.keyCode == 49 { command?(.preview); return }
             if event.keyCode == 36 { command?(.rename); return }
@@ -320,6 +338,27 @@ final class LibraryCollectionView: NSCollectionView {
     }
 
     @objc func copy(_ sender: Any?) { command?(.copy) }
+}
+
+struct LibraryCollectionSection: Equatable {
+    let title: String
+    let count: Int
+}
+
+private final class LibrarySectionHeader: NSView {
+    static let identifier = NSUserInterfaceItemIdentifier("LibrarySectionHeader")
+    let title = NSTextField(labelWithString: "")
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        title.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
+        title.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(title)
+        NSLayoutConstraint.activate([title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: LibraryGridMetrics.edgeMargin),
+                                     title.bottomAnchor.constraint(equalTo: bottomAnchor)])
+    }
+
+    required init?(coder: NSCoder) { nil }
 }
 
 final class LibraryCollectionLayout: NSCollectionViewFlowLayout {
@@ -392,6 +431,7 @@ final class LibraryCollectionItem: NSCollectionViewItem {
     override var isSelected: Bool { didSet { updateContent() } }
 
     func configure(_ content: @escaping (Bool, @escaping (CGRect) -> Void) -> AnyView) {
+        titleFrame = .zero
         self.content = content
         updateContent()
     }
@@ -475,6 +515,7 @@ struct LibraryCellContent: View {
 
     private func act(_ action: CaptureLibraryAction, on item: CaptureLibraryItem) {
         let model = CaptureLibraryModel.shared
+        if LibrarySavedModel.shared.isShown { ClipboardHistoryModel.shared.librarySelectionIDs = [] }
         let followed = QuickLookPreviewPresenter.followsLibrary && model.selection != [item.id]
         model.selection = [item.id]
         // An open Quick Look has already followed the selection; .preview would toggle it closed.
