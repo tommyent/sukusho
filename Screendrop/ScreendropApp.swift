@@ -160,8 +160,9 @@ struct ScreendropApp: App {
 
 /// Quits Sukusho and opens it again, for permissions macOS applies only at launch, such as Input Monitoring.
 enum AppRelaunch {
-    /// Opens Settings › Shortcuts instead of the Library when Sukusho comes back.
-    static let argument = "--reopen-shortcut-settings"
+    /// When the quitting copy asked for Settings › Shortcuts, read by whichever copy opens next: a new one at launch, or
+    /// one already running when the helper's open reaches it as a reopen. Two minutes old, it's stale.
+    private static let reopenKey = "appRelaunch.showShortcutsRequestedAt"
     /// Belongs to the quit `request` starts: every way that quit is cancelled clears it (`cancel`).
     private static var isRequested = false
 
@@ -176,17 +177,29 @@ enum AppRelaunch {
         isRequested = false
     }
 
-    /// From applicationWillTerminate: a shell waits up to a minute for this process to end, then opens the app again as
-    /// a new instance (`-n`), so the argument reaches it; if this process is still running by then, it opens nothing.
+    /// From applicationWillTerminate: a shell waits up to a minute for this process to end, then opens the app again; if
+    /// this process is still running by then, it opens nothing. A plain open, so Launch Services reuses a copy that's
+    /// already running (it gets a reopen) rather than starting a second.
     static func reopenIfRequested() {
         guard isRequested else { return }
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: reopenKey)
+        CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication)
         let reopen = Process()
         reopen.executableURL = URL(fileURLWithPath: "/bin/sh")
         reopen.arguments = [
-            "-c", "i=0; while kill -0 \"$1\" 2>/dev/null; do [ $i -ge 300 ] && exit 1; sleep 0.2; i=$((i+1)); done; exec /usr/bin/open -n \"$2\" --args \"$3\"",
-            "sh", String(ProcessInfo.processInfo.processIdentifier), Bundle.main.bundleURL.path, argument,
+            "-c", "i=0; while kill -0 \"$1\" 2>/dev/null; do [ $i -ge 300 ] && exit 1; sleep 0.2; i=$((i+1)); done; exec /usr/bin/open \"$2\"",
+            "sh", String(ProcessInfo.processInfo.processIdentifier), Bundle.main.bundleURL.path,
         ]
         try? reopen.run()
+    }
+
+    /// True once after Relaunch Sukusho, at the launch or reopen that follows it: then Settings › Shortcuts opens.
+    static func takeShowShortcutsRequest() -> Bool {
+        let defaults = UserDefaults.standard
+        let requestedAt = defaults.double(forKey: reopenKey)
+        guard requestedAt > 0 else { return false }
+        defaults.removeObject(forKey: reopenKey)
+        return Date().timeIntervalSince1970 - requestedAt < 120
     }
 }
 
@@ -249,7 +262,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self, !launchedInBackground, !self.openedFilesAtLaunch else { return }
             // Relaunched from Settings › Shortcuts: back where the user was.
-            if CommandLine.arguments.contains(AppRelaunch.argument) { return SettingsWindowController.show(tab: .shortcuts) }
+            if AppRelaunch.takeShowShortcutsRequest() { return SettingsWindowController.show(tab: .shortcuts) }
             CaptureLibraryModel.shared.show()
         }
         // Below the macOS this build is tested on, say so, in front of the Library and before
@@ -280,6 +293,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Finder, Spotlight and the Dock all reopen the same Library window.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        // Relaunch Sukusho's open reached this copy, already running, instead of starting one.
+        if AppRelaunch.takeShowShortcutsRequest() {
+            SettingsWindowController.show(tab: .shortcuts)
+            return false
+        }
         CaptureLibraryModel.shared.show()
         return false
     }
