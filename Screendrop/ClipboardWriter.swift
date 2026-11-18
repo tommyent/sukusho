@@ -24,14 +24,11 @@ nonisolated enum ClipboardWriter {
     static func libraryItems(for entry: ClipboardEntry, richText: [String: Data], plain: Bool,
                              includeTIFF: Bool) async throws -> [NSPasteboardItem] {
         if entry.kind == .image {
-            guard let url = entry.libraryImageURL else {
+            guard let url = entry.imageURL else {
                 throw CocoaError(.fileNoSuchFile)
             }
-            let title = ClipboardList.fileTitle(of: entry)
-            let ext = url.pathExtension
-            let name = ext.isEmpty || title.lowercased().hasSuffix("." + ext.lowercased()) ? title : title + "." + ext
             let item = try await ScreenshotClipboardImage.item(from: url, dataType: imageType(for: url),
-                                                               includeTIFF: includeTIFF, snapshotName: name)
+                                                               includeTIFF: includeTIFF, snapshotName: entry.snapshotName(for: url))
             mark(item, source: entry.sourceBundleID)
             return [item]
         }
@@ -62,7 +59,7 @@ nonisolated enum ClipboardWriter {
                 }
             }
         case .image:
-            guard let url = entry.imageURL ?? entry.libraryPath.map({ URL(fileURLWithPath: $0) }),
+            guard let url = entry.imageURL,
                   let data = try? Data(contentsOf: url) else { return nil }
             let item = NSPasteboardItem()
             item.setData(data, forType: imageType(for: url))

@@ -162,11 +162,6 @@ struct ClipboardCard: View {
                 // The time first: it's what differs between cards, so a narrow card cuts the app rather than the time.
                 HStack(spacing: 3) {
                     if entry.kind != .snippet { Text(ClipboardInfo.shortWhen(entry.lastCopiedAt)).layoutPriority(1).libraryRaisedText() }
-                    // The one mark that the picture is also a capture, on the caption line (Fable #5).
-                    if entry.libraryPath != nil {
-                        Text("·").libraryRaisedText()
-                        Text("In Captures").foregroundStyle(.tint).layoutPriority(1).libraryRaisedText()
-                    }
                     if let app = model.appName(entry.sourceBundleID) {
                         if entry.kind != .snippet { Text("·").libraryRaisedText() }
                         if let icon = model.appIcon(entry.sourceBundleID) {
@@ -210,7 +205,7 @@ struct ClipboardCard: View {
     @ViewBuilder private var face: some View {
         switch entry.kind {
         case .image:
-            if let url = entry.libraryImageURL {
+            if let url = entry.imageURL {
                 // Whole, as capture cards show an image: filling cropped the sides off text (owner, 2026-11-16).
                 // A much taller one shows its top at full width instead of a thin strip.
                 let tall = TallCapture.isTall(width: entry.pixelWidth, height: entry.pixelHeight)
@@ -263,7 +258,7 @@ struct ClipboardListRow: View {
 
     var body: some View {
         HStack(spacing: DS.Space.ml) {
-            ClipboardRowTile(entry: entry, size: 24, imageURL: entry.libraryImageURL)
+            ClipboardRowTile(entry: entry, size: 24, imageURL: entry.imageURL)
                 .id(CaptureLibraryModel.shared.contentRevision)
             Text(ClipboardList.cardTitle(of: entry) ?? ClipboardList.title(of: entry))
                 .font(ClipboardList.looksLikeCode(entry) ? .system(size: 12.5, design: .monospaced) : .system(size: 13))
@@ -312,7 +307,7 @@ struct ClipboardLibraryInspector: View {
                     } else {
                         // Clicking the picture opens Quick Look, as in a capture's inspector.
                         Button { model.quickLook(entry) } label: {
-                            ClipboardPreview(entry: entry, imageURL: entry.libraryImageURL)
+                            ClipboardPreview(entry: entry, imageURL: entry.imageURL)
                                 .id(CaptureLibraryModel.shared.contentRevision)
                                 .frame(height: 220)
                         }
@@ -524,7 +519,7 @@ private struct ClipboardVersionList: View {
                 HStack(spacing: DS.Space.m) {
                     Button { model.quickLook(earlier) } label: {
                         Group {
-                            if let url = earlier.imageFileURL {
+                            if let url = earlier.imageURL {
                                 ClipboardThumbnail(url: url, maxPixelSize: 160, contentMode: .fit)
                             } else {
                                 Image(systemName: "photo").foregroundStyle(.tertiary)
@@ -539,8 +534,8 @@ private struct ClipboardVersionList: View {
                         Text(index == entry.earlierVersions.count - 1 ? "Original" : "Earlier version")
                             .font(DS.TypeScale.labelMedium)
                         Text([ByteCountFormatter.string(fromByteCount: Int64(version.byteSize), countStyle: .file),
-                              ClipboardInfo.when(version.copiedAt), version.libraryPath == nil ? nil : "In Captures"]
-                            .compactMap { $0 }.joined(separator: " · "))
+                              ClipboardInfo.when(version.copiedAt)]
+                            .joined(separator: " · "))
                             .font(DS.TypeScale.label).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer(minLength: 0)

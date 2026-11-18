@@ -10,7 +10,7 @@ nonisolated struct ClipboardEntry: Sendable, Equatable, Identifiable {
     let title: String?
     /// The kept image, in the history's Blobs folder.
     var imageURL: URL?
-    /// A Sukusho capture's file, when the image stays in the Library.
+    /// The editable capture associated with this clip, if any.
     var libraryPath: String?
     var byteSize: Int
     let pixelWidth: Int
@@ -49,24 +49,6 @@ nonisolated struct ClipboardEntryVersion: Sendable, Equatable {
     let libraryPath: String?
     let byteSize: Int
     let copiedAt: Date
-}
-
-extension ClipboardEntry {
-    /// The Library opens the editable capture once a clip has been imported. Its original blob
-    /// still serves popup paste-back, and is the fallback if the capture was later removed.
-    nonisolated var libraryImageURL: URL? {
-        if let libraryPath, FileManager.default.fileExists(atPath: libraryPath) { return URL(fileURLWithPath: libraryPath) }
-        return imageURL
-    }
-
-    /// The size to show. A clip of a Sukusho capture keeps no copy of its own: it is the capture's file, which the
-    /// optimizer or an edit may have rewritten since, and that file is what pastes (Fable 15 #2: "1.9 MB" for a
-    /// 1.3 MB file after the copy-after-capture swap).
-    nonisolated var shownByteSize: Int {
-        guard kind == .image, imageURL == nil, let path = libraryPath,
-              let size = (try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? NSNumber else { return byteSize }
-        return size.intValue
-    }
 }
 
 /// Clipboard history on disk: one SQLite database for entries, and images as
@@ -195,6 +177,31 @@ actor ClipboardHistoryStore {
                 COMMIT;
                 """)
         }
+        if schemaVersion < 2 {
+            try Self.execute(handle, "BEGIN IMMEDIATE")
+            do {
+                for table in ["entries", "versions"] {
+                    let rows = try Self.query(handle, """
+                        SELECT rowid, library_path FROM \(table) WHERE library_path IS NOT NULL AND blob IS NULL
+                        """, []) { ($0.int(0), $0.text(1)!) }
+                    for (row, path) in rows {
+                        let file = URL(fileURLWithPath: path)
+                        let data: Data
+                        do { data = try Data(contentsOf: file) }
+                        catch let error as CocoaError where error.code == .fileReadNoSuchFile { continue }
+                        let blob = try Self.writeBlob(data, hash: ClipboardPasteboardReader.digest(data),
+                                                      ext: file.pathExtension, in: directory)
+                        _ = try Self.query(handle, """
+                            UPDATE \(table) SET blob = ?, stored_bytes = ?, byte_size = ? WHERE rowid = ?
+                            """, [blob, data.count, data.count, row]) { _ in () }
+                    }
+                }
+                try Self.execute(handle, "PRAGMA user_version = 2; COMMIT")
+            } catch {
+                try? Self.execute(handle, "ROLLBACK")
+                throw error
+            }
+        }
         // Histories from before the image descriptions get their columns; on a newer one each is a duplicate.
         for column in ["read_text TEXT", "model_title TEXT", "model_keywords TEXT", "model_category TEXT",
                        "described INTEGER NOT NULL DEFAULT 0", "optimized_here INTEGER NOT NULL DEFAULT 0"] {
@@ -213,9 +220,13 @@ actor ClipboardHistoryStore {
     func record(_ capture: ClipboardCapture, at date: Date = .now) throws -> RecordOutcome {
         try transaction {
             let key = [capture.kind.rawValue, capture.hash]
-            let existing = try query("SELECT id FROM entries WHERE kind != 'snippet' AND kind = ? AND hash = ? AND pinned_at IS NULL",
-                                     key) { $0.text(0) }.first
-            if let id = existing ?? nil {
+            let existing = try query("SELECT id, blob FROM entries WHERE kind != 'snippet' AND kind = ? AND hash = ? AND pinned_at IS NULL",
+                                     key) { ($0.text(0)!, $0.text(1)) }.first
+            if let (id, existingBlob) = existing {
+                if existingBlob == nil, let blob = try writeBlob(of: capture) {
+                    try run("UPDATE entries SET blob = ?, stored_bytes = ?, byte_size = ? WHERE id = ?",
+                            [blob, capture.storedBytes, capture.byteSize, id])
+                }
                 // Content history already holds: that card goes to the top. A fresh copy it looks like stays as it is.
                 try run("UPDATE entries SET last_copied_at = ?, times_copied = times_copied + 1, change_seq = ? WHERE id = ?",
                         [date.timeIntervalSince1970, try nextChange(), id])
@@ -364,15 +375,7 @@ actor ClipboardHistoryStore {
                 evicted.append(id)
             }
         }
-        // Only unsaved references: a clip that was added to the Library or saved keeps its own image, and a Saved card
-        // is never cleared out, even if its capture's file is gone (Astra L1).
-        let gone = try query("""
-            SELECT id, library_path FROM entries WHERE library_path IS NOT NULL AND blob IS NULL AND pinned_at IS NULL
-            """, []) {
-            ($0.text(0) ?? "", $0.text(1) ?? "")
-        }.filter { !FileManager.default.fileExists(atPath: $0.1) }.map(\.0)
-        try delete(ids: gone)
-        return doomed.count + evicted.count + gone.count
+        return doomed.count + evicted.count
     }
 
     // MARK: - Reading
@@ -512,20 +515,20 @@ actor ClipboardHistoryStore {
         guard let path, let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               ClipboardPasteboardReader.digest(data) == hash else { return nil }
         let ext = URL(fileURLWithPath: path).pathExtension
-        let name = "\(hash.prefix(2))/\(hash).\(ext.isEmpty ? "img" : ext)"
-        let url = blobs.appendingPathComponent(name)
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if !FileManager.default.fileExists(atPath: url.path) { try data.write(to: url, options: .atomic) }
-        return (name, data.count)
+        return (try Self.writeBlob(data, hash: hash, ext: ext, in: directory), data.count)
     }
 
-    /// Writes a copy's image under its hash and returns the name, or nil for a copy without one.
     private func writeBlob(of capture: ClipboardCapture) throws -> String? {
         guard let image = capture.image else { return nil }
-        let name = "\(capture.hash.prefix(2))/\(capture.hash).\(capture.imageExtension ?? "img")"
-        let url = blobs.appendingPathComponent(name)
+        return try Self.writeBlob(image, hash: ClipboardPasteboardReader.digest(image),
+                                  ext: capture.imageExtension ?? "img", in: directory)
+    }
+
+    nonisolated private static func writeBlob(_ image: Data, hash: String, ext: String, in directory: URL) throws -> String {
+        let name = "\(hash.prefix(2))/\(hash).\(ext.isEmpty ? "img" : ext)"
+        let url = directory.appendingPathComponent("Blobs").appendingPathComponent(name)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try image.write(to: url, options: .atomic)
+        if !FileManager.default.fileExists(atPath: url.path) { try image.write(to: url, options: .atomic) }
         return name
     }
 
@@ -579,6 +582,10 @@ actor ClipboardHistoryStore {
     }
 
     private func query<T>(_ sql: String, _ values: [Any?], _ map: (Row) -> T) throws -> [T] {
+        try Self.query(db, sql, values, map)
+    }
+
+    nonisolated private static func query<T>(_ db: OpaquePointer, _ sql: String, _ values: [Any?], _ map: (Row) -> T) throws -> [T] {
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK, let statement else {
             throw StoreError(description: String(cString: sqlite3_errmsg(db)))

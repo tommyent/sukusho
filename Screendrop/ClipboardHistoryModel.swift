@@ -66,21 +66,15 @@ final class ClipboardHistoryModel {
         }
     }
 
-    /// The names shown: the model's while its Settings switch is on (stored, and back when it's on again),
-    /// and for an image that is a Library capture, the name the Library gives it.
+    /// Apply the intelligence preference without changing stored descriptions.
     private func presented(_ loaded: [ClipboardEntry]) -> [ClipboardEntry] {
         let usesModel = ScreendropPreferences.libraryUsesIntelligence
-        let captures = Dictionary(CaptureLibraryModel.shared.items.map { ($0.fileURL.standardizedFileURL.path, $0) },
-                                  uniquingKeysWith: { first, _ in first })
         return loaded.map { entry in
             var entry = entry
             if !usesModel {
                 entry.modelTitle = nil
                 entry.keywords = []
                 entry.category = nil
-            }
-            if let path = entry.libraryPath, let capture = captures[URL(fileURLWithPath: path).standardizedFileURL.path] {
-                entry.modelTitle = capture.customName ?? capture.modelTitle
             }
             return entry
         }
@@ -201,7 +195,7 @@ final class ClipboardHistoryModel {
     /// Makes an image clip smaller without changing a pixel. The smaller file becomes the card's newest version
     /// and the original stays behind it, so history gains no entry.
     func optimize(_ entry: ClipboardEntry) {
-        guard entry.kind == .image, let url = entry.imageURL ?? entry.libraryPath.map({ URL(fileURLWithPath: $0) }) else { return }
+        guard entry.kind == .image, let url = entry.imageURL else { return }
         Task {
             guard let result = try? await ImageOptimizer.shared.optimize(url, effort: OptimizePreferences.effort) else { return }
             defer { result.discard() }
@@ -241,8 +235,8 @@ final class ClipboardHistoryModel {
 
     /// Convert to WebP… and Convert to JPEG…: the Library's sheet, on this clip's image as the card shows it.
     func convert(_ entry: ClipboardEntry, to format: ImageConversion.Format) {
-        guard entry.kind == .image, let url = entry.imageURL ?? entry.libraryPath.map({ URL(fileURLWithPath: $0) }) else { return }
-        let name = entry.libraryPath.map { URL(fileURLWithPath: $0).deletingPathExtension().lastPathComponent } ?? "Copied Image"
+        guard entry.kind == .image, let url = entry.imageURL else { return }
+        let name = ClipboardList.fileTitle(of: entry)
         CaptureLibraryModel.shared.pendingConversion = ImageConversion(
             format: format, files: [(url, name)], subtitle: "\(entry.pixelWidth) × \(entry.pixelHeight) image")
     }
@@ -348,14 +342,8 @@ final class ClipboardHistoryModel {
         let name = ClipboardList.fileTitle(of: entry)
         switch entry.kind {
         case .image:
-            guard let url = entry.libraryImageURL else { return [] }
-            // A Library capture's own name is shown as it is. History keeps images under their hash, which
-            // Quick Look would put in its title bar: a link named after the entry shows its title instead.
-            guard entry.libraryPath == nil else { return [url] }
-            let named = folder.appendingPathComponent((name.isEmpty ? "Image" : name) + "." + url.pathExtension)
-            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            if !FileManager.default.fileExists(atPath: named.path) { try? FileManager.default.linkItem(at: url, to: named) }
-            return [FileManager.default.fileExists(atPath: named.path) ? named : url]
+            guard let image = entry.imageURL else { return [] }
+            return (try? [ClipboardFiles.snapshot(of: image, in: folder, name: entry.snapshotName(for: image))]) ?? []
         case .files:
             return entry.filePaths.map { URL(fileURLWithPath: $0) }.filter { FileManager.default.fileExists(atPath: $0.path) }
         case .text, .snippet:

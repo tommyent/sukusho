@@ -224,7 +224,7 @@ nonisolated enum ClipboardList {
     static func typeName(of entry: ClipboardEntry) -> String {
         switch entry.kind {
         case .image:
-            let ext = (entry.imageURL?.pathExtension ?? entry.libraryPath.map { ($0 as NSString).pathExtension } ?? "").uppercased()
+            let ext = (entry.imageURL?.pathExtension ?? "").uppercased()
             return ext.isEmpty ? "Image" : "\(ext == "JPG" ? "JPEG" : ext) image"
         case .files:
             let count = (entry.text ?? "").split(separator: "\n").count

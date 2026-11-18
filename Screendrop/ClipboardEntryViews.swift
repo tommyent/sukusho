@@ -2,8 +2,6 @@ import AppKit
 import SwiftUI
 
 extension ClipboardEntry {
-    /// The image's file: the one history kept, or the Sukusho capture in the Library.
-    var imageFileURL: URL? { imageURL ?? libraryPath.map { URL(fileURLWithPath: $0) } }
     var filePaths: [String] { kind == .files ? (text ?? "").split(separator: "\n").map(String.init) : [] }
 }
 
@@ -47,7 +45,7 @@ struct ClipboardRowTile: View {
 
     var body: some View {
         Group {
-            if entry.kind == .image, let url = imageURL ?? entry.imageFileURL {
+            if entry.kind == .image, let url = imageURL ?? entry.imageURL {
                 ClipboardThumbnail(url: url, maxPixelSize: Int(size * 2))
             } else if case .color(let hex) = ClipboardList.textForm(of: entry), let color = Color(clipboardHex: hex) {
                 color.overlay(RoundedRectangle(cornerRadius: DS.Radius.s).strokeBorder(.black.opacity(0.15), lineWidth: 0.5))
@@ -86,7 +84,7 @@ struct ClipboardPreview: View {
     var body: some View {
         switch entry.kind {
         case .image:
-            if let url = imageURL ?? entry.imageFileURL {
+            if let url = imageURL ?? entry.imageURL {
                 ClipboardThumbnail(url: url, maxPixelSize: 1080, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: DS.Radius.l))
                     .shadow(color: .black.opacity(0.18), radius: 9, y: 4)
@@ -176,7 +174,7 @@ struct ClipboardInfo: View {
                 case .plain: textRows
                 case nil: EmptyView()
                 }
-                row("Size") { Text(ByteCountFormatter.string(fromByteCount: Int64(entry.shownByteSize), countStyle: .file)) }
+                row("Size") { Text(ByteCountFormatter.string(fromByteCount: Int64(entry.byteSize), countStyle: .file)) }
                 row("Times copied") { Text(entry.timesCopied, format: .number) }
                 row("First copied") { Text(Self.when(entry.firstCopiedAt)) }
                 if entry.lastCopiedAt != entry.firstCopiedAt { row("Last copied") { Text(Self.when(entry.lastCopiedAt)) } }
@@ -187,7 +185,7 @@ struct ClipboardInfo: View {
 
     /// Where an image's capture or the copied files are: the file name, its folder and a way to Finder.
     @ViewBuilder private var fileRows: some View {
-        let paths = entry.kind == .files ? entry.filePaths : entry.libraryPath.map { [$0] } ?? []
+        let paths = entry.filePaths
         if let first = paths.first {
             row(paths.count == 1 ? "File" : "Files") {
                 HStack(spacing: DS.Space.xs) {

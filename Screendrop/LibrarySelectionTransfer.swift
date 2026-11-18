@@ -35,7 +35,7 @@ extension LibrarySavedCard {
             case .text, .snippet:
                 return [.text(entry.text ?? "", name: entry.title.flatMap { $0.isEmpty ? nil : String($0.prefix(60)) } ?? "Text")]
             case .image:
-                guard let url = entry.libraryImageURL else { throw CocoaError(.fileNoSuchFile) }
+                let url = try entry.imageSnapshot()
                 return [.file(url, name: String(ClipboardList.title(of: entry).prefix(60)))]
             case .files:
                 return try entry.filePaths.map { path in

@@ -58,6 +58,7 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
     let menu: (Int) -> [LibraryMenuItem]
     /// The menu for a right-click between the cards, like Finder's.
     var backgroundMenu: () -> [LibraryMenuItem] = { [] }
+    var dragWriter: ((Entry) -> NSPasteboardWriting?)?
     var onReturn: (() -> Void)? = nil
     let onAction: (CaptureLibraryAction) -> Void
 
@@ -71,6 +72,7 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
         collection.autoresizingMask = [.width]
         collection.setAccessibilityLabel(accessibilityLabel)
         collection.backgroundColors = [.clear]
+        collection.setDraggingSourceOperationMask(.copy, forLocal: false)
         collection.isSelectable = true
         collection.allowsMultipleSelection = true
         collection.allowsEmptySelection = true
@@ -167,6 +169,11 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
             let cell = collectionView.makeItem(withIdentifier: LibraryCollectionItem.identifier, for: indexPath)
             configure(cell, at: indexPath)
             return cell
+        }
+
+        func collectionView(_ collectionView: NSCollectionView, pasteboardWriterForItemAt indexPath: IndexPath) -> NSPasteboardWriting? {
+            guard !parent.isBusy, let index = order.index(at: indexPath), parent.items.indices.contains(index) else { return nil }
+            return parent.dragWriter?(parent.items[index])
         }
 
         func configure(_ item: NSCollectionViewItem, at indexPath: IndexPath) {

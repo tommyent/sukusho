@@ -131,7 +131,7 @@ struct ClipboardPasteboardReaderTests {
         }
     }
 
-    @Test func aSukushoCaptureStaysInTheLibrary() throws {
+    @Test func aSukushoCaptureKeepsItsOwnBytesAndEditorLink() throws {
         let png = try image(width: 8, height: 8, as: .png)
         let file = history.appendingPathComponent("Screenshot 2026-11-16.png")
         withPasteboard([item(["public.file-url": file.absoluteString, "org.nspasteboard.source": "com.tommyent.Sukusho"],
@@ -139,8 +139,8 @@ struct ClipboardPasteboardReaderTests {
             guard case .captured(let capture) = read(pasteboard) else { Issue.record("not captured"); return }
             #expect(capture.kind == .image)
             #expect(capture.libraryPath == file.path)
-            #expect(capture.image == nil)
-            #expect(capture.storedBytes == 0)
+            #expect(capture.image == png)
+            #expect(capture.storedBytes == png.count)
             #expect(capture.byteSize == png.count)
         }
     }
@@ -320,18 +320,48 @@ struct ClipboardHistoryStoreTests {
         #expect(try await store.totalBytes() == 1000)
     }
 
-    @Test func aDeletedLibraryCaptureTakesItsEntry() async throws {
-        let store = try store()
-        let file = directory.appendingPathComponent("capture.png")
-        try Data([1]).write(to: file)
-        var capture = image(100)
-        capture.image = nil
-        capture.libraryPath = file.path
-        try await store.record(capture, at: start)
-        #expect(try await store.sweep(now: start, retention: nil, maxBytes: .max) == 0)
+    @Test func legacyCaptureReferencesAcquireIndependentBytesOnce() async throws {
+        let old = try store()
+        let history = directory.appendingPathComponent("History")
+        try FileManager.default.createDirectory(at: history, withIntermediateDirectories: true)
+        let file = history.appendingPathComponent("Before.png")
+        let pixels = Self.picture(3)
+        try pixels.write(to: file)
+        var reference = image(100)
+        reference.image = nil
+        reference.libraryPath = file.path
+        try await old.record(reference)
+        var missing = image(120)
+        missing.image = nil
+        missing.libraryPath = history.appendingPathComponent("Missing.png").path
+        try await old.record(missing)
+        var db: OpaquePointer?
+        try #require(sqlite3_open(directory.appendingPathComponent("clipboard.sqlite").path, &db) == SQLITE_OK)
+        defer { sqlite3_close(db) }
+        try #require(sqlite3_exec(db, """
+            INSERT INTO versions(entry_id,hash,library_path,copied_at)
+            SELECT id,hash,library_path,0 FROM entries;
+            PRAGMA user_version = 1;
+            """, nil, nil, nil) == SQLITE_OK)
+
+        let upgraded = try store()
+        let entries = try await upgraded.entries()
+        let kept = try #require(entries.first { $0.libraryPath == file.path })
+        let blob = try #require(kept.imageURL)
+        #expect(blob != file && kept.byteSize == pixels.count)
+        #expect(kept.earlierVersions.first?.imageURL == blob)
+        #expect(try Data(contentsOf: file) == pixels)
+        try Self.picture(9).write(to: file)
+        let reopened = try store()
         try FileManager.default.removeItem(at: file)
-        #expect(try await store.sweep(now: start, retention: nil, maxBytes: .max) == 1)
-        #expect(try await store.entries().isEmpty)
+        #expect(try await reopened.sweep(retention: nil, maxBytes: .max) == 0)
+        #expect(try await reopened.entries() == entries)
+        #expect(entries.first { $0.libraryPath == missing.libraryPath }?.imageURL == nil)
+        #expect(try Data(contentsOf: blob) == pixels)
+        let snapshot = try kept.imageSnapshot()
+        #expect(snapshot != blob && snapshot.pathExtension == "png")
+        try Data().write(to: snapshot)
+        #expect(try Data(contentsOf: blob) == pixels)
     }
 
     @Test func betaOnePinnedSnippetStaysInSnippets() async throws {
@@ -1018,24 +1048,6 @@ struct ClipboardWriterTests {
                        firstCopiedAt: .now, lastCopiedAt: .now, timesCopied: 1, pinnedAt: pinnedAt)
     }
 
-    /// Fable 15 #2: a capture's clip shows its file as it is now, after the optimizer rewrote it; a clip with its own
-    /// copy keeps the size it was copied at.
-    @Test func aCapturesClipShowsItsFileAsItIsNow() throws {
-        let file = FileManager.default.temporaryDirectory.appending(path: "SukushoClipSize-\(UUID().uuidString).png")
-        defer { try? FileManager.default.removeItem(at: file) }
-        try Data(repeating: 1, count: 1_300).write(to: file)
-        var clip = entry(.image, nil)
-        clip.byteSize = 1_900
-        clip.libraryPath = file.path
-        #expect(clip.shownByteSize == 1_300)
-
-        clip.imageURL = file   // its own kept copy: the recorded size stands
-        #expect(clip.shownByteSize == 1_900)
-        clip.imageURL = nil
-        clip.libraryPath = file.path + ".gone"   // the capture is gone: the recorded size stands
-        #expect(clip.shownByteSize == 1_900)
-    }
-
     private func withPasteboard(_ body: (NSPasteboard) throws -> Void) rethrows {
         let pasteboard = NSPasteboard(name: .init("SukushoClipboardTest-\(UUID().uuidString)"))
         defer { pasteboard.releaseGlobally() }
@@ -1127,15 +1139,21 @@ struct ClipboardWriterTests {
         }
     }
 
-    @Test func libraryImageUsesSavedEditsAndFallsBackToItsClipboardCopy() throws {
-        let original = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
-        let edited = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+    @Test func pasteUsesTheOwnedImageAfterTheCaptureChangesOrDisappears() throws {
+        let original = FileManager.default.temporaryDirectory.appending(path: "\(UUID()).png")
+        let capture = FileManager.default.temporaryDirectory.appending(path: "\(UUID()).png")
+        try Data([42]).write(to: original)
+        defer { try? FileManager.default.removeItem(at: original) }
+        try Data([13]).write(to: capture)
         var clip = entry(.image, nil, image: original)
-        clip.libraryPath = edited.path
-        #expect(clip.libraryImageURL == original)
-        try Data().write(to: edited)
-        defer { try? FileManager.default.removeItem(at: edited) }
-        #expect(clip.libraryImageURL == edited)
+        clip.libraryPath = capture.path
+        try withPasteboard { board in
+            #expect(ClipboardWriter.write(clip, richText: [:], plain: false, to: board))
+            #expect(board.data(forType: .png) == Data([42]))
+            try FileManager.default.removeItem(at: capture)
+            #expect(ClipboardWriter.write(clip, richText: [:], plain: false, to: board))
+            #expect(board.data(forType: .png) == Data([42]))
+        }
     }
 
     @Test func aMissingImageFileIsNotWritten() {

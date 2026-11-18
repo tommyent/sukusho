@@ -10,7 +10,7 @@ nonisolated struct ClipboardCapture: Sendable, Equatable {
     var hash: String
     /// The text as copied (links and colours included), or a files copy's paths, one per line.
     var text: String?
-    /// Bytes to keep; nil for a Sukusho capture, which stays in the Library.
+    /// Image bytes owned by this copy.
     var image: Data?
     var imageExtension: String?
     var libraryPath: String?
@@ -115,11 +115,11 @@ nonisolated enum ClipboardPasteboardReader {
             var capture = ClipboardCapture(kind: .image, hash: digest(data), pixelWidth: size.width,
                                            pixelHeight: size.height, byteSize: data.count)
             let fileURL = item.string(forType: .fileURL).flatMap(URL.init(string:))
-            if let libraryPath = ClipboardCapturePolicy.libraryPath(of: fileURL, historyDirectory: historyDirectory) {
-                capture.libraryPath = libraryPath
-            } else if type == "public.tiff" {
+            capture.libraryPath = ClipboardCapturePolicy.libraryPath(of: fileURL, historyDirectory: historyDirectory)
+            if type == "public.tiff" {
                 guard let png = png(from: data) else { return nil }
                 capture.image = png
+                capture.byteSize = png.count
                 capture.imageExtension = "png"
             } else {
                 capture.image = data

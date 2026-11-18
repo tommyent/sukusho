@@ -27,7 +27,7 @@ final class ClipboardDescriber {
         let describes = CaptureInsightRules.runs(modelAvailable: CaptureIntelligence.isModelAvailable,
                                                  enabled: ScreendropPreferences.libraryUsesIntelligence, readsText: reads)
         guard let entry = entries.first(where: { entry in
-            entry.kind == .image && entry.libraryPath == nil && entry.imageURL != nil && !skipped.contains(entry.hash)
+            entry.kind == .image && entry.imageURL != nil && !skipped.contains(entry.hash)
                 && ((reads && entry.readText == nil) || (describes && !entry.isDescribed))
         }), let url = entry.imageURL else { return }
         let source = ClipboardHistoryModel.shared.appName(entry.sourceBundleID)
