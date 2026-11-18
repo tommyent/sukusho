@@ -352,6 +352,8 @@ struct FlexibleShortcutsTests {
         let control = 262_144, command = 1_048_576
         #expect(SystemScreenshotShortcuts.dictationDoubleTap(in: entry([65535, 65535, control])) == HotkeyShortcut(.twice(keyCode: kVK_Control)))
         #expect(SystemScreenshotShortcuts.dictationDoubleTap(in: entry([control])) == HotkeyShortcut(.twice(keyCode: kVK_Control)))
+        // As keys-vm3 read it on 27.2.1: (262144, 9223372036854775807).
+        #expect(SystemScreenshotShortcuts.dictationDoubleTap(in: entry([control, Int.max])) == HotkeyShortcut(.twice(keyCode: kVK_Control)))
         #expect(SystemScreenshotShortcuts.dictationDoubleTap(in: entry([65535, 65535, command])) == HotkeyShortcut(.twice(keyCode: kVK_Command)))
         #expect(SystemScreenshotShortcuts.dictationDoubleTap(in: entry([65535, 65535, command | 0x10])) == HotkeyShortcut(.twice(keyCode: kVK_Command)),
                 "a right-⌘-only value still clashes with ⌘ ⌘, which either ⌘ fires")
