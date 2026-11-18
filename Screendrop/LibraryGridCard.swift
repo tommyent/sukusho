@@ -1,5 +1,9 @@
 import SwiftUI
 
+extension EnvironmentValues {
+    @Entry var libraryCardDensity = LibraryCardDensity(width: 220)
+}
+
 struct LibraryGridCard<Picture: View, Caption: View>: View {
     let marks: LibraryCardMarks
     let cloudAction: () -> Void
@@ -9,17 +13,19 @@ struct LibraryGridCard<Picture: View, Caption: View>: View {
 
     var body: some View {
         GeometryReader { geometry in
+            let density = LibraryCardDensity(width: geometry.size.width)
             VStack(alignment: .leading, spacing: 0) {
                 picture()
                     .frame(width: max(1, geometry.size.width - 2 * LibraryGridMetrics.pictureInset),
                            height: max(1, geometry.size.height - LibraryGridMetrics.pictureInset - LibraryGridMetrics.captionHeight))
                     .libraryCardChip()
-                    .overlay(alignment: .topLeading) { pills(marks.settings) }
+                    .overlay(alignment: .topLeading) { pills(settings(for: density), density: density) }
                     .overlay(alignment: .topTrailing) { cloudButton.padding(6) }
-                    .overlay(alignment: .bottomLeading) { pills(marks.social) }
-                    .overlay(alignment: .bottomTrailing) { pills(marks.content) }
+                    .overlay(alignment: .bottomLeading) { if density.showsSocial { pills(marks.social, density: density) } }
+                    .overlay(alignment: .bottomTrailing) { pills(marks.content, density: density) }
                 caption().frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             }
+            .environment(\.libraryCardDensity, density)
             .padding([.top, .horizontal], LibraryGridMetrics.pictureInset)
         }
     }
@@ -38,19 +44,26 @@ struct LibraryGridCard<Picture: View, Caption: View>: View {
         }
     }
 
-    private func pills(_ values: [LibraryCardMarks.Pill]) -> some View {
+    private func settings(for density: LibraryCardDensity) -> [LibraryCardMarks.Pill] {
+        if !density.separatesLocks && marks.settings.contains(.encrypted) && marks.settings.contains(.password) {
+            return marks.settings.filter { $0 != .password }
+        }
+        return marks.settings
+    }
+
+    private func pills(_ values: [LibraryCardMarks.Pill], density: LibraryCardDensity) -> some View {
         HStack(spacing: 3) {
-            ForEach(Array(values.enumerated()), id: \.offset) { _, value in pill(value) }
+            ForEach(Array(values.enumerated()), id: \.offset) { _, value in pill(value, density: density) }
         }
         .fixedSize().padding(6)
     }
 
-    @ViewBuilder private func pill(_ mark: LibraryCardMarks.Pill) -> some View {
+    @ViewBuilder private func pill(_ mark: LibraryCardMarks.Pill, density: LibraryCardDensity) -> some View {
         switch mark {
         case .encrypted: Image(systemName: "lock.shield.fill").cardPill().help("End-to-end encrypted")
         case .password: Image(systemName: "lock.fill").cardPill().help("Password protected")
         case .expiry(let date):
-            Label(CloudUploadText.expiryShort(date), systemImage: "hourglass")
+            compactLabel(CloudUploadText.expiryShort(date), symbol: "hourglass", density: density)
                 .cardPill(date <= .now ? .red : CardMark.text).help(CloudUploadText.expiryDate(date))
         case .comments(let n):
             Label { Text(n.formatted()) } icon: { Image(systemName: "bubble.left.fill").foregroundStyle(.blue) }
@@ -59,15 +72,26 @@ struct LibraryGridCard<Picture: View, Caption: View>: View {
             Label { Text(n.formatted()) } icon: { Image(systemName: "heart.fill").foregroundStyle(.red) }
                 .cardPill().help(CloudUploadText.likes(n) ?? "")
         case .tall: TallCapture.badge
-        case .versions(let n): Label("\(n)", systemImage: "square.stack").cardPill().help("\(n) versions")
+        case .versions(let n): compactLabel("\(n)", symbol: "square.stack", density: density).cardPill().help("\(n) versions")
         case .duration(let time): Label(time, systemImage: "play.fill").cardPill().monospacedDigit()
-        case .kind(let word): Text(word).cardPill()
+        case .kind(let word):
+            if density.showsPillText { Text(word).cardPill() }
+            else {
+                Image(systemName: word == "code" ? "chevron.left.forwardslash.chevron.right" : word == "link" ? "link" : "text.alignleft")
+                    .cardPill().accessibilityLabel(word).help(word.capitalized)
+            }
         case .gallery(let n): Label("\(n)", systemImage: "photo.stack").cardPill().help("\(n) images")
         }
     }
+    @ViewBuilder private func compactLabel(_ text: String, symbol: String, density: LibraryCardDensity) -> some View {
+        if density.showsPillText { Label(text, systemImage: symbol) }
+        else { Image(systemName: symbol).accessibilityLabel(text) }
+    }
+
 }
 
 struct LibraryGridCaption<Title: View>: View {
+    @Environment(\.libraryCardDensity) private var density
     let date: Date
     var bundleID: String?
     var saved = false
@@ -89,7 +113,7 @@ struct LibraryGridCaption<Title: View>: View {
                     Image(nsImage: icon).resizable().frame(width: 13, height: 13)
                         .libraryRaisedIcon(ringed: ClipboardHistoryModel.shared.appIconIsLight(bundleID))
                 }
-                Text(CaptureLibraryItem.dateTitle(date)).lineLimit(1).libraryRaisedText()
+                Text(density.showsFullDate ? CaptureLibraryItem.dateTitle(date) : date.formatted(date: .omitted, time: .shortened)).lineLimit(1).libraryRaisedText()
                 Spacer(minLength: 0)
                 if saved { Image(systemName: "star.fill").font(.system(size: 9)).foregroundStyle(.yellow).accessibilityLabel("Saved") }
             }

@@ -114,3 +114,11 @@ nonisolated enum TallCapture {
         width > 0 && Double(height) > Double(width) * 2.5
     }
 }
+
+nonisolated struct LibraryCardDensity {
+    let width: CGFloat
+    var showsSocial: Bool { width >= 200 }
+    var showsPillText: Bool { width >= 180 }
+    var separatesLocks: Bool { width >= 165 }
+    var showsFullDate: Bool { width >= 155 }
+}

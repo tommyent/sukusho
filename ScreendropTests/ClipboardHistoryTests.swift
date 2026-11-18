@@ -1194,6 +1194,16 @@ struct ClipboardImageMatchTests {
 /// (owner, 2026-11-16), and even margins rather than a strip on one side (Astra B2).
 @Suite
 struct LibraryGridMetricsTests {
+    @Test func narrowCardsGiveWayInOrder() {
+        let widths: [CGFloat] = [220, 190, 170, 160, 140]
+        let stages = widths.map { width in
+            let d = LibraryCardDensity(width: width)
+            return [d.showsSocial, d.showsPillText, d.separatesLocks, d.showsFullDate]
+        }
+        #expect(stages == [[true, true, true, true], [false, true, true, true], [false, false, true, true],
+                           [false, false, false, true], [false, false, false, false]])
+    }
+
     @Test func marksStayInTheirOwnCorners() {
         var upload = CloudUpload(id: "sample", url: "https://example.invalid/sample", title: nil, filename: "sky.png",
                                  mediaType: "image", size: nil, duration: nil, createdAt: .now, views: nil, thumbnailUrl: nil)
