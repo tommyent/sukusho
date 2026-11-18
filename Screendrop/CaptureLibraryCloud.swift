@@ -853,7 +853,7 @@ private struct CloudUploadCard: View {
             CloudUploadText.comments(upload.commentCount), CloudUploadText.likes(upload.likeCount),
             upload.hasPassword == true ? "password protected" : nil,
             upload.encrypted == true ? "encrypted" : nil,
-            CloudUploadText.expiry(upload.expiresAt), local == nil ? "cloud only" : "in Library",
+            CloudUploadText.expiry(upload.expiresAt),
         ]
         return parts.compactMap(\.self).joined(separator: ", ")
     }
@@ -867,12 +867,7 @@ private struct CloudUploadCard: View {
 
     private var labels: some View {
         VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 5) {
-                Text(CloudUploadText.title(upload, local: local)).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.middle)
-                if local != nil {
-                    Image(systemName: "internaldrive").foregroundStyle(.secondary).help("The capture is in your Library")
-                }
-            }
+            Text(CloudUploadText.title(upload, local: local)).font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.middle)
             // A space when there's no size keeps the line, so cards stay level.
             Text(CloudUploadText.subtitle(upload, local: local) ?? " ").font(.caption).foregroundStyle(.secondary).lineLimit(1)
         }
