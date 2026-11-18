@@ -34,13 +34,14 @@ private struct AfterCaptureToggleRow: View {
     }
 
     var body: some View {
+        let available = action != .upload || CloudCredentialStore.shared.isConfigured
         SettingsControlLabel(title, detail: subtitle).control { label in
-            Toggle(isOn: $isOn) { label }
+            Toggle(isOn: Binding(get: { available && isOn }, set: { isOn = $0 })) { label }
         }
         .toggleStyle(.switch)
-        .disabled(action == .upload && !isOn && !CloudCredentialStore.shared.isConfigured)
+        .disabled(!available)
 
-        if action == .upload && !CloudCredentialStore.shared.isConfigured {
+        if !available {
             HStack {
                 Text(isOn ? "Automatic uploads are paused until Cloud is set up."
                           : "Set up Cloud to enable automatic uploads.")

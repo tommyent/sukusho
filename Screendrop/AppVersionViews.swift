@@ -43,6 +43,7 @@ struct AboutHeader: View {
 
                 HStack(spacing: 6) {
                     Text(AppVersion.displayString)
+                        .fixedSize(horizontal: false, vertical: true)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)

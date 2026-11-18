@@ -126,7 +126,11 @@ final class ClipboardHistoryModel {
         // Cached first: every Library card asks, as it scrolls in.
         if let icon = appIcons[bundleID] { return icon }
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
-        let icon = NSWorkspace.shared.icon(forFile: url.path)
+        let bundle = Bundle(url: url)
+        let file = bundle?.object(forInfoDictionaryKey: "CFBundleIconFile") as? String
+        let resource = file.flatMap { bundle?.url(forResource: ($0 as NSString).deletingPathExtension, withExtension: "icns") }
+        let icon = resource.flatMap(NSImage.init(contentsOf:))
+            ?? NSWorkspace.shared.icon(forFile: url.path)
         appIcons[bundleID] = icon
         return icon
     }

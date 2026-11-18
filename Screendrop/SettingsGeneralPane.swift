@@ -8,6 +8,7 @@ import ServiceManagement
 import SwiftUI
 
 struct GeneralSettingsPane: View {
+    @AppStorage(ScreendropPreferences.videoExportDirectoryPathKey) private var videoDirectoryPath = ""
     @AppStorage(ScreendropPreferences.exportDirectoryPathKey) private var exportDirectoryPath = ""
     @AppStorage(ScreendropPreferences.saveButtonUsesFolderKey) private var saveButtonUsesFolder = false
     @AppStorage(ScreendropPreferences.playSoundsKey) private var playSounds = true
@@ -37,46 +38,8 @@ struct GeneralSettingsPane: View {
     var body: some View {
         Form {
             Section("Save Location") {
-                // One row and one name, "Save folder", as in the menu bar
-                // menu; "Use Default" only once a custom folder is set
-                // (design pass choice 15).
-                LabeledContent("Save folder") {
-                    HStack(spacing: DS.Space.m) {
-                        Image(systemName: "folder.fill")
-                            .foregroundStyle(.blue)
-                            .font(.system(size: 14))
-
-                        Text(ScreendropPreferences.exportDirectory.abbreviatedPath)
-                            .font(.system(size: 13))
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .foregroundStyle(.primary)
-                            .help(ScreendropPreferences.exportDirectory.path)
-
-                        if !exportDirectoryPath.isEmpty {
-                            Button("Use Default") {
-                                exportDirectoryPath = ""
-                            }
-                            .controlSize(.small)
-                        }
-
-                        Button("Choose…") {
-                            chooseExportDirectory()
-                        }
-                        .controlSize(.small)
-                    }
-                }
-                // Videos have their own home while no folder is chosen (owner, 2026-11-17).
-                if exportDirectoryPath.isEmpty {
-                    LabeledContent("Videos") {
-                        Text(ScreendropPreferences.defaultVideoExportDirectory.abbreviatedPath)
-                            .font(.system(size: 13))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .help("Recordings and their exports are saved here; screenshots go to the Save folder.")
-                    }
-                }
+                folderRow("Save folder", directory: ScreendropPreferences.exportDirectory, path: $exportDirectoryPath)
+                folderRow("Videos", directory: ScreendropPreferences.videoExportDirectory, path: $videoDirectoryPath)
 
                 SettingsControlLabel(
                     "Save without choosing a location",
@@ -184,22 +147,38 @@ struct GeneralSettingsPane: View {
         }
     }
 
-    private func chooseExportDirectory() {
+    private func folderRow(_ title: String, directory: URL, path: Binding<String>) -> some View {
+        LabeledContent(title) {
+            HStack(spacing: DS.Space.m) {
+                Image(systemName: "folder.fill").foregroundStyle(.blue)
+                Text(directory.abbreviatedPath)
+                    .lineLimit(1).truncationMode(.middle).help(directory.path)
+                if !path.wrappedValue.isEmpty {
+                    Button("Use Default") { path.wrappedValue = "" }
+                }
+                Button("Choose…") { chooseDirectory(title, current: directory, path: path) }
+                    .accessibilityLabel("Choose \(title)")
+            }
+            .controlSize(.small)
+        }
+    }
+
+    private func chooseDirectory(_ title: String, current: URL, path: Binding<String>) {
         let panel = NSOpenPanel()
-        panel.title = "Choose Save Location"
+        panel.title = "Choose \(title)"
         panel.prompt = "Choose"
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = true
-        panel.directoryURL = ScreendropPreferences.exportDirectory
+        panel.directoryURL = current
 
         guard panel.runModal() == .OK,
               let url = panel.url else {
             return
         }
 
-        exportDirectoryPath = url.path
+        path.wrappedValue = url.path
     }
 
     private func refreshLaunchAtLoginStatus() {

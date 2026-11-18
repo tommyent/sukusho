@@ -90,9 +90,15 @@ struct ClipboardSettingsPane: View {
         }
         ForEach(ignoredApps, id: \.self) { bundleID in
             HStack(spacing: 8) {
-                Image(nsImage: ClipboardHistoryModel.shared.appIcon(bundleID)
-                      ?? NSWorkspace.shared.icon(for: .applicationBundle))
-                    .resizable().frame(width: 18, height: 18)
+                Group {
+                    if let icon = ClipboardHistoryModel.shared.appIcon(bundleID) {
+                        Image(nsImage: icon).resizable()
+                    } else {
+                        Image(systemName: "app.dashed").foregroundStyle(.secondary)
+                    }
+                }
+                .frame(width: 18, height: 18)
+                .accessibilityHidden(true)
                 Text(Self.ignoredAppName(bundleID))
                 Spacer()
                 Button("Remove", systemImage: "minus.circle") { setIgnoredApps(ignoredApps.filter { $0 != bundleID }) }

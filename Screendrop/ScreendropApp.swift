@@ -84,7 +84,12 @@ struct ScreendropApp: App {
             }
         }
         .windowResizability(.contentSize)
-        .defaultSize(width: 1360, height: 860)
+        .defaultWindowPlacement { _, context in
+            let screen = context.defaultDisplay.visibleRect
+            let size = CGSize(width: min(1360, screen.width), height: min(860, screen.height))
+            return WindowPlacement(CGPoint(x: screen.midX - size.width / 2, y: screen.midY - size.height / 2),
+                                   size: size)
+        }
     }
 
     @MainActor

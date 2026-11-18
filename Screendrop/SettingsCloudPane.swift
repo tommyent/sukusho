@@ -550,17 +550,53 @@ private struct SetupStepView: View {
     }
 }
 
-private struct SetupVideoPlayer: NSViewRepresentable {
+private struct SetupVideoPlayer: View {
     private static let videoURL = URL(string: "https://static.fayazahmed.com/8130A265-enable-cloud-screendrop.mp4")!
+    @State private var player: AVPlayer?
+    @State private var failed = false
+    @State private var attempt = 0
+
+    var body: some View {
+        Group {
+            if let player {
+                SetupPlaybackView(player: player)
+            } else if failed {
+                VStack(spacing: 8) {
+                    Label("Setup video unavailable", systemImage: "video.slash")
+                    Text("You can follow the steps above while offline.").foregroundStyle(.secondary)
+                    Button("Retry") { attempt += 1 }
+                }
+            } else {
+                ProgressView("Loading setup video…")
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task(id: attempt) {
+            failed = false
+            let asset = AVURLAsset(url: Self.videoURL)
+            do {
+                let playable = try await asset.load(.isPlayable)
+                try Task.checkCancellation()
+                if playable { player = AVPlayer(playerItem: AVPlayerItem(asset: asset)) }
+                else { failed = true }
+            } catch {
+                if !Task.isCancelled { failed = true }
+            }
+        }
+    }
+}
+
+private struct SetupPlaybackView: NSViewRepresentable {
+    let player: AVPlayer
 
     func makeNSView(context: Context) -> AVPlayerView {
-        let player = AVPlayer(url: Self.videoURL)
-        let playerView = AVPlayerView()
-        playerView.player = player
-        playerView.controlsStyle = .inline
-        playerView.showsFullScreenToggleButton = true
-        return playerView
+        let view = AVPlayerView()
+        view.controlsStyle = .inline
+        view.showsFullScreenToggleButton = true
+        return view
     }
 
-    func updateNSView(_ nsView: AVPlayerView, context: Context) {}
+    func updateNSView(_ view: AVPlayerView, context: Context) {
+        if view.player !== player { view.player = player }
+    }
 }

@@ -99,7 +99,7 @@ private struct RecordingStudioContent: View {
                 StudioTimelineEditor(model: model)
             }
         }
-        .frame(minWidth: 980, minHeight: 720)
+        .frame(minWidth: 980 - (isInspectorPresented ? InspectorMetrics.columnMinWidth : 0), minHeight: 720)
         // One language at a time; the system asks first if it needs to download one.
         .translationTask(model.translationConfiguration) { session in
             await model.translate(using: session)

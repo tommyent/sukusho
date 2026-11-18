@@ -205,12 +205,12 @@ private struct SettingsSidebarFooter: View {
     var body: some View {
         HStack(spacing: 6) {
             // Without the word "Version": the build number is long and the sidebar narrow.
-            Text(AppVersion.displayString.replacingOccurrences(of: "Version ", with: ""))
+            Text(AppVersion.displayString.replacingOccurrences(of: "Version ", with: "")
+                .replacingOccurrences(of: " (", with: "\n("))
                 .font(.footnote)
                 .foregroundStyle(.tertiary)
                 .fontDesign(.monospaced)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
+                .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
             AppVersionCopyButton()
         }

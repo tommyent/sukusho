@@ -18,6 +18,7 @@ enum ScreendropPreferences {
     static let copyTIFFKey = "copyScreenshotsAsTIFF"
     static let exportFormatKey = "exportFormat"
     static let compressionQualityKey = "compressionQuality"
+    static let videoExportDirectoryPathKey = "videoExportDirectoryPath"
     static let exportDirectoryPathKey = "exportDirectoryPath"
     static let fullscreenHotkeyKey = "captureHotkey.fullscreen"
     static let windowHotkeyKey = "captureHotkey.window"
@@ -155,6 +156,9 @@ enum ScreendropPreferences {
     /// Where recordings and everything exported from them (movies, GIFs, audio) are saved: the Save folder the user
     /// chose, else ~/Movies/Sukusho, as images go to ~/Pictures/Sukusho (owner, 2026-11-17).
     static var videoExportDirectory: URL {
+        if let path = UserDefaults.standard.string(forKey: videoExportDirectoryPathKey), !path.isEmpty {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
         if let path = UserDefaults.standard.string(forKey: exportDirectoryPathKey), !path.isEmpty {
             return URL(fileURLWithPath: path, isDirectory: true)
         }
