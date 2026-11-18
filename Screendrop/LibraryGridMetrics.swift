@@ -51,6 +51,55 @@ nonisolated struct LibraryGridMetrics: Equatable, Sendable {
     var pictureHeight: CGFloat { cardHeight - Self.pictureInset - Self.captionHeight }
 }
 
+/// Geometry from the Heavy stock mockup, in points. Shadow blur is the CSS diameter.
+nonisolated enum LibraryCardDepth {
+    case resting, hovering, pressed, deleting
+
+    init(hovering: Bool, pressed: Bool, deleting: Bool) {
+        self = deleting ? .deleting : pressed ? .pressed : hovering ? .hovering : .resting
+    }
+
+    var lift: CGFloat {
+        switch self {
+        case .resting: 0
+        case .hovering: -2
+        case .pressed: 2
+        case .deleting: 1
+        }
+    }
+
+    var lip: CGFloat {
+        switch self {
+        case .resting, .hovering: 2
+        case .pressed: 0.5
+        case .deleting: 1
+        }
+    }
+
+    struct Shadow: Equatable {
+        let offset: CGFloat
+        let blur: CGFloat
+        let inset: CGFloat
+    }
+
+    var contact: Shadow? {
+        switch self {
+        case .resting: Shadow(offset: 4, blur: 5, inset: 1)
+        case .hovering: Shadow(offset: 6, blur: 6, inset: 1)
+        case .pressed: Shadow(offset: 1, blur: 1.5, inset: 0)
+        case .deleting: nil
+        }
+    }
+
+    var key: Shadow? {
+        switch self {
+        case .resting: Shadow(offset: 16, blur: 28, inset: 8)
+        case .hovering: Shadow(offset: 26, blur: 40, inset: 10)
+        case .pressed, .deleting: nil
+        }
+    }
+}
+
 /// Index paths and flat positions for the same ordered snapshot of cards.
 nonisolated struct LibraryDisplayOrder {
     let paths: [IndexPath]

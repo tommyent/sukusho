@@ -1,6 +1,7 @@
 import SwiftUI
 
 extension EnvironmentValues {
+    @Entry var libraryCellPressed = false
     @Entry var libraryCardDensity = LibraryCardDensity(width: 220)
 }
 
@@ -87,6 +88,88 @@ struct LibraryGridCard<Picture: View, Caption: View>: View {
         else { Image(systemName: symbol).accessibilityLabel(text) }
     }
 
+}
+
+/// Grid cards share one stock surface. List rows retain their compact backing.
+struct LibraryCardSurface: ViewModifier {
+    let layout: CaptureLibraryLayout
+    let selected: Bool
+    let hovering: Bool
+    var deleting = false
+
+    @Environment(\.libraryCellPressed) private var pressed
+    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.appearsActive) private var active
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var dark: Bool { scheme == .dark }
+    private let shape = RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
+
+    func body(content: Content) -> some View {
+        if layout == .grid {
+            let depth = LibraryCardDepth(hovering: hovering, pressed: pressed, deleting: deleting)
+            content
+                .background { stock(depth).allowsHitTesting(false) }
+                .overlay {
+                    if !selected && contrast == .increased {
+                        shape.strokeBorder(Color.primary.opacity(0.65), lineWidth: 1)
+                    } else {
+                        LibraryCardBorder(selected: selected)
+                    }
+                }
+                .offset(y: depth.lift)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: depth)
+        } else {
+            content
+                .background(Color.primary.opacity(selected ? 0.075 : hovering ? 0.035 : 0.012), in: shape)
+                .background(WorkspaceChrome.background, in: shape)
+                .overlay { LibraryCardBorder(selected: selected) }
+        }
+    }
+
+    private func stock(_ depth: LibraryCardDepth) -> some View {
+        ZStack {
+            if let key = depth.key { shadow(key, depth: depth) }
+            if let contact = depth.contact { shadow(contact, depth: depth) }
+            if depth != .deleting { shape.fill(lip(lower: true)).offset(y: depth.lip) }
+            if depth != .pressed { shape.fill(lip(lower: false)).offset(y: 1) }
+            shape.fill(LinearGradient(colors: dark ? [Color(stock: 0x333335), Color(stock: 0x2B2B2D)]
+                                                   : [.white, Color(stock: 0xF7F7F8)], startPoint: .top, endPoint: .bottom))
+            Canvas { context, size in
+                let path = shape.path(in: CGRect(origin: .zero, size: size))
+                context.clip(to: path)
+                context.clip(to: path.offsetBy(dx: 0, dy: 1), options: .inverse)
+                context.fill(path, with: .color(.white.opacity(dark ? 0.16 : 1)))
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func shadow(_ spec: LibraryCardDepth.Shadow, depth: LibraryCardDepth) -> some View {
+        let alpha = depth == .pressed ? (dark ? 0.5 : 0.12) : (dark ? 0.65 : 0.18)
+        return shape.inset(by: spec.inset).fill(.black)
+            .shadow(color: .black.opacity(alpha), radius: spec.blur / 2, y: spec.offset)
+    }
+
+    private func lip(lower: Bool) -> Color {
+        guard selected else {
+            if dark { return Color(stock: lower ? 0x0A0A0A : 0x141414) }
+            return Color(stock: lower ? 0xBDBDC2 : 0xD6D6DA)
+        }
+        guard active else { return .secondary }
+        let accent = NSColor.controlAccentColor
+        if accent.usingColorSpace(.sRGB) == NSColor.systemBlue.usingColorSpace(.sRGB) {
+            return Color(stock: lower ? (dark ? 0x064A99 : 0x0055B3) : 0x0A6FE0)
+        }
+        return Color.accentColor.mix(with: .black, by: lower ? (dark ? 0.4 : 0.3) : 0.12)
+    }
+}
+
+private extension Color {
+    init(stock rgb: Int) {
+        self.init(red: Double(rgb >> 16) / 255, green: Double((rgb >> 8) & 255) / 255, blue: Double(rgb & 255) / 255)
+    }
 }
 
 struct LibraryGridCaption<Title: View>: View {

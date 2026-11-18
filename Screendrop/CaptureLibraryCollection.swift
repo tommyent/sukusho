@@ -306,6 +306,38 @@ final class LibraryCollectionView: NSCollectionView, NSUserInterfaceValidations 
 
     override func menu(for event: NSEvent) -> NSMenu? { contextMenuProvider?(event) }
 
+    private weak var pressedItem: LibraryCollectionItem?
+    private var pressMonitor: Any?
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if let pressMonitor { NSEvent.removeMonitor(pressMonitor) }
+        pressMonitor = nil
+        setPressed(nil)
+        super.viewWillMove(toWindow: newWindow)
+        guard let newWindow else { return }
+        // Observe without claiming the click from cell buttons, selection, rename or dragging.
+        pressMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp, .leftMouseDragged]) { [weak self, weak newWindow] event in
+            guard let self else { return event }
+            if event.type == .leftMouseDown, event.window === newWindow,
+               (collectionViewLayout as? LibraryCollectionLayout)?.displayLayout == .grid {
+                let point = convert(event.locationInWindow, from: nil)
+                if visibleRect.contains(point), let path = indexPathForItem(at: point) {
+                    setPressed(item(at: path) as? LibraryCollectionItem)
+                }
+            } else {
+                setPressed(nil)
+            }
+            return event
+        }
+    }
+
+    private func setPressed(_ item: LibraryCollectionItem?) {
+        guard item !== pressedItem else { return }
+        pressedItem?.isPressed = false
+        pressedItem = item
+        item?.isPressed = true
+    }
+
     private var pendingRename: DispatchWorkItem?
 
     /// Clicking the title of the one selected capture renames it, as in
@@ -320,6 +352,7 @@ final class LibraryCollectionView: NSCollectionView, NSUserInterfaceValidations 
         window?.makeFirstResponder(self)
         mouseSelectionHandler?(event)
         super.mouseDown(with: event)
+        if NSEvent.pressedMouseButtons & 1 == 0 { setPressed(nil) }
         if event.clickCount == 2 {
             guard let clicked else { return }
             selectionIndexPaths = [clicked]
@@ -455,9 +488,12 @@ final class LibraryCollectionItem: NSCollectionViewItem {
     override func loadView() {
         let host = NSHostingView(rootView: AnyView(EmptyView()))
         host.sizingOptions = []
+        host.clipsToBounds = false
         self.host = host
         view = host
     }
+
+    var isPressed = false { didSet { if isPressed != oldValue { updateContent() } } }
 
     override var isSelected: Bool { didSet { updateContent() } }
 
@@ -469,6 +505,7 @@ final class LibraryCollectionItem: NSCollectionViewItem {
 
     func clearContent() {
         content = nil
+        isPressed = false
         titleFrame = .zero
         updateContent()
     }
@@ -480,7 +517,8 @@ final class LibraryCollectionItem: NSCollectionViewItem {
 
     private func updateContent() {
         _ = view
-        host?.rootView = content?(isSelected) { [weak self] frame in self?.titleFrame = frame } ?? AnyView(EmptyView())
+        let cell = content?(isSelected) { [weak self] frame in self?.titleFrame = frame }
+        host?.rootView = AnyView(cell.environment(\.libraryCellPressed, isPressed))
     }
 }
 
@@ -536,15 +574,7 @@ struct LibraryCellContent: View {
                         }
                     }
                 }
-                .background(
-                    Color.primary.opacity(selected ? 0.075 : isHovering ? 0.035 : 0.012),
-                    in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
-                )
-                // A solid backing in the chrome colour, so titles never sit on the grid's dots.
-                .background(WorkspaceChrome.background, in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
-                .overlay {
-                    LibraryCardBorder(selected: selected)
-                }
+                .modifier(LibraryCardSurface(layout: layout, selected: selected, hovering: isHovering))
                 .onHover { isHovering = $0 }
                 .onChange(of: item.id) { _, _ in isHovering = false }
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: selected)
