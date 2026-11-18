@@ -178,44 +178,44 @@ actor ClipboardHistoryStore {
                 COMMIT;
                 """)
         }
-        if schemaVersion < 2 {
-            try Self.execute(handle, "BEGIN IMMEDIATE")
-            do {
-                for table in ["entries", "versions"] {
-                    let rows = try Self.query(handle, """
-                        SELECT rowid, library_path, hash FROM \(table) WHERE library_path IS NOT NULL AND blob IS NULL
-                        """, []) { ($0.int(0), $0.text(1)!, $0.text(2)!) }
-                    for (row, path, previousHash) in rows {
-                        let file = URL(fileURLWithPath: path)
-                        let data: Data
-                        do { data = try Data(contentsOf: file) }
-                        catch let error as CocoaError where error.code == .fileReadNoSuchFile { continue }
-                        let hash = ClipboardPasteboardReader.digest(data)
-                        let blob = try Self.writeBlob(data, hash: hash,
-                                                      ext: file.pathExtension, in: directory)
-                        _ = try Self.query(handle, """
-                            UPDATE \(table) SET blob = ?, byte_size = ? WHERE rowid = ?
-                            """, [blob, data.count, row]) { _ in () }
-                        if table == "entries", let size = ClipboardPasteboardReader.pixelSize(of: data) {
-                            _ = try Self.query(handle, "UPDATE entries SET pixel_width = ?, pixel_height = ? WHERE rowid = ?",
-                                               [size.width, size.height, row]) { _ in () }
-                        }
-                        if hash != previousHash {
-                            // A pre-upgrade edit changed the bytes. A new copy of the old bytes must get its own card.
-                            _ = try Self.query(handle, "UPDATE OR IGNORE \(table) SET hash = ? WHERE rowid = ?", [hash, row]) { _ in () }
-                            if sqlite3_changes(handle) == 0 {
-                                // Another row already indexes these bytes. Keep both histories and one canonical copy target.
-                                _ = try Self.query(handle, "UPDATE \(table) SET hash = ? WHERE rowid = ?",
-                                                   ["legacy-\(row)-\(hash)", row]) { _ in () }
-                            }
+        // Older builds can add references after a downgrade. Retry only rows still missing their bytes.
+        try Self.execute(handle, "BEGIN IMMEDIATE")
+        do {
+            for table in ["entries", "versions"] {
+                let rows = try Self.query(handle, """
+                    SELECT rowid, library_path, hash FROM \(table) WHERE library_path IS NOT NULL AND blob IS NULL
+                    """, []) { ($0.int(0), $0.text(1)!, $0.text(2)!) }
+                for (row, path, previousHash) in rows {
+                    let file = URL(fileURLWithPath: path)
+                    let data: Data
+                    do { data = try Data(contentsOf: file) }
+                    catch let error as CocoaError where error.code == .fileReadNoSuchFile { continue }
+                    let hash = ClipboardPasteboardReader.digest(data)
+                    let blob = try Self.writeBlob(data, hash: hash,
+                                                  ext: file.pathExtension, in: directory)
+                    _ = try Self.query(handle, """
+                        UPDATE \(table) SET blob = ?, byte_size = ? WHERE rowid = ?
+                        """, [blob, data.count, row]) { _ in () }
+                    if table == "entries", let size = ClipboardPasteboardReader.pixelSize(of: data) {
+                        _ = try Self.query(handle, "UPDATE entries SET pixel_width = ?, pixel_height = ? WHERE rowid = ?",
+                                           [size.width, size.height, row]) { _ in () }
+                    }
+                    if hash != previousHash {
+                        // A pre-upgrade edit changed the bytes. A new copy of the old bytes must get its own card.
+                        _ = try Self.query(handle, "UPDATE OR IGNORE \(table) SET hash = ? WHERE rowid = ?", [hash, row]) { _ in () }
+                        if sqlite3_changes(handle) == 0 {
+                            // Another row already indexes these bytes. Keep both histories and one canonical copy target.
+                            _ = try Self.query(handle, "UPDATE \(table) SET hash = ? WHERE rowid = ?",
+                                               ["legacy-\(row)-\(hash)", row]) { _ in () }
                         }
                     }
                 }
-                try Self.execute(handle, "PRAGMA user_version = 2; COMMIT")
-            } catch {
-                try? Self.execute(handle, "ROLLBACK")
-                throw error
             }
+            if schemaVersion < 2 { try Self.execute(handle, "PRAGMA user_version = 2") }
+            try Self.execute(handle, "COMMIT")
+        } catch {
+            try? Self.execute(handle, "ROLLBACK")
+            throw error
         }
         // Histories from before the image descriptions get their columns; on a newer one each is a duplicate.
         for column in ["read_text TEXT", "model_title TEXT", "model_keywords TEXT", "model_category TEXT",

@@ -364,6 +364,21 @@ struct ClipboardHistoryStoreTests {
         #expect(try Data(contentsOf: #require(copy.imageURL)) == pixels)
     }
 
+    @Test func reopeningCopiesReferencesWrittenAfterADowngrade() async throws {
+        let current = try store()
+        let reference = try capture(4, named: "Later.png")
+        try await current.record(reference)
+        let legacy = try #require(try await current.entries().first)
+        #expect(legacy.imageURL == nil)
+
+        let reopened = try store()
+        let entry = try #require(try await reopened.entries().first)
+        #expect(entry.id == legacy.id && entry.libraryPath == reference.libraryPath)
+        #expect(try Data(contentsOf: #require(entry.imageURL)) == Self.picture(4))
+        #expect(try await reopened.sweep(retention: nil, maxBytes: .max) == 0)
+        #expect(try await reopened.entries().count == 1)
+    }
+
     @Test func legacyCaptureReferencesAcquireIndependentBytesOnce() async throws {
         let old = try store()
         let history = directory.appendingPathComponent("History")
