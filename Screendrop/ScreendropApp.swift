@@ -182,7 +182,7 @@ enum AppRelaunch {
     /// already running (it gets a reopen) rather than starting a second.
     static func reopenIfRequested() {
         guard isRequested else { return }
-        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: reopenKey)
+        CFPreferencesSetAppValue(reopenKey as CFString, Date().timeIntervalSince1970 as CFNumber, kCFPreferencesCurrentApplication)
         CFPreferencesAppSynchronize(kCFPreferencesCurrentApplication)
         let reopen = Process()
         reopen.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -193,12 +193,16 @@ enum AppRelaunch {
         try? reopen.run()
     }
 
-    /// True once after Relaunch Sukusho, at the launch or reopen that follows it: then Settings › Shortcuts opens.
+    /// True once after Relaunch Sukusho, at the launch or reopen that follows it: then Settings › Shortcuts opens. The
+    /// request comes from another process, the copy that quit, so it's read past this process's cached preferences.
+    /// (In a two-process probe on 27.3 a copy already running saw it even without synchronizing; this doesn't rely on
+    /// that.)
     static func takeShowShortcutsRequest() -> Bool {
-        let defaults = UserDefaults.standard
-        let requestedAt = defaults.double(forKey: reopenKey)
-        guard requestedAt > 0 else { return false }
-        defaults.removeObject(forKey: reopenKey)
+        let app = kCFPreferencesCurrentApplication
+        CFPreferencesAppSynchronize(app)
+        guard let requestedAt = (CFPreferencesCopyAppValue(reopenKey as CFString, app) as? NSNumber)?.doubleValue else { return false }
+        CFPreferencesSetAppValue(reopenKey as CFString, nil, app)
+        CFPreferencesAppSynchronize(app)
         return Date().timeIntervalSince1970 - requestedAt < 120
     }
 }
