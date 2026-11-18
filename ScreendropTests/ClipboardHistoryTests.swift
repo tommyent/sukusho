@@ -235,7 +235,9 @@ struct ClipboardHistoryStoreTests {
 
     @Test func anOptimizedVersionStacksOnItsOwnCard() async throws {
         let store = try store()
-        guard case .inserted(let id) = try await store.record(image(400, width: 4, height: 4), at: start) else {
+        var original = image(400, width: 4, height: 4)
+        original.libraryPath = directory.appendingPathComponent("Shot.png").path
+        guard case .inserted(let id) = try await store.record(original, at: start) else {
             Issue.record("not inserted")
             return
         }
@@ -246,6 +248,8 @@ struct ClipboardHistoryStoreTests {
         let entries = try await store.entries()
         #expect(entries.count == 2)
         let card = try #require(entries.first { $0.id == id })
+        #expect(card.libraryPath == original.libraryPath)
+        #expect(card.earlierVersions.first?.libraryPath == original.libraryPath)
         #expect(card.hash == smaller.hash)
         #expect(card.byteSize == 200)
         #expect(card.earlierVersions.count == 1)
@@ -256,9 +260,11 @@ struct ClipboardHistoryStoreTests {
 
         // Astra OR4: optimized a second time, at another effort. The versions keep the order they were made
         // in although the card's copy time never moved, so the original is still the last one.
-        let smallest = image(150, width: 4, height: 4)
+        var smallest = image(150, width: 4, height: 4)
+        smallest.libraryPath = directory.appendingPathComponent("Replacement.png").path
         #expect(try await store.stack(smallest, on: id))
         let twice = try #require(try await store.entries().first { $0.id == id })
+        #expect(twice.libraryPath == smallest.libraryPath)
         #expect(twice.hash == smallest.hash)
         #expect(twice.earlierVersions.map(\.byteSize) == [200, 400])
         #expect(twice.earlierVersions.last?.byteSize == 400)
@@ -700,7 +706,7 @@ struct ClipboardHistoryStoreTests {
         let entry = try #require(entries.first)
         #expect(entry.hash == rewrite.hash && entry.byteSize == rewrite.byteSize)
         #expect(!entry.isOptimizedHere)   // another app's re-encode
-        #expect(entry.libraryPath == nil)
+        #expect(entry.libraryPath == original.libraryPath)
         #expect(entry.sourceBundleID == "com.tommyent.Sukusho")
         #expect(entry.timesCopied == 1)
         #expect(entry.firstCopiedAt == start)

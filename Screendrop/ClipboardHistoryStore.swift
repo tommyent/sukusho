@@ -305,7 +305,7 @@ actor ClipboardHistoryStore {
         // What was read or said about the earlier image is cleared, so the newest is read and described
         // afresh (Astra L3); late answers for the earlier image are kept out by their hash guard.
         try run("""
-            UPDATE entries SET hash = ?, blob = ?, library_path = ?, byte_size = ?, stored_bytes = ?,
+            UPDATE entries SET hash = ?, blob = ?, library_path = COALESCE(?, library_path), byte_size = ?, stored_bytes = ?,
                 last_copied_at = ?, change_seq = ?, read_text = NULL, model_title = NULL, model_keywords = NULL,
                 model_category = NULL, described = 0, optimized_here = ? WHERE id = ?
             """, [capture.hash, blob, capture.libraryPath, capture.byteSize, capture.storedBytes,
