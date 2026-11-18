@@ -27,15 +27,18 @@ enum LibrarySavedCard: Identifiable {
         }
     }
 
-    var clipID: String? {
-        if case .clip(let entry) = self { return entry.id }
+    var clipEntry: ClipboardEntry? {
+        if case .clip(let entry) = self { return entry }
         return nil
     }
 
-    var captureID: String? {
-        if case .capture(let item) = self { return item.id }
+    var captureItem: CaptureLibraryItem? {
+        if case .capture(let item) = self { return item }
         return nil
     }
+
+    var clipID: String? { clipEntry?.id }
+    var captureID: String? { captureItem?.id }
 
     var previewURLs: [URL] {
         switch self {

@@ -37,7 +37,7 @@ extension CaptureLibraryModel {
         case .reveal:
             NSWorkspace.shared.activateFileViewerSelecting(selected.map(\.ownedURL))
         case .trash:
-            pendingTrash = selected
+            deleteSelection(selected.map(LibrarySavedCard.capture))
         }
     }
 
@@ -106,8 +106,19 @@ extension CaptureLibraryModel {
         renameSession = nil
     }
 
+    func deleteSelection(_ cards: [LibrarySavedCard]) {
+        if cards.contains(where: { $0.captureID != nil }) { pendingTrash = cards }
+        else { ClipboardHistoryModel.shared.delete(cards.compactMap(\.clipEntry)) }
+    }
+
+    var trashConfirmationTitle: String {
+        if pendingTrash.contains(where: { $0.clipID != nil }) { return "Delete \(pendingTrash.count) selected items?" }
+        return pendingTrash.count == 1 ? "Move capture to Trash?" : "Move \(pendingTrash.count) captures to Trash?"
+    }
+
     func movePendingItemsToTrash() {
-        let targets = pendingTrash
+        let targets = pendingTrash.compactMap(\.captureItem)
+        ClipboardHistoryModel.shared.delete(pendingTrash.compactMap(\.clipEntry))
         pendingTrash = []
         guard !targets.isEmpty else { return }
         run("Moving to Trash…") {

@@ -365,7 +365,7 @@ private struct SnippetEditor: View {
             HStack {
                 Button("Copy") { model.deliver(entry, as: .copy, to: nil) }.buttonStyle(.borderedProminent)
                 Spacer()
-                Button("Delete", role: .destructive) { model.delete(entry) }
+                Button("Delete", role: .destructive) { CaptureLibraryModel.shared.deleteSelection([.clip(entry)]) }
             }
             .controlSize(.small)
         }

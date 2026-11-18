@@ -10,7 +10,6 @@ struct LibraryClipCollection: View {
     let isSavedPage: Bool
     @State private var clipboard = ClipboardHistoryModel.shared
     @State private var library = CaptureLibraryModel.shared
-    @State private var pendingDeletion: [LibrarySavedCard] = []
 
     private var selection: Binding<Set<String>> {
         Binding {
@@ -48,17 +47,6 @@ struct LibraryClipCollection: View {
             .onChange(of: selection.wrappedValue) { _, _ in
                 if QuickLookPreviewPresenter.followsLibrary { QuickLookPreviewPresenter.follow(urls: chosen.flatMap(\.previewURLs)) }
             }
-            .alert("Delete \(pendingDeletion.count == 1 ? "this item" : "these \(pendingDeletion.count) items")?",
-                   isPresented: Binding(get: { !pendingDeletion.isEmpty }, set: { if !$0 { pendingDeletion = [] } })) {
-                Button("Delete", role: .destructive) {
-                    let cards = pendingDeletion
-                    pendingDeletion = []
-                    delete(cards)
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Selected copies will be deleted from clipboard history. Selected captures and their edits will move to Trash.")
-            }
     }
 
     @ViewBuilder private func clipView(_ entry: ClipboardEntry, selected: Bool) -> some View {
@@ -83,8 +71,7 @@ struct LibraryClipCollection: View {
             if !QuickLookPreviewPresenter.isShown { ClipboardHistoryModel.clearQuickLookFiles() }
             QuickLookPreviewPresenter.toggleLibrarySelection(selected.flatMap(\.previewURLs))
         case .trash:
-            if selected.allSatisfy({ $0.captureID != nil }) { library.perform(.trash) }
-            else { pendingDeletion = selected }
+            library.deleteSelection(selected)
         case .edit:
             guard selected.count == 1 else { return }
             switch selected[0] {
@@ -98,25 +85,13 @@ struct LibraryClipCollection: View {
         }
     }
 
-    private func delete(_ cards: [LibrarySavedCard]) {
-        var clips: [ClipboardEntry] = []
-        var captures: [CaptureLibraryItem] = []
-        for card in cards {
-            switch card {
-            case .capture(let item): captures.append(item)
-            case .clip(let entry): clips.append(entry)
-            }
-        }
-        clipboard.delete(clips)
-        if !captures.isEmpty {
-            library.pendingTrash = captures
-            library.movePendingItemsToTrash()
-        }
-    }
-
     private func menu() -> [LibraryMenuItem] {
         let selected = chosen
-        if !selected.isEmpty, selected.allSatisfy({ $0.captureID != nil }) { return library.menuItems(selected: selected.count) }
+        if selected.count == 1, selected[0].captureID != nil {
+            let actions: [CaptureLibraryAction] = [.preview, .edit, .copy, .reveal]
+            return actions.map { action in LibraryMenuItem(title: action.rawValue) { perform(action) } }
+                + [LibraryMenuItem(title: "Remove from Saved", startsGroup: true) { library.setSaved(false) }]
+        }
         var items = [LibraryMenuItem(title: "Copy") { perform(.copy) }, LibraryMenuItem(title: "Quick Look") { perform(.preview) }]
         if selected.count == 1, case .clip(let entry) = selected[0] {
             if entry.kind == .image {
@@ -133,7 +108,7 @@ struct LibraryClipCollection: View {
                 clipboard.toggleSaved(entry)
             })
         }
-        items.append(LibraryMenuItem(title: "Delete…", startsGroup: true) { perform(.trash) })
+        items.append(LibraryMenuItem(title: selected.contains { $0.captureID != nil } ? "Delete…" : "Delete", startsGroup: true) { perform(.trash) })
         return items
     }
 }
