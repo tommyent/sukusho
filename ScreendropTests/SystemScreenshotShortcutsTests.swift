@@ -159,4 +159,13 @@ struct SystemScreenshotShortcutsTests {
         #expect(all.contains(altShift(20)) && !all.contains(altShift(21)))
         #expect(all.isSuperset(of: system))
     }
+
+    /// Use Other Keys names the actions that kept their keys in the same words after the launch notice as in Settings,
+    /// where the launch notice's run used to drop them (audit finding 16).
+    @Test func keptKeysAreNamedTheSameWayEverywhere() {
+        #expect(SystemScreenshotShortcuts.keptKeysMessage([]) == nil)
+        #expect(SystemScreenshotShortcuts.keptKeysMessage([.area]) == "Area kept its keys: another app uses the new ones.")
+        #expect(SystemScreenshotShortcuts.keptKeysMessage([.area, .scrollingCapture, .screenRecording])
+            == "Area, Scrolling Capture and Screen Recording kept their keys: another app uses the new ones.")
+    }
 }

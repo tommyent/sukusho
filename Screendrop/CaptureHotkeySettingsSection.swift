@@ -113,10 +113,9 @@ struct CaptureHotkeySettingsSection: View {
     }
 
     private func useOtherKeys() {
-        let failed = SystemScreenshotShortcuts.useOtherKeys()
+        errorMessage = nil
+        SystemScreenshotShortcuts.useOtherKeys()
         reloadShortcuts()
-        errorMessage = failed.isEmpty ? nil
-            : "\(failed.map(\.title).joined(separator: ", ")) kept \(failed.count == 1 ? "its" : "their") keys: another app uses the new ones."
     }
 
     /// The keys themselves are the control: a click records new ones.
@@ -164,6 +163,10 @@ struct CaptureHotkeySettingsSection: View {
             Text(errorMessage)
                 .font(.caption)
                 .foregroundStyle(.red)
+        } else if let kept = SystemScreenshotShortcuts.keptKeysMessage(HotkeyManager.shared.keptKeys) {
+            Text(kept)
+                .font(.caption)
+                .foregroundStyle(.red)
         }
 
         ForEach(actions) { action in
@@ -192,6 +195,7 @@ struct CaptureHotkeySettingsSection: View {
 
     private func toggleRecording(for action: CaptureHotkeyAction) {
         errorMessage = nil
+        HotkeyManager.shared.keptKeys = []
 
         if isRecording(action) {
             recorder.stop()
@@ -216,6 +220,7 @@ struct CaptureHotkeySettingsSection: View {
 
     /// Nil clears the action.
     private func apply(_ shortcut: HotkeyShortcut?, to action: CaptureHotkeyAction) {
+        HotkeyManager.shared.keptKeys = []
         if let shortcut, let conflict = CaptureHotkeyPreferences.conflictingAction(for: shortcut, excluding: action) {
             errorMessage = "\(shortcut.displayString) is already assigned to \(conflict.title)."
             NSSound.beep()
@@ -240,6 +245,7 @@ struct CaptureHotkeySettingsSection: View {
         recorder.stop()
         recordingAction = nil
         errorMessage = nil
+        HotkeyManager.shared.keptKeys = []
         HotkeyManager.shared.restoreDefaults(for: actions)
         reloadShortcuts()
     }

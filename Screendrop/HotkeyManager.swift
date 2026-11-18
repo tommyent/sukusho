@@ -26,6 +26,9 @@ final class HotkeyManager {
     @ObservationIgnored private var nextTemporaryHotKeyID: UInt32 = 1000
     /// Bumped whenever a shortcut changes, so the menu shows the current ones.
     private(set) var revision = 0
+    /// The clashing actions Use Other Keys left on their keys, because another app holds the new ones: Settings names
+    /// them, whether Use Other Keys ran there or from the launch notice.
+    var keptKeys: [CaptureHotkeyAction] = []
     
     private init() {}
 

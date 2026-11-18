@@ -428,10 +428,17 @@ enum SystemScreenshotShortcuts {
         return "\(what) \(ours), or turn macOS’s off in Keyboard Shortcuts › Screenshots."
     }
 
-    /// Opens System Settings at its Keyboard pane, the nearest place a link reaches (checked in the VM); Keyboard
-    /// Shortcuts… › Screenshots is one click and one choice from there.
+    /// Names the actions Use Other Keys left on their keys, the same after the launch notice as in Settings.
+    static func keptKeysMessage(_ kept: [CaptureHotkeyAction]) -> String? {
+        guard !kept.isEmpty else { return nil }
+        return "\(list(kept.map(\.title))) kept \(kept.count == 1 ? "its" : "their") keys: another app uses the new ones."
+    }
+
+    /// Opens System Settings at Keyboard › Keyboard Shortcuts…, the nearest a link reaches: `Shortcuts` is the anchor
+    /// System Settings' own search uses for "App and system keyboard shortcuts" (Keyboard.searchTerms on macOS 26.5.1
+    /// and 27.3, read 2026-11-17); no anchor selects Screenshots in it, one click from there.
     @MainActor static func openKeyboardSettings() {
-        guard let url = URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension") else { return }
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension?Shortcuts") else { return }
         NSWorkspace.shared.open(url)
     }
 
