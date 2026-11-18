@@ -26,8 +26,9 @@ final class HotkeyManager {
     @ObservationIgnored private var nextTemporaryHotKeyID: UInt32 = 1000
     /// Bumped whenever a shortcut changes, so the menu shows the current ones.
     private(set) var revision = 0
-    /// Some action is a modifier key on its own and macOS doesn't let Sukusho watch for it: no Input Monitoring.
-    private(set) var needsInputMonitoring = false
+    /// What an action on a modifier key alone still needs from macOS: Input Monitoring, or a relaunch once it's on.
+    private(set) var inputMonitoring = InputMonitoringNeed.none
+    var needsInputMonitoring: Bool { inputMonitoring != .none }
     /// The clashing actions Use Other Keys left on their keys, because another app holds the new ones: Settings names
     /// them, whether Use Other Keys ran there or from the launch notice.
     var keptKeys: [CaptureHotkeyAction] = []
@@ -93,15 +94,23 @@ final class HotkeyManager {
     private func watchModifierTaps() {
         guard !tapActions.isEmpty else {
             modifierTaps.stop()
-            needsInputMonitoring = false
+            inputMonitoring = .none
             return
         }
-        needsInputMonitoring = !modifierTaps.start { [weak self] tap in
+        let watching = modifierTaps.start { [weak self] tap in
             self?.tapActions[HotkeyShortcut(tap)]?.perform()
         }
-        guard needsInputMonitoring else { return }
+        // macOS applies a new Input Monitoring grant only when the app next opens (it says so, and taps stay silent
+        // until then: VM, 27.2.1), so a grant this run can see but not use means a relaunch.
+        let granted = CGPreflightListenEventAccess()
+        inputMonitoring = .of(hasTapShortcuts: true, watching: watching, granted: granted)
+        guard !watching else { return }
+        NSLog("[Sukusho] Modifier-key shortcuts wait for Input Monitoring: preflight %@, Accessibility %@",
+              granted ? "granted" : "not granted", AXIsProcessTrusted() ? "trusted" : "not trusted")
         for (shortcut, action) in tapActions {
-            registrationErrors[action] = "\(shortcut.displayString) needs Input Monitoring."
+            registrationErrors[action] = inputMonitoring == .relaunch
+                ? "\(shortcut.displayString) works once Sukusho relaunches."
+                : "\(shortcut.displayString) needs Input Monitoring."
         }
     }
 

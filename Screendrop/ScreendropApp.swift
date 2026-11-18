@@ -158,6 +158,32 @@ struct ScreendropApp: App {
 
 // MARK: - App Delegate
 
+/// Quits Sukusho and opens it again, for permissions macOS applies only at launch, such as Input Monitoring.
+enum AppRelaunch {
+    /// Opens Settings › Shortcuts instead of the Library when Sukusho comes back.
+    static let argument = "--reopen-shortcut-settings"
+    private static var requestedAt: Date?
+
+    /// Quits as Quit does, so unsaved work is asked about first; a quit that's cancelled reopens nothing.
+    static func request() {
+        requestedAt = Date()
+        NSApp.terminate(nil)
+    }
+
+    /// From applicationWillTerminate: a shell waits up to a minute for this process to end, then opens the app again.
+    /// A request older than two minutes, from a quit that was cancelled then, is ignored.
+    static func reopenIfRequested() {
+        guard let requestedAt, Date().timeIntervalSince(requestedAt) < 120 else { return }
+        let reopen = Process()
+        reopen.executableURL = URL(fileURLWithPath: "/bin/sh")
+        reopen.arguments = [
+            "-c", "i=0; while kill -0 \"$1\" 2>/dev/null && [ $i -lt 300 ]; do sleep 0.2; i=$((i+1)); done; exec /usr/bin/open \"$2\" --args \"$3\"",
+            "sh", String(ProcessInfo.processInfo.processIdentifier), Bundle.main.bundleURL.path, argument,
+        ]
+        try? reopen.run()
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var openedFilesAtLaunch = false
 
@@ -216,6 +242,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Library. Login/service launches keep the existing quiet menu-bar mode.
         DispatchQueue.main.async { [weak self] in
             guard let self, !launchedInBackground, !self.openedFilesAtLaunch else { return }
+            // Relaunched from Settings › Shortcuts: back where the user was.
+            if CommandLine.arguments.contains(AppRelaunch.argument) { return SettingsWindowController.show(tab: .shortcuts) }
             CaptureLibraryModel.shared.show()
         }
         // Below the macOS this build is tested on, say so, in front of the Library and before
@@ -231,6 +259,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         AgentAccess.shared.stop()
+        AppRelaunch.reopenIfRequested()
     }
 
     /// Finder "Open With" / `open -a Sukusho file.png` entry point.

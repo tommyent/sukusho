@@ -20,6 +20,8 @@ struct CaptureHotkeySettingsSection: View {
     @State private var systemEntries: [Int: HotkeyShortcut] = [:]
     /// Every shortcut macOS has on, for Use Other Keys to stay clear of.
     @State private var systemAll: Set<HotkeyShortcut> = []
+    /// Once the user has been to Input Monitoring, Relaunch is offered: this run may not see a new grant at all.
+    @State private var visitedInputMonitoring = false
 
     /// This section's shortcuts that macOS's screenshot shortcuts also use.
     private var clashes: [SystemScreenshotShortcuts.Clash] {
@@ -116,15 +118,29 @@ struct CaptureHotkeySettingsSection: View {
         .font(.caption)
     }
 
-    /// A shortcut that is a modifier key on its own works only with Input Monitoring: why, and the way to it.
+    /// A shortcut that is a modifier key on its own works only with Input Monitoring, which macOS applies when Sukusho
+    /// next opens: why, the way to it, and the relaunch.
     private var inputMonitoringNotice: some View {
-        VStack(alignment: .leading, spacing: DS.Space.s) {
-            warningLabel("A modifier key on its own needs Input Monitoring, so Sukusho can notice it in other apps. Sukusho never records what you type.")
-            HStack {
+        let granted = HotkeyManager.shared.inputMonitoring == .relaunch
+        return VStack(alignment: .leading, spacing: DS.Space.s) {
+            warningLabel(granted
+                ? "Input Monitoring is on. macOS lets Sukusho use it once Sukusho opens again."
+                : "A modifier key on its own needs Input Monitoring, so Sukusho can notice it in other apps; it never records what you type. Turn on Sukusho there, then choose Quit & Reopen when macOS asks.")
+            HStack(spacing: DS.Space.m) {
                 Spacer(minLength: 0)
-                Button("Open Input Monitoring…") { ModifierTapMonitor.openInputMonitoringSettings() }
+                if granted || visitedInputMonitoring {
+                    Button("Relaunch Sukusho") { AppRelaunch.request() }
+                        .controlSize(.small)
+                        .help("Quit and open Sukusho again, so macOS applies Input Monitoring")
+                }
+                if !granted {
+                    Button("Open Input Monitoring…") {
+                        visitedInputMonitoring = true
+                        ModifierTapMonitor.openInputMonitoringSettings()
+                    }
                     .controlSize(.small)
                     .help("Turn on Sukusho in Privacy & Security › Input Monitoring")
+                }
             }
         }
     }

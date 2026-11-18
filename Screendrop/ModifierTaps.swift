@@ -96,6 +96,20 @@ struct ModifierTapDetector {
     }
 }
 
+/// What a shortcut on a modifier key alone still needs from macOS, for Settings to say.
+enum InputMonitoringNeed: Equatable {
+    case none
+    /// Not granted: Sukusho has to be turned on in Privacy & Security › Input Monitoring.
+    case grant
+    /// Granted, but this run of Sukusho can't watch yet: macOS applies Input Monitoring when an app next opens.
+    case relaunch
+
+    static func of(hasTapShortcuts: Bool, watching: Bool, granted: Bool) -> Self {
+        guard hasTapShortcuts, !watching else { return .none }
+        return granted ? .relaunch : .grant
+    }
+}
+
 extension HotkeyShortcut {
     /// The shortcut a tap is: once, that key; twice, its pair.
     init(_ tap: ModifierTapDetector.Tap) {

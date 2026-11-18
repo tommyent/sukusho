@@ -175,6 +175,17 @@ struct FlexibleShortcutsTests {
                                                            defaults: defaults) == .window)
     }
 
+    // MARK: - Input Monitoring
+
+    /// Round 2 (VM, 27.2.1): macOS applies a new Input Monitoring grant only when Sukusho next opens, so a grant this run
+    /// can see but not use asks for a relaunch, not for the grant again.
+    @Test func inputMonitoringAsksForWhatIsMissing() {
+        #expect(InputMonitoringNeed.of(hasTapShortcuts: false, watching: false, granted: false) == .none)
+        #expect(InputMonitoringNeed.of(hasTapShortcuts: true, watching: true, granted: false) == .none, "Accessibility can be enough")
+        #expect(InputMonitoringNeed.of(hasTapShortcuts: true, watching: false, granted: false) == .grant)
+        #expect(InputMonitoringNeed.of(hasTapShortcuts: true, watching: false, granted: true) == .relaunch)
+    }
+
     // MARK: - Menus
 
     /// Round 2 (VM, 27.2.1): a subtitle given inside a Label never showed, so a shortcut the menu's shortcut column
