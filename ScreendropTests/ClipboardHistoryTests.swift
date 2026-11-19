@@ -279,9 +279,9 @@ struct ClipboardHistoryStoreTests {
         #expect(after.first { $0.id == id }?.hash == smallest.hash)
     }
 
-    /// Beta 4: ⌘C puts the original on the clipboard at once and its optimized image a moment later. History
-    /// filed the original; the optimized image is found by the original's hash and goes on that card. One copy,
-    /// one entry, now holding the smaller image, with the original behind it.
+    /// Beta 4: ⌘C puts the original on the clipboard at once and its optimized image a moment later. The copy is
+    /// filed when it is written; the optimized image goes on the card that record names. One copy, one entry, now
+    /// holding the smaller image, with the original behind it.
     @Test func aCopySwappedForItsOptimizedImageStaysOneEntry() async throws {
         let store = try store()
         var original = image(400, width: 4, height: 4)
@@ -290,9 +290,6 @@ struct ClipboardHistoryStoreTests {
             Issue.record("not inserted")
             return
         }
-        #expect(try await store.imageEntryID(hash: original.hash) == id)
-        #expect(try await store.imageEntryID(hash: "not-copied") == nil)
-
         let optimized = image(250, width: 4, height: 4)
         #expect(try await store.stack(optimized, on: id))
         let entries = try await store.entries()
@@ -301,8 +298,6 @@ struct ClipboardHistoryStoreTests {
         #expect(entries.first?.hash == optimized.hash)
         #expect(entries.first?.earlierVersions.map(\.hash) == [original.hash])
         #expect(entries.first?.libraryPath == original.libraryPath)
-        // Once swapped, the card is found by what it holds now, not by the original.
-        #expect(try await store.imageEntryID(hash: original.hash) == nil)
     }
 
     @Test func copyingAgainBumpsTheSameEntry() async throws {

@@ -67,19 +67,21 @@ final class OptimizedImageCopy {
     private var held: (key: AnyHashable, count: Int)?
 
     /// A copy nobody waits for: the item `first` makes goes on the pasteboard as soon as it is read, and
-    /// this returns. The item `smaller` makes, if it makes one, then takes its place, after `beforeSwap`
-    /// (given the original's change count) and only while the pasteboard still holds the original: it
-    /// never lands on a later copy from here or on anything copied in another app. This copy takes its
-    /// turn before it reads anything, so the original never lands on something newer either. `swapped` is
-    /// told whether the swap happened, and the returned task ends with it; nil from `smaller` (nothing
-    /// smaller came out, the optimizer failed or is off) leaves the original there.
+    /// this returns. `record` files that write in history at once and names the card it went on. The item
+    /// `smaller` makes, if it makes one, then takes its place, only while the pasteboard still holds the
+    /// original: never on a later copy from here or on anything copied in another app before the swap's
+    /// last check. `stack` then puts it on the card `record` named. This copy takes its turn before it reads
+    /// anything, so the original never lands on something newer either. `swapped` is told whether the swap
+    /// happened, and the returned task ends with it; nil from `smaller` (nothing smaller came out, the
+    /// optimizer failed or is off) leaves the original there.
     ///
     /// `key` names what is copied, a file as it is now: copying the same key again while the pasteboard
     /// still holds this copier's write of it writes nothing and doesn't start the work again (a second ⌘C).
     func copyNow(key: AnyHashable = UUID(), to pasteboard: NSPasteboard = .general,
                  first: () async throws -> NSPasteboardItem,
+                 record: @escaping (NSPasteboardItem) async -> String? = { _ in nil },
                  smaller: @escaping () async -> NSPasteboardItem?,
-                 beforeSwap: @escaping (_ count: Int) async -> Void = { _ in },
+                 stack: @escaping (_ card: String, _ item: NSPasteboardItem) async -> Void = { _, _ in },
                  swapped: @escaping (Bool) -> Void = { _ in }) async throws -> (InstantCopy, Task<Bool, Never>?) {
         if let held, held.key == key, held.count == pasteboard.changeCount { return (.alreadyThere, nil) }
         latest += 1
@@ -96,14 +98,14 @@ final class OptimizedImageCopy {
         let countAfterWrite = pasteboard.clearContents()
         guard pasteboard.writeObjects([original]) else { throw CocoaError(.fileWriteUnknown) }
         held = (key, countAfterWrite)
+        // History files this copy now, not at the monitor's next poll: a swap before that poll would hide it.
+        let card = Task { await record(original) }
         let swap = Task {
             func done(_ result: Bool) -> Bool {
                 swapped(result)
                 return result
             }
-            guard let item = await smaller(), !Task.isCancelled,
-                  mine == latest, pasteboard.changeCount == countAfterWrite else { return done(false) }
-            await beforeSwap(countAfterWrite)
+            guard let item = await smaller(), !Task.isCancelled else { return done(false) }
             // No suspension between this check and the clear. NSPasteboard has no compare-and-replace, so a
             // window is left: another app that copies between this check and `clearContents` loses its copy
             // to the swap. It is the same window Clop's own swap has, a few instructions wide; anything copied
@@ -112,6 +114,8 @@ final class OptimizedImageCopy {
             let countAfterSwap = pasteboard.clearContents()
             guard pasteboard.writeObjects([item]) else { return done(false) }
             if held?.key == key { held = (key, countAfterSwap) }
+            // The card this copy was filed on gets the smaller image, so the copy keeps one entry.
+            if let id = await card.value { await stack(id, item) }
             return done(true)
         }
         cancelInFlight = { swap.cancel() }

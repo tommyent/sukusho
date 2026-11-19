@@ -88,6 +88,20 @@ nonisolated enum ClipboardPasteboardReader {
         return copy
     }
 
+    /// A copy Sukusho writes and files in history itself, read from the items it wrote, by the same rules a
+    /// poll of the pasteboard applies to it: nil whatever a poll would skip. The items carry `ownType`, which
+    /// is what keeps the poll from filing them a second time; it isn't part of what is read.
+    static func ownCopy(_ items: [NSPasteboardItem], ignoredApps: Set<String>, historyDirectory: URL) -> ClipboardCapture? {
+        guard let first = items.first else { return nil }
+        let types = first.types.map(\.rawValue).filter { $0 != ClipboardCapturePolicy.ownType }
+        guard ClipboardCapturePolicy.privateMarker(in: types) == nil else { return nil }
+        let source = first.string(forType: .init(ClipboardCapturePolicy.sourceType)).flatMap { $0.isEmpty ? nil : $0 }
+        guard case .read(let content) = ClipboardCapturePolicy.decide(types: types, sourceBundleID: source, ignoredApps: ignoredApps),
+              var copy = capture(content, items: items, types: types, historyDirectory: historyDirectory) else { return nil }
+        copy.sourceBundleID = source
+        return copy
+    }
+
     private static func capture(
         _ content: ClipboardCapturePolicy.Content,
         items: [NSPasteboardItem],
