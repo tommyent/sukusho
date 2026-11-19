@@ -24,6 +24,7 @@ nonisolated struct RecordingInkStroke: Codable, Equatable, Identifiable, Sendabl
     /// False once undone: the stroke goes at once instead of fading.
     var fadesOut = true
 
+    var fittedOval: Bool?
     var markerNumber: Int?
 
     var startTime: TimeInterval { points.first?.t ?? 0 }
@@ -59,6 +60,7 @@ nonisolated struct RecordingInkCapture: Sendable {
     var id = UUID()
     var samples: [Sample]
     var widthInPoints: Double
+    var fittedOval: Bool?
     var markerNumber: Int?
     var hideUptime: TimeInterval?
     var fadesOut = true
@@ -90,6 +92,7 @@ nonisolated extension RecordingInkStroke {
                 points: points,
                 hideTime: capture.hideUptime.flatMap(time),
                 fadesOut: capture.fadesOut,
+                fittedOval: capture.fittedOval,
                 markerNumber: capture.markerNumber
             )
         }
@@ -230,10 +233,26 @@ nonisolated enum RecordingInkPath {
     }
 
     /// Receives top-left drawing coordinates from every output, including the live panel.
-    static func draw(_ points: [CGPoint], marker: Int?, color: RecordingInkColor, opacity: Double,
+    static func fitsOval(_ points: [CGPoint]) -> Bool {
+        guard points.count >= 5, let first = points.first, let last = points.last else { return false }
+        let box = bounds(of: points)
+        guard min(box.width, box.height) >= 8,
+              hypot(first.x - last.x, first.y - last.y) <= min(box.width, box.height) * 0.35 else { return false }
+        let twiceArea = zip(points, points.dropFirst() + [first]).reduce(0.0) { sum, pair in
+            sum + (pair.0.x - first.x) * (pair.1.y - first.y) - (pair.1.x - first.x) * (pair.0.y - first.y)
+        }
+        return abs(twiceArea) >= box.width * box.height * 0.65
+    }
+
+    private static func bounds(of points: [CGPoint]) -> CGRect {
+        points.reduce(CGRect.null) { $0.union(CGRect(origin: $1, size: .zero)) }
+    }
+
+    static func draw(_ points: [CGPoint], oval: Bool = false, marker: Int?, color: RecordingInkColor, opacity: Double,
                      width: CGFloat, bounds: CGRect, in context: CGContext) {
         guard let number = marker, let tip = points.first else {
-            stroke(path(points), color: color, opacity: opacity, width: width, in: context)
+            let geometry = oval ? CGPath(ellipseIn: Self.bounds(of: points), transform: nil) : path(points)
+            stroke(geometry, color: color, opacity: opacity, width: width, in: context)
             return
         }
         context.saveGState()

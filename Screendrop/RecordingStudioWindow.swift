@@ -1112,7 +1112,8 @@ private struct StudioInkOverlay: View {
                             y: cardSize.height / 2 + scaleY * ($0.y - state.anchor.y))
                 }
                 context.withCGContext { cg in
-                    RecordingInkPath.draw(points, marker: frame.stroke.markerNumber, color: frame.stroke.color,
+                    RecordingInkPath.draw(points, oval: frame.stroke.fittedOval == true && frame.pointCount == frame.stroke.points.count,
+                                      marker: frame.stroke.markerNumber, color: frame.stroke.color,
                         opacity: frame.opacity, width: frame.stroke.width * min(scale, scaleY),
                         bounds: CGRect(x: cardSize.width / 2 - scale * state.anchor.x,
                                        y: cardSize.height / 2 - scaleY * state.anchor.y, width: scale, height: scaleY), in: cg)

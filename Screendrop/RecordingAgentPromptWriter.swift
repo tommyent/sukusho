@@ -311,7 +311,8 @@ nonisolated enum RecordingAgentPromptWriter {
                 context.clip(to: cell)
                 context.translateBy(x: cell.minX - crop.minX * scale, y: cell.maxY + crop.minY * scale)
                 context.scaleBy(x: scale, y: -scale)
-                RecordingInkPath.draw(points, marker: frame.stroke.markerNumber, color: frame.stroke.color, opacity: frame.opacity,
+                RecordingInkPath.draw(points, oval: frame.stroke.fittedOval == true && frame.pointCount == frame.stroke.points.count,
+                                      marker: frame.stroke.markerNumber, color: frame.stroke.color, opacity: frame.opacity,
                                       width: frame.stroke.width * min(size.width, size.height), bounds: CGRect(origin: .zero, size: size), in: context)
                 context.restoreGState()
             }

@@ -1229,7 +1229,8 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
                 CGPoint(x: drawRect.minX + $0.x * drawRect.width,
                         y: drawRect.minY + $0.y * drawRect.height)
             }
-            RecordingInkPath.draw(points, marker: frame.stroke.markerNumber, color: frame.stroke.color,
+            RecordingInkPath.draw(points, oval: frame.stroke.fittedOval == true && frame.pointCount == frame.stroke.points.count,
+                                      marker: frame.stroke.markerNumber, color: frame.stroke.color,
                                   opacity: frame.opacity, width: frame.stroke.width * lineScale, bounds: drawRect, in: context)
         }
         context.restoreGState()

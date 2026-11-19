@@ -126,6 +126,16 @@ struct RecordingInkTests {
         #expect(presses == resumeClick + contentClick)
     }
 
+    @Test func onlyClosedLoopsWithAreaSnap() {
+        let loop = (0...48).map { i in
+            let angle = Double(i) * .pi / 24
+            return CGPoint(x: cos(angle) * 60 + Double(i % 3), y: sin(angle) * 35)
+        }
+        #expect(RecordingInkPath.fitsOval(loop))
+        #expect(!RecordingInkPath.fitsOval(Array(loop.prefix(28))))
+        #expect(!RecordingInkPath.fitsOval([.zero, .init(x: 55, y: 48), .zero]))
+    }
+
     @Test func fivePointSmoothingPreservesEndpoints() {
         let input = (0..<7).map { CGPoint(x: $0, y: $0 == 3 ? 9 : 0) }
         let output = RecordingInkPath.smoothed(input)
