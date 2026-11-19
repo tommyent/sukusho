@@ -130,6 +130,10 @@ final class ClipboardHistoryModel {
         return icon
     }
 
+    func libraryCardIcon(_ bundleID: String?) -> (image: NSImage, ringed: Bool)? {
+        appIcon(bundleID).map { ($0, appIconIsLight(bundleID)) }
+    }
+
     /// Whether an app's icon is light enough to need its ring on a Library card (`IconLightness`), measured once.
     func appIconIsLight(_ bundleID: String?) -> Bool {
         guard let bundleID else { return false }

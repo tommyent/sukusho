@@ -129,7 +129,7 @@ struct ClipboardCard: View {
             face
         } caption: {
             LibraryGridCaption(date: entry.kind == .snippet ? entry.snippetEditedAt ?? entry.firstCopiedAt : entry.lastCopiedAt,
-                               bundleID: entry.sourceBundleID, saveAction: entry.canMoveToSaved ? { model.moveToSaved([entry]) } : nil) {
+                               sourceIcon: model.libraryCardIcon(entry.sourceBundleID), saveAction: entry.canMoveToSaved ? { model.moveToSaved([entry]) } : nil) {
                 Text(ClipboardList.gridTitle(of: entry))
             }
         }

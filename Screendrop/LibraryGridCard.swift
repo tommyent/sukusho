@@ -184,7 +184,7 @@ private extension Color {
 struct LibraryGridCaption<Title: View>: View {
     @Environment(\.libraryCardDensity) private var density
     let date: Date
-    var bundleID: String?
+    var sourceIcon: (image: NSImage, ringed: Bool)?
     var saveAction: (() -> Void)?
     var saveDisabled = false
     @State private var hoveringStar = false
@@ -205,9 +205,9 @@ struct LibraryGridCaption<Title: View>: View {
             }
             .frame(height: 16)
             HStack(spacing: 4) {
-                if let icon = ClipboardHistoryModel.shared.appIcon(bundleID) {
-                    Image(nsImage: icon).resizable().frame(width: 13, height: 13)
-                        .libraryRaisedIcon(ringed: ClipboardHistoryModel.shared.appIconIsLight(bundleID))
+                if let sourceIcon {
+                    Image(nsImage: sourceIcon.image).resizable().frame(width: 13, height: 13)
+                        .libraryRaisedIcon(ringed: sourceIcon.ringed)
                 }
                 Text(density.showsFullDate ? CaptureLibraryItem.dateTitle(date) : date.formatted(date: .omitted, time: .shortened)).lineLimit(1).libraryRaisedText()
                 Spacer(minLength: 0)

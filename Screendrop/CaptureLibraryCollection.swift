@@ -586,7 +586,7 @@ struct LibraryCellContent: View {
                             }, cloudEnabled: item.cloudURL != nil || CloudUploader.shared.isConfigured) {
                             CaptureLibraryThumbnail(item: item, showsTopOfTall: true)
                         } caption: {
-                            LibraryGridCaption(date: item.createdAt, bundleID: item.source?.bundleIdentifier,
+                            LibraryGridCaption(date: item.createdAt, sourceIcon: ClipboardHistoryModel.shared.libraryCardIcon(item.source?.bundleIdentifier),
                                                saveAction: item.isSaved ? nil : { CaptureLibraryModel.shared.moveToSaved([item]) },
                                                saveDisabled: CaptureLibraryModel.shared.isBusy, capture: item) {
                                 if isRenaming(item) {
