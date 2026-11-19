@@ -24,6 +24,19 @@ nonisolated enum LibraryTransferValue {
     }
 }
 
+extension ClipboardEntry {
+    var textTransfer: LibraryTransferValue {
+        .text(text ?? "", name: title.flatMap { $0.isEmpty ? nil : String($0.prefix(60)) } ?? "Text")
+    }
+
+    func fileTransferURLs() throws -> [URL] {
+        try filePaths.map { path in
+            guard FileManager.default.fileExists(atPath: path) else { throw CocoaError(.fileNoSuchFile, userInfo: [NSFilePathErrorKey: path]) }
+            return URL(fileURLWithPath: path)
+        }
+    }
+}
+
 extension LibrarySavedCard {
     func transferValues() async throws -> [LibraryTransferValue] {
         switch self {
@@ -33,16 +46,12 @@ extension LibrarySavedCard {
         case .clip(let entry):
             switch entry.kind {
             case .text, .snippet:
-                return [.text(entry.text ?? "", name: entry.title.flatMap { $0.isEmpty ? nil : String($0.prefix(60)) } ?? "Text")]
+                return [entry.textTransfer]
             case .image:
                 let url = try entry.imageSnapshot()
                 return [.file(url, name: String(ClipboardList.title(of: entry).prefix(60)))]
             case .files:
-                return try entry.filePaths.map { path in
-                    guard FileManager.default.fileExists(atPath: path) else { throw CocoaError(.fileNoSuchFile, userInfo: [NSFilePathErrorKey: path]) }
-                    let url = URL(fileURLWithPath: path)
-                    return .file(url, name: url.lastPathComponent)
-                }
+                return try entry.fileTransferURLs().map { .file($0, name: $0.lastPathComponent) }
             }
         }
     }

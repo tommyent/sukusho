@@ -48,10 +48,7 @@ struct LibraryClipCollection: View {
                     clipboard.refresh()
                     if isSavedPage { ScreenshotHistoryStore.shared.reload(); library.refresh() }
                 }]
-            }, dragWriter: { card in
-                guard let entry = card.clipEntry, entry.kind == .image, let snapshot = try? entry.imageSnapshot() else { return nil }
-                return snapshot as NSURL
-            }, onReturn: {
+            }, dragWriter: { try $0.dragWriter() }, onReturn: {
                 if let entry = chosen.first?.clipEntry, chosen.count == 1 {
                     perform(entry.kind == .snippet ? .rename : .edit)
                 } else {

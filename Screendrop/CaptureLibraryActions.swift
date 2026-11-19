@@ -472,14 +472,18 @@ nonisolated enum CaptureLibraryFiles {
         }
     }
 
-    static func export(name: String, ext: String, to directory: URL, write: (URL) throws -> Void) throws -> URL {
+    static func fileName(_ name: String, ext: String, suffix: Int = 0) -> String {
         let safe = name.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
         let stem = (safe as NSString).pathExtension.lowercased() == ext.lowercased()
             ? (safe as NSString).deletingPathExtension : safe
         let base = stem.isEmpty || stem == "." || stem == ".." ? "Untitled" : stem
+        let result = suffix == 0 ? base : "\(base) \(suffix)"
+        return ext.isEmpty ? result : result + "." + ext
+    }
+
+    static func export(name: String, ext: String, to directory: URL, write: (URL) throws -> Void) throws -> URL {
         for suffix in 0..<10_000 {
-            let name = suffix == 0 ? base : "\(base) \(suffix)"
-            let destination = directory.appendingPathComponent(ext.isEmpty ? name : name + "." + ext)
+            let destination = directory.appendingPathComponent(fileName(name, ext: ext, suffix: suffix))
             if FileManager.default.fileExists(atPath: destination.path) { continue }
             try write(destination)
             return destination

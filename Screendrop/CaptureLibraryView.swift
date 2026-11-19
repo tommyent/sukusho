@@ -443,6 +443,7 @@ struct CaptureLibraryView: View {
                 },
                 menu: { [model] in model.menuItems(selected: $0) },
                 backgroundMenu: { [model] in model.backgroundMenuItems { model.refresh() } },
+                dragWriter: { try LibrarySavedCard.capture($0).dragWriter() },
                 onAction: model.perform)
         }
     }
