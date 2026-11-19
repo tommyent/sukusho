@@ -4,6 +4,7 @@
 // - Chip: the picture's pixels are the same in both runs (no grain on a capture) and the strip under it differs.
 // - Classic: every pixel is the same in both runs (no paper).
 // "The same" allows the stray pixel ImageRenderer moves between processes: under 0.1% of a region may differ.
+// It also holds Chip's border: a light line on the picture's bottom row and a dark outer edge, light and dark.
 //   check-chip-paper render <folder>
 //   check-chip-paper compare <folder with the tile> <folder without it>
 import AppKit
@@ -71,6 +72,14 @@ import SwiftUI
                 }
                 let percent = { (share: Double) in String(format: "%.2f%%", share * 100) }
                 if theme.hasPrefix("chip") {
+                    // Chip's border (owner, 2026-11-19): a light line along the picture's bottom row and a dark outer edge,
+                    // in Light and Dark. Brightness is the sum of red, green and blue at a pixel of the render with the tile.
+                    func brightness(_ x: Int, _ y: Int) -> Int { (0 ..< 3).reduce(0) { $0 + Int(a[(y * row / 4 + x) * 4 + $1]) } }
+                    let bottom = picture / row - 1, centre = Int(width)
+                    let line = brightness(centre, bottom), above = brightness(centre, bottom - 2)
+                    if line < above + 30 { failures.append("\(name): no light line under the picture (\(line) against \(above) above it)") }
+                    let edge = brightness(0, bottom + 20), face = brightness(3, bottom + 20)
+                    if edge > face - 15 { failures.append("\(name): the outer edge isn't dark (\(edge) against the face's \(face))") }
                     let onPicture = changed(0 ..< picture), onStrip = changed(picture ..< a.count)
                     if onPicture > 0.001 { failures.append("\(name): the grain reaches the picture (\(percent(onPicture)) of its pixels)") }
                     if onStrip < 0.05 { failures.append("\(name): no grain on the paper strip (\(percent(onStrip)) of its pixels)") }

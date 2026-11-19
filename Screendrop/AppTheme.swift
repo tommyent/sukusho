@@ -62,6 +62,8 @@ nonisolated struct AppTheme: Sendable, Equatable, Identifiable {
         /// The strength of the paper grain over the caption strip, never the picture: the app's one tile
         /// (`CardPaperGrain`) at this opacity. 0: none.
         var paper = 0.0
+        /// A 0.5 pt line along the picture's bottom edge, where it meets the caption. nil: none.
+        var pictureEdge: ThemeColor? = nil
     }
 
     /// How a card is drawn. A theme picks one and tunes it; it can't add its own.
@@ -117,15 +119,17 @@ nonisolated extension AppTheme {
 
     /// A colour chip: Classic cut square and flat, the picture edge to edge above the label (owner's pick, 2026-11-19,
     /// sd-ygmk). Only the shape changes; the owner kept Classic's colours ("I would keep the colours the same") and
-    /// its drop shadow ("The chips are missing the shadow"), and added a subtle kraft grain to the paper only.
-    static let chipLight = chip(classicLight, id: "chip-light", name: "Chip Light", edge: .rgb(0x000000, opacity: 0.3))
-    static let chipDark = chip(classicDark, id: "chip-dark", name: "Chip Dark", edge: .white(opacity: 0.28))
+    /// its drop shadow ("The chips are missing the shadow"), added a subtle kraft grain to the paper only, and a border:
+    /// a dark outer edge in both appearances with a light line under the picture ("Yes, as read back").
+    static let chipLight = chip(classicLight, id: "chip-light", name: "Chip Light")
+    static let chipDark = chip(classicDark, id: "chip-dark", name: "Chip Dark")
 
     /// Classic's colours in the flat recipe: no inset, square corners, the caption on its own 11 pt gutter, and a hairline
     /// perimeter (the mockup's strength, which is what sets a card without shadows off the ground).
-    private static func chip(_ classic: AppTheme, id: String, name: String, edge: ThemeColor) -> AppTheme {
+    private static func chip(_ classic: AppTheme, id: String, name: String) -> AppTheme {
         var card = classic.card
-        card.recipe = .flat(edge: edge)
+        card.recipe = .flat(edge: .rgb(0x000000, opacity: 0.3))
+        card.pictureEdge = .white(opacity: 0.35)
         card.radius = 0
         card.inset = 0
         card.gutter = 11

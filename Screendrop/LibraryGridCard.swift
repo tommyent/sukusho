@@ -135,6 +135,13 @@ struct LibraryCardSurface: ViewModifier {
                             CardPaperGrain().opacity(theme.card.paper).frame(height: LibraryGridMetrics.captionHeight)
                         }
                     }
+                    .overlay(alignment: .bottom) {
+                        // The picture's bottom edge: a line on its last half point, inside the card's outer edge.
+                        if let pictureEdge = theme.card.pictureEdge {
+                            Rectangle().fill(pictureEdge.color).frame(height: 0.5).padding(.horizontal, 0.5)
+                                .padding(.bottom, LibraryGridMetrics.captionHeight).allowsHitTesting(false)
+                        }
+                    }
                     .overlay {
                         // A flat card stays put: a press shades it instead of sinking it.
                         if edge != nil && pressed { outline.fill(.black.opacity(dark ? 0.25 : 0.08)).allowsHitTesting(false) }
