@@ -24,6 +24,18 @@ final class RecordingInkPresenter {
     @ObservationIgnored private var history = RecordingInkHistory()
     @ObservationIgnored private var bugReport = false
 
+    @ObservationIgnored private var usedShortcut = false
+
+    func toggleFromShortcut() {
+        if usedShortcut && isPenOn { setPen(false); return }
+        if !usedShortcut {
+            endStroke(at: ProcessInfo.processInfo.systemUptime, point: nil)
+            tool = .markers
+        }
+        usedShortcut = true
+        setPen(true)
+    }
+
     func select(_ next: Tool) {
         if isPenOn && tool == next { setPen(false); return }
         endStroke(at: ProcessInfo.processInfo.systemUptime, point: nil)
@@ -139,6 +151,7 @@ final class RecordingInkPresenter {
         panel = nil
         inkView = nil
         strokes = []
+        usedShortcut = false
         history = RecordingInkHistory()
         tool = .pen
         fadingStrokes = []

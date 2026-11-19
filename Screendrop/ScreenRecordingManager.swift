@@ -115,7 +115,13 @@ nonisolated struct ScreenRecordingCaptureOptions: Sendable {
 final class ScreenRecordingManager {
     static let shared = ScreenRecordingManager()
 
-    var state: ScreenRecordingState = .idle
+    var state: ScreenRecordingState = .idle {
+        didSet {
+            if (oldValue == .recording) != (state == .recording) {
+                HotkeyManager.shared.reloadHotkeys()
+            }
+        }
+    }
     var elapsedTime: TimeInterval = 0
     var errorMessage: String?
     var onFinishRecording: ((RecordingSession, CGDirectDisplayID?) -> Void)?

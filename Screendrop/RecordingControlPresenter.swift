@@ -107,7 +107,11 @@ struct RecordingSessionControls: View {
 
     private func toolButton(_ tool: RecordingInkPresenter.Tool, id: BarTooltipID, name: String, symbol: String) -> some View {
         let selected = ink.isPenOn && ink.tool == tool
-        return BarActionButton(id: id, hover: BarHover(name, "Esc stops drawing · ⌘Z undoes"),
+        let _ = HotkeyManager.shared.revision
+        let shortcut = CaptureHotkeyPreferences.shortcut(for: .drawing)?.displayString
+        let hint = tool == .markers ? [shortcut, "Esc stops drawing", "⌘Z undoes"].compactMap { $0 }.joined(separator: " · ")
+                                    : "Esc stops drawing · ⌘Z undoes"
+        return BarActionButton(id: id, hover: BarHover(name, hint),
                                systemImage: symbol, tint: selected ? BarMetrics.helperForeground : BarMetrics.activeTint,
                                accessibility: name) { ink.select(tool) }
             .accessibilityAddTraits(selected ? .isSelected : [])
