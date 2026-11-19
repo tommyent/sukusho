@@ -198,7 +198,7 @@ nonisolated enum CaptureTextIndexPlan {
     /// a failure isn't final until the app quits.
     static let retryDelay: TimeInterval = 300
 
-    /// Fingerprints still waiting for their next OCR or insight attempt.
+    /// Fingerprints still waiting for their next OCR attempt.
     static func waiting(retryAt: [String: Date], now: Date) -> [String: Date] {
         retryAt.filter { $0.value > now }
     }
@@ -207,14 +207,18 @@ nonisolated enum CaptureTextIndexPlan {
     /// first: those taken since `since`, or all of them once the user asks
     /// for existing captures. `older` counts the ones still waiting for that.
     static func dueForInsight(_ captures: [Capture], entries: [String: CaptureTextEntry], since: Date,
-                              includesExisting: Bool, skipping: Set<String> = []) -> (due: [Capture], older: Int) {
+                              includesExisting: Bool, lastFailure: [String: Date] = [:]) -> (due: [Capture], older: Int) {
         var due: [Capture] = [], older = 0
-        for capture in captures where !skipping.contains(capture.fingerprint) {
+        for capture in captures {
             guard let entry = entries[capture.id], entry.isCurrent(fingerprint: capture.fingerprint),
                   entry.insight?.isCurrent != true else { continue }
             if includesExisting || capture.createdAt >= since { due.append(capture) } else { older += 1 }
         }
-        return (due.sorted { $0.createdAt > $1.createdAt }, older)
+        // Give other captures a turn when a particular input repeatedly times out.
+        return (due.sorted { lhs, rhs in
+            let left = lastFailure[lhs.id] ?? .distantPast, right = lastFailure[rhs.id] ?? .distantPast
+            return left == right ? lhs.createdAt > rhs.createdAt : left < right
+        }, older)
     }
 
     /// The long side, in pixels, to read a width × height image at: at most

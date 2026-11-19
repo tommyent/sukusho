@@ -58,7 +58,9 @@ final class CaptureLibraryIndex {
     @ObservationIgnored private var insightDeadline: Task<Void, Never>?
     @ObservationIgnored var insightTimeout: Duration = .seconds(60)
     @ObservationIgnored var retryDelay = CaptureTextIndexPlan.retryDelay
-    @ObservationIgnored private var insightLater: [String: Date] = [:]
+    @ObservationIgnored private var modelRetryAt: Date?
+    @ObservationIgnored private var modelBackoff: TimeInterval = 0
+    @ObservationIgnored private var lastModelFailure: [String: Date] = [:]
     /// The earliest retry for each unreadable fingerprint.
     @ObservationIgnored private var unreadable: [String: Date] = [:]
     /// Plans again once failed reads may be retried, should nothing else
@@ -142,6 +144,7 @@ final class CaptureLibraryIndex {
         let gone = CaptureTextIndexPlan.removed(entryIDs: entries.keys, liveIDs: Set(items.map(\.id)), isComplete: isComplete)
         if !gone.isEmpty {
             for id in gone {
+                lastModelFailure[id] = nil
                 entries[id] = nil
                 foldedText[id] = nil
             }
@@ -177,7 +180,7 @@ final class CaptureLibraryIndex {
             let plan = CaptureTextIndexPlan.dueForInsight(
                 items.filter { $0.id != describing?.id }.map { .init(id: $0.id, fingerprint: $0.thumbnailKey, createdAt: $0.createdAt) },
                 entries: entries, since: ScreendropPreferences.libraryInsightsSince,
-                includesExisting: ScreendropPreferences.libraryInsightsIncludeExisting, skipping: Set(insightLater.keys))
+                includesExisting: ScreendropPreferences.libraryInsightsIncludeExisting, lastFailure: lastModelFailure)
             let byID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             insightQueue = plan.due.compactMap { byID[$0.id] }
             older = plan.older
@@ -189,14 +192,14 @@ final class CaptureLibraryIndex {
     }
 
     private var canStartInsight: Bool {
-        describing == nil && outstandingInsights < 2 && !insightQueue.isEmpty
+        modelRetryAt == nil && describing == nil && outstandingInsights < 2 && !insightQueue.isEmpty
     }
 
     private func scheduleRetries() {
         let now = Date()
         unreadable = CaptureTextIndexPlan.waiting(retryAt: unreadable, now: now)
-        insightLater = CaptureTextIndexPlan.waiting(retryAt: insightLater, now: now)
-        let next = [unreadable.values.min(), insightLater.values.min()].compactMap { $0 }.min()
+        if let due = modelRetryAt, due <= now { modelRetryAt = nil }
+        let next = [unreadable.values.min(), modelRetryAt].compactMap { $0 }.min()
         guard next != retryAt else { return }
         retry?.cancel()
         retryAt = next
@@ -250,6 +253,13 @@ final class CaptureLibraryIndex {
         updatePending()
     }
 
+    private func deferModel(for item: CaptureLibraryItem) {
+        let now = Date()
+        if entries[item.id]?.isCurrent(fingerprint: item.thumbnailKey) == true { lastModelFailure[item.id] = now }
+        modelBackoff = min(60 * 60, max(retryDelay, modelBackoff * 2))
+        modelRetryAt = now.addingTimeInterval(modelBackoff)
+    }
+
     private func startInsight() {
         let item = insightQueue.removeFirst()
         guard let entry = entries[item.id] else { return }
@@ -271,8 +281,10 @@ final class CaptureLibraryIndex {
             describing = nil
             switch outcome {
             case .later:
-                insightLater[item.thumbnailKey] = Date().addingTimeInterval(retryDelay)
+                deferModel(for: item)
             case .insight(let insight):
+                modelBackoff = 0
+                lastModelFailure[item.id] = nil
                 guard latestItems?.contains(where: { $0.id == item.id && $0.thumbnailKey == item.thumbnailKey }) == true,
                       var current = entries[item.id], current.isCurrent(fingerprint: item.thumbnailKey) else { return }
                 current.insight = insight
@@ -286,7 +298,7 @@ final class CaptureLibraryIndex {
             do { try await Task.sleep(for: insightTimeout) } catch { return }
             request.cancel()
             describing = nil
-            insightLater[item.thumbnailKey] = Date().addingTimeInterval(retryDelay)
+            deferModel(for: item)
             Self.logger.notice("Library insight timed out; retrying later")
             settingsDidChange()
         }

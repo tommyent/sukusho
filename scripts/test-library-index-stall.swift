@@ -3,6 +3,7 @@
 import CoreGraphics
 import Foundation
 import ImageIO
+import Synchronization
 @testable import Screendrop
 
 @main
@@ -36,14 +37,28 @@ struct LibraryIndexStallTest {
         var calls: [String: Int] = [:]
         var firstID = ""
         var cancelledLateAnswer = false
+        let timedOutAt = Mutex<ContinuousClock.Instant?>(nil)
+        var nextAllowedCall: ContinuousClock.Instant?
         index.describer = { item, _, _ in
+            if let timeout = timedOutAt.withLock({ $0 }) {
+                precondition(ContinuousClock.now >= timeout + .seconds(index.retryDelay), "A capture bypassed the timeout cooldown")
+            }
+            if let nextAllowedCall {
+                precondition(ContinuousClock.now >= nextAllowedCall, "A different capture bypassed model backoff")
+            }
             calls[item.id, default: 0] += 1
             if calls[item.id] == 1 {
                 if item.id == firstID {
-                    await withCheckedContinuation { hold = $0 } // Ignore cancellation until the test releases this call.
+                    await withTaskCancellationHandler {
+                        await withCheckedContinuation { hold = $0 } // Stay outstanding until released.
+                    } onCancel: {
+                        timedOutAt.withLock { $0 = .now }
+                    }
                     cancelledLateAnswer = Task.isCancelled
                     return .insight(CaptureInsight(title: "Expired answer"))
                 }
+                // The first timeout and this busy response are consecutive model failures.
+                nextAllowedCall = .now + .seconds(2 * index.retryDelay)
                 return .later
             }
             return .insight(CaptureInsight(title: "Retried answer"))
