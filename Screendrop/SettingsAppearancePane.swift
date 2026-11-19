@@ -66,7 +66,6 @@ struct AppearanceSettingsPane: View {
             } label: {
                 label
             }
-            .fixedSize()
         }
     }
 }
