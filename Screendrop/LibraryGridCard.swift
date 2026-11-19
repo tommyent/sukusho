@@ -125,8 +125,7 @@ struct LibraryCardSurface: ViewModifier {
                     .background {
                         switch theme.card.recipe {
                         case .stock(let stock): self.stock(stock, depth, shape: outline, radius: radius).allowsHitTesting(false)
-                        case .flat: outline.fill(LinearGradient(colors: theme.card.face.map(\.color), startPoint: .top, endPoint: .bottom))
-                                .allowsHitTesting(false).accessibilityHidden(true)
+                        case .flat: flat(depth, shape: outline, radius: radius).allowsHitTesting(false)
                         }
                     }
                     .overlay {
@@ -156,8 +155,8 @@ struct LibraryCardSurface: ViewModifier {
 
     private func stock(_ stock: AppTheme.Stock, _ depth: LibraryCardDepth, shape: RoundedRectangle, radius: CGFloat) -> some View {
         ZStack {
-            if let key = depth.key { shadow(key, stock, depth: depth, radius: radius) }
-            if let contact = depth.contact { shadow(contact, stock, depth: depth, radius: radius) }
+            if let key = depth.key { shadow(key, depth: depth, radius: radius) }
+            if let contact = depth.contact { shadow(contact, depth: depth, radius: radius) }
             if let offset = depth.lowerLip { shape.fill(lip(stock, lower: true)).offset(y: offset) }
             if depth != .pressed { shape.fill(lip(stock, lower: false)).offset(y: 1) }
             shape.fill(LinearGradient(colors: theme.card.face.map(\.color), startPoint: .top, endPoint: .bottom))
@@ -171,8 +170,18 @@ struct LibraryCardSurface: ViewModifier {
         .accessibilityHidden(true)
     }
 
-    private func shadow(_ spec: LibraryCardDepth.Shadow, _ stock: AppTheme.Stock, depth: LibraryCardDepth, radius: CGFloat) -> some View {
-        let alpha = depth == .pressed ? stock.pressedShadow : stock.shadow
+    /// The stock card's two shadows under a flat face: no lips, no gloss, square when the theme's radius is 0.
+    private func flat(_ depth: LibraryCardDepth, shape: RoundedRectangle, radius: CGFloat) -> some View {
+        ZStack {
+            if let key = depth.key { shadow(key, depth: depth, radius: radius) }
+            if let contact = depth.contact { shadow(contact, depth: depth, radius: radius) }
+            shape.fill(LinearGradient(colors: theme.card.face.map(\.color), startPoint: .top, endPoint: .bottom))
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func shadow(_ spec: LibraryCardDepth.Shadow, depth: LibraryCardDepth, radius: CGFloat) -> some View {
+        let alpha = depth == .pressed ? theme.card.pressedShadow : theme.card.shadow
         return LibraryShadowShape(inset: spec.inset, radius: radius).fill(.black)
             .shadow(color: .black.opacity(alpha), radius: spec.blur / 2, y: spec.offset)
     }

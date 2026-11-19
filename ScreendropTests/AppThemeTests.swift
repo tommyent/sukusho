@@ -42,7 +42,8 @@ struct AppThemeTests {
     }
 
     /// The owner, 2026-11-19: "I would keep the colours the same." Chip changes the card's shape only, so every colour it
-    /// shares with Classic is Classic's: ink, chrome, ground, the face behind the label, the wells and the marks.
+    /// shares with Classic is Classic's: ink, chrome, ground, the face behind the label, the wells and the marks; and,
+    /// "The chips are missing the shadow", Classic's drop shadow.
     @Test func chipKeepsClassicsColours() {
         for (chip, classic) in [(AppTheme.chipLight, AppTheme.classicLight), (.chipDark, .classicDark)] {
             #expect(chip.isDark == classic.isDark)
@@ -53,6 +54,7 @@ struct AppThemeTests {
             #expect(chip.card.face == classic.card.face, "\(chip.id)")
             #expect(chip.card.well == classic.card.well, "\(chip.id)")
             #expect(chip.card.textWell == classic.card.textWell, "\(chip.id)")
+            #expect(chip.card.shadow == classic.card.shadow && chip.card.pressedShadow == classic.card.pressedShadow, "\(chip.id)")
         }
     }
 

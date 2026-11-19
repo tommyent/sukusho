@@ -56,13 +56,16 @@ nonisolated struct AppTheme: Sendable, Equatable, Identifiable {
         var well: ThemeColor
         /// Behind text, code and link clips.
         var textWell: ThemeColor
+        /// The drop shadows' opacity at rest and while pressed; their offsets and blurs are the app's (`LibraryCardDepth`).
+        var shadow: Double
+        var pressedShadow: Double
     }
 
     /// How a card is drawn. A theme picks one and tunes it; it can't add its own.
     nonisolated enum Recipe: Sendable, Equatable {
         /// Heavy stock: raised and rounded, two lips, two shadows, a bevelled picture (Classic).
         case stock(Stock)
-        /// Square cut and flat: no depth, the picture as the card's well, a hairline perimeter (Chip).
+        /// Square cut and flat: no lips or bevel, the picture edge to edge, a hairline perimeter, the card's drop shadow (Chip).
         case flat(edge: ThemeColor)
 
         /// The flat recipe's perimeter; nil for the stock card.
@@ -74,9 +77,6 @@ nonisolated struct AppTheme: Sendable, Equatable, Identifiable {
         var lowerLip: ThemeColor
         /// The light edge along the face's top.
         var gloss: ThemeColor
-        /// The shadows' opacity at rest and while pressed.
-        var shadow: Double
-        var pressedShadow: Double
     }
 
     /// The pills and badges on pictures (`cardMark`).
@@ -97,10 +97,9 @@ nonisolated extension AppTheme {
         ink: Ink(primary: .black, inverse: .white()),
         chrome: Chrome(background: .white(), panel: .white()),
         ground: Ground(workspace: .gray(0.93)),
-        card: Card(recipe: .stock(Stock(upperLip: .rgb(0xD6D6DA), lowerLip: .rgb(0xBDBDC2), gloss: .white(),
-                                        shadow: 0.18, pressedShadow: 0.12)),
+        card: Card(recipe: .stock(Stock(upperLip: .rgb(0xD6D6DA), lowerLip: .rgb(0xBDBDC2), gloss: .white())),
                    radius: 16, inset: 6, gutter: nil, face: [.white(), .rgb(0xF7F7F8)],
-                   well: .white(), textWell: .rgb(0xECEFF2)),
+                   well: .white(), textWell: .rgb(0xECEFF2), shadow: 0.18, pressedShadow: 0.12),
         marks: .classic)
 
     static let classicDark = AppTheme(
@@ -108,14 +107,14 @@ nonisolated extension AppTheme {
         ink: Ink(primary: .white(), inverse: .black),
         chrome: Chrome(background: .windowBackground, panel: .windowBackground),
         ground: Ground(workspace: .gray(0.16)),
-        card: Card(recipe: .stock(Stock(upperLip: .rgb(0x141414), lowerLip: .rgb(0x0A0A0A), gloss: .white(opacity: 0.16),
-                                        shadow: 0.65, pressedShadow: 0.5)),
+        card: Card(recipe: .stock(Stock(upperLip: .rgb(0x141414), lowerLip: .rgb(0x0A0A0A), gloss: .white(opacity: 0.16))),
                    radius: 16, inset: 6, gutter: nil, face: [.rgb(0x333335), .rgb(0x2B2B2D)],
-                   well: .rgb(0x282627), textWell: .rgb(0x26282C)),
+                   well: .rgb(0x282627), textWell: .rgb(0x26282C), shadow: 0.65, pressedShadow: 0.5),
         marks: .classic)
 
     /// A colour chip: Classic cut square and flat, the picture edge to edge above the label (owner's pick, 2026-11-19,
-    /// sd-ygmk). Only the shape changes; the owner kept Classic's colours ("I would keep the colours the same").
+    /// sd-ygmk). Only the shape changes; the owner kept Classic's colours ("I would keep the colours the same") and
+    /// its drop shadow ("The chips are missing the shadow").
     static let chipLight = chip(classicLight, id: "chip-light", name: "Chip Light", edge: .rgb(0x000000, opacity: 0.3))
     static let chipDark = chip(classicDark, id: "chip-dark", name: "Chip Dark", edge: .white(opacity: 0.28))
 
