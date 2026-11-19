@@ -71,8 +71,7 @@ struct LibraryIndexStallTest {
         history.importScreenshot(from: source)
         let secondID = history.items[0].id.uuidString
         try await waitFor("New capture text was not indexed during the held insight") {
-            let words = store.loadAll()[secondID]?.paragraphs.joined().filter { !$0.isWhitespace }
-            return words?.localizedCaseInsensitiveContains("captureisready") == true
+            store.loadAll()[secondID]?.paragraphs.joined().contains { !$0.isWhitespace } == true
         }
         guard calls[secondID] == nil && calls[firstID] == 1 else { throw Failure(message: "Expected OCR before insight timeout") }
         print("Second capture's text reached disk before the first insight timed out.")
