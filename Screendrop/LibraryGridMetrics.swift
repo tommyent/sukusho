@@ -20,9 +20,6 @@ nonisolated struct LibraryGridMetrics: Equatable, Sendable {
 
     /// The narrowest margin at either side, and above and below the grid.
     static let edgeMargin: CGFloat = 24
-    /// The picture's inset inside its card, the same at the sides and the top, so it sits on the card as a chip
-    /// (owner's pick, 2026-11-17). The caption lines up with it.
-    static let pictureInset: CGFloat = 6
     /// The caption below the picture: a name and a small detail line, with their padding.
     static let captionHeight: CGFloat = 50
 
@@ -50,7 +47,7 @@ nonisolated struct LibraryGridMetrics: Equatable, Sendable {
     /// takes the room above the caption.
     var cardHeight: CGFloat { floor(cellWidth * 0.625) + 62 }
     /// The picture's height inside a card: what the inset and the caption leave.
-    var pictureHeight: CGFloat { cardHeight - Self.pictureInset - Self.captionHeight }
+    var pictureHeight: CGFloat { cardHeight - LibraryCardDensity(width: cellWidth).pictureInset - Self.captionHeight }
 }
 
 /// Geometry from the Heavy stock mockup, in points. Shadow blur is the CSS diameter.
@@ -111,7 +108,7 @@ nonisolated struct LibraryShadowShape: Shape {
     func path(in rect: CGRect) -> Path {
         Self.paths.withLock { paths in
             if let cached = paths[inset], cached.bounds == rect, cached.radius == radius { return cached.path }
-            let path = RoundedRectangle(cornerRadius: radius, style: .continuous).inset(by: inset).path(in: rect)
+            let path = RoundedRectangle(cornerRadius: radius, style: .circular).inset(by: inset).path(in: rect)
             paths[inset] = (rect, radius, path)
             return path
         }
@@ -231,6 +228,11 @@ nonisolated enum TallCapture {
 
 nonisolated struct LibraryCardDensity {
     let width: CGFloat
+    // The mockup is 220 pt wide. Smaller cards retain its minimum edge and corner sizes.
+    private var scale: CGFloat { max(1, width / 220) }
+    var pictureInset: CGFloat { 6 * scale }
+    var cornerRadius: CGFloat { 16 * scale }
+    var pictureRadius: CGFloat { cornerRadius - pictureInset }
     var showsSocial: Bool { width >= 200 }
     var showsPillText: Bool { width >= 180 }
     var separatesLocks: Bool { width >= 165 }

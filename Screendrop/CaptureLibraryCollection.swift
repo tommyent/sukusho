@@ -853,15 +853,10 @@ extension View {
     }
 }
 
-/// A picture inset in its card (`LibraryGridMetrics.pictureInset`) as a chip, its corners concentric with the
-/// card's. Shared by capture and clipboard cards.
-let libraryCardPictureShape = RoundedRectangle(cornerRadius: max(4, DS.Radius.card - LibraryGridMetrics.pictureInset), style: .continuous)
-
 extension View {
-    /// A card's picture as a raised chip (owner's pick A, 2026-11-17): light along the top edge, a shade along the
-    /// bottom, lifted off the card. The edge is gradients and strokes over the picture; only a plain shape behind it
-    /// casts the lift's shadow, so no card renders its picture offscreen.
-    func libraryCardChip() -> some View { modifier(LibraryCardChip()) }
+    func libraryCardChip(radius: CGFloat, height: CGFloat) -> some View {
+        modifier(LibraryCardChip(radius: radius, height: height))
+    }
 
     /// Caption text pressed up from the card: a faint shade one point under the letters (owner's pick, subtle).
     func libraryRaisedText() -> some View { modifier(LibraryRaisedText()) }
@@ -872,34 +867,41 @@ extension View {
 }
 
 private struct LibraryCardChip: ViewModifier {
+    let radius: CGFloat
+    let height: CGFloat
     @Environment(\.colorScheme) private var colorScheme
 
     func body(content: Content) -> some View {
         let dark = colorScheme == .dark
+        let shape = RoundedRectangle(cornerRadius: radius, style: .circular)
+        let well = dark ? Color(red: 40 / 255, green: 38 / 255, blue: 39 / 255) : Color.white
+        // Limit the wash to its reach on the 220 pt reference card as the picture grows.
+        let wash = 0.16 * min(1, 143 / height)
         content
-            .clipShape(libraryCardPictureShape)
+            .clipShape(shape)
             .overlay {
                 ZStack {
-                    LinearGradient(stops: [.init(color: .white.opacity(0.22), location: 0), .init(color: .white.opacity(0), location: 0.16),
-                                           .init(color: .black.opacity(0), location: 0.84), .init(color: .black.opacity(0.12), location: 1)],
-                                   startPoint: .top, endPoint: .bottom)
-                        .clipShape(libraryCardPictureShape)
-                    libraryCardPictureShape.strokeBorder(
+                    shape.strokeBorder(
                         LinearGradient(stops: [.init(color: .white.opacity(dark ? 0.35 : 0.75), location: 0),
                                                .init(color: .white.opacity(dark ? 0.12 : 0.25), location: 0.06),
                                                .init(color: .black.opacity(dark ? 0.25 : 0.10), location: 0.94),
                                                .init(color: .black.opacity(dark ? 0.45 : 0.22), location: 1)],
                                        startPoint: .top, endPoint: .bottom),
                         lineWidth: 1.5)
-                    libraryCardPictureShape.strokeBorder(dark ? Color.white.opacity(0.10) : Color.black.opacity(0.20), lineWidth: 0.5)
+                    LinearGradient(stops: [.init(color: .white.opacity(0.22), location: 0), .init(color: .white.opacity(0), location: wash),
+                                           .init(color: .black.opacity(0), location: 1 - wash), .init(color: .black.opacity(0.12), location: 1)],
+                                   startPoint: .top, endPoint: .bottom)
+                        .clipShape(shape)
+                    shape.strokeBorder(dark ? Color.white.opacity(0.10) : Color.black.opacity(0.20), lineWidth: 0.5)
                 }
                 .allowsHitTesting(false)
             }
             .background {
                 // Transparent pixels reveal the picture well inside the lighter stock face.
-                libraryCardPictureShape.fill(WorkspaceChrome.background)
-                    .shadow(color: .black.opacity(dark ? 0.55 : 0.20), radius: 0.75, y: 1)
-                    .shadow(color: .black.opacity(dark ? 0.40 : 0.12), radius: 3, y: 3)
+                ZStack {
+                    shape.fill(well).shadow(color: .black.opacity(dark ? 0.40 : 0.12), radius: 3, y: 3)
+                    shape.fill(well).shadow(color: .black.opacity(dark ? 0.55 : 0.20), radius: 0.75, y: 1)
+                }
             }
     }
 }
@@ -933,11 +935,11 @@ private struct LibraryRaisedIcon: ViewModifier {
 /// choice 4). Shared by capture, upload and comment cards.
 struct LibraryCardBorder: View {
     let selected: Bool
+    var shape = RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
     @Environment(\.appearsActive) private var appearsActive
 
     var body: some View {
-        RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
-            .strokeBorder(color, lineWidth: selected ? 2 : 0.5)
+        shape.strokeBorder(color, lineWidth: selected ? 2 : 0.5)
     }
 
     private var color: Color {

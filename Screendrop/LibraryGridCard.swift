@@ -16,11 +16,12 @@ struct LibraryGridCard<Picture: View, Caption: View>: View {
     var body: some View {
         GeometryReader { geometry in
             let density = LibraryCardDensity(width: geometry.size.width)
+            let pictureHeight = max(1, geometry.size.height - density.pictureInset - LibraryGridMetrics.captionHeight)
             VStack(alignment: .leading, spacing: 0) {
                 picture()
-                    .frame(width: max(1, geometry.size.width - 2 * LibraryGridMetrics.pictureInset),
-                           height: max(1, geometry.size.height - LibraryGridMetrics.pictureInset - LibraryGridMetrics.captionHeight))
-                    .libraryCardChip()
+                    .frame(width: max(1, geometry.size.width - 2 * density.pictureInset),
+                           height: pictureHeight)
+                    .libraryCardChip(radius: density.pictureRadius, height: pictureHeight)
                     .overlay(alignment: .topLeading) { pills(settings(for: density), density: density) }
                     .overlay(alignment: .topTrailing) { cloudButton.padding(6) }
                     .overlay(alignment: .bottomLeading) { if density.showsSocial { pills(marks.social, density: density) } }
@@ -28,7 +29,7 @@ struct LibraryGridCard<Picture: View, Caption: View>: View {
                 caption().frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
             }
             .environment(\.libraryCardDensity, density)
-            .padding([.top, .horizontal], LibraryGridMetrics.pictureInset)
+            .padding([.top, .horizontal], density.pictureInset)
         }
     }
 
@@ -110,17 +111,21 @@ struct LibraryCardSurface: ViewModifier {
     func body(content: Content) -> some View {
         if layout == .grid {
             let depth = LibraryCardDepth(hovering: hovering, pressed: pressed, deleting: deleting)
-            content
-                .background { stock(depth).allowsHitTesting(false) }
-                .overlay {
-                    if !selected && contrast == .increased {
-                        shape.strokeBorder(Color.primary.opacity(0.65), lineWidth: 1)
-                    } else {
-                        LibraryCardBorder(selected: selected)
+            GeometryReader { geometry in
+                let radius = LibraryCardDensity(width: geometry.size.width).cornerRadius
+                let outline = RoundedRectangle(cornerRadius: radius, style: .circular)
+                content
+                    .background { stock(depth, shape: outline, radius: radius).allowsHitTesting(false) }
+                    .overlay {
+                        if !selected && contrast == .increased {
+                            outline.strokeBorder(Color.primary.opacity(0.65), lineWidth: 1)
+                        } else {
+                            LibraryCardBorder(selected: selected, shape: outline)
+                        }
                     }
-                }
-                .offset(y: depth.lift)
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: depth)
+                    .offset(y: depth.lift)
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: depth)
+            }
         } else {
             content
                 .background(Color.primary.opacity(selected ? 0.075 : hovering ? 0.035 : 0.012), in: shape)
@@ -129,10 +134,10 @@ struct LibraryCardSurface: ViewModifier {
         }
     }
 
-    private func stock(_ depth: LibraryCardDepth) -> some View {
+    private func stock(_ depth: LibraryCardDepth, shape: RoundedRectangle, radius: CGFloat) -> some View {
         ZStack {
-            if let key = depth.key { shadow(key, depth: depth) }
-            if let contact = depth.contact { shadow(contact, depth: depth) }
+            if let key = depth.key { shadow(key, depth: depth, radius: radius) }
+            if let contact = depth.contact { shadow(contact, depth: depth, radius: radius) }
             if let offset = depth.lowerLip { shape.fill(lip(lower: true)).offset(y: offset) }
             if depth != .pressed { shape.fill(lip(lower: false)).offset(y: 1) }
             shape.fill(LinearGradient(colors: dark ? [Color(stock: 0x333335), Color(stock: 0x2B2B2D)]
@@ -147,9 +152,9 @@ struct LibraryCardSurface: ViewModifier {
         .accessibilityHidden(true)
     }
 
-    private func shadow(_ spec: LibraryCardDepth.Shadow, depth: LibraryCardDepth) -> some View {
+    private func shadow(_ spec: LibraryCardDepth.Shadow, depth: LibraryCardDepth, radius: CGFloat) -> some View {
         let alpha = depth == .pressed ? (dark ? 0.5 : 0.12) : (dark ? 0.65 : 0.18)
-        return LibraryShadowShape(inset: spec.inset, radius: DS.Radius.card).fill(.black)
+        return LibraryShadowShape(inset: spec.inset, radius: radius).fill(.black)
             .shadow(color: .black.opacity(alpha), radius: spec.blur / 2, y: spec.offset)
     }
 

@@ -1533,9 +1533,15 @@ struct LibraryGridMetricsTests {
         // Rows keep the card's own gap, even when one wide column turns the row gap into margin.
         let single = LibraryGridMetrics(width: 612, cardWidth: 320)
         #expect(single.columns == 1 && single.lineSpacing == LibraryGridMetrics.minimumGap(for: 320))
-        #expect(large.cardHeight == LibraryGridMetrics.pictureInset + large.pictureHeight + LibraryGridMetrics.captionHeight)
+        for width: CGFloat in [140, 220, 314, 320] {
+            let density = LibraryCardDensity(width: width)
+            let scale = max(1, width / 220)
+            #expect(density.pictureInset == 6 * scale)
+            #expect(density.cornerRadius == 16 * scale)
+            #expect(density.pictureRadius == density.cornerRadius - density.pictureInset)
+        }
         #expect(large.cardHeight == (320 * 0.625).rounded(.down) + 62)
-        #expect(large.pictureHeight == large.cardHeight - 6 - 50)
+        #expect(large.pictureHeight == large.cardHeight - LibraryCardDensity(width: 320).pictureInset - 50)
     }
 }
 
