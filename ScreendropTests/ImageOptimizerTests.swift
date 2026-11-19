@@ -1445,7 +1445,7 @@ private func isRunning(_ text: String) -> Bool {
         let (release, doRelease) = AsyncStream<Void>.makeStream()
         var made: ImageOptimizationResult?
         func copy() async throws -> (OptimizedImageCopy.InstantCopy, Task<Bool, Never>?) {
-            try await copier.copyNow(key: "Edited.png, first save", to: board, first: { try item(source) }) {
+            try await copier.copyNow(to: board, first: { .init(item: try item(source), key: "Edited.png, first save") }) {
                 calls.smaller += 1
                 for await _ in release { break }
                 guard let result = try? await optimizer.optimize(source), result.outcome == .optimized else { return nil }
@@ -1477,8 +1477,8 @@ private func isRunning(_ text: String) -> Bool {
         #expect(try await copy().0 == .alreadyThere)
         #expect(board.changeCount == count + 2)
         // The file saved again is another copy.
-        let (changed, changedSwap) = try await copier.copyNow(key: "Edited.png, second save", to: board,
-                                                              first: { try item(source) }, smaller: { nil })
+        let (changed, changedSwap) = try await copier.copyNow(to: board,
+                                                              first: { .init(item: try item(source), key: "Edited.png, second save") }, smaller: { nil })
         #expect(changed == .written)
         #expect(await changedSwap?.value == false)
         #expect(board.changeCount == count + 3)
@@ -1509,7 +1509,7 @@ private func isRunning(_ text: String) -> Bool {
         let (outcome, swap) = try await copier.copyNow(to: board, first: {
             let original = try item(source)
             original.setData(Data(), forType: .init(ClipboardCapturePolicy.ownType))
-            return original
+            return .init(item: original, key: UUID())
         }, record: { written in
             guard let capture = ClipboardPasteboardReader.ownCopy([written], ignoredApps: [], historyDirectory: bench.folder),
                   case .inserted(let id)? = try? await store.record(capture, ownCopy: true) else { return nil }
@@ -1565,7 +1565,7 @@ private func isRunning(_ text: String) -> Bool {
         defer { optimizedA.discard() }
 
         let (releaseSwap, doReleaseSwap) = AsyncStream<Void>.makeStream()
-        let (first, swapA) = try await copier.copyNow(key: "A", to: board, first: { try item(a) }) {
+        let (first, swapA) = try await copier.copyNow(to: board, first: { .init(item: try item(a), key: "A") }) {
             for await _ in releaseSwap { break }
             return swapIn(optimizedA)
         }
@@ -1574,14 +1574,14 @@ private func isRunning(_ text: String) -> Bool {
         let (bReading, didStartB) = AsyncStream<Void>.makeStream()
         let (releaseB, doReleaseB) = AsyncStream<Void>.makeStream()
         let copyB = Task {
-            try await copier.copyNow(key: "B", to: board, first: {
+            try await copier.copyNow(to: board, first: {
                 didStartB.yield()
                 for await _ in releaseB { break }
-                return try item(b)
+                return .init(item: try item(b), key: "B")
             }, smaller: { nil })
         }
         for await _ in bReading { break }
-        let (repeatOfA, _) = try await copier.copyNow(key: "A", to: board, first: { try item(a) }, smaller: { nil })
+        let (repeatOfA, _) = try await copier.copyNow(to: board, first: { .init(item: try item(a), key: "A") }, smaller: { nil })
         #expect(repeatOfA == .alreadyThere)
 
         doReleaseB.yield()

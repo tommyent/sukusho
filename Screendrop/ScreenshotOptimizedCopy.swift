@@ -33,17 +33,16 @@ extension ScreenshotFileActions {
         // A file made only for this copy: kept while the clipboard names it, as every optimized copy's is.
         var made: ImageOptimizationResult?
         var swappedIn: (file: URL, saving: String)?
-        // A repeat is a copy of the same bytes, not of a file with the same name, size and date: a file rewritten
-        // with other pixels and the same size and time is a new copy (Sol, round 2). Read before the copy takes its
-        // turn, which reads the file again for what it writes.
-        let key = await Task.detached { FileIdentity(url)?.digest }.value
-        // The original is read inside the copy's turn, not before it: reading takes time, and a copy made
-        // meanwhile must not be written over.
-        let (outcome, _) = try await OptimizedImageCopy.shared.copyNow(key: key.map { AnyHashable($0) } ?? AnyHashable(UUID()), first: {
+        // Nothing is awaited before `copyNow`: the copy takes its turn first, and everything it reads, the file
+        // and what it is a copy of, is read inside that turn, so a copy made meanwhile is never written over.
+        let (outcome, _) = try await OptimizedImageCopy.shared.copyNow(first: {
             let item = try await clipboardItem(for: url)
             // Filed in history by `record`, when it is written; the monitor's poll leaves Sukusho's own writes alone.
             item.setData(Data(), forType: .init(ClipboardCapturePolicy.ownType))
-            return item
+            // A repeat is a copy of the same bytes, not of a file with the same name, size and date: a file
+            // rewritten with other pixels and the same size and time is a new copy (Sol, round 2).
+            let key = await Task.detached { FileIdentity(url)?.digest }.value
+            return .init(item: item, key: key.map { AnyHashable($0) } ?? AnyHashable(UUID()))
         }, record: { item in
             await ClipboardHistoryModel.shared.recordOwnCopy(item)
         }, smaller: {
