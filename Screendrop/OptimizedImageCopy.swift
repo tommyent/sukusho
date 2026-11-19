@@ -91,9 +91,10 @@ final class OptimizedImageCopy {
         let original = try await first()
         // No suspension between each check and its write, as in `copy`.
         guard mine == latest, pasteboard.changeCount == countAtStart else { return (.overtaken, nil) }
-        pasteboard.clearContents()
+        // The count this clear returns is this copy's own. A count read after the write could already be
+        // another app's, which copied in between, and the swap would then take that copy for this one.
+        let countAfterWrite = pasteboard.clearContents()
         guard pasteboard.writeObjects([original]) else { throw CocoaError(.fileWriteUnknown) }
-        let countAfterWrite = pasteboard.changeCount
         held = (key, countAfterWrite)
         let swap = Task {
             func done(_ result: Bool) -> Bool {
@@ -103,11 +104,14 @@ final class OptimizedImageCopy {
             guard let item = await smaller(), !Task.isCancelled,
                   mine == latest, pasteboard.changeCount == countAfterWrite else { return done(false) }
             await beforeSwap(countAfterWrite)
-            // No suspension between this check and the write.
+            // No suspension between this check and the clear. NSPasteboard has no compare-and-replace, so a
+            // window is left: another app that copies between this check and `clearContents` loses its copy
+            // to the swap. It is the same window Clop's own swap has, a few instructions wide; anything copied
+            // before the check, however late, keeps the original or the newer copy where it is.
             guard mine == latest, pasteboard.changeCount == countAfterWrite else { return done(false) }
-            pasteboard.clearContents()
+            let countAfterSwap = pasteboard.clearContents()
             guard pasteboard.writeObjects([item]) else { return done(false) }
-            if held?.key == key { held = (key, pasteboard.changeCount) }
+            if held?.key == key { held = (key, countAfterSwap) }
             return done(true)
         }
         cancelInFlight = { swap.cancel() }
