@@ -30,47 +30,27 @@ extension SystemScreenshotShortcuts {
     }
 }
 
-/// Once, at launch, when a Sukusho shortcut is one of macOS's screenshot shortcuts that is still on (the owner,
-/// 2026-11-17: beta 1), with the owner's two ways out: Use Other Keys… moves them and opens Settings › Shortcuts to
-/// change them further, Open Keyboard Shortcuts… opens macOS's settings to turn macOS's off; Not Now leaves them.
-/// Settings keeps the same line and buttons for as long as the clash lasts; this notice never comes back.
-enum ShortcutClashNotice {
-    static let shownKey = "shortcutClashNotice.shown"
-
+extension ShortcutClashNotice {
     static func showIfNeeded(defaults: UserDefaults = .standard) {
-        guard !defaults.bool(forKey: shownKey) else { return }
+        guard panel == nil, !defaults.bool(forKey: shownKey) else { return }
         let clashes = SystemScreenshotShortcuts.currentClashPairs()
         guard !clashes.isEmpty else { return }
 
-        let otherKeys = SystemScreenshotShortcuts.currentOtherKeys()
-        let alert = NSAlert()
-        alert.alertStyle = .informational
-        alert.messageText = "macOS also uses some of Sukusho’s shortcuts"
-        alert.informativeText = SystemScreenshotShortcuts.warning(clashes, canUseOtherKeys: !otherKeys.isEmpty)
-        if !otherKeys.isEmpty { alert.addButton(withTitle: "Use Other Keys…") }
-        alert.addButton(withTitle: "Open Keyboard Shortcuts…").toolTip = SystemScreenshotShortcuts.keyboardShortcutsHint
-        alert.addButton(withTitle: "Not Now")
-        // An alert can't put text under one of its buttons, so the line goes just above them, below the warning.
-        let hint = NSTextField(wrappingLabelWithString: SystemScreenshotShortcuts.keyboardShortcutsHint)
-        hint.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        hint.textColor = .secondaryLabelColor
-        hint.alignment = .center
-        hint.preferredMaxLayoutWidth = 220
-        hint.frame.size = hint.fittingSize
-        alert.accessoryView = hint
-        NSApp.activate()
-        let response = alert.runModal()
-        // Shown once it's answered, Not Now included; a notice that never got an answer comes back at the next launch.
-        defaults.set(true, forKey: shownKey)
-        let first = NSApplication.ModalResponse.alertFirstButtonReturn
-        switch (otherKeys.isEmpty, response) {
-        case (false, first):
-            // One button for "other keys or your own" (the owner): moved, then shown in Settings to change if wanted,
-            // where any that kept their keys are named, as when Use Other Keys runs in Settings.
-            SystemScreenshotShortcuts.useOtherKeys()
-            SettingsWindowController.show(tab: .shortcuts)
-        case (false, .alertSecondButtonReturn), (true, first): SystemScreenshotShortcuts.openKeyboardSettings()
-        default: break
+        let canUseOtherKeys = !SystemScreenshotShortcuts.currentOtherKeys().isEmpty
+        let window = makePanel(clashes: clashes, canUseOtherKeys: canUseOtherKeys, defaults: defaults) { answer in
+            switch answer {
+            case .useOtherKeys:
+                // One button for "other keys or your own" (the owner): moved, then shown in Settings to change if wanted,
+                // where any that kept their keys are named, as when Use Other Keys runs in Settings. The keys that clash
+                // are read again now, so a change made while the notice waited is taken into account.
+                SystemScreenshotShortcuts.useOtherKeys()
+                SettingsWindowController.show(tab: .shortcuts)
+            case .openKeyboardShortcuts: SystemScreenshotShortcuts.openKeyboardSettings()
+            case .notNow: break
+            }
         }
+        panel = window
+        NSApp.activate()
+        window.orderFront(nil)
     }
 }
