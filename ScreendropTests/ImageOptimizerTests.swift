@@ -1663,6 +1663,33 @@ private func isRunning(_ text: String) -> Bool {
         }
     }
 
+    /// Astra, round 4, found along the way: an image copied as it is (Copy Original, or with optimizing off) takes
+    /// its turn before it reads the file, as the optimized copy does. A copy asked for while it reads, even a repeat of
+    /// the clipboard's image that writes nothing, is newer, and the older copy doesn't land after it.
+    @Test func anImageCopiedAsItIsTakesItsTurnBeforeItReads() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let a = try bench.file("A.png", Sample.screenshot(width: 640, height: 400, seed: 55))
+        let b = try bench.file("B.png", Sample.screenshot(width: 640, height: 400, seed: 56))
+        // The copier the app's image copies share, on a private pasteboard.
+        let copier = OptimizedImageCopy.shared
+        let board = pasteboard()
+        defer { board.releaseGlobally() }
+        let key = "A, \(UUID())"
+        #expect(try await copier.copyNow(to: board, first: { .init(item: try item(a), key: key) }, smaller: { nil }).0 == .written)
+
+        let copyB = Task { try await ScreenshotFileActions.copyImageToClipboard(from: b, dataType: .png, to: board) }
+        // B starts, and is reading its file, when A is copied again.
+        await Task.yield()
+        #expect(try await copier.copyNow(to: board, first: { .init(item: try item(a), key: key) }, smaller: { nil }).0 == .alreadyThere)
+        #expect(try await copyB.value == false)
+        #expect(board.data(forType: .png) == (try Data(contentsOf: a)))
+
+        // Nothing copied meanwhile: it is written.
+        #expect(try await ScreenshotFileActions.copyImageToClipboard(from: b, dataType: .png, to: board))
+        #expect(board.data(forType: .png) == (try Data(contentsOf: b)))
+    }
+
     /// Sol, round 2: the swap publishes only the optimized form of the bytes the copy wrote. A file rewritten after
     /// the copy read it (another picture), a result that can't say what it was made from, and the same bytes again
     /// all leave the original on the pasteboard, written once.

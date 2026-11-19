@@ -173,7 +173,8 @@ private struct PinnedScreenshotView: View {
     private func copy() {
         Task {
             do {
-                try await ScreenshotFileActions.copyPNGToClipboard(from: url)
+                // Not when something newer reached the clipboard while the image was read: nothing was copied.
+                guard try await ScreenshotFileActions.copyPNGToClipboard(from: url) else { return }
                 copied.show()
             } catch {
                 print("Failed to copy pinned screenshot: \(error)")

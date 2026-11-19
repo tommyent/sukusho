@@ -27,8 +27,7 @@ extension ScreenshotFileActions {
                                      optimized: @escaping (_ saving: String, _ bytes: Int) -> Void = { _, _ in }) async throws -> Bool {
         guard !original, OptimizePreferences.whenCopying else {
             let isJPEG = UTType(filenameExtension: url.pathExtension)?.conforms(to: .jpeg) == true
-            try await copyImageToClipboard(from: url, dataType: isJPEG ? NSPasteboard.PasteboardType(UTType.jpeg.identifier) : .png)
-            return true
+            return try await copyImageToClipboard(from: url, dataType: isJPEG ? NSPasteboard.PasteboardType(UTType.jpeg.identifier) : .png)
         }
         // A file made only for this copy: kept while the clipboard names it, as every optimized copy's is.
         var made: ImageOptimizationResult?
