@@ -313,7 +313,7 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
         if let recorded = recordedLine { text += recorded + "\n\n" }
         text += "Times refer to the edited recording (\(Self.timestamp(duration))). Click coordinates are normalized to the captured source, with a top-left origin; "
             + (sourceStills ? "they match the stills." : "crop and zoom can move them in the stills.") + (ink.contains { $0.markerNumber != nil }
-                ? " Numbered markers are annotations. Control names come from accessibility at placement. Plain typing was not recorded.\n\n"
+                ? " Numbered markers are annotations. Marker control names come from accessibility at placement. Plain typing was not recorded.\n\n"
                 : " Plain typing and control names were not recorded.\n\n")
         text += "Pointer rests of 0.7 s or more and scrolls come from the input log; a long recording lists only the longest ones.\n\n"
         let marks = ink.isEmpty ? "a red ring marks the pointer, which the screen recording doesn't show"

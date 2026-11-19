@@ -27,6 +27,7 @@ struct RecordingAgentPromptTests {
             #expect(index != nil)
             if let index { #expect(markdown.contains("stills/" + RecordingAgentPromptPlan.stillName(index))) }
         }
+        #expect(markdown.contains("Marker control names come from accessibility at placement."))
         #expect(markdown.contains("(200, 300) source px from top left"))
         #expect(markdown.contains("AXButton, Save, window “Draft”") && markdown.contains("Control name unavailable"))
         #expect(markdown.contains("Nearby narration: Right here") && !markdown.contains("left; source position"))
