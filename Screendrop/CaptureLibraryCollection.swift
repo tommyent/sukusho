@@ -311,6 +311,8 @@ final class LibraryCollectionView: NSCollectionView, NSUserInterfaceValidations 
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
+        pendingRename?.cancel()
+        pendingRename = nil
         setPressed(nil)
         return contextMenuProvider?(event)
     }
@@ -323,21 +325,34 @@ final class LibraryCollectionView: NSCollectionView, NSUserInterfaceValidations 
         pressMonitor = nil
         setPressed(nil)
         super.viewWillMove(toWindow: newWindow)
-        guard let newWindow else { return }
-        // Observe without claiming the click from cell buttons, selection, rename or dragging.
-        pressMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp, .leftMouseDragged]) { [weak self, weak newWindow] event in
+        guard newWindow != nil else { return }
+        pressMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp, .leftMouseDragged]) { [weak self] event in
             guard let self else { return event }
-            if event.type == .leftMouseDown, event.window === newWindow,
-               (collectionViewLayout as? LibraryCollectionLayout)?.displayLayout == .grid {
-                let point = convert(event.locationInWindow, from: nil)
-                if visibleRect.contains(point), let path = indexPathForItem(at: point) {
-                    setPressed(item(at: path) as? LibraryCollectionItem)
-                }
-            } else {
-                setPressed(nil)
-            }
+            return trackMouseEvent(event)
+        }
+    }
+
+    func trackMouseEvent(_ event: NSEvent) -> NSEvent? {
+        guard event.type == .leftMouseDown, let window, event.window === window else {
+            setPressed(nil)
             return event
         }
+        let point = convert(event.locationInWindow, from: nil)
+        guard visibleRect.contains(point) else { return event }
+        if event.modifierFlags.contains(.control) {
+            // Handle this before the hosting view can select the card or fire its Save or Cloud button.
+            guard let content = window.contentView, let parent = content.superview,
+                  let hit = content.hitTest(parent.convert(event.locationInWindow, from: nil)),
+                  hit.isDescendant(of: self), !(hit is NSText),
+                  (hit as? NSTextField)?.isEditable != true else { return event }
+            if let menu = menu(for: event) { NSMenu.popUpContextMenu(menu, with: event, for: self) }
+            return nil
+        }
+        if (collectionViewLayout as? LibraryCollectionLayout)?.displayLayout == .grid,
+           let path = indexPathForItem(at: point) {
+            setPressed(item(at: path) as? LibraryCollectionItem)
+        }
+        return event
     }
 
     func setPressed(_ item: LibraryCollectionItem?) {
