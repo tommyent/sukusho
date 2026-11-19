@@ -177,6 +177,24 @@ nonisolated enum CaptureInsightRules {
     }
 }
 
+nonisolated struct InsightModelCooldown {
+    private(set) var retryAt: Date?
+    private var backoff: TimeInterval = 0
+
+    mutating func recordFailure(at now: Date, retryDelay: TimeInterval) {
+        backoff = min(60 * 60, max(retryDelay, backoff * 2))
+        retryAt = now.addingTimeInterval(backoff)
+    }
+
+    mutating func expire(at now: Date) {
+        if let retryAt, retryAt <= now { self.retryAt = nil }
+    }
+
+    mutating func reset() {
+        self = Self()
+    }
+}
+
 /// Which captures to read and which entries to forget after a Library scan.
 nonisolated enum CaptureTextIndexPlan {
     struct Capture: Sendable, Equatable {
@@ -198,23 +216,27 @@ nonisolated enum CaptureTextIndexPlan {
     /// a failure isn't final until the app quits.
     static let retryDelay: TimeInterval = 300
 
-    /// Fingerprints whose read failed less than `retryDelay` before `now`.
-    static func waiting(failedAt: [String: Date], now: Date) -> Set<String> {
-        Set(failedAt.filter { now.timeIntervalSince($0.value) < retryDelay }.keys)
+    /// Fingerprints still waiting for their next OCR attempt.
+    static func waiting(retryAt: [String: Date], now: Date) -> [String: Date] {
+        retryAt.filter { $0.value > now }
     }
 
     /// Captures whose text is read but that the model hasn't seen, newest
     /// first: those taken since `since`, or all of them once the user asks
     /// for existing captures. `older` counts the ones still waiting for that.
     static func dueForInsight(_ captures: [Capture], entries: [String: CaptureTextEntry], since: Date,
-                              includesExisting: Bool, skipping: Set<String> = []) -> (due: [Capture], older: Int) {
+                              includesExisting: Bool, lastFailure: [String: Date] = [:]) -> (due: [Capture], older: Int) {
         var due: [Capture] = [], older = 0
-        for capture in captures where !skipping.contains(capture.fingerprint) {
+        for capture in captures {
             guard let entry = entries[capture.id], entry.isCurrent(fingerprint: capture.fingerprint),
                   entry.insight?.isCurrent != true else { continue }
             if includesExisting || capture.createdAt >= since { due.append(capture) } else { older += 1 }
         }
-        return (due.sorted { $0.createdAt > $1.createdAt }, older)
+        // Give other captures a turn when a particular input repeatedly times out.
+        return (due.sorted { lhs, rhs in
+            let left = lastFailure[lhs.id] ?? .distantPast, right = lastFailure[rhs.id] ?? .distantPast
+            return left == right ? lhs.createdAt > rhs.createdAt : left < right
+        }, older)
     }
 
     /// The long side, in pixels, to read a width × height image at: at most

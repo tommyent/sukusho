@@ -66,6 +66,30 @@ final class CaptureTextFeedbackPresenter {
         dismiss()
     }
 
+    func copyText(from url: URL) {
+        let displayID = ActiveDisplayResolver.activeDisplayID(preferPointer: true)
+        // Text recognition's first run can take many seconds.
+        showReading(detail: "Recognizing the screenshot.", displayID: displayID)
+        Task {
+            guard let text = await ImageTextRecognizer.recognizeText(at: url) else {
+                showRecognitionFailed(displayID: displayID)
+                return
+            }
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                showNoTextFound(displayID: displayID)
+                return
+            }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            showCopied(text: text, displayID: displayID)
+        }
+    }
+
+    func showRecognitionFailed(displayID: CGDirectDisplayID?) {
+        present(symbol: "exclamationmark.triangle", title: "Text recognition failed",
+                detail: "Try again in a moment.", displayID: displayID)
+    }
+
     /// The capture succeeded but Vision found nothing. Not a failure worth an
     /// `NSAlert` - the user just picked an empty region and will try again.
     func showNoTextFound(displayID: CGDirectDisplayID?) {

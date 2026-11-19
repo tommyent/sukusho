@@ -182,20 +182,7 @@ private struct PinnedScreenshotView: View {
     }
 
     private func copyText() {
-        let url = url
-        let displayID = ActiveDisplayResolver.activeDisplayID(preferPointer: true)
-        // Text recognition's first run can take many seconds.
-        CaptureTextFeedbackPresenter.shared.showReading(detail: "Recognizing the screenshot.", displayID: displayID)
-        Task {
-            let text = await ImageTextRecognizer.recognizeText(at: url)
-            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                CaptureTextFeedbackPresenter.shared.showNoTextFound(displayID: displayID)
-                return
-            }
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
-            CaptureTextFeedbackPresenter.shared.showCopied(text: text, displayID: displayID)
-        }
+        CaptureTextFeedbackPresenter.shared.copyText(from: url)
     }
 
     private func save() {

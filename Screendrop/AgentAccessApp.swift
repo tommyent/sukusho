@@ -249,6 +249,7 @@ final class AgentLiveBackend: AgentBackend {
         case .text:
             switch await CaptureCoordinator.shared.captureTextAwaiting() {
             case .cancelled: return .cancelled
+            case .recognitionFailed: return .failed("Text recognition failed. Try again in a moment.")
             case .noTextFound: return .noText
             case .copied(let text): return .text(text)
             }

@@ -36,9 +36,10 @@ final class CaptureLibraryIndex {
     @ObservationIgnored var modelAvailability: () -> Bool = { CaptureIntelligence.isModelAvailable }
     @ObservationIgnored var describer: (CaptureLibraryItem, CaptureTextEntry, CGImage?) async -> CaptureIntelligence.Outcome = { item, entry, image in
         let (paragraphs, transcript, source, isVideo) = (entry.paragraphs, entry.transcript, item.source, item.isVideo)
-        return await Task.detached(priority: .background) {
+        let work = Task.detached(priority: .background) {
             await CaptureIntelligence.describe(paragraphs: paragraphs, transcript: transcript, source: source, isVideo: isVideo, image: image)
-        }.value
+        }
+        return await withTaskCancellationHandler { await work.value } onCancel: { work.cancel() }
     }
 
     @ObservationIgnored private let store = CaptureTextIndexStore(
@@ -52,14 +53,19 @@ final class CaptureLibraryIndex {
     @ObservationIgnored private var inFlight: CaptureLibraryItem?
     @ObservationIgnored private var insightQueue: [CaptureLibraryItem] = []
     @ObservationIgnored private var describing: CaptureLibraryItem?
-    /// Fingerprints the model was too busy for this session.
-    @ObservationIgnored private var insightLater: Set<String> = []
-    /// When each fingerprint last couldn't be read, so a failed read isn't
-    /// retried on every refresh but is again after a few minutes.
+    /// A cancelled framework call can outlive its deadline. Allow one replacement, without piling up stuck calls.
+    @ObservationIgnored private var outstandingInsights = 0
+    @ObservationIgnored private var insightDeadline: Task<Void, Never>?
+    @ObservationIgnored var insightTimeout: Duration = .seconds(60)
+    @ObservationIgnored var retryDelay = CaptureTextIndexPlan.retryDelay
+    @ObservationIgnored private var modelCooldown = InsightModelCooldown()
+    @ObservationIgnored private var lastModelFailure: [String: Date] = [:]
+    /// The earliest retry for each unreadable fingerprint.
     @ObservationIgnored private var unreadable: [String: Date] = [:]
     /// Plans again once failed reads may be retried, should nothing else
     /// change in the Library before then.
     @ObservationIgnored private var retry: Task<Void, Never>?
+    @ObservationIgnored private var retryAt: Date?
     @ObservationIgnored private var runner: Task<Void, Never>?
     /// The last write to the store queued; each waits for the one before.
     @ObservationIgnored private var lastWrite: Task<Void, Never>?
@@ -87,6 +93,7 @@ final class CaptureLibraryIndex {
 
     /// Opts older captures in to titles and suggestions.
     func includeExistingCaptures() {
+        modelCooldown.reset()
         UserDefaults.standard.set(true, forKey: ScreendropPreferences.libraryInsightsIncludeExistingKey)
         settingsDidChange()
     }
@@ -137,12 +144,14 @@ final class CaptureLibraryIndex {
         let gone = CaptureTextIndexPlan.removed(entryIDs: entries.keys, liveIDs: Set(items.map(\.id)), isComplete: isComplete)
         if !gone.isEmpty {
             for id in gone {
+                lastModelFailure[id] = nil
                 entries[id] = nil
                 foldedText[id] = nil
             }
             write { $0.remove(ids: gone) }
         }
         planInsights(items)
+        scheduleRetries()
         guard ScreendropPreferences.libraryReadsText else {
             queue = []
             updatePending()
@@ -151,11 +160,11 @@ final class CaptureLibraryIndex {
         let byID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let stale = CaptureTextIndexPlan.stale(
             items.filter { $0.id != inFlight?.id }.map { .init(id: $0.id, fingerprint: $0.thumbnailKey, createdAt: $0.createdAt) },
-            entries: entries, skipping: CaptureTextIndexPlan.waiting(failedAt: unreadable, now: Date())
+            entries: entries, skipping: Set(unreadable.keys)
         )
         queue = stale.compactMap { byID[$0.id] }
         updatePending()
-        if !queue.isEmpty || !insightQueue.isEmpty, runner == nil { runner = Task { await drain() } }
+        if !queue.isEmpty || canStartInsight, runner == nil { runner = Task { await drain() } }
     }
 
     /// Queues captures the model hasn't seen, when it may run.
@@ -163,6 +172,7 @@ final class CaptureLibraryIndex {
         let available = modelAvailability(), enabled = ScreendropPreferences.libraryUsesIntelligence
         if available != modelAvailable { modelAvailable = available }
         if enabled != usesIntelligence {
+            if enabled { modelCooldown.reset() }
             usesIntelligence = enabled
             CaptureLibraryModel.shared.insightsDidChange()
         }
@@ -171,7 +181,7 @@ final class CaptureLibraryIndex {
             let plan = CaptureTextIndexPlan.dueForInsight(
                 items.filter { $0.id != describing?.id }.map { .init(id: $0.id, fingerprint: $0.thumbnailKey, createdAt: $0.createdAt) },
                 entries: entries, since: ScreendropPreferences.libraryInsightsSince,
-                includesExisting: ScreendropPreferences.libraryInsightsIncludeExisting, skipping: insightLater)
+                includesExisting: ScreendropPreferences.libraryInsightsIncludeExisting, lastFailure: lastModelFailure)
             let byID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             insightQueue = plan.due.compactMap { byID[$0.id] }
             older = plan.older
@@ -182,18 +192,37 @@ final class CaptureLibraryIndex {
         updatePending()
     }
 
+    private var canStartInsight: Bool {
+        modelCooldown.retryAt == nil && describing == nil && outstandingInsights < 2 && !insightQueue.isEmpty
+    }
+
+    private func scheduleRetries() {
+        let now = Date()
+        unreadable = CaptureTextIndexPlan.waiting(retryAt: unreadable, now: now)
+        modelCooldown.expire(at: now)
+        let next = [unreadable.values.min(), modelCooldown.retryAt].compactMap { $0 }.min()
+        guard next != retryAt else { return }
+        retry?.cancel()
+        retryAt = next
+        guard let next else { return }
+        retry = Task {
+            do { try await Task.sleep(for: .seconds(max(0, next.timeIntervalSinceNow))) } catch { return }
+            retryAt = nil
+            settingsDidChange()
+        }
+    }
+
     private func drain() async {
         defer { runner = nil }
-        while !Task.isCancelled, !queue.isEmpty || !insightQueue.isEmpty {
+        while !Task.isCancelled, !queue.isEmpty || canStartInsight {
             if Self.shouldPause() {
                 try? await Task.sleep(for: .seconds(10))
                 continue
             }
             // Every capture's text is read before the model sees any.
             guard !queue.isEmpty else {
-                await describeNext()
-                if let latestItems { sync(latestItems, isComplete: latestIsComplete) }
-                continue
+                startInsight()
+                return
             }
             let item = queue.removeFirst()
             inFlight = item
@@ -206,12 +235,7 @@ final class CaptureLibraryIndex {
                 queue.insert(item, at: 0)
                 continue
             case .unreadable:
-                unreadable[item.thumbnailKey] = Date()
-                retry?.cancel()
-                retry = Task {
-                    try? await Task.sleep(for: .seconds(CaptureTextIndexPlan.retryDelay))
-                    if !Task.isCancelled, let latestItems { sync(latestItems, isComplete: latestIsComplete) }
-                }
+                unreadable[item.thumbnailKey] = Date().addingTimeInterval(retryDelay)
             case .read(var entry):
                 // A capture deleted while it was read keeps no entry.
                 if latestItems?.contains(where: { $0.id == item.id }) == true {
@@ -227,34 +251,56 @@ final class CaptureLibraryIndex {
             // Re-plans, so a capture edited while it was read is read again.
             if let latestItems { sync(latestItems, isComplete: latestIsComplete) }
         }
-        queue = []
-        insightQueue = []
         updatePending()
     }
 
-    /// Asks the model about the next capture and stores its answer, or its
-    /// refusal, so it isn't asked again.
-    private func describeNext() async {
+    private func deferModel(for item: CaptureLibraryItem) {
+        let now = Date()
+        if entries[item.id]?.isCurrent(fingerprint: item.thumbnailKey) == true { lastModelFailure[item.id] = now }
+        modelCooldown.recordFailure(at: now, retryDelay: retryDelay)
+    }
+
+    private func startInsight() {
         let item = insightQueue.removeFirst()
         guard let entry = entries[item.id] else { return }
         describing = item
+        outstandingInsights += 1
         updatePending()
-        defer {
+        let request = Task(priority: .background) {
+            defer {
+                outstandingInsights -= 1
+                settingsDidChange()
+            }
+            let image = await Self.image(for: item)
+            guard !Task.isCancelled else { return }
+            let outcome = Self.shouldPause() ? nil : await describer(item, entry, image)
+            // A timed-out answer must never replace a retry's answer or clear its deadline.
+            guard !Task.isCancelled else { return }
+            insightDeadline?.cancel()
+            insightDeadline = nil
             describing = nil
-            updatePending()
+            switch outcome {
+            case .later:
+                deferModel(for: item)
+            case .insight(let insight):
+                modelCooldown.reset()
+                lastModelFailure[item.id] = nil
+                guard latestItems?.contains(where: { $0.id == item.id && $0.thumbnailKey == item.thumbnailKey }) == true,
+                      var current = entries[item.id], current.isCurrent(fingerprint: item.thumbnailKey) else { return }
+                current.insight = insight
+                entries[item.id] = current
+                CaptureLibraryModel.shared.insightsDidChange()
+                write { [current] in try $0.save(current) }
+            case nil: break
+            }
         }
-        let image = await Self.image(for: item)
-        guard !Self.shouldPause() else { return insightQueue.insert(item, at: 0) }
-        switch await describer(item, entry, image) {
-        case .later:
-            insightLater.insert(item.thumbnailKey)
-        case .insight(let insight):
-            // A capture deleted while the model looked keeps no answer.
-            guard latestItems?.contains(where: { $0.id == item.id }) == true, var current = entries[item.id] else { return }
-            current.insight = insight
-            entries[item.id] = current
-            CaptureLibraryModel.shared.insightsDidChange()
-            await write { [current] in try $0.save(current) }.value
+        insightDeadline = Task {
+            do { try await Task.sleep(for: insightTimeout) } catch { return }
+            request.cancel()
+            describing = nil
+            deferModel(for: item)
+            Self.logger.notice("Library insight timed out; retrying later")
+            settingsDidChange()
         }
     }
 

@@ -154,6 +154,22 @@ struct CaptureInsightTests {
 
     // MARK: Planning
 
+    @Test func optingInDuringAnHourCooldownAllowsAnImmediateAttemptAndRestartsBackoff() {
+        var cooldown = InsightModelCooldown()
+        var now = Date(timeIntervalSince1970: 0)
+        for delay: TimeInterval in [300, 600, 1200, 2400, 3600] {
+            cooldown.recordFailure(at: now, retryDelay: 300)
+            now.addTimeInterval(delay)
+            #expect(cooldown.retryAt == now)
+            if delay < 3600 { cooldown.expire(at: now) }
+        }
+        now.addTimeInterval(-1800)
+        cooldown.reset()
+        #expect(cooldown.retryAt == nil)
+        cooldown.recordFailure(at: now, retryDelay: 300)
+        #expect(cooldown.retryAt == now.addingTimeInterval(300))
+    }
+
     @Test func newCapturesAreDueNewestFirstAndOlderOnesWaitForTheUser() {
         let since = Date()
         let captures: [CaptureTextIndexPlan.Capture] = [
@@ -173,8 +189,8 @@ struct CaptureInsightTests {
         entries["titled"] = CaptureTextEntry(id: "titled", fingerprint: "titled:1", paragraphs: [], insight: insight)
         entries["declined"] = CaptureTextEntry(id: "declined", fingerprint: "declined:1", paragraphs: [], insight: CaptureInsight(declined: true))
         // Text not read yet, or read before an edit, waits for the read; a refusal isn't asked again.
-        let plan = CaptureTextIndexPlan.dueForInsight(captures, entries: entries, since: since, includesExisting: false, skipping: ["busy:1"])
-        #expect(plan.due.map(\.id) == ["newer", "new"])
+        let plan = CaptureTextIndexPlan.dueForInsight(captures, entries: entries, since: since, includesExisting: false, lastFailure: ["busy": since])
+        #expect(plan.due.map(\.id) == ["newer", "new", "busy"])
         #expect(plan.older == 1)
         let all = CaptureTextIndexPlan.dueForInsight(captures, entries: entries, since: since, includesExisting: true)
         #expect(all.due.map(\.id) == ["busy", "newer", "new", "older"] && all.older == 0)
@@ -183,6 +199,6 @@ struct CaptureInsightTests {
         stale.version = CaptureInsight.currentVersion - 1
         entries["titled"]?.insight = stale
         #expect(CaptureTextIndexPlan.dueForInsight(captures, entries: entries, since: since, includesExisting: false,
-                                                   skipping: ["busy:1"]).due.first?.id == "titled")
+                                                   lastFailure: ["busy": since]).due.first?.id == "titled")
     }
 }

@@ -621,20 +621,7 @@ final class ScreenshotPreviewStack {
     /// clipboard. No-op for videos or images without detectable text.
     func copyText(id: ScreenshotPreviewItem.ID) {
         guard !preparingItemIDs.contains(id), let item = items.first(where: { $0.id == id }), item.kind == .image else { return }
-        let url = item.url
-        let displayID = ActiveDisplayResolver.activeDisplayID(preferPointer: true)
-        // Text recognition's first run can take many seconds.
-        CaptureTextFeedbackPresenter.shared.showReading(detail: "Recognizing the screenshot.", displayID: displayID)
-        Task {
-            let text = await ImageTextRecognizer.recognizeText(at: url)
-            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                CaptureTextFeedbackPresenter.shared.showNoTextFound(displayID: displayID)
-                return
-            }
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(text, forType: .string)
-            CaptureTextFeedbackPresenter.shared.showCopied(text: text, displayID: displayID)
-        }
+        CaptureTextFeedbackPresenter.shared.copyText(from: item.url)
     }
 
     /// Whether an editor has this capture open. Deleting it then would leave
