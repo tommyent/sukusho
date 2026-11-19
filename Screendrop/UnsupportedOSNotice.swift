@@ -6,16 +6,9 @@
 import AppKit
 import SwiftUI
 
-/// A modeless notice leaves the Library and clipboard monitor available while it is open.
+/// Below the tested macOS, once per macOS version until dismissed, in a modeless `LaunchNoticePanel`.
 enum UnsupportedOSNotice {
-    private final class Panel: NSPanel {
-        override func close() {
-            super.close()
-            UnsupportedOSNotice.panel = nil
-        }
-    }
-
-    private static var panel: Panel?
+    private static var panel: LaunchNoticePanel?
     static let dismissedKey = "unsupportedOSNotice.dismissedForVersion"
     #if DEBUG
     /// A Debug build pretends to run on this version, so the notice can be seen on macOS 27:
@@ -29,13 +22,10 @@ enum UnsupportedOSNotice {
             return
         }
         guard panel == nil else { return }
-        let window = Panel(contentRect: .zero, styleMask: [.titled, .closable], backing: .buffered, defer: true)
-        window.title = "Unsupported macOS version"
-        window.isReleasedWhenClosed = false
-        window.contentViewController = NSHostingController(rootView: Notice(version: version, defaults: defaults) {
-            [weak window] in window?.close()
+        let window = LaunchNoticePanel(title: "Unsupported macOS version", content: Notice(version: version, defaults: defaults) {
+            UnsupportedOSNotice.panel?.close()
         })
-        window.center()
+        window.onClose = { UnsupportedOSNotice.panel = nil }
         panel = window
         window.orderFront(nil)
     }
