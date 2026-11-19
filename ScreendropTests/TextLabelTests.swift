@@ -547,8 +547,11 @@ struct TextLabelTests {
         let (view, editor) = Self.overlay(TextProps(text: "teh cat"), zoom: 1)
         let id = try #require(view.editedShapeId)
         #expect(view.isContinuousSpellCheckingEnabled && !view.isRichText && !view.allowsUndo)
+        var boundaries: [String] = []
+        editor.onTextReplacementBoundary = { boundaries.append(editor.document.shape(id)?.textProps?.text ?? "") }
         view.insertText("the", replacementRange: NSRange(location: 0, length: 3))
         #expect(editor.document.shape(id)?.textProps?.text == "the cat")
+        #expect(boundaries == ["teh cat", "the cat"])
         editor.undo()
         #expect(editor.document.shape(id)?.textProps?.text == "teh cat")
         #expect(!editor.canUndo)

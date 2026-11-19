@@ -218,11 +218,15 @@ final class AnnoTextEditorOverlay: NSTextView {
 extension AnnoTextEditorOverlay: NSTextViewDelegate {
     func textDidChange(_ notification: Notification) {
         guard let shapeId else { return }
-        if replacingText, let editor, editor.document.shape(shapeId)?.textProps?.text != string {
-            editor.markUndo()
-        }
+        guard let editor else { return }
+        let replacement = replacingText && editor.document.shape(shapeId)?.textProps?.text != string
         replacingText = false
-        editor?.updateEditingText(shapeId, to: string)
+        if replacement {
+            editor.markUndo()
+            editor.onTextReplacementBoundary?()
+        }
+        editor.updateEditingText(shapeId, to: string)
+        if replacement { editor.onTextReplacementBoundary?() }
         // The shape may have grown or moved to keep its alignment anchor; follow it.
         sync()
     }

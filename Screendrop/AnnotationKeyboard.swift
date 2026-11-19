@@ -178,6 +178,11 @@ final class AnnotationKeyCommandHandlerView: NSView {
                 return nil
             }
 
+            // This plain text view keeps its undo in the annotation document.
+            if let text = self.window?.firstResponder as? AnnoTextEditorOverlay, !text.hasMarkedText() {
+                if Self.isUndo(event) { self.onUndo?(); return nil }
+                if Self.isRedo(event) { self.onRedo?(); return nil }
+            }
             if Self.isEditingText(in: self.window) {
                 return event
             }

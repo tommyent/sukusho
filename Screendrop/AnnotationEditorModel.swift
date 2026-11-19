@@ -176,6 +176,7 @@ final class AnnotationEditorModel {
     init(renderSave: @escaping (AnnotationSaveSnapshot) async throws -> URL = { try await $0.render() }) {
         self.renderSave = renderSave
         engine.tool = selectedTool
+        engine.onTextReplacementBoundary = { [weak self] in self?.recordHistoryChange(force: true) }
         engine.onChange = { [weak self] in
             guard let self else { return }
             selectedTool = engine.tool
