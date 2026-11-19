@@ -343,7 +343,8 @@ final class LibraryCollectionView: NSCollectionView, NSUserInterfaceValidations 
             // Handle this before the hosting view can select the card or fire its Save or Cloud button.
             guard let content = window.contentView, let parent = content.superview,
                   let hit = content.hitTest(parent.convert(event.locationInWindow, from: nil)),
-                  hit.isDescendant(of: self), !(hit is NSText || hit is NSTextField) else { return event }
+                  hit.isDescendant(of: self), !(hit is NSText),
+                  (hit as? NSTextField)?.isEditable != true else { return event }
             if let menu = menu(for: event) { NSMenu.popUpContextMenu(menu, with: event, for: self) }
             return nil
         }

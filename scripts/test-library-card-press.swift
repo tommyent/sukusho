@@ -55,6 +55,17 @@ struct LibraryCardPressTest {
             textView.removeFromSuperview()
         }
 
+        button.removeFromSuperview()
+        let title = NSTextField(labelWithString: "Today")
+        title.frame = button.frame
+        collection.addSubview(title)
+        precondition(collection.hitTest(controlClick.locationInWindow) === title)
+        precondition(collection.trackMouseEvent(controlClick) == nil && menuRequests == 2,
+                     "A section title must open the collection menu")
+        title.removeFromSuperview()
+        precondition(collection.trackMouseEvent(controlClick) == nil && menuRequests == 3,
+                     "Background space must open the same menu")
+
         let coordinator = CaptureLibraryCollection<Entry>(
             items: [], revision: 0, layout: .grid, cardWidth: 220, selection: .constant([]), isBusy: false,
             cell: { _, _, _ in AnyView(EmptyView()) }, menu: { _ in [] }, onAction: { _ in }
