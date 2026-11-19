@@ -3,6 +3,43 @@
     <channel>
         <title>Sukusho</title>
         <item>
+            <title>1.3.0 beta 5</title>
+            <pubDate>Thu, 19 Nov 2026 08:19:45 -0500</pubDate>
+            <link>https://tommyent.github.io/sukusho/</link>
+            <sparkle:fullReleaseNotesLink>https://github.com/tommyent/sukusho/releases</sparkle:fullReleaseNotesLink>
+            <sparkle:channel>beta</sparkle:channel>
+            <sparkle:version>32.261119.1316</sparkle:version>
+            <sparkle:shortVersionString>1.3.0 beta 5</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
+            <description sparkle:format="markdown"><![CDATA[# Sukusho 1.3.0 beta 5
+
+This beta lets you drag captures out of the Library, point to a problem while recording a bug report, and correct spelling in a screenshot annotation. Open the DMG and drag Sukusho to Applications.
+
+**Getting this beta.** If you have an earlier 1.3.0 beta, turn on **Settings › About › Get beta updates** to receive beta 5. This setting starts on in a beta. From 1.2.0, download it here.
+
+## New since beta 4
+
+### Drag captures out of the Library
+
+Drag a screenshot or recording from the Library or Saved to Finder. A renamed capture uses its Library name. You can drag several selected cards together. If a recording has edits, Sukusho prepares the edited movie for the destination. Dropping it again leaves the existing file intact.
+
+### Mark a bug while recording
+
+Press **⌃⇧M** during a bug report to switch to **Markers**, then click to place a numbered marker. Use **Oval** to circle a detail or **Pen** to draw a smoother freehand line. Marks stay visible throughout a bug report until you remove them. In an ordinary recording, numbered markers stay and pen and oval marks fade.
+
+**Clear marks** removes all visible marks. **⌘Z** brings them back. The Agent Prompt gives each marker’s number, time, position and still image. When Accessibility supplies the name of the control you pointed to, the prompt includes it. Undo a misplaced marker within three seconds and it drops out of the prompt.
+
+### Check spelling in annotations
+
+Control-click an underlined word in a text annotation to choose a correction. Automatic corrections follow your macOS setting, and **⌘Z** undoes a correction. Spelling underlines stay out of the exported image.
+
+## Fixes
+
+The Agent Prompt identifies a recording of a window or a selected area so someone reading the report knows which part of the screen it shows.
+]]></description>
+            <enclosure url="https://github.com/tommyent/sukusho/releases/download/v1.3.0-beta.5/Sukusho-1.3.0-beta.5.dmg" length="22135600" type="application/octet-stream" sparkle:edSignature="oEQxwhYOjDaK/olV5h9tYOJ5xmWjZX+e7rZRSK2UpbWra3upwBqu2Lig8RceJ+WjHLY4cL5uq0+KWlwS7GQiBw=="/>
+        </item>
+        <item>
             <title>1.3.0 beta 4</title>
             <pubDate>Thu, 19 Nov 2026 04:27:56 -0500</pubDate>
             <link>https://tommyent.github.io/sukusho/</link>
