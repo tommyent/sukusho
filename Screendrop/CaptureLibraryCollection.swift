@@ -177,6 +177,11 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
             return parent.dragWriter?(parent.items[index])
         }
 
+        func collectionView(_ collectionView: NSCollectionView, draggingSession session: NSDraggingSession,
+                            willBeginAt screenPoint: NSPoint, forItemsAt indexPaths: Set<IndexPath>) {
+            (collectionView as? LibraryCollectionView)?.setPressed(nil)
+        }
+
         func configure(_ item: NSCollectionViewItem, at indexPath: IndexPath) {
             guard let cell = item as? LibraryCollectionItem, let index = order.index(at: indexPath), parent.items.indices.contains(index) else { return }
             let entry = parent.items[index]
@@ -305,7 +310,10 @@ final class LibraryCollectionView: NSCollectionView, NSUserInterfaceValidations 
         register(LibraryCollectionItem.self, forItemWithIdentifier: LibraryCollectionItem.identifier)
     }
 
-    override func menu(for event: NSEvent) -> NSMenu? { contextMenuProvider?(event) }
+    override func menu(for event: NSEvent) -> NSMenu? {
+        setPressed(nil)
+        return contextMenuProvider?(event)
+    }
 
     private weak var pressedItem: LibraryCollectionItem?
     private var pressMonitor: Any?
@@ -332,7 +340,7 @@ final class LibraryCollectionView: NSCollectionView, NSUserInterfaceValidations 
         }
     }
 
-    private func setPressed(_ item: LibraryCollectionItem?) {
+    func setPressed(_ item: LibraryCollectionItem?) {
         guard item !== pressedItem else { return }
         pressedItem?.isPressed = false
         pressedItem = item
