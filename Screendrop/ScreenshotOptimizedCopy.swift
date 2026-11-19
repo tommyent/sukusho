@@ -17,16 +17,18 @@ extension ScreenshotFileActions {
     /// unless something else was copied meanwhile. The history entry the copy made is updated in place, not
     /// doubled. Copying the same file again while the clipboard still holds this copy of it adds nothing and
     /// doesn't start the optimizer again. `optimized` gets the saving ("↓18%") and the new size once the swap
-    /// is made.
+    /// is made. False when nothing was written because something newer reached the clipboard while the image
+    /// was read: the caller mustn't say "Copied" or close then.
     ///
     /// The owner's choice (2026-11-18): waiting for the optimizer before anything happened made ⌘C feel
     /// unresponsive and led to pressing it again; Clop, which they used before, never made them wait.
+    @discardableResult
     static func copyImageToClipboard(from url: URL, original: Bool = false,
-                                     optimized: @escaping (_ saving: String, _ bytes: Int) -> Void = { _, _ in }) async throws {
+                                     optimized: @escaping (_ saving: String, _ bytes: Int) -> Void = { _, _ in }) async throws -> Bool {
         guard !original, OptimizePreferences.whenCopying else {
             let isJPEG = UTType(filenameExtension: url.pathExtension)?.conforms(to: .jpeg) == true
             try await copyImageToClipboard(from: url, dataType: isJPEG ? NSPasteboard.PasteboardType(UTType.jpeg.identifier) : .png)
-            return
+            return true
         }
         // A file made only for this copy: kept while the clipboard names it, as every optimized copy's is.
         var made: ImageOptimizationResult?
@@ -37,7 +39,7 @@ extension ScreenshotFileActions {
         let key = await Task.detached { FileIdentity(url)?.digest }.value
         // The original is read inside the copy's turn, not before it: reading takes time, and a copy made
         // meanwhile must not be written over.
-        _ = try await OptimizedImageCopy.shared.copyNow(key: key.map { AnyHashable($0) } ?? AnyHashable(UUID()), first: {
+        let (outcome, _) = try await OptimizedImageCopy.shared.copyNow(key: key.map { AnyHashable($0) } ?? AnyHashable(UUID()), first: {
             let item = try await clipboardItem(for: url)
             // Filed in history by `record`, when it is written; the monitor's poll leaves Sukusho's own writes alone.
             item.setData(Data(), forType: .init(ClipboardCapturePolicy.ownType))
@@ -68,6 +70,7 @@ extension ScreenshotFileActions {
             let bytes = (try? FileManager.default.attributesOfItem(atPath: swappedIn.file.path)[.size] as? NSNumber)?.intValue
             optimized(swappedIn.saving, bytes ?? 0)
         })
+        return outcome != .overtaken
     }
 
     /// The image file at `url` as the pasteboard item an image copy writes: its data in its own type (JPEG, or

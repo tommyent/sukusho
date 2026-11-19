@@ -604,7 +604,12 @@ struct AnnotationEditorWindow: View {
                     )
                 }
                 // No result means nothing was drawn: the original is the image.
-                try await ScreenshotFileActions.copyImageToClipboard(from: resultURL ?? sourceURL, original: original)
+                guard try await ScreenshotFileActions.copyImageToClipboard(from: resultURL ?? sourceURL, original: original) else {
+                    // Something newer reached the clipboard while the image was read: nothing was copied, so the
+                    // editor stays, edits saved, for another ⌘C.
+                    isFinishing = false
+                    return
+                }
                 // The window usually closes, so a toast says the image went to the clipboard.
                 let display = ActiveDisplayResolver.activeDisplayID()
                 let toast = {

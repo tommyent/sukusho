@@ -79,9 +79,10 @@ final class ScreenshotPreviewStack {
         return items.filter { $0.autoSavedURL == nil && !$0.url.standardizedFileURL.path.hasPrefix(library) }
     }
 
-    @ObservationIgnored private let copyImage: (URL) async throws -> Void
+    /// Whether the image went on the clipboard: false when something newer got there while it was read.
+    @ObservationIgnored private let copyImage: (URL) async throws -> Bool
 
-    init(copyImage: @escaping (URL) async throws -> Void = { try await ScreenshotFileActions.copyImageToClipboard(from: $0) }) {
+    init(copyImage: @escaping (URL) async throws -> Bool = { try await ScreenshotFileActions.copyImageToClipboard(from: $0) }) {
         self.copyImage = copyImage
     }
 
@@ -992,8 +993,8 @@ final class ScreenshotPreviewStack {
 
     private func copyURLToClipboard(_ url: URL, original: Bool = false) async -> Bool {
         do {
-            if original { try await ScreenshotFileActions.copyImageToClipboard(from: url, original: true) } else { try await copyImage(url) }
-            return true
+            if original { return try await ScreenshotFileActions.copyImageToClipboard(from: url, original: true) }
+            return try await copyImage(url)
         } catch {
             print("Failed to copy screenshot: \(error)")
             return false
