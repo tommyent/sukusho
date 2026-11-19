@@ -23,6 +23,7 @@ import ScreenCaptureKit
 nonisolated enum ScreendropIntentError: Error, CustomLocalizedStringResourceConvertible {
     case captureCancelled
     case noTextRecognized
+    case recognitionFailed
     case recordingAlreadyActive
     case noActiveRecording
     case recordingCancelled
@@ -32,6 +33,8 @@ nonisolated enum ScreendropIntentError: Error, CustomLocalizedStringResourceConv
         switch self {
         case .captureCancelled:
             "The screenshot was canceled before it could be captured."
+        case .recognitionFailed:
+            "Text recognition failed. Try again in a moment."
         case .noTextRecognized:
             "No text was recognized in the captured area."
         case .recordingAlreadyActive:
@@ -104,6 +107,8 @@ nonisolated struct CaptureTextIntent: AppIntent {
         switch await CaptureCoordinator.shared.captureTextAwaiting() {
         case .cancelled:
             throw ScreendropIntentError.captureCancelled
+        case .recognitionFailed:
+            throw ScreendropIntentError.recognitionFailed
         case .noTextFound:
             throw ScreendropIntentError.noTextRecognized
         case .copied(let text):

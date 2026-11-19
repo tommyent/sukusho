@@ -15,6 +15,7 @@ import SwiftUI
 enum CaptureTextOutcome {
     case cancelled
     case noTextFound
+    case recognitionFailed
     case copied(String)
 }
 
@@ -226,6 +227,10 @@ final class CaptureCoordinator {
             text = CapturedDocumentText.plainText(blocks)
         } else {
             let read = if let readable { await ImageTextRecognizer.recognizeText(in: readable) } else { await ImageTextRecognizer.recognizeText(at: url) }
+            guard let read else {
+                CaptureTextFeedbackPresenter.shared.showRecognitionFailed(displayID: displayID)
+                return .recognitionFailed
+            }
             text = keepsLines ? read : CaptureTextParagraphs.reflowed(read)
         }
 

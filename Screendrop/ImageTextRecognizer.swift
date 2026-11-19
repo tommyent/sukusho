@@ -13,52 +13,45 @@ import Vision
 enum ImageTextRecognizer {
     /// Recognises text in the image at `url`, returning the recognised lines
     /// joined by newlines in reading order. Returns an empty string when
-    /// nothing is found.
-    static func recognizeText(at url: URL) async -> String {
+    /// nothing is found, or nil if the image could not be read.
+    static func recognizeText(at url: URL) async -> String? {
         await read { ScreenshotImageLoader.uprightImage(at: url) }
     }
 
     /// The same for an image already prepared, such as Capture Text's 2× read (`CapturedDocumentText.readable`).
-    static func recognizeText(in image: CGImage) async -> String {
+    static func recognizeText(in image: CGImage) async -> String? {
         await read { image }
     }
 
-    private static func read(_ load: @escaping @Sendable () -> CGImage?) async -> String {
+    private static func read(_ load: @escaping @Sendable () -> CGImage?) async -> String? {
         await ImageTextWarmUp.shared.waitUntilReady()
-        return await withCheckedContinuation { (continuation: CheckedContinuation<String, Never>) in
+        return await withCheckedContinuation { (continuation: CheckedContinuation<String?, Never>) in
             DispatchQueue.global(qos: .userInitiated).async {
-                guard let cgImage = load() else {
-                    continuation.resume(returning: "")
-                    return
+                guard let image = load(), let observations = try? observations(in: image) else {
+                    return continuation.resume(returning: nil)
                 }
-
-                let request = VNRecognizeTextRequest()
-                request.recognitionLevel = .accurate
-                request.usesLanguageCorrection = true
-
-                let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-                do {
-                    try handler.perform([request])
-                    let observations = request.results ?? []
-                    let lines = readingOrder(observations)
-                        .compactMap { $0.topCandidates(1).first?.string }
-                    continuation.resume(returning: lines.joined(separator: "\n"))
-                } catch {
-                    continuation.resume(returning: "")
-                }
+                continuation.resume(returning: observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n"))
             }
         }
     }
 
-    /// The lines in `image` in reading order, for the Library's text index.
-    /// Synchronous and slow when Vision is cold: call it off the main thread
-    /// and off the cooperative pool. Throws when Vision itself fails.
+    nonisolated static func withFallback<T>(_ recognize: (VNRequestTextRecognitionLevel) throws -> T) rethrows -> T {
+        do { return try recognize(.accurate) } catch { return try recognize(.fast) }
+    }
+
+    nonisolated private static func observations(in image: CGImage) throws -> [VNRecognizedTextObservation] {
+        try withFallback { level in
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = level
+            request.usesLanguageCorrection = true
+            try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+            return readingOrder(request.results ?? [])
+        }
+    }
+
+    /// The lines in an image, in reading order. Run off the main thread and cooperative pool.
     nonisolated static func recognizeLines(in image: CGImage) throws -> [CaptureTextLine] {
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = true
-        try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
-        return readingOrder(request.results ?? []).compactMap { observation in
+        try observations(in: image).compactMap { observation in
             guard let text = observation.topCandidates(1).first?.string.trimmingCharacters(in: .whitespacesAndNewlines),
                   !text.isEmpty else { return nil }
             let box = observation.boundingBox
