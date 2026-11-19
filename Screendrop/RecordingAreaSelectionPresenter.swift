@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import QuartzCore
 import ScreenCaptureKit
 
 /// The drag-an-area picker: for an area recording and a scrolling capture on
@@ -72,6 +73,7 @@ final class RecordingAreaSelectionPresenter {
                 height: localRect.height
             )
         }
+        revealPanels()
     }
 
     /// The picker of the Area screenshot and Capture Text, on every display:
@@ -102,6 +104,7 @@ final class RecordingAreaSelectionPresenter {
                 }
             }
             guard !panels.isEmpty else { return finish(rect: nil) }
+            revealPanels()
             freezeTask = Task { await freezeFrames(windows: windows) }
         }
     }
@@ -121,6 +124,9 @@ final class RecordingAreaSelectionPresenter {
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = false
+        // Order the nonactivating panel and install its cursor before showing the selection surface.
+        panel.alphaValue = 0
+        panel.animationBehavior = .none
         panel.level = .screenSaver
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.isReleasedWhenClosed = false
@@ -154,11 +160,37 @@ final class RecordingAreaSelectionPresenter {
         if panels.isEmpty {
             installEventMonitor()
             watchSystemScreenshot(generation: session.open())
+            // One cursor stack entry for the selection, including selections spanning multiple displays.
+            NSCursor.annotationPlus.push()
             panel.makeKeyAndOrderFront(nil)
         }
         panels.append(panel)
         panel.orderFrontRegardless()
-        selectionView.beginSelectionCursorSession()
+        panel.resetCursorRects()
+        panel.displayIfNeeded()
+    }
+
+    private func revealPanels() {
+        let generation = session.generation
+        Task { @MainActor in
+            let cursor = NSCursor.annotationPlus
+            let deadline = ContinuousClock.now + .milliseconds(500)
+            var matchedLastFrame = false
+            CATransaction.flush()
+            // An inactive panel can be key before WindowServer displays its cursor.
+            while session.generation == generation, panels.contains(where: { $0.frame.contains(NSEvent.mouseLocation) }) {
+                cursor.set()
+                guard let displayed = NSCursor.currentSystem else { break }
+                let matches = displayed.hotSpot == cursor.hotSpot && displayed.image.size == cursor.image.size
+                if matches && matchedLastFrame { break }
+                // Keep the picker usable if macOS reports customized or unavailable artwork.
+                guard ContinuousClock.now < deadline else { break }
+                matchedLastFrame = matches
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+            guard session.generation == generation else { return }
+            for panel in panels { panel.alphaValue = 1 }
+        }
     }
 
     private func finish(rect: CGRect?) {
@@ -170,11 +202,13 @@ final class RecordingAreaSelectionPresenter {
         freezeTask = nil
         removeEventMonitor()
         stopWatchingSystemScreenshot()
-        for panel in panels {
-            (panel.contentView as? RecordingAreaSelectionView)?.endSelectionCursorSession()
-            panel.orderOut(nil)
+        if !panels.isEmpty {
+            for panel in panels { panel.alphaValue = 0 }
+            CATransaction.flush()
+            for panel in panels { panel.orderOut(nil) }
+            NSCursor.pop()
+            panels.removeAll()
         }
-        panels = []
         completion?(rect)
     }
 
@@ -269,7 +303,6 @@ private final class RecordingAreaSelectionView: NSView {
     /// How far above the display's bottom edge the line about Shift and
     /// Option sits; nil once it has been shown often enough.
     private let hintInset: CGFloat?
-    private var didPushSelectionCursor = false
 
     /// Where the pointer is, while it's on this display.
     private var pointer: CGPoint?
@@ -308,16 +341,6 @@ private final class RecordingAreaSelectionView: NSView {
 
     required init?(coder: NSCoder) {
         nil
-    }
-
-    deinit {
-        endSelectionCursorSession()
-    }
-
-    /// The same bold crosshair for every picker: the system's thin one read as an ordinary pointer on the Area
-    /// screenshot and Capture Text pickers, where the area recording's showed clearly (owner, 2026-11-17).
-    private var selectionCursor: NSCursor {
-        .annotationPlus
     }
 
     private var modifiers: NSEvent.ModifierFlags {
@@ -483,37 +506,15 @@ private final class RecordingAreaSelectionView: NSView {
     // MARK: - Cursor
 
     override func resetCursorRects() {
-        addCursorRect(bounds, cursor: selectionCursor)
-    }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        window?.invalidateCursorRects(for: self)
-        if window != nil {
-            beginSelectionCursorSession()
-        } else {
-            endSelectionCursorSession()
-        }
+        addCursorRect(bounds, cursor: .annotationPlus)
     }
 
     override func cursorUpdate(with event: NSEvent) {
-        beginSelectionCursorSession()
+        NSCursor.annotationPlus.set()
     }
 
-    func beginSelectionCursorSession() {
-        if didPushSelectionCursor {
-            selectionCursor.set()
-        } else {
-            selectionCursor.push()
-            didPushSelectionCursor = true
-        }
-    }
-
-    func endSelectionCursorSession() {
-        guard didPushSelectionCursor else { return }
-
-        NSCursor.pop()
-        didPushSelectionCursor = false
+    override func mouseEntered(with event: NSEvent) {
+        NSCursor.annotationPlus.set()
     }
 
     // MARK: - Pointer
@@ -521,10 +522,10 @@ private final class RecordingAreaSelectionView: NSView {
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach(removeTrackingArea)
-        guard isScreenshot else { return }
         // The panels on other displays aren't key, and still follow the pointer.
-        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-                                       owner: self))
+        var options: NSTrackingArea.Options = [.mouseEnteredAndExited, .activeAlways, .inVisibleRect]
+        if isScreenshot { options.insert(.mouseMoved) }
+        addTrackingArea(NSTrackingArea(rect: .zero, options: options, owner: self))
     }
 
     override func mouseMoved(with event: NSEvent) {
@@ -562,8 +563,7 @@ private final class RecordingAreaSelectionView: NSView {
     }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
-        beginSelectionCursorSession()
-        return true
+        true
     }
 
     override func mouseDragged(with event: NSEvent) {
