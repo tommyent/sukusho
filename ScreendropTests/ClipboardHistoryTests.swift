@@ -1479,13 +1479,14 @@ struct ClipboardImageMatchTests {
 @Suite
 struct LibraryGridMetricsTests {
     @Test func narrowCardsGiveWayInOrder() {
-        let widths: [CGFloat] = [220, 190, 170, 160, 140]
+        let widths: [CGFloat] = [220, 190, 165, 160, 140]
         let stages = widths.map { width in
             let d = LibraryCardDensity(width: width)
             return [d.showsSocial, d.showsPillText, d.separatesLocks, d.showsFullDate]
         }
         #expect(stages == [[true, true, true, true], [false, true, true, true], [false, false, true, true],
-                           [false, false, false, true], [false, false, false, false]])
+                           [false, false, false, false], [false, false, false, false]])
+        #expect(!LibraryCardDensity(width: 164.9).showsFullDate)
     }
 
     @Test func marksStayInTheirOwnCorners() {

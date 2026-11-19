@@ -236,5 +236,5 @@ nonisolated struct LibraryCardDensity {
     var showsSocial: Bool { width >= 200 }
     var showsPillText: Bool { width >= 180 }
     var separatesLocks: Bool { width >= 165 }
-    var showsFullDate: Bool { width >= 155 }
+    var showsFullDate: Bool { width >= 165 }
 }
