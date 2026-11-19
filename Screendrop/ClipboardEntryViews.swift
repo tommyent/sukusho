@@ -54,9 +54,7 @@ struct ClipboardRowTile: View {
             } else {
                 Image(systemName: symbol)
                     .font(.system(size: size * 0.5, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(.quaternary.opacity(0.6))
+                    .foregroundStyle(CardMark.kindSymbol)
             }
         }
         .frame(width: size, height: size)
@@ -69,9 +67,7 @@ struct ClipboardRowTile: View {
         case .snippet: "text.badge.star"
         case .files: "doc"
         case .image: "photo"
-        case .text:
-            ClipboardList.textForm(of: entry) == .link ? "link"
-                : ClipboardList.looksLikeCode(entry) ? "chevron.left.forwardslash.chevron.right" : "text.alignleft"
+        case .text: (ClipboardList.clipKind(of: entry) ?? .text).symbol
         }
     }
 }

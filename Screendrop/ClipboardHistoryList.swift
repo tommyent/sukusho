@@ -248,7 +248,7 @@ nonisolated enum ClipboardList {
         }
     }
 
-    static func kindPill(of entry: ClipboardEntry) -> LibraryClipKind? {
+    static func clipKind(of entry: ClipboardEntry) -> LibraryClipKind? {
         switch textForm(of: entry) {
         case .plain: looksLikeCode(entry) ? .code : .text
         case .link: .link

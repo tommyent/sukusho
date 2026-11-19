@@ -1573,12 +1573,12 @@ struct ClipboardCardTextTests {
 
     @Test func textIsSaidOnceAndNamedByKind() {
         #expect(ClipboardList.cardTitle(of: text("Meeting moved to 3pm")) == nil)
-        #expect(ClipboardList.kindPill(of: text("Meeting moved to 3pm")) == .text)
+        #expect(ClipboardList.clipKind(of: text("Meeting moved to 3pm")) == .text)
         #expect(ClipboardList.cardTitle(of: text("https://nspasteboard.org/")) == nil)
-        #expect(ClipboardList.kindPill(of: text("https://nspasteboard.org/")) == .link)
+        #expect(ClipboardList.clipKind(of: text("https://nspasteboard.org/")) == .link)
         // A color keeps a title, as copied; its face is the swatch.
         #expect(ClipboardList.cardTitle(of: text(" #ff6363 ")) == "#ff6363")
-        #expect(ClipboardList.kindPill(of: text("#ff6363")) == nil)
+        #expect(ClipboardList.clipKind(of: text("#ff6363")) == nil)
     }
 
     @Test func codeIsRecognizedByWhatItSays() {
@@ -1594,7 +1594,7 @@ struct ClipboardCardTextTests {
         #expect(!ClipboardList.isCodeLike("[Meeting notes] tomorrow"))
         #expect(ClipboardList.isCodeLike(swift))
         #expect(ClipboardList.isCodeLike("func tailPath(radius r: CGFloat, tip d: CGFloat) -> CGPath {"))
-        #expect(ClipboardList.kindPill(of: text(swift, from: "com.tommyent.Sukusho.dev")) == .code)
+        #expect(ClipboardList.clipKind(of: text(swift, from: "com.tommyent.Sukusho.dev")) == .code)
         #expect(!ClipboardList.isCodeLike("Meeting moved to 3pm"))
         // Astra R2: prose that starts with a keyword or ends in a semicolon isn't code.
         for prose in ["Please send the revised draft;", "return home before dinner", "let me know tomorrow",
@@ -1611,7 +1611,7 @@ struct ClipboardCardTextTests {
         #expect(!ClipboardList.isCodeLike("Let me know if the fix works.\nThanks!"))
         #expect(!ClipboardList.isCodeLike("hello@example.com"))
         // From a code app, any plain text counts, as before.
-        #expect(ClipboardList.kindPill(of: text("ls -la", from: "com.apple.Terminal")) == .code)
+        #expect(ClipboardList.clipKind(of: text("ls -la", from: "com.apple.Terminal")) == .code)
     }
 
     /// Fable #3: rgb() and hsl() get a swatch, as hex does.

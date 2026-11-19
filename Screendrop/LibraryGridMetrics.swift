@@ -58,6 +58,10 @@ nonisolated enum LibraryCardDepth {
         self = deleting ? .deleting : pressed ? .pressed : hovering ? .hovering : .resting
     }
 
+    static func textWell(in appearance: ColorScheme) -> Color {
+        appearance == .dark ? Color(red: 38/255, green: 40/255, blue: 44/255) : Color(red: 236/255, green: 239/255, blue: 242/255)
+    }
+
     var lift: CGFloat {
         switch self {
         case .resting: 0
@@ -144,7 +148,6 @@ nonisolated struct LibraryDisplayOrder {
 
 /// Badge style B (owner’s choice, 2026-10-13) uses a near-opaque white ground,
 /// a hairline and a small shadow to keep marks visible over thumbnails.
-/// In dark appearance, the clipboard kind pill uses a dark gray ground and a near-white symbol.
 enum CardMark {
     static let fill = Color.white.opacity(0.94)
     static let text = Color(red: 0x1D / 255, green: 0x1D / 255, blue: 0x1F / 255)
@@ -152,9 +155,7 @@ enum CardMark {
     /// #1E9E4A: 3.5:1 on the white ground, where systemGreen is 2.2:1.
     static let green = Color(red: 0x1E / 255, green: 0x9E / 255, blue: 0x4A / 255)
 
-    static func kindColors(in appearance: ColorScheme) -> (symbol: Color, fill: Color) {
-        appearance == .dark ? (Color(white: 0.96), idle) : (text, fill)
-    }
+    static let kindSymbol = Color(nsColor: .secondaryLabelColor)
 }
 
 nonisolated enum LibraryClipKind: String {
@@ -216,7 +217,7 @@ nonisolated struct LibraryCardMarks {
     init(clip: ClipboardEntry, upload: CloudUpload?) {
         self.init(cloud: clip.cloudLinks.isEmpty ? nil : .shared, upload: upload,
                   tall: clip.kind == .image && TallCapture.isTall(width: clip.pixelWidth, height: clip.pixelHeight),
-                  versions: clip.earlierVersions.count + 1, content: ClipboardList.kindPill(of: clip).map(Pill.kind))
+                  versions: clip.earlierVersions.count + 1, content: ClipboardList.clipKind(of: clip).map(Pill.kind))
     }
 }
 

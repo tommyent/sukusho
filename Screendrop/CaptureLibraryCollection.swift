@@ -846,18 +846,18 @@ struct CardCloudBadge: View {
 }
 
 extension View {
-    func cardMark<S: InsettableShape>(_ shape: S, fill: Color = CardMark.fill) -> some View {
+    func cardMark<S: InsettableShape>(_ shape: S) -> some View {
         environment(\.colorScheme, .light)
-            .background { shape.fill(fill).shadow(color: .black.opacity(0.25), radius: 1.5, y: 1) }
+            .background { shape.fill(CardMark.fill).shadow(color: .black.opacity(0.25), radius: 1.5, y: 1) }
             .overlay { shape.strokeBorder(.black.opacity(0.15), lineWidth: 0.5) }
     }
 
     /// A small pill of dark text on that ground, such as a video's length.
-    func cardPill(_ tint: Color = CardMark.text, fill: Color = CardMark.fill) -> some View {
+    func cardPill(_ tint: Color = CardMark.text) -> some View {
         font(.system(size: 10, weight: .semibold))
             .padding(.horizontal, 6).padding(.vertical, 3)
             .foregroundStyle(tint)
-            .cardMark(Capsule(), fill: fill)
+            .cardMark(Capsule())
     }
 }
 
@@ -885,7 +885,7 @@ private struct LibraryCardChip: ViewModifier {
         let shape = RoundedRectangle(cornerRadius: radius, style: .circular)
         let strength: Double = usesTextWell ? 0.45 : 1
         let well: Color = if usesTextWell {
-            dark ? Color(red: 38/255, green: 40/255, blue: 44/255) : Color(red: 236/255, green: 239/255, blue: 242/255)
+            LibraryCardDepth.textWell(in: colorScheme)
         } else {
             dark ? Color(red: 40 / 255, green: 38 / 255, blue: 39 / 255) : Color.white
         }

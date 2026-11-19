@@ -6,7 +6,6 @@ extension EnvironmentValues {
 }
 
 struct LibraryGridCard<Picture: View, Caption: View>: View {
-    @Environment(\.colorScheme) private var colorScheme
     let marks: LibraryCardMarks
     let cloudAction: () -> Void
     var cloudEnabled = true
@@ -82,9 +81,10 @@ struct LibraryGridCard<Picture: View, Caption: View>: View {
         case .versions(let n): compactLabel("\(n)", symbol: "square.stack", density: density).cardPill().help("\(n) versions")
         case .duration(let time): Label(time, systemImage: "play.fill").cardPill().monospacedDigit()
         case .kind(let kind):
-            let colors = CardMark.kindColors(in: colorScheme)
             Image(systemName: kind.symbol)
-                .cardPill(colors.symbol, fill: colors.fill)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(CardMark.kindSymbol)
+                .padding([.bottom, .trailing], 2)
                 .accessibilityLabel(kind.rawValue).help(kind.rawValue.capitalized)
         case .gallery(let n): Label("\(n)", systemImage: "photo.stack").cardPill().help("\(n) images")
         }

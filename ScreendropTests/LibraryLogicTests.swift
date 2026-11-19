@@ -1,18 +1,29 @@
+import AppKit
 import Foundation
 import SwiftUI
 import Testing
 
 struct LibraryLogicTests {
-    @Test func clipboardKindPillsHaveContrastingSymbolsInBothAppearances() {
-        func luminance(_ color: Color) -> Float {
-            let c = color.resolve(in: EnvironmentValues())
-            return 0.2126 * c.linearRed + 0.7152 * c.linearGreen + 0.0722 * c.linearBlue
+    @MainActor @Test func bareClipboardMarksContrastWithTheTextWell() throws {
+        for scheme in [ColorScheme.light, .dark] {
+            let well = LibraryCardDepth.textWell(in: scheme)
+            let swatches = HStack(spacing: 0) {
+                well
+                CardMark.kindSymbol.background(well)
+            }
+            .frame(width: 20, height: 10)
+            .environment(\.colorScheme, scheme)
+            let bitmap = NSBitmapImageRep(cgImage: try #require(ImageRenderer(content: swatches).cgImage))
+            func luminance(at x: Int) throws -> Float {
+                let pixel = try #require(bitmap.colorAt(x: x, y: 5))
+                let color = Color(nsColor: pixel).resolve(in: EnvironmentValues())
+                return 0.2126 * color.linearRed + 0.7152 * color.linearGreen + 0.0722 * color.linearBlue
+            }
+            let face = try luminance(at: 5)
+            let mark = try luminance(at: 15)
+            #expect((max(face, mark) + 0.05) / (min(face, mark) + 0.05) >= 3)
+            #expect(scheme == .light ? mark < face : mark > face)
         }
-        let dark = CardMark.kindColors(in: .dark)
-        let light = CardMark.kindColors(in: .light)
-        #expect((luminance(dark.symbol) + 0.05) / (luminance(dark.fill) + 0.05) >= 3)
-        #expect((luminance(light.fill) + 0.05) / (luminance(light.symbol) + 0.05) >= 3)
-        #expect(light.fill == CardMark.fill && light.symbol == CardMark.text)
     }
 
     @Test func cachedShadowMatchesItsRoundedRectangleAfterResizing() {

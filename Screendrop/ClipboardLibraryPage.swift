@@ -200,7 +200,7 @@ struct ClipboardCard: View {
                     .lineLimit(6)
                     .padding(DS.Space.l)
                     // Room for the kind symbol in the bottom corner, so it never sits over the last line (Astra R2).
-                    .padding(.bottom, ClipboardList.kindPill(of: entry) == nil ? 0 : 8)
+                    .padding(.bottom, ClipboardList.clipKind(of: entry) == nil ? 0 : 8)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
         }
