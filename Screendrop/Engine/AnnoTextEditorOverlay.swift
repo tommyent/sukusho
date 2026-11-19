@@ -10,6 +10,7 @@ import Foundation
 /// Ported from the drawing-app's `UI/TextEditorOverlay.swift`.
 @MainActor
 final class AnnoTextEditorOverlay: NSTextView {
+    private var replacingText = false
     private weak var editor: AnnoEditor?
     private var shapeId: AnnoShapeID?
 
@@ -69,6 +70,8 @@ final class AnnoTextEditorOverlay: NSTextView {
         // The shape owns wrapping: it measures the text and sets the frame, so the container must
         // not impose a width of its own.
         textContainer?.widthTracksTextView = false
+        isContinuousSpellCheckingEnabled = true
+        // NSTextView follows the system correction preference until an app overrides it.
         allowsUndo = false
         focusRingType = .none
         delegate = self
@@ -198,6 +201,14 @@ final class AnnoTextEditorOverlay: NSTextView {
         super.draw(dirtyRect)
     }
 
+    override func shouldChangeText(inRanges ranges: [NSValue], replacementStrings strings: [String]?) -> Bool {
+        let allowed = super.shouldChangeText(inRanges: ranges, replacementStrings: strings)
+        replacingText = allowed && zip(ranges, strings ?? []).contains { range, replacement in
+            range.rangeValue.length > 0 && !replacement.isEmpty
+        }
+        return allowed
+    }
+
     override func cancelOperation(_ sender: Any?) {
         // Commits the text and puts the Text tool away, as Escape does for every tool.
         editor?.escapeSelectionOrDisarm()
@@ -207,6 +218,10 @@ final class AnnoTextEditorOverlay: NSTextView {
 extension AnnoTextEditorOverlay: NSTextViewDelegate {
     func textDidChange(_ notification: Notification) {
         guard let shapeId else { return }
+        if replacingText, let editor, editor.document.shape(shapeId)?.textProps?.text != string {
+            editor.markUndo()
+        }
+        replacingText = false
         editor?.updateEditingText(shapeId, to: string)
         // The shape may have grown or moved to keep its alignment anchor; follow it.
         sync()
