@@ -39,10 +39,9 @@ extension ScreenshotFileActions {
             let item = try await clipboardItem(for: url)
             // Filed in history by `record`, when it is written; the monitor's poll leaves Sukusho's own writes alone.
             item.setData(Data(), forType: .init(ClipboardCapturePolicy.ownType))
-            // A repeat is a copy of the same bytes, not of a file with the same name, size and date: a file
-            // rewritten with other pixels and the same size and time is a new copy (Sol, round 2).
-            let key = await Task.detached { FileIdentity(url)?.digest }.value
-            return .init(item: item, key: key.map { AnyHashable($0) } ?? AnyHashable(UUID()))
+            // A repeat is a copy of the same bytes from the same file: keyed on the bytes this item carries, read
+            // once with it, not on a second read of the file, which could find other bytes (Astra, round 3).
+            return .init(item: item, key: await OptimizedImageCopy.key(of: item))
         }, record: { item in
             await ClipboardHistoryModel.shared.recordOwnCopy(item)
         }, smaller: {

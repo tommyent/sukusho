@@ -1549,6 +1549,26 @@ private func isRunning(_ text: String) -> Bool {
         #expect(bench.leftovers.isEmpty)
     }
 
+    /// Astra, round 3: an image copy is a copy of the bytes its item carries and of the file that item names. Two
+    /// files with the same bytes are two copies (a file paste gets the file named), and a file with other bytes is
+    /// another copy; the same file with the same bytes is a repeat.
+    @Test func anImageCopyIsKeyedOnTheBytesItCarriesAndTheFileItNames() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let a = try Data(contentsOf: try bench.file("A.png", Sample.screenshot(width: 320, height: 200, seed: 50)))
+        let b = try Data(contentsOf: try bench.file("B.png", Sample.screenshot(width: 320, height: 200, seed: 51)))
+        func item(_ bytes: Data, file: String) -> NSPasteboardItem {
+            let item = NSPasteboardItem()
+            item.setData(bytes, forType: .png)
+            item.setString("file:///Captures/\(file)", forType: .fileURL)
+            return item
+        }
+        let first = await OptimizedImageCopy.key(of: item(a, file: "One.png"))
+        #expect(await OptimizedImageCopy.key(of: item(a, file: "One.png")) == first)
+        #expect(await OptimizedImageCopy.key(of: item(a, file: "Two.png")) != first)
+        #expect(await OptimizedImageCopy.key(of: item(b, file: "One.png")) != first)
+    }
+
     /// Astra, round 3: with A on the pasteboard, a copy of B starts and is still reading when A is copied again. The
     /// repeat writes nothing but is the newest copy, so B, older, can't land after it; and A's own swap, held back
     /// meanwhile, still goes in, since the repeat was of A.

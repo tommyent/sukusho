@@ -89,6 +89,15 @@ final class OptimizedImageCopy {
         let key: AnyHashable
     }
 
+    /// What an image item is a copy of: the bytes it carries, hashed from the item itself so they are the bytes
+    /// written, and the file it names (`public.file-url`), which a file paste uses, so two files with the same
+    /// bytes are two copies (Astra, round 3).
+    static func key(of item: NSPasteboardItem) async -> AnyHashable {
+        guard let bytes = imageData(of: item) else { return AnyHashable(UUID()) }
+        let digest = await Task.detached { ClipboardPasteboardReader.digest(bytes) }.value
+        return AnyHashable([item.string(forType: .fileURL) ?? "", digest])
+    }
+
     /// A copy nobody waits for: the item `first` makes goes on the pasteboard as soon as it is read, and
     /// this returns. `record` files that write in history at once and names the card it went on. The item
     /// `smaller` makes, if it makes one, then takes its place, only while the pasteboard still holds the
