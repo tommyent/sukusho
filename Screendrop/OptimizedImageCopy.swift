@@ -261,14 +261,19 @@ final class OptimizedImageCopy {
             results.forEach { $0.discard() }
             return nil
         }
-        cancelSwap?()
-        cancelSwap = nil
         do {
             try write(results.map(\.url))
         } catch {
+            // A write that failed before it cleared the pasteboard, as when a selected capture is gone and its
+            // snapshot can't be made, left the held copy there, so its swap may still go in (Astra, round 4). One
+            // that cleared it moved the count, and the swap gives up by itself.
             results.forEach { $0.discard() }
             throw error
         }
+        // This copy replaced the held one: a swap still coming for that one is moot. `write` doesn't suspend, so
+        // the swap couldn't go in meanwhile.
+        cancelSwap?()
+        cancelSwap = nil
         return results
     }
 }

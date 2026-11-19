@@ -1735,6 +1735,45 @@ private func isRunning(_ text: String) -> Bool {
         }
     }
 
+    /// Astra, round 4: a selection whose write fails before it clears the pasteboard, as when a selected capture is
+    /// gone and its clipboard snapshot can't be made, leaves the clipboard's image there, and that image's swap still
+    /// goes in.
+    @Test func aSelectionThatFailsBeforeItWritesLeavesTheHeldSwapToGoIn() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let a = try bench.file("A.png", Sample.screenshot(width: 640, height: 400, seed: 59))
+        let gone = bench.folder.appending(path: "Gone.png")
+        let optimizedA = try await bench.optimizer.optimize(a)
+        defer { optimizedA.discard() }
+        #expect(optimizedA.outcome == .optimized)
+        let copier = OptimizedImageCopy()
+        let board = pasteboard()
+        defer { board.releaseGlobally() }
+        let (releaseSwap, doReleaseSwap) = AsyncStream<Void>.makeStream()
+        let (first, swapA) = try await copier.copyNow(to: board, first: { .init(item: try item(a), key: "A") }) {
+            for await _ in releaseSwap { break }
+            return swapIn(optimizedA)
+        }
+        #expect(first == .written)
+        let swapTask = try #require(swapA)
+        let count = board.changeCount
+
+        await #expect(throws: (any Error).self) {
+            try await copier.copyAll([gone], to: board, ready: { .original($0) }, write: { files in
+                try ClipboardFiles.withClipboardSnapshots(of: files) { snapshots in
+                    board.clearContents()
+                    guard board.writeObjects(snapshots as [NSURL]) else { throw CocoaError(.fileWriteUnknown) }
+                }
+            })
+        }
+        #expect(board.changeCount == count)
+        #expect(board.data(forType: .png) == (try Data(contentsOf: a)))
+
+        doReleaseSwap.yield()
+        #expect(await swapTask.value)
+        #expect(board.data(forType: .png) == (try Data(contentsOf: optimizedA.url)))
+    }
+
     /// Astra, round 4, found along the way: an image copied as it is (Copy Original, or with optimizing off) takes
     /// its turn before it reads the file, as the optimized copy does. A copy asked for while it reads, even a repeat of
     /// the clipboard's image that writes nothing, is newer, and the older copy doesn't land after it.
