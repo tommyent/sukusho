@@ -39,7 +39,21 @@ struct AppThemeTests {
                 #expect(density.pictureInset == 0 && density.cornerRadius == 0 && density.pictureRadius == 0, "\(theme.id) \(width)")
             }
         }
-        #expect(AppTheme.chipDark.card.face == [.rgb(0x141517)])
+    }
+
+    /// The owner, 2026-11-19: "I would keep the colours the same." Chip changes the card's shape only, so every colour it
+    /// shares with Classic is Classic's: ink, chrome, ground, the face behind the label, the wells and the marks.
+    @Test func chipKeepsClassicsColours() {
+        for (chip, classic) in [(AppTheme.chipLight, AppTheme.classicLight), (.chipDark, .classicDark)] {
+            #expect(chip.isDark == classic.isDark)
+            #expect(chip.ink == classic.ink, "\(chip.id)")
+            #expect(chip.chrome == classic.chrome, "\(chip.id)")
+            #expect(chip.ground == classic.ground, "\(chip.id)")
+            #expect(chip.marks == classic.marks, "\(chip.id)")
+            #expect(chip.card.face == classic.card.face, "\(chip.id)")
+            #expect(chip.card.well == classic.card.well, "\(chip.id)")
+            #expect(chip.card.textWell == classic.card.textWell, "\(chip.id)")
+        }
     }
 
     /// Titles are drawn in the theme's ink on the card's face, top and bottom of its gradient.

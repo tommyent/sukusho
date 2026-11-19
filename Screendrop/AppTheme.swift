@@ -114,20 +114,22 @@ nonisolated extension AppTheme {
                    well: .rgb(0x282627), textWell: .rgb(0x26282C)),
         marks: .classic)
 
-    /// A colour chip: square, flat, the picture edge to edge above a plain label (owner's pick, 2026-11-19, sd-ygmk).
-    static let chipLight = AppTheme(
-        id: "chip-light", name: "Chip Light", isDark: false,
-        ink: classicLight.ink, chrome: classicLight.chrome, ground: classicLight.ground,
-        card: Card(recipe: .flat(edge: .rgb(0x000000, opacity: 0.3)), radius: 0, inset: 0, gutter: 11,
-                   face: [.white()], well: .white(), textWell: .rgb(0xECEFF2)),
-        marks: .classic)
+    /// A colour chip: Classic cut square and flat, the picture edge to edge above the label (owner's pick, 2026-11-19,
+    /// sd-ygmk). Only the shape changes; the owner kept Classic's colours ("I would keep the colours the same").
+    static let chipLight = chip(classicLight, id: "chip-light", name: "Chip Light", edge: .rgb(0x000000, opacity: 0.3))
+    static let chipDark = chip(classicDark, id: "chip-dark", name: "Chip Dark", edge: .white(opacity: 0.28))
 
-    static let chipDark = AppTheme(
-        id: "chip-dark", name: "Chip Dark", isDark: true,
-        ink: classicDark.ink, chrome: classicDark.chrome, ground: classicDark.ground,
-        card: Card(recipe: .flat(edge: .white(opacity: 0.28)), radius: 0, inset: 0, gutter: 11,
-                   face: [.rgb(0x141517)], well: .rgb(0x282627), textWell: .rgb(0x26282C)),
-        marks: .classic)
+    /// Classic's colours in the flat recipe: no inset, square corners, the caption on its own 11 pt gutter, and a hairline
+    /// perimeter (the mockup's strength, which is what sets a card without shadows off the ground).
+    private static func chip(_ classic: AppTheme, id: String, name: String, edge: ThemeColor) -> AppTheme {
+        var card = classic.card
+        card.recipe = .flat(edge: edge)
+        card.radius = 0
+        card.inset = 0
+        card.gutter = 11
+        return AppTheme(id: id, name: name, isDark: classic.isDark, ink: classic.ink, chrome: classic.chrome,
+                        ground: classic.ground, card: card, marks: classic.marks)
+    }
 
     static let builtIns = [classicLight, classicDark, chipLight, chipDark]
 
