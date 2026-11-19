@@ -219,7 +219,8 @@ final class RecordingInkPresenter {
         guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenBelowWindow, .excludeDesktopElements], overlay)
                 as? [[String: Any]],
               let window = windows.first(where: { info in
-                  guard let rect = info[kCGWindowBounds as String] as? [String: Any],
+                  guard let pid = info[kCGWindowOwnerPID as String] as? pid_t, pid != getpid(),
+                        let rect = info[kCGWindowBounds as String] as? [String: Any],
                         let bounds = CGRect(dictionaryRepresentation: rect as CFDictionary) else { return false }
                   return bounds.contains(point) && (info[kCGWindowAlpha as String] as? Double ?? 1) > 0
               }), recordedWindow == nil || window[kCGWindowNumber as String] as? CGWindowID == recordedWindow,
