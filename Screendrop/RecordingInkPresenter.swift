@@ -24,8 +24,6 @@ final class RecordingInkPresenter {
     @ObservationIgnored private var history = RecordingInkHistory()
     @ObservationIgnored private var bugReport = false
 
-    func togglePen() { select(.pen) }
-
     func select(_ next: Tool) {
         if isPenOn && tool == next { setPen(false); return }
         endStroke(at: ProcessInfo.processInfo.systemUptime, point: nil)
