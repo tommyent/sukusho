@@ -1146,11 +1146,9 @@ private func isRunning(_ text: String) -> Bool {
         let quick = try bench.file("Quick.png", Sample.screenshot(width: 320, height: 200, seed: 37))
         let optimizer = bench.optimizer
         let copier = OptimizedImageCopy()
-        func write(to board: NSPasteboard) -> ([URL]) throws -> Void {
-            { urls in
-                board.clearContents()
-                guard board.writeObjects(urls.map { $0 as NSURL }) else { throw CocoaError(.fileWriteUnknown) }
-            }
+        /// Publishes the files themselves, where the Library publishes their snapshots.
+        let write: ([URL], ([NSPasteboardWriting]) throws -> Void) throws -> Void = { urls, publish in
+            try publish(urls.map { $0 as NSURL })
         }
         func files(on board: NSPasteboard) -> [String] {
             ((board.readObjects(forClasses: [NSURL.self]) as? [URL]) ?? []).map(\.lastPathComponent)
@@ -1162,7 +1160,7 @@ private func isRunning(_ text: String) -> Bool {
             defer { board.releaseGlobally() }
             let count = board.changeCount
             let copied = try #require(try await copier.copyAll([first, second], to: board, ready: { try await optimizer.optimize($0) },
-                                                               write: write(to: board)))
+                                                               write: write))
             #expect(copied.map(\.outcome) == [.optimized, .optimized])
             #expect(files(on: board) == ["First.png", "Second.png"])
             #expect(board.changeCount == count + 1)
@@ -1182,7 +1180,7 @@ private func isRunning(_ text: String) -> Bool {
                         for await _ in release { break }
                     }
                     return try await optimizer.optimize(url)
-                }, write: write(to: board))
+                }, write: write)
             }
             for await _ in started { break }
             board.clearContents()
@@ -1207,7 +1205,7 @@ private func isRunning(_ text: String) -> Bool {
                         for await _ in release { break }
                     }
                     return try await optimizer.optimize(url)
-                }, write: write(to: board))
+                }, write: write)
             }
             for await _ in started { break }
             let newer = try #require(try await copier.copy(quick, to: board, optimize: { try await optimizer.optimize($0) }, item: item))
@@ -1619,10 +1617,7 @@ private func isRunning(_ text: String) -> Bool {
                             for await _ in releaseB { break }
                         }
                         return .original(url)
-                    }, write: { _ in
-                        board.clearContents()
-                        guard board.writeObjects([try item(b)]) else { throw CocoaError(.fileWriteUnknown) }
-                    }) != nil
+                    }, write: { _, publish in try publish([try item(b)]) }) != nil
                 }
                 return try await copier.copyNow(to: board, first: {
                     didStartB.yield()
@@ -1697,10 +1692,8 @@ private func isRunning(_ text: String) -> Bool {
                 defer { copier.finish(turn) }
                 for await _ in releaseRead { break }
                 if batch {
-                    return try await copier.copyAll([b], to: board, turn: turn, ready: { .original($0) }, write: { _ in
-                        board.clearContents()
-                        guard board.writeObjects([try item(b)]) else { throw CocoaError(.fileWriteUnknown) }
-                    }) != nil
+                    return try await copier.copyAll([b], to: board, turn: turn, ready: { .original($0) },
+                                                    write: { _, publish in try publish([try item(b)]) }) != nil
                 }
                 return try await copier.copyNow(to: board, turn: turn, first: { .init(item: try item(b), key: "B") },
                                                 smaller: { nil }).0 == .written
@@ -1759,11 +1752,8 @@ private func isRunning(_ text: String) -> Bool {
         let count = board.changeCount
 
         await #expect(throws: (any Error).self) {
-            try await copier.copyAll([gone], to: board, ready: { .original($0) }, write: { files in
-                try ClipboardFiles.withClipboardSnapshots(of: files) { snapshots in
-                    board.clearContents()
-                    guard board.writeObjects(snapshots as [NSURL]) else { throw CocoaError(.fileWriteUnknown) }
-                }
+            try await copier.copyAll([gone], to: board, ready: { .original($0) }, write: { files, publish in
+                try ClipboardFiles.withClipboardSnapshots(of: files) { try publish($0 as [NSURL]) }
             })
         }
         #expect(board.changeCount == count)
@@ -1772,6 +1762,48 @@ private func isRunning(_ text: String) -> Bool {
         doReleaseSwap.yield()
         #expect(await swapTask.value)
         #expect(board.data(forType: .png) == (try Data(contentsOf: optimizedA.url)))
+    }
+
+    /// Astra, round 5: a selection checks again once its payload is made, right before it clears the pasteboard. The
+    /// Library's snapshots copy files, and a copy made in another app meanwhile is newer: it stays, the selection
+    /// writes nothing and returns nil, and its snapshots are removed. Nothing copied meanwhile, the snapshots go on.
+    @Test func aSelectionChecksAgainOnceItsSnapshotsAreMade() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let files = try (0..<3).map { try bench.file("Shot \($0).png", Sample.screenshot(width: 320, height: 200, seed: 60 + UInt64($0))) }
+        let copier = OptimizedImageCopy()
+        for copiedMeanwhile in [true, false] {
+            let board = pasteboard()
+            defer { board.releaseGlobally() }
+            var snapshots: [URL] = []
+            let copied = try await copier.copyAll(files, to: board, ready: { .original($0) }, write: { files, publish in
+                try ClipboardFiles.withClipboardSnapshots(of: files) { made in
+                    snapshots = made
+                    // Another app copies while the snapshots are being made.
+                    if copiedMeanwhile {
+                        board.clearContents()
+                        board.setString("copied elsewhere", forType: .string)
+                    }
+                    try publish(made as [NSURL])
+                }
+            })
+            #expect(snapshots.count == 3)
+            if copiedMeanwhile {
+                #expect(copied == nil)
+                #expect(board.string(forType: .string) == "copied elsewhere")
+                #expect(board.pasteboardItems?.count == 1)
+                #expect(snapshots.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
+            } else {
+                #expect(copied?.count == 3)
+                let published = (board.readObjects(forClasses: [NSURL.self]) as? [URL]) ?? []
+                #expect(published.map(\.standardizedFileURL) == snapshots.map(\.standardizedFileURL))
+                #expect(snapshots.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
+                // Published snapshots live until the system clears its temporary folder; the test's go now.
+                if let first = snapshots.first {
+                    try? FileManager.default.removeItem(at: first.deletingLastPathComponent().deletingLastPathComponent())
+                }
+            }
+        }
     }
 
     /// Astra, round 4, found along the way: an image copied as it is (Copy Original, or with optimizing off) takes

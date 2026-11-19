@@ -49,6 +49,9 @@ final class OptimizedImageCopy {
         pending.remove(turn.number)
     }
 
+    /// What `copyAll`'s `publish` throws when something newer came first while the payload was made.
+    nonisolated private struct Overtaken: Error {}
+
     /// Optimizes `url`, then writes the pasteboard item made from the result. Returns nil, and writes
     /// nothing, when something newer reached the pasteboard while optimizing: a later copy from here,
     /// which also stops this one's optimizing, or anything copied in another app. `optimize` falls back
@@ -224,14 +227,17 @@ final class OptimizedImageCopy {
     }
 
     /// Several files at once, as the Library copies a selection. Each goes through `ready` in turn (a
-    /// screenshot optimized, a recording rendered); then `write` gets the files to put on the pasteboard, in
-    /// one go, and must not suspend. The rule is `copy`'s: nil, with nothing written and the results deleted,
-    /// when a later copy from here or anything copied in another app got there first. Results that were
+    /// screenshot optimized, a recording rendered); then `write` gets the files, makes what goes on the
+    /// pasteboard from them (the Library's snapshots), and hands it to `publish`, once. `write` must not
+    /// suspend. The rule is `copy`'s: nil, with nothing written and the results deleted, when a later copy from
+    /// here or anything copied in another app got there first, `publish` included: it writes only if nothing
+    /// came first meanwhile, and otherwise throws, so `write` stops and undoes what it made. Results that were
     /// written stay the caller's to discard. `turn` is the one the route took when it was asked to copy, if it
     /// read anything before this (`takeTurn`); otherwise the copy takes its turn here.
     func copyAll(_ urls: [URL], to pasteboard: NSPasteboard = .general, turn: Turn? = nil,
                  ready: @escaping (URL) async throws -> ImageOptimizationResult,
-                 write: ([URL]) throws -> Void) async throws -> [ImageOptimizationResult]? {
+                 write: (_ files: [URL], _ publish: ([NSPasteboardWriting]) throws -> Void) throws -> Void)
+        async throws -> [ImageOptimizationResult]? {
         let turn = turn ?? takeTurn(on: pasteboard)
         let mine = turn.number
         let countAtStart = turn.count
@@ -256,13 +262,21 @@ final class OptimizedImageCopy {
         } catch is CancellationError where mine != latest {
             return nil
         }
-        // No suspension between this check and the write, as in `copy`.
         guard mine == latest, pasteboard.changeCount == countAtStart else {
             results.forEach { $0.discard() }
             return nil
         }
         do {
-            try write(results.map(\.url))
+            try write(results.map(\.url)) { payload in
+                // Again once the payload is made: the Library's snapshots copy files, and another app can copy
+                // meanwhile (Astra, round 5). No suspension between this check and the clear, as in `copy`.
+                guard mine == latest, pasteboard.changeCount == countAtStart else { throw Overtaken() }
+                pasteboard.clearContents()
+                guard pasteboard.writeObjects(payload) else { throw CocoaError(.fileWriteUnknown) }
+            }
+        } catch is Overtaken {
+            results.forEach { $0.discard() }
+            return nil
         } catch {
             // A write that failed before it cleared the pasteboard, as when a selected capture is gone and its
             // snapshot can't be made, left the held copy there, so its swap may still go in (Astra, round 4). One

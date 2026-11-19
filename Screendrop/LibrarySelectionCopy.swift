@@ -39,7 +39,7 @@ extension CaptureLibraryModel {
             let copied = try await OptimizedImageCopy.shared.copyAll(captures.map(\.fileURL), turn: turn, ready: { url in
                 if videos.contains(url) { return .original(try await RecordingDeliverable.resolve(for: url)) }
                 return optimize ? try await ScreenshotFileActions.optimizedForCopy(url) : .original(url)
-            }, write: { files in
+            }, write: { files, publish in
                 try ClipboardFiles.withClipboardSnapshots(of: files) { snapshots in
                     var files = snapshots.makeIterator()
                     var payload: [NSPasteboardWriting] = []
@@ -53,9 +53,9 @@ extension CaptureLibraryModel {
                             payload.append(contentsOf: items)
                         }
                     }
-                    let board = NSPasteboard.general
-                    board.clearContents()
-                    guard board.writeObjects(payload) else { throw CocoaError(.fileWriteUnknown) }
+                    // Written only if nothing was copied while the snapshots were made; otherwise it throws, and the
+                    // snapshots go (Astra, round 5).
+                    try publish(payload)
                 }
             })
             guard let copied else { return }
