@@ -206,7 +206,7 @@ final class ClipboardHistoryModel {
               let capture = ClipboardPasteboardReader.ownCopy([item], ignoredApps: Set(ScreendropPreferences.clipboardIgnoredApps),
                                                               historyDirectory: ScreenshotHistoryStore.historyDirectory) else { return nil }
         do {
-            let outcome = try await store.record(capture)
+            let outcome = try await store.record(capture, ownCopy: true)
             refresh()
             switch outcome {
             case .inserted(let id), .bumped(let id), .stacked(let id): return id

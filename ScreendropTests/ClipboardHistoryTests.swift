@@ -300,6 +300,32 @@ struct ClipboardHistoryStoreTests {
         #expect(entries.first?.libraryPath == original.libraryPath)
     }
 
+    /// Sol, round 2: copy a capture, let its card take the optimized image, copy some text, copy the same capture
+    /// again. The original is now that card's earlier version, and the second copy goes to that card, not a new
+    /// one; its own swap then finds the optimized image already there. One card for one image.
+    @Test func copyingAnImageAgainAfterItsCardTookTheOptimizedOneKeepsOneCard() async throws {
+        let store = try store()
+        var original = image(400, width: 4, height: 4)
+        original.libraryPath = directory.appendingPathComponent("Capture.png").path
+        guard case .inserted(let id) = try await store.record(original, at: start, ownCopy: true) else {
+            Issue.record("not inserted")
+            return
+        }
+        let optimized = image(250, width: 4, height: 4)
+        #expect(try await store.stack(optimized, on: id))
+        _ = try await store.record(text("unrelated"), at: start + 10)
+
+        #expect(try await store.record(original, at: start + 20, ownCopy: true) == .bumped(id))
+        #expect(try await store.stack(optimized, on: id))   // the second copy's swap: already there
+        let images = try await store.entries().filter { $0.kind == .image }
+        #expect(images.count == 1)
+        #expect(images.first?.id == id)
+        #expect(images.first?.hash == optimized.hash)
+        #expect(images.first?.earlierVersions.map(\.hash) == [original.hash])
+        #expect(images.first?.timesCopied == 2)
+        #expect(try await store.entries().first?.id == id)   // back on top, above the text
+    }
+
     @Test func copyingAgainBumpsTheSameEntry() async throws {
         let store = try store()
         let first = try await store.record(text("same"), at: start)

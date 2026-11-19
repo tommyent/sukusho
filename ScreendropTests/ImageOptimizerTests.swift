@@ -1507,7 +1507,7 @@ private func isRunning(_ text: String) -> Bool {
             return original
         }, record: { written in
             guard let capture = ClipboardPasteboardReader.ownCopy([written], ignoredApps: [], historyDirectory: bench.folder),
-                  case .inserted(let id)? = try? await store.record(capture) else { return nil }
+                  case .inserted(let id)? = try? await store.record(capture, ownCopy: true) else { return nil }
             return id
         }, smaller: {
             for await _ in release { break }

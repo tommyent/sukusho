@@ -228,9 +228,10 @@ actor ClipboardHistoryStore {
 
     // MARK: - Writing
 
-    /// Adds a copy, or moves the same content's entry to the top.
+    /// Adds a copy, or moves the same content's entry to the top. `ownCopy`: an image copy Sukusho wrote itself and
+    /// will swap for its optimized image (`ClipboardHistoryModel.recordOwnCopy`).
     @discardableResult
-    func record(_ capture: ClipboardCapture, at date: Date = .now) throws -> RecordOutcome {
+    func record(_ capture: ClipboardCapture, at date: Date = .now, ownCopy: Bool = false) throws -> RecordOutcome {
         try transaction {
             let key = [capture.kind.rawValue, capture.hash]
             let existing = try query("SELECT id, blob FROM entries WHERE kind != 'snippet' AND kind = ? AND hash = ? AND pinned_at IS NULL",
@@ -241,6 +242,20 @@ actor ClipboardHistoryStore {
                             [blob, capture.storedBytes, capture.byteSize, id])
                 }
                 // Content history already holds: that card goes to the top. A fresh copy it looks like stays as it is.
+                try run("""
+                    UPDATE entries SET last_copied_at = ?, times_copied = times_copied + 1,
+                        library_path = COALESCE(?, library_path), change_seq = ? WHERE id = ?
+                    """, [date.timeIntervalSince1970, capture.libraryPath, try nextChange(), id])
+                return .bumped(id)
+            }
+            // Sukusho's own copy of an image a card holds as an earlier version (copied, then given its optimized
+            // image by that copy's swap) is that card's: it goes to the top as it is, and this copy's swap finds the
+            // optimized image already there. Sol, round 2: copying the same capture again made a second card. Other
+            // apps' copies keep the rule below, a new card (`copyingAnOptimisedImageAgainDeletesNothing`).
+            if ownCopy, capture.kind == .image, let id = try query("""
+                SELECT e.id FROM versions v JOIN entries e ON e.id = v.entry_id
+                WHERE e.kind = 'image' AND v.hash = ? AND e.pinned_at IS NULL LIMIT 1
+                """, [capture.hash], { $0.text(0) }).first ?? nil {
                 try run("""
                     UPDATE entries SET last_copied_at = ?, times_copied = times_copied + 1,
                         library_path = COALESCE(?, library_path), change_seq = ? WHERE id = ?
