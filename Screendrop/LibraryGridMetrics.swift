@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Synchronization
 
 /// How the Library's grids lay out cards, Finder-style: cards keep one width and a wider window fits more
 /// columns. The gaps grow with the cards, from a fifth to half a card's width, so cards breathe at every slider
@@ -50,6 +51,71 @@ nonisolated struct LibraryGridMetrics: Equatable, Sendable {
     var cardHeight: CGFloat { floor(cellWidth * 0.625) + 62 }
     /// The picture's height inside a card: what the inset and the caption leave.
     var pictureHeight: CGFloat { cardHeight - Self.pictureInset - Self.captionHeight }
+}
+
+/// Geometry from the Heavy stock mockup, in points. Shadow blur is the CSS diameter.
+nonisolated enum LibraryCardDepth {
+    case resting, hovering, pressed, deleting
+
+    init(hovering: Bool, pressed: Bool, deleting: Bool) {
+        self = deleting ? .deleting : pressed ? .pressed : hovering ? .hovering : .resting
+    }
+
+    var lift: CGFloat {
+        switch self {
+        case .resting: 0
+        case .hovering: -2
+        case .pressed: 2
+        case .deleting: 1
+        }
+    }
+
+    var lip: CGFloat {
+        switch self {
+        case .resting, .hovering: 2
+        case .pressed: 0.5
+        case .deleting: 1
+        }
+    }
+
+    struct Shadow: Equatable {
+        let offset: CGFloat
+        let blur: CGFloat
+        let inset: CGFloat
+    }
+
+    var contact: Shadow? {
+        switch self {
+        case .resting: Shadow(offset: 4, blur: 5, inset: 1)
+        case .hovering: Shadow(offset: 6, blur: 6, inset: 1)
+        case .pressed: Shadow(offset: 1, blur: 1.5, inset: 0)
+        case .deleting: nil
+        }
+    }
+
+    var key: Shadow? {
+        switch self {
+        case .resting: Shadow(offset: 16, blur: 28, inset: 8)
+        case .hovering: Shadow(offset: 26, blur: 40, inset: 10)
+        case .pressed, .deleting: nil
+        }
+    }
+}
+
+/// Cells of a given size share the same shadow outline. Each inset keeps just its latest bounds.
+nonisolated struct LibraryShadowShape: Shape {
+    let inset: CGFloat
+    let radius: CGFloat
+    private static let paths = Mutex<[CGFloat: (bounds: CGRect, radius: CGFloat, path: Path)]>([:])
+
+    func path(in rect: CGRect) -> Path {
+        Self.paths.withLock { paths in
+            if let cached = paths[inset], cached.bounds == rect, cached.radius == radius { return cached.path }
+            let path = RoundedRectangle(cornerRadius: radius, style: .continuous).inset(by: inset).path(in: rect)
+            paths[inset] = (rect, radius, path)
+            return path
+        }
+    }
 }
 
 /// Index paths and flat positions for the same ordered snapshot of cards.

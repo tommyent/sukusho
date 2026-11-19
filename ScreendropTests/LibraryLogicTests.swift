@@ -15,6 +15,32 @@ struct LibraryLogicTests {
         #expect(light.fill == CardMark.fill && light.symbol == CardMark.text)
     }
 
+    @Test func cachedShadowMatchesItsRoundedRectangleAfterResizing() {
+        for width: CGFloat in [220, 140, 220] {
+            let bounds = CGRect(x: 2, y: 3, width: width, height: width - 30)
+            for inset: CGFloat in [0, 1, 8, 10] {
+                let shadow = LibraryShadowShape(inset: inset, radius: 14)
+                let shape = RoundedRectangle(cornerRadius: 14, style: .continuous).inset(by: inset)
+                #expect(shadow.path(in: bounds) == shape.path(in: bounds))
+            }
+        }
+    }
+
+    @Test func stockCardDepthFollowsPointerAndDeletion() {
+        let resting = LibraryCardDepth(hovering: false, pressed: false, deleting: false)
+        let hover = LibraryCardDepth(hovering: true, pressed: false, deleting: false)
+        let press = LibraryCardDepth(hovering: true, pressed: true, deleting: false)
+        let deleting = LibraryCardDepth(hovering: true, pressed: true, deleting: true)
+        #expect([resting.lift, hover.lift, press.lift, deleting.lift] == [0, -2, 2, 1])
+        #expect([resting.lip, hover.lip, press.lip, deleting.lip] == [2, 2, 0.5, 1])
+        #expect(resting.contact == .init(offset: 4, blur: 5, inset: 1))
+        #expect(resting.key == .init(offset: 16, blur: 28, inset: 8))
+        #expect(hover.contact == .init(offset: 6, blur: 6, inset: 1))
+        #expect(hover.key == .init(offset: 26, blur: 40, inset: 10))
+        #expect(press.contact == .init(offset: 1, blur: 1.5, inset: 0))
+        #expect(press.key == nil && deleting.contact == nil && deleting.key == nil)
+    }
+
     @Test func clipboardKindSymbolsKeepTheirSpokenNames() {
         for (kind, word, symbol): (LibraryClipKind, String, String) in [
             (.text, "text", "textformat"), (.code, "code", "chevron.left.forwardslash.chevron.right"), (.link, "link", "link")

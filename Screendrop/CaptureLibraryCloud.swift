@@ -839,14 +839,7 @@ private struct CloudUploadCard: View {
                     }
             }
         }
-        .background(
-            Color.primary.opacity(selected ? 0.075 : isHovering ? 0.035 : 0.012),
-            in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
-        )
-        .background(WorkspaceChrome.background, in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
-        .overlay {
-            LibraryCardBorder(selected: selected)
-        }
+        .modifier(LibraryCardSurface(layout: layout, selected: selected, hovering: isHovering, deleting: deleting))
         .opacity(deleting ? 0.5 : 1)
         .onHover { isHovering = $0 }
         // Cells are reused for other uploads.

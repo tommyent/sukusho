@@ -133,10 +133,7 @@ struct ClipboardCard: View {
                 Text(ClipboardList.gridTitle(of: entry))
             }
         }
-        .background(Color.primary.opacity(isSelected ? 0.075 : isHovering ? 0.035 : 0.012),
-                    in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
-        .background(WorkspaceChrome.background, in: RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous))
-        .overlay { LibraryCardBorder(selected: isSelected) }
+        .modifier(LibraryCardSurface(layout: .grid, selected: isSelected, hovering: isHovering))
         .onHover { isHovering = $0 }
         .contentShape(Rectangle())
 
