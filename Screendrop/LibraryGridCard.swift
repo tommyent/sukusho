@@ -133,7 +133,7 @@ struct LibraryCardSurface: ViewModifier {
         ZStack {
             if let key = depth.key { shadow(key, depth: depth) }
             if let contact = depth.contact { shadow(contact, depth: depth) }
-            if depth != .deleting { shape.fill(lip(lower: true)).offset(y: depth.lip) }
+            if let offset = depth.lowerLip { shape.fill(lip(lower: true)).offset(y: offset) }
             if depth != .pressed { shape.fill(lip(lower: false)).offset(y: 1) }
             shape.fill(LinearGradient(colors: dark ? [Color(stock: 0x333335), Color(stock: 0x2B2B2D)]
                                                    : [.white, Color(stock: 0xF7F7F8)], startPoint: .top, endPoint: .bottom))

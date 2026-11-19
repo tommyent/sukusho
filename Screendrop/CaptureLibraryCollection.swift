@@ -114,6 +114,7 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
             let inPlace = !coordinator.initialLoad && old.layout == layout && old.sections == sections && old.items.map(\.id) == items.map(\.id)
             coordinator.initialLoad = false
             coordinator.order = LibraryDisplayOrder(sectionCounts: sections.isEmpty ? [items.count] : sections.map(\.count))
+            (collection.collectionViewLayout as? LibraryCollectionLayout)?.order = coordinator.order
             coordinator.indices = Dictionary(items.enumerated().map { ($0.element.id, $0.offset) }, uniquingKeysWith: { first, _ in first })
             if inPlace {
                 for path in collection.indexPathsForVisibleItems() {
@@ -426,6 +427,7 @@ private final class LibrarySectionHeader: NSView {
 }
 
 final class LibraryCollectionLayout: NSCollectionViewFlowLayout {
+    var order = LibraryDisplayOrder(sectionCounts: [])
     var displayLayout: CaptureLibraryLayout = .grid
     /// Grid cell width, from the Library's card size slider.
     var cardWidth: CGFloat = 220
@@ -455,6 +457,23 @@ final class LibraryCollectionLayout: NSCollectionViewFlowLayout {
             itemSize = CGSize(width: width - 32, height: 76)
         }
         super.prepare()
+    }
+
+    // Reused rows may be added out of order after scrolling back up. Keep the lower card above the upper shadow.
+    override func layoutAttributesForElements(in rect: NSRect) -> [NSCollectionViewLayoutAttributes] {
+        let attributes = super.layoutAttributesForElements(in: rect)
+        if displayLayout == .grid {
+            for item in attributes where item.representedElementCategory == .item {
+                if let path = item.indexPath { item.zIndex = order.index(at: path) ?? 0 }
+            }
+        }
+        return attributes
+    }
+
+    override func layoutAttributesForItem(at indexPath: IndexPath) -> NSCollectionViewLayoutAttributes? {
+        let item = super.layoutAttributesForItem(at: indexPath)
+        if displayLayout == .grid { item?.zIndex = order.index(at: indexPath) ?? 0 }
+        return item
     }
 
     /// Compared with the width the cells were sized for, not the collection
@@ -877,7 +896,7 @@ private struct LibraryCardChip: ViewModifier {
                 .allowsHitTesting(false)
             }
             .background {
-                // The card's own colour, so a transparent picture still shows the card through it.
+                // Transparent pixels reveal the picture well inside the lighter stock face.
                 libraryCardPictureShape.fill(WorkspaceChrome.background)
                     .shadow(color: .black.opacity(dark ? 0.55 : 0.20), radius: 0.75, y: 1)
                     .shadow(color: .black.opacity(dark ? 0.40 : 0.12), radius: 3, y: 3)

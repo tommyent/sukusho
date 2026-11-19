@@ -32,7 +32,7 @@ struct LibraryLogicTests {
         let press = LibraryCardDepth(hovering: true, pressed: true, deleting: false)
         let deleting = LibraryCardDepth(hovering: true, pressed: true, deleting: true)
         #expect([resting.lift, hover.lift, press.lift, deleting.lift] == [0, -2, 2, 1])
-        #expect([resting.lip, hover.lip, press.lip, deleting.lip] == [2, 2, 0.5, 1])
+        #expect([resting.lowerLip, hover.lowerLip, press.lowerLip, deleting.lowerLip] == [2, 2, 0.5, nil])
         #expect(resting.contact == .init(offset: 4, blur: 5, inset: 1))
         #expect(resting.key == .init(offset: 16, blur: 28, inset: 8))
         #expect(hover.contact == .init(offset: 6, blur: 6, inset: 1))

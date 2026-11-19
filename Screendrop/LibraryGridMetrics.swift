@@ -70,11 +70,11 @@ nonisolated enum LibraryCardDepth {
         }
     }
 
-    var lip: CGFloat {
+    var lowerLip: CGFloat? {
         switch self {
         case .resting, .hovering: 2
         case .pressed: 0.5
-        case .deleting: 1
+        case .deleting: nil
         }
     }
 
