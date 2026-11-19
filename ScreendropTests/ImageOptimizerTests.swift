@@ -1549,6 +1549,51 @@ private func isRunning(_ text: String) -> Bool {
         #expect(bench.leftovers.isEmpty)
     }
 
+    /// Astra, round 3: with A on the pasteboard, a copy of B starts and is still reading when A is copied again. The
+    /// repeat writes nothing but is the newest copy, so B, older, can't land after it; and A's own swap, held back
+    /// meanwhile, still goes in, since the repeat was of A.
+    @Test func aRepeatOfTheHeldCopySupersedesAnOlderCopyStillReading() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let a = try bench.file("A.png", Sample.screenshot(width: 640, height: 400, seed: 48))
+        let b = try bench.file("B.png", Sample.screenshot(width: 640, height: 400, seed: 49))
+        let optimizer = bench.optimizer
+        let copier = OptimizedImageCopy()
+        let board = pasteboard()
+        defer { board.releaseGlobally() }
+        let optimizedA = try await optimizer.optimize(a)
+        defer { optimizedA.discard() }
+
+        let (releaseSwap, doReleaseSwap) = AsyncStream<Void>.makeStream()
+        let (first, swapA) = try await copier.copyNow(key: "A", to: board, first: { try item(a) }) {
+            for await _ in releaseSwap { break }
+            return swapIn(optimizedA)
+        }
+        #expect(first == .written)
+
+        let (bReading, didStartB) = AsyncStream<Void>.makeStream()
+        let (releaseB, doReleaseB) = AsyncStream<Void>.makeStream()
+        let copyB = Task {
+            try await copier.copyNow(key: "B", to: board, first: {
+                didStartB.yield()
+                for await _ in releaseB { break }
+                return try item(b)
+            }, smaller: { nil })
+        }
+        for await _ in bReading { break }
+        let (repeatOfA, _) = try await copier.copyNow(key: "A", to: board, first: { try item(a) }, smaller: { nil })
+        #expect(repeatOfA == .alreadyThere)
+
+        doReleaseB.yield()
+        #expect(try await copyB.value.0 == .overtaken)
+        #expect(board.data(forType: .png) == (try Data(contentsOf: a)))
+
+        doReleaseSwap.yield()
+        let swapTask = try #require(swapA)
+        #expect(await swapTask.value)
+        #expect(board.data(forType: .png) == (try Data(contentsOf: optimizedA.url)))
+    }
+
     /// Sol, round 2: the swap publishes only the optimized form of the bytes the copy wrote. A file rewritten after
     /// the copy read it (another picture), a result that can't say what it was made from, and the same bytes again
     /// all leave the original on the pasteboard, written once.

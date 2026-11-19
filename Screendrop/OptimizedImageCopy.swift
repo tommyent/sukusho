@@ -19,6 +19,8 @@ final class OptimizedImageCopy {
 
     /// Counts the copies asked for; only the newest may write.
     private var latest = 0
+    /// Copies asked for that haven't written yet or given up. A swap waits for them (`copyNow`).
+    private var pending = 0
     /// Stops the copy that is still optimizing, if there is one.
     private var cancelInFlight: (() -> Void)?
 
@@ -31,6 +33,8 @@ final class OptimizedImageCopy {
               item: (URL) async throws -> NSPasteboardItem) async throws -> ImageOptimizationResult? {
         latest += 1
         let mine = latest
+        pending += 1
+        defer { pending -= 1 }
         let countAtStart = pasteboard.changeCount
         cancelInFlight?()
         let work = Task { try await optimize(url) }
@@ -96,16 +100,21 @@ final class OptimizedImageCopy {
                  smaller: @escaping () async -> Swap?,
                  stack: @escaping (_ card: String, _ item: NSPasteboardItem) async -> Void = { _, _ in },
                  swapped: @escaping (Bool) -> Void = { _ in }) async throws -> (InstantCopy, Task<Bool, Never>?) {
-        if let held, held.key == key, held.count == pasteboard.changeCount { return (.alreadyThere, nil) }
         latest += 1
         let mine = latest
+        // A repeat of what the pasteboard still holds from here writes nothing, but it is the newest copy asked
+        // for all the same: an older one still reading another item can't land after it (Astra, round 3). The
+        // held copy's swap, if one is coming, still may, so a genuine repeat keeps its optimization.
+        if let held, held.key == key, held.count == pasteboard.changeCount { return (.alreadyThere, nil) }
+        pending += 1
+        defer { pending -= 1 }
         let countAtStart = pasteboard.changeCount
-        // A copy that was still optimizing is overtaken by this one.
-        cancelInFlight?()
-        cancelInFlight = nil
         let original = try await first()
         // No suspension between each check and its write, as in `copy`.
         guard mine == latest, pasteboard.changeCount == countAtStart else { return (.overtaken, nil) }
+        // This copy replaces the held one now: a swap still coming for that one is moot.
+        cancelInFlight?()
+        cancelInFlight = nil
         // The count this clear returns is this copy's own. A count read after the write could already be
         // another app's, which copied in between, and the swap would then take that copy for this one.
         let countAfterWrite = pasteboard.clearContents()
@@ -128,11 +137,17 @@ final class OptimizedImageCopy {
             }.value
             guard candidate.source == copied, made != copied, !Task.isCancelled else { return done(false) }
             let item = candidate.item
+            // A newer copy still reading would find the pasteboard moved by the swap and give up: wait until it has
+            // written, which moves the count and ends this swap, or found it is a repeat of this copy or given up,
+            // which leaves the swap to go in. Copies are short; this rarely waits.
+            while pending > 0, pasteboard.changeCount == countAfterWrite, !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(20))
+            }
             // No suspension between this check and the clear. NSPasteboard has no compare-and-replace, so a
             // window is left: another app that copies between this check and `clearContents` loses its copy
             // to the swap. It is the same window Clop's own swap has, a few instructions wide; anything copied
             // before the check, however late, keeps the original or the newer copy where it is.
-            guard mine == latest, pasteboard.changeCount == countAfterWrite else { return done(false) }
+            guard !Task.isCancelled, pending == 0, pasteboard.changeCount == countAfterWrite else { return done(false) }
             let countAfterSwap = pasteboard.clearContents()
             guard pasteboard.writeObjects([item]) else { return done(false) }
             if held?.key == key { held = (key, countAfterSwap) }
