@@ -930,24 +930,21 @@ final class ScreenshotPreviewStack {
         }
     }
 
-    /// The copy right after a capture. With Settings › Optimize › Optimize when copying on, nobody waits: the
-    /// original is on the clipboard at once, the optimized file takes its place when it is ready, unless
+    /// The copy right after a capture. With Settings › Optimize › Optimize when copying on, as every image copy:
+    /// the original is on the clipboard at once, the optimized file takes its place when it is ready, unless
     /// something else was copied meanwhile, and the capture's card, if it is still showing, says so for a
-    /// moment. Esc and ⇧⌘C have no part here; every other copy still waits for its optimized file.
+    /// moment.
     private func copyAfterCapture(_ url: URL, itemID: UUID) async {
         guard OptimizePreferences.whenCopying else {
             _ = await copyURLToClipboard(url)
             return
         }
-        // Not awaited past the first write: the other after-capture actions don't wait for the optimizer.
-        Task {
-            do {
-                if let saving = try await ScreenshotFileActions.copyOriginalThenOptimized(from: url) {
-                    showOptimizedNote(saving, on: itemID)
-                }
-            } catch {
-                print("Failed to copy screenshot: \(error)")
+        do {
+            try await ScreenshotFileActions.copyImageToClipboard(from: url) { [weak self] saving, _ in
+                self?.showOptimizedNote(saving, on: itemID)
             }
+        } catch {
+            print("Failed to copy screenshot: \(error)")
         }
     }
 

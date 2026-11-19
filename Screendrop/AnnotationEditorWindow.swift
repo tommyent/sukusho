@@ -576,9 +576,11 @@ struct AnnotationEditorWindow: View {
         }
     }
 
-    /// Cmd-C without a selection: saves and closes, then puts the finished image - annotations
-    /// included - on the clipboard whatever the auto-copy setting, for a
-    /// capture, mark up, paste loop that never touches the mouse.
+    /// Cmd-C without a selection: saves, puts the finished image - annotations
+    /// included - on the clipboard whatever the auto-copy setting, and closes, for a
+    /// capture, mark up, paste loop that never touches the mouse. Nothing waits for
+    /// the optimizer: the image is on the clipboard and the window gone as soon as
+    /// it is saved, and the optimized copy takes its place in the background.
     private func copyAndFinishEditing(original: Bool = false) {
         clearInspectorFocus()
         guard let sourceURL = model.sourceURL else {
@@ -594,23 +596,31 @@ struct AnnotationEditorWindow: View {
             do {
                 let resultURL = try await model.commitEdits()
                 if let resultURL {
+                    // Not copied there too: the copy below is the one (auto-copy would make it twice).
                     _ = await ScreenshotPreviewStack.shared.applyAnnotation(
                         originalURL: sourceURL,
-                        historyURL: resultURL
+                        historyURL: resultURL,
+                        updatesClipboard: false
                     )
                 }
                 // No result means nothing was drawn: the original is the image.
-                let saving = try await ScreenshotFileActions.copyImageToClipboard(from: resultURL ?? sourceURL, original: original)
+                try await ScreenshotFileActions.copyImageToClipboard(from: resultURL ?? sourceURL, original: original)
                 // The window usually closes, so a toast says the image went to the clipboard.
-                CaptureTextFeedbackPresenter.shared.showDone(original ? "Copied Original" : "Copied",
-                                                             detail: saving ?? "The marked-up screenshot is on the clipboard.",
-                                                             displayID: ActiveDisplayResolver.activeDisplayID())
+                let display = ActiveDisplayResolver.activeDisplayID()
+                let toast = {
+                    CaptureTextFeedbackPresenter.shared.showDone(original ? "Copied Original" : "Copied",
+                                                                 detail: "The marked-up screenshot is on the clipboard.",
+                                                                 displayID: display)
+                }
                 guard !model.hasUnsavedChanges else {
                     isFinishing = false
+                    toast()
                     return
                 }
-                model.releaseEditorResources()
+                // The window goes first; the toast and the clean-up follow it.
                 dismissWindow()
+                toast()
+                model.releaseEditorResources()
             } catch {
                 isFinishing = false
                 model.errorMessage = "Failed to finish annotation: \(error.localizedDescription)"

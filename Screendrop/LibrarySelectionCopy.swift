@@ -8,8 +8,10 @@ extension CaptureLibraryModel {
         run("Copying…") {
             StudioProjectRegistry.shared.flushDrafts()
             if cards.count == 1, case .capture(let item) = cards[0], !item.isVideo {
-                let saving = try await ScreenshotFileActions.copyImageToClipboard(from: item.fileURL, original: original)
-                self.actionFeedback.show(original ? "Copied Original" : saving.map { "Copied · \($0)" } ?? "Copied")
+                try await ScreenshotFileActions.copyImageToClipboard(from: item.fileURL, original: original) { saving, bytes in
+                    self.actionFeedback.show("Copied · \(saving) · \(ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file))")
+                }
+                self.actionFeedback.show(original ? "Copied Original" : "Copied")
                 return
             }
             var captures: [CaptureLibraryItem] = []

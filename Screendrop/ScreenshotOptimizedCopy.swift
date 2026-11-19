@@ -2,41 +2,82 @@
 //  ScreenshotOptimizedCopy.swift
 //  Screendrop
 //
-//  Copy, as every image copy in the app makes it: optimized first when
-//  Settings › Optimize says so, the original with ⇧⌘C.
+//  Copy, as every image copy in the app makes it: the image at once, then
+//  its optimized file in its place when Settings › Optimize says so; the
+//  original alone with ⇧⌘C.
 //
 
 import AppKit
 import UniformTypeIdentifiers
 
 extension ScreenshotFileActions {
-    /// Copies the image at `url`. With Settings › Optimize › Optimize when copying on, a PNG or JPEG is made
-    /// smaller first, with the same pixels, and the pasteboard is written once, with the result. Esc while
-    /// that runs copies the original at once, and `original` (⇧⌘C) never optimizes. Returns the saving to
-    /// show, such as "↓18% · 1.1 MB", when the copy came out smaller.
-    @discardableResult
-    static func copyImageToClipboard(from url: URL, original: Bool = false) async throws -> String? {
-        let contentType = UTType(filenameExtension: url.pathExtension)
-        let dataType: NSPasteboard.PasteboardType = if contentType?.conforms(to: .jpeg) == true {
-            NSPasteboard.PasteboardType(UTType.jpeg.identifier)
-        } else {
-            .png
-        }
+    /// Copies the image at `url`, at once: it is on the clipboard when this returns, so it pastes straight away.
+    /// With Settings › Optimize › Optimize when copying on (never for `original`, ⇧⌘C), a PNG or JPEG is then
+    /// made smaller in the background, with the same pixels, and takes the original's place when it is ready,
+    /// unless something else was copied meanwhile. The history entry the copy made is updated in place, not
+    /// doubled. Copying the same file again while the clipboard still holds this copy of it adds nothing and
+    /// doesn't start the optimizer again. `optimized` gets the saving ("↓18%") and the new size once the swap
+    /// is made.
+    ///
+    /// The owner's choice (2026-11-18): waiting for the optimizer before anything happened made ⌘C feel
+    /// unresponsive and led to pressing it again; Clop, which they used before, never made them wait.
+    static func copyImageToClipboard(from url: URL, original: Bool = false,
+                                     optimized: @escaping (_ saving: String, _ bytes: Int) -> Void = { _, _ in }) async throws {
         guard !original, OptimizePreferences.whenCopying else {
-            try await copyImageToClipboard(from: url, dataType: dataType)
-            return nil
+            let isJPEG = UTType(filenameExtension: url.pathExtension)?.conforms(to: .jpeg) == true
+            try await copyImageToClipboard(from: url, dataType: isJPEG ? NSPasteboard.PasteboardType(UTType.jpeg.identifier) : .png)
+            return
         }
-        let copied = try await OptimizedImageCopy.shared.copy(url, optimize: { try await optimizedForCopy($0) }) {
-            let item = try await clipboardItem(for: $0)
-            if $0 != url, ClipboardCapturePolicy.libraryPath(of: url, historyDirectory: ScreenshotHistoryStore.historyDirectory) != nil {
+        var originalHash: String?
+        // A file made only for this copy: kept while the clipboard names it, as every optimized copy's is.
+        var made: ImageOptimizationResult?
+        var swappedIn: (file: URL, saving: String)?
+        // The original is read inside the copy's turn, not before it: reading takes time, and a copy made
+        // meanwhile must not be written over.
+        _ = try await OptimizedImageCopy.shared.copyNow(key: copyKey(url), first: {
+            let item = try await clipboardItem(for: url)
+            originalHash = (item.data(forType: .png) ?? item.data(forType: .init(UTType.jpeg.identifier))).map(ClipboardPasteboardReader.digest)
+            return item
+        }, smaller: {
+            guard let smaller = await CaptureOptimizer.smallerForFirstCopy(url) else { return nil }
+            made = smaller.result
+            guard let item = try? await clipboardItem(for: smaller.file),
+                  let data = item.data(forType: .png) ?? item.data(forType: .init(UTType.jpeg.identifier)),
+                  // A capture optimized before this copy already went on the clipboard as it is: nothing to swap.
+                  ClipboardPasteboardReader.digest(data) != originalHash else { return nil }
+            if smaller.file != url, ClipboardCapturePolicy.libraryPath(of: url, historyDirectory: ScreenshotHistoryStore.historyDirectory) != nil {
                 // The optimized file is temporary. Keep the capture name for the editor without publishing its path.
                 item.setString(url.lastPathComponent, forType: .init(ClipboardCapturePolicy.captureNameType))
             }
+            // Clipboard managers that follow nspasteboard.org's convention don't keep it as a second copy.
+            item.setData(Data(), forType: NSPasteboard.PasteboardType(ClipboardWriter.autoGeneratedType))
+            swappedIn = (smaller.file, smaller.saving)
             return item
-        }
-        guard let copied, copied.outcome == .optimized else { return nil }
-        let size = ByteCountFormatter.string(fromByteCount: copied.resultByteCount, countStyle: .file)
-        return "\(ImageOptimizationResult.saving(from: copied.originalByteCount, to: copied.resultByteCount)) · \(size)"
+        }, beforeSwap: { count in
+            // History files the original first, or a poll after the swap would see only the marked copy.
+            await ClipboardMonitor.shared.settled(through: count)
+        }, swapped: { done in
+            guard done, let swappedIn else {
+                made?.discard()
+                return
+            }
+            Task {
+                guard let data = try? Data(contentsOf: swappedIn.file) else { return }
+                if let originalHash {
+                    await ClipboardHistoryModel.shared.stackOptimizedCopy(of: originalHash, data: data, fileExtension: swappedIn.file.pathExtension)
+                }
+                optimized(swappedIn.saving, data.count)
+            }
+        })
+    }
+
+    /// A file as it is now: two copies with one key are copies of the same contents. Read through FileManager,
+    /// since URL's resource values are cached.
+    private static func copyKey(_ url: URL) -> AnyHashable {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let modified = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        let size = (attributes?[.size] as? NSNumber)?.intValue ?? -1
+        return [url.standardizedFileURL.path, "\(modified)", "\(size)"]
     }
 
     /// The image file at `url` as the pasteboard item an image copy writes: its data in its own type (JPEG, or
@@ -45,29 +86,6 @@ extension ScreenshotFileActions {
         let isJPEG = UTType(filenameExtension: url.pathExtension)?.conforms(to: .jpeg) == true
         return try await ScreenshotClipboardImage.item(from: url, dataType: isJPEG ? NSPasteboard.PasteboardType(UTType.jpeg.identifier) : .png,
                                                        includeTIFF: ScreendropPreferences.copyTIFF)
-    }
-
-    /// The copy right after a capture, which nobody should wait for (the owner's choice, 2026-11-17): the
-    /// original goes on the clipboard at once, and the optimized file takes its place when it is ready,
-    /// unless something else was copied meanwhile. Returns the saving ("↓32%") when the swap happened.
-    /// The swapped-in copy carries nspasteboard.org's auto-generated marker, so a clipboard history that
-    /// already has the original doesn't keep a second entry for one capture.
-    static func copyOriginalThenOptimized(from url: URL) async throws -> String? {
-        var saving: String?
-        // A file made only for this copy: kept while the clipboard names it, as every optimized copy's is.
-        var made: ImageOptimizationResult?
-        // The original is read inside the copy's turn, not before it: reading takes time, and a copy made
-        // meanwhile must not be written over.
-        let swapped = try await OptimizedImageCopy.shared.copyThenSwap(first: { try await clipboardItem(for: url) }) {
-            guard let smaller = await CaptureOptimizer.smallerForFirstCopy(url) else { return nil }
-            made = smaller.result
-            guard let item = try? await clipboardItem(for: smaller.file) else { return nil }
-            item.setData(Data(), forType: NSPasteboard.PasteboardType(ClipboardWriter.autoGeneratedType))
-            saving = smaller.saving
-            return item
-        }
-        if !swapped { made?.discard() }
-        return swapped ? saving : nil
     }
 
     /// The file to copy for `url`: its optimized result, or the file itself when nothing smaller comes out.

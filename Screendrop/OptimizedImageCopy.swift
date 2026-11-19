@@ -2,14 +2,13 @@
 //  OptimizedImageCopy.swift
 //  Screendrop
 //
-//  Copies an image after optimizing it. The pasteboard is written once, with
-//  the finished result: never the original first and the smaller file later,
-//  which is what makes clipboard managers keep two entries for one copy.
-//
-//  The one exception is the copy made right after a capture (`copyThenSwap`),
-//  which the owner chose not to wait for: the original first, the smaller
-//  file in its place when it is ready. Its caller marks the second write as
-//  auto-generated, so a well-behaved clipboard manager still keeps one entry.
+//  Copies images, optimized. One image (`copyNow`) goes on the pasteboard at
+//  once, as it is, and its optimized file takes its place when it is ready:
+//  the owner's choice (2026-11-18), since waiting made ⌘C feel unresponsive.
+//  Its caller marks that second write as auto-generated and updates the one
+//  history entry in place, so clipboard managers that follow the convention
+//  keep one entry for one copy. Several files (`copyAll`) are still written
+//  once, when every one is ready.
 //
 
 import AppKit
@@ -53,14 +52,36 @@ final class OptimizedImageCopy {
         return result
     }
 
-    /// The copy right after a capture, which nobody should wait for: the item `first` makes goes on the
-    /// pasteboard as soon as it is read, and the item `smaller` makes, if it makes one, takes its place
-    /// when it is ready. This copy takes its turn before it reads anything, so neither write ever lands
-    /// on something newer: a later copy from here, or anything copied in another app, while the original
-    /// is being read or while it is being optimized, stays. Returns whether the swap happened; `smaller`
-    /// giving nil (nothing smaller came out, or the optimizer failed) leaves the original there.
-    func copyThenSwap(to pasteboard: NSPasteboard = .general, first: () async throws -> NSPasteboardItem,
-                      smaller: () async -> NSPasteboardItem?) async throws -> Bool {
+    /// What `copyNow` did.
+    enum InstantCopy: Equatable {
+        /// The original is on the pasteboard; the swap, if one comes, follows.
+        case written
+        /// The pasteboard still held this copier's write of the same `key`, the original or its swap:
+        /// nothing was written and no second optimization started.
+        case alreadyThere
+        /// Something newer reached the pasteboard while the original was read: nothing was written.
+        case overtaken
+    }
+
+    /// The last write here and what it was a copy of, for as long as the pasteboard still holds it.
+    private var held: (key: AnyHashable, count: Int)?
+
+    /// A copy nobody waits for: the item `first` makes goes on the pasteboard as soon as it is read, and
+    /// this returns. The item `smaller` makes, if it makes one, then takes its place, after `beforeSwap`
+    /// (given the original's change count) and only while the pasteboard still holds the original: it
+    /// never lands on a later copy from here or on anything copied in another app. This copy takes its
+    /// turn before it reads anything, so the original never lands on something newer either. `swapped` is
+    /// told whether the swap happened, and the returned task ends with it; nil from `smaller` (nothing
+    /// smaller came out, the optimizer failed or is off) leaves the original there.
+    ///
+    /// `key` names what is copied, a file as it is now: copying the same key again while the pasteboard
+    /// still holds this copier's write of it writes nothing and doesn't start the work again (a second ⌘C).
+    func copyNow(key: AnyHashable = UUID(), to pasteboard: NSPasteboard = .general,
+                 first: () async throws -> NSPasteboardItem,
+                 smaller: @escaping () async -> NSPasteboardItem?,
+                 beforeSwap: @escaping (_ count: Int) async -> Void = { _ in },
+                 swapped: @escaping (Bool) -> Void = { _ in }) async throws -> (InstantCopy, Task<Bool, Never>?) {
+        if let held, held.key == key, held.count == pasteboard.changeCount { return (.alreadyThere, nil) }
         latest += 1
         let mine = latest
         let countAtStart = pasteboard.changeCount
@@ -69,15 +90,36 @@ final class OptimizedImageCopy {
         cancelInFlight = nil
         let original = try await first()
         // No suspension between each check and its write, as in `copy`.
-        guard mine == latest, pasteboard.changeCount == countAtStart else { return false }
+        guard mine == latest, pasteboard.changeCount == countAtStart else { return (.overtaken, nil) }
         pasteboard.clearContents()
         guard pasteboard.writeObjects([original]) else { throw CocoaError(.fileWriteUnknown) }
         let countAfterWrite = pasteboard.changeCount
-        guard let item = await smaller() else { return false }
-        guard mine == latest, pasteboard.changeCount == countAfterWrite else { return false }
-        pasteboard.clearContents()
-        guard pasteboard.writeObjects([item]) else { throw CocoaError(.fileWriteUnknown) }
-        return true
+        held = (key, countAfterWrite)
+        let swap = Task {
+            func done(_ result: Bool) -> Bool {
+                swapped(result)
+                return result
+            }
+            guard let item = await smaller(), !Task.isCancelled,
+                  mine == latest, pasteboard.changeCount == countAfterWrite else { return done(false) }
+            await beforeSwap(countAfterWrite)
+            // No suspension between this check and the write.
+            guard mine == latest, pasteboard.changeCount == countAfterWrite else { return done(false) }
+            pasteboard.clearContents()
+            guard pasteboard.writeObjects([item]) else { return done(false) }
+            if held?.key == key { held = (key, pasteboard.changeCount) }
+            return done(true)
+        }
+        cancelInFlight = { swap.cancel() }
+        return (.written, swap)
+    }
+
+    /// `copyNow`, waited out: whether the smaller item took the original's place.
+    func copyThenSwap(to pasteboard: NSPasteboard = .general, first: () async throws -> NSPasteboardItem,
+                      smaller: @escaping () async -> NSPasteboardItem?) async throws -> Bool {
+        let (outcome, swap) = try await copyNow(to: pasteboard, first: first, smaller: smaller)
+        guard outcome == .written, let swap else { return false }
+        return await swap.value
     }
 
     /// Several files at once, as the Library copies a selection. Each goes through `ready` in turn (a

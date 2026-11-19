@@ -23,6 +23,8 @@ final class ClipboardMonitor {
     private static let maxEmptyRereads = 4
     private var readToken = 0
     private var isReading = false
+    /// The latest pasteboard change history is done with: read, then recorded or left out.
+    private var settledChangeCount = 0
     private var defaultsObserver: NSObjectProtocol?
     private var lastHistoryEnabled: Bool?
     private let logger = Logger(subsystem: "com.tommyent.Sukusho", category: "Clipboard")
@@ -31,6 +33,21 @@ final class ClipboardMonitor {
 
     static var directory: URL {
         ScreendropStorage.applicationSupportDirectory.appendingPathComponent("Clipboard", isDirectory: true)
+    }
+
+    /// Waits until history is done with the pasteboard's change `count`, so a write that follows it at once
+    /// can't hide it: a poll that came after both would read only the second. At most `limit`, and not at
+    /// all while history is off.
+    func settled(through count: Int, limit: Duration = .seconds(3)) async {
+        let clock = ContinuousClock()
+        let end = clock.now + limit
+        while isRunning, settledChangeCount < count, clock.now < end {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+    }
+
+    private func settle(_ count: Int) {
+        settledChangeCount = max(settledChangeCount, count)
     }
 
     /// Starts or stops with the setting. Called at launch; follows later changes itself.
@@ -101,6 +118,7 @@ final class ClipboardMonitor {
         // 2026-11-16); anything else waits for onboarding rather than asking per copy.
         guard pasteboard.accessBehavior == .alwaysAllow else {
             needsAccess = true
+            settle(count)
             return
         }
         needsAccess = false
@@ -114,7 +132,7 @@ final class ClipboardMonitor {
             let result = ClipboardPasteboardReader.read(
                 .general, changeCount: count, frontmostBundleID: frontmost,
                 ignoredApps: ignoredApps, historyDirectory: historyDirectory)
-            Task { @MainActor in ClipboardMonitor.shared.finish(result.outcome, types: result.types, token: token) }
+            Task { @MainActor in ClipboardMonitor.shared.finish(result.outcome, types: result.types, token: token, count: count) }
         }
         // An app that promised data and hung holds only its own read; after 2 s
         // the next copy gets a read of its own and this one's result is dropped.
@@ -130,7 +148,7 @@ final class ClipboardMonitor {
         logger.notice("Clipboard read took over 2 s; that copy is skipped")
     }
 
-    private func finish(_ outcome: ClipboardPasteboardReader.Outcome, types: [String], token: Int) {
+    private func finish(_ outcome: ClipboardPasteboardReader.Outcome, types: [String], token: Int, count: Int) {
         guard token == readToken, isReading else { return }
         isReading = false
         if !types.isEmpty { emptyRereads = 0 }
@@ -139,14 +157,15 @@ final class ClipboardMonitor {
         }
         switch outcome {
         case .captured(let capture):
-            guard let store else { return }
+            guard let store else { return settle(count) }
             Task {
                 do { try await store.record(capture); ClipboardHistoryModel.shared.refresh() } catch {
                     logger.error("Clipboard history can't save a copy: \(String(describing: error), privacy: .public)")
                 }
+                settle(count)
             }
         case .skipped(.ownWrite):
-            break
+            settle(count)
         case .skipped(.nothingKept) where types.isEmpty && emptyRereads < Self.maxEmptyRereads:
             // Read between an app's clearContents and its write: the write doesn't change the count again,
             // so look once more on the next polls, or that copy is lost (seen in the VM, 2026-11-16).
@@ -156,6 +175,7 @@ final class ClipboardMonitor {
         case .skipped:
             emptyRereads = 0
             skippedCount += 1
+            settle(count)
         case .changed:
             // Read again on the next poll: the copy that replaced it is the one to keep.
             lastChangeCount = -1

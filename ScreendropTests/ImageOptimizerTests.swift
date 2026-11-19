@@ -1424,6 +1424,108 @@ private func isRunning(_ text: String) -> Bool {
         #expect(board.changeCount > count)
         #expect(board.pasteboardItems?.count == 1)
     }
+
+    /// Beta 4, the owner pressing ⌘C again because nothing seemed to happen: the second copy of the same file
+    /// writes nothing and doesn't start the optimizer again, while the first one's swap still lands.
+    @Test func aSecondCopyOfTheSameFileWritesNothingAndStartsNoSecondOptimization() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let source = try bench.file("Edited.png", Sample.screenshot(width: 640, height: 400, seed: 44))
+        let optimizer = bench.optimizer
+        let copier = OptimizedImageCopy()
+        let board = pasteboard()
+        defer { board.releaseGlobally() }
+        final class Calls { var smaller = 0 }
+        let calls = Calls()
+        let (release, doRelease) = AsyncStream<Void>.makeStream()
+        var made: ImageOptimizationResult?
+        func copy() async throws -> (OptimizedImageCopy.InstantCopy, Task<Bool, Never>?) {
+            try await copier.copyNow(key: "Edited.png, first save", to: board, first: { try item(source) }) {
+                calls.smaller += 1
+                for await _ in release { break }
+                guard let result = try? await optimizer.optimize(source), result.outcome == .optimized else { return nil }
+                made = result
+                return try? item(result.url)
+            }
+        }
+        let count = board.changeCount
+        let (first, swap) = try await copy()
+        #expect(first == .written)
+        // On the pasteboard when the copy returns, before the optimizer has done anything: a paste gets it now.
+        #expect(board.data(forType: .png) == (try Data(contentsOf: source)))
+        #expect(board.changeCount == count + 1)
+
+        let (second, noSwap) = try await copy()
+        #expect(second == .alreadyThere)
+        #expect(noSwap == nil)
+        #expect(board.changeCount == count + 1)
+
+        doRelease.yield()
+        let swapTask = try #require(swap)
+        #expect(await swapTask.value)
+        #expect(board.changeCount == count + 2)
+        #expect(calls.smaller == 1)
+        let optimized = try #require(made)
+        #expect(board.data(forType: .png) == (try Data(contentsOf: optimized.url)))
+
+        // Again after the swap: the optimized copy stays as it is.
+        #expect(try await copy().0 == .alreadyThere)
+        #expect(board.changeCount == count + 2)
+        // The file saved again is another copy.
+        let (changed, changedSwap) = try await copier.copyNow(key: "Edited.png, second save", to: board,
+                                                              first: { try item(source) }, smaller: { nil })
+        #expect(changed == .written)
+        #expect(await changedSwap?.value == false)
+        #expect(board.changeCount == count + 3)
+        optimized.discard()
+        #expect(bench.leftovers.isEmpty)
+    }
+
+    /// The swap waits for history to file the original first (`beforeSwap`, given the original's change count),
+    /// and anything copied while it waits stays: the change-count check comes after the wait.
+    @Test func theSwapWaitsForHistoryAndNeverLandsOnACopyMadeWhileItWaited() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let source = try bench.file("Shot.png", Sample.screenshot(width: 640, height: 400, seed: 45))
+        let optimizer = bench.optimizer
+        let copier = OptimizedImageCopy()
+        func smaller() async -> NSPasteboardItem? {
+            guard let result = try? await optimizer.optimize(source), result.outcome == .optimized else { return nil }
+            defer { result.discard() }
+            return try? item(result.url)
+        }
+
+        do {
+            let board = pasteboard()
+            defer { board.releaseGlobally() }
+            let count = board.changeCount
+            var waitedFor: Int?
+            let (outcome, swap) = try await copier.copyNow(to: board, first: { try item(source) }, smaller: smaller,
+                                                           beforeSwap: { written in
+                waitedFor = written
+                // Still the original while history reads it.
+                #expect(board.data(forType: .png) == (try? Data(contentsOf: source)))
+            })
+            #expect(outcome == .written)
+            #expect(await swap?.value == true)
+            #expect(waitedFor == count + 1)
+            #expect(board.changeCount == count + 2)
+        }
+
+        do {
+            let board = pasteboard()
+            defer { board.releaseGlobally() }
+            let (outcome, swap) = try await copier.copyNow(to: board, first: { try item(source) }, smaller: smaller,
+                                                           beforeSwap: { _ in
+                board.clearContents()
+                board.setString("copied while history read the original", forType: .string)
+            })
+            #expect(outcome == .written)
+            #expect(await swap?.value == false)
+            #expect(board.string(forType: .string) == "copied while history read the original")
+        }
+        #expect(bench.leftovers.isEmpty)
+    }
 }
 
 // MARK: - One optimization for a new capture

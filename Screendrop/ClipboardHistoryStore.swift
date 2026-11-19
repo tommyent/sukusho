@@ -270,6 +270,11 @@ actor ClipboardHistoryStore {
         }
     }
 
+    /// The card a copy of the image `hash` was filed on: the unsaved one, as `record` files it.
+    func imageEntryID(hash: String) throws -> String? {
+        try query("SELECT id FROM entries WHERE kind = 'image' AND hash = ? AND pinned_at IS NULL", [hash]) { $0.text(0) }.first ?? nil
+    }
+
     /// Puts `capture` on the card `id` as its newest version, for an image Sukusho made smaller itself: the same
     /// picture, so history gains no entry. The card keeps its place. False, with nothing changed, when another
     /// card already holds exactly that content: two cards can't hold one content.
