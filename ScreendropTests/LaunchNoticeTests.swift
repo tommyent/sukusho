@@ -44,6 +44,16 @@ struct LaunchNoticeTests {
         }
     }
 
+    @Test func aSecondNoticeLeavesTheFirstTitleBarExposed() throws {
+        let first = LaunchNoticePanel(title: "First", content: Color.clear.frame(width: 370, height: 180))
+        let second = LaunchNoticePanel(title: "Second", content: Color.clear.frame(width: 460, height: 160))
+        let screen = try #require(first.screen)
+        second.stagger(after: first)
+        #expect(second.frame.minX == first.frame.minX + 24)
+        #expect(second.frame.maxY == first.frame.maxY - 24)
+        #expect(screen.visibleFrame.contains(second.frame))
+    }
+
     @Test func theClashNoticeRecordsAnAnswerOnlyWhenOneIsGiven() {
         for answer in [ShortcutClashNotice.Answer.useOtherKeys, .openKeyboardShortcuts, .notNow] {
             let (defaults, name) = suite()

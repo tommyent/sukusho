@@ -31,7 +31,7 @@ extension SystemScreenshotShortcuts {
 }
 
 extension ShortcutClashNotice {
-    static func showIfNeeded(defaults: UserDefaults = .standard) {
+    static func showIfNeeded(after first: LaunchNoticePanel?, defaults: UserDefaults = .standard) {
         guard panel == nil, !defaults.bool(forKey: shownKey) else { return }
         let clashes = SystemScreenshotShortcuts.currentClashPairs()
         guard !clashes.isEmpty else { return }
@@ -49,6 +49,7 @@ extension ShortcutClashNotice {
             case .notNow: break
             }
         }
+        if let first { window.stagger(after: first) }
         panel = window
         // Key, as the alert was: Return gives the default answer, and the Library opened at launch doesn't keep the keys.
         window.makeKeyAndOrderFront(nil)

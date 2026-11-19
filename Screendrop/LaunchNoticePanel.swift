@@ -38,6 +38,14 @@ final class LaunchNoticePanel: NSPanel {
         center()
     }
 
+    func stagger(after first: LaunchNoticePanel) {
+        // Leave the first notice's title bar and close button exposed.
+        let topLeft = NSPoint(x: first.frame.minX + 24, y: first.frame.maxY - 24)
+        var next = frame
+        next.origin = NSPoint(x: topLeft.x, y: topLeft.y - next.height)
+        setFrame(constrainFrameRect(next, to: first.screen), display: false)
+    }
+
     override func close() {
         super.close()
         let onClose = onClose

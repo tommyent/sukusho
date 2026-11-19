@@ -8,7 +8,7 @@ import SwiftUI
 
 /// Below the tested macOS, once per macOS version until dismissed, in a modeless `LaunchNoticePanel`.
 enum UnsupportedOSNotice {
-    private static var panel: LaunchNoticePanel?
+    private(set) static var panel: LaunchNoticePanel?
     static let dismissedKey = "unsupportedOSNotice.dismissedForVersion"
     #if DEBUG
     /// A Debug build pretends to run on this version, so the notice can be seen on macOS 27:

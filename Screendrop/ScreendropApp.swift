@@ -314,7 +314,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showLaunchNoticesIfActive() {
         guard launchNotices.takeIfDue(isActive: NSApp.isActive) else { return }
         UnsupportedOSNotice.showIfNeeded()
-        ShortcutClashNotice.showIfNeeded()
+        ShortcutClashNotice.showIfNeeded(after: UnsupportedOSNotice.panel)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
