@@ -8,6 +8,7 @@ import SwiftUI
 
 enum SettingsTab: String, CaseIterable, Identifiable {
     case general
+    case appearance
     case shortcuts
     case screenshots
     case video
@@ -24,6 +25,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .general: "General"
+        case .appearance: "Appearance"
         case .shortcuts: "Shortcuts"
         case .library: "Library"
         case .clipboard: "Clipboard"
@@ -40,6 +42,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .general: "gearshape"
+        case .appearance: "circle.lefthalf.filled"
         case .shortcuts: "keyboard"
         case .library: "square.grid.2x2"
         case .clipboard: "doc.on.clipboard"
@@ -67,8 +70,9 @@ final class SettingsNavigation {
 // MARK: - Main Settings View
 
 struct SettingsView: View {
-    /// The sidebar's 200 points plus the widest pane: General needs 476 (measured on macOS
-    /// 27.0.1 and 27.3 as the window's 660 minus the squeezed sidebar's 184), with room to spare.
+    /// The sidebar's 200 points plus the widest pane: General needed 476 (measured on macOS
+    /// 27.0.1 and 27.3 as the window's 660 minus the squeezed sidebar's 184) while it held what
+    /// is now Appearance, with room to spare.
     static let minimumWidth: CGFloat = 720
     @State private var navigation = SettingsNavigation.shared
     @State private var navigationHistory: [SettingsTab] = [.general]
@@ -229,6 +233,8 @@ private struct SettingsDetailView: View {
             switch tab {
             case .general:
                 GeneralSettingsPane()
+            case .appearance:
+                AppearanceSettingsPane()
             case .shortcuts:
                 ShortcutsSettingsPane()
             case .library:

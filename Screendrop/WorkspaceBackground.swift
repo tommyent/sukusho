@@ -8,7 +8,7 @@ import Foundation
 import ImageIO
 
 /// What the Library's browser, the image editor and Studio draw behind their
-/// content (Settings › General › Workspace). Screen only: no export, Copy,
+/// content (Settings › Appearance › Workspace). Screen only: no export, Copy,
 /// upload or Agent Prompt path reads these settings.
 nonisolated enum WorkspaceBackground {
     enum Style: String, CaseIterable, Identifiable, Sendable {
