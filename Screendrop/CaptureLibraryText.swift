@@ -198,9 +198,9 @@ nonisolated enum CaptureTextIndexPlan {
     /// a failure isn't final until the app quits.
     static let retryDelay: TimeInterval = 300
 
-    /// Fingerprints whose read failed less than `retryDelay` before `now`.
-    static func waiting(failedAt: [String: Date], now: Date) -> Set<String> {
-        Set(failedAt.filter { now.timeIntervalSince($0.value) < retryDelay }.keys)
+    /// Fingerprints still waiting for their next OCR or insight attempt.
+    static func waiting(retryAt: [String: Date], now: Date) -> [String: Date] {
+        retryAt.filter { $0.value > now }
     }
 
     /// Captures whose text is read but that the model hasn't seen, newest

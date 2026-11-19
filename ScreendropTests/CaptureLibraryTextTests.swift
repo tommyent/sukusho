@@ -86,7 +86,7 @@ struct CaptureLibraryTextTests {
 
     @Test func failedReadsWaitAFewMinutesThenAreReadAgain() {
         let failed = Date()
-        let failures = ["broken:1": failed, "older:1": failed.addingTimeInterval(-600)]
+        let failures = ["broken:1": failed.addingTimeInterval(CaptureTextIndexPlan.retryDelay), "older:1": failed.addingTimeInterval(-300)]
         let captures: [CaptureTextIndexPlan.Capture] = [
             .init(id: "broken", fingerprint: "broken:1", createdAt: failed),
             .init(id: "older", fingerprint: "older:1", createdAt: failed.addingTimeInterval(-700)),
@@ -94,13 +94,13 @@ struct CaptureLibraryTextTests {
         ]
         func stale(after seconds: TimeInterval) -> [String] {
             let now = failed.addingTimeInterval(seconds)
-            return CaptureTextIndexPlan.stale(captures, entries: [:], skipping: CaptureTextIndexPlan.waiting(failedAt: failures, now: now)).map(\.id)
+            return CaptureTextIndexPlan.stale(captures, entries: [:], skipping: Set(CaptureTextIndexPlan.waiting(retryAt: failures, now: now).keys)).map(\.id)
         }
         // A minute on, the failed capture still waits; one that failed long ago is read again.
-        #expect(CaptureTextIndexPlan.waiting(failedAt: failures, now: failed.addingTimeInterval(60)) == ["broken:1"])
+        #expect(Set(CaptureTextIndexPlan.waiting(retryAt: failures, now: failed.addingTimeInterval(60)).keys) == ["broken:1"])
         #expect(stale(after: 60) == ["new", "older"])
         // Once the delay has passed, every capture is read again, newest first.
-        #expect(CaptureTextIndexPlan.waiting(failedAt: failures, now: failed.addingTimeInterval(CaptureTextIndexPlan.retryDelay)).isEmpty)
+        #expect(CaptureTextIndexPlan.waiting(retryAt: failures, now: failed.addingTimeInterval(CaptureTextIndexPlan.retryDelay)).isEmpty)
         #expect(stale(after: CaptureTextIndexPlan.retryDelay) == ["new", "broken", "older"])
     }
 

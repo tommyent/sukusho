@@ -9,7 +9,7 @@ import FoundationModels
 nonisolated enum CaptureIntelligence {
     enum Outcome: Sendable {
         case insight(CaptureInsight)
-        /// Busy, rate limited or still downloading: asked again next launch.
+        /// Busy, rate limited or still downloading: asked again later.
         case later
     }
 
@@ -64,7 +64,7 @@ nonisolated enum CaptureIntelligence {
 
     /// A refusal, a guardrail or an answer that doesn't fit is final for this
     /// prompt version, so the capture isn't asked again in a loop; a busy or
-    /// still-downloading model is asked again next launch.
+    /// still-downloading model is asked again later.
     static func outcome(for error: any Error) -> Outcome {
         if error is CancellationError { return .later }
         if #available(macOS 27, *), let outcome = currentOutcome(error) { return outcome }

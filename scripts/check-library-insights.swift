@@ -253,7 +253,7 @@ struct LibraryInsightChecks {
     }
 
     /// A refusal or guardrail stores the declined mark and isn't asked
-    /// again; a busy model isn't asked again this session either.
+    /// again; a busy model waits for its retry delay.
     static func declineChecks(scratch: URL, store: CaptureTextIndexStore) async throws {
         let index = CaptureLibraryIndex.shared
         let history = ScreenshotHistoryStore.shared
@@ -290,7 +290,7 @@ struct LibraryInsightChecks {
             try await Task.sleep(for: .milliseconds(400))
         }
         try check(calls == 1 && index.entries[busyID]?.insight == nil && index.insightsPending == 0, "Busy model: asked \(calls) times or stored")
-        print("CHECK: a busy model isn't stored or asked again this session")
+        print("CHECK: a busy model isn't stored or asked again during its retry delay")
 
         // The type thrown before macOS 27 splits the same way.
         for (name, error, retries) in legacyErrors() {
