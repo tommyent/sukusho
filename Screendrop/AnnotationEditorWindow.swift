@@ -592,7 +592,11 @@ struct AnnotationEditorWindow: View {
         guard !isBusy else { return }
 
         isFinishing = true
+        // The copy's turn is taken now, at ⌘C, before the edits are saved: anything copied while they are, here or
+        // in another app, is newer, and this copy doesn't land after it (as the Library's selection, Astra round 4).
+        let turn = OptimizedImageCopy.shared.takeTurn()
         Task {
+            defer { OptimizedImageCopy.shared.finish(turn) }
             do {
                 let resultURL = try await model.commitEdits()
                 if let resultURL {
@@ -604,9 +608,10 @@ struct AnnotationEditorWindow: View {
                     )
                 }
                 // No result means nothing was drawn: the original is the image.
-                guard try await ScreenshotFileActions.copyImageToClipboard(from: resultURL ?? sourceURL, original: original) else {
-                    // Something newer reached the clipboard while the image was read: nothing was copied, so the
-                    // editor stays, edits saved, for another ⌘C.
+                guard try await ScreenshotFileActions.copyImageToClipboard(from: resultURL ?? sourceURL, original: original,
+                                                                           turn: turn) else {
+                    // Something newer reached the clipboard while the image was saved or read: nothing was copied, so
+                    // the editor stays, edits saved, for another ⌘C.
                     isFinishing = false
                     return
                 }
