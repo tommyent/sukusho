@@ -436,14 +436,7 @@ struct CaptureLibraryView: View {
                 .workspaceTextPlate()
             }
         } else {
-            CaptureLibraryCollection(items: model.visibleItems, revision: model.contentRevision, layout: layout,
-                cardWidth: cardWidth, selection: $model.selection, isBusy: model.isBusy,
-                cell: { item, selected, onTitleFrame in
-                    AnyView(LibraryCellContent(item: item, selected: selected, layout: layout, onTitleFrame: onTitleFrame))
-                },
-                menu: { [model] in model.menuItems(selected: $0) },
-                backgroundMenu: { [model] in model.backgroundMenuItems { model.refresh() } },
-                onAction: model.perform)
+            LibraryCaptureCollection(items: model.visibleItems, layout: layout, cardWidth: cardWidth, model: model)
         }
     }
 
@@ -657,6 +650,25 @@ struct CaptureLibraryView: View {
             .help(inspectorVisible ? "Hide Inspector" : "Show Inspector")
         }
         .sharedBackgroundVisibility(.hidden)
+    }
+}
+
+struct LibraryCaptureCollection: View {
+    let items: [CaptureLibraryItem]
+    let layout: CaptureLibraryLayout
+    let cardWidth: CGFloat
+    @Bindable var model: CaptureLibraryModel
+
+    var body: some View {
+        CaptureLibraryCollection(items: items, revision: model.contentRevision, layout: layout,
+            cardWidth: cardWidth, selection: $model.selection, isBusy: model.isBusy,
+            cell: { item, selected, onTitleFrame in
+                AnyView(LibraryCellContent(item: item, selected: selected, layout: layout, onTitleFrame: onTitleFrame))
+            },
+            menu: { [model] in model.menuItems(selected: $0) },
+            backgroundMenu: { [model] in model.backgroundMenuItems { model.refresh() } },
+            dragWriter: { try LibrarySavedCard.capture($0).dragWriter() },
+            onAction: model.perform)
     }
 }
 

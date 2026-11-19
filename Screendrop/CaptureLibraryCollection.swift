@@ -58,7 +58,7 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
     let menu: (Int) -> [LibraryMenuItem]
     /// The menu for a right-click between the cards, like Finder's.
     var backgroundMenu: () -> [LibraryMenuItem] = { [] }
-    var dragWriter: ((Entry) -> NSPasteboardWriting?)?
+    var dragWriter: ((Entry) throws -> NSPasteboardWriting?)?
     var onReturn: (() -> Void)? = nil
     let onAction: (CaptureLibraryAction) -> Void
 
@@ -174,7 +174,11 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
 
         func collectionView(_ collectionView: NSCollectionView, pasteboardWriterForItemAt indexPath: IndexPath) -> NSPasteboardWriting? {
             guard !parent.isBusy, let index = order.index(at: indexPath), parent.items.indices.contains(index) else { return nil }
-            return parent.dragWriter?(parent.items[index])
+            do { return try parent.dragWriter?(parent.items[index]) }
+            catch {
+                CaptureLibraryModel.shared.errorMessage = error.localizedDescription
+                return nil
+            }
         }
 
         func collectionView(_ collectionView: NSCollectionView, draggingSession session: NSDraggingSession,
@@ -363,6 +367,23 @@ final class LibraryCollectionView: NSCollectionView, NSUserInterfaceValidations 
     }
 
     private var pendingRename: DispatchWorkItem?
+    private var beganDragging = false
+
+    override func beginDraggingSession(with items: [NSDraggingItem], event: NSEvent, source: NSDraggingSource) -> NSDraggingSession {
+        beganDragging = true
+        pendingRename?.cancel()
+        setPressed(nil)
+        let files = items.flatMap { item -> [NSDraggingItem] in
+            guard let group = item.item as? LibraryFileGroup else { return [item] }
+            return group.urls.map { url in
+                let file = NSDraggingItem(pasteboardWriter: url as NSURL)
+                file.draggingFrame = item.draggingFrame
+                file.imageComponentsProvider = item.imageComponentsProvider
+                return file
+            }
+        }
+        return super.beginDraggingSession(with: files, event: event, source: source)
+    }
 
     /// Clicking the title of the one selected capture renames it, as in
     /// Finder. It waits out the double-click interval first, so a double
@@ -371,12 +392,14 @@ final class LibraryCollectionView: NSCollectionView, NSUserInterfaceValidations 
         guard visibleRect.contains(convert(event.locationInWindow, from: nil)) else { return }
         pendingRename?.cancel()
         pendingRename = nil
+        beganDragging = false
         let clicked = indexPathForItem(at: convert(event.locationInWindow, from: nil))
         let wasOnlySelection = clicked.map { selectionIndexPaths == [$0] } ?? false
         window?.makeFirstResponder(self)
         mouseSelectionHandler?(event)
         super.mouseDown(with: event)
         if NSEvent.pressedMouseButtons & 1 == 0 { setPressed(nil) }
+        guard !beganDragging else { return }
         if event.clickCount == 2 {
             guard let clicked else { return }
             selectionIndexPaths = [clicked]

@@ -119,7 +119,7 @@ enum VideoFileActions {
     /// renaming a QuickTime master to `.mp4` would produce a file some players
     /// reject - the remux is what makes the rename honest. Matching containers
     /// take the copy path, which on APFS is a clone rather than a byte copy.
-    static func save(from sourceURL: URL, to destinationURL: URL) async throws {
+    static func save(from sourceURL: URL, to destinationURL: URL, replacingExisting: Bool = true) async throws {
         let stagingURL = try ScreenshotFileActions.stagingURL(from: sourceURL, to: destinationURL)
         defer { try? FileManager.default.removeItem(at: stagingURL) }
         try Task.checkCancellation()
@@ -130,7 +130,7 @@ enum VideoFileActions {
             try FileManager.default.copyItem(at: sourceURL, to: stagingURL)
         }
         try Task.checkCancellation()
-        try ScreenshotFileActions.installExport(from: stagingURL, at: destinationURL)
+        try ScreenshotFileActions.installExport(from: stagingURL, at: destinationURL, replacingExisting: replacingExisting)
     }
 
     /// The container to rewrite into, or nil when a plain copy is correct.
