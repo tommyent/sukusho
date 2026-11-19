@@ -145,6 +145,7 @@
 		C11B00000000000000000009 /* Screendrop/ClipboardWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = C11B0000000000000000000A /* Screendrop/ClipboardWriter.swift */; };
 		C11B0000000000000000000B /* Screendrop/ClipboardImageMatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = C11B0000000000000000000C /* Screendrop/ClipboardImageMatch.swift */; };
 		C11B0000000000000000000D /* Screendrop/LibraryGridMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = C11B0000000000000000000E /* Screendrop/LibraryGridMetrics.swift */; };
+		7E3E00000000000000000001 /* Screendrop/AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E3E00000000000000000002 /* Screendrop/AppTheme.swift */; };
 		C11C00000000000000000001 /* Screendrop/IconLightness.swift in Sources */ = {isa = PBXBuildFile; fileRef = C11C00000000000000000002 /* Screendrop/IconLightness.swift */; };
 		C11B0000000000000000000F /* Screendrop/LibraryArchive.swift in Sources */ = {isa = PBXBuildFile; fileRef = C11B00000000000000000010 /* Screendrop/LibraryArchive.swift */; };
 		ED2A00000000000000000001 /* Screendrop/InspectorAutoFold.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED2A00000000000000000002 /* Screendrop/InspectorAutoFold.swift */; };
@@ -358,6 +359,7 @@
 		C11B0000000000000000000A /* Screendrop/ClipboardWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ClipboardWriter.swift; sourceTree = SOURCE_ROOT; };
 		C11B0000000000000000000C /* Screendrop/ClipboardImageMatch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ClipboardImageMatch.swift; sourceTree = SOURCE_ROOT; };
 		C11B0000000000000000000E /* Screendrop/LibraryGridMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/LibraryGridMetrics.swift; sourceTree = SOURCE_ROOT; };
+		7E3E00000000000000000002 /* Screendrop/AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AppTheme.swift; sourceTree = SOURCE_ROOT; };
 		C11C00000000000000000002 /* Screendrop/IconLightness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/IconLightness.swift; sourceTree = SOURCE_ROOT; };
 		C11B00000000000000000010 /* Screendrop/LibraryArchive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/LibraryArchive.swift; sourceTree = SOURCE_ROOT; };
 		ED2A00000000000000000002 /* Screendrop/InspectorAutoFold.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/InspectorAutoFold.swift; sourceTree = SOURCE_ROOT; };
@@ -616,6 +618,7 @@
 				C11B0000000000000000000A /* Screendrop/ClipboardWriter.swift */,
 				C11B0000000000000000000C /* Screendrop/ClipboardImageMatch.swift */,
 				C11B0000000000000000000E /* Screendrop/LibraryGridMetrics.swift */,
+				7E3E00000000000000000002 /* Screendrop/AppTheme.swift */,
 				C11C00000000000000000002 /* Screendrop/IconLightness.swift */,
 				C11B00000000000000000010 /* Screendrop/LibraryArchive.swift */,
 				ED2A00000000000000000002 /* Screendrop/InspectorAutoFold.swift */,
@@ -917,6 +920,7 @@
 				C11B00000000000000000009 /* Screendrop/ClipboardWriter.swift in Sources */,
 				C11B0000000000000000000B /* Screendrop/ClipboardImageMatch.swift in Sources */,
 				C11B0000000000000000000D /* Screendrop/LibraryGridMetrics.swift in Sources */,
+				7E3E00000000000000000001 /* Screendrop/AppTheme.swift in Sources */,
 				C11C00000000000000000001 /* Screendrop/IconLightness.swift in Sources */,
 				C11B0000000000000000000F /* Screendrop/LibraryArchive.swift in Sources */,
 				ED2A00000000000000000001 /* Screendrop/InspectorAutoFold.swift in Sources */,

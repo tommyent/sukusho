@@ -864,6 +864,7 @@ struct CardCloudBadge: View {
     let isShared: Bool
     let action: () -> Void
     @State private var copied = ActionFeedback(announce: { _ in })
+    @CurrentTheme private var theme
 
     var body: some View {
         Button {
@@ -872,7 +873,7 @@ struct CardCloudBadge: View {
         } label: {
             Image(systemName: copied.isShowing ? "checkmark" : isShared ? "checkmark.icloud.fill" : "icloud.and.arrow.up")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(isShared ? CardMark.green : CardMark.idle)
+                .foregroundStyle(isShared ? CardMark.green : theme.marks.idle.color)
                 .frame(width: 24, height: 24)
                 .cardMark(Circle())
                 .contentShape(Circle())
@@ -884,17 +885,31 @@ struct CardCloudBadge: View {
 }
 
 extension View {
-    func cardMark<S: InsettableShape>(_ shape: S) -> some View {
-        environment(\.colorScheme, .light)
-            .background { shape.fill(CardMark.fill).shadow(color: .black.opacity(0.25), radius: 1.5, y: 1) }
+    func cardMark<S: InsettableShape>(_ shape: S) -> some View { modifier(CardMarkGround(shape: shape)) }
+
+    /// A small pill of dark text on that ground, such as a video's length. nil: the theme's mark ink.
+    func cardPill(_ tint: Color? = nil) -> some View { modifier(CardPill(tint: tint)) }
+}
+
+private struct CardMarkGround<S: InsettableShape>: ViewModifier {
+    let shape: S
+    @CurrentTheme private var theme
+
+    func body(content: Content) -> some View {
+        content.environment(\.colorScheme, .light)
+            .background { shape.fill(theme.marks.fill.color).shadow(color: .black.opacity(0.25), radius: 1.5, y: 1) }
             .overlay { shape.strokeBorder(.black.opacity(0.15), lineWidth: 0.5) }
     }
+}
 
-    /// A small pill of dark text on that ground, such as a video's length.
-    func cardPill(_ tint: Color = CardMark.text) -> some View {
-        font(.system(size: 10, weight: .semibold))
+private struct CardPill: ViewModifier {
+    let tint: Color?
+    @CurrentTheme private var theme
+
+    func body(content: Content) -> some View {
+        content.font(.system(size: 10, weight: .semibold))
             .padding(.horizontal, 6).padding(.vertical, 3)
-            .foregroundStyle(tint)
+            .foregroundStyle(tint ?? theme.marks.ink.color)
             .cardMark(Capsule())
     }
 }
@@ -917,16 +932,13 @@ private struct LibraryCardChip: ViewModifier {
     let radius: CGFloat
     let height: CGFloat
     @Environment(\.colorScheme) private var colorScheme
+    @CurrentTheme private var theme
 
     func body(content: Content) -> some View {
         let dark = colorScheme == .dark
         let shape = RoundedRectangle(cornerRadius: radius, style: .circular)
         let strength: Double = usesTextWell ? 0.45 : 1
-        let well: Color = if usesTextWell {
-            LibraryCardDepth.textWell(in: colorScheme)
-        } else {
-            dark ? Color(red: 40 / 255, green: 38 / 255, blue: 39 / 255) : Color.white
-        }
+        let well = (usesTextWell ? theme.card.textWell : theme.card.well).color
         // Limit the wash to its reach on the 220 pt reference card as the picture grows.
         let wash = 0.16 * min(1, 143 / height)
         content

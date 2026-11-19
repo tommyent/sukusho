@@ -12,6 +12,7 @@ struct LibraryGridCard<Picture: View, Caption: View>: View {
     var usesTextWell = false
     @ViewBuilder let picture: () -> Picture
     @ViewBuilder let caption: () -> Caption
+    @CurrentTheme private var theme
 
     var body: some View {
         GeometryReader { geometry in
@@ -43,7 +44,7 @@ struct LibraryGridCard<Picture: View, Caption: View>: View {
         case .received:
             Button(action: cloudAction) {
                 Image(systemName: "tray.and.arrow.down").font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(CardMark.idle).frame(width: 24, height: 24).cardMark(Circle())
+                    .foregroundStyle(theme.marks.idle.color).frame(width: 24, height: 24).cardMark(Circle())
             }
             .buttonStyle(.plain).help("Download received file").accessibilityLabel("Download received file")
         case nil: EmptyView()
@@ -70,7 +71,7 @@ struct LibraryGridCard<Picture: View, Caption: View>: View {
         case .password: Image(systemName: "lock.fill").cardPill().help("Password protected")
         case .expiry(let date):
             compactLabel(CloudUploadText.expiryShort(date), symbol: "hourglass", density: density)
-                .cardPill(date <= .now ? .red : CardMark.text).help(CloudUploadText.expiryDate(date))
+                .cardPill(date <= .now ? .red : nil).help(CloudUploadText.expiryDate(date))
         case .comments(let n):
             Label { Text(n.formatted()) } icon: { Image(systemName: "bubble.left.fill").foregroundStyle(.blue) }
                 .cardPill().help(CloudUploadText.comments(n) ?? "")
@@ -96,7 +97,7 @@ struct LibraryGridCard<Picture: View, Caption: View>: View {
 
 }
 
-/// Grid cards share one stock surface. List rows retain their compact backing.
+/// Grid cards share one surface, drawn by the theme's card recipe. List rows retain their compact backing.
 struct LibraryCardSurface: ViewModifier {
     let layout: CaptureLibraryLayout
     let selected: Bool
@@ -108,6 +109,7 @@ struct LibraryCardSurface: ViewModifier {
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.appearsActive) private var active
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @CurrentTheme private var theme
 
     private var dark: Bool { scheme == .dark }
     private let shape = RoundedRectangle(cornerRadius: DS.Radius.card, style: .continuous)
@@ -119,7 +121,11 @@ struct LibraryCardSurface: ViewModifier {
                 let radius = LibraryCardDensity(width: geometry.size.width).cornerRadius
                 let outline = RoundedRectangle(cornerRadius: radius, style: .circular)
                 content
-                    .background { stock(depth, shape: outline, radius: radius).allowsHitTesting(false) }
+                    .background {
+                        switch theme.card.recipe {
+                        case .stock(let stock): self.stock(stock, depth, shape: outline, radius: radius).allowsHitTesting(false)
+                        }
+                    }
                     .overlay {
                         if !selected && contrast == .increased {
                             outline.strokeBorder(Color.primary.opacity(0.65), lineWidth: 1)
@@ -138,35 +144,31 @@ struct LibraryCardSurface: ViewModifier {
         }
     }
 
-    private func stock(_ depth: LibraryCardDepth, shape: RoundedRectangle, radius: CGFloat) -> some View {
+    private func stock(_ stock: AppTheme.Stock, _ depth: LibraryCardDepth, shape: RoundedRectangle, radius: CGFloat) -> some View {
         ZStack {
-            if let key = depth.key { shadow(key, depth: depth, radius: radius) }
-            if let contact = depth.contact { shadow(contact, depth: depth, radius: radius) }
-            if let offset = depth.lowerLip { shape.fill(lip(lower: true)).offset(y: offset) }
-            if depth != .pressed { shape.fill(lip(lower: false)).offset(y: 1) }
-            shape.fill(LinearGradient(colors: dark ? [Color(stock: 0x333335), Color(stock: 0x2B2B2D)]
-                                                   : [.white, Color(stock: 0xF7F7F8)], startPoint: .top, endPoint: .bottom))
+            if let key = depth.key { shadow(key, stock, depth: depth, radius: radius) }
+            if let contact = depth.contact { shadow(contact, stock, depth: depth, radius: radius) }
+            if let offset = depth.lowerLip { shape.fill(lip(stock, lower: true)).offset(y: offset) }
+            if depth != .pressed { shape.fill(lip(stock, lower: false)).offset(y: 1) }
+            shape.fill(LinearGradient(colors: theme.card.face.map(\.color), startPoint: .top, endPoint: .bottom))
             Canvas { context, size in
                 let path = shape.path(in: CGRect(origin: .zero, size: size))
                 context.clip(to: path)
                 context.clip(to: path.offsetBy(dx: 0, dy: 1), options: .inverse)
-                context.fill(path, with: .color(.white.opacity(dark ? 0.16 : 1)))
+                context.fill(path, with: .color(stock.gloss.color))
             }
         }
         .accessibilityHidden(true)
     }
 
-    private func shadow(_ spec: LibraryCardDepth.Shadow, depth: LibraryCardDepth, radius: CGFloat) -> some View {
-        let alpha = depth == .pressed ? (dark ? 0.5 : 0.12) : (dark ? 0.65 : 0.18)
+    private func shadow(_ spec: LibraryCardDepth.Shadow, _ stock: AppTheme.Stock, depth: LibraryCardDepth, radius: CGFloat) -> some View {
+        let alpha = depth == .pressed ? stock.pressedShadow : stock.shadow
         return LibraryShadowShape(inset: spec.inset, radius: radius).fill(.black)
             .shadow(color: .black.opacity(alpha), radius: spec.blur / 2, y: spec.offset)
     }
 
-    private func lip(lower: Bool) -> Color {
-        guard selected else {
-            if dark { return Color(stock: lower ? 0x0A0A0A : 0x141414) }
-            return Color(stock: lower ? 0xBDBDC2 : 0xD6D6DA)
-        }
+    private func lip(_ stock: AppTheme.Stock, lower: Bool) -> Color {
+        guard selected else { return (lower ? stock.lowerLip : stock.upperLip).color }
         guard active else { return .secondary }
         let accent = NSColor.controlAccentColor
         if accent.usingColorSpace(.sRGB) == NSColor.systemBlue.usingColorSpace(.sRGB) {

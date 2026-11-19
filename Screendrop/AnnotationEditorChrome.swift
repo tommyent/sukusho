@@ -115,18 +115,19 @@ struct LowResolutionPreviewNotice: View {
 }
 
 /// The one flat colour of the windows' chrome, shared by the editor and the Library: the toolbar,
-/// the left sidebar and the right inspector. White in light mode, the window background in dark.
+/// the left sidebar and the right inspector, from the theme (Classic: white in light mode, the window
+/// background in dark).
 enum WorkspaceChrome {
     static var background: Color { Color(nsColor: NSColor(name: nil, dynamicProvider: color)) }
 
     /// Nonisolated: AppKit can resolve colours off the main thread.
     nonisolated private static func color(for appearance: NSAppearance) -> NSColor {
-        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .windowBackgroundColor : .white
+        AppTheme.current(for: appearance).chrome.background.nsColor
     }
 }
 
 /// The ground behind the Library's browser, the editor's canvas and Studio's
-/// canvas: Dots, Plain or a wallpaper, from Settings › General › Workspace.
+/// canvas: Dots, Plain or a wallpaper, from Settings › Appearance › Workspace, on the theme's ground.
 struct AnnotationEditorWorkspaceBackground: View {
     @AppStorage(WorkspaceBackground.styleKey) private var style = WorkspaceBackground.Style.dots
     @AppStorage(WorkspaceBackground.wallpaperPathKey) private var wallpaperPath = ""
@@ -136,13 +137,14 @@ struct AnnotationEditorWorkspaceBackground: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
+    @CurrentTheme private var theme
 
     var body: some View {
-        // A flat, fully desaturated gray rather than a system material -
-        // vibrancy materials pick up a bluish cast from the accent color
-        // and whatever's behind the window, which reads as tinted rather
-        // than neutral.
-        let ground = colorScheme == .dark ? Color(white: 0.16) : Color(white: 0.93)
+        // Classic's is a flat, fully desaturated gray rather than a system
+        // material - vibrancy materials pick up a bluish cast from the accent
+        // color and whatever's behind the window, which reads as tinted
+        // rather than neutral.
+        let ground = theme.ground.workspace.color
         ZStack {
             Rectangle().fill(ground)
 

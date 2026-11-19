@@ -5,8 +5,9 @@ import Testing
 
 struct LibraryLogicTests {
     @MainActor @Test func bareClipboardMarksContrastWithTheTextWell() throws {
-        for scheme in [ColorScheme.light, .dark] {
-            let well = LibraryCardDepth.textWell(in: scheme)
+        for theme in AppTheme.builtIns {
+            let scheme: ColorScheme = theme.isDark ? .dark : .light
+            let well = theme.card.textWell.color
             let swatches = HStack(spacing: 0) {
                 well
                 CardMark.kindSymbol.background(well)

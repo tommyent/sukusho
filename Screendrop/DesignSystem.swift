@@ -24,9 +24,9 @@ extension Color {
     /// Pure black in light mode, pure white in dark. `.primary` inside a
     /// button in a non-key panel resolves dimmed, and `.labelColor` is
     /// slightly translucent, so solid marks use this instead.
-    static let ink = Color(nsColor: NSColor(name: "screendrop.ink") { $0.isDarkAppearance ? .white : .black })
+    static let ink = Color(nsColor: NSColor(name: "screendrop.ink") { AppTheme.current(for: $0).ink.primary.nsColor })
     /// The opposite of `ink`: text and glyphs drawn on a solid ink fill.
-    static let inkInverse = Color(nsColor: NSColor(name: "screendrop.inkInverse") { $0.isDarkAppearance ? .black : .white })
+    static let inkInverse = Color(nsColor: NSColor(name: "screendrop.inkInverse") { AppTheme.current(for: $0).ink.inverse.nsColor })
 }
 
 extension NSAppearance {
@@ -68,16 +68,12 @@ enum Palette {
     static let strongHairline = Color.primary.opacity(0.18)
 
     /// The opaque background of inspectors and side panels.
-    static let panel = Color(nsColor: NSColor(name: "screendrop.panel") {
-        $0.isDarkAppearance ? .windowBackgroundColor : .white
-    })
+    static let panel = Color(nsColor: NSColor(name: "screendrop.panel") { AppTheme.current(for: $0).chrome.panel.nsColor })
 
     /// The neutral, slightly recessed ground editors place their canvas on.
     /// A flat desaturated gray: system materials pick up a blue cast from the
     /// accent color and whatever sits behind the window.
-    static let workspace = Color(nsColor: NSColor(name: "screendrop.workspace") {
-        $0.isDarkAppearance ? NSColor(white: 0.16, alpha: 1) : NSColor(white: 0.93, alpha: 1)
-    })
+    static let workspace = Color(nsColor: NSColor(name: "screendrop.workspace") { AppTheme.current(for: $0).ground.workspace.nsColor })
 }
 
 // MARK: - Geometry
