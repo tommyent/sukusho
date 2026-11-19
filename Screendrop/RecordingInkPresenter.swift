@@ -147,7 +147,7 @@ final class RecordingInkPresenter {
         let point = quartz(point)
         if let last = strokes[index].samples.last?.point, hypot(point.x - last.x, point.y - last.y) < 0.5 { return }
         strokes[index].samples.append(.init(uptime: uptime, point: point))
-        redraw(strokes[index].samples.suffix(3))
+        redraw(strokes[index].samples.suffix(7))
     }
 
     fileprivate func endStroke(at uptime: TimeInterval, point: CGPoint?) {
@@ -158,7 +158,7 @@ final class RecordingInkPresenter {
         holdTimer = Timer.scheduledTimer(withTimeInterval: RecordingInkTimeline.holdDuration, repeats: false) { _ in
             Task { @MainActor in RecordingInkPresenter.shared.fadeGroup() }
         }
-        redraw(strokes[index].samples.suffix(3))
+        redraw(strokes[index].samples.suffix(7))
     }
 
     private func fadeGroup() {

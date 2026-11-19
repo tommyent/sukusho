@@ -126,6 +126,14 @@ struct RecordingInkTests {
         #expect(presses == resumeClick + contentClick)
     }
 
+    @Test func fivePointSmoothingPreservesEndpoints() {
+        let input = (0..<7).map { CGPoint(x: $0, y: $0 == 3 ? 9 : 0) }
+        let output = RecordingInkPath.smoothed(input)
+        #expect(output.first == input.first && output.last == input.last)
+        #expect(output[2].y == 2 && output[3].y == 3 && output[4].y == 2)
+        #expect(RecordingInkPath.smoothed([]).isEmpty)
+    }
+
     @Test func pathRunsFromFirstToLastSampleAndOnePointIsADot() {
         let points = [CGPoint(x: 0, y: 0), CGPoint(x: 10, y: 0), CGPoint(x: 10, y: 10), CGPoint(x: 20, y: 10)]
         let path = RecordingInkPath.path(points)

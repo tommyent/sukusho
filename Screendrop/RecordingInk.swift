@@ -189,9 +189,27 @@ nonisolated struct RecordingInkTimeline: Sendable {
 }
 
 nonisolated enum RecordingInkPath {
+    static func smoothed(_ samples: [CGPoint]) -> [CGPoint] {
+        guard samples.count >= 3 else { return samples }
+        var result = samples
+        for i in 1..<(samples.count - 1) {
+            let radius = min(2, i, samples.count - 1 - i)
+            var x = 0.0, y = 0.0, sum = 0.0
+            for offset in -radius...radius {
+                let weight = Double(3 - abs(offset))
+                x += samples[i + offset].x * weight
+                y += samples[i + offset].y * weight
+                sum += weight
+            }
+            result[i] = CGPoint(x: x / sum, y: y / sum)
+        }
+        return result
+    }
+
     /// Quadratic curves through the midpoints of successive samples, so the
     /// live pen, Studio and export draw the same line. One point is a dot.
-    static func path(_ points: [CGPoint]) -> CGPath {
+    static func path(_ samples: [CGPoint]) -> CGPath {
+        let points = smoothed(samples)
         let path = CGMutablePath()
         guard let first = points.first, let last = points.last else { return path }
         path.move(to: first)
