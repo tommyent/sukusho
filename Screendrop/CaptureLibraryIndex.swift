@@ -58,8 +58,7 @@ final class CaptureLibraryIndex {
     @ObservationIgnored private var insightDeadline: Task<Void, Never>?
     @ObservationIgnored var insightTimeout: Duration = .seconds(60)
     @ObservationIgnored var retryDelay = CaptureTextIndexPlan.retryDelay
-    @ObservationIgnored private var modelRetryAt: Date?
-    @ObservationIgnored private var modelBackoff: TimeInterval = 0
+    @ObservationIgnored private var modelCooldown = InsightModelCooldown()
     @ObservationIgnored private var lastModelFailure: [String: Date] = [:]
     /// The earliest retry for each unreadable fingerprint.
     @ObservationIgnored private var unreadable: [String: Date] = [:]
@@ -94,6 +93,7 @@ final class CaptureLibraryIndex {
 
     /// Opts older captures in to titles and suggestions.
     func includeExistingCaptures() {
+        modelCooldown.reset()
         UserDefaults.standard.set(true, forKey: ScreendropPreferences.libraryInsightsIncludeExistingKey)
         settingsDidChange()
     }
@@ -150,8 +150,8 @@ final class CaptureLibraryIndex {
             }
             write { $0.remove(ids: gone) }
         }
-        scheduleRetries()
         planInsights(items)
+        scheduleRetries()
         guard ScreendropPreferences.libraryReadsText else {
             queue = []
             updatePending()
@@ -172,6 +172,7 @@ final class CaptureLibraryIndex {
         let available = modelAvailability(), enabled = ScreendropPreferences.libraryUsesIntelligence
         if available != modelAvailable { modelAvailable = available }
         if enabled != usesIntelligence {
+            if enabled { modelCooldown.reset() }
             usesIntelligence = enabled
             CaptureLibraryModel.shared.insightsDidChange()
         }
@@ -192,14 +193,14 @@ final class CaptureLibraryIndex {
     }
 
     private var canStartInsight: Bool {
-        modelRetryAt == nil && describing == nil && outstandingInsights < 2 && !insightQueue.isEmpty
+        modelCooldown.retryAt == nil && describing == nil && outstandingInsights < 2 && !insightQueue.isEmpty
     }
 
     private func scheduleRetries() {
         let now = Date()
         unreadable = CaptureTextIndexPlan.waiting(retryAt: unreadable, now: now)
-        if let due = modelRetryAt, due <= now { modelRetryAt = nil }
-        let next = [unreadable.values.min(), modelRetryAt].compactMap { $0 }.min()
+        modelCooldown.expire(at: now)
+        let next = [unreadable.values.min(), modelCooldown.retryAt].compactMap { $0 }.min()
         guard next != retryAt else { return }
         retry?.cancel()
         retryAt = next
@@ -256,8 +257,7 @@ final class CaptureLibraryIndex {
     private func deferModel(for item: CaptureLibraryItem) {
         let now = Date()
         if entries[item.id]?.isCurrent(fingerprint: item.thumbnailKey) == true { lastModelFailure[item.id] = now }
-        modelBackoff = min(60 * 60, max(retryDelay, modelBackoff * 2))
-        modelRetryAt = now.addingTimeInterval(modelBackoff)
+        modelCooldown.recordFailure(at: now, retryDelay: retryDelay)
     }
 
     private func startInsight() {
@@ -283,7 +283,7 @@ final class CaptureLibraryIndex {
             case .later:
                 deferModel(for: item)
             case .insight(let insight):
-                modelBackoff = 0
+                modelCooldown.reset()
                 lastModelFailure[item.id] = nil
                 guard latestItems?.contains(where: { $0.id == item.id && $0.thumbnailKey == item.thumbnailKey }) == true,
                       var current = entries[item.id], current.isCurrent(fingerprint: item.thumbnailKey) else { return }

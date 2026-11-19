@@ -154,6 +154,22 @@ struct CaptureInsightTests {
 
     // MARK: Planning
 
+    @Test func optingInDuringAnHourCooldownAllowsAnImmediateAttemptAndRestartsBackoff() {
+        var cooldown = InsightModelCooldown()
+        var now = Date(timeIntervalSince1970: 0)
+        for delay: TimeInterval in [300, 600, 1200, 2400, 3600] {
+            cooldown.recordFailure(at: now, retryDelay: 300)
+            now.addTimeInterval(delay)
+            #expect(cooldown.retryAt == now)
+            if delay < 3600 { cooldown.expire(at: now) }
+        }
+        now.addTimeInterval(-1800)
+        cooldown.reset()
+        #expect(cooldown.retryAt == nil)
+        cooldown.recordFailure(at: now, retryDelay: 300)
+        #expect(cooldown.retryAt == now.addingTimeInterval(300))
+    }
+
     @Test func newCapturesAreDueNewestFirstAndOlderOnesWaitForTheUser() {
         let since = Date()
         let captures: [CaptureTextIndexPlan.Capture] = [

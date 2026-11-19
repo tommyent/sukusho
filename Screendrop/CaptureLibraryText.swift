@@ -177,6 +177,24 @@ nonisolated enum CaptureInsightRules {
     }
 }
 
+nonisolated struct InsightModelCooldown {
+    private(set) var retryAt: Date?
+    private var backoff: TimeInterval = 0
+
+    mutating func recordFailure(at now: Date, retryDelay: TimeInterval) {
+        backoff = min(60 * 60, max(retryDelay, backoff * 2))
+        retryAt = now.addingTimeInterval(backoff)
+    }
+
+    mutating func expire(at now: Date) {
+        if let retryAt, retryAt <= now { self.retryAt = nil }
+    }
+
+    mutating func reset() {
+        self = Self()
+    }
+}
+
 /// Which captures to read and which entries to forget after a Library scan.
 nonisolated enum CaptureTextIndexPlan {
     struct Capture: Sendable, Equatable {

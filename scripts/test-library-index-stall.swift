@@ -83,5 +83,27 @@ struct LibraryIndexStallTest {
         precondition(calls == [firstID: 2, secondID: 2])
         precondition(index.entries[firstID]?.insight?.title == "Retried answer" && index.insightsPending == 0)
         print("Timed-out and busy insights retried. The late answer did not overwrite the retry.")
+
+        index.retryDelay = 3600
+        var attempts = 0
+        index.describer = { _, _, _ in
+            attempts += 1
+            return attempts < 3 ? .later : .insight(CaptureInsight(title: "After opt-in"))
+        }
+        history.importScreenshot(from: source)
+        let newID = history.items[0].id.uuidString
+        try await waitFor("The model did not enter cooldown") { attempts == 1 }
+        index.includeExistingCaptures()
+        try await waitFor("Including existing captures did not retry the model") { attempts == 2 }
+        UserDefaults.standard.set(false, forKey: ScreendropPreferences.libraryUsesIntelligenceKey)
+        index.settingsDidChange()
+        precondition(!index.usesIntelligence)
+        UserDefaults.standard.set(true, forKey: ScreendropPreferences.libraryUsesIntelligenceKey)
+        index.settingsDidChange()
+        try await waitFor("Turning titles on did not retry the model") {
+            store.loadAll()[newID]?.insight?.title == "After opt-in"
+        }
+        precondition(attempts == 3)
+        print("Including existing captures and turning titles back on each retried during an hour-long cooldown.")
     }
 }
