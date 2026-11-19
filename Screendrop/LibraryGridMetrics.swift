@@ -20,8 +20,9 @@ nonisolated struct LibraryGridMetrics: Equatable, Sendable {
 
     /// The narrowest margin at either side, and above and below the grid.
     static let edgeMargin: CGFloat = 24
-    /// The caption below the picture: a name and a small detail line, with their padding.
-    static let captionHeight: CGFloat = 50
+    static let captionTopPadding: CGFloat = 8
+    /// The original two-row caption plus the space above its title.
+    static let captionHeight: CGFloat = 50 + captionTopPadding
 
     static func minimumGap(for cellWidth: CGFloat) -> CGFloat { max(20, (cellWidth * 0.2).rounded()) }
     static func maximumGap(for cellWidth: CGFloat) -> CGFloat { max(minimumGap(for: cellWidth), (cellWidth * 0.5).rounded()) }
@@ -43,9 +44,8 @@ nonisolated struct LibraryGridMetrics: Equatable, Sendable {
         rightInset = max(edge, width - rowWidth - leftInset - 0.5)
     }
 
-    /// A whole card: as tall as before the picture was inset (a 16:10 picture over a 62 pt caption), so the chip
-    /// takes the room above the caption.
-    var cardHeight: CGFloat { floor(cellWidth * 0.625) + 62 }
+    // Preserve the picture and its top inset as the caption grows.
+    var cardHeight: CGFloat { floor(cellWidth * 0.625) + 12 + Self.captionHeight }
     /// The picture's height inside a card: what the inset and the caption leave.
     var pictureHeight: CGFloat { cardHeight - LibraryCardDensity(width: cellWidth).pictureInset - Self.captionHeight }
 }

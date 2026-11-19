@@ -1539,9 +1539,12 @@ struct LibraryGridMetricsTests {
             #expect(density.pictureInset == 6 * scale)
             #expect(density.cornerRadius == 16 * scale)
             #expect(density.pictureRadius == density.cornerRadius - density.pictureInset)
+            let metrics = LibraryGridMetrics(width: 900, cardWidth: width)
+            let previousHeight = floor(width * 0.625) + 62
+            #expect(metrics.cardHeight == previousHeight + 8)
+            let previousPictureHeight = previousHeight - density.pictureInset - 50
+            #expect(abs(metrics.pictureHeight - previousPictureHeight) < 0.000001)
         }
-        #expect(large.cardHeight == (320 * 0.625).rounded(.down) + 62)
-        #expect(large.pictureHeight == large.cardHeight - LibraryCardDensity(width: 320).pictureInset - 50)
     }
 }
 

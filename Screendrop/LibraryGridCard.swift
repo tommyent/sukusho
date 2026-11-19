@@ -26,7 +26,10 @@ struct LibraryGridCard<Picture: View, Caption: View>: View {
                     .overlay(alignment: .topTrailing) { cloudButton.padding(6) }
                     .overlay(alignment: .bottomLeading) { if density.showsSocial { pills(marks.social, density: density) } }
                     .overlay(alignment: .bottomTrailing) { pills(marks.content, density: density) }
-                caption().frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                caption()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                    .padding(.horizontal, density.pictureInset)
+                    .padding(.top, LibraryGridMetrics.captionTopPadding)
             }
             .environment(\.libraryCardDensity, density)
             .padding([.top, .horizontal], density.pictureInset)
@@ -189,10 +192,11 @@ struct LibraryGridCaption<Title: View>: View {
     @ViewBuilder let title: () -> Title
 
     var body: some View {
+        let fonts: (title: Font, date: Font) = (.system(size: 13, weight: .medium), .caption)
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 4) {
                 title()
-                    .font(.system(size: 13, weight: .medium)).lineLimit(1).truncationMode(.tail).libraryRaisedText()
+                    .font(fonts.title).lineLimit(1).truncationMode(.tail).libraryRaisedText()
                 Spacer(minLength: 0)
                 if capture?.hasDraft == true {
                     Image(systemName: "circle.fill").font(.system(size: 6)).foregroundStyle(.orange).libraryRaisedIcon()
@@ -223,7 +227,7 @@ struct LibraryGridCaption<Title: View>: View {
                     .accessibilityLabel("Move to Saved")
                 }
             }
-            .font(.caption).foregroundStyle(.secondary)
+            .font(fonts.date).foregroundStyle(.secondary)
         }
     }
 }
