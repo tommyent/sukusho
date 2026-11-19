@@ -64,7 +64,6 @@ struct LibraryGridCardPreview: View {
                 Text("Review the first cut on Friday.\nSend the final notes to the editor.")
                     .font(.system(size: 12)).lineLimit(6).padding(DS.Space.l).padding(.bottom, 8)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .background(.background)
             }
         }
     }
@@ -84,7 +83,7 @@ struct LibraryGridCardPreview: View {
                 GridRow {
                     Text(state.rawValue).font(.caption).gridColumnAlignment(.trailing)
                     ForEach(Kind.allCases, id: \.self) { kind in
-                        LibraryGridCard(marks: kind.marks, cloudAction: {}) {
+                        LibraryGridCard(marks: kind.marks, cloudAction: {}, usesTextWell: kind == .clip) {
                             kind.picture
                         } caption: {
                             LibraryGridCaption(date: Date(timeIntervalSinceReferenceDate: 816_000_000),

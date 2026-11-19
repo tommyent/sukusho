@@ -10,6 +10,7 @@ struct LibraryGridCard<Picture: View, Caption: View>: View {
     let marks: LibraryCardMarks
     let cloudAction: () -> Void
     var cloudEnabled = true
+    var usesTextWell = false
     @ViewBuilder let picture: () -> Picture
     @ViewBuilder let caption: () -> Caption
 
@@ -21,7 +22,7 @@ struct LibraryGridCard<Picture: View, Caption: View>: View {
                 picture()
                     .frame(width: max(1, geometry.size.width - 2 * density.pictureInset),
                            height: pictureHeight)
-                    .libraryCardChip(radius: density.pictureRadius, height: pictureHeight)
+                    .libraryCardChip(radius: density.pictureRadius, height: pictureHeight, usesTextWell: usesTextWell)
                     .overlay(alignment: .topLeading) { pills(settings(for: density), density: density) }
                     .overlay(alignment: .topTrailing) { cloudButton.padding(6) }
                     .overlay(alignment: .bottomLeading) { if density.showsSocial { pills(marks.social, density: density) } }

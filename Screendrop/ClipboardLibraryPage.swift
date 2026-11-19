@@ -124,9 +124,11 @@ struct ClipboardCard: View {
     @Environment(\.displayScale) private var displayScale
 
     var body: some View {
+        let swatch: Color? = if case .color(let hex) = ClipboardList.textForm(of: entry) { Color(clipboardHex: hex) } else { nil }
         LibraryGridCard(marks: LibraryCardMarks(clip: entry, upload: CloudLibraryModel.shared.upload(for: entry.cloudLinks.first)),
-                        cloudAction: { select(); CloudShareLinks.copy(entry.cloudLinks, feedback: CaptureLibraryModel.shared.actionFeedback) }) {
-            face
+                        cloudAction: { select(); CloudShareLinks.copy(entry.cloudLinks, feedback: CaptureLibraryModel.shared.actionFeedback) },
+                        usesTextWell: entry.kind != .image && swatch == nil) {
+            face(swatch: swatch)
         } caption: {
             LibraryGridCaption(date: entry.kind == .snippet ? entry.snippetEditedAt ?? entry.firstCopiedAt : entry.lastCopiedAt,
                                sourceIcon: model.libraryCardIcon(entry.sourceBundleID), saveAction: entry.canMoveToSaved ? { model.moveToSaved([entry]) } : nil) {
@@ -161,7 +163,7 @@ struct ClipboardCard: View {
         min(8192, 640 * entry.pixelHeight / max(entry.pixelWidth, 1))
     }
 
-    @ViewBuilder private var face: some View {
+    @ViewBuilder private func face(swatch: Color?) -> some View {
         switch entry.kind {
         case .image:
             if let url = entry.imageURL {
@@ -186,13 +188,12 @@ struct ClipboardCard: View {
             VStack(alignment: .leading, spacing: DS.Space.s) {
                 ClipboardRowTile(entry: entry, size: 36)
                 Text(entry.filePaths.first.map { ($0 as NSString).deletingLastPathComponent } ?? "")
-                    .font(DS.TypeScale.label).foregroundStyle(.secondary).lineLimit(2).truncationMode(.middle)
+                    .font(DS.TypeScale.label).foregroundStyle(.primary).lineLimit(2).truncationMode(.middle)
             }
             .padding(DS.Space.l).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(.background)
         case .text, .snippet:
-            if case .color(let hex) = ClipboardList.textForm(of: entry), let color = Color(clipboardHex: hex) {
-                color
+            if let swatch {
+                swatch
             } else {
                 Text(entry.text ?? "")
                     .font(ClipboardList.looksLikeCode(entry) ? .system(size: 11.5, design: .monospaced) : .system(size: 12))
@@ -201,7 +202,6 @@ struct ClipboardCard: View {
                     // Room for the kind symbol in the bottom corner, so it never sits over the last line (Astra R2).
                     .padding(.bottom, ClipboardList.kindPill(of: entry) == nil ? 0 : 8)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .background(.background)
             }
         }
     }

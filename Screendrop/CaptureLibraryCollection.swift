@@ -862,8 +862,8 @@ extension View {
 }
 
 extension View {
-    func libraryCardChip(radius: CGFloat, height: CGFloat) -> some View {
-        modifier(LibraryCardChip(radius: radius, height: height))
+    func libraryCardChip(radius: CGFloat, height: CGFloat, usesTextWell: Bool) -> some View {
+        modifier(LibraryCardChip(usesTextWell: usesTextWell, radius: radius, height: height))
     }
 
     /// Caption text pressed up from the card: a faint shade one point under the letters (owner's pick, subtle).
@@ -875,6 +875,7 @@ extension View {
 }
 
 private struct LibraryCardChip: ViewModifier {
+    let usesTextWell: Bool
     let radius: CGFloat
     let height: CGFloat
     @Environment(\.colorScheme) private var colorScheme
@@ -882,7 +883,12 @@ private struct LibraryCardChip: ViewModifier {
     func body(content: Content) -> some View {
         let dark = colorScheme == .dark
         let shape = RoundedRectangle(cornerRadius: radius, style: .circular)
-        let well = dark ? Color(red: 40 / 255, green: 38 / 255, blue: 39 / 255) : Color.white
+        let strength: Double = usesTextWell ? 0.45 : 1
+        let well: Color = if usesTextWell {
+            dark ? Color(red: 38/255, green: 40/255, blue: 44/255) : Color(red: 236/255, green: 239/255, blue: 242/255)
+        } else {
+            dark ? Color(red: 40 / 255, green: 38 / 255, blue: 39 / 255) : Color.white
+        }
         // Limit the wash to its reach on the 220 pt reference card as the picture grows.
         let wash = 0.16 * min(1, 143 / height)
         content
@@ -902,13 +908,14 @@ private struct LibraryCardChip: ViewModifier {
                         .clipShape(shape)
                     shape.strokeBorder(dark ? Color.white.opacity(0.10) : Color.black.opacity(0.20), lineWidth: 0.5)
                 }
+                .opacity(strength)
                 .allowsHitTesting(false)
             }
             .background {
                 // Transparent pixels reveal the picture well inside the lighter stock face.
                 ZStack {
-                    shape.fill(well).shadow(color: .black.opacity(dark ? 0.40 : 0.12), radius: 3, y: 3)
-                    shape.fill(well).shadow(color: .black.opacity(dark ? 0.55 : 0.20), radius: 0.75, y: 1)
+                    shape.fill(well).shadow(color: .black.opacity((dark ? 0.40 : 0.12) * strength), radius: 3, y: 3)
+                    shape.fill(well).shadow(color: .black.opacity((dark ? 0.55 : 0.20) * strength), radius: 0.75, y: 1)
                 }
             }
     }
