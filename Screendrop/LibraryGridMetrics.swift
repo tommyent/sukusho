@@ -223,10 +223,13 @@ nonisolated enum TallCapture {
 
 nonisolated struct LibraryCardDensity {
     let width: CGFloat
+    /// The theme's picture inset and corner radius on the 220 pt card (Classic's 6 and 16; Chip's 0).
+    var inset: CGFloat = 6
+    var radius: CGFloat = 16
     // The mockup is 220 pt wide. Smaller cards retain its minimum edge and corner sizes.
     private var scale: CGFloat { max(1, width / 220) }
-    var pictureInset: CGFloat { 6 * scale }
-    var cornerRadius: CGFloat { 16 * scale }
+    var pictureInset: CGFloat { inset * scale }
+    var cornerRadius: CGFloat { radius * scale }
     var pictureRadius: CGFloat { cornerRadius - pictureInset }
     var showsSocial: Bool { width >= 200 }
     var showsPillText: Bool { width >= 180 }

@@ -29,6 +29,29 @@ struct AppThemeTests {
         }
     }
 
+    /// Chip (sd-ygmk): square and flat, the picture edge to edge at every slider size, the caption on its own 11 pt gutter.
+    @Test func chipPicturesReachTheCardsEdges() {
+        for theme in [AppTheme.chipLight, .chipDark] {
+            #expect(theme.card.recipe.flatEdge != nil, "\(theme.id)")
+            #expect(theme.card.gutter == 11)
+            for width: CGFloat in [140, 192, 220, 320] {
+                let density = LibraryCardDensity(width: width, inset: theme.card.inset, radius: theme.card.radius)
+                #expect(density.pictureInset == 0 && density.cornerRadius == 0 && density.pictureRadius == 0, "\(theme.id) \(width)")
+            }
+        }
+        #expect(AppTheme.chipDark.card.face == [.rgb(0x141517)])
+    }
+
+    /// Titles are drawn in the theme's ink on the card's face, top and bottom of its gradient.
+    @Test func captionInkReadsOnEveryFace() throws {
+        for theme in AppTheme.builtIns {
+            for face in theme.card.face {
+                let ratio = try contrast(theme.ink.primary, on: face)
+                #expect(ratio >= 4.5, "\(theme.id): \(ratio)")
+            }
+        }
+    }
+
     @Test func themeColoursKeepTheirHexValues() throws {
         let rgb = try #require(ThemeColor.rgb(0x1D9E4A).nsColor.usingColorSpace(.sRGB))
         #expect(Int((rgb.redComponent * 255).rounded()) == 0x1D)

@@ -16,7 +16,7 @@ struct LibraryGridCard<Picture: View, Caption: View>: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let density = LibraryCardDensity(width: geometry.size.width)
+            let density = LibraryCardDensity(width: geometry.size.width, inset: theme.card.inset, radius: theme.card.radius)
             let pictureHeight = max(1, geometry.size.height - density.pictureInset - LibraryGridMetrics.captionHeight)
             VStack(alignment: .leading, spacing: 0) {
                 picture()
@@ -29,7 +29,7 @@ struct LibraryGridCard<Picture: View, Caption: View>: View {
                     .overlay(alignment: .bottomTrailing) { pills(marks.content, density: density) }
                 caption()
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                    .padding(.horizontal, density.pictureInset)
+                    .padding(.horizontal, theme.card.gutter ?? density.pictureInset)
                     .padding(.top, LibraryGridMetrics.captionTopPadding)
             }
             .environment(\.libraryCardDensity, density)
@@ -117,23 +117,33 @@ struct LibraryCardSurface: ViewModifier {
     func body(content: Content) -> some View {
         if layout == .grid {
             let depth = LibraryCardDepth(hovering: hovering, pressed: pressed, deleting: deleting)
+            let edge = theme.card.recipe.flatEdge
             GeometryReader { geometry in
-                let radius = LibraryCardDensity(width: geometry.size.width).cornerRadius
+                let radius = LibraryCardDensity(width: geometry.size.width, inset: theme.card.inset, radius: theme.card.radius).cornerRadius
                 let outline = RoundedRectangle(cornerRadius: radius, style: .circular)
                 content
                     .background {
                         switch theme.card.recipe {
                         case .stock(let stock): self.stock(stock, depth, shape: outline, radius: radius).allowsHitTesting(false)
+                        case .flat: outline.fill(LinearGradient(colors: theme.card.face.map(\.color), startPoint: .top, endPoint: .bottom))
+                                .allowsHitTesting(false).accessibilityHidden(true)
                         }
+                    }
+                    .overlay {
+                        // A flat card stays put: a press shades it instead of sinking it.
+                        if edge != nil && pressed { outline.fill(.black.opacity(dark ? 0.25 : 0.08)).allowsHitTesting(false) }
                     }
                     .overlay {
                         if !selected && contrast == .increased {
                             outline.strokeBorder(Color.primary.opacity(0.65), lineWidth: 1)
+                        } else if !selected, let edge {
+                            // Hover firms the hairline up rather than lifting the card.
+                            outline.strokeBorder(edge.color, lineWidth: hovering ? 1 : 0.5).allowsHitTesting(false)
                         } else {
                             LibraryCardBorder(selected: selected, shape: outline)
                         }
                     }
-                    .offset(y: depth.lift)
+                    .offset(y: edge == nil ? depth.lift : 0)
                     .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: depth)
             }
         } else {

@@ -939,6 +939,15 @@ private struct LibraryCardChip: ViewModifier {
         let shape = RoundedRectangle(cornerRadius: radius, style: .circular)
         let strength: Double = usesTextWell ? 0.45 : 1
         let well = (usesTextWell ? theme.card.textWell : theme.card.well).color
+        if theme.card.recipe.flatEdge != nil {
+            // A straight cut: the picture meets the label with no bevel, wash or shadow.
+            content.clipShape(shape).background { shape.fill(well) }
+        } else {
+            stock(content, dark: dark, shape: shape, strength: strength, well: well)
+        }
+    }
+
+    @ViewBuilder private func stock(_ content: Content, dark: Bool, shape: RoundedRectangle, strength: Double, well: Color) -> some View {
         // Limit the wash to its reach on the 220 pt reference card as the picture grows.
         let wash = 0.16 * min(1, 143 / height)
         content

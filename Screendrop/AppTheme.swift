@@ -62,6 +62,11 @@ nonisolated struct AppTheme: Sendable, Equatable, Identifiable {
     nonisolated enum Recipe: Sendable, Equatable {
         /// Heavy stock: raised and rounded, two lips, two shadows, a bevelled picture (Classic).
         case stock(Stock)
+        /// Square cut and flat: no depth, the picture as the card's well, a hairline perimeter (Chip).
+        case flat(edge: ThemeColor)
+
+        /// The flat recipe's perimeter; nil for the stock card.
+        var flatEdge: ThemeColor? { if case .flat(let edge) = self { edge } else { nil } }
     }
 
     nonisolated struct Stock: Sendable, Equatable {
@@ -109,7 +114,22 @@ nonisolated extension AppTheme {
                    well: .rgb(0x282627), textWell: .rgb(0x26282C)),
         marks: .classic)
 
-    static let builtIns = [classicLight, classicDark]
+    /// A colour chip: square, flat, the picture edge to edge above a plain label (owner's pick, 2026-11-19, sd-ygmk).
+    static let chipLight = AppTheme(
+        id: "chip-light", name: "Chip Light", isDark: false,
+        ink: classicLight.ink, chrome: classicLight.chrome, ground: classicLight.ground,
+        card: Card(recipe: .flat(edge: .rgb(0x000000, opacity: 0.3)), radius: 0, inset: 0, gutter: 11,
+                   face: [.white()], well: .white(), textWell: .rgb(0xECEFF2)),
+        marks: .classic)
+
+    static let chipDark = AppTheme(
+        id: "chip-dark", name: "Chip Dark", isDark: true,
+        ink: classicDark.ink, chrome: classicDark.chrome, ground: classicDark.ground,
+        card: Card(recipe: .flat(edge: .white(opacity: 0.28)), radius: 0, inset: 0, gutter: 11,
+                   face: [.rgb(0x141517)], well: .rgb(0x282627), textWell: .rgb(0x26282C)),
+        marks: .classic)
+
+    static let builtIns = [classicLight, classicDark, chipLight, chipDark]
 
     static let lightKey = "appTheme.light"
     static let darkKey = "appTheme.dark"
