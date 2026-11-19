@@ -25,6 +25,7 @@ nonisolated struct RecordingInkStroke: Codable, Equatable, Identifiable, Sendabl
     var fadesOut = true
 
     var fittedOval: Bool?
+    var visibilityChanges: [TimeInterval]?
     var markerNumber: Int?
 
     var startTime: TimeInterval { points.first?.t ?? 0 }
@@ -61,6 +62,7 @@ nonisolated struct RecordingInkCapture: Sendable {
     var samples: [Sample]
     var widthInPoints: Double
     var fittedOval: Bool?
+    var visibilityChanges: [TimeInterval]?
     var markerNumber: Int?
     var hideUptime: TimeInterval?
     var fadesOut = true
@@ -93,6 +95,7 @@ nonisolated extension RecordingInkStroke {
                 hideTime: capture.hideUptime.flatMap(time),
                 fadesOut: capture.fadesOut,
                 fittedOval: capture.fittedOval,
+                visibilityChanges: capture.visibilityChanges?.compactMap(time),
                 markerNumber: capture.markerNumber
             )
         }
@@ -111,6 +114,53 @@ nonisolated extension RecordingInkStroke {
             return stroke
         }
         .sorted { $0.startTime < $1.startTime }
+    }
+}
+
+nonisolated struct RecordingInkHistory {
+    enum Edit { case added(Int), cleared([Int]) }
+    private var edits: [Edit] = []
+    private var nextNumber = 1
+
+    mutating func added(at index: Int, marker: Bool) -> Int? {
+        edits.append(.added(index))
+        guard marker else { return nil }
+        defer { nextNumber += 1 }
+        return nextNumber
+    }
+
+    static func persists(marker: Bool, bugReport: Bool) -> Bool { marker || bugReport }
+
+    mutating func clear(_ strokes: inout [RecordingInkCapture], at time: TimeInterval) {
+        let visible = strokes.indices.filter { strokes[$0].visible(at: time) }
+        guard !visible.isEmpty else { return }
+        for i in visible { strokes[i].toggleVisibility(at: time) }
+        edits.append(.cleared(visible))
+    }
+
+    mutating func undo(_ strokes: inout [RecordingInkCapture], at time: TimeInterval) {
+        while let edit = edits.popLast() {
+            switch edit {
+            case .added(let i):
+                guard strokes[i].visible(at: time) else { continue }
+                strokes[i].toggleVisibility(at: time)
+            case .cleared(let indices):
+                for i in indices { strokes[i].toggleVisibility(at: time) }
+            }
+            return
+        }
+    }
+}
+
+nonisolated extension RecordingInkCapture {
+    func visible(at time: TimeInterval) -> Bool {
+        RecordingInkTimeline.isVisible(visibilityChanges, at: time) &&
+        RecordingInkTimeline.opacity(hideTime: hideUptime, fadesOut: fadesOut, at: time) > 0
+    }
+
+    mutating func toggleVisibility(at time: TimeInterval) {
+        if visibilityChanges == nil { visibilityChanges = [] }
+        visibilityChanges?.append(time)
     }
 }
 
@@ -184,9 +234,13 @@ nonisolated struct RecordingInkTimeline: Sendable {
         strokes.compactMap { stroke in
             guard let first = stroke.points.first, time >= first.t else { return nil }
             let opacity = Self.opacity(hideTime: stroke.hideTime, fadesOut: stroke.fadesOut, at: time)
-            guard opacity > 0, let last = stroke.points.lastIndex(atOrBefore: time, by: \.t) else { return nil }
+            guard Self.isVisible(stroke.visibilityChanges, at: time), opacity > 0, let last = stroke.points.lastIndex(atOrBefore: time, by: \.t) else { return nil }
             return Frame(stroke: stroke, pointCount: last + 1, opacity: opacity)
         }
+    }
+
+    static func isVisible(_ changes: [TimeInterval]?, at time: TimeInterval) -> Bool {
+        (changes?.prefix(while: { $0 <= time }).count ?? 0).isMultiple(of: 2)
     }
 
     static func opacity(hideTime: TimeInterval?, fadesOut: Bool, at time: TimeInterval) -> Double {

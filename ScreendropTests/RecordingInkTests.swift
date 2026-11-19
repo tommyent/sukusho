@@ -136,6 +136,26 @@ struct RecordingInkTests {
         #expect(!RecordingInkPath.fitsOval([.zero, .init(x: 55, y: 48), .zero]))
     }
 
+    @Test func clearAndUndoKeepOriginalTimelineAndNumbers() {
+        var history = RecordingInkHistory()
+        var captures: [RecordingInkCapture] = []
+        for i in 0..<2 {
+            let number = history.added(at: i, marker: true)
+            captures.append(.init(samples: [.init(uptime: Double(i), point: .zero)], widthInPoints: 6, markerNumber: number))
+        }
+        history.clear(&captures, at: 3)
+        history.undo(&captures, at: 5)
+        #expect(history.added(at: 2, marker: true) == 3)
+        let mapped = RecordingInkStroke.mapped(captures, widthScale: { _ in 0.01 }, time: { $0 }, point: { _,_ in (0.5, 0.5) })
+        let timeline = RecordingInkTimeline(strokes: mapped)
+        #expect(timeline.frames(at: 2).compactMap(\.stroke.markerNumber) == [1, 2])
+        #expect(timeline.frames(at: 4).isEmpty)
+        #expect(timeline.frames(at: 6).compactMap(\.stroke.markerNumber) == [1, 2])
+        #expect(RecordingInkHistory.persists(marker: true, bugReport: false))
+        #expect(RecordingInkHistory.persists(marker: false, bugReport: true))
+        #expect(!RecordingInkHistory.persists(marker: false, bugReport: false))
+    }
+
     @Test func fivePointSmoothingPreservesEndpoints() {
         let input = (0..<7).map { CGPoint(x: $0, y: $0 == 3 ? 9 : 0) }
         let output = RecordingInkPath.smoothed(input)

@@ -246,9 +246,9 @@ final class ScreenRecordingManager {
 
                 // The pen panel goes up before the filter snapshots window IDs.
                 if let inkFrame = Self.inkFrame(for: source) {
-                    RecordingInkPresenter.shared.prepare(covering: inkFrame) { [pointerActivityRecorder] isOn in
+                    RecordingInkPresenter.shared.prepare(covering: inkFrame, bugReport: options.bugReport) { [pointerActivityRecorder] isOn, fromBar in
                         let bar = RecordingBarPresenter.shared.barFrame.map { Self.quartzRect(fromAppKitRect: $0) }
-                        pointerActivityRecorder.setPenOn(isOn, bar: bar)
+                        pointerActivityRecorder.setPenOn(isOn, bar: fromBar ? bar : nil)
                     }
                 }
                 let content = try await ScreenRecordingCapture.availableContent(
