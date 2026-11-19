@@ -32,6 +32,9 @@ nonisolated struct RecordingInkStroke: Codable, Equatable, Identifiable, Sendabl
 
     var fittedOval: Bool?
     var visibilityChanges: [TimeInterval]?
+    /// Undoing placement is terminal. All earlier hide/show pairs are Clear marks and its undo.
+    /// Older sidecars recorded only the toggle times.
+    var endedByUndo: Bool?
     var markerNumber: Int?
     var target: RecordingMarkerTarget?
 
@@ -70,6 +73,7 @@ nonisolated struct RecordingInkCapture: Sendable {
     var widthInPoints: Double
     var fittedOval: Bool?
     var visibilityChanges: [TimeInterval]?
+    var endedByUndo = false
     var markerNumber: Int?
     var target: RecordingMarkerTarget?
     var hideUptime: TimeInterval?
@@ -96,6 +100,8 @@ nonisolated extension RecordingInkStroke {
                 return RecordingInkPoint(t: t, x: p.x, y: p.y)
             }
             guard points.contains(where: { (0...1).contains($0.x) && (0...1).contains($0.y) }) else { return nil }
+            let changes = capture.visibilityChanges?.compactMap(time)
+            let endedByUndo = capture.endedByUndo && capture.visibilityChanges?.last.flatMap(time) != nil
             return RecordingInkStroke(
                 id: capture.id,
                 width: capture.widthInPoints * scale,
@@ -103,7 +109,8 @@ nonisolated extension RecordingInkStroke {
                 hideTime: capture.hideUptime.flatMap(time),
                 fadesOut: capture.fadesOut,
                 fittedOval: capture.fittedOval,
-                visibilityChanges: capture.visibilityChanges?.compactMap(time),
+                visibilityChanges: changes,
+                endedByUndo: changes?.isEmpty == false ? endedByUndo : nil,
                 markerNumber: capture.markerNumber, target: capture.target
             )
         }
@@ -152,6 +159,7 @@ nonisolated struct RecordingInkHistory {
             case .added(let i):
                 guard strokes[i].visible(at: time) else { continue }
                 strokes[i].toggleVisibility(at: time)
+                strokes[i].endedByUndo = true
             case .cleared(let indices):
                 for i in indices { strokes[i].toggleVisibility(at: time) }
             }

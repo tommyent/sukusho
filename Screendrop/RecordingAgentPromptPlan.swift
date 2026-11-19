@@ -181,9 +181,10 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
             guard let first = slices.first, let last = slices.last, abs(first.sourceStart - start) < 0.000_001 else { return nil }
             return (first.editorStart, last.editorEnd)
         }
-        let ink = RecordingInkStroke.sanitized(capture?.ink ?? [])
+        let ink = RecordingInkStroke.sanitized(capture?.ink ?? []).filter { !Self.isRetractedMarker($0) }
         var markerMoments: [Moment] = []
         for stroke in ink {
+            let changes = Self.visibilityNotes(for: stroke, actionTime: actionTime)
             if let number = stroke.markerNumber, let tip = stroke.points.first {
                 guard let time = actionTime(tip.t) else { continue }
                 let location: String
@@ -198,7 +199,7 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
                     .compactMap { $0 }.joined(separator: ", ")
                 let nearby = narration.filter { $0.end >= time - 2 && $0.start <= time + 2 }
                     .map { Self.escape($0.text) }.joined(separator: " ")
-                let description = "Marker \(number) at \(Self.timestamp(time)) — \(location). \(target)."
+                let description = "Marker \(number) at \(Self.timestamp(time)) — \(location). \(target)\(changes)."
                     + (nearby.isEmpty ? " No nearby narration." : " Nearby narration: \(nearby)")
                 markerMoments.append(Moment(time: time, evidence: [description], focus: CGPoint(x: tip.x, y: tip.y)))
                 continue
@@ -211,10 +212,9 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
             let shape = maxX - minX < 0.005 && maxY - minY < 0.005
                 ? "a dot at source position \(Self.position(center.x, center.y))"
                 : String(format: "a pen stroke over source x=%.3f–%.3f, y=%.3f–%.3f", locale: Locale(identifier: "en_US_POSIX"), minX, maxX, minY, maxY)
-            let hidden = stroke.hideTime.flatMap(actionTime).map { (stroke.fadesOut ? "; it fades out at " : "; undone at ") + Self.timestamp($0) } ?? ""
             // The moment sits where the stroke ends, so its still shows the finished stroke; at its first
             // point the still showed nothing of it yet.
-            evidence.append((span.end, "Drew on screen \(Self.timestamp(span.start))–\(Self.timestamp(span.end)): \(shape)\(hidden).", center,
+            evidence.append((span.end, "Drew on screen \(Self.timestamp(span.start))–\(Self.timestamp(span.end)): \(shape)\(changes).", center,
                              .did("Draw on the screen")))
         }
         var motion: [(time: Double, text: String, position: CGPoint?, part: Part, score: Double)] = []
@@ -269,6 +269,40 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
             moment.focus = moment.focus ?? Self.pointerPosition(in: pointer, at: timeline.sourceTime(at: moment.time))
             return moment
         }
+    }
+
+    /// Measured on the source clock so editing the playback speed cannot turn a deliberate marker into a mistake.
+    private static func isRetractedMarker(_ stroke: RecordingInkStroke) -> Bool {
+        guard stroke.markerNumber != nil else { return false }
+        let undo = stroke.endedByUndo == true ? stroke.visibilityChanges?.last : (stroke.fadesOut ? nil : stroke.hideTime)
+        guard let undo else { return false }
+        return (0...3).contains(undo - stroke.startTime)
+    }
+
+    private static func visibilityNotes(for stroke: RecordingInkStroke, actionTime: (Double) -> Double?) -> String {
+        var notes: [(Double, String)] = []
+        if let hide = stroke.hideTime, let time = actionTime(hide),
+           RecordingInkTimeline.isVisible(stroke.visibilityChanges, at: hide) {
+            notes.append((time, (stroke.fadesOut ? "it fades out at " : "undone at ") + timestamp(time)))
+        }
+        let changes = stroke.visibilityChanges ?? []
+        for (index, source) in changes.enumerated() {
+            guard let time = actionTime(source),
+                  RecordingInkTimeline.opacity(hideTime: stroke.hideTime, fadesOut: stroke.fadesOut, at: source) > 0 else { continue }
+            let stamp = timestamp(time)
+            let note: String
+            if !index.isMultiple(of: 2) {
+                note = "shown again at \(stamp) (undo)"
+            } else if index < changes.count - 1 || stroke.endedByUndo == false {
+                note = "cleared at \(stamp) (Clear marks)"
+            } else if stroke.endedByUndo == true {
+                note = "undone at \(stamp)"
+            } else {
+                note = "hidden at \(stamp) (undo or Clear marks)"
+            }
+            notes.append((time, note))
+        }
+        return notes.sorted { $0.0 < $1.0 }.map { "; " + $0.1 }.joined()
     }
 
     /// `strips` holds each moment's strip span, nil where none was written.
