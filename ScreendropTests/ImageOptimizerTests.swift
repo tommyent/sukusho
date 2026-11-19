@@ -1571,49 +1571,96 @@ private func isRunning(_ text: String) -> Bool {
         #expect(await OptimizedImageCopy.key(of: item(b, file: "One.png")) != first)
     }
 
-    /// Astra, round 3: with A on the pasteboard, a copy of B starts and is still reading when A is copied again. The
-    /// repeat writes nothing but is the newest copy, so B, older, can't land after it; and A's own swap, held back
-    /// meanwhile, still goes in, since the repeat was of A.
-    @Test func aRepeatOfTheHeldCopySupersedesAnOlderCopyStillReading() async throws {
+    /// Astra, rounds 3 and 4: with A on the pasteboard and its swap still coming, a copy of B starts, one image
+    /// (`copyNow`) or a Library selection of several (`copyAll`), and is held while it reads. Copied again before B
+    /// writes, A is the newest copy: B gives way, and A's swap still goes in, whether it is ready after B gave way or
+    /// while B is still reading. Not copied again, B is the newest: A's swap, ready while B reads, waits for it rather
+    /// than land under it, and B's write ends the swap.
+    @Test(arguments: [false, true]) func aRepeatOfTheHeldCopyKeepsItsSwapAndANewerCopyStillWrites(batch: Bool) async throws {
         let bench = try Bench()
         defer { bench.remove() }
         let a = try bench.file("A.png", Sample.screenshot(width: 640, height: 400, seed: 48))
         let b = try bench.file("B.png", Sample.screenshot(width: 640, height: 400, seed: 49))
-        let optimizer = bench.optimizer
-        let copier = OptimizedImageCopy()
-        let board = pasteboard()
-        defer { board.releaseGlobally() }
-        let optimizedA = try await optimizer.optimize(a)
+        let c = try bench.file("C.png", Sample.screenshot(width: 320, height: 200, seed: 54))
+        let optimizedA = try await bench.optimizer.optimize(a)
         defer { optimizedA.discard() }
+        #expect(optimizedA.outcome == .optimized)
+        let originalA = try Data(contentsOf: a), smallerA = try Data(contentsOf: optimizedA.url), copiedB = try Data(contentsOf: b)
 
-        let (releaseSwap, doReleaseSwap) = AsyncStream<Void>.makeStream()
-        let (first, swapA) = try await copier.copyNow(to: board, first: { .init(item: try item(a), key: "A") }) {
-            for await _ in releaseSwap { break }
-            return swapIn(optimizedA)
+        enum Order { case bGivesWayFirst, swapReadyFirst, noRepeat }
+        for order in [Order.bGivesWayFirst, .swapReadyFirst, .noRepeat] {
+            let copier = OptimizedImageCopy()
+            let board = pasteboard()
+            defer { board.releaseGlobally() }
+            /// Whether the pasteboard comes to hold `bytes` within two seconds.
+            func lands(_ bytes: Data) async -> Bool {
+                for _ in 0..<100 {
+                    if board.data(forType: .png) == bytes { return true }
+                    try? await Task.sleep(for: .milliseconds(20))
+                }
+                return false
+            }
+            let (releaseSwap, doReleaseSwap) = AsyncStream<Void>.makeStream()
+            let (first, swapA) = try await copier.copyNow(to: board, first: { .init(item: try item(a), key: "A") }) {
+                for await _ in releaseSwap { break }
+                return swapIn(optimizedA)
+            }
+            #expect(first == .written)
+            let swapTask = try #require(swapA)
+
+            let (bReading, didStartB) = AsyncStream<Void>.makeStream()
+            let (releaseB, doReleaseB) = AsyncStream<Void>.makeStream()
+            // Whether B wrote.
+            let copyB = Task { () throws -> Bool in
+                if batch {
+                    return try await copier.copyAll([b, c], to: board, ready: { url in
+                        if url == b {
+                            didStartB.yield()
+                            for await _ in releaseB { break }
+                        }
+                        return .original(url)
+                    }, write: { _ in
+                        board.clearContents()
+                        guard board.writeObjects([try item(b)]) else { throw CocoaError(.fileWriteUnknown) }
+                    }) != nil
+                }
+                return try await copier.copyNow(to: board, first: {
+                    didStartB.yield()
+                    for await _ in releaseB { break }
+                    return .init(item: try item(b), key: "B")
+                }, smaller: { nil }).0 == .written
+            }
+            for await _ in bReading { break }
+
+            switch order {
+            case .bGivesWayFirst, .swapReadyFirst:
+                let (repeatOfA, noSwap) = try await copier.copyNow(to: board, first: { .init(item: try item(a), key: "A") }, smaller: { nil })
+                #expect(repeatOfA == .alreadyThere, "\(order)")
+                #expect(noSwap == nil, "\(order)")
+                if order == .bGivesWayFirst {
+                    doReleaseB.yield()
+                    #expect(try await copyB.value == false, "\(order)")
+                    #expect(board.data(forType: .png) == originalA, "\(order)")
+                    doReleaseSwap.yield()
+                } else {
+                    // B, older than the repeat, can't write any more: the swap doesn't wait for it.
+                    doReleaseSwap.yield()
+                    #expect(await lands(smallerA), "\(order)")
+                    doReleaseB.yield()
+                    #expect(try await copyB.value == false, "\(order)")
+                }
+                #expect(await swapTask.value, "\(order)")
+                #expect(board.data(forType: .png) == smallerA, "\(order)")
+            case .noRepeat:
+                doReleaseSwap.yield()
+                try await Task.sleep(for: .milliseconds(200))
+                #expect(board.data(forType: .png) == originalA, "\(order)")
+                doReleaseB.yield()
+                #expect(try await copyB.value, "\(order)")
+                #expect(await swapTask.value == false, "\(order)")
+                #expect(board.data(forType: .png) == copiedB, "\(order)")
+            }
         }
-        #expect(first == .written)
-
-        let (bReading, didStartB) = AsyncStream<Void>.makeStream()
-        let (releaseB, doReleaseB) = AsyncStream<Void>.makeStream()
-        let copyB = Task {
-            try await copier.copyNow(to: board, first: {
-                didStartB.yield()
-                for await _ in releaseB { break }
-                return .init(item: try item(b), key: "B")
-            }, smaller: { nil })
-        }
-        for await _ in bReading { break }
-        let (repeatOfA, _) = try await copier.copyNow(to: board, first: { .init(item: try item(a), key: "A") }, smaller: { nil })
-        #expect(repeatOfA == .alreadyThere)
-
-        doReleaseB.yield()
-        #expect(try await copyB.value.0 == .overtaken)
-        #expect(board.data(forType: .png) == (try Data(contentsOf: a)))
-
-        doReleaseSwap.yield()
-        let swapTask = try #require(swapA)
-        #expect(await swapTask.value)
-        #expect(board.data(forType: .png) == (try Data(contentsOf: optimizedA.url)))
     }
 
     /// Sol, round 2: the swap publishes only the optimized form of the bytes the copy wrote. A file rewritten after

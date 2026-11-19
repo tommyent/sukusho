@@ -19,10 +19,14 @@ final class OptimizedImageCopy {
 
     /// Counts the copies asked for; only the newest may write.
     private var latest = 0
-    /// Copies asked for that haven't written yet or given up. A swap waits for them (`copyNow`).
-    private var pending = 0
+    /// The turns of copies asked for that haven't written yet or given up. A swap waits while the newest is
+    /// one of them (`copyNow`); an older one can't write any more.
+    private var pending: Set<Int> = []
     /// Stops the copy that is still optimizing, if there is one.
     private var cancelInFlight: (() -> Void)?
+    /// Stops the held copy's swap, if one is coming. Only a write replaces the held copy, so only a write
+    /// cancels it: a copy that gives way, or turns out to be a repeat, leaves the swap to go in (Astra, round 4).
+    private var cancelSwap: (() -> Void)?
 
     /// Optimizes `url`, then writes the pasteboard item made from the result. Returns nil, and writes
     /// nothing, when something newer reached the pasteboard while optimizing: a later copy from here,
@@ -33,8 +37,8 @@ final class OptimizedImageCopy {
               item: (URL) async throws -> NSPasteboardItem) async throws -> ImageOptimizationResult? {
         latest += 1
         let mine = latest
-        pending += 1
-        defer { pending -= 1 }
+        pending.insert(mine)
+        defer { pending.remove(mine) }
         let countAtStart = pasteboard.changeCount
         cancelInFlight?()
         let work = Task { try await optimize(url) }
@@ -51,6 +55,8 @@ final class OptimizedImageCopy {
             result.discard()
             return nil
         }
+        cancelSwap?()
+        cancelSwap = nil
         pasteboard.clearContents()
         guard pasteboard.writeObjects([item]) else { throw CocoaError(.fileWriteUnknown) }
         return result
@@ -123,8 +129,8 @@ final class OptimizedImageCopy {
         latest += 1
         let mine = latest
         let countAtStart = pasteboard.changeCount
-        pending += 1
-        defer { pending -= 1 }
+        pending.insert(mine)
+        defer { pending.remove(mine) }
         let read = try await first()
         // No suspension between each check and its write, as in `copy`.
         guard mine == latest, pasteboard.changeCount == countAtStart else { return (.overtaken, nil) }
@@ -134,7 +140,10 @@ final class OptimizedImageCopy {
         if let held, held.key == read.key, held.count == countAtStart { return (.alreadyThere, nil) }
         let original = read.item
         let key = read.key
-        // This copy replaces the held one now: a swap still coming for that one is moot.
+        // This copy replaces the held one now: a swap still coming for that one is moot, as is an older copy
+        // still optimizing.
+        cancelSwap?()
+        cancelSwap = nil
         cancelInFlight?()
         cancelInFlight = nil
         // The count this clear returns is this copy's own. A count read after the write could already be
@@ -162,17 +171,18 @@ final class OptimizedImageCopy {
             guard candidate.source == copied, let output = candidate.output, made == output, made != copied,
                   !Task.isCancelled else { return done(false) }
             let item = candidate.item
-            // A newer copy still reading would find the pasteboard moved by the swap and give up: wait until it has
-            // written, which moves the count and ends this swap, or found it is a repeat of this copy or given up,
-            // which leaves the swap to go in. Copies are short; this rarely waits.
-            while pending > 0, pasteboard.changeCount == countAfterWrite, !Task.isCancelled {
+            // The newest copy, if it is still reading or optimizing, would find the pasteboard moved by the swap and
+            // give up: wait until it has written, which moves the count and ends this swap, or found it is a repeat
+            // of this copy or given up, which leaves the swap to go in. An older copy can't write any more, so the
+            // swap doesn't wait for it.
+            while pending.contains(latest), pasteboard.changeCount == countAfterWrite, !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(20))
             }
             // No suspension between this check and the clear. NSPasteboard has no compare-and-replace, so a
             // window is left: another app that copies between this check and `clearContents` loses its copy
             // to the swap. It is the same window Clop's own swap has, a few instructions wide; anything copied
             // before the check, however late, keeps the original or the newer copy where it is.
-            guard !Task.isCancelled, pending == 0, pasteboard.changeCount == countAfterWrite else { return done(false) }
+            guard !Task.isCancelled, !pending.contains(latest), pasteboard.changeCount == countAfterWrite else { return done(false) }
             let countAfterSwap = pasteboard.clearContents()
             guard pasteboard.writeObjects([item]) else { return done(false) }
             if held?.key == key { held = (key, countAfterSwap) }
@@ -180,7 +190,7 @@ final class OptimizedImageCopy {
             if let id = await card.value { await stack(id, item) }
             return done(true)
         }
-        cancelInFlight = { swap.cancel() }
+        cancelSwap = { swap.cancel() }
         return (.written, swap)
     }
 
@@ -203,6 +213,8 @@ final class OptimizedImageCopy {
         latest += 1
         let mine = latest
         let countAtStart = pasteboard.changeCount
+        pending.insert(mine)
+        defer { pending.remove(mine) }
         cancelInFlight?()
         let work = Task {
             var results: [ImageOptimizationResult] = []
@@ -226,6 +238,8 @@ final class OptimizedImageCopy {
             results.forEach { $0.discard() }
             return nil
         }
+        cancelSwap?()
+        cancelSwap = nil
         do {
             try write(results.map(\.url))
         } catch {
