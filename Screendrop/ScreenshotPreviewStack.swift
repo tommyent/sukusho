@@ -79,9 +79,13 @@ final class ScreenshotPreviewStack {
         return items.filter { $0.autoSavedURL == nil && !$0.url.standardizedFileURL.path.hasPrefix(library) }
     }
 
-    @ObservationIgnored private let copyImage: (URL) async throws -> Void
+    /// Whether the image went on the clipboard: false when something newer got there while it was read. The turn is
+    /// the one a card's Copy took when it was clicked, if it was one (`OptimizedImageCopy.takeTurn`).
+    @ObservationIgnored private let copyImage: (URL, OptimizedImageCopy.Turn?) async throws -> Bool
 
-    init(copyImage: @escaping (URL) async throws -> Void = { try await ScreenshotFileActions.copyImageToClipboard(from: $0) }) {
+    init(copyImage: @escaping (URL, OptimizedImageCopy.Turn?) async throws -> Bool = {
+        try await ScreenshotFileActions.copyImageToClipboard(from: $0, turn: $1)
+    }) {
         self.copyImage = copyImage
     }
 
@@ -522,8 +526,12 @@ final class ScreenshotPreviewStack {
         guard !preparingItemIDs.contains(id), let item = items.first(where: { $0.id == id }) else { return }
         switch item.kind {
         case .image:
+            // The copy's turn is taken now, as Copy is clicked, before the task starts: anything copied from here on
+            // is newer, and this copy doesn't land after it (Astra, round 5).
+            let turn = OptimizedImageCopy.shared.takeTurn()
             Task {
-                guard await copyURLToClipboard(item.url, original: original) else { return }
+                defer { OptimizedImageCopy.shared.finish(turn) }
+                guard await copyURLToClipboard(item.url, original: original, turn: turn) else { return }
                 dismiss(id: id)
                 showDone(original ? "Copied Original" : "Copied", detail: "The screenshot is on the clipboard.")
             }
@@ -917,24 +925,21 @@ final class ScreenshotPreviewStack {
         }
     }
 
-    /// The copy right after a capture. With Settings › Optimize › Optimize when copying on, nobody waits: the
-    /// original is on the clipboard at once, the optimized file takes its place when it is ready, unless
+    /// The copy right after a capture. With Settings › Optimize › Optimize when copying on, as every image copy:
+    /// the original is on the clipboard at once, the optimized file takes its place when it is ready, unless
     /// something else was copied meanwhile, and the capture's card, if it is still showing, says so for a
-    /// moment. Esc and ⇧⌘C have no part here; every other copy still waits for its optimized file.
+    /// moment.
     private func copyAfterCapture(_ url: URL, itemID: UUID) async {
         guard OptimizePreferences.whenCopying else {
             _ = await copyURLToClipboard(url)
             return
         }
-        // Not awaited past the first write: the other after-capture actions don't wait for the optimizer.
-        Task {
-            do {
-                if let saving = try await ScreenshotFileActions.copyOriginalThenOptimized(from: url) {
-                    showOptimizedNote(saving, on: itemID)
-                }
-            } catch {
-                print("Failed to copy screenshot: \(error)")
+        do {
+            try await ScreenshotFileActions.copyImageToClipboard(from: url) { [weak self] saving, _ in
+                self?.showOptimizedNote(saving, on: itemID)
             }
+        } catch {
+            print("Failed to copy screenshot: \(error)")
         }
     }
 
@@ -980,10 +985,10 @@ final class ScreenshotPreviewStack {
         optimizedNotes.removeAll()
     }
 
-    private func copyURLToClipboard(_ url: URL, original: Bool = false) async -> Bool {
+    private func copyURLToClipboard(_ url: URL, original: Bool = false, turn: OptimizedImageCopy.Turn? = nil) async -> Bool {
         do {
-            if original { try await ScreenshotFileActions.copyImageToClipboard(from: url, original: true) } else { try await copyImage(url) }
-            return true
+            if original { return try await ScreenshotFileActions.copyImageToClipboard(from: url, original: true, turn: turn) }
+            return try await copyImage(url, turn)
         } catch {
             print("Failed to copy screenshot: \(error)")
             return false

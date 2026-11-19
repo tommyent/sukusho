@@ -110,24 +110,31 @@ enum CaptureOptimizer {
         }
     }
 
-    /// For the copy right after a capture: the smaller file to put on the clipboard in the original's place,
-    /// with the saving to show ("↓32%"), or nil when there is none. A new capture due its background pass
-    /// gets that pass now, so it is optimized once and the smaller file is the capture itself. Any other
-    /// image is optimized to a file of its own: `result`, for the caller to discard.
-    static func smallerForFirstCopy(_ url: URL) async -> (file: URL, saving: String, result: ImageOptimizationResult?)? {
+    /// For an image copy: the smaller file to put on the clipboard in the original's place, with the saving to
+    /// show ("↓32%"), the digest of the contents it was made from (`source`, which the swap checks against the
+    /// bytes it copied) and the digest of what the encoder made (`output`, which the swap checks the bytes it reads
+    /// from `file` against), or nil when there is none. A new capture due its background pass gets that pass now,
+    /// so it is optimized once and the smaller file is the capture itself, which an edit can still overwrite before
+    /// the swap reads it: `output` is what tells (Astra, round 3). Any other image is optimized to a file of its
+    /// own: `result`, for the caller to discard. A capture already optimized has no `source` here: what the copy
+    /// read was already the smaller file, or can't be told from it.
+    static func smallerForFirstCopy(_ url: URL) async
+        -> (file: URL, saving: String, result: ImageOptimizationResult?, source: String?, output: String?)? {
         guard ["png", "jpg", "jpeg"].contains(url.pathExtension.lowercased()) else { return nil }
         if let outcome = await newCaptures.now(url.standardizedFileURL) {
             guard case .optimized(let result) = outcome else { return nil }
-            return (url, ImageOptimizationResult.saving(from: result.originalByteCount, to: result.resultByteCount), nil)
+            return (url, ImageOptimizationResult.saving(from: result.originalByteCount, to: result.resultByteCount), nil,
+                    result.source?.digest, result.output?.digest)
         }
         // Its pass has already run and left a smaller file.
-        if OptimizedMark.isCurrent(url) { return OptimizedMark.saving(of: url).map { (url, $0.percent, nil) } }
+        if OptimizedMark.isCurrent(url) { return OptimizedMark.saving(of: url).map { (url, $0.percent, nil, nil, nil) } }
         guard let result = try? await ImageOptimizer.shared.optimize(url, effort: OptimizePreferences.quietEffort) else { return nil }
         guard result.outcome == .optimized else {
             result.discard()
             return nil
         }
-        return (result.url, ImageOptimizationResult.saving(from: result.originalByteCount, to: result.resultByteCount), result)
+        return (result.url, ImageOptimizationResult.saving(from: result.originalByteCount, to: result.resultByteCount), result,
+                result.source?.digest, result.output?.digest)
     }
 }
 

@@ -576,9 +576,11 @@ struct AnnotationEditorWindow: View {
         }
     }
 
-    /// Cmd-C without a selection: saves and closes, then puts the finished image - annotations
-    /// included - on the clipboard whatever the auto-copy setting, for a
-    /// capture, mark up, paste loop that never touches the mouse.
+    /// Cmd-C without a selection: saves, puts the finished image - annotations
+    /// included - on the clipboard whatever the auto-copy setting, and closes, for a
+    /// capture, mark up, paste loop that never touches the mouse. Nothing waits for
+    /// the optimizer: the image is on the clipboard and the window gone as soon as
+    /// it is saved, and the optimized copy takes its place in the background.
     private func copyAndFinishEditing(original: Bool = false) {
         clearInspectorFocus()
         guard let sourceURL = model.sourceURL else {
@@ -590,27 +592,45 @@ struct AnnotationEditorWindow: View {
         guard !isBusy else { return }
 
         isFinishing = true
+        // The copy's turn is taken now, at ⌘C, before the edits are saved: anything copied while they are, here or
+        // in another app, is newer, and this copy doesn't land after it (as the Library's selection, Astra round 4).
+        let turn = OptimizedImageCopy.shared.takeTurn()
         Task {
+            defer { OptimizedImageCopy.shared.finish(turn) }
             do {
                 let resultURL = try await model.commitEdits()
                 if let resultURL {
+                    // Not copied there too: the copy below is the one (auto-copy would make it twice).
                     _ = await ScreenshotPreviewStack.shared.applyAnnotation(
                         originalURL: sourceURL,
-                        historyURL: resultURL
+                        historyURL: resultURL,
+                        updatesClipboard: false
                     )
                 }
                 // No result means nothing was drawn: the original is the image.
-                let saving = try await ScreenshotFileActions.copyImageToClipboard(from: resultURL ?? sourceURL, original: original)
-                // The window usually closes, so a toast says the image went to the clipboard.
-                CaptureTextFeedbackPresenter.shared.showDone(original ? "Copied Original" : "Copied",
-                                                             detail: saving ?? "The marked-up screenshot is on the clipboard.",
-                                                             displayID: ActiveDisplayResolver.activeDisplayID())
-                guard !model.hasUnsavedChanges else {
+                guard try await ScreenshotFileActions.copyImageToClipboard(from: resultURL ?? sourceURL, original: original,
+                                                                           turn: turn) else {
+                    // Something newer reached the clipboard while the image was saved or read: nothing was copied, so
+                    // the editor stays, edits saved, for another ⌘C.
                     isFinishing = false
                     return
                 }
-                model.releaseEditorResources()
+                // The window usually closes, so a toast says the image went to the clipboard.
+                let display = ActiveDisplayResolver.activeDisplayID()
+                let toast = {
+                    CaptureTextFeedbackPresenter.shared.showDone(original ? "Copied Original" : "Copied",
+                                                                 detail: "The marked-up screenshot is on the clipboard.",
+                                                                 displayID: display)
+                }
+                guard !model.hasUnsavedChanges else {
+                    isFinishing = false
+                    toast()
+                    return
+                }
+                // The window goes first; the toast and the clean-up follow it.
                 dismissWindow()
+                toast()
+                model.releaseEditorResources()
             } catch {
                 isFinishing = false
                 model.errorMessage = "Failed to finish annotation: \(error.localizedDescription)"

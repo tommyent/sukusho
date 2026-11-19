@@ -815,10 +815,12 @@ private func isRunning(_ text: String) -> Bool {
         let result = try await bench.optimizer.optimize(source)
         #expect(result.outcome == .optimized)
         #expect(result.source == before)
+        #expect(result.output == FileIdentity(result.url))   // round 3: what the encoder made, as it made it
         // Nothing smaller, and a failure, name what was read as well: the Library marks a file on the first.
         let again = try await bench.optimizer.optimize(result.url)
         #expect(again.outcome == .alreadyOptimized)
         #expect(again.source == FileIdentity(result.url))
+        #expect(again.output == nil)   // nothing was made: the result is the file read
         let noTools = ImageOptimizer(toolsDirectory: bench.folder.appending(path: "none"), outputDirectory: bench.output)
         let failed = try await noTools.optimize(source)
         guard case .failed = failed.outcome else {
@@ -1038,6 +1040,11 @@ private func isRunning(_ text: String) -> Bool {
         return item
     }
 
+    /// A swap of an optimized result, naming what the optimizer read, as the copy route makes it.
+    private func swapIn(_ result: ImageOptimizationResult) -> OptimizedImageCopy.Swap? {
+        (try? item(result.url)).map { .init(item: $0, source: result.source?.digest, output: result.output?.digest) }
+    }
+
     @Test func twoSameSizeScreenshotsStayTwoDifferentResults() async throws {
         let bench = try Bench()
         defer { bench.remove() }
@@ -1139,11 +1146,9 @@ private func isRunning(_ text: String) -> Bool {
         let quick = try bench.file("Quick.png", Sample.screenshot(width: 320, height: 200, seed: 37))
         let optimizer = bench.optimizer
         let copier = OptimizedImageCopy()
-        func write(to board: NSPasteboard) -> ([URL]) throws -> Void {
-            { urls in
-                board.clearContents()
-                guard board.writeObjects(urls.map { $0 as NSURL }) else { throw CocoaError(.fileWriteUnknown) }
-            }
+        /// Publishes the files themselves, where the Library publishes their snapshots.
+        let write: ([URL], ([NSPasteboardWriting]) throws -> Void) throws -> Void = { urls, publish in
+            try publish(urls.map { $0 as NSURL })
         }
         func files(on board: NSPasteboard) -> [String] {
             ((board.readObjects(forClasses: [NSURL.self]) as? [URL]) ?? []).map(\.lastPathComponent)
@@ -1155,7 +1160,7 @@ private func isRunning(_ text: String) -> Bool {
             defer { board.releaseGlobally() }
             let count = board.changeCount
             let copied = try #require(try await copier.copyAll([first, second], to: board, ready: { try await optimizer.optimize($0) },
-                                                               write: write(to: board)))
+                                                               write: write))
             #expect(copied.map(\.outcome) == [.optimized, .optimized])
             #expect(files(on: board) == ["First.png", "Second.png"])
             #expect(board.changeCount == count + 1)
@@ -1175,7 +1180,7 @@ private func isRunning(_ text: String) -> Bool {
                         for await _ in release { break }
                     }
                     return try await optimizer.optimize(url)
-                }, write: write(to: board))
+                }, write: write)
             }
             for await _ in started { break }
             board.clearContents()
@@ -1200,7 +1205,7 @@ private func isRunning(_ text: String) -> Bool {
                         for await _ in release { break }
                     }
                     return try await optimizer.optimize(url)
-                }, write: write(to: board))
+                }, write: write)
             }
             for await _ in started { break }
             let newer = try #require(try await copier.copy(quick, to: board, optimize: { try await optimizer.optimize($0) }, item: item))
@@ -1234,7 +1239,7 @@ private func isRunning(_ text: String) -> Bool {
                 for await _ in release { break }
                 guard let result = try? await optimizer.optimize(source), result.outcome == .optimized else { return nil }
                 defer { result.discard() }
-                return try? item(result.url)
+                return swapIn(result)
             }
         }
         for await _ in started { break }
@@ -1273,7 +1278,7 @@ private func isRunning(_ text: String) -> Bool {
                     for await _ in release { break }
                     guard let result = try? await optimizer.optimize(source), result.outcome == .optimized else { return nil }
                     defer { result.discard() }
-                    return try? item(result.url)
+                    return swapIn(result)
                 }
             }
             for await _ in started { break }
@@ -1322,7 +1327,7 @@ private func isRunning(_ text: String) -> Bool {
             let original = try item(source)
             let swapped = try await copier.copyThenSwap(to: board, first: { original }) {
                 guard let result = try? await noTools.optimize(source), result.outcome == .optimized else { return nil }
-                return try? item(result.url)
+                return swapIn(result)
             }
             #expect(!swapped)
             #expect(board.data(forType: .png) == (try Data(contentsOf: source)))
@@ -1423,6 +1428,475 @@ private func isRunning(_ text: String) -> Bool {
         #expect(board.data(forType: .png) == (try Data(contentsOf: source)))
         #expect(board.changeCount > count)
         #expect(board.pasteboardItems?.count == 1)
+    }
+
+    /// Beta 4, the owner pressing ⌘C again because nothing seemed to happen: the second copy of the same file
+    /// writes nothing and doesn't start the optimizer again, while the first one's swap still lands.
+    @Test func aSecondCopyOfTheSameFileWritesNothingAndStartsNoSecondOptimization() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let source = try bench.file("Edited.png", Sample.screenshot(width: 640, height: 400, seed: 44))
+        let optimizer = bench.optimizer
+        let copier = OptimizedImageCopy()
+        let board = pasteboard()
+        defer { board.releaseGlobally() }
+        final class Calls { var smaller = 0 }
+        let calls = Calls()
+        let (release, doRelease) = AsyncStream<Void>.makeStream()
+        var made: ImageOptimizationResult?
+        func copy() async throws -> (OptimizedImageCopy.InstantCopy, Task<Bool, Never>?) {
+            try await copier.copyNow(to: board, first: { .init(item: try item(source), key: "Edited.png, first save") }) {
+                calls.smaller += 1
+                for await _ in release { break }
+                guard let result = try? await optimizer.optimize(source), result.outcome == .optimized else { return nil }
+                made = result
+                return swapIn(result)
+            }
+        }
+        let count = board.changeCount
+        let (first, swap) = try await copy()
+        #expect(first == .written)
+        // On the pasteboard when the copy returns, before the optimizer has done anything: a paste gets it now.
+        #expect(board.data(forType: .png) == (try Data(contentsOf: source)))
+        #expect(board.changeCount == count + 1)
+
+        let (second, noSwap) = try await copy()
+        #expect(second == .alreadyThere)
+        #expect(noSwap == nil)
+        #expect(board.changeCount == count + 1)
+
+        doRelease.yield()
+        let swapTask = try #require(swap)
+        #expect(await swapTask.value)
+        #expect(board.changeCount == count + 2)
+        #expect(calls.smaller == 1)
+        let optimized = try #require(made)
+        #expect(board.data(forType: .png) == (try Data(contentsOf: optimized.url)))
+
+        // Again after the swap: the optimized copy stays as it is.
+        #expect(try await copy().0 == .alreadyThere)
+        #expect(board.changeCount == count + 2)
+        // The file saved again is another copy.
+        let (changed, changedSwap) = try await copier.copyNow(to: board,
+                                                              first: { .init(item: try item(source), key: "Edited.png, second save") }, smaller: { nil })
+        #expect(changed == .written)
+        #expect(await changedSwap?.value == false)
+        #expect(board.changeCount == count + 3)
+        optimized.discard()
+        #expect(bench.leftovers.isEmpty)
+    }
+
+    /// Sol, round 2: history doesn't wait for the monitor's poll. The copy is filed when it is written (`record`,
+    /// as `recordOwnCopy` does it) and its optimized image goes on that card (`stack`), so a swap that comes before
+    /// any poll still leaves one card. A poll after it finds nothing to file: the original is Sukusho's own
+    /// write, the swap auto-generated.
+    @Test func aCopyIsFiledWhenWrittenAndItsSwapGoesOnThatCardWithoutAPoll() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let source = try bench.file("Shot.png", Sample.screenshot(width: 640, height: 400, seed: 45))
+        let optimizer = bench.optimizer
+        let copier = OptimizedImageCopy()
+        let store = try ClipboardHistoryStore(directory: bench.folder.appending(path: "Clipboard"), deviceID: "test-mac")
+        let board = pasteboard()
+        defer { board.releaseGlobally() }
+        func poll() -> ClipboardPasteboardReader.Outcome {
+            ClipboardPasteboardReader.read(board, changeCount: board.changeCount, frontmostBundleID: nil, ignoredApps: [],
+                                           historyDirectory: bench.folder).outcome
+        }
+        let originalData = try Data(contentsOf: source)
+        let (release, doRelease) = AsyncStream<Void>.makeStream()
+        var optimizedData: Data?
+        let (outcome, swap) = try await copier.copyNow(to: board, first: {
+            let original = try item(source)
+            original.setData(Data(), forType: .init(ClipboardCapturePolicy.ownType))
+            return .init(item: original, key: UUID())
+        }, record: { written in
+            guard let capture = ClipboardPasteboardReader.ownCopy([written], ignoredApps: [], historyDirectory: bench.folder),
+                  case .inserted(let id)? = try? await store.record(capture, ownCopy: true) else { return nil }
+            return id
+        }, smaller: {
+            for await _ in release { break }
+            guard let result = try? await optimizer.optimize(source), result.outcome == .optimized else { return nil }
+            defer { result.discard() }
+            let smaller = swapIn(result)
+            smaller?.item.setData(Data(), forType: .init(ClipboardWriter.autoGeneratedType))
+            optimizedData = smaller?.item.data(forType: .png)
+            return smaller
+        }, stack: { card, swapped in
+            guard let data = swapped.data(forType: .png) else {
+                Issue.record("the swap has no image")
+                return
+            }
+            var capture = ClipboardCapture(kind: .image, hash: ClipboardPasteboardReader.digest(data))
+            capture.image = data
+            capture.imageExtension = "png"
+            capture.byteSize = data.count
+            let stacked = (try? await store.stack(capture, on: card)) ?? false
+            #expect(stacked)
+        })
+        #expect(outcome == .written)
+        // A poll now leaves the original to `record`, which already filed it.
+        #expect(poll() == .skipped(.ownWrite))
+        doRelease.yield()
+        #expect(await swap?.value == true)
+        #expect(poll() == .skipped(.privateType(ClipboardWriter.autoGeneratedType)))
+
+        let cards = try await store.entries()
+        #expect(cards.count == 1)
+        let optimized = try #require(optimizedData)
+        #expect(cards.first?.hash == ClipboardPasteboardReader.digest(optimized))
+        #expect(cards.first?.earlierVersions.map(\.hash) == [ClipboardPasteboardReader.digest(originalData)])
+        #expect(bench.leftovers.isEmpty)
+    }
+
+    /// Astra, round 3: an image copy is a copy of the bytes its item carries and of the file that item names. Two
+    /// files with the same bytes are two copies (a file paste gets the file named), and a file with other bytes is
+    /// another copy; the same file with the same bytes is a repeat.
+    @Test func anImageCopyIsKeyedOnTheBytesItCarriesAndTheFileItNames() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let a = try Data(contentsOf: try bench.file("A.png", Sample.screenshot(width: 320, height: 200, seed: 50)))
+        let b = try Data(contentsOf: try bench.file("B.png", Sample.screenshot(width: 320, height: 200, seed: 51)))
+        func item(_ bytes: Data, file: String) -> NSPasteboardItem {
+            let item = NSPasteboardItem()
+            item.setData(bytes, forType: .png)
+            item.setString("file:///Captures/\(file)", forType: .fileURL)
+            return item
+        }
+        let first = await OptimizedImageCopy.key(of: item(a, file: "One.png"))
+        #expect(await OptimizedImageCopy.key(of: item(a, file: "One.png")) == first)
+        #expect(await OptimizedImageCopy.key(of: item(a, file: "Two.png")) != first)
+        #expect(await OptimizedImageCopy.key(of: item(b, file: "One.png")) != first)
+    }
+
+    /// Astra, rounds 3 and 4: with A on the pasteboard and its swap still coming, a copy of B starts, one image
+    /// (`copyNow`) or a Library selection of several (`copyAll`), and is held while it reads. Copied again before B
+    /// writes, A is the newest copy: B gives way, and A's swap still goes in, whether it is ready after B gave way or
+    /// while B is still reading. Not copied again, B is the newest: A's swap, ready while B reads, waits for it rather
+    /// than land under it, and B's write ends the swap.
+    @Test(arguments: [false, true]) func aRepeatOfTheHeldCopyKeepsItsSwapAndANewerCopyStillWrites(batch: Bool) async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let a = try bench.file("A.png", Sample.screenshot(width: 640, height: 400, seed: 48))
+        let b = try bench.file("B.png", Sample.screenshot(width: 640, height: 400, seed: 49))
+        let c = try bench.file("C.png", Sample.screenshot(width: 320, height: 200, seed: 54))
+        let optimizedA = try await bench.optimizer.optimize(a)
+        defer { optimizedA.discard() }
+        #expect(optimizedA.outcome == .optimized)
+        let originalA = try Data(contentsOf: a), smallerA = try Data(contentsOf: optimizedA.url), copiedB = try Data(contentsOf: b)
+
+        enum Order { case bGivesWayFirst, swapReadyFirst, noRepeat }
+        for order in [Order.bGivesWayFirst, .swapReadyFirst, .noRepeat] {
+            let copier = OptimizedImageCopy()
+            let board = pasteboard()
+            defer { board.releaseGlobally() }
+            /// Whether the pasteboard comes to hold `bytes` within two seconds.
+            func lands(_ bytes: Data) async -> Bool {
+                for _ in 0..<100 {
+                    if board.data(forType: .png) == bytes { return true }
+                    try? await Task.sleep(for: .milliseconds(20))
+                }
+                return false
+            }
+            let (releaseSwap, doReleaseSwap) = AsyncStream<Void>.makeStream()
+            let (first, swapA) = try await copier.copyNow(to: board, first: { .init(item: try item(a), key: "A") }) {
+                for await _ in releaseSwap { break }
+                return swapIn(optimizedA)
+            }
+            #expect(first == .written)
+            let swapTask = try #require(swapA)
+
+            let (bReading, didStartB) = AsyncStream<Void>.makeStream()
+            let (releaseB, doReleaseB) = AsyncStream<Void>.makeStream()
+            // Whether B wrote.
+            let copyB = Task { () throws -> Bool in
+                if batch {
+                    return try await copier.copyAll([b, c], to: board, ready: { url in
+                        if url == b {
+                            didStartB.yield()
+                            for await _ in releaseB { break }
+                        }
+                        return .original(url)
+                    }, write: { _, publish in try publish([try item(b)]) }) != nil
+                }
+                return try await copier.copyNow(to: board, first: {
+                    didStartB.yield()
+                    for await _ in releaseB { break }
+                    return .init(item: try item(b), key: "B")
+                }, smaller: { nil }).0 == .written
+            }
+            for await _ in bReading { break }
+
+            switch order {
+            case .bGivesWayFirst, .swapReadyFirst:
+                let (repeatOfA, noSwap) = try await copier.copyNow(to: board, first: { .init(item: try item(a), key: "A") }, smaller: { nil })
+                #expect(repeatOfA == .alreadyThere, "\(order)")
+                #expect(noSwap == nil, "\(order)")
+                if order == .bGivesWayFirst {
+                    doReleaseB.yield()
+                    #expect(try await copyB.value == false, "\(order)")
+                    #expect(board.data(forType: .png) == originalA, "\(order)")
+                    doReleaseSwap.yield()
+                } else {
+                    // B, older than the repeat, can't write any more: the swap doesn't wait for it.
+                    doReleaseSwap.yield()
+                    #expect(await lands(smallerA), "\(order)")
+                    doReleaseB.yield()
+                    #expect(try await copyB.value == false, "\(order)")
+                }
+                #expect(await swapTask.value, "\(order)")
+                #expect(board.data(forType: .png) == smallerA, "\(order)")
+            case .noRepeat:
+                doReleaseSwap.yield()
+                try await Task.sleep(for: .milliseconds(200))
+                #expect(board.data(forType: .png) == originalA, "\(order)")
+                doReleaseB.yield()
+                #expect(try await copyB.value, "\(order)")
+                #expect(await swapTask.value == false, "\(order)")
+                #expect(board.data(forType: .png) == copiedB, "\(order)")
+            }
+        }
+    }
+
+    /// Astra, round 4: a route that reads before it copies, as the Library's selection reads its clip cards, takes its
+    /// turn when it is asked to copy and copies with that turn. With A on the pasteboard and A's swap still coming:
+    /// copied again while the route reads, A is newer, and the route gives way and A's swap goes in; ready while the
+    /// route reads, A's swap waits for it and the route writes; copied in another app meanwhile, that copy stays.
+    @Test(arguments: [false, true]) func aRouteThatReadsFirstCopiesWithTheTurnItTookWhenAsked(batch: Bool) async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let a = try bench.file("A.png", Sample.screenshot(width: 640, height: 400, seed: 57))
+        let b = try bench.file("B.png", Sample.screenshot(width: 640, height: 400, seed: 58))
+        let optimizedA = try await bench.optimizer.optimize(a)
+        defer { optimizedA.discard() }
+        #expect(optimizedA.outcome == .optimized)
+        let originalA = try Data(contentsOf: a), smallerA = try Data(contentsOf: optimizedA.url), copiedB = try Data(contentsOf: b)
+
+        enum Meanwhile { case repeatOfA, swapReady, otherApp }
+        for meanwhile in [Meanwhile.repeatOfA, .swapReady, .otherApp] {
+            let copier = OptimizedImageCopy()
+            let board = pasteboard()
+            defer { board.releaseGlobally() }
+            let (releaseSwap, doReleaseSwap) = AsyncStream<Void>.makeStream()
+            let (first, swapA) = try await copier.copyNow(to: board, first: { .init(item: try item(a), key: "A") }) {
+                for await _ in releaseSwap { break }
+                return swapIn(optimizedA)
+            }
+            #expect(first == .written)
+            let swapTask = try #require(swapA)
+
+            // The route is asked to copy B: it takes its turn, then reads until released. Whether it wrote.
+            let turn = copier.takeTurn(on: board)
+            let (releaseRead, doReleaseRead) = AsyncStream<Void>.makeStream()
+            let route = Task { () throws -> Bool in
+                defer { copier.finish(turn) }
+                for await _ in releaseRead { break }
+                if batch {
+                    return try await copier.copyAll([b], to: board, turn: turn, ready: { .original($0) },
+                                                    write: { _, publish in try publish([try item(b)]) }) != nil
+                }
+                return try await copier.copyNow(to: board, turn: turn, first: { .init(item: try item(b), key: "B") },
+                                                smaller: { nil }).0 == .written
+            }
+
+            switch meanwhile {
+            case .repeatOfA:
+                #expect(try await copier.copyNow(to: board, first: { .init(item: try item(a), key: "A") }, smaller: { nil }).0 == .alreadyThere)
+                doReleaseRead.yield()
+                #expect(try await route.value == false, "\(meanwhile)")
+                #expect(board.data(forType: .png) == originalA, "\(meanwhile)")
+                doReleaseSwap.yield()
+                #expect(await swapTask.value, "\(meanwhile)")
+                #expect(board.data(forType: .png) == smallerA, "\(meanwhile)")
+            case .swapReady:
+                doReleaseSwap.yield()
+                try await Task.sleep(for: .milliseconds(200))
+                #expect(board.data(forType: .png) == originalA, "\(meanwhile)")
+                doReleaseRead.yield()
+                #expect(try await route.value, "\(meanwhile)")
+                #expect(await swapTask.value == false, "\(meanwhile)")
+                #expect(board.data(forType: .png) == copiedB, "\(meanwhile)")
+            case .otherApp:
+                board.clearContents()
+                board.setString("copied elsewhere", forType: .string)
+                doReleaseRead.yield()
+                #expect(try await route.value == false, "\(meanwhile)")
+                doReleaseSwap.yield()
+                #expect(await swapTask.value == false, "\(meanwhile)")
+                #expect(board.string(forType: .string) == "copied elsewhere", "\(meanwhile)")
+            }
+        }
+    }
+
+    /// Astra, round 4: a selection whose write fails before it clears the pasteboard, as when a selected capture is
+    /// gone and its clipboard snapshot can't be made, leaves the clipboard's image there, and that image's swap still
+    /// goes in.
+    @Test func aSelectionThatFailsBeforeItWritesLeavesTheHeldSwapToGoIn() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let a = try bench.file("A.png", Sample.screenshot(width: 640, height: 400, seed: 59))
+        let gone = bench.folder.appending(path: "Gone.png")
+        let optimizedA = try await bench.optimizer.optimize(a)
+        defer { optimizedA.discard() }
+        #expect(optimizedA.outcome == .optimized)
+        let copier = OptimizedImageCopy()
+        let board = pasteboard()
+        defer { board.releaseGlobally() }
+        let (releaseSwap, doReleaseSwap) = AsyncStream<Void>.makeStream()
+        let (first, swapA) = try await copier.copyNow(to: board, first: { .init(item: try item(a), key: "A") }) {
+            for await _ in releaseSwap { break }
+            return swapIn(optimizedA)
+        }
+        #expect(first == .written)
+        let swapTask = try #require(swapA)
+        let count = board.changeCount
+
+        await #expect(throws: (any Error).self) {
+            try await copier.copyAll([gone], to: board, ready: { .original($0) }, write: { files, publish in
+                try ClipboardFiles.withClipboardSnapshots(of: files) { try publish($0 as [NSURL]) }
+            })
+        }
+        #expect(board.changeCount == count)
+        #expect(board.data(forType: .png) == (try Data(contentsOf: a)))
+
+        doReleaseSwap.yield()
+        #expect(await swapTask.value)
+        #expect(board.data(forType: .png) == (try Data(contentsOf: optimizedA.url)))
+    }
+
+    /// Astra, round 5: a selection checks again once its payload is made, right before it clears the pasteboard. The
+    /// Library's snapshots copy files, and a copy made in another app meanwhile is newer: it stays, the selection
+    /// writes nothing and returns nil, and its snapshots are removed. Nothing copied meanwhile, the snapshots go on.
+    @Test func aSelectionChecksAgainOnceItsSnapshotsAreMade() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let files = try (0..<3).map { try bench.file("Shot \($0).png", Sample.screenshot(width: 320, height: 200, seed: 60 + UInt64($0))) }
+        let copier = OptimizedImageCopy()
+        for copiedMeanwhile in [true, false] {
+            let board = pasteboard()
+            defer { board.releaseGlobally() }
+            var snapshots: [URL] = []
+            let copied = try await copier.copyAll(files, to: board, ready: { .original($0) }, write: { files, publish in
+                try ClipboardFiles.withClipboardSnapshots(of: files) { made in
+                    snapshots = made
+                    // Another app copies while the snapshots are being made.
+                    if copiedMeanwhile {
+                        board.clearContents()
+                        board.setString("copied elsewhere", forType: .string)
+                    }
+                    try publish(made as [NSURL])
+                }
+            })
+            #expect(snapshots.count == 3)
+            if copiedMeanwhile {
+                #expect(copied == nil)
+                #expect(board.string(forType: .string) == "copied elsewhere")
+                #expect(board.pasteboardItems?.count == 1)
+                #expect(snapshots.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
+            } else {
+                #expect(copied?.count == 3)
+                let published = (board.readObjects(forClasses: [NSURL.self]) as? [URL]) ?? []
+                #expect(published.map(\.standardizedFileURL) == snapshots.map(\.standardizedFileURL))
+                #expect(snapshots.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
+                // Published snapshots live until the system clears its temporary folder; the test's go now.
+                if let first = snapshots.first {
+                    try? FileManager.default.removeItem(at: first.deletingLastPathComponent().deletingLastPathComponent())
+                }
+            }
+        }
+    }
+
+    /// Astra, round 4, found along the way: an image copied as it is (Copy Original, or with optimizing off) takes
+    /// its turn before it reads the file, as the optimized copy does. A copy asked for while it reads, even a repeat of
+    /// the clipboard's image that writes nothing, is newer, and the older copy doesn't land after it.
+    @Test func anImageCopiedAsItIsTakesItsTurnBeforeItReads() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let a = try bench.file("A.png", Sample.screenshot(width: 640, height: 400, seed: 55))
+        let b = try bench.file("B.png", Sample.screenshot(width: 640, height: 400, seed: 56))
+        // The copier the app's image copies share, on a private pasteboard.
+        let copier = OptimizedImageCopy.shared
+        let board = pasteboard()
+        defer { board.releaseGlobally() }
+        let key = "A, \(UUID())"
+        #expect(try await copier.copyNow(to: board, first: { .init(item: try item(a), key: key) }, smaller: { nil }).0 == .written)
+
+        let copyB = Task { try await ScreenshotFileActions.copyImageToClipboard(from: b, dataType: .png, to: board) }
+        // B starts, and is reading its file, when A is copied again.
+        await Task.yield()
+        #expect(try await copier.copyNow(to: board, first: { .init(item: try item(a), key: key) }, smaller: { nil }).0 == .alreadyThere)
+        #expect(try await copyB.value == false)
+        #expect(board.data(forType: .png) == (try Data(contentsOf: a)))
+
+        // Nothing copied meanwhile: it is written.
+        #expect(try await ScreenshotFileActions.copyImageToClipboard(from: b, dataType: .png, to: board))
+        #expect(board.data(forType: .png) == (try Data(contentsOf: b)))
+    }
+
+    /// Sol, round 2: the swap publishes only the optimized form of the bytes the copy wrote. A file rewritten after
+    /// the copy read it (another picture), a result that can't say what it was made from, and the same bytes again
+    /// all leave the original on the pasteboard, written once.
+    @Test func aSwapMadeFromOtherBytesThanTheCopyWroteIsNeverWritten() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let source = try bench.file("Capture.png", Sample.screenshot(width: 640, height: 400, seed: 46))
+        let replacement = try bench.file("Replacement.png", Sample.screenshot(width: 640, height: 400, seed: 47))
+        let optimizer = bench.optimizer
+        let copier = OptimizedImageCopy()
+        let original = try Data(contentsOf: source)
+        let result = try await optimizer.optimize(source)
+        defer { result.discard() }
+        let rewritten = try await optimizer.optimize(replacement)
+        defer { rewritten.discard() }
+        #expect(result.outcome == .optimized && rewritten.outcome == .optimized)
+        let candidates: [(String, OptimizedImageCopy.Swap?)] = [
+            ("the rewritten file's optimized picture", swapIn(rewritten)),
+            ("a result that can't say what it was made from", OptimizedImageCopy.Swap(item: try item(result.url), source: nil, output: result.output?.digest)),
+            ("the copied bytes again", OptimizedImageCopy.Swap(item: try item(source), source: ClipboardPasteboardReader.digest(original),
+                                                       output: ClipboardPasteboardReader.digest(original))),
+        ]
+        for (name, candidate) in candidates {
+            let board = pasteboard()
+            defer { board.releaseGlobally() }
+            let count = board.changeCount
+            let swapped = try await copier.copyThenSwap(to: board, first: { try item(source) }) { candidate }
+            #expect(!swapped, "\(name)")
+            #expect(board.data(forType: .png) == original, "\(name)")
+            #expect(board.changeCount == count + 1, "\(name)")
+        }
+        // And the optimized form of the copied bytes still goes in.
+        let board = pasteboard()
+        defer { board.releaseGlobally() }
+        #expect(try await copier.copyThenSwap(to: board, first: { try item(source) }) { swapIn(result) })
+        #expect(board.data(forType: .png) == (try Data(contentsOf: result.url)))
+    }
+
+    /// Astra, round 3: a new capture optimized in place is read back from its Library file for the swap. An edit
+    /// saved over that file in between is made from no optimizer: its bytes aren't the encoder's output, so the
+    /// original stays, written once, whatever the result says it was made from.
+    @Test func anEditSavedOverTheOptimizedFileIsNeverSwappedIn() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let capture = try bench.file("Capture.png", Sample.screenshot(width: 640, height: 400, seed: 52))
+        let original = try Data(contentsOf: capture)
+        let result = try await bench.optimizer.optimize(capture)
+        defer { result.discard() }
+        #expect(result.outcome == .optimized)
+        #expect(result.output == FileIdentity(result.url))
+        // The capture now holds the optimized bytes, then an edit is saved over it before the swap reads it.
+        let edit = try bench.file("Edit.png", Sample.screenshot(width: 640, height: 400, seed: 53))
+        let copier = OptimizedImageCopy()
+        let board = pasteboard()
+        defer { board.releaseGlobally() }
+        let swapped = try await copier.copyThenSwap(to: board, first: {
+            let written = NSPasteboardItem()
+            written.setData(original, forType: .png)
+            return written
+        }) {
+            .init(item: try! item(edit), source: result.source?.digest, output: result.output?.digest)
+        }
+        #expect(!swapped)
+        #expect(board.data(forType: .png) == original)
     }
 }
 

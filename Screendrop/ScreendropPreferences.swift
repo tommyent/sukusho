@@ -421,21 +421,23 @@ enum ScreenshotExportFormat: String, CaseIterable, Identifiable {
 }
 
 enum ScreenshotFileActions {
-    static func copyPNGToClipboard(from url: URL) async throws {
-        try await copyImageToClipboard(from: url, dataType: .png)
+    @discardableResult
+    static func copyPNGToClipboard(from url: URL, turn: OptimizedImageCopy.Turn? = nil) async throws -> Bool {
+        try await copyImageToClipboard(from: url, dataType: .png, turn: turn)
     }
 
-    static func copyImageToClipboard(from url: URL, dataType: NSPasteboard.PasteboardType) async throws {
-        let item = try await ScreenshotClipboardImage.item(from: url, dataType: dataType, includeTIFF: ScreendropPreferences.copyTIFF)
-        let pasteboard = NSPasteboard.general
-        // Publication stays on MainActor, without suspension between clear and
-        // write, so colour, text and link copies cannot interleave with it.
-        pasteboard.clearContents()
-
-        // The pasteboard can refuse a write; callers treat a return as copied.
-        guard pasteboard.writeObjects([item]) else {
-            throw CocoaError(.fileWriteUnknown)
-        }
+    /// The image at `url` copied as it is (Copy Original, or with optimizing off). It takes its turn before it
+    /// reads the file, as the optimized copy does: false, with nothing written, when something newer was copied
+    /// meanwhile, here or in another app, a repeat of the clipboard's image included (Astra, round 4). `turn` is
+    /// the one the route took when it was asked to copy, if it did (`OptimizedImageCopy.takeTurn`).
+    @discardableResult
+    static func copyImageToClipboard(from url: URL, dataType: NSPasteboard.PasteboardType,
+                                     to pasteboard: NSPasteboard = .general, turn: OptimizedImageCopy.Turn? = nil) async throws -> Bool {
+        let (outcome, _) = try await OptimizedImageCopy.shared.copyNow(to: pasteboard, turn: turn, first: {
+            .init(item: try await ScreenshotClipboardImage.item(from: url, dataType: dataType, includeTIFF: ScreendropPreferences.copyTIFF),
+                  key: UUID())
+        }, smaller: { nil })
+        return outcome == .written
     }
     
     private static var reservedSaveURLs: Set<URL> = []
