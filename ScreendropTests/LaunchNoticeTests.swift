@@ -7,6 +7,15 @@ import Testing
 /// are built here but never shown.
 @MainActor
 struct LaunchNoticeTests {
+    @Test func noticesWaitForBothTheirDeadlineAndAnActiveApp() {
+        var notices = LaunchNoticeDelivery()
+        let beforeDeadline = notices.takeIfDue(isActive: true)
+        #expect(!beforeDeadline)
+        notices.isDue = true
+        let deliveries = [false, true, true].map { notices.takeIfDue(isActive: $0) }
+        #expect(deliveries == [false, true, false])
+    }
+
     private func suite() -> (UserDefaults, String) {
         let name = "LaunchNoticeTests-\(UUID().uuidString)"
         return (UserDefaults(suiteName: name)!, name)

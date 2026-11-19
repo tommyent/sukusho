@@ -6,6 +6,16 @@
 import AppKit
 import SwiftUI
 
+struct LaunchNoticeDelivery {
+    var isDue = false
+
+    mutating func takeIfDue(isActive: Bool) -> Bool {
+        guard isDue, isActive else { return false }
+        isDue = false
+        return true
+    }
+}
+
 /// The window of a notice Sukusho shows at launch: the unsupported-macOS notice and the shortcut clash. It's modeless,
 /// so clipboard history, the Library and its Copy keep working while it waits; a modal alert held copies for 20 s and
 /// more (m1, beta 2). It floats in front of Sukusho's own windows, the Library included, and hides while another app is

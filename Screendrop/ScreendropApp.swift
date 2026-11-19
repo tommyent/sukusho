@@ -233,6 +233,7 @@ enum AppRelaunch {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var launchNotices = LaunchNoticeDelivery()
     private var openedFilesAtLaunch = false
 
     /// Files handed to us via Finder's "Open With" (or `open -a Sukusho`)
@@ -296,14 +297,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if relaunched { return SettingsWindowController.show(tab: .shortcuts) }
             CaptureLibraryModel.shared.show()
         }
-        // Login launches can show the compatibility notice without interrupting clipboard polling.
         // An agent's helper starts quietly.
         if !CommandLine.arguments.contains(AgentAccess.launchArgument) {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                UnsupportedOSNotice.showIfNeeded()
-                ShortcutClashNotice.showIfNeeded()
+                self.launchNotices.isDue = true
+                self.showLaunchNoticesIfActive()
             }
         }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        // Let the Dock reopen the Library before handing the clash notice the keyboard.
+        DispatchQueue.main.async { self.showLaunchNoticesIfActive() }
+    }
+
+    private func showLaunchNoticesIfActive() {
+        guard launchNotices.takeIfDue(isActive: NSApp.isActive) else { return }
+        UnsupportedOSNotice.showIfNeeded()
+        ShortcutClashNotice.showIfNeeded()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
