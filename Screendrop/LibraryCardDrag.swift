@@ -21,9 +21,7 @@ extension LibrarySavedCard {
             switch entry.kind {
             case .image: return try entry.imageSnapshot() as NSURL
             case .text, .snippet:
-                let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-                return try entry.textTransfer.write(to: folder) as NSURL
+                return try ClipboardFiles.withSnapshotDirectory { try entry.textTransfer.write(to: $0) as NSURL }
             case .files:
                 let urls = try entry.fileTransferURLs()
                 guard let first = urls.first else { return nil }
@@ -72,7 +70,7 @@ private final class LibraryRecordingPromise: NSObject, NSFilePromiseProviderDele
         Task { @MainActor in
             do {
                 let file = try await RecordingSessionRenderer.ensureDeliverable(for: session, editDocument: edits)
-                try await VideoFileActions.save(from: file, to: url)
+                try await VideoFileActions.save(from: file, to: url, replacingExisting: false)
                 completionHandler(nil)
             } catch { completionHandler(error) }
         }

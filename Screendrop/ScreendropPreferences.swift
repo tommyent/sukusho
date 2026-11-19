@@ -544,8 +544,11 @@ enum ScreenshotFileActions {
             .appendingPathExtension(destinationURL.pathExtension)
     }
 
-    nonisolated static func installExport(from stagingURL: URL, at destinationURL: URL) throws {
-        guard rename(stagingURL.path, destinationURL.path) == 0 else {
+    nonisolated static func installExport(from stagingURL: URL, at destinationURL: URL, replacingExisting: Bool = true) throws {
+        let result = replacingExisting
+            ? rename(stagingURL.path, destinationURL.path)
+            : renamex_np(stagingURL.path, destinationURL.path, UInt32(RENAME_EXCL))
+        guard result == 0 else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
     }

@@ -3,6 +3,13 @@ import AppKit
 import SwiftUI
 @testable import Screendrop
 
+private let fixtureDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("Sukusho-drag-\(UUID())", isDirectory: true)
+
+extension FileManager {
+    // Foundation's per-user temp directory can ignore TMPDIR, even in a disposable home.
+    @objc fileprivate var dragTestTemporaryDirectory: URL { fixtureDirectory }
+}
+
 @MainActor private var sessions: [[NSPasteboardWriting]] = []
 
 extension NSView {
@@ -71,6 +78,51 @@ extension NSView {
         return board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
     }
 
+    static func writeError(_ start: (@escaping @Sendable (Error?) -> Void) -> Void) -> NSError? {
+        var finished = false
+        var result: NSError?
+        start { error in
+            DispatchQueue.main.async {
+                result = error as NSError?
+                finished = true
+            }
+        }
+        let deadline = Date().addingTimeInterval(3)
+        while !finished && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+        require(finished, "file write timed out")
+        return result
+    }
+
+    static func checkSaveCollision(in folder: URL) throws {
+        let source = folder.appendingPathComponent("source.mov")
+        let destination = folder.appendingPathComponent("existing.mov")
+        let incoming = Data("incoming recording".utf8)
+        let existing = Data("existing destination".utf8)
+        try incoming.write(to: source)
+        try existing.write(to: destination)
+        let error = writeError { complete in
+            Task {
+                do {
+                    try await VideoFileActions.save(from: source, to: destination, replacingExisting: false)
+                    complete(nil)
+                } catch { complete(error) }
+            }
+        }
+        require(try Data(contentsOf: destination) == existing, "exclusive save replaced the existing bytes")
+        require(error?.domain == NSPOSIXErrorDomain && error?.code == Int(EEXIST), "exclusive save must return EEXIST")
+        let save = writeError { complete in
+            Task {
+                do {
+                    try await VideoFileActions.save(from: source, to: destination)
+                    complete(nil)
+                } catch { complete(error) }
+            }
+        }
+        require(save == nil, "ordinary Save failed")
+        require(try Data(contentsOf: destination) == incoming, "ordinary Save did not replace the file")
+        print("PASS save-level collision, EEXIST, byte preservation and ordinary Save")
+    }
+
     static func main() throws {
         NSApplication.shared.setActivationPolicy(.prohibited)
         let original = class_getInstanceMethod(NSView.self, #selector(NSView.beginDraggingSession(with:event:source:)))!
@@ -78,9 +130,15 @@ extension NSView {
         method_exchangeImplementations(original, recorder)
         defer { method_exchangeImplementations(original, recorder) }
 
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let folder = fixtureDirectory
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
-        defer { try? FileManager.default.removeItem(at: folder) }
+        atexit { try? FileManager.default.removeItem(at: fixtureDirectory) }
+        let systemTemp = class_getInstanceMethod(FileManager.self, #selector(getter: FileManager.temporaryDirectory))!
+        let testTemp = class_getInstanceMethod(FileManager.self, #selector(getter: FileManager.dragTestTemporaryDirectory))!
+        method_exchangeImplementations(systemTemp, testTemp)
+        defer { method_exchangeImplementations(systemTemp, testTemp) }
+        require(FileManager.default.temporaryDirectory == folder, "snapshot directory escaped the fixture")
+        try checkSaveCollision(in: folder)
         let bytes = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z4xkAAAAASUVORK5CYII=")!
         let url = folder.appendingPathComponent("history-id.png")
         try bytes.write(to: url)
@@ -100,12 +158,19 @@ extension NSView {
         @discardableResult
         func check(_ cards: [LibrarySavedCard], selection: Set<Int> = [], on index: Int, distance: CGFloat,
                    flags: NSEvent.ModifierFlags = [], clicks: Int = 1, title: Bool = false,
-                   expected: Set<Int>? = nil) -> [CaptureLibraryAction] {
+                   expected: Set<Int>? = nil, capturesPage: Bool = false) -> [CaptureLibraryAction] {
             let chosen = selection.map { cards[$0] }
             ClipboardHistoryModel.shared.librarySelectionIDs = Set(chosen.compactMap(\.clipID))
             CaptureLibraryModel.shared.selection = Set(chosen.compactMap(\.captureID))
-            let root = NSHostingView(rootView: LibraryClipCollection(cards: cards, cardWidth: 180,
-                                       layout: .grid, sections: [], isSavedPage: true))
+            let page: AnyView
+            if capturesPage {
+                page = AnyView(LibraryCaptureCollection(items: cards.compactMap(\.captureItem), layout: .grid,
+                                                        cardWidth: 180, model: CaptureLibraryModel.shared))
+            } else {
+                page = AnyView(LibraryClipCollection(cards: cards, cardWidth: 180, layout: .grid,
+                                                     sections: [], isSavedPage: true))
+            }
+            let root = NSHostingView(rootView: page)
             let window = TestWindow(contentRect: NSRect(x: 0, y: 0, width: 660, height: 400),
                                   styleMask: .borderless, backing: .buffered, defer: false)
             window.contentView = root
@@ -143,12 +208,17 @@ extension NSView {
                 "mixed selection lost files: \(multiple)")
         let other = folder.appendingPathComponent("second.txt")
         try Data("other".utf8).write(to: other)
-        check([.clip(clip(.files, text: "\(url.path)\n\(other.path)")), .clip(clip(.snippet, text: "snippet"))],
-              selection: [0, 1], on: 0, distance: 32)
+        check([.clip(clip(.files, text: "\(url.path)\n\(other.path)")), .clip(clip(.snippet, text: "snippet")), .clip(clip(.text, text: "plain"))],
+              selection: [0, 1, 2], on: 0, distance: 32)
         require(sessions.count == 4, "no file group drag")
         let group = files(in: sessions[3])
-        require(group.count == 3 && group.contains(url) && group.contains(other), "clipboard group lost files: \(group)")
-        require(try String(contentsOf: group.first { $0.lastPathComponent == "Text.txt" }!, encoding: .utf8) == "snippet", "snippet contents")
+        require(group.count == 4 && group.contains(url) && group.contains(other), "clipboard group lost files: \(group)")
+        let texts = group.filter { $0.lastPathComponent == "Text.txt" }
+        let clipboard = folder.appending(path: "\(ScreendropStorage.directoryName)/Clipboard", directoryHint: .isDirectory)
+        let roots = texts.map { $0.deletingLastPathComponent().deletingLastPathComponent().standardizedFileURL.path }
+        require(roots == Array(repeating: clipboard.standardizedFileURL.path, count: 2),
+                "text and snippet snapshots must be under the app's Clipboard folder")
+        require(try Set(texts.map { try String(contentsOf: $0, encoding: .utf8) }) == ["plain", "snippet"], "text and snippet contents")
 
         let session = RecordingSession(directoryURL: folder.appendingPathComponent("Project.sukushorec", isDirectory: true))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
@@ -169,15 +239,15 @@ extension NSView {
         let flattened = Data("flattened with pointer".utf8)
         try flattened.write(to: fixture)
         _ = try session.installFinalVideo(movingFrom: fixture)
-        var finished = false
-        delegate.filePromiseProvider(promise, writePromiseTo: destination) { error in
-            require(error == nil, "recording promise failed: \(String(describing: error))")
-            finished = true
-        }
-        let deadline = Date().addingTimeInterval(3)
-        while !finished && Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
-        require(finished, "recording promise timed out")
-        require(try Data(contentsOf: destination) == flattened, "promise exposed raw footage")
+        let occupied = Data("earlier drop".utf8)
+        try occupied.write(to: destination)
+        let collision = writeError { delegate.filePromiseProvider(promise, writePromiseTo: destination, completionHandler: $0) }
+        require(collision?.domain == NSPOSIXErrorDomain && collision?.code == Int(EEXIST), "promise must return EEXIST")
+        require(try Data(contentsOf: destination) == occupied, "promise replaced the earlier drop")
+        let empty = folder.appendingPathComponent("new." + destination.pathExtension)
+        let write = writeError { delegate.filePromiseProvider(promise, writePromiseTo: empty, completionHandler: $0) }
+        require(write == nil, "recording promise failed: \(String(describing: write))")
+        require(try Data(contentsOf: empty) == flattened, "promise exposed raw footage")
         check([movie], on: 0, distance: 32)
         require(sessions.count == 6, "no cached recording drag")
         let cached = files(in: sessions[5])
@@ -193,5 +263,11 @@ extension NSView {
         require(check(cards, selection: [1], on: 1, distance: 32, title: true).isEmpty, "drag renamed the card")
         require(sessions.count == 7, "expected one title drag")
         print("PASS plain, command, shift, double click, title rename and title drag")
+        check([capture(url, name: "Captures page")], on: 0, distance: 32, capturesPage: true)
+        require(sessions.count == 8, "Captures page did not request a drag session")
+        let capturesPageFiles = files(in: sessions[7])
+        require(capturesPageFiles.map(\.lastPathComponent) == ["Captures page.png"], "wrong file from Captures page")
+        require(try Data(contentsOf: capturesPageFiles[0]) == bytes, "wrong bytes from Captures page")
+        print("PASS Captures-page card, Clipboard snapshot paths and promise collision")
     }
 }
