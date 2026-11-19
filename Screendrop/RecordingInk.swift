@@ -13,6 +13,12 @@ import CoreText
 
 /// One stroke on the screen movie's source clock, with top-left normalized
 /// points like the pointer sidecar.
+nonisolated struct RecordingMarkerTarget: Codable, Equatable, Sendable {
+    var role: String?
+    var label: String?
+    var window: String?
+}
+
 nonisolated struct RecordingInkStroke: Codable, Equatable, Identifiable, Sendable {
     var id = UUID()
     var color = RecordingInkColor.marker
@@ -27,6 +33,7 @@ nonisolated struct RecordingInkStroke: Codable, Equatable, Identifiable, Sendabl
     var fittedOval: Bool?
     var visibilityChanges: [TimeInterval]?
     var markerNumber: Int?
+    var target: RecordingMarkerTarget?
 
     var startTime: TimeInterval { points.first?.t ?? 0 }
 }
@@ -64,6 +71,7 @@ nonisolated struct RecordingInkCapture: Sendable {
     var fittedOval: Bool?
     var visibilityChanges: [TimeInterval]?
     var markerNumber: Int?
+    var target: RecordingMarkerTarget?
     var hideUptime: TimeInterval?
     var fadesOut = true
 }
@@ -96,7 +104,7 @@ nonisolated extension RecordingInkStroke {
                 fadesOut: capture.fadesOut,
                 fittedOval: capture.fittedOval,
                 visibilityChanges: capture.visibilityChanges?.compactMap(time),
-                markerNumber: capture.markerNumber
+                markerNumber: capture.markerNumber, target: capture.target
             )
         }
     }

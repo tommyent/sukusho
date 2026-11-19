@@ -12,6 +12,26 @@ struct RecordingAgentPromptTests {
         .init(sourceStart: 4, sourceEnd: 8, speed: 2),
     ])
 
+    @Test func markerStillHasSourcePixelsControlAndNearbySpeech() {
+        var capture = PointerCaptureFile()
+        for n in 1...2 {
+            capture.ink.append(.init(width: 0.01, points: [.init(t: 1 + Double(n) / 10, x: 0.25, y: 0.5)],
+                markerNumber: n, target: n == 1 ? .init(role: "AXButton", label: "Save", window: "Draft") : nil))
+        }
+        let plan = RecordingAgentPromptPlan(title: "Fixture", timeline: .full(sourceDuration: 3),
+            cues: [.init(start: 1, end: 2, text: "Right here")], words: [], capture: capture,
+            screen: .init(width: 800, height: 600, scale: 2))
+        let markdown = plan.markdown(frameTimes: plan.moments.map(\.time), sourceStills: true)
+        for stroke in capture.ink {
+            let index = plan.moments.firstIndex { $0.time == stroke.startTime }
+            #expect(index != nil)
+            if let index { #expect(markdown.contains("stills/" + RecordingAgentPromptPlan.stillName(index))) }
+        }
+        #expect(markdown.contains("(200, 300) source px from top left"))
+        #expect(markdown.contains("AXButton, Save, window “Draft”") && markdown.contains("Control name unavailable"))
+        #expect(markdown.contains("Nearby narration: Right here") && !markdown.contains("left; source position"))
+    }
+
     @Test func sourceStillsDescribeCaptureScope() {
         for (mode, expected): (RecordingCaptureMode?, String) in [
             (.window, "the recorded window “Preferences”"), (.area, "the recorded area"),

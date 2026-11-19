@@ -23,6 +23,7 @@ final class RecordingInkPresenter {
     private(set) var tool = Tool.pen
     @ObservationIgnored private var history = RecordingInkHistory()
     @ObservationIgnored private var bugReport = false
+    @ObservationIgnored private var recordedWindow: CGWindowID?
 
     @ObservationIgnored private var usedShortcut = false
 
@@ -67,9 +68,10 @@ final class RecordingInkPresenter {
 
     /// Puts the click-through panel up before the capture filter is built,
     /// so the filter can leave it out. `frame` is in AppKit screen space.
-    func prepare(covering frame: CGRect, bugReport: Bool, onPenChange: @escaping (Bool, Bool) -> Void) {
+    func prepare(covering frame: CGRect, bugReport: Bool, recordedWindow: CGWindowID?, onPenChange: @escaping (Bool, Bool) -> Void) {
         hide()
         self.bugReport = bugReport
+        self.recordedWindow = recordedWindow
         let panel = RecordingInkPanel(
             contentRect: frame,
             styleMask: [.borderless, .nonactivatingPanel],
@@ -171,6 +173,15 @@ final class RecordingInkPresenter {
             widthInPoints: Self.lineWidth, markerNumber: number
         ))
         if number != nil {
+            if let overlay = windowID, AXIsProcessTrusted() {
+                let index = strokes.count - 1, id = strokes[index].id
+                let location = quartz(point), window = recordedWindow
+                Task {
+                    let target = await Self.readTarget(at: location, below: overlay, recordedWindow: window)
+                    guard strokes.indices.contains(index), strokes[index].id == id else { return }
+                    strokes[index].target = target
+                }
+            }
             inkView?.needsDisplay = true
             return
         }
@@ -200,6 +211,38 @@ final class RecordingInkPresenter {
             Task { @MainActor in RecordingInkPresenter.shared.fadeGroup() }
         }
         redraw(strokes[index].samples.suffix(7))
+    }
+
+    /// Query only the window under this placement. An unresponsive app cannot stall the recorder.
+    @concurrent private static func readTarget(at point: CGPoint, below overlay: CGWindowID,
+                                               recordedWindow: CGWindowID?) async -> RecordingMarkerTarget? {
+        guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenBelowWindow, .excludeDesktopElements], overlay)
+                as? [[String: Any]],
+              let window = windows.first(where: { info in
+                  guard let rect = info[kCGWindowBounds as String] as? [String: Any],
+                        let bounds = CGRect(dictionaryRepresentation: rect as CFDictionary) else { return false }
+                  return bounds.contains(point) && (info[kCGWindowAlpha as String] as? Double ?? 1) > 0
+              }), recordedWindow == nil || window[kCGWindowNumber as String] as? CGWindowID == recordedWindow,
+              let pid = window[kCGWindowOwnerPID as String] as? pid_t else { return nil }
+        let app = AXUIElementCreateApplication(pid)
+        guard AXUIElementSetMessagingTimeout(app, 0.10) == .success else { return nil }
+        var hit: AXUIElement?
+        guard AXUIElementCopyElementAtPosition(app, Float(point.x), Float(point.y), &hit) == .success, let hit else { return nil }
+        func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
+            var v: CFTypeRef?
+            guard AXUIElementSetMessagingTimeout(element, 0.10) == .success,
+                  AXUIElementCopyAttributeValue(element, attribute as CFString, &v) == .success else { return nil }
+            return v
+        }
+        func name(_ element: AXUIElement, _ attribute: String) -> String? {
+            guard let text = value(element, attribute) as? String else { return nil }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : String(trimmed.prefix(240))
+        }
+        let windowElement = value(hit, kAXWindowAttribute)
+        let title = windowElement.flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? name($0 as! AXUIElement, kAXTitleAttribute) : nil }
+        return RecordingMarkerTarget(role: name(hit, kAXRoleAttribute),
+                                     label: name(hit, kAXTitleAttribute) ?? name(hit, kAXDescriptionAttribute), window: title)
     }
 
     private func fadeGroup() {

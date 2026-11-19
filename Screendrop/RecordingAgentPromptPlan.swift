@@ -182,7 +182,27 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
             return (first.editorStart, last.editorEnd)
         }
         let ink = RecordingInkStroke.sanitized(capture?.ink ?? [])
+        var markerMoments: [Moment] = []
         for stroke in ink {
+            if let number = stroke.markerNumber, let tip = stroke.points.first {
+                guard let time = actionTime(tip.t) else { continue }
+                let location: String
+                if let screen, screen.width > 0, screen.height > 0 {
+                    let x = min(Double(screen.width - 1), floor(max(0, min(1, tip.x)) * Double(screen.width)))
+                    let y = min(Double(screen.height - 1), floor(max(0, min(1, tip.y)) * Double(screen.height)))
+                    location = String(format: "(%.0f, %.0f) source px from top left", x, y)
+                } else { location = "normalized source position " + Self.position(tip.x, tip.y) }
+                let role = stroke.target?.role.map(Self.escape)
+                let label = stroke.target?.label.map(Self.escape) ?? "Control name unavailable"
+                let target = [role, label, stroke.target?.window.map { "window “\(Self.escape($0))”" }]
+                    .compactMap { $0 }.joined(separator: ", ")
+                let nearby = narration.filter { $0.end >= time - 2 && $0.start <= time + 2 }
+                    .map { Self.escape($0.text) }.joined(separator: " ")
+                let description = "Marker \(number) at \(Self.timestamp(time)) — \(location). \(target)."
+                    + (nearby.isEmpty ? " No nearby narration." : " Nearby narration: \(nearby)")
+                markerMoments.append(Moment(time: time, evidence: [description], focus: CGPoint(x: tip.x, y: tip.y)))
+                continue
+            }
             guard let last = stroke.points.last,
                   let span = editorSpan(stroke.startTime, max(last.t, stroke.startTime + 0.001)) else { continue }
             let xs = stroke.points.map { min(max($0.x, 0), 1) }, ys = stroke.points.map { min(max($0.y, 0), 1) }
@@ -237,6 +257,8 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
                 grouped.append(Moment(time: event.time, evidence: [event.text], focus: event.position, parts: [event.part]))
             }
         }
+        grouped.append(contentsOf: markerMoments)
+        grouped.sort { $0.time < $1.time }
         self.timeline = timeline
         let pointer = (capture?.travel ?? []).filter { $0.time.isFinite && $0.x.isFinite && $0.y.isFinite }.sorted { $0.time < $1.time }
         self.pointer = pointer
@@ -256,7 +278,9 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
         text += "Use this recorded walkthrough and its evidence as task context.\n\n"
         if let recorded = recordedLine { text += recorded + "\n\n" }
         text += "Times refer to the edited recording (\(Self.timestamp(duration))). Click coordinates are normalized to the captured source, with a top-left origin; "
-            + (sourceStills ? "they match the stills." : "crop and zoom can move them in the stills.") + " Plain typing and control names were not recorded.\n\n"
+            + (sourceStills ? "they match the stills." : "crop and zoom can move them in the stills.") + (ink.contains { $0.markerNumber != nil }
+                ? " Numbered markers are annotations. Control names come from accessibility at placement. Plain typing was not recorded.\n\n"
+                : " Plain typing and control names were not recorded.\n\n")
         text += "Pointer rests of 0.7 s or more and scrolls come from the input log; a long recording lists only the longest ones.\n\n"
         let marks = ink.isEmpty ? "a red ring marks the pointer, which the screen recording doesn't show"
             : "a red ring marks the pointer and the pen's strokes are drawn in, since the screen recording shows neither"
