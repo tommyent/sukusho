@@ -115,7 +115,13 @@ nonisolated struct ScreenRecordingCaptureOptions: Sendable {
 final class ScreenRecordingManager {
     static let shared = ScreenRecordingManager()
 
-    var state: ScreenRecordingState = .idle
+    var state: ScreenRecordingState = .idle {
+        didSet {
+            if (oldValue == .recording) != (state == .recording) {
+                HotkeyManager.shared.reloadHotkeys()
+            }
+        }
+    }
     var elapsedTime: TimeInterval = 0
     var errorMessage: String?
     var onFinishRecording: ((RecordingSession, CGDirectDisplayID?) -> Void)?
@@ -246,9 +252,10 @@ final class ScreenRecordingManager {
 
                 // The pen panel goes up before the filter snapshots window IDs.
                 if let inkFrame = Self.inkFrame(for: source) {
-                    RecordingInkPresenter.shared.prepare(covering: inkFrame) { [pointerActivityRecorder] isOn in
+                    let recordedWindow: CGWindowID? = if case .window(let window) = source.kind { window.windowID } else { nil }
+                    RecordingInkPresenter.shared.prepare(covering: inkFrame, bugReport: options.bugReport, recordedWindow: recordedWindow) { [pointerActivityRecorder] isOn, fromBar in
                         let bar = RecordingBarPresenter.shared.barFrame.map { Self.quartzRect(fromAppKitRect: $0) }
-                        pointerActivityRecorder.setPenOn(isOn, bar: bar)
+                        pointerActivityRecorder.setPenOn(isOn, bar: fromBar ? bar : nil)
                     }
                 }
                 let content = try await ScreenRecordingCapture.availableContent(
@@ -314,6 +321,13 @@ final class ScreenRecordingManager {
                 try await capture.startCapture(filter: target.filter, configuration: target.configuration)
                 guard try isStarting(session: session) else { return }
                 manifest = CaptureManifest()
+                switch source.kind {
+                case .fullscreen: manifest.captureMode = .display
+                case .area: manifest.captureMode = .area
+                case .window(let window):
+                    manifest.captureMode = .window
+                    manifest.capturedWindowTitle = window.title
+                }
                 manifest.pixelWidth = target.width
                 manifest.pixelHeight = target.height
                 manifest.pixelScale = target.pointPixelScale

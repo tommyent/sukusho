@@ -543,6 +543,32 @@ struct TextLabelTests {
         #expect(editor.hitShape(at: Vec(290, 215))?.id == id, "halfway along the turned tail")
     }
 
+    @Test func nativeSpellingReplacementIsOneDocumentUndo() throws {
+        let (view, editor) = Self.overlay(TextProps(text: "teh cat"), zoom: 1)
+        let id = try #require(view.editedShapeId)
+        #expect(view.isContinuousSpellCheckingEnabled && !view.isRichText && !view.allowsUndo)
+        var boundaries: [String] = []
+        editor.onTextReplacementBoundary = { boundaries.append(editor.document.shape(id)?.textProps?.text ?? "") }
+        view.insertText("the", replacementRange: NSRange(location: 0, length: 3))
+        #expect(editor.document.shape(id)?.textProps?.text == "the cat")
+        #expect(boundaries == ["teh cat", "the cat"])
+        editor.undo()
+        #expect(editor.document.shape(id)?.textProps?.text == "teh cat")
+        #expect(!editor.canUndo)
+    }
+
+    @Test func spellingDecorationStaysOutOfExport() throws {
+        let (view, editor) = Self.overlay(TextProps(text: "mispelll"), zoom: 1)
+        let id = try #require(view.editedShapeId)
+        let shape = try #require(editor.document.shape(id))
+        let intended = Self.drawn([shape], width: 250, height: 80, flippedCanvas: false)
+        let layout = try #require(view.layoutManager)
+        layout.addTemporaryAttribute(.spellingState, value: NSAttributedString.SpellingState.spelling.rawValue,
+                                     forCharacterRange: NSRange(location: 0, length: 8))
+        let exported = Self.drawn([try #require(editor.document.shape(id))], width: 250, height: 80, flippedCanvas: false)
+        #expect(exported.data == intended.data)
+    }
+
     /// An overlay synced to one boxed label at `zoom`, with no window.
     static func overlay(_ props: TextProps, zoom: Double) -> (AnnoTextEditorOverlay, AnnoEditor) {
         let editor = AnnoEditor()

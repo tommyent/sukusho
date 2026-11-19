@@ -1,6 +1,8 @@
 import CoreGraphics
 import Foundation
 
+nonisolated enum RecordingCaptureMode: String, Codable { case display, window, area }
+
 nonisolated struct RecordingAgentPromptPlan: Sendable {
     struct Text: Sendable {
         var start: TimeInterval
@@ -53,6 +55,7 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
     let source: CaptureSource?
     /// The recorded area in pixels, and pixels per point.
     let screen: Screen?
+    let recordedScope: String
     /// Why the narration couldn't be transcribed, when it couldn't.
     let transcriptionFailure: String?
     /// A Bug report take's app log, when the user included it.
@@ -68,7 +71,8 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
     init(title: String, timeline: RecordingClipTimeline, cues: [RecordingSubtitleCue],
          words: [RecordingTranscriptWord], capture: PointerCaptureFile?,
          cursorNames: [String: String] = [:], files: SourceFiles? = nil, excludesAppWindows: Bool = false,
-         source: CaptureSource? = nil, transcriptionFailure: String? = nil, screen: Screen? = nil, logs: RecordingAppLogs? = nil) {
+         source: CaptureSource? = nil, transcriptionFailure: String? = nil, screen: Screen? = nil,
+         captureMode: RecordingCaptureMode? = nil, capturedWindowTitle: String? = nil, logs: RecordingAppLogs? = nil) {
         self.title = title
         duration = timeline.duration
         hasInput = capture != nil
@@ -76,6 +80,14 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
         self.excludesAppWindows = excludesAppWindows
         self.source = source
         self.screen = screen
+        switch captureMode {
+        case .display: recordedScope = "the recorded display"
+        case .area: recordedScope = "the recorded area"
+        case .window:
+            let title = capturedWindowTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+            recordedScope = "the recorded window" + (title.flatMap { $0.isEmpty ? nil : " “\(Self.escape($0))”" } ?? "")
+        case nil: recordedScope = "the recorded content"
+        }
         self.transcriptionFailure = transcriptionFailure
         self.logs = logs
 
@@ -169,8 +181,29 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
             guard let first = slices.first, let last = slices.last, abs(first.sourceStart - start) < 0.000_001 else { return nil }
             return (first.editorStart, last.editorEnd)
         }
-        let ink = RecordingInkStroke.sanitized(capture?.ink ?? [])
+        let ink = RecordingInkStroke.sanitized(capture?.ink ?? []).filter { !Self.isRetractedMarker($0) }
+        var markerMoments: [Moment] = []
         for stroke in ink {
+            let changes = Self.visibilityNotes(for: stroke, actionTime: actionTime)
+            if let number = stroke.markerNumber, let tip = stroke.points.first {
+                guard let time = actionTime(tip.t) else { continue }
+                let location: String
+                if let screen, screen.width > 0, screen.height > 0 {
+                    let x = min(Double(screen.width - 1), floor(max(0, min(1, tip.x)) * Double(screen.width)))
+                    let y = min(Double(screen.height - 1), floor(max(0, min(1, tip.y)) * Double(screen.height)))
+                    location = String(format: "(%.0f, %.0f) source px from top left", x, y)
+                } else { location = "normalized source position " + Self.position(tip.x, tip.y) }
+                let role = stroke.target?.role.map(Self.escape)
+                let label = stroke.target?.label.map(Self.escape) ?? "Control name unavailable"
+                let target = [role, label, stroke.target?.window.map { "window “\(Self.escape($0))”" }]
+                    .compactMap { $0 }.joined(separator: ", ")
+                let nearby = narration.filter { $0.end >= time - 2 && $0.start <= time + 2 }
+                    .map { Self.escape($0.text) }.joined(separator: " ")
+                let description = "Marker \(number) at \(Self.timestamp(time)) — \(location). \(target)\(changes)."
+                    + (nearby.isEmpty ? " No nearby narration." : " Nearby narration: \(nearby)")
+                markerMoments.append(Moment(time: time, evidence: [description], focus: CGPoint(x: tip.x, y: tip.y)))
+                continue
+            }
             guard let last = stroke.points.last,
                   let span = editorSpan(stroke.startTime, max(last.t, stroke.startTime + 0.001)) else { continue }
             let xs = stroke.points.map { min(max($0.x, 0), 1) }, ys = stroke.points.map { min(max($0.y, 0), 1) }
@@ -179,10 +212,9 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
             let shape = maxX - minX < 0.005 && maxY - minY < 0.005
                 ? "a dot at source position \(Self.position(center.x, center.y))"
                 : String(format: "a pen stroke over source x=%.3f–%.3f, y=%.3f–%.3f", locale: Locale(identifier: "en_US_POSIX"), minX, maxX, minY, maxY)
-            let hidden = stroke.hideTime.flatMap(actionTime).map { (stroke.fadesOut ? "; it fades out at " : "; undone at ") + Self.timestamp($0) } ?? ""
             // The moment sits where the stroke ends, so its still shows the finished stroke; at its first
             // point the still showed nothing of it yet.
-            evidence.append((span.end, "Drew on screen \(Self.timestamp(span.start))–\(Self.timestamp(span.end)): \(shape)\(hidden).", center,
+            evidence.append((span.end, "Drew on screen \(Self.timestamp(span.start))–\(Self.timestamp(span.end)): \(shape)\(changes).", center,
                              .did("Draw on the screen")))
         }
         var motion: [(time: Double, text: String, position: CGPoint?, part: Part, score: Double)] = []
@@ -225,6 +257,8 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
                 grouped.append(Moment(time: event.time, evidence: [event.text], focus: event.position, parts: [event.part]))
             }
         }
+        grouped.append(contentsOf: markerMoments)
+        grouped.sort { $0.time < $1.time }
         self.timeline = timeline
         let pointer = (capture?.travel ?? []).filter { $0.time.isFinite && $0.x.isFinite && $0.y.isFinite }.sorted { $0.time < $1.time }
         self.pointer = pointer
@@ -237,6 +271,40 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
         }
     }
 
+    /// Measured on the source clock so editing the playback speed cannot turn a deliberate marker into a mistake.
+    private static func isRetractedMarker(_ stroke: RecordingInkStroke) -> Bool {
+        guard stroke.markerNumber != nil else { return false }
+        let undo = stroke.endedByUndo == true ? stroke.visibilityChanges?.last : (stroke.fadesOut ? nil : stroke.hideTime)
+        guard let undo else { return false }
+        return (0...3).contains(undo - stroke.startTime)
+    }
+
+    private static func visibilityNotes(for stroke: RecordingInkStroke, actionTime: (Double) -> Double?) -> String {
+        var notes: [(Double, String)] = []
+        if let hide = stroke.hideTime, let time = actionTime(hide),
+           RecordingInkTimeline.isVisible(stroke.visibilityChanges, at: hide) {
+            notes.append((time, (stroke.fadesOut ? "it fades out at " : "undone at ") + timestamp(time)))
+        }
+        let changes = stroke.visibilityChanges ?? []
+        for (index, source) in changes.enumerated() {
+            guard let time = actionTime(source),
+                  RecordingInkTimeline.opacity(hideTime: stroke.hideTime, fadesOut: stroke.fadesOut, at: source) > 0 else { continue }
+            let stamp = timestamp(time)
+            let note: String
+            if !index.isMultiple(of: 2) {
+                note = "shown again at \(stamp) (undo)"
+            } else if index < changes.count - 1 || stroke.endedByUndo == false {
+                note = "cleared at \(stamp) (Clear marks)"
+            } else if stroke.endedByUndo == true {
+                note = "undone at \(stamp)"
+            } else {
+                note = "hidden at \(stamp) (undo or Clear marks)"
+            }
+            notes.append((time, note))
+        }
+        return notes.sorted { $0.0 < $1.0 }.map { "; " + $0.1 }.joined()
+    }
+
     /// `strips` holds each moment's strip span, nil where none was written.
     /// `sourceStills`: the stills came from the screen recording, not the edited movie.
     func markdown(frameTimes: [TimeInterval], strips: [ClosedRange<TimeInterval>?] = [], sourceStills: Bool = false) -> String {
@@ -244,14 +312,16 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
         text += "Use this recorded walkthrough and its evidence as task context.\n\n"
         if let recorded = recordedLine { text += recorded + "\n\n" }
         text += "Times refer to the edited recording (\(Self.timestamp(duration))). Click coordinates are normalized to the captured source, with a top-left origin; "
-            + (sourceStills ? "they match the stills." : "crop and zoom can move them in the stills.") + " Plain typing and control names were not recorded.\n\n"
+            + (sourceStills ? "they match the stills." : "crop and zoom can move them in the stills.") + (ink.contains { $0.markerNumber != nil }
+                ? " Numbered markers are annotations. Marker control names come from accessibility at placement. Plain typing was not recorded.\n\n"
+                : " Plain typing and control names were not recorded.\n\n")
         text += "Pointer rests of 0.7 s or more and scrolls come from the input log; a long recording lists only the longest ones.\n\n"
         let marks = ink.isEmpty ? "a red ring marks the pointer, which the screen recording doesn't show"
             : "a red ring marks the pointer and the pen's strokes are drawn in, since the screen recording shows neither"
         let hasStrips = strips.contains(where: { $0 != nil })
         let stripSpan = "\(Self.stripFrames) frames of the unedited screen recording, from \(Self.stripLead) s before the moment to \(Self.stripSpan - Self.stripLead) s after it, around where it happened"
         if sourceStills {
-            text += "Each still shows the whole screen at its moment, from the unedited screen recording: cuts and speed changes apply, Studio's zoom, crop, background, camera and redactions don't; \(marks)."
+            text += "Each still shows \(recordedScope) at its moment, from the unedited screen recording: cuts and speed changes apply, Studio's zoom, crop, background, camera and redactions don't; \(marks)."
                 + (hasStrips ? " Each strip shows \(stripSpan).\n\n" : "\n\n")
         } else if hasStrips {
             text += "Each still shows the edited recording. Each strip shows \(stripSpan); \(marks).\n\n"

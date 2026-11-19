@@ -19,6 +19,31 @@ final class RecordingInkPresenter {
     /// The marker's width on screen, in points.
     static let lineWidth: CGFloat = 6
 
+    enum Tool { case pen, oval, markers }
+    private(set) var tool = Tool.pen
+    @ObservationIgnored private var history = RecordingInkHistory()
+    @ObservationIgnored private var bugReport = false
+    @ObservationIgnored private var recordedWindow: CGWindowID?
+
+    @ObservationIgnored private var usedShortcut = false
+
+    func toggleFromShortcut() {
+        if usedShortcut && isPenOn { setPen(false); return }
+        if !usedShortcut {
+            endStroke(at: ProcessInfo.processInfo.systemUptime, point: nil)
+            tool = .markers
+        }
+        usedShortcut = true
+        setPen(true)
+    }
+
+    func select(_ next: Tool) {
+        if isPenOn && tool == next { setPen(false); return }
+        endStroke(at: ProcessInfo.processInfo.systemUptime, point: nil)
+        tool = next
+        setPen(true, fromBar: true)
+    }
+
     private(set) var isPenOn = false
 
     /// Every stroke of the take, including faded and undone ones: the
@@ -32,7 +57,7 @@ final class RecordingInkPresenter {
     @ObservationIgnored private var holdTimer: Timer?
     @ObservationIgnored private var fadeTimer: Timer?
     @ObservationIgnored private var fadingStrokes: [Int] = []
-    @ObservationIgnored private var onPenChange: ((Bool) -> Void)?
+    @ObservationIgnored private var onPenChange: ((Bool, Bool) -> Void)?
     @ObservationIgnored private var penHotKeyIDs: [UInt32] = []
 
     private init() {}
@@ -43,8 +68,10 @@ final class RecordingInkPresenter {
 
     /// Puts the click-through panel up before the capture filter is built,
     /// so the filter can leave it out. `frame` is in AppKit screen space.
-    func prepare(covering frame: CGRect, onPenChange: @escaping (Bool) -> Void) {
+    func prepare(covering frame: CGRect, bugReport: Bool, recordedWindow: CGWindowID?, onPenChange: @escaping (Bool, Bool) -> Void) {
         hide()
+        self.bugReport = bugReport
+        self.recordedWindow = recordedWindow
         let panel = RecordingInkPanel(
             contentRect: frame,
             styleMask: [.borderless, .nonactivatingPanel],
@@ -72,18 +99,14 @@ final class RecordingInkPresenter {
         panel.orderFrontRegardless()
     }
 
-    func togglePen() {
-        setPen(!isPenOn)
-    }
-
-    func setPen(_ isOn: Bool) {
+    func setPen(_ isOn: Bool, fromBar: Bool = false) {
         guard isOn != isPenOn, !isOn || panel != nil else { return }
         if !isOn { endStroke(at: ProcessInfo.processInfo.systemUptime, point: nil) }
         isPenOn = isOn
         panel?.ignoresMouseEvents = !isOn
         inkView?.needsDisplay = true
         setPenKeys(isOn)
-        onPenChange?(isOn)
+        onPenChange?(isOn, fromBar)
     }
 
     /// Esc and ⌘Z belong to the pen only while it is on; the rest of the
@@ -104,11 +127,18 @@ final class RecordingInkPresenter {
 
     /// Undo takes the last stroke still showing off at once.
     func undoLastStroke() {
-        guard currentStroke == nil,
-              let index = strokes.lastIndex(where: { $0.hideUptime == nil }) else { return }
-        strokes[index].hideUptime = ProcessInfo.processInfo.systemUptime
-        strokes[index].fadesOut = false
-        redraw(strokes[index].samples[...])
+        guard currentStroke == nil else { return }
+        history.undo(&strokes, at: ProcessInfo.processInfo.systemUptime)
+        inkView?.needsDisplay = true
+    }
+
+    func clearMarks() {
+        endStroke(at: ProcessInfo.processInfo.systemUptime, point: nil)
+        let now = ProcessInfo.processInfo.systemUptime
+        guard strokes.contains(where: { $0.visible(at: now) }) else { return }
+        history.clear(&strokes, at: now)
+        setPen(true, fromBar: true)
+        inkView?.needsDisplay = true
     }
 
     /// Takes the panel down and forgets the take's strokes; read `strokes`
@@ -123,6 +153,9 @@ final class RecordingInkPresenter {
         panel = nil
         inkView = nil
         strokes = []
+        usedShortcut = false
+        history = RecordingInkHistory()
+        tool = .pen
         fadingStrokes = []
         currentStroke = nil
         onPenChange = nil
@@ -133,11 +166,25 @@ final class RecordingInkPresenter {
     fileprivate func beginStroke(at uptime: TimeInterval, point: CGPoint) {
         endStroke(at: uptime, point: nil)
         // A stroke drawn before the hold ends keeps the group on screen.
-        holdTimer?.invalidate()
+        let number = history.added(at: strokes.count, marker: tool == .markers)
+        if number == nil { holdTimer?.invalidate() }
         strokes.append(RecordingInkCapture(
             samples: [.init(uptime: uptime, point: quartz(point))],
-            widthInPoints: Self.lineWidth
+            widthInPoints: Self.lineWidth, markerNumber: number
         ))
+        if number != nil {
+            if let overlay = windowID, AXIsProcessTrusted() {
+                let index = strokes.count - 1, id = strokes[index].id
+                let location = quartz(point), window = recordedWindow
+                Task {
+                    let target = await Self.readTarget(at: location, below: overlay, recordedWindow: window)
+                    guard strokes.indices.contains(index), strokes[index].id == id else { return }
+                    strokes[index].target = target
+                }
+            }
+            inkView?.needsDisplay = true
+            return
+        }
         currentStroke = strokes.count - 1
         redraw(strokes[strokes.count - 1].samples[...])
     }
@@ -147,24 +194,62 @@ final class RecordingInkPresenter {
         let point = quartz(point)
         if let last = strokes[index].samples.last?.point, hypot(point.x - last.x, point.y - last.y) < 0.5 { return }
         strokes[index].samples.append(.init(uptime: uptime, point: point))
-        redraw(strokes[index].samples.suffix(3))
+        redraw(strokes[index].samples.suffix(7))
     }
 
     fileprivate func endStroke(at uptime: TimeInterval, point: CGPoint?) {
         guard let index = currentStroke else { return }
         if let point { strokes[index].samples.append(.init(uptime: uptime, point: quartz(point))) }
         currentStroke = nil
+        if tool == .oval && RecordingInkPath.fitsOval(strokes[index].samples.map(\.point)) {
+            strokes[index].fittedOval = true
+            redraw(strokes[index].samples[...])
+        }
+        guard !bugReport else { return }
         holdTimer?.invalidate()
         holdTimer = Timer.scheduledTimer(withTimeInterval: RecordingInkTimeline.holdDuration, repeats: false) { _ in
             Task { @MainActor in RecordingInkPresenter.shared.fadeGroup() }
         }
-        redraw(strokes[index].samples.suffix(3))
+        redraw(strokes[index].samples.suffix(7))
+    }
+
+    /// Query only the window under this placement. An unresponsive app cannot stall the recorder.
+    @concurrent private static func readTarget(at point: CGPoint, below overlay: CGWindowID,
+                                               recordedWindow: CGWindowID?) async -> RecordingMarkerTarget? {
+        guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenBelowWindow, .excludeDesktopElements], overlay)
+                as? [[String: Any]],
+              let window = windows.first(where: { info in
+                  guard let pid = info[kCGWindowOwnerPID as String] as? pid_t, pid != getpid(),
+                        let rect = info[kCGWindowBounds as String] as? [String: Any],
+                        let bounds = CGRect(dictionaryRepresentation: rect as CFDictionary) else { return false }
+                  return bounds.contains(point) && (info[kCGWindowAlpha as String] as? Double ?? 1) > 0
+              }), recordedWindow == nil || window[kCGWindowNumber as String] as? CGWindowID == recordedWindow,
+              let pid = window[kCGWindowOwnerPID as String] as? pid_t else { return nil }
+        let app = AXUIElementCreateApplication(pid)
+        guard AXUIElementSetMessagingTimeout(app, 0.10) == .success else { return nil }
+        var hit: AXUIElement?
+        guard AXUIElementCopyElementAtPosition(app, Float(point.x), Float(point.y), &hit) == .success, let hit else { return nil }
+        func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
+            var v: CFTypeRef?
+            guard AXUIElementSetMessagingTimeout(element, 0.10) == .success,
+                  AXUIElementCopyAttributeValue(element, attribute as CFString, &v) == .success else { return nil }
+            return v
+        }
+        func name(_ element: AXUIElement, _ attribute: String) -> String? {
+            guard let text = value(element, attribute) as? String else { return nil }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : String(trimmed.prefix(240))
+        }
+        let windowElement = value(hit, kAXWindowAttribute)
+        let title = windowElement.flatMap { CFGetTypeID($0) == AXUIElementGetTypeID() ? name($0 as! AXUIElement, kAXTitleAttribute) : nil }
+        return RecordingMarkerTarget(role: name(hit, kAXRoleAttribute),
+                                     label: name(hit, kAXTitleAttribute) ?? name(hit, kAXDescriptionAttribute), window: title)
     }
 
     private func fadeGroup() {
         guard currentStroke == nil else { return }
         let now = ProcessInfo.processInfo.systemUptime
-        fadingStrokes = strokes.indices.filter { strokes[$0].hideUptime == nil }
+        fadingStrokes = strokes.indices.filter { strokes[$0].hideUptime == nil && !RecordingInkHistory.persists(marker: strokes[$0].markerNumber != nil, bugReport: bugReport) }
         for index in fadingStrokes {
             strokes[index].hideUptime = now
         }
@@ -204,10 +289,10 @@ final class RecordingInkPresenter {
         let now = ProcessInfo.processInfo.systemUptime
         for stroke in strokes {
             let opacity = RecordingInkTimeline.opacity(hideTime: stroke.hideUptime, fadesOut: stroke.fadesOut, at: now)
-            guard opacity > 0 else { continue }
+            guard stroke.visible(at: now) else { continue }
             let points = stroke.samples.map { CGPoint(x: $0.point.x - quartzOrigin.x, y: $0.point.y - quartzOrigin.y) }
-            RecordingInkPath.stroke(RecordingInkPath.path(points), color: .marker, opacity: opacity,
-                                    width: stroke.widthInPoints, in: context)
+            RecordingInkPath.draw(points, oval: stroke.fittedOval == true, marker: stroke.markerNumber, color: .marker, opacity: opacity,
+                                  width: stroke.widthInPoints, bounds: inkView?.bounds ?? .zero, in: context)
         }
     }
 }

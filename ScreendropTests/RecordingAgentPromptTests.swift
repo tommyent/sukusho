@@ -12,6 +12,87 @@ struct RecordingAgentPromptTests {
         .init(sourceStart: 4, sourceEnd: 8, speed: 2),
     ])
 
+    @Test func markerStillHasSourcePixelsControlAndNearbySpeech() {
+        var capture = PointerCaptureFile()
+        for n in 1...2 {
+            capture.ink.append(.init(width: 0.01, points: [.init(t: 1 + Double(n) / 10, x: 0.25, y: 0.5)],
+                markerNumber: n, target: n == 1 ? .init(role: "AXButton", label: "Save", window: "Draft") : nil))
+        }
+        let plan = RecordingAgentPromptPlan(title: "Fixture", timeline: .full(sourceDuration: 3),
+            cues: [.init(start: 1, end: 2, text: "Right here")], words: [], capture: capture,
+            screen: .init(width: 800, height: 600, scale: 2))
+        let markdown = plan.markdown(frameTimes: plan.moments.map(\.time), sourceStills: true)
+        for stroke in capture.ink {
+            let index = plan.moments.firstIndex { $0.time == stroke.startTime }
+            #expect(index != nil)
+            if let index { #expect(markdown.contains("stills/" + RecordingAgentPromptPlan.stillName(index))) }
+        }
+        #expect(markdown.contains("Marker control names come from accessibility at placement."))
+        #expect(markdown.contains("(200, 300) source px from top left"))
+        #expect(markdown.contains("AXButton, Save, window “Draft”") && markdown.contains("Control name unavailable"))
+        #expect(markdown.contains("Nearby narration: Right here") && !markdown.contains("left; source position"))
+    }
+
+    @Test func promptFollowsRecordingUndoAndClearHistory() throws {
+        var history = RecordingInkHistory()
+        var captures: [RecordingInkCapture] = []
+        func draw(at time: Double, markerLabel: String? = nil) {
+            let number = history.added(at: captures.count, marker: markerLabel != nil)
+            captures.append(.init(samples: [.init(uptime: time, point: CGPoint(x: 10, y: 20))], widthInPoints: 6,
+                                  markerNumber: number, target: markerLabel.map { .init(label: $0) }))
+        }
+        draw(at: 1, markerLabel: "Kept")
+        draw(at: 2, markerLabel: "Mistaken target")
+        history.undo(&captures, at: 2.5)
+        draw(at: 3, markerLabel: "Cleared promptly")
+        history.clear(&captures, at: 3.2)
+        history.undo(&captures, at: 4)
+        draw(at: 5)
+        history.undo(&captures, at: 6)
+        captures[3].hideUptime = 8.5 // The normal recording’s group fade fires after this individual undo.
+        history.undo(&captures, at: 7) // Late individual undo of marker 3.
+        history.clear(&captures, at: 8)
+        let strokes = RecordingInkStroke.mapped(captures, widthScale: { _ in 0.01 }, time: { $0 },
+                                                point: { _, _ in (0.1, 0.2) })
+        let input = try JSONDecoder().decode(PointerCaptureFile.self,
+            from: JSONEncoder().encode(PointerCaptureFile(ink: strokes)))
+        let plan = RecordingAgentPromptPlan(title: "Take", timeline: .full(sourceDuration: 10),
+                                           cues: [], words: [], capture: input)
+        let markdown = plan.markdown(frameTimes: plan.moments.map(\.time))
+        #expect(!markdown.contains("Mistaken target") && !markdown.contains("Marker 2 at"))
+        #expect(!plan.moments.contains { $0.time == 2 })
+        #expect(plan.ink.compactMap(\.markerNumber) == [1, 3])
+        #expect(markdown.contains("stills/0001.jpg") && markdown.contains("stills/0002.jpg"))
+        let first = try #require(plan.moments.first { $0.time == 1 }).evidence.joined()
+        #expect(first.contains("cleared at 00:03.200 (Clear marks)"))
+        #expect(first.contains("shown again at 00:04.000 (undo)"))
+        #expect(first.contains("cleared at 00:08.000 (Clear marks)"))
+        let third = try #require(plan.moments.first { $0.time == 3 }).evidence.joined()
+        #expect(third.contains("Marker 3") && third.contains("undone at 00:07.000"))
+        #expect(markdown.contains("undone at 00:06.000"))
+        #expect(!markdown.contains("it fades out at 00:08.500"))
+    }
+
+    @Test func legacyUnattributedHideKeepsMarkerWithoutGuessingItsCause() {
+        let marker = RecordingInkStroke(width: 0.01, points: [.init(t: 1, x: 0.3, y: 0.5)],
+                                        visibilityChanges: [1.5], markerNumber: 1)
+        let plan = RecordingAgentPromptPlan(title: "Legacy", timeline: .full(sourceDuration: 4),
+                                           cues: [], words: [], capture: .init(ink: [marker]))
+        let markdown = plan.markdown(frameTimes: [1])
+        #expect(markdown.contains("Marker 1") && markdown.contains("hidden at 00:01.500 (undo or Clear marks)"))
+    }
+
+    @Test func sourceStillsDescribeCaptureScope() {
+        for (mode, expected): (RecordingCaptureMode?, String) in [
+            (.window, "the recorded window “Preferences”"), (.area, "the recorded area"),
+            (.display, "the recorded display"), (nil, "the recorded content")
+        ] {
+            let plan = RecordingAgentPromptPlan(title: "Take", timeline: .full(sourceDuration: 2),
+                cues: [], words: [], capture: nil, captureMode: mode, capturedWindowTitle: "Preferences")
+            #expect(plan.markdown(frameTimes: [], sourceStills: true).contains(expected + " at its moment"))
+        }
+    }
+
     @Test func cutsAndSpeedMapAllEvidenceWithoutLeakingRemovedSpeech() {
         let plan = RecordingAgentPromptPlan(title: "Fixture", timeline: cut, cues: [
             .init(start: 0, end: 1, text: "Corrected caption"),
@@ -367,7 +448,7 @@ struct RecordingAgentPromptTests {
         let index = try #require(plan.moments.firstIndex { $0.time == 1 })
         let folder = try await RecordingAgentPromptWriter.write(movie: nil, plan: plan, to: directory, master: movie)
         let markdown = try String(contentsOf: folder.appendingPathComponent("prompt.md"), encoding: .utf8)
-        #expect(markdown.contains("Each still shows the whole screen at its moment, from the unedited screen recording"))
+        #expect(markdown.contains("Each still shows the recorded content at its moment, from the unedited screen recording"))
         #expect(markdown.contains("they match the stills."))
         #expect(markdown.contains("![Frame at 00:01.000](stills/\(RecordingAgentPromptPlan.stillName(index)))"))
         let data = try Data(contentsOf: folder.appendingPathComponent("stills/\(RecordingAgentPromptPlan.stillName(index))"))

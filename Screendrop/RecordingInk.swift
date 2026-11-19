@@ -9,9 +9,16 @@
 
 import CoreGraphics
 import Foundation
+import CoreText
 
 /// One stroke on the screen movie's source clock, with top-left normalized
 /// points like the pointer sidecar.
+nonisolated struct RecordingMarkerTarget: Codable, Equatable, Sendable {
+    var role: String?
+    var label: String?
+    var window: String?
+}
+
 nonisolated struct RecordingInkStroke: Codable, Equatable, Identifiable, Sendable {
     var id = UUID()
     var color = RecordingInkColor.marker
@@ -22,6 +29,14 @@ nonisolated struct RecordingInkStroke: Codable, Equatable, Identifiable, Sendabl
     var hideTime: TimeInterval?
     /// False once undone: the stroke goes at once instead of fading.
     var fadesOut = true
+
+    var fittedOval: Bool?
+    var visibilityChanges: [TimeInterval]?
+    /// Undoing placement is terminal. All earlier hide/show pairs are Clear marks and its undo.
+    /// Older sidecars recorded only the toggle times.
+    var endedByUndo: Bool?
+    var markerNumber: Int?
+    var target: RecordingMarkerTarget?
 
     var startTime: TimeInterval { points.first?.t ?? 0 }
 }
@@ -56,6 +71,11 @@ nonisolated struct RecordingInkCapture: Sendable {
     var id = UUID()
     var samples: [Sample]
     var widthInPoints: Double
+    var fittedOval: Bool?
+    var visibilityChanges: [TimeInterval]?
+    var endedByUndo = false
+    var markerNumber: Int?
+    var target: RecordingMarkerTarget?
     var hideUptime: TimeInterval?
     var fadesOut = true
 }
@@ -80,12 +100,18 @@ nonisolated extension RecordingInkStroke {
                 return RecordingInkPoint(t: t, x: p.x, y: p.y)
             }
             guard points.contains(where: { (0...1).contains($0.x) && (0...1).contains($0.y) }) else { return nil }
+            let changes = capture.visibilityChanges?.compactMap(time)
+            let endedByUndo = capture.endedByUndo && capture.visibilityChanges?.last.flatMap(time) != nil
             return RecordingInkStroke(
                 id: capture.id,
                 width: capture.widthInPoints * scale,
                 points: points,
                 hideTime: capture.hideUptime.flatMap(time),
-                fadesOut: capture.fadesOut
+                fadesOut: capture.fadesOut,
+                fittedOval: capture.fittedOval,
+                visibilityChanges: changes,
+                endedByUndo: changes?.isEmpty == false ? endedByUndo : nil,
+                markerNumber: capture.markerNumber, target: capture.target
             )
         }
     }
@@ -103,6 +129,54 @@ nonisolated extension RecordingInkStroke {
             return stroke
         }
         .sorted { $0.startTime < $1.startTime }
+    }
+}
+
+nonisolated struct RecordingInkHistory {
+    enum Edit { case added(Int), cleared([Int]) }
+    private var edits: [Edit] = []
+    private var nextNumber = 1
+
+    mutating func added(at index: Int, marker: Bool) -> Int? {
+        edits.append(.added(index))
+        guard marker else { return nil }
+        defer { nextNumber += 1 }
+        return nextNumber
+    }
+
+    static func persists(marker: Bool, bugReport: Bool) -> Bool { marker || bugReport }
+
+    mutating func clear(_ strokes: inout [RecordingInkCapture], at time: TimeInterval) {
+        let visible = strokes.indices.filter { strokes[$0].visible(at: time) }
+        guard !visible.isEmpty else { return }
+        for i in visible { strokes[i].toggleVisibility(at: time) }
+        edits.append(.cleared(visible))
+    }
+
+    mutating func undo(_ strokes: inout [RecordingInkCapture], at time: TimeInterval) {
+        while let edit = edits.popLast() {
+            switch edit {
+            case .added(let i):
+                guard strokes[i].visible(at: time) else { continue }
+                strokes[i].toggleVisibility(at: time)
+                strokes[i].endedByUndo = true
+            case .cleared(let indices):
+                for i in indices { strokes[i].toggleVisibility(at: time) }
+            }
+            return
+        }
+    }
+}
+
+nonisolated extension RecordingInkCapture {
+    func visible(at time: TimeInterval) -> Bool {
+        RecordingInkTimeline.isVisible(visibilityChanges, at: time) &&
+        RecordingInkTimeline.opacity(hideTime: hideUptime, fadesOut: fadesOut, at: time) > 0
+    }
+
+    mutating func toggleVisibility(at time: TimeInterval) {
+        if visibilityChanges == nil { visibilityChanges = [] }
+        visibilityChanges?.append(time)
     }
 }
 
@@ -176,9 +250,13 @@ nonisolated struct RecordingInkTimeline: Sendable {
         strokes.compactMap { stroke in
             guard let first = stroke.points.first, time >= first.t else { return nil }
             let opacity = Self.opacity(hideTime: stroke.hideTime, fadesOut: stroke.fadesOut, at: time)
-            guard opacity > 0, let last = stroke.points.lastIndex(atOrBefore: time, by: \.t) else { return nil }
+            guard Self.isVisible(stroke.visibilityChanges, at: time), opacity > 0, let last = stroke.points.lastIndex(atOrBefore: time, by: \.t) else { return nil }
             return Frame(stroke: stroke, pointCount: last + 1, opacity: opacity)
         }
+    }
+
+    static func isVisible(_ changes: [TimeInterval]?, at time: TimeInterval) -> Bool {
+        (changes?.prefix(while: { $0 <= time }).count ?? 0).isMultiple(of: 2)
     }
 
     static func opacity(hideTime: TimeInterval?, fadesOut: Bool, at time: TimeInterval) -> Double {
@@ -189,9 +267,27 @@ nonisolated struct RecordingInkTimeline: Sendable {
 }
 
 nonisolated enum RecordingInkPath {
+    static func smoothed(_ samples: [CGPoint]) -> [CGPoint] {
+        guard samples.count >= 3 else { return samples }
+        var result = samples
+        for i in 1..<(samples.count - 1) {
+            let radius = min(2, i, samples.count - 1 - i)
+            var x = 0.0, y = 0.0, sum = 0.0
+            for offset in -radius...radius {
+                let weight = Double(3 - abs(offset))
+                x += samples[i + offset].x * weight
+                y += samples[i + offset].y * weight
+                sum += weight
+            }
+            result[i] = CGPoint(x: x / sum, y: y / sum)
+        }
+        return result
+    }
+
     /// Quadratic curves through the midpoints of successive samples, so the
     /// live pen, Studio and export draw the same line. One point is a dot.
-    static func path(_ points: [CGPoint]) -> CGPath {
+    static func path(_ samples: [CGPoint]) -> CGPath {
+        let points = smoothed(samples)
         let path = CGMutablePath()
         guard let first = points.first, let last = points.last else { return path }
         path.move(to: first)
@@ -204,6 +300,67 @@ nonisolated enum RecordingInkPath {
         }
         path.addLine(to: last)
         return path
+    }
+
+    /// Receives top-left drawing coordinates from every output, including the live panel.
+    static func fitsOval(_ points: [CGPoint]) -> Bool {
+        guard points.count >= 5, let first = points.first, let last = points.last else { return false }
+        let box = bounds(of: points)
+        guard min(box.width, box.height) >= 8,
+              hypot(first.x - last.x, first.y - last.y) <= min(box.width, box.height) * 0.35 else { return false }
+        let twiceArea = zip(points, points.dropFirst() + [first]).reduce(0.0) { sum, pair in
+            sum + (pair.0.x - first.x) * (pair.1.y - first.y) - (pair.1.x - first.x) * (pair.0.y - first.y)
+        }
+        return abs(twiceArea) >= box.width * box.height * 0.65
+    }
+
+    private static func bounds(of points: [CGPoint]) -> CGRect {
+        points.reduce(CGRect.null) { $0.union(CGRect(origin: $1, size: .zero)) }
+    }
+
+    static func draw(_ points: [CGPoint], oval: Bool = false, marker: Int?, color: RecordingInkColor, opacity: Double,
+                     width: CGFloat, bounds: CGRect, in context: CGContext) {
+        guard let number = marker, let tip = points.first else {
+            let geometry = oval ? CGPath(ellipseIn: Self.bounds(of: points), transform: nil) : path(points)
+            stroke(geometry, color: color, opacity: opacity, width: width, in: context)
+            return
+        }
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.setAlpha(opacity)
+        context.translateBy(x: tip.x, y: tip.y)
+        let scale = width / 6
+        context.scaleBy(x: scale, y: scale)
+        let center = CGPoint(x: tip.x + 36 * scale <= bounds.maxX ? 22 : -22,
+                             y: tip.y - 40 * scale >= bounds.minY ? -26 : 26)
+        let navy = CGColor(srgbRed: 0.09, green: 0.13, blue: 0.19, alpha: 1)
+        let white = CGColor(gray: 1, alpha: 1)
+        context.setLineCap(.round)
+        for (ink, thickness) in [(white, 4.0), (navy, 1.5)] {
+            context.setStrokeColor(ink)
+            context.setLineWidth(thickness)
+            context.move(to: .zero)
+            context.addLine(to: center)
+            context.strokePath()
+        }
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: String(number), attributes: [
+            NSAttributedString.Key(kCTFontAttributeName as String): CTFontCreateWithName("HelveticaNeue-Bold" as CFString, 13, nil),
+            NSAttributedString.Key(kCTForegroundColorAttributeName as String): white
+        ]))
+        let glyph = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
+        let radius = max(10, glyph.width / 2 + 3)
+        for (position, r) in [(CGPoint.zero, 2.6), (center, radius)] {
+            context.setFillColor(navy)
+            context.setStrokeColor(white)
+            context.setLineWidth(1.5)
+            context.addEllipse(in: CGRect(x: position.x - r, y: position.y - r, width: 2*r, height: 2*r))
+            context.drawPath(using: .fillStroke)
+        }
+        context.translateBy(x: center.x, y: center.y)
+        context.scaleBy(x: 1, y: -1)
+        context.textMatrix = .identity
+        context.textPosition = CGPoint(x: -glyph.midX, y: -glyph.midY)
+        CTLineDraw(line, context)
     }
 
     static func stroke(_ path: CGPath, color: RecordingInkColor, opacity: Double, width: CGFloat, in context: CGContext) {

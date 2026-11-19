@@ -38,18 +38,12 @@ struct RecordingSessionControls: View {
 
             BarDivider()
 
-            BarActionButton(
-                id: .pen,
-                hover: ink.isPenOn ? BarHover("Stop drawing", "Esc · ⌘Z undoes the last stroke")
-                    : BarHover("Draw on screen", "Drags draw instead of clicking"),
-                systemImage: "pencil.tip",
-                // A helper, so soft blue when on: red is for recording alone.
-                tint: ink.isPenOn ? BarMetrics.helperForeground : BarMetrics.activeTint,
-                accessibility: ink.isPenOn
-                    ? "Stop drawing. Escape also stops, and Command-Z undoes the last stroke."
-                    : "Draw on screen. Drags draw instead of clicking until you stop drawing."
-            ) {
-                ink.togglePen()
+            toolButton(.pen, id: .pen, name: "Pen", symbol: "pencil")
+            toolButton(.oval, id: .oval, name: "Oval", symbol: "oval")
+            toolButton(.markers, id: .markers, name: "Markers", symbol: "1.circle")
+            BarActionButton(id: .clearMarks, hover: BarHover("Clear marks", "⌘Z restores the marks"),
+                            systemImage: "eraser", accessibility: "Clear marks") {
+                ink.clearMarks()
             }
             .disabled(manager.state != .recording)
 
@@ -109,6 +103,19 @@ struct RecordingSessionControls: View {
             }
         }
         .onChange(of: manager.state) { _, _ in showsDiscardConfirmation = false }
+    }
+
+    private func toolButton(_ tool: RecordingInkPresenter.Tool, id: BarTooltipID, name: String, symbol: String) -> some View {
+        let selected = ink.isPenOn && ink.tool == tool
+        let _ = HotkeyManager.shared.revision
+        let shortcut = CaptureHotkeyPreferences.shortcut(for: .drawing)?.displayString
+        let hint = tool == .markers ? [shortcut, "Esc stops drawing", "⌘Z undoes"].compactMap { $0 }.joined(separator: " · ")
+                                    : "Esc stops drawing · ⌘Z undoes"
+        return BarActionButton(id: id, hover: BarHover(name, hint),
+                               systemImage: symbol, tint: selected ? BarMetrics.helperForeground : BarMetrics.activeTint,
+                               accessibility: name) { ink.select(tool) }
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            .disabled(manager.state != .recording)
     }
 
     /// Red while recording - the only red besides Stop - and amber while paused.

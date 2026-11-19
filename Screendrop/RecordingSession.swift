@@ -341,7 +341,9 @@ nonisolated struct CaptureManifest: Codable, Sendable, Equatable {
     /// Whether Sukusho's own windows were visible to the capture when it
     /// started. Nil for sessions recorded before this was kept.
     var includesAppWindows: Bool?
-    /// Recorded with Bug report on: Stop writes its Agent Prompt instead of opening Studio.
+    var captureMode: RecordingCaptureMode?
+    var capturedWindowTitle: String?
+    /// Stop writes the Agent Prompt for a Bug report take.
     var isBugReport: Bool?
     /// A Bug report take with Include app logs on: whose log to read after Stop, and when.
     var appLogSpan: RecordingAppLogs.Span?

@@ -306,12 +306,14 @@ nonisolated enum RecordingAgentPromptWriter {
         private func drawMarks(at source: Double, crop: CGRect, scale: CGFloat, in cell: CGRect, ink: RecordingInkTimeline,
                                plan: RecordingAgentPromptPlan, context: CGContext) {
             for frame in ink.frames(at: source) {
-                let points = frame.points.map { CGPoint(x: cell.minX + ($0.x * size.width - crop.minX) * scale,
-                                                        y: cell.maxY - ($0.y * size.height - crop.minY) * scale) }
+                let points = frame.points.map { CGPoint(x: $0.x * size.width, y: $0.y * size.height) }
                 context.saveGState()
                 context.clip(to: cell)
-                RecordingInkPath.stroke(RecordingInkPath.path(points), color: frame.stroke.color, opacity: frame.opacity,
-                                        width: frame.stroke.width * min(size.width, size.height) * scale, in: context)
+                context.translateBy(x: cell.minX - crop.minX * scale, y: cell.maxY + crop.minY * scale)
+                context.scaleBy(x: scale, y: -scale)
+                RecordingInkPath.draw(points, oval: frame.stroke.fittedOval == true && frame.pointCount == frame.stroke.points.count,
+                                      marker: frame.stroke.markerNumber, color: frame.stroke.color, opacity: frame.opacity,
+                                      width: frame.stroke.width * min(size.width, size.height), bounds: CGRect(origin: .zero, size: size), in: context)
                 context.restoreGState()
             }
             guard let pointer = RecordingAgentPromptPlan.pointerPosition(in: plan.pointer, at: source) else { return }

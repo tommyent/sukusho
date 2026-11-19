@@ -82,6 +82,7 @@ final class HotkeyManager {
         for action in CaptureHotkeyAction.allCases {
             guard let shortcut = CaptureHotkeyPreferences.shortcut(for: action) else { continue }
             // An off feature mustn't take ⌃⌘V from other apps.
+            if action == .drawing, ScreenRecordingManager.shared.state != .recording { continue }
             if action == .clipboardHistory, !ScreendropPreferences.clipboardHistoryEnabled { continue }
             guard !registeredShortcuts.contains(where: shortcut.overlaps) else {
                 registrationErrors[action] = "\(shortcut.displayString) is already used by another action."
@@ -218,6 +219,11 @@ final class HotkeyManager {
             CaptureHotkeyPreferences.saveShortcut(nil, for: action)
             registrationErrors[action] = nil
             stopWatchingTap(for: action)
+            return
+        }
+        if action == .drawing, ScreenRecordingManager.shared.state != .recording {
+            CaptureHotkeyPreferences.saveShortcut(shortcut, for: action)
+            registrationErrors[action] = nil
             return
         }
         if shortcut.taps != nil {

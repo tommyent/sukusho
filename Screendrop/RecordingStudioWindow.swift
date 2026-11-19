@@ -1111,11 +1111,13 @@ private struct StudioInkOverlay: View {
                     CGPoint(x: cardSize.width / 2 + scale * ($0.x - state.anchor.x),
                             y: cardSize.height / 2 + scaleY * ($0.y - state.anchor.y))
                 }
-                context.stroke(
-                    Path(RecordingInkPath.path(points)),
-                    with: .color(Color(cgColor: frame.stroke.color.cgColor(opacity: frame.opacity))),
-                    style: StrokeStyle(lineWidth: frame.stroke.width * min(scale, scaleY), lineCap: .round, lineJoin: .round)
-                )
+                context.withCGContext { cg in
+                    RecordingInkPath.draw(points, oval: frame.stroke.fittedOval == true && frame.pointCount == frame.stroke.points.count,
+                                      marker: frame.stroke.markerNumber, color: frame.stroke.color,
+                        opacity: frame.opacity, width: frame.stroke.width * min(scale, scaleY),
+                        bounds: CGRect(x: cardSize.width / 2 - scale * state.anchor.x,
+                                       y: cardSize.height / 2 - scaleY * state.anchor.y, width: scale, height: scaleY), in: cg)
+                }
             }
         }
         .frame(width: cardSize.width, height: cardSize.height)

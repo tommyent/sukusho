@@ -144,7 +144,7 @@ enum BarTooltipID: String {
     case appLogs
     case close
 
-    case pen
+    case pen, oval, markers, clearMarks
     case pauseResume
     case restart
     case stop
@@ -334,7 +334,23 @@ struct BarActionLabel: View {
 
     var body: some View {
         BarControlChrome(id: id, hover: hover, showsPuck: filled == nil) {
-            Image(systemName: systemImage)
+            Group {
+                if id == .pen {
+                    Path { p in
+                        p.move(to: CGPoint(x: 2, y: 16))
+                        p.addLine(to: CGPoint(x: 5, y: 6))
+                        p.addLine(to: CGPoint(x: 11, y: 2))
+                        p.addLine(to: CGPoint(x: 16, y: 7))
+                        p.addLine(to: CGPoint(x: 12, y: 13))
+                        p.closeSubpath()
+                        p.move(to: CGPoint(x: 2, y: 16))
+                        p.addLine(to: CGPoint(x: 9, y: 9))
+                        p.addEllipse(in: CGRect(x: 8, y: 7, width: 3, height: 3))
+                    }
+                    .stroke(style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                    .frame(width: 18, height: 18)
+                } else { Image(systemName: systemImage) }
+            }
                 .font(.system(size: filled == nil ? 17 : 14, weight: filled == nil ? .regular : .bold))
                 .foregroundStyle(filled != nil ? .white : isEnabled ? tint : BarMetrics.unavailableTint)
                 .frame(width: BarMetrics.chipHeight + 2, height: BarMetrics.chipHeight + 2)

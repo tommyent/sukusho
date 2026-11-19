@@ -102,6 +102,7 @@ struct SystemScreenshotShortcutsTests {
         let shiftCmd = { (key: Int) in HotkeyShortcut(modifiers: [.shift, .command], keyCode: key) }
         let expected: [CaptureHotkeyAction: HotkeyShortcut] = [
             .fullscreen: shiftCmd(18), .window: shiftCmd(19), .area: shiftCmd(20), .scrollingCapture: shiftCmd(21),
+            .drawing: HotkeyShortcut(modifiers: [.control, .shift], keyCode: 46),
             .screenRecording: shiftCmd(23), .textCapture: shiftCmd(31), .library: shiftCmd(37),
             .clipboardHistory: HotkeyShortcut(modifiers: [.control, .command], keyCode: 9),
         ]
@@ -109,7 +110,7 @@ struct SystemScreenshotShortcutsTests {
         #expect(Set(expected.values).count == expected.count, "no two defaults share keys")
         #expect(!expected.values.contains(shiftCmd(22)), "nothing on ⇧⌘6")
         #expect(CaptureHotkeyAction.settingsOrder
-            == [.fullscreen, .window, .area, .scrollingCapture, .screenRecording, .textCapture, .library, .clipboardHistory])
+            == [.fullscreen, .window, .area, .scrollingCapture, .screenRecording, .drawing, .textCapture, .library, .clipboardHistory])
         #expect(Set(CaptureHotkeyAction.settingsOrder) == Set(CaptureHotkeyAction.allCases))
 
     }

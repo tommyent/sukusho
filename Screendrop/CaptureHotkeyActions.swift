@@ -11,6 +11,8 @@ extension CaptureHotkeyAction {
             CaptureCoordinator.shared.captureWindow()
         case .area:
             CaptureCoordinator.shared.captureArea()
+        case .drawing:
+            RecordingInkPresenter.shared.toggleFromShortcut()
         case .screenRecording:
             Task { @MainActor in
                 RecordingBarPresenter.shared.togglePicker()

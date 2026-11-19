@@ -220,6 +220,7 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
     case window
     case area
     case screenRecording
+    case drawing
     case textCapture
     case scrollingCapture
     /// Not a capture: brings the Library forward from any app.
@@ -238,6 +239,7 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
         case .textCapture: 5
         case .scrollingCapture: 6
         case .library: 7
+        case .drawing: 9
         case .clipboardHistory: 8
         }
     }
@@ -248,6 +250,7 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
         case .window: "Window"
         case .area: "Area"
         case .screenRecording: "Screen Recording"
+        case .drawing: "Drawing while recording"
         case .textCapture: "Capture Text"
         case .scrollingCapture: "Scrolling Capture"
         case .library: "Show Library"
@@ -268,6 +271,8 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
             HotkeyShortcut(modifiers: [.command, .shift], keyCode: Int(kVK_ANSI_3))
         case .screenRecording:
             HotkeyShortcut(modifiers: [.command, .shift], keyCode: Int(kVK_ANSI_5))
+        case .drawing:
+            HotkeyShortcut(modifiers: [.control, .shift], keyCode: Int(kVK_ANSI_M))
         case .textCapture:
             HotkeyShortcut(modifiers: [.command, .shift], keyCode: Int(kVK_ANSI_O))
         case .scrollingCapture:
@@ -292,7 +297,7 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
 
     /// Settings › Shortcuts' rows: 1 to 5, then O, L and V (the owner, 2026-11-17).
     static let settingsOrder: [CaptureHotkeyAction] = [
-        .fullscreen, .window, .area, .scrollingCapture, .screenRecording, .textCapture, .library, .clipboardHistory,
+        .fullscreen, .window, .area, .scrollingCapture, .screenRecording, .drawing, .textCapture, .library, .clipboardHistory,
     ]
 
     var preferencesKey: String {
@@ -305,6 +310,8 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
             ScreendropPreferences.areaHotkeyKey
         case .screenRecording:
             ScreendropPreferences.screenRecordingHotkeyKey
+        case .drawing:
+            "recordingDrawingHotkey"
         case .textCapture:
             ScreendropPreferences.textCaptureHotkeyKey
         case .scrollingCapture:

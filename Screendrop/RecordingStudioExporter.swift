@@ -1222,13 +1222,16 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
         context.saveGState()
         context.addPath(roundedPath(for: layout.cardRect, radius: layout.cardCornerRadius))
         context.clip()
+        context.translateBy(x: 0, y: canvasSize.height)
+        context.scaleBy(x: 1, y: -1)
         for frame in frames {
             let points = frame.points.map {
                 CGPoint(x: drawRect.minX + $0.x * drawRect.width,
-                        y: canvasSize.height - (drawRect.minY + $0.y * drawRect.height))
+                        y: drawRect.minY + $0.y * drawRect.height)
             }
-            RecordingInkPath.stroke(RecordingInkPath.path(points), color: frame.stroke.color,
-                                    opacity: frame.opacity, width: frame.stroke.width * lineScale, in: context)
+            RecordingInkPath.draw(points, oval: frame.stroke.fittedOval == true && frame.pointCount == frame.stroke.points.count,
+                                      marker: frame.stroke.markerNumber, color: frame.stroke.color,
+                                  opacity: frame.opacity, width: frame.stroke.width * lineScale, bounds: drawRect, in: context)
         }
         context.restoreGState()
     }

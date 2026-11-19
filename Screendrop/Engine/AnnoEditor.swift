@@ -166,6 +166,7 @@ final class AnnoEditor {
     /// the text view is built. Nil means "put the caret at the end", which is what a new text
     /// shape does.
     var textCaretPagePoint: Vec?
+    var onTextReplacementBoundary: (() -> Void)?
     var onEditingTextChanged: ((AnnoShapeID?) -> Void)?
 
     private(set) var interaction: AnnoInteraction = .idle
