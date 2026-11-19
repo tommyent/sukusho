@@ -31,9 +31,13 @@ extension ScreenshotFileActions {
         // A file made only for this copy: kept while the clipboard names it, as every optimized copy's is.
         var made: ImageOptimizationResult?
         var swappedIn: (file: URL, saving: String)?
+        // A repeat is a copy of the same bytes, not of a file with the same name, size and date: a file rewritten
+        // with other pixels and the same size and time is a new copy (Sol, round 2). Read before the copy takes its
+        // turn, which reads the file again for what it writes.
+        let key = await Task.detached { FileIdentity(url)?.digest }.value
         // The original is read inside the copy's turn, not before it: reading takes time, and a copy made
         // meanwhile must not be written over.
-        _ = try await OptimizedImageCopy.shared.copyNow(key: copyKey(url), first: {
+        _ = try await OptimizedImageCopy.shared.copyNow(key: key.map { AnyHashable($0) } ?? AnyHashable(UUID()), first: {
             let item = try await clipboardItem(for: url)
             // Filed in history by `record`, when it is written; the monitor's poll leaves Sukusho's own writes alone.
             item.setData(Data(), forType: .init(ClipboardCapturePolicy.ownType))
@@ -64,15 +68,6 @@ extension ScreenshotFileActions {
             let bytes = (try? FileManager.default.attributesOfItem(atPath: swappedIn.file.path)[.size] as? NSNumber)?.intValue
             optimized(swappedIn.saving, bytes ?? 0)
         })
-    }
-
-    /// A file as it is now: two copies with one key are copies of the same contents. Read through FileManager,
-    /// since URL's resource values are cached.
-    private static func copyKey(_ url: URL) -> AnyHashable {
-        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
-        let modified = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-        let size = (attributes?[.size] as? NSNumber)?.intValue ?? -1
-        return [url.standardizedFileURL.path, "\(modified)", "\(size)"]
     }
 
     /// The image file at `url` as the pasteboard item an image copy writes: its data in its own type (JPEG, or
