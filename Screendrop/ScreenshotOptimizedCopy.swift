@@ -18,23 +18,25 @@ extension ScreenshotFileActions {
     /// doubled. Copying the same file again while the clipboard still holds this copy of it adds nothing and
     /// doesn't start the optimizer again. `optimized` gets the saving ("↓18%") and the new size once the swap
     /// is made. False when nothing was written because something newer reached the clipboard while the image
-    /// was read: the caller mustn't say "Copied" or close then.
+    /// was read: the caller mustn't say "Copied" or close then. `turn` is the one a route that reads first took
+    /// when it was asked to copy (`OptimizedImageCopy.takeTurn`); without one, the copy takes its turn here.
     ///
     /// The owner's choice (2026-11-18): waiting for the optimizer before anything happened made ⌘C feel
     /// unresponsive and led to pressing it again; Clop, which they used before, never made them wait.
     @discardableResult
-    static func copyImageToClipboard(from url: URL, original: Bool = false,
+    static func copyImageToClipboard(from url: URL, original: Bool = false, turn: OptimizedImageCopy.Turn? = nil,
                                      optimized: @escaping (_ saving: String, _ bytes: Int) -> Void = { _, _ in }) async throws -> Bool {
         guard !original, OptimizePreferences.whenCopying else {
             let isJPEG = UTType(filenameExtension: url.pathExtension)?.conforms(to: .jpeg) == true
-            return try await copyImageToClipboard(from: url, dataType: isJPEG ? NSPasteboard.PasteboardType(UTType.jpeg.identifier) : .png)
+            return try await copyImageToClipboard(from: url, dataType: isJPEG ? NSPasteboard.PasteboardType(UTType.jpeg.identifier) : .png,
+                                                  turn: turn)
         }
         // A file made only for this copy: kept while the clipboard names it, as every optimized copy's is.
         var made: ImageOptimizationResult?
         var swappedIn: (file: URL, saving: String)?
         // Nothing is awaited before `copyNow`: the copy takes its turn first, and everything it reads, the file
         // and what it is a copy of, is read inside that turn, so a copy made meanwhile is never written over.
-        let (outcome, _) = try await OptimizedImageCopy.shared.copyNow(first: {
+        let (outcome, _) = try await OptimizedImageCopy.shared.copyNow(turn: turn, first: {
             let item = try await clipboardItem(for: url)
             // Filed in history by `record`, when it is written; the monitor's poll leaves Sukusho's own writes alone.
             item.setData(Data(), forType: .init(ClipboardCapturePolicy.ownType))

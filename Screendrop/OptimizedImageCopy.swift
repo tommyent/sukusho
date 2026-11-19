@@ -28,6 +28,27 @@ final class OptimizedImageCopy {
     /// cancels it: a copy that gives way, or turns out to be a repeat, leaves the swap to go in (Astra, round 4).
     private var cancelSwap: (() -> Void)?
 
+    /// A copy's place in line: only the newest turn may write, and only while the pasteboard's count is still
+    /// the one noted with it.
+    struct Turn {
+        fileprivate let number: Int
+        fileprivate let count: Int
+    }
+
+    /// Takes a turn now, for a route that reads what it copies before it calls `copyAll` or `copyNow` with it:
+    /// anything copied from now on, here or in another app, is newer than this copy (Astra, round 4). The route
+    /// `finish`es it when it ends, whether it got to copy or not, or a swap waits for it.
+    func takeTurn(on pasteboard: NSPasteboard = .general) -> Turn {
+        latest += 1
+        pending.insert(latest)
+        return Turn(number: latest, count: pasteboard.changeCount)
+    }
+
+    /// The route that took `turn` won't write with it any more.
+    func finish(_ turn: Turn) {
+        pending.remove(turn.number)
+    }
+
     /// Optimizes `url`, then writes the pasteboard item made from the result. Returns nil, and writes
     /// nothing, when something newer reached the pasteboard while optimizing: a later copy from here,
     /// which also stops this one's optimizing, or anything copied in another app. `optimize` falls back
@@ -118,19 +139,19 @@ final class OptimizedImageCopy {
     /// (nothing smaller came out, the optimizer failed or is off) leaves the original there, as does a swap
     /// made from other bytes than the ones written (the file changed after it was read) or one that holds
     /// those very bytes.
-    func copyNow(to pasteboard: NSPasteboard = .general,
+    func copyNow(to pasteboard: NSPasteboard = .general, turn: Turn? = nil,
                  first: () async throws -> Original,
                  record: @escaping (NSPasteboardItem) async -> String? = { _ in nil },
                  smaller: @escaping () async -> Swap?,
                  stack: @escaping (_ card: String, _ item: NSPasteboardItem) async -> Void = { _, _ in },
                  swapped: @escaping (Bool) -> Void = { _ in }) async throws -> (InstantCopy, Task<Bool, Never>?) {
         // The turn and the count come first, before any await: a copy asked for or made while this one reads
-        // is newer (Astra, round 3, for a digest read that came before them).
-        latest += 1
-        let mine = latest
-        let countAtStart = pasteboard.changeCount
-        pending.insert(mine)
-        defer { pending.remove(mine) }
+        // is newer (Astra, round 3, for a digest read that came before them). A route that read before this
+        // took them when it was asked to copy (`takeTurn`).
+        let turn = turn ?? takeTurn(on: pasteboard)
+        let mine = turn.number
+        let countAtStart = turn.count
+        defer { finish(turn) }
         let read = try await first()
         // No suspension between each check and its write, as in `copy`.
         guard mine == latest, pasteboard.changeCount == countAtStart else { return (.overtaken, nil) }
@@ -206,15 +227,17 @@ final class OptimizedImageCopy {
     /// screenshot optimized, a recording rendered); then `write` gets the files to put on the pasteboard, in
     /// one go, and must not suspend. The rule is `copy`'s: nil, with nothing written and the results deleted,
     /// when a later copy from here or anything copied in another app got there first. Results that were
-    /// written stay the caller's to discard.
-    func copyAll(_ urls: [URL], to pasteboard: NSPasteboard = .general,
+    /// written stay the caller's to discard. `turn` is the one the route took when it was asked to copy, if it
+    /// read anything before this (`takeTurn`); otherwise the copy takes its turn here.
+    func copyAll(_ urls: [URL], to pasteboard: NSPasteboard = .general, turn: Turn? = nil,
                  ready: @escaping (URL) async throws -> ImageOptimizationResult,
                  write: ([URL]) throws -> Void) async throws -> [ImageOptimizationResult]? {
-        latest += 1
-        let mine = latest
-        let countAtStart = pasteboard.changeCount
-        pending.insert(mine)
-        defer { pending.remove(mine) }
+        let turn = turn ?? takeTurn(on: pasteboard)
+        let mine = turn.number
+        let countAtStart = turn.count
+        defer { finish(turn) }
+        // A turn taken earlier may be overtaken already: then there is nothing to get ready.
+        guard mine == latest, pasteboard.changeCount == countAtStart else { return nil }
         cancelInFlight?()
         let work = Task {
             var results: [ImageOptimizationResult] = []

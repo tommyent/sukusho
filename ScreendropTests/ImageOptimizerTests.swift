@@ -1663,6 +1663,78 @@ private func isRunning(_ text: String) -> Bool {
         }
     }
 
+    /// Astra, round 4: a route that reads before it copies, as the Library's selection reads its clip cards, takes its
+    /// turn when it is asked to copy and copies with that turn. With A on the pasteboard and A's swap still coming:
+    /// copied again while the route reads, A is newer, and the route gives way and A's swap goes in; ready while the
+    /// route reads, A's swap waits for it and the route writes; copied in another app meanwhile, that copy stays.
+    @Test(arguments: [false, true]) func aRouteThatReadsFirstCopiesWithTheTurnItTookWhenAsked(batch: Bool) async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let a = try bench.file("A.png", Sample.screenshot(width: 640, height: 400, seed: 57))
+        let b = try bench.file("B.png", Sample.screenshot(width: 640, height: 400, seed: 58))
+        let optimizedA = try await bench.optimizer.optimize(a)
+        defer { optimizedA.discard() }
+        #expect(optimizedA.outcome == .optimized)
+        let originalA = try Data(contentsOf: a), smallerA = try Data(contentsOf: optimizedA.url), copiedB = try Data(contentsOf: b)
+
+        enum Meanwhile { case repeatOfA, swapReady, otherApp }
+        for meanwhile in [Meanwhile.repeatOfA, .swapReady, .otherApp] {
+            let copier = OptimizedImageCopy()
+            let board = pasteboard()
+            defer { board.releaseGlobally() }
+            let (releaseSwap, doReleaseSwap) = AsyncStream<Void>.makeStream()
+            let (first, swapA) = try await copier.copyNow(to: board, first: { .init(item: try item(a), key: "A") }) {
+                for await _ in releaseSwap { break }
+                return swapIn(optimizedA)
+            }
+            #expect(first == .written)
+            let swapTask = try #require(swapA)
+
+            // The route is asked to copy B: it takes its turn, then reads until released. Whether it wrote.
+            let turn = copier.takeTurn(on: board)
+            let (releaseRead, doReleaseRead) = AsyncStream<Void>.makeStream()
+            let route = Task { () throws -> Bool in
+                defer { copier.finish(turn) }
+                for await _ in releaseRead { break }
+                if batch {
+                    return try await copier.copyAll([b], to: board, turn: turn, ready: { .original($0) }, write: { _ in
+                        board.clearContents()
+                        guard board.writeObjects([try item(b)]) else { throw CocoaError(.fileWriteUnknown) }
+                    }) != nil
+                }
+                return try await copier.copyNow(to: board, turn: turn, first: { .init(item: try item(b), key: "B") },
+                                                smaller: { nil }).0 == .written
+            }
+
+            switch meanwhile {
+            case .repeatOfA:
+                #expect(try await copier.copyNow(to: board, first: { .init(item: try item(a), key: "A") }, smaller: { nil }).0 == .alreadyThere)
+                doReleaseRead.yield()
+                #expect(try await route.value == false, "\(meanwhile)")
+                #expect(board.data(forType: .png) == originalA, "\(meanwhile)")
+                doReleaseSwap.yield()
+                #expect(await swapTask.value, "\(meanwhile)")
+                #expect(board.data(forType: .png) == smallerA, "\(meanwhile)")
+            case .swapReady:
+                doReleaseSwap.yield()
+                try await Task.sleep(for: .milliseconds(200))
+                #expect(board.data(forType: .png) == originalA, "\(meanwhile)")
+                doReleaseRead.yield()
+                #expect(try await route.value, "\(meanwhile)")
+                #expect(await swapTask.value == false, "\(meanwhile)")
+                #expect(board.data(forType: .png) == copiedB, "\(meanwhile)")
+            case .otherApp:
+                board.clearContents()
+                board.setString("copied elsewhere", forType: .string)
+                doReleaseRead.yield()
+                #expect(try await route.value == false, "\(meanwhile)")
+                doReleaseSwap.yield()
+                #expect(await swapTask.value == false, "\(meanwhile)")
+                #expect(board.string(forType: .string) == "copied elsewhere", "\(meanwhile)")
+            }
+        }
+    }
+
     /// Astra, round 4, found along the way: an image copied as it is (Copy Original, or with optimizing off) takes
     /// its turn before it reads the file, as the optimized copy does. A copy asked for while it reads, even a repeat of
     /// the clipboard's image that writes nothing, is newer, and the older copy doesn't land after it.

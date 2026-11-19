@@ -428,11 +428,12 @@ enum ScreenshotFileActions {
 
     /// The image at `url` copied as it is (Copy Original, or with optimizing off). It takes its turn before it
     /// reads the file, as the optimized copy does: false, with nothing written, when something newer was copied
-    /// meanwhile, here or in another app, a repeat of the clipboard's image included (Astra, round 4).
+    /// meanwhile, here or in another app, a repeat of the clipboard's image included (Astra, round 4). `turn` is
+    /// the one the route took when it was asked to copy, if it did (`OptimizedImageCopy.takeTurn`).
     @discardableResult
     static func copyImageToClipboard(from url: URL, dataType: NSPasteboard.PasteboardType,
-                                     to pasteboard: NSPasteboard = .general) async throws -> Bool {
-        let (outcome, _) = try await OptimizedImageCopy.shared.copyNow(to: pasteboard, first: {
+                                     to pasteboard: NSPasteboard = .general, turn: OptimizedImageCopy.Turn? = nil) async throws -> Bool {
+        let (outcome, _) = try await OptimizedImageCopy.shared.copyNow(to: pasteboard, turn: turn, first: {
             .init(item: try await ScreenshotClipboardImage.item(from: url, dataType: dataType, includeTIFF: ScreendropPreferences.copyTIFF),
                   key: UUID())
         }, smaller: { nil })
