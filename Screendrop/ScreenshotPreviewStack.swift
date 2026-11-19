@@ -79,10 +79,13 @@ final class ScreenshotPreviewStack {
         return items.filter { $0.autoSavedURL == nil && !$0.url.standardizedFileURL.path.hasPrefix(library) }
     }
 
-    /// Whether the image went on the clipboard: false when something newer got there while it was read.
-    @ObservationIgnored private let copyImage: (URL) async throws -> Bool
+    /// Whether the image went on the clipboard: false when something newer got there while it was read. The turn is
+    /// the one a card's Copy took when it was clicked, if it was one (`OptimizedImageCopy.takeTurn`).
+    @ObservationIgnored private let copyImage: (URL, OptimizedImageCopy.Turn?) async throws -> Bool
 
-    init(copyImage: @escaping (URL) async throws -> Bool = { try await ScreenshotFileActions.copyImageToClipboard(from: $0) }) {
+    init(copyImage: @escaping (URL, OptimizedImageCopy.Turn?) async throws -> Bool = {
+        try await ScreenshotFileActions.copyImageToClipboard(from: $0, turn: $1)
+    }) {
         self.copyImage = copyImage
     }
 
@@ -523,8 +526,12 @@ final class ScreenshotPreviewStack {
         guard !preparingItemIDs.contains(id), let item = items.first(where: { $0.id == id }) else { return }
         switch item.kind {
         case .image:
+            // The copy's turn is taken now, as Copy is clicked, before the task starts: anything copied from here on
+            // is newer, and this copy doesn't land after it (Astra, round 5).
+            let turn = OptimizedImageCopy.shared.takeTurn()
             Task {
-                guard await copyURLToClipboard(item.url, original: original) else { return }
+                defer { OptimizedImageCopy.shared.finish(turn) }
+                guard await copyURLToClipboard(item.url, original: original, turn: turn) else { return }
                 dismiss(id: id)
                 showDone(original ? "Copied Original" : "Copied", detail: "The screenshot is on the clipboard.")
             }
@@ -991,10 +998,10 @@ final class ScreenshotPreviewStack {
         optimizedNotes.removeAll()
     }
 
-    private func copyURLToClipboard(_ url: URL, original: Bool = false) async -> Bool {
+    private func copyURLToClipboard(_ url: URL, original: Bool = false, turn: OptimizedImageCopy.Turn? = nil) async -> Bool {
         do {
-            if original { return try await ScreenshotFileActions.copyImageToClipboard(from: url, original: true) }
-            return try await copyImage(url)
+            if original { return try await ScreenshotFileActions.copyImageToClipboard(from: url, original: true, turn: turn) }
+            return try await copyImage(url, turn)
         } catch {
             print("Failed to copy screenshot: \(error)")
             return false

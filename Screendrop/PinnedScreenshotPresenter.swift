@@ -171,10 +171,14 @@ private struct PinnedScreenshotView: View {
     }
 
     private func copy() {
+        // The copy's turn is taken now, as Copy is clicked, before the task starts: anything copied from here on is
+        // newer, and this copy doesn't land after it (Astra, round 5).
+        let turn = OptimizedImageCopy.shared.takeTurn()
         Task {
+            defer { OptimizedImageCopy.shared.finish(turn) }
             do {
-                // Not when something newer reached the clipboard while the image was read: nothing was copied.
-                guard try await ScreenshotFileActions.copyPNGToClipboard(from: url) else { return }
+                // Not when something newer reached the clipboard meanwhile: nothing was copied.
+                guard try await ScreenshotFileActions.copyPNGToClipboard(from: url, turn: turn) else { return }
                 copied.show()
             } catch {
                 print("Failed to copy pinned screenshot: \(error)")

@@ -422,8 +422,8 @@ enum ScreenshotExportFormat: String, CaseIterable, Identifiable {
 
 enum ScreenshotFileActions {
     @discardableResult
-    static func copyPNGToClipboard(from url: URL) async throws -> Bool {
-        try await copyImageToClipboard(from: url, dataType: .png)
+    static func copyPNGToClipboard(from url: URL, turn: OptimizedImageCopy.Turn? = nil) async throws -> Bool {
+        try await copyImageToClipboard(from: url, dataType: .png, turn: turn)
     }
 
     /// The image at `url` copied as it is (Copy Original, or with optimizing off). It takes its turn before it
