@@ -48,6 +48,13 @@ struct LibraryCardPressTest {
                                             eventNumber: 2, clickCount: 1, pressure: 1)!
         precondition(collection.trackMouseEvent(plainClick) === plainClick && menuRequests == 1)
 
+        for textView in [NSTextField(frame: button.frame), NSTextView(frame: button.frame)] as [NSView] {
+            collection.addSubview(textView)
+            precondition(collection.trackMouseEvent(controlClick) === controlClick && menuRequests == 1,
+                         "Control-click in a rename field must reach its text menu")
+            textView.removeFromSuperview()
+        }
+
         let coordinator = CaptureLibraryCollection<Entry>(
             items: [], revision: 0, layout: .grid, cardWidth: 220, selection: .constant([]), isBusy: false,
             cell: { _, _, _ in AnyView(EmptyView()) }, menu: { _ in [] }, onAction: { _ in }
