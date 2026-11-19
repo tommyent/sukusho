@@ -548,8 +548,22 @@ enum ScreenshotFileActions {
         let result = replacingExisting
             ? rename(stagingURL.path, destinationURL.path)
             : renamex_np(stagingURL.path, destinationURL.path, UInt32(RENAME_EXCL))
-        guard result == 0 else {
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        guard result != 0 else { return }
+        let error = POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        guard !replacingExisting, error.code == .ENOTSUP else { throw error }
+
+        // exFAT and FAT32 lack RENAME_EXCL. Reserve the name before installing the completed file.
+        let claim = open(destinationURL.path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0o600)
+        guard claim >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        defer { close(claim) }
+        guard rename(stagingURL.path, destinationURL.path) == 0 else {
+            let installError = POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            var reserved = stat(), current = stat()
+            if fstat(claim, &reserved) == 0, lstat(destinationURL.path, &current) == 0,
+               reserved.st_dev == current.st_dev, reserved.st_ino == current.st_ino, current.st_size == 0 {
+                unlink(destinationURL.path)
+            }
+            throw installError
         }
     }
     

@@ -100,16 +100,25 @@ extension NSView {
         let existing = Data("existing destination".utf8)
         try incoming.write(to: source)
         try existing.write(to: destination)
-        let error = writeError { complete in
-            Task {
-                do {
-                    try await VideoFileActions.save(from: source, to: destination, replacingExisting: false)
-                    complete(nil)
-                } catch { complete(error) }
+        func drop(at url: URL) -> NSError? {
+            writeError { complete in
+                Task {
+                    do {
+                        try await VideoFileActions.save(from: source, to: url, replacingExisting: false)
+                        complete(nil)
+                    } catch { complete(error) }
+                }
             }
         }
+        let error = drop(at: destination)
         require(try Data(contentsOf: destination) == existing, "exclusive save replaced the existing bytes")
         require(error?.domain == NSPOSIXErrorDomain && error?.code == Int(EEXIST), "exclusive save must return EEXIST")
+        print("PASS occupied name returned EEXIST and kept its original bytes")
+        let free = folder.appendingPathComponent("free.mov")
+        let freeError = drop(at: free)
+        require(freeError == nil, "drop on a free name failed: \(String(describing: freeError))")
+        require(try Data(contentsOf: free) == incoming, "drop on a free name delivered the wrong bytes")
+        print("PASS free name received the recording")
         let save = writeError { complete in
             Task {
                 do {
@@ -124,6 +133,17 @@ extension NSView {
     }
 
     static func main() throws {
+        if CommandLine.arguments.count == 3, CommandLine.arguments[1] == "--save-volume" {
+            let mount = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true)
+            let folder = mount.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+            defer { try? FileManager.default.removeItem(at: folder) }
+            try checkSaveCollision(in: folder)
+            let names = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+            require(Set(names.filter { !$0.hasPrefix("._") }) == ["source.mov", "existing.mov", "free.mov"],
+                    "save left unexpected files: \(names)")
+            return
+        }
         NSApplication.shared.setActivationPolicy(.prohibited)
         let original = class_getInstanceMethod(NSView.self, #selector(NSView.beginDraggingSession(with:event:source:)))!
         let recorder = class_getInstanceMethod(NSView.self, #selector(NSView.recordLibraryDrag(_:event:source:)))!
