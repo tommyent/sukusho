@@ -54,7 +54,7 @@ Click a picture to see it full size.
 
 Sharing is optional: it runs on a Worker in your own Cloudflare account ([set it up](docs/sharing-setup.md)). Everything else works without it.
 
-Tested on macOS 27.0.1 and 27.3 on Apple silicon. Signed, notarized, and checks for updates itself.
+Tested on macOS 26.5.1, 27.2.1 and 27.3 on Apple silicon. Signed, notarized, and checks for updates itself.
 
 ## Docs
 
