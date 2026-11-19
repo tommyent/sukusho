@@ -314,6 +314,13 @@ final class ScreenRecordingManager {
                 try await capture.startCapture(filter: target.filter, configuration: target.configuration)
                 guard try isStarting(session: session) else { return }
                 manifest = CaptureManifest()
+                switch source.kind {
+                case .fullscreen: manifest.captureMode = .display
+                case .area: manifest.captureMode = .area
+                case .window(let window):
+                    manifest.captureMode = .window
+                    manifest.capturedWindowTitle = window.title
+                }
                 manifest.pixelWidth = target.width
                 manifest.pixelHeight = target.height
                 manifest.pixelScale = target.pointPixelScale

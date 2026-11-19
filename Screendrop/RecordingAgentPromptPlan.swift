@@ -1,6 +1,8 @@
 import CoreGraphics
 import Foundation
 
+nonisolated enum RecordingCaptureMode: String, Codable { case display, window, area }
+
 nonisolated struct RecordingAgentPromptPlan: Sendable {
     struct Text: Sendable {
         var start: TimeInterval
@@ -53,6 +55,7 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
     let source: CaptureSource?
     /// The recorded area in pixels, and pixels per point.
     let screen: Screen?
+    let recordedScope: String
     /// Why the narration couldn't be transcribed, when it couldn't.
     let transcriptionFailure: String?
     /// A Bug report take's app log, when the user included it.
@@ -68,7 +71,8 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
     init(title: String, timeline: RecordingClipTimeline, cues: [RecordingSubtitleCue],
          words: [RecordingTranscriptWord], capture: PointerCaptureFile?,
          cursorNames: [String: String] = [:], files: SourceFiles? = nil, excludesAppWindows: Bool = false,
-         source: CaptureSource? = nil, transcriptionFailure: String? = nil, screen: Screen? = nil, logs: RecordingAppLogs? = nil) {
+         source: CaptureSource? = nil, transcriptionFailure: String? = nil, screen: Screen? = nil,
+         captureMode: RecordingCaptureMode? = nil, capturedWindowTitle: String? = nil, logs: RecordingAppLogs? = nil) {
         self.title = title
         duration = timeline.duration
         hasInput = capture != nil
@@ -76,6 +80,14 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
         self.excludesAppWindows = excludesAppWindows
         self.source = source
         self.screen = screen
+        switch captureMode {
+        case .display: recordedScope = "the recorded display"
+        case .area: recordedScope = "the recorded area"
+        case .window:
+            let title = capturedWindowTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+            recordedScope = "the recorded window" + (title.flatMap { $0.isEmpty ? nil : " “\(Self.escape($0))”" } ?? "")
+        case nil: recordedScope = "the recorded content"
+        }
         self.transcriptionFailure = transcriptionFailure
         self.logs = logs
 
@@ -251,7 +263,7 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
         let hasStrips = strips.contains(where: { $0 != nil })
         let stripSpan = "\(Self.stripFrames) frames of the unedited screen recording, from \(Self.stripLead) s before the moment to \(Self.stripSpan - Self.stripLead) s after it, around where it happened"
         if sourceStills {
-            text += "Each still shows the whole screen at its moment, from the unedited screen recording: cuts and speed changes apply, Studio's zoom, crop, background, camera and redactions don't; \(marks)."
+            text += "Each still shows \(recordedScope) at its moment, from the unedited screen recording: cuts and speed changes apply, Studio's zoom, crop, background, camera and redactions don't; \(marks)."
                 + (hasStrips ? " Each strip shows \(stripSpan).\n\n" : "\n\n")
         } else if hasStrips {
             text += "Each still shows the edited recording. Each strip shows \(stripSpan); \(marks).\n\n"

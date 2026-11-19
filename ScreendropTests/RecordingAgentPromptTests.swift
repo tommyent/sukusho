@@ -12,6 +12,17 @@ struct RecordingAgentPromptTests {
         .init(sourceStart: 4, sourceEnd: 8, speed: 2),
     ])
 
+    @Test func sourceStillsDescribeCaptureScope() {
+        for (mode, expected): (RecordingCaptureMode?, String) in [
+            (.window, "the recorded window “Preferences”"), (.area, "the recorded area"),
+            (.display, "the recorded display"), (nil, "the recorded content")
+        ] {
+            let plan = RecordingAgentPromptPlan(title: "Take", timeline: .full(sourceDuration: 2),
+                cues: [], words: [], capture: nil, captureMode: mode, capturedWindowTitle: "Preferences")
+            #expect(plan.markdown(frameTimes: [], sourceStills: true).contains(expected + " at its moment"))
+        }
+    }
+
     @Test func cutsAndSpeedMapAllEvidenceWithoutLeakingRemovedSpeech() {
         let plan = RecordingAgentPromptPlan(title: "Fixture", timeline: cut, cues: [
             .init(start: 0, end: 1, text: "Corrected caption"),
@@ -367,7 +378,7 @@ struct RecordingAgentPromptTests {
         let index = try #require(plan.moments.firstIndex { $0.time == 1 })
         let folder = try await RecordingAgentPromptWriter.write(movie: nil, plan: plan, to: directory, master: movie)
         let markdown = try String(contentsOf: folder.appendingPathComponent("prompt.md"), encoding: .utf8)
-        #expect(markdown.contains("Each still shows the whole screen at its moment, from the unedited screen recording"))
+        #expect(markdown.contains("Each still shows the recorded content at its moment, from the unedited screen recording"))
         #expect(markdown.contains("they match the stills."))
         #expect(markdown.contains("![Frame at 00:01.000](stills/\(RecordingAgentPromptPlan.stillName(index)))"))
         let data = try Data(contentsOf: folder.appendingPathComponent("stills/\(RecordingAgentPromptPlan.stillName(index))"))
