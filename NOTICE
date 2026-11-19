@@ -10,3 +10,7 @@ Third-party packages keep their own licences, including DockProgress
 (https://github.com/sindresorhus/DockProgress), Sparkle
 (https://github.com/sparkle-project/Sparkle) and the MCP Swift SDK
 (https://github.com/modelcontextprotocol/swift-sdk).
+
+Chip's paper grain (Screendrop/PaperGrain.png) is made from ambientCG's Paper006
+(https://ambientcg.com/a/Paper006) by scripts/make-paper-grain.py. ambientCG
+releases its assets under CC0 1.0 Universal (https://docs.ambientcg.com/license/).

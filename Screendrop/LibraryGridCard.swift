@@ -1,3 +1,4 @@
+import ImageIO
 import SwiftUI
 
 extension EnvironmentValues {
@@ -128,6 +129,12 @@ struct LibraryCardSurface: ViewModifier {
                         case .flat: flat(depth, shape: outline, radius: radius).allowsHitTesting(false)
                         }
                     }
+                    .overlay(alignment: .bottom) {
+                        // Paper only: the caption strip under the picture, so a capture is never textured.
+                        if theme.card.paper > 0 && contrast != .increased {
+                            CardPaperGrain().opacity(theme.card.paper).frame(height: LibraryGridMetrics.captionHeight)
+                        }
+                    }
                     .overlay {
                         // A flat card stays put: a press shades it instead of sinking it.
                         if edge != nil && pressed { outline.fill(.black.opacity(dark ? 0.25 : 0.08)).allowsHitTesting(false) }
@@ -194,6 +201,24 @@ struct LibraryCardSurface: ViewModifier {
             return Color(stock: lower ? (dark ? 0x064A99 : 0x0055B3) : 0x0A6FE0)
         }
         return Color.accentColor.mix(with: .black, by: lower ? (dark ? 0.4 : 0.3) : 0.12)
+    }
+}
+
+/// Chip's paper grain, one tile for light and dark (the owner's pick, 2026-11-19: kraft, paper only, subtle), made
+/// from ambientCG's Paper006 (CC0) by scripts/make-paper-grain.py. Its black marks at low alpha darken light paper
+/// and its white marks lift dark paper, as a multiply and a screen would, without a blend mode: one translucent
+/// image per card, at the theme's strength.
+struct CardPaperGrain: View {
+    private static let tile: CGImage? = Bundle.main.url(forResource: "PaperGrain", withExtension: "png")
+        .flatMap { CGImageSourceCreateWithURL($0 as CFURL, nil) }
+        .flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }
+
+    var body: some View {
+        if let tile = Self.tile {
+            // 2x: one texel is half a point, as in the mockups.
+            Image(decorative: tile, scale: 2).resizable(resizingMode: .tile)
+                .allowsHitTesting(false).accessibilityHidden(true)
+        }
     }
 }
 

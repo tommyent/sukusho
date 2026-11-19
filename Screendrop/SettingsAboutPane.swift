@@ -56,6 +56,8 @@ struct SettingsAboutPane: View {
                 // ships without its own documentation.
                 Text("Images are optimized with oxipng, libwebp and MozJPEG. This software is based in part on the work of the Independent JPEG Group.")
                     .foregroundStyle(.secondary)
+                Text("Chip's paper grain is made from ambientCG's Paper006, released under CC0 1.0.")
+                    .foregroundStyle(.secondary)
 
                 Button("Show Licenses") {
                     if let licenses = Bundle.main.url(forResource: "OptimizerLicenses", withExtension: nil) {

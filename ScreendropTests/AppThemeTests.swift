@@ -15,6 +15,7 @@ struct AppThemeTests {
         }
         #expect(Set(AppTheme.builtIns.map(\.id)).count == AppTheme.builtIns.count)
         #expect(Set(AppTheme.builtIns.map(\.name)).count == AppTheme.builtIns.count)
+        #expect(AppTheme.classicLight.card.paper == 0 && AppTheme.classicDark.card.paper == 0)
     }
 
     @Test func everyBuiltInHasALightAndADarkLook() {
@@ -34,6 +35,7 @@ struct AppThemeTests {
         for theme in [AppTheme.chipLight, .chipDark] {
             #expect(theme.card.recipe.flatEdge != nil, "\(theme.id)")
             #expect(theme.card.gutter == 11)
+            #expect(theme.card.paper == 0.35, "\(theme.id)")
             for width: CGFloat in [140, 192, 220, 320] {
                 let density = LibraryCardDensity(width: width, inset: theme.card.inset, radius: theme.card.radius)
                 #expect(density.pictureInset == 0 && density.cornerRadius == 0 && density.pictureRadius == 0, "\(theme.id) \(width)")

@@ -59,6 +59,9 @@ nonisolated struct AppTheme: Sendable, Equatable, Identifiable {
         /// The drop shadows' opacity at rest and while pressed; their offsets and blurs are the app's (`LibraryCardDepth`).
         var shadow: Double
         var pressedShadow: Double
+        /// The strength of the paper grain over the caption strip, never the picture: the app's one tile
+        /// (`CardPaperGrain`) at this opacity. 0: none.
+        var paper = 0.0
     }
 
     /// How a card is drawn. A theme picks one and tunes it; it can't add its own.
@@ -114,7 +117,7 @@ nonisolated extension AppTheme {
 
     /// A colour chip: Classic cut square and flat, the picture edge to edge above the label (owner's pick, 2026-11-19,
     /// sd-ygmk). Only the shape changes; the owner kept Classic's colours ("I would keep the colours the same") and
-    /// its drop shadow ("The chips are missing the shadow").
+    /// its drop shadow ("The chips are missing the shadow"), and added a subtle kraft grain to the paper only.
     static let chipLight = chip(classicLight, id: "chip-light", name: "Chip Light", edge: .rgb(0x000000, opacity: 0.3))
     static let chipDark = chip(classicDark, id: "chip-dark", name: "Chip Dark", edge: .white(opacity: 0.28))
 
@@ -126,6 +129,7 @@ nonisolated extension AppTheme {
         card.radius = 0
         card.inset = 0
         card.gutter = 11
+        card.paper = 0.35   // subtle
         return AppTheme(id: id, name: name, isDark: classic.isDark, ink: classic.ink, chrome: classic.chrome,
                         ground: classic.ground, card: card, marks: classic.marks)
     }
