@@ -9,6 +9,7 @@
 
 import CoreGraphics
 import Foundation
+import CoreText
 
 /// One stroke on the screen movie's source clock, with top-left normalized
 /// points like the pointer sidecar.
@@ -22,6 +23,8 @@ nonisolated struct RecordingInkStroke: Codable, Equatable, Identifiable, Sendabl
     var hideTime: TimeInterval?
     /// False once undone: the stroke goes at once instead of fading.
     var fadesOut = true
+
+    var markerNumber: Int?
 
     var startTime: TimeInterval { points.first?.t ?? 0 }
 }
@@ -56,6 +59,7 @@ nonisolated struct RecordingInkCapture: Sendable {
     var id = UUID()
     var samples: [Sample]
     var widthInPoints: Double
+    var markerNumber: Int?
     var hideUptime: TimeInterval?
     var fadesOut = true
 }
@@ -85,7 +89,8 @@ nonisolated extension RecordingInkStroke {
                 width: capture.widthInPoints * scale,
                 points: points,
                 hideTime: capture.hideUptime.flatMap(time),
-                fadesOut: capture.fadesOut
+                fadesOut: capture.fadesOut,
+                markerNumber: capture.markerNumber
             )
         }
     }
@@ -222,6 +227,51 @@ nonisolated enum RecordingInkPath {
         }
         path.addLine(to: last)
         return path
+    }
+
+    /// Receives top-left drawing coordinates from every output, including the live panel.
+    static func draw(_ points: [CGPoint], marker: Int?, color: RecordingInkColor, opacity: Double,
+                     width: CGFloat, bounds: CGRect, in context: CGContext) {
+        guard let number = marker, let tip = points.first else {
+            stroke(path(points), color: color, opacity: opacity, width: width, in: context)
+            return
+        }
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.setAlpha(opacity)
+        context.translateBy(x: tip.x, y: tip.y)
+        let scale = width / 6
+        context.scaleBy(x: scale, y: scale)
+        let center = CGPoint(x: tip.x + 36 * scale <= bounds.maxX ? 22 : -22,
+                             y: tip.y - 40 * scale >= bounds.minY ? -26 : 26)
+        let navy = CGColor(srgbRed: 0.09, green: 0.13, blue: 0.19, alpha: 1)
+        let white = CGColor(gray: 1, alpha: 1)
+        context.setLineCap(.round)
+        for (ink, thickness) in [(white, 4.0), (navy, 1.5)] {
+            context.setStrokeColor(ink)
+            context.setLineWidth(thickness)
+            context.move(to: .zero)
+            context.addLine(to: center)
+            context.strokePath()
+        }
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: String(number), attributes: [
+            NSAttributedString.Key(kCTFontAttributeName as String): CTFontCreateWithName("HelveticaNeue-Bold" as CFString, 13, nil),
+            NSAttributedString.Key(kCTForegroundColorAttributeName as String): white
+        ]))
+        let glyph = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
+        let radius = max(10, glyph.width / 2 + 3)
+        for (position, r) in [(CGPoint.zero, 2.6), (center, radius)] {
+            context.setFillColor(navy)
+            context.setStrokeColor(white)
+            context.setLineWidth(1.5)
+            context.addEllipse(in: CGRect(x: position.x - r, y: position.y - r, width: 2*r, height: 2*r))
+            context.drawPath(using: .fillStroke)
+        }
+        context.translateBy(x: center.x, y: center.y)
+        context.scaleBy(x: 1, y: -1)
+        context.textMatrix = .identity
+        context.textPosition = CGPoint(x: -glyph.midX, y: -glyph.midY)
+        CTLineDraw(line, context)
     }
 
     static func stroke(_ path: CGPath, color: RecordingInkColor, opacity: Double, width: CGFloat, in context: CGContext) {
