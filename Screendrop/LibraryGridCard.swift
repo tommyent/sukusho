@@ -192,7 +192,7 @@ struct LibraryGridCaption<Title: View>: View {
     @ViewBuilder let title: () -> Title
 
     var body: some View {
-        let fonts: (title: Font, date: Font) = (.system(size: 13, weight: .medium), .caption)
+        let fonts: (title: Font, date: Font) = (.system(size: 14, weight: .medium), .system(size: 11))
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 4) {
                 title()
