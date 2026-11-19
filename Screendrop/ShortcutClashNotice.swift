@@ -51,6 +51,7 @@ extension ShortcutClashNotice {
         }
         panel = window
         NSApp.activate()
-        window.orderFront(nil)
+        // Key, as the alert was: Return gives the default answer, and the Library opened at launch doesn't keep the keys.
+        window.makeKeyAndOrderFront(nil)
     }
 }
