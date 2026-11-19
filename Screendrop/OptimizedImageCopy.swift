@@ -70,11 +70,14 @@ final class OptimizedImageCopy {
     /// The last write here and what it was a copy of, for as long as the pasteboard still holds it.
     private var held: (key: AnyHashable, count: Int)?
 
-    /// What `copyNow`'s `smaller` gives for the swap: the optimized item, and the digest
-    /// (`ClipboardPasteboardReader.digest`) of the bytes the optimizer read, which must be the bytes the copy wrote.
+    /// What `copyNow`'s `smaller` gives for the swap: the optimized item, the digest (`ClipboardPasteboardReader.digest`)
+    /// of the bytes the optimizer read, which must be the bytes the copy wrote, and the digest of what the encoder
+    /// made, which must be the bytes the item carries: a file read after the encoder left it (an optimized capture,
+    /// optimized in place) can have been overwritten since.
     struct Swap {
         let item: NSPasteboardItem
         let source: String?
+        let output: String?
     }
 
     /// The image an item carries, as history reads it: PNG, else JPEG.
@@ -150,11 +153,14 @@ final class OptimizedImageCopy {
                   let copiedData = Self.imageData(of: original), let smallerData = Self.imageData(of: candidate.item)
             else { return done(false) }
             // Only the optimized form of the bytes this copy wrote: the file can be rewritten after it was read,
-            // and the swap must not publish another picture. Nor the same bytes again.
+            // and the swap must not publish another picture. Only the bytes the encoder made, too: an edit saved
+            // over a capture optimized in place, before the swap read it, isn't them (Astra, round 3). Nor the same
+            // bytes again.
             let (copied, made) = await Task.detached {
                 (ClipboardPasteboardReader.digest(copiedData), ClipboardPasteboardReader.digest(smallerData))
             }.value
-            guard candidate.source == copied, made != copied, !Task.isCancelled else { return done(false) }
+            guard candidate.source == copied, let output = candidate.output, made == output, made != copied,
+                  !Task.isCancelled else { return done(false) }
             let item = candidate.item
             // A newer copy still reading would find the pasteboard moved by the swap and give up: wait until it has
             // written, which moves the count and ends this swap, or found it is a repeat of this copy or given up,

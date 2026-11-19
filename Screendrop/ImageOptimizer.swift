@@ -56,6 +56,10 @@ nonisolated struct ImageOptimizationResult: Sendable {
     /// same once it was done. A caller that goes on to replace or mark the source asks `FileIdentity` again
     /// right before it does. Nil only for a file handed back unread (`original`).
     var source: FileIdentity?
+    /// The result's own contents, hashed as the encoder left them, before anyone else could touch the file: what
+    /// a caller reading `url` later, or the file it was moved to, checks its bytes against. Nil when `url` is the
+    /// original.
+    var output: FileIdentity?
 
     /// Deletes the result's file once it has been used. The caller's original is never touched.
     func discard() {
@@ -210,7 +214,8 @@ nonisolated struct ImageOptimizer: Sendable {
                 if let sourceFolder { try? FileManager.default.removeItem(at: sourceFolder) }
                 return ImageOptimizationResult(url: output, outcome: target == .lossless ? .optimized : .converted,
                                                originalByteCount: originalBytes, resultByteCount: bytes,
-                                               ownedFolder: output.deletingLastPathComponent(), source: identity)
+                                               ownedFolder: output.deletingLastPathComponent(), source: identity,
+                                               output: FileIdentity(output))
             } catch let failure as Failure {
                 return original(.failed(failure.message))
             } catch is CancellationError {

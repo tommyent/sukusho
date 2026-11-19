@@ -815,10 +815,12 @@ private func isRunning(_ text: String) -> Bool {
         let result = try await bench.optimizer.optimize(source)
         #expect(result.outcome == .optimized)
         #expect(result.source == before)
+        #expect(result.output == FileIdentity(result.url))   // round 3: what the encoder made, as it made it
         // Nothing smaller, and a failure, name what was read as well: the Library marks a file on the first.
         let again = try await bench.optimizer.optimize(result.url)
         #expect(again.outcome == .alreadyOptimized)
         #expect(again.source == FileIdentity(result.url))
+        #expect(again.output == nil)   // nothing was made: the result is the file read
         let noTools = ImageOptimizer(toolsDirectory: bench.folder.appending(path: "none"), outputDirectory: bench.output)
         let failed = try await noTools.optimize(source)
         guard case .failed = failed.outcome else {
@@ -1040,7 +1042,7 @@ private func isRunning(_ text: String) -> Bool {
 
     /// A swap of an optimized result, naming what the optimizer read, as the copy route makes it.
     private func swapIn(_ result: ImageOptimizationResult) -> OptimizedImageCopy.Swap? {
-        (try? item(result.url)).map { .init(item: $0, source: result.source?.digest) }
+        (try? item(result.url)).map { .init(item: $0, source: result.source?.digest, output: result.output?.digest) }
     }
 
     @Test func twoSameSizeScreenshotsStayTwoDifferentResults() async throws {
@@ -1632,8 +1634,9 @@ private func isRunning(_ text: String) -> Bool {
         #expect(result.outcome == .optimized && rewritten.outcome == .optimized)
         let candidates: [(String, OptimizedImageCopy.Swap?)] = [
             ("the rewritten file's optimized picture", swapIn(rewritten)),
-            ("a result that can't say what it was made from", OptimizedImageCopy.Swap(item: try item(result.url), source: nil)),
-            ("the copied bytes again", OptimizedImageCopy.Swap(item: try item(source), source: ClipboardPasteboardReader.digest(original))),
+            ("a result that can't say what it was made from", OptimizedImageCopy.Swap(item: try item(result.url), source: nil, output: result.output?.digest)),
+            ("the copied bytes again", OptimizedImageCopy.Swap(item: try item(source), source: ClipboardPasteboardReader.digest(original),
+                                                       output: ClipboardPasteboardReader.digest(original))),
         ]
         for (name, candidate) in candidates {
             let board = pasteboard()
@@ -1649,6 +1652,34 @@ private func isRunning(_ text: String) -> Bool {
         defer { board.releaseGlobally() }
         #expect(try await copier.copyThenSwap(to: board, first: { try item(source) }) { swapIn(result) })
         #expect(board.data(forType: .png) == (try Data(contentsOf: result.url)))
+    }
+
+    /// Astra, round 3: a new capture optimized in place is read back from its Library file for the swap. An edit
+    /// saved over that file in between is made from no optimizer: its bytes aren't the encoder's output, so the
+    /// original stays, written once, whatever the result says it was made from.
+    @Test func anEditSavedOverTheOptimizedFileIsNeverSwappedIn() async throws {
+        let bench = try Bench()
+        defer { bench.remove() }
+        let capture = try bench.file("Capture.png", Sample.screenshot(width: 640, height: 400, seed: 52))
+        let original = try Data(contentsOf: capture)
+        let result = try await bench.optimizer.optimize(capture)
+        defer { result.discard() }
+        #expect(result.outcome == .optimized)
+        #expect(result.output == FileIdentity(result.url))
+        // The capture now holds the optimized bytes, then an edit is saved over it before the swap reads it.
+        let edit = try bench.file("Edit.png", Sample.screenshot(width: 640, height: 400, seed: 53))
+        let copier = OptimizedImageCopy()
+        let board = pasteboard()
+        defer { board.releaseGlobally() }
+        let swapped = try await copier.copyThenSwap(to: board, first: {
+            let written = NSPasteboardItem()
+            written.setData(original, forType: .png)
+            return written
+        }) {
+            .init(item: try! item(edit), source: result.source?.digest, output: result.output?.digest)
+        }
+        #expect(!swapped)
+        #expect(board.data(forType: .png) == original)
     }
 }
 
