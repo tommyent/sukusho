@@ -82,7 +82,7 @@ struct CaptureLibraryView: View {
         // Glass: no bar under the toolbar, so macOS's title and window buttons sit on glass pills, the inspector
         // floats as a raised glass pane on macOS 26 and 27.2+, and on macOS 27.2+ the left sidebar floats too. The
         // title field, buttons and split wrappers arrive a moment after the window, so a few tries.
-        .task(id: "\(title)#\(glass != nil)#\(columnVisibility)#\(inspectorVisible)#\(libraryWindow.map { ObjectIdentifier($0).hashValue } ?? 0)") {
+        .task(id: "\(title)#\(glass != nil)#\(colorScheme)#\(columnVisibility)#\(inspectorVisible)#\(libraryWindow.map { ObjectIdentifier($0).hashValue } ?? 0)") {
             for _ in 0..<10 {
                 let plateDone = LibraryTitlePlate.update(libraryWindow, shown: glass != nil)
                 let buttonsDone = LibraryWindowButtonCapsule.update(libraryWindow, shown: glass != nil)
