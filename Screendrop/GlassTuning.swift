@@ -3,8 +3,8 @@
 //  GlassTuning.swift
 //  Screendrop
 //
-//  The Theme Tuner's Glass values: the frost's material, tint and rim, the picture's blur and dim, and the colour of
-//  text drawn straight on the picture, Light and Dark apart. Saved under their own tuner-only key, so Chip's saved
+//  The Theme Tuner's Glass values: the frost's material, tint and rim, and the picture's blur and dim, Light and
+//  Dark apart. Saved under their own tuner-only key, so Chip's saved
 //  values are untouched, and laid over the built-in Glass only while on. Owner's builds only, as ThemeTuning.swift.
 //
 
@@ -21,7 +21,6 @@ nonisolated struct GlassTuning: Codable, Equatable, Sendable {
         var rimOpacity: Double
         var blur: Double
         var dim: Double
-        var ink: AppTheme.BackdropInk
 
         init(_ glass: AppTheme) {
             let frost = glass.card.recipe.frost, backdrop = glass.ground.backdrop
@@ -29,7 +28,7 @@ nonisolated struct GlassTuning: Codable, Equatable, Sendable {
             material = frost?.material ?? .regular
             self.tint = tint.hex; tintOpacity = tint.opacity
             rimOpacity = ThemeTuning.split(frost?.rim).opacity
-            blur = backdrop?.blur ?? 0; dim = backdrop?.dim ?? 0; ink = backdrop?.ink ?? .auto
+            blur = backdrop?.blur ?? 0; dim = backdrop?.dim ?? 0
         }
     }
 
@@ -55,7 +54,6 @@ nonisolated struct GlassTuning: Codable, Equatable, Sendable {
         frost.rim = .white(opacity: side.rimOpacity)
         backdrop.blur = side.blur
         backdrop.dim = side.dim
-        backdrop.ink = side.ink
         var tuned = theme
         tuned.card.recipe = .frost(frost)
         tuned.ground.backdrop = backdrop
@@ -70,7 +68,7 @@ nonisolated struct GlassTuning: Codable, Equatable, Sendable {
                 : ".rgb(\(String(format: "0x%06X", side.tint)), opacity: \(number(side.tintOpacity)))"
             return """
                 // \(name)
-                ground: Ground(workspace: …, backdrop: Backdrop(blur: \(number(side.blur)), dim: \(number(side.dim)), ink: .\(side.ink.rawValue))),
+                ground: Ground(workspace: …, backdrop: Backdrop(blur: \(number(side.blur)), dim: \(number(side.dim)))),
                 card: Card(recipe: .frost(Frost(material: .\(side.material.rawValue), tint: \(tint), rim: .white(opacity: \(number(side.rimOpacity))))), …
                 """
         }

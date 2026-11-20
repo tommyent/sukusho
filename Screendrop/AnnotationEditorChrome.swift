@@ -118,7 +118,8 @@ struct LowResolutionPreviewNotice: View {
 /// the left sidebar and the right inspector, from the theme (Classic: white in light mode, the window
 /// background in dark).
 enum WorkspaceChrome {
-    static var background: Color { Color(nsColor: NSColor(name: nil, dynamicProvider: color)) }
+    static var background: Color { Color(nsColor: nsBackground) }
+    static var nsBackground: NSColor { NSColor(name: nil, dynamicProvider: color) }
 
     /// Nonisolated: AppKit can resolve colours off the main thread.
     nonisolated private static func color(for appearance: NSAppearance) -> NSColor {
@@ -192,33 +193,36 @@ struct GlassBackdrop: View {
 }
 
 extension EnvironmentValues {
-    /// Set under a `GlassBackdrop`: text drawn straight on the window then sits on a picture and takes a plate.
+    /// Set while Glass's picture is drawn under the window: text there takes frost or a plate, never the bare picture.
     @Entry var overGlassPicture = false
 }
 
 extension View {
-    /// Text drawn straight on Glass's picture, such as the Library's status bar, in the backdrop's ink
-    /// (`GlassPicture.lightInk`). Anywhere else, and with Reduce Transparency or Increase Contrast, nothing changes.
-    func glassInk() -> some View { modifier(GlassInk()) }
+    /// The cards' frost (material and tint) behind text in the Library that would otherwise sit straight on Glass's
+    /// picture, such as the status bar or a clipboard row. It reads `DrawnGlass`, not the environment, so it works in
+    /// the collection's cells, which AppKit hosts apart. Other themes, and Reduce Transparency or Increase Contrast,
+    /// change nothing.
+    func glassFrostBacking<S: Shape>(in shape: S) -> some View { modifier(GlassFrostBacking(shape: shape)) }
 }
 
-private struct GlassInk: ViewModifier {
-    @AppStorage(GlassPicture.pathKey) private var picked = ""
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.overGlassPicture) private var overGlassPicture
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @Environment(\.colorSchemeContrast) private var contrast
+private struct GlassFrostBacking<S: Shape>: ViewModifier {
+    let shape: S
+    @DrawnGlass private var glass
     @CurrentTheme private var theme
 
+    @ViewBuilder
     func body(content: Content) -> some View {
-        let dark = colorScheme == .dark
-        var scheme = colorScheme
-        if overGlassPicture, !reduceTransparency, contrast != .increased, let backdrop = theme.ground.backdrop {
-            let light = GlassPicture.lightInk(backdrop, picture: GlassPicture.url(picked: picked, dark: dark),
-                                              ground: theme.ground.workspace, dark: dark)
-            scheme = light ? .dark : .light
+        if glass != nil, let frost = theme.card.recipe.frost {
+            content.background {
+                ZStack {
+                    shape.fill(frost.material.material)
+                    shape.fill(frost.tint.color)
+                }
+                .allowsHitTesting(false)
+            }
+        } else {
+            content
         }
-        return content.environment(\.colorScheme, scheme)
     }
 }
 

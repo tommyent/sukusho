@@ -231,6 +231,8 @@ struct ClipboardListRow: View {
         .frame(height: 34)
         .background(isSelected ? AnyShapeStyle(.tint.opacity(0.22)) : isHovering ? AnyShapeStyle(.quaternary.opacity(0.5)) : AnyShapeStyle(.clear),
                     in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        // Glass: frost under the hover and selection fills, so the title and time never sit on the bare picture.
+        .glassFrostBacking(in: RoundedRectangle(cornerRadius: 7, style: .continuous))
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
 

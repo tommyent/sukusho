@@ -238,7 +238,8 @@ struct CaptureLibraryView: View {
                             : likes.isShown ? likes.visibleLikes.isEmpty : true
                     ))
                 Divider()
-                statusBar.glassInk()
+                // Glass: on the cards' frost, not the bare picture, whatever its colours.
+                statusBar.glassFrostBacking(in: Rectangle())
             }
             .modifier(LibraryColumnSeparators(
                 leading: columnVisibility != .detailOnly,

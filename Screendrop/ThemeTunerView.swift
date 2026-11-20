@@ -82,14 +82,6 @@ struct ThemeTunerView: View {
             glassSlider("Blur", \.blur, 0...60, stepsPerUnit: 1)
             glassSlider("Dim", \.dim, 0...0.9)
         }
-        Section("Text on the picture") {
-            Picker("Color", selection: glassSide(\.ink)) {
-                Text("Auto").tag(AppTheme.BackdropInk.auto)
-                Text("Light").tag(AppTheme.BackdropInk.light)
-                Text("Dark").tag(AppTheme.BackdropInk.dark)
-            }
-            .pickerStyle(.segmented)
-        }
     }
 
     @ViewBuilder private var chipSections: some View {

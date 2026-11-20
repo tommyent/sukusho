@@ -48,17 +48,11 @@ nonisolated struct AppTheme: Sendable, Equatable, Identifiable {
         var backdrop: Backdrop? = nil
     }
 
-    /// Glass's picture (`GlassPicture`): blurred by `blur` points, then `workspace` laid over it at `dim`.
+    /// Glass's picture (`GlassPicture`): blurred by `blur` points, then `workspace` laid over it at `dim`. No text
+    /// sits on it bare: the cards, rows, status bar and headings over it each have frost or a plate under their text.
     nonisolated struct Backdrop: Sendable, Equatable {
         var blur: Double
         var dim: Double
-        /// Text drawn straight on the picture, such as the status bar's.
-        var ink = BackdropInk.auto
-    }
-
-    /// Auto keeps the appearance's text unless it reads under 4.5:1 on the picture and the other reads better.
-    nonisolated enum BackdropInk: String, Sendable, Equatable, CaseIterable, Codable {
-        case auto, light, dark
     }
 
     nonisolated struct Card: Sendable, Equatable {

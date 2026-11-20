@@ -19,7 +19,7 @@ struct GlassThemeTests {
             let frost = try #require(glass.card.recipe.frost, "\(glass.id)")
             #expect(frost.material == .regular, "\(glass.id): a standard material, never Liquid Glass per card")
             let backdrop = try #require(glass.ground.backdrop, "\(glass.id)")
-            #expect(backdrop.blur > 0 && backdrop.ink == .auto, "\(glass.id)")
+            #expect(backdrop.blur > 0, "\(glass.id)")
         }
     }
 
@@ -60,35 +60,6 @@ struct GlassThemeTests {
         #expect(GlassPicture.url(picked: "", dark: true).path != gone)
     }
 
-    // MARK: - Text on the picture
-
-    /// Auto keeps the appearance's ink while it reads at 4.5:1 and switches only when the other ink reads better.
-    @Test func autoInkFollowsThePictureOnlyWhenTheAppearancesWouldFail() throws {
-        let folder = try temporaryFolder()
-        let white = try picture(white: 1, in: folder), black = try picture(white: 0, in: folder)
-        let light = AppTheme.glassLight.ground, dark = AppTheme.glassDark.ground
-        let lightBackdrop = try #require(light.backdrop), darkBackdrop = try #require(dark.backdrop)
-        // Each appearance over its own kind of picture keeps its ink.
-        #expect(!GlassPicture.lightInk(lightBackdrop, picture: white, ground: light.workspace, dark: false))
-        #expect(GlassPicture.lightInk(darkBackdrop, picture: black, ground: dark.workspace, dark: true))
-        // Over the other kind, dark text on black or white on white, it switches.
-        #expect(GlassPicture.lightInk(lightBackdrop, picture: black, ground: light.workspace, dark: false))
-        #expect(!GlassPicture.lightInk(darkBackdrop, picture: white, ground: dark.workspace, dark: true))
-        // A chosen ink is kept whatever the picture.
-        var forced = lightBackdrop
-        forced.ink = .dark
-        #expect(!GlassPicture.lightInk(forced, picture: black, ground: light.workspace, dark: false))
-        forced.ink = .light
-        #expect(GlassPicture.lightInk(forced, picture: white, ground: light.workspace, dark: false))
-    }
-
-    @Test func pictureBrightnessIsMeasured() throws {
-        let folder = try temporaryFolder()
-        #expect(try #require(GlassPicture.meanLuminance(try picture(white: 1, in: folder))) > 0.99)
-        #expect(try #require(GlassPicture.meanLuminance(try picture(white: 0, in: folder))) < 0.01)
-        #expect(GlassPicture.meanLuminance(folder.appendingPathComponent("missing.png")) == nil)
-    }
-
     // MARK: - The Theme Tuner's Glass values
 
     @Test func untouchedGlassTuningIsTheBuiltInGlass() {
@@ -106,16 +77,15 @@ struct GlassThemeTests {
         tuning.dark.rimOpacity = 0.3
         tuning.dark.blur = 12
         tuning.dark.dim = 0.5
-        tuning.dark.ink = .light
         for theme in AppTheme.builtIns { #expect(tuning.applied(to: theme) == theme, "off: \(theme.id)") }
         tuning.on = true
         let dark = tuning.applied(to: .glassDark)
         let frost = try #require(dark.card.recipe.frost)
         #expect(frost.material == .thick && frost.tint == .rgb(0x102030, opacity: 0.4) && frost.rim == .white(opacity: 0.3))
-        #expect(dark.ground.backdrop == AppTheme.Backdrop(blur: 12, dim: 0.5, ink: .light))
+        #expect(dark.ground.backdrop == AppTheme.Backdrop(blur: 12, dim: 0.5))
         #expect(tuning.applied(to: .glassLight) == .glassLight)
         for theme in AppTheme.builtIns where !theme.id.hasPrefix("glass") { #expect(tuning.applied(to: theme) == theme) }
-        #expect(tuning.swift.contains("Backdrop(blur: 12, dim: 0.5, ink: .light)"))
+        #expect(tuning.swift.contains("Backdrop(blur: 12, dim: 0.5)"))
         #expect(tuning.swift.contains("Frost(material: .thick, tint: .rgb(0x102030, opacity: 0.4), rim: .white(opacity: 0.3))"))
         #expect(GlassTuning(tuning.data) == tuning)
         #expect(GlassTuning(Data("not json".utf8)) == GlassTuning())

@@ -106,6 +106,12 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
         let old = coordinator.parent
         coordinator.parent = self
         guard let collection = coordinator.collection else { return }
+        if coordinator.headerPlates != context.environment.overGlassPicture {
+            coordinator.headerPlates = context.environment.overGlassPicture
+            for case let header as LibrarySectionHeader in collection.visibleSupplementaryViews(ofKind: NSCollectionView.elementKindSectionHeader) {
+                header.plate.isHidden = !coordinator.headerPlates
+            }
+        }
         coordinator.updating = true
         defer { coordinator.updating = false }
         if old.revision != revision || old.layout != layout || old.sections != sections || coordinator.initialLoad {
@@ -143,6 +149,8 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
         weak var collection: LibraryCollectionView?
         var updating = false
         var initialLoad = true
+        /// Glass's picture is under the headers (`overGlassPicture`), so each title takes a plate.
+        var headerPlates = false
         var order = LibraryDisplayOrder(sectionCounts: [])
         var indices: [String: Int] = [:]
         private var selectionAnchorID: String?
@@ -159,6 +167,7 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
                             at indexPath: IndexPath) -> NSView {
             let header = collectionView.makeSupplementaryView(ofKind: kind, withIdentifier: LibrarySectionHeader.identifier, for: indexPath) as! LibrarySectionHeader
             header.title.stringValue = parent.sections[indexPath.section].title
+            header.plate.isHidden = !headerPlates
             return header
         }
 
@@ -456,17 +465,30 @@ struct LibraryCollectionSection: Equatable {
     let count: Int
 }
 
-private final class LibrarySectionHeader: NSView {
+private final class LibrarySectionHeader: NSView, NSCollectionViewElement {
     static let identifier = NSUserInterfaceItemIdentifier("LibrarySectionHeader")
     let title = NSTextField(labelWithString: "")
+    /// Glass: the opaque chrome behind the title, as under the empty pages' text, so it never sits on the bare picture.
+    let plate = NSBox()
 
     override init(frame: NSRect) {
         super.init(frame: frame)
         title.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
         title.translatesAutoresizingMaskIntoConstraints = false
+        plate.boxType = .custom
+        plate.borderWidth = 0
+        plate.cornerRadius = 7
+        plate.fillColor = WorkspaceChrome.nsBackground
+        plate.isHidden = true
+        plate.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(plate)
         addSubview(title)
         NSLayoutConstraint.activate([title.leadingAnchor.constraint(equalTo: leadingAnchor, constant: LibraryGridMetrics.edgeMargin),
-                                     title.bottomAnchor.constraint(equalTo: bottomAnchor)])
+                                     title.bottomAnchor.constraint(equalTo: bottomAnchor),
+                                     plate.leadingAnchor.constraint(equalTo: title.leadingAnchor, constant: -8),
+                                     plate.trailingAnchor.constraint(equalTo: title.trailingAnchor, constant: 8),
+                                     plate.topAnchor.constraint(equalTo: title.topAnchor, constant: -3),
+                                     plate.bottomAnchor.constraint(equalTo: title.bottomAnchor, constant: 3)])
     }
 
     required init?(coder: NSCoder) { nil }
