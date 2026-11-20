@@ -156,6 +156,14 @@ final class AgentGrantStore {
         saveGrants()
     }
 
+    /// A kept grant shows the name its program has now: one made before sd-il4w called a self-signed app "unsigned".
+    /// The key is the same, so this changes no grant.
+    func refresh(_ agent: AgentIdentity) {
+        guard let index = grants.firstIndex(where: { $0.agent.key == agent.key }), grants[index].agent != agent else { return }
+        grants[index].agent = agent
+        saveGrants()
+    }
+
     /// Counts every revoke and every end of the session grants, so a call let through on a grant can tell it was
     /// taken back even when another has been given since (Astra, round 3).
     @ObservationIgnored private(set) var revocations = 0

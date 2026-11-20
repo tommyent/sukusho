@@ -447,6 +447,21 @@ struct AgentGrantTests {
         #expect(!reloaded.hasAlways(.publish, for: AgentHarness.agent))
     }
 
+    /// sd-il4w: a grant kept from before shows the self-signed app's name as Sukusho gives it now, and stays the same grant.
+    @Test func aKeptGrantTakesItsProgramsNameNow() {
+        let harness = AgentHarness()
+        let old = AgentIdentity(signer: "path:/Applications/Unleash.app", signerName: "Unleash.app, unsigned", clientName: "unleash", clientVersion: "1")
+        harness.grants.grantAlways(.clipboard, to: old)
+        let now = AgentIdentity(signer: old.signer, signerName: "Unleash.app, self-signed", clientName: "unleash", clientVersion: "1")
+        harness.grants.refresh(now)
+        let reloaded = AgentGrantStore(defaults: harness.defaults)
+        #expect(reloaded.grants.map(\.agent.signerName) == ["Unleash.app, self-signed"])
+        #expect(reloaded.hasAlways(.clipboard, for: now))
+        // Another program's name never lands on this grant.
+        harness.grants.refresh(AgentIdentity(signer: "path:/tmp/other", signerName: "other, self-signed", clientName: "unleash"))
+        #expect(AgentGrantStore(defaults: harness.defaults).grants.map(\.agent.signerName) == ["Unleash.app, self-signed"])
+    }
+
     @Test func revokeEndsAnAlways() async {
         let harness = AgentHarness()
         harness.asker.reply = .allow(.always)

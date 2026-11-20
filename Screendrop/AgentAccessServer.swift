@@ -72,6 +72,7 @@ final class AgentAccessServer {
                     let name = (hello["name"] as? String).map { String($0.prefix(100)) } ?? ""
                     let agent = AgentIdentity(signer: signer.signer, signerName: signer.name, clientName: name,
                                               clientVersion: (hello["version"] as? String).map { String($0.prefix(40)) })
+                    self.toolbox.grants.refresh(agent)
                     let session = AgentSession(agent: agent)
                     state.session = session
                     self.sessions.append(session)
