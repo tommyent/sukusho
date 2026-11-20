@@ -92,6 +92,7 @@ struct SettingsView: View {
             // beside the widest pane. Keep the sidebar flexible inside the column so Glass's
             // floating inset pane (`LibraryFloatingSidebar`) never clips a fixed-width list.
             SettingsSidebarView(selectedTab: $navigation.selectedTab)
+                .frame(minWidth: glass != nil ? 192 : 200, idealWidth: 200, maxWidth: 200)
                 .navigationSplitViewColumnWidth(
                     min: 200,
                     ideal: 200,
