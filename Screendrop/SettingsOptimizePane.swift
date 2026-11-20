@@ -60,6 +60,7 @@ struct OptimizeSettingsPane: View {
     @AppStorage(OptimizePreferences.webPLosslessKey) private var webPLossless = true
     @AppStorage(OptimizePreferences.webPQualityKey) private var webPQuality = OptimizePreferences.defaultQuality
     @AppStorage(OptimizePreferences.jpegQualityKey) private var jpegQuality = OptimizePreferences.defaultQuality
+    @Environment(\.overGlassPicture) private var overGlassPicture
 
     var body: some View {
         Form {
@@ -105,17 +106,36 @@ struct OptimizeSettingsPane: View {
             }
 
             Section("Converting") {
-                SettingsControlLabel(
-                    "WebP",
-                    detail: "Lossless keeps every pixel. Smaller trades detail for size."
-                ).control { label in
-                    Picker(selection: $webPLossless) {
-                        Text("Lossless").tag(true)
-                        Text("Smaller").tag(false)
+                if overGlassPicture {
+                    LabeledContent {
+                        InspectorSegmented(
+                            options: [true, false],
+                            isSelected: { $0 == webPLossless },
+                            onTap: { webPLossless = $0 },
+                            label: { Text($0 ? "Lossless" : "Smaller").font(.system(size: 12, weight: .medium)) },
+                            height: 26,
+                            equalWidths: false
+                        )
+                        .fixedSize()
                     } label: {
-                        label
+                        SettingsControlLabel(
+                            "WebP",
+                            detail: "Lossless keeps every pixel. Smaller trades detail for size."
+                        )
                     }
-                    .pickerStyle(.segmented)
+                } else {
+                    SettingsControlLabel(
+                        "WebP",
+                        detail: "Lossless keeps every pixel. Smaller trades detail for size."
+                    ).control { label in
+                        Picker(selection: $webPLossless) {
+                            Text("Lossless").tag(true)
+                            Text("Smaller").tag(false)
+                        } label: {
+                            label
+                        }
+                        .pickerStyle(.segmented)
+                    }
                 }
 
                 if !webPLossless {

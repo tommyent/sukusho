@@ -748,6 +748,7 @@ struct InspectorTile<Content: View>: View {
 
     private let cornerRadius = InspectorMetrics.tileRadius
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.overGlassPicture) private var overGlassPicture
     @State private var isHovering = false
 
     var body: some View {
@@ -763,7 +764,7 @@ struct InspectorTile<Content: View>: View {
                 .overlay {
                     if isSelected {
                         RoundedRectangle(cornerRadius: cornerRadius + 2.5, style: .continuous)
-                            .strokeBorder(Color.accentColor, lineWidth: 2)
+                            .strokeBorder(overGlassPicture ? Color.primary.opacity(0.85) : Color.accentColor, lineWidth: 2)
                     }
                 }
                 .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))

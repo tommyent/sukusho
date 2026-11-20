@@ -9,6 +9,7 @@ import SwiftUI
 struct SettingsAboutPane: View {
     // Shown as Sparkle reads it: on in a beta build until the person chooses; the default is never stored.
     @AppStorage(UpdateChannels.betaKey) private var getsBetaUpdates = UpdateChannels.getsBetas()
+    @Environment(\.overGlassPicture) private var overGlassPicture
 
     var body: some View {
         Form {
@@ -40,6 +41,7 @@ struct SettingsAboutPane: View {
                     .foregroundStyle(.secondary)
 
                 Link("Source Code", destination: URL(string: "https://github.com/tommyent/sukusho")!)
+                    .foregroundStyle(overGlassPicture ? AnyShapeStyle(.primary) : AnyShapeStyle(.tint))
             }
 
             Section("Credits") {
@@ -47,8 +49,10 @@ struct SettingsAboutPane: View {
                     .foregroundStyle(.secondary)
 
                 Link("GitHub", destination: URL(string: "https://github.com/fayazara")!)
+                    .foregroundStyle(overGlassPicture ? AnyShapeStyle(.primary) : AnyShapeStyle(.tint))
 
                 Link("Follow on X", destination: URL(string: "https://x.com/fayazara")!)
+                    .foregroundStyle(overGlassPicture ? AnyShapeStyle(.primary) : AnyShapeStyle(.tint))
             }
 
             Section("Acknowledgments") {

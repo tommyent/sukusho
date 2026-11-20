@@ -28,6 +28,7 @@ struct CaptureHotkeySettingsSection: View {
     @State private var systemAll: Set<HotkeyShortcut> = []
     /// macOS Dictation's shortcut, when it's a modifier key pressed twice.
     @State private var dictation: HotkeyShortcut?
+    @Environment(\.overGlassPicture) private var overGlassPicture
 
     /// This section's shortcuts that macOS's screenshot shortcuts also use.
     private var clashes: [SystemScreenshotShortcuts.Clash] {
@@ -188,7 +189,10 @@ struct CaptureHotkeySettingsSection: View {
                         .font(.system(size: 11, weight: .medium))
                         .padding(.horizontal, DS.Space.s)
                         .frame(minHeight: 21)
-                        .background(Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                        .background(
+                            overGlassPicture ? Color.primary.opacity(0.14) : Color.accentColor.opacity(0.18),
+                            in: RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        )
                 } else if let shortcut = shortcuts[action] {
                     HotkeyShortcutDisplay(shortcut: shortcut)
                 } else {

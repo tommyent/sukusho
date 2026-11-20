@@ -18,6 +18,7 @@ struct GeneralSettingsPane: View {
     @AppStorage(ShakeToUpload.enabledKey) private var shakeShelf = false
     @State private var launchAtLoginStatus = LaunchAtLoginController.status
     @State private var launchAtLoginError: String?
+    @Environment(\.overGlassPicture) private var overGlassPicture
 
     private var launchAtLoginBinding: Binding<Bool> {
         Binding(
@@ -117,7 +118,8 @@ struct GeneralSettingsPane: View {
     private func folderRow(_ title: String, directory: URL, path: Binding<String>) -> some View {
         LabeledContent(title) {
             HStack(spacing: DS.Space.m) {
-                Image(systemName: "folder.fill").foregroundStyle(.blue)
+                Image(systemName: "folder.fill")
+                    .foregroundStyle(overGlassPicture ? AnyShapeStyle(.secondary) : AnyShapeStyle(.blue))
                 Text(directory.abbreviatedPath)
                     .lineLimit(1).truncationMode(.middle).help(directory.path)
                 if !path.wrappedValue.isEmpty {

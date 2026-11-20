@@ -222,6 +222,11 @@ nonisolated extension AppTheme {
         dark ? .white(opacity: 0.72) : .rgb(0x000000, opacity: 0.62)
     }
 
+    /// Neutral tint for controls in Glass windows (switches, sliders) so they work on any picture colour.
+    static func glassControlTint(dark: Bool) -> ThemeColor {
+        dark ? .white(opacity: 0.36) : .rgb(0x000000, opacity: 0.44)
+    }
+
     static let builtIns = [classicLight, classicDark, chipLight, chipDark, glassLight, glassDark]
 
     static let lightKey = "appTheme.light"
