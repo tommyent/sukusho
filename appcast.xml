@@ -3,331 +3,83 @@
     <channel>
         <title>Sukusho</title>
         <item>
-            <title>1.3.0 beta 5</title>
-            <pubDate>Thu, 19 Nov 2026 08:19:45 -0500</pubDate>
+            <title>1.3.0</title>
+            <pubDate>Fri, 20 Nov 2026 00:06:27 -0500</pubDate>
             <link>https://tommyent.github.io/sukusho/</link>
             <sparkle:fullReleaseNotesLink>https://github.com/tommyent/sukusho/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:channel>beta</sparkle:channel>
-            <sparkle:version>32.261119.1316</sparkle:version>
-            <sparkle:shortVersionString>1.3.0 beta 5</sparkle:shortVersionString>
+            <sparkle:version>32.261120.0501</sparkle:version>
+            <sparkle:shortVersionString>1.3.0</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[# Sukusho 1.3.0 beta 5
+            <description sparkle:format="markdown"><![CDATA[# Sukusho 1.3.0
 
-This beta lets you drag captures out of the Library, point to a problem while recording a bug report, and correct spelling in a screenshot annotation. Open the DMG and drag Sukusho to Applications.
+Clipboard history, themes with a new card look called Chip, image optimizing, a new recording bar with markers for bug reports, captures you can drag out of the Library, and Sukusho on macOS 26. Open the DMG and drag Sukusho to Applications.
 
-**Getting this beta.** If you have an earlier 1.3.0 beta, turn on **Settings › About › Get beta updates** to receive beta 5. This setting starts on in a beta. From 1.2.0, download it here.
+Tested on macOS 26.5.1 and 27.3.
 
-## New since beta 4
+**Getting it:** Sukusho 1.2.0 offers this update by itself, or choose **Sukusho › Check for Updates…**. If you ran a 1.3.0 beta, you're offered it too. **Settings › About › Get beta updates** decides whether you're also offered later betas.
 
-### Drag captures out of the Library
+## Scrolling Capture is a beta
 
-Drag a screenshot or recording from the Library or Saved to Finder. A renamed capture uses its Library name. You can drag several selected cards together. If a recording has edits, Sukusho prepares the edited movie for the destination. Dropping it again leaves the existing file intact.
-
-### Mark a bug while recording
-
-Press **⌃⇧M** during a bug report to switch to **Markers**, then click to place a numbered marker. Use **Oval** to circle a detail or **Pen** to draw a smoother freehand line. Marks stay visible throughout a bug report until you remove them. In an ordinary recording, numbered markers stay and pen and oval marks fade.
-
-**Clear marks** removes all visible marks. **⌘Z** brings them back. The Agent Prompt gives each marker’s number, time, position and still image. When Accessibility supplies the name of the control you pointed to, the prompt includes it. Undo a misplaced marker within three seconds and it drops out of the prompt.
-
-### Check spelling in annotations
-
-Control-click an underlined word in a text annotation to choose a correction. Automatic corrections follow your macOS setting, and **⌘Z** undoes a correction. Spelling underlines stay out of the exported image.
-
-## Fixes
-
-The Agent Prompt identifies a recording of a window or a selected area so someone reading the report knows which part of the screen it shows.
-]]></description>
-            <enclosure url="https://github.com/tommyent/sukusho/releases/download/v1.3.0-beta.5/Sukusho-1.3.0-beta.5.dmg" length="22135600" type="application/octet-stream" sparkle:edSignature="oEQxwhYOjDaK/olV5h9tYOJ5xmWjZX+e7rZRSK2UpbWra3upwBqu2Lig8RceJ+WjHLY4cL5uq0+KWlwS7GQiBw=="/>
-        </item>
-        <item>
-            <title>1.3.0 beta 4</title>
-            <pubDate>Thu, 19 Nov 2026 04:27:56 -0500</pubDate>
-            <link>https://tommyent.github.io/sukusho/</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/tommyent/sukusho/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:channel>beta</sparkle:channel>
-            <sparkle:version>32.261119.0923</sparkle:version>
-            <sparkle:shortVersionString>1.3.0 beta 4</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[# Sukusho 1.3.0 beta 4
-
-The fourth beta of Sukusho 1.3.0: **⌘C** copies at once, a copy never lands on something you copied after it, Control-click opens the Library's menus, the area picker always shows its crosshair, and a new capture's text no longer waits to become searchable. Open the DMG and drag Sukusho to Applications.
-
-Tested on macOS 26.5.1 and 27.2.1.
-
-**Getting this beta:** with beta 1, 2 or 3 installed and **Settings › About › Get beta updates** on (it starts on in a beta), Sukusho offers beta 4 by itself. From 1.2.0, download it here.
-
-## New since beta 3
-
-### ⌘C copies at once
-- With **Settings › Optimize › Optimize when copying** on, **⌘C** in the editor used to wait until the smaller image was made, up to a few seconds for a large screenshot, before anything reached the clipboard. Now the image goes on the clipboard as soon as you press **⌘C**, and the editor closes. The smaller image, with the same pixels, takes its place when it's ready, while the clipboard still holds it. A paste in between gets the image as it is.
-- **Copy** on one capture in the Library and on a preview card, and the copy right after a capture, work the same way.
-- Clipboard history keeps one entry for the copy. It shows the smaller image, with the original kept as its earlier version.
-- Pressing **⌘C** again on the same image adds nothing, and doesn't make a second smaller copy.
-- **Copy Original** (**⇧⌘C**), and every copy with **Optimize when copying** off, copy the image as it is, as before.
-
-### A copy never lands on something newer
-- If you copy something else while Sukusho is still preparing a copy you asked for, here or in another app, your later copy stays on the clipboard, and Sukusho doesn't say Copied. This holds for **⌘C** in the editor while it saves your edits, for copying one or several items in the Library, and for **Copy** on a preview card or a pinned screenshot.
-
-## Fixes
-- **Control-click** on a Library card or list row opens its menu, as a right-click does, on every page. With several cards selected, the selection stays. Control-click on a card's **☆** opens the menu instead of moving the capture to Saved. In a rename field, Control-click opens the text menu, and on a Clipboard section title it opens the page's menu.
-- The area picker for **Area Screenshot**, **Capture Text** and **Video Area** sometimes showed the arrow instead of its bold crosshair when another app was in front. It now shows the crosshair from the moment it appears.
-- A new capture's text could wait to become searchable while Apple Intelligence was still titling another capture. Now text is read as captures arrive.
-  - A title that takes more than a minute is stopped. Titles that don't come through are tried again after five minutes, then less often, up to once an hour.
-  - Turning **Use Apple Intelligence for titles and tag suggestions** back on, or starting **Title and tag existing captures**, tries again at once.
-- When text recognition fails on an image, Sukusho tries its faster recognition before giving up. If neither can read the image, **Copy Text from Image** and **Capture Text** say "Text recognition failed" and leave the clipboard as it was. Shortcuts and agents get an error too.
-]]></description>
-            <enclosure url="https://github.com/tommyent/sukusho/releases/download/v1.3.0-beta.4/Sukusho-1.3.0-beta.4.dmg" length="22051452" type="application/octet-stream" sparkle:edSignature="XS8Nxx6WDP/UQDc/AcVhOauE188UdVcoKvDUjtUyVRApTlV+zquNEt8uS4+ISAumXma9CTXXfbI2vnbJrNH8BA=="/>
-        </item>
-        <item>
-            <title>1.3.0 beta 3</title>
-            <pubDate>Wed, 18 Nov 2026 22:04:40 -0500</pubDate>
-            <link>https://tommyent.github.io/sukusho/</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/tommyent/sukusho/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:channel>beta</sparkle:channel>
-            <sparkle:version>32.261119.0259</sparkle:version>
-            <sparkle:shortVersionString>1.3.0 beta 3</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[# Sukusho 1.3.0 beta 3
-
-The third beta of Sukusho 1.3.0: Library cards look like heavy card stock, with roomier and larger captions; clipboard text sits on a cool gray well with a plain kind symbol; and the notices at launch no longer hold anything up or pull Sukusho to the front. Open the DMG and drag Sukusho to Applications.
-
-Tested on macOS 26.5.1 and 27.2.1.
-
-**Getting this beta:** with beta 1 or beta 2 installed and **Settings › About › Get beta updates** on (it starts on in a beta), Sukusho offers beta 3 by itself. From 1.2.0, download it here.
-
-## New since beta 2
-
-### Library cards
-- Cards look like heavy card stock, with a lit top edge and a thin lip underneath. A card lifts a little under the pointer and sinks while you press it, and a selected card's lip takes the accent color along with its ring. This is on every page with cards: Captures, Clipboard, Snippets, Saved and Cloud.
-- The picture sits in a soft, shaded well.
-- The card's edges, padding and corners grow with the size slider, so large cards keep their proportions.
-- The caption has more room above it and at the sides, and its title and date are a point larger. Narrow cards show the time alone.
-- The gray **☆**, the orange draft dot and the Agent Prompt mark in the caption are raised like the app icon beside them.
-
-### Clipboard
-- Text, code, link, snippet and file cards sit on a cool gray well instead of the picture well. Images and colors keep the picture well.
-- Text, code and link clips are marked with a plain gray symbol (**Aa**, **</>** and a link) in the card's bottom-right corner, without the pill behind it. List rows and the clipboard popup use the same symbols. On cards, VoiceOver still says text, code or link.
-
-## Fixes
-- The notice about macOS's screenshot shortcuts held up clipboard history until you answered it. Now copies keep being recorded while it's open. **Return** gives the highlighted answer and **Escape** is **Not Now**. Closing it without an answer still brings it back at the next launch.
-- The notice that Sukusho hasn't been tested on your version of macOS opened off to one side and went behind the Library. It now opens in the middle of the screen and stays in front of Sukusho's windows.
-- The notices wait until Sukusho is in front. If you switch to another app right after opening Sukusho, Sukusho stays behind, and the notices show when you come back to it. While another app is in front, an open notice steps aside and comes back with Sukusho.
-- When both notices show at once, the second opens a little lower and to the right, so both can be seen.
-]]></description>
-            <enclosure url="https://github.com/tommyent/sukusho/releases/download/v1.3.0-beta.3/Sukusho-1.3.0-beta.3.dmg" length="22000713" type="application/octet-stream" sparkle:edSignature="BMrstmxC0jfTSZ1DJdM63Da82AUZR4vdSqK8pSJr7TYeozHl4KhKoyGOK8jntusKytmy5x2HEJFD74a9ITSXDA=="/>
-        </item>
-        <item>
-            <title>1.3.0 beta 2</title>
-            <pubDate>Wed, 18 Nov 2026 17:12:37 -0500</pubDate>
-            <link>https://tommyent.github.io/sukusho/</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/tommyent/sukusho/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:channel>beta</sparkle:channel>
-            <sparkle:version>32.261118.2209</sparkle:version>
-            <sparkle:shortVersionString>1.3.0 beta 2</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[# Sukusho 1.3.0 beta 2
-
-The second beta of Sukusho 1.3.0: Saved works as an archive, clipboard pictures keep their own copy, the Library selects, copies and previews the same way on every page, cards have a new layout, and shortcuts can be a modifier key on its own. Open the DMG and drag Sukusho to Applications.
-
-Tested on macOS 26.5.1 and 27.2.1.
-
-**Getting this beta:** with beta 1 installed and **Settings › About › Get beta updates** on (it starts on in a beta), Sukusho offers beta 2 by itself. From 1.2.0, download it here.
-
-## Before you update: what the first launch does
-- **A one-time copy of clipboard pictures.** In beta 1, an image in clipboard history that came from a screenshot was the screenshot file itself. The first time beta 2 opens, it copies each of those pictures into clipboard history, once. This takes extra disk space, about the size of those screenshots. The copies don't count toward the history's size limit, so the upgrade doesn't make its clean-up remove anything. A clip whose screenshot was already deleted can't be copied, and stays in history without a picture.
-- **Saved now works as an archive** (below). Captures beta 1 put in Saved only because you shared them to Cloud leave Saved; they stay in the Library and keep their links. Captures you saved yourself stay saved.
-- Snippets beta 1 let you pin stay in **Snippets**, not Saved.
-
-## New since beta 1
-
-### Saved is an archive
-- **Move to Saved** takes a capture or clip out of All Captures, Screenshots, Recordings and Clipboard and keeps it in **Library › Saved**, where clipboard history's clean-up never removes it. It works on several items at once.
-- The gray **☆** at the end of a card's caption moves that one card to Saved in one click.
-- **⌘Z** undoes Move to Saved, and **⇧⌘Z** redoes it.
-- Only Move to Saved saves something now. Naming, tagging or sharing a capture no longer does.
-- In the clipboard popup, the **Saved** chip shows your saved clips, which you can search like the rest, and **⌘.** moves the selected clip to Saved.
-
-### Clipboard pictures are their own
-- A clip of a screenshot keeps its own copy of the picture. Deleting or editing the screenshot no longer changes or empties the clip.
-- Double-clicking an image clip opens it in the editor: its screenshot while that exists, otherwise a copy, which becomes a new screenshot when you save.
-- An image clip with no name or description is titled by its size, such as "1440 × 900". Pasted or dragged into Finder, it's a file named after it, such as "Image (1440 × 900).png".
-
-### Selecting, copying and Quick Look in the Library
-- Clipboard, Snippets and Saved select like Captures: **⌘-click**, **Shift-click**, drag a rectangle, or **⌘A**.
-- **⌘C** and **Edit › Copy** work on every page, and copy every selected item, in order.
-- Several clips can be shared, exported or shared to Cloud together.
-- **Quick Look** (Space) follows the selection on every page, and the arrow keys step through it.
-- **Return** renames a capture or snippet, opens an image clip in the editor, copies other clips, opens a Cloud item's page, and downloads a received file.
-- Deleting asks first, with **Cancel** as the default, in the Library and in the popup (**⌃X** and **⌘Delete**). A capture moved to the Trash keeps its Cloud link.
-- Context menus list what the selection can do, and saved captures get the full capture menu.
-- Every card page shares one **Grid** or **List** choice; List hides the size slider. **⌘R** refreshes the page you're on.
-- A search or filter with no results says so and offers **Clear Filters**.
-
-### Library cards
-- The picture is the same height on every page, with the card's marks in its four corners.
-- Every card has a two-line caption: what it is, then the app it came from and the date.
-- Text, code and link clips are marked with a symbol (**Aa**, **</>** and a link) instead of a word. VoiceOver still says text, code or link.
-- In dark mode, that symbol is light on a dark gray pill.
-- Clicking a card's cloud mark to copy its link shows **Link Copied** at the bottom of the Library.
-- On narrow cards, the less important marks make room first, and titles end with "…".
-- Shell scripts and JSON show as code, and tall clipboard images get the scrolling badge, as screenshots do.
-
-### Shortcuts
-- A shortcut can be **any one modifier with a key** (⌥1, ⌃X, ⇧A), or **F1 to F20** on its own. When it also types a character, Settings says so under its row.
-- A shortcut can be **a modifier key on its own**, tapped once (**Right ⌥**) or twice (**⌥ ⌥**, **⌘ ⌘**). To record one, click the shortcut, wait a moment with no key held, then tap. Menus show it after the title, as in **Capture Area (Right ⌥)**.
-- A modifier key on its own needs **Input Monitoring**, so Sukusho can notice it in other apps; it never records what you type. Settings says when it's missing, opens the right place in System Settings, and offers **Relaunch Sukusho**, since macOS applies the permission only after a relaunch.
-- A double tap that also starts macOS Dictation says so under its row.
-- While you record a shortcut, the others pause, so a shortcut that's already in use shows which action has it instead of running.
-
-### Clipboard popup
-- **⌘1** to **⌘0** paste the first ten clips shown, in the order you see them.
-- The popup follows **Settings › General › Include Sukusho windows in captures** in Sukusho's own screenshots and recordings, like Sukusho's other windows.
-- The empty Snippets page names your own shortcut for the popup.
-
-### Settings and Studio
-- **Settings › General** lets you choose a folder for videos.
-- Uploading to Cloud after a capture stays off, and says why, until Cloud is set up.
-- The Cloud setup video says when it can't load, with **Retry**, and the steps still work offline.
-- Apps without an icon get a stand-in in the ignored-apps list, and long version numbers wrap.
-- Studio's first window fits the screen, inspector included.
-
-## Fixes
-- Copy was unavailable for a selected clip in the Library.
-- Double-clicking an older clip moved it to the top of the history.
-- Quick Look kept showing an earlier item after the selection changed.
-- Recording a shortcut that was already in use ran that shortcut.
-- The notice about macOS's screenshot shortcuts counted as answered when it was closed without an answer. It now comes back at the next launch, names the actions that kept their keys, and **Open Keyboard Shortcuts…** opens Keyboard Shortcuts, where you choose Screenshots on the left.
-- The notice that Sukusho hasn't been tested on your version of macOS held up clipboard history and the Library's Copy until you closed it. Now everything keeps working while it's open, and macOS 26.5.1 no longer gets it.
-]]></description>
-            <enclosure url="https://github.com/tommyent/sukusho/releases/download/v1.3.0-beta.2/Sukusho-1.3.0-beta.2.dmg" length="21945989" type="application/octet-stream" sparkle:edSignature="hLDgNXS2JOE08vXAYPF+XT2If5ADmDo9LsbX3hWGTdZ8kjIORsJY+yvKIoDO872wsnmQLpVaLGWnSDYy+RzTCw=="/>
-        </item>
-        <item>
-            <title>1.3.0 beta 1</title>
-            <pubDate>Tue, 17 Nov 2026 16:13:49 -0500</pubDate>
-            <link>https://tommyent.github.io/sukusho/</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/tommyent/sukusho/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:channel>beta</sparkle:channel>
-            <sparkle:version>32.261117.2109</sparkle:version>
-            <sparkle:shortVersionString>1.3.0 beta 1</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>26.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[# Sukusho 1.3.0 beta 1
-
-The first beta of Sukusho 1.3.0: clipboard history, image optimizing, a new recording bar, and Sukusho on macOS 26. Open the DMG and drag Sukusho to Applications.
-
-Tested on macOS 26.5.1 and 27.2.1.
-
-**Getting later betas:** 1.2.0 has no beta switch, so this beta comes only as a download. Once it's installed, Sukusho offers you the next betas by itself: **Settings › About › Get beta updates** starts on in a beta. Turn it off to be offered only regular releases.
+Scrolling Capture is marked **Beta** in the Capture menu, the menu bar menu and **Settings › Shortcuts**. It works for many pages, with known limits: auto-scroll may not stop at the end of a page, sticky sidebars and scrolling areas inside a page can stitch poorly, and scrolling with **Page Down** captures nothing, so scroll with the trackpad or mouse.
 
 ## New since 1.2.0
 
+### Themes and Chip
+- **Settings › Appearance** is a new pane. **Mode** chooses System, Light or Dark. **Light theme** and **Dark theme** each choose a look for that appearance. The **Workspace** background (Dots, Plain or a wallpaper, with Dim and Blur) moved here from General.
+- **Chip** is a new look for Library cards, in Light and Dark: a square, flat card with the picture set in from the top and sides, like a paint chip, a fine line under the picture, and a label strip with a subtle paper grain. It keeps Classic's colors and drop shadow. Pick it in **Settings › Appearance**.
+- **Classic**, the look of the betas, stays the default. Library cards look like heavy card stock, with a lit top edge and a thin lip, and lift a little under the pointer.
+
 ### Clipboard history and the Library
 - **Clipboard history** keeps what you copy: text, links, colors, images and files. It's off until you turn it on in **Settings › Clipboard**, which walks you through setup and lets you choose apps whose copies are ignored. Copies that apps mark as private or temporary are never kept.
-- **⌃⌘V** opens a popup to search your history and paste. **⌘1** to **⌘0** paste your saved clips, and **Actions** (⌘K) has the rest. Clipboard History is also in the menu bar menu.
-- The Library has a **Clipboard** section, with **History** and **Snippets**, in a grid or a list. Images get a title and keywords, read on your Mac, and can be opened in the editor, optimized or converted.
-- When another app, or Sukusho's own Optimize, puts a smaller copy of an image back on the clipboard, it becomes the newest version of the same card, and the original is kept beside it.
-- **Save (★)** keeps a capture or a clip in **Library › Saved**, out of reach of the history's clean-up. Captures you named, tagged or shared before are saved for you.
-- Captures are titled by app and window, and Quick Look follows your selection.
-- Settings has new **Shortcuts**, **Library** and **Clipboard** panes. **Show Library** has a shortcut that works anywhere.
-- New default shortcuts: **Screen Recording** is **⇧⌘5** and **Capture Text** **⇧⌘O**. A shortcut you set yourself stays as it is; only the ones you never changed follow the new defaults. **Settings › Shortcuts** lists them in order: ⇧⌘1 to ⇧⌘5, then O, L and V.
-- **⇧⌘3**, **⇧⌘4** and **⇧⌘5** are also macOS's screenshot shortcuts. Sukusho says so once at launch and in **Settings › Shortcuts**, with two ways out. **Use Other Keys** moves them to **⌥⇧⌘3**, **⌥⇧⌘4** and **⌥⇧⌘5**, or to **⌃⌥⌘** with the same number when those are taken, and shows them in Settings to change if you like; a shortcut with no free key stays as it is. **Open Keyboard Shortcuts…** opens macOS's Keyboard settings, where **Keyboard Shortcuts… › Screenshots** turns macOS's off so Sukusho keeps the keys.
-- Library cards have a new look: the picture sits as a raised chip on the card, with the title and date below it, and each capture shows the icon of the app it came from.
+- **⌃⌘V** opens a popup to search your history and paste. **⌘1** to **⌘0** paste the first ten clips shown, and **Actions** (⌘K) has the rest.
+- The Library has a **Clipboard** section, with **History** and **Snippets**, in a grid or a list. Images get a title and keywords, read on your Mac.
+- **Move to Saved** (or the gray **☆** on a card) keeps a capture or clip in **Library › Saved**, where clipboard history's clean-up never removes it. **⌘Z** undoes it.
+- Clipboard, Snippets and Saved select, copy and preview like Captures: **⌘-click**, **Shift-click**, drag a rectangle or **⌘A**; **⌘C** copies every selected item; **Quick Look** (Space) follows the selection. **Control-click** opens a card's menu.
+- **Drag captures out:** drag a screenshot or recording from the Library or Saved to Finder or another app, one or several at a time. A renamed capture uses its Library name, and an edited recording arrives with its edits.
+- Captures are titled by app and window, and each card shows the icon of the app it came from.
 
 ### Screenshots and the editor
 - **Area screenshots** use Sukusho's own picker: hold **Shift** to snap to a box on screen, or **Option** for a loupe.
-- Preview cards close after 10 seconds by default, overlap instead of piling up, and stay while the pointer is over any of them.
-- **Text** is sized by its handles, with a size badge and snapping. New text gets a light halo so it reads over busy screenshots, and **⌘⌥+** and **⌘⌥−** resize it.
-- Tool options sit in one place at the top of the inspector, under the tool's name. **Crop** takes over the inspector while you crop.
-- **Numbered circles** can have a short tail. The magnifier comes in circle, rectangle and rounded-square shapes.
-- A drawing tool stays selected after each annotation; **Escape** returns to Select.
-- A **Transparent** background keeps padding, corners and shadow.
-- **Scrolling Capture** shows a live preview strip, **Space** starts and pauses auto-scroll, and pinned sidebars and window edges stitch more cleanly.
+- Preview cards close after 10 seconds by default, overlap instead of piling up, and stay while the pointer is over them.
+- **Text** annotations are sized by their handles, get a light halo so they read over busy screenshots, and check spelling: Control-click an underlined word to choose a correction.
+- Tool options sit at the top of the inspector. **Numbered circles** can have a short tail, the magnifier comes in three shapes, and a **Transparent** background keeps padding, corners and shadow.
+- **⌘C** copies at once, and a copy never lands on something you copied after it.
 
-### Recording bar and Studio
-- The recording bar has a new look: what's on is lit, the countdown shows in the bar, red means recording and amber means paused. The microphone and system-audio chips show their levels during a take.
+### Recording, Studio and bug reports
+- The recording bar has a new look: the countdown shows in the bar, red means recording and amber means paused, and the microphone and system-audio chips show their levels.
 - **Area recordings** wait for **Record**, so you can move and resize the area first.
-- Recordings start with no background, as screenshots do, and are captured at even sizes.
-- Studio's inspector works like the image editor's: sections are switches or always open, and what isn't available says what unlocks it.
-- Export doesn't offer **Include audio** for a recording with no sound.
-- Videos are saved to **~/Movies/Sukusho**; images stay in Pictures.
+- **Mark a bug while recording:** press **⌃⇧M** in a bug report to place numbered markers, circle a detail with **Oval** or draw with **Pen**. The Agent Prompt lists each marker's number, time, position and still image.
+- Videos are saved to **~/Movies/Sukusho**, or a folder you choose in **Settings › General**.
 
 ### Capture Text
-- Lines the screen wrapped are joined into paragraphs, with hyphens kept. Turn on **Settings › Screenshots › Keep line breaks in Capture Text** to keep every line.
-- Tables and lists keep their shape, and text captured on a non-Retina screen is read at twice its size.
-- Capture Text uses Sukusho's area picker, and says what it copied.
+- Lines the screen wrapped are joined into paragraphs. Turn on **Settings › Screenshots › Keep line breaks in Capture Text** to keep every line.
+- Tables and lists keep their shape, and text on a non-Retina screen is read at twice its size.
 
 ### Image optimizing and the shelf
 - **Optimize** makes screenshots smaller without changing a pixel, using oxipng, libwebp and MozJPEG, included in the app. **Convert to WebP…** and **Convert to JPEG…** make a smaller copy in another format.
-- In **Settings › Optimize**, new captures are optimized in the background, copies are optimized as they're made, and shares to Cloud are optimized before upload. **⇧⌘C** copies the original.
-- The copy made right after a capture doesn't wait: the original goes on the clipboard at once, and the smaller copy takes its place when it's ready.
-- **The shelf:** shake the pointer while dragging files from Finder or the Desktop, then drop them on the shelf to optimize, convert or share them.
+- **Settings › Optimize** can optimize new captures in the background, copies as they're made, and shares to Cloud before upload. **⇧⌘C** copies the original.
+- **The shelf:** shake the pointer while dragging files from Finder, then drop them on the shelf to optimize, convert or share them.
+
+### Shortcuts
+- **Settings › Shortcuts** lists every shortcut in order. New defaults: **Screen Recording** is **⇧⌘5** and **Capture Text** **⇧⌘O**; shortcuts you set yourself stay as they are.
+- **⇧⌘3**, **⇧⌘4** and **⇧⌘5** are also macOS's screenshot shortcuts. Sukusho says so, and offers **Use Other Keys** or **Open Keyboard Shortcuts…** to turn macOS's off.
+- A shortcut can be any one modifier with a key, **F1** to **F20** on its own, or a modifier key tapped once or twice, such as **Right ⌥** or **⌘ ⌘**.
 
 ### Privacy of Sukusho's windows
-- **Settings › General › Include Sukusho windows in captures** decides whether preview cards, the recording bar, editors and Studio appear in Sukusho's own screenshots and recordings. Other apps and screen sharing see them either way.
-- The clipboard popup is always left out of Sukusho's own captures, including a recording that's already running, and Sukusho asks macOS to hide it from other apps too.
-- Pinned screenshots follow the same setting.
+- **Settings › General › Include Sukusho windows in captures** decides whether preview cards, the recording bar, editors and Studio appear in Sukusho's own screenshots and recordings.
+- The clipboard popup is always left out of Sukusho's own captures, and Sukusho asks macOS to hide it from other apps too.
 
-### Updates
-- **Settings › About › Get beta updates** offers betas as well as every regular release. It starts on in a beta and off in a regular release, and your own choice always stays.
-
-### macOS 26
+### Updates and macOS 26
+- **Settings › About › Get beta updates** offers betas as well as every regular release. It's off in a regular release, and your own choice stays.
 - Sukusho now opens on macOS 26. A notice at launch says some features may be missing there; **Don't show again** hides it for that macOS version.
 
 ## Fixes
 - Screenshots say so when Sukusho isn't allowed to record the screen.
+- The area picker always shows its crosshair, even when another app is in front.
+- A new capture's text becomes searchable right away, without waiting for Apple Intelligence to title another capture.
+- The notices at launch no longer hold up clipboard history or pull Sukusho in front of other apps.
 ]]></description>
-            <enclosure url="https://github.com/tommyent/sukusho/releases/download/v1.3.0-beta.1/Sukusho-1.3.0-beta.1.dmg" length="21677394" type="application/octet-stream" sparkle:edSignature="Y1gzvWLaV+gPGzqshJcGHAMZzClkUMHK2R/oprhZv7XoF+ET1Kt5PD3GBU1mtV3bETQkb4S7ZNVyLHpTCTOSAw=="/>
-        </item>
-        <item>
-            <title>1.2.0</title>
-            <pubDate>Mon, 09 Nov 2026 13:45:00 -0500</pubDate>
-            <link>https://tommyent.github.io/sukusho/</link>
-            <sparkle:fullReleaseNotesLink>https://github.com/tommyent/sukusho/releases</sparkle:fullReleaseNotesLink>
-            <sparkle:version>32.261109.1842</sparkle:version>
-            <sparkle:shortVersionString>1.2.0</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
-            <description sparkle:format="markdown"><![CDATA[# Sukusho 1.2.0
-
-The first Sukusho you can download: a signed, notarized app for macOS 27. Open the DMG and drag Sukusho to Applications.
-
-From this version, Sukusho can update itself. On its second launch it asks whether to check for updates automatically, and **Sukusho › Check for Updates…** checks at any time. **Settings › About › Updates** changes the answer later.
-
-Sharing needs your own Cloudflare Worker: deploy [sukusho-worker](https://github.com/tommyent/sukusho-worker) 2.1.0 or later, then add its URL and upload token in **Settings › Cloud**.
-
-## New since 1.1.0
-
-### Sharing
-- **Galleries:** share 2 to 100 screenshots behind one link, with a thumbnail page and a lightbox where each image keeps its own likes, comments and views.
-- **Files:** the Library's Files page shares files of any kind. Large files upload in parts.
-- **File requests:** a link someone can use to send you files, with an optional message, password, expiry and limits. What they send arrives on the Library's **Received** page.
-- **End-to-end encryption:** images and files of up to 32 MB are sealed on your Mac before upload, so the Worker stores a file it can't read.
-- **Shake to upload:** shake the pointer while dragging files from Finder to upload them from a small shelf.
-- **Draft Message:** Apple Intelligence writes a short note to send with a link, on your Mac, and the note and the link are copied together.
-
-### Recording and Studio
-- **Draw while recording** with the pen on the recording bar. Strokes replay in Studio, exports and shares.
-- **Bug Report** turns a recording into a walkthrough for a coding agent and a report for a person. **How-To Guide** writes the same moments as numbered steps.
-- **Background music** from your own file or the Free To Use library, lowered while you speak. **Isolate voice** cleans the microphone track.
-- **Redactions:** blur or pixelate a region for part of a recording.
-- **Remove Filler Words** and **Shorten Pauses** cut the "um"s and long silences from the transcript, with one Undo.
-- **Chapters**, named from what you said, with a jump list on the share page. **Summarize**, **Name Chapters** and **Translate Captions…** run on your Mac.
-- **Clean desktop** keeps desktop icons, the Dock and notification banners out of recordings. A level meter shows the microphone during a take.
-- Movie exports use HEVC by default; shares stay H.264.
-
-### Screenshots and the editor
-- A **Highlighter** pen, an opacity slider for annotation colours, and copy and paste of annotations.
-- Text labels can have a speech-bubble tail.
-- **File › Revert To** keeps the last five sessions in both editors.
-- **Scrolling Capture** auto-scrolls to the end of the page and saves by itself, and stitches pinned sidebars and repeating content more reliably.
-
-### Library
-- Search finds the words inside captures, read on your Mac, and `app:` keeps only captures taken in one app.
-- Apple Intelligence names untitled captures and suggests tags, on your Mac.
-- **Settings › General › Workspace** sets the appearance (Automatic, Light or Dark) and what sits behind your captures: dots, plain grey or a wallpaper.
-
-### Agents
-- **Agent access** (**Settings › Agents**, off by default) lets coding agents such as Claude Code or Codex add, find and share captures through Sukusho's own MCP server. Sukusho asks you before anything is shared, deleted or captured.
-]]></description>
-            <enclosure url="https://github.com/tommyent/sukusho/releases/download/v1.2.0/Sukusho-1.2.0.dmg" length="9650640" type="application/octet-stream" sparkle:edSignature="uj4A7T6MnuLj81qjqUhiQpwTi/seFRUqB3M48qkSozKBprkwvSCe8BApcynHKT8fKxD9PoH2WV0aEPbgSJq8CA=="/>
+            <enclosure url="https://github.com/tommyent/sukusho/releases/download/v1.3.0/Sukusho-1.3.0.dmg" length="22443629" type="application/octet-stream" sparkle:edSignature="JBpNRD8PqiGMA5EiTAlV1YrhlJM9oCGP7JfE3djU9joUuh+0IstGw9295gTqIC0Mfjl0gmHeshKfV+Cb8xa5Dg=="/>
         </item>
     </channel>
 </rss>
