@@ -109,18 +109,21 @@ struct CaptureLibraryView: View {
             libraryWindow = window
             model.savedUndoManager = window?.undoManager
             PreviewWindowCaptureExclusion.shared.register(window: window)
+            // Every theme: SwiftUI can open at the Library's previous minimum size despite the scene's default. Sized
+            // once as the window arrives (after SwiftUI's own sizing this turn), not on a later key event, which could
+            // come only after the user clicked away and back, and jump the window then.
+            if let window, !handledInitialWindowPlacement {
+                handledInitialWindowPlacement = true
+                DispatchQueue.main.async {
+                    guard let screen = (window.screen ?? NSScreen.main)?.visibleFrame else { return }
+                    let size = CGSize(width: min(1180, screen.width), height: min(760, screen.height))
+                    window.setFrame(CGRect(x: screen.midX - size.width / 2, y: screen.midY - size.height / 2,
+                                           width: size.width, height: size.height), display: true)
+                }
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
             if let window = notification.object as? NSWindow, window === libraryWindow {
-                if !handledInitialWindowPlacement {
-                    handledInitialWindowPlacement = true
-                    if floatingChrome, let screen = window.screen?.visibleFrame {
-                        // SwiftUI can open at the Library's previous minimum size despite the scene's default.
-                        let size = CGSize(width: min(1180, screen.width), height: min(760, screen.height))
-                        window.setFrame(CGRect(x: screen.midX - size.width / 2, y: screen.midY - size.height / 2,
-                                               width: size.width, height: size.height), display: true)
-                    }
-                }
                 model.refresh()
                 if cloud.isShown { cloud.refresh() }
                 // The sidebar's unread counts, whichever page is open. No timer: only here, on open and on ⌘R.
