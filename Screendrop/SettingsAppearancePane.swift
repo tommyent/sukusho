@@ -167,43 +167,53 @@ private struct WorkspaceWallpaperSettings: View {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            choose(try store.importWallpaper(from: url))
-        } catch {
-            addError = "Couldn't add the wallpaper: \(error.localizedDescription)"
+        Task {
+            do {
+                choose(try await store.importWallpaper(from: url))
+            } catch {
+                addError = "Couldn't add the wallpaper: \(error.localizedDescription)"
+            }
         }
     }
 }
 
 /// Glass's picture: the default (the desktop picture, or Sukusho's own while macOS would ask first), the wallpapers
-/// the workspace keeps, and Add…, which copies the picked file into Sukusho's folder so it stays when the original moves.
+/// the workspace keeps, and Add…. Every choice, a recent tile too, goes through `importWallpaper`, which copies a file
+/// from outside Sukusho's folder in, so the choice stays when the original moves. What's shown is resolved off the
+/// main thread, as the windows resolve it (`GlassPicture.resolve`).
 private struct GlassPictureSettings: View {
     @AppStorage(GlassPicture.pathKey) private var path = ""
     @Environment(\.colorScheme) private var colorScheme
     @State private var addError: String?
+    /// The default for this window's screen, and what Glass shows for the current choice.
+    @State private var resolved: (fallback: URL, shown: URL)?
+    @State private var host = WeakWindow()
+    @State private var windowChanges = 0
 
     private let store = AnnotationWallpaperStore.shared
     private let columns = Array(repeating: GridItem(.flexible(), spacing: DS.Space.s), count: 6)
 
     var body: some View {
+        let dark = colorScheme == .dark
         VStack(alignment: .leading, spacing: DS.Space.m) {
             SettingsControlLabel(
                 "Picture",
                 detail: "Behind Glass's frosted panes. By default your desktop picture, or Sukusho's own when macOS would ask before Sukusho reads yours."
             )
             LazyVGrid(columns: columns, spacing: DS.Space.s) {
-                let fallback = GlassPicture.desktopPicture() == nil
-                InspectorTile(title: fallback ? "Sukusho's" : "Desktop", aspectRatio: 1.35, isSelected: path.isEmpty) {
+                let own = resolved.map { $0.fallback == GlassPicture.ownPicture(dark: dark) } ?? true
+                InspectorTile(title: own ? "Sukusho's" : "Desktop", aspectRatio: 1.35, isSelected: path.isEmpty) {
                     path = ""
                 } content: {
-                    AnnotationCustomWallpaperPreview(wallpaper: AnnotationCustomWallpaper(url: GlassPicture.url(picked: "", dark: colorScheme == .dark)),
-                                                     maxPixelSize: 320)
+                    if let resolved {
+                        AnnotationCustomWallpaperPreview(wallpaper: AnnotationCustomWallpaper(url: resolved.fallback), maxPixelSize: 320)
+                    }
                 }
-                .accessibilityLabel(fallback ? "Sukusho's picture" : "Desktop picture")
+                .accessibilityLabel(own ? "Sukusho's picture" : "Desktop picture")
                 ForEach(store.recentWallpapers) { wallpaper in
                     InspectorTile(title: wallpaper.title, aspectRatio: 1.35,
                                   isSelected: wallpaper.url.standardizedFileURL.path == path) {
-                        path = wallpaper.url.standardizedFileURL.path
+                        choose(wallpaper.url)
                     } content: {
                         AnnotationCustomWallpaperPreview(wallpaper: wallpaper, maxPixelSize: 320)
                     }
@@ -213,16 +223,35 @@ private struct GlassPictureSettings: View {
                     .help("Add a picture")
                     .accessibilityLabel("Add Picture…")
             }
-            if let message = addError ?? missingMessage {
+            if let message = addError ?? unreadableMessage {
                 Text(message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
         }
+        .onWindowChange { host.window = $0; windowChanges += 1 }
+        .task(id: "\(path)#\(dark)#\(windowChanges)") {
+            let desktop = host.window?.screen.flatMap { NSWorkspace.shared.desktopImageURL(for: $0) }
+            let fallback = await GlassPicture.resolve(picked: "", desktop: desktop, dark: dark)
+            let shown = path.isEmpty ? fallback : await GlassPicture.resolve(picked: path, desktop: desktop, dark: dark)
+            if !Task.isCancelled { resolved = (fallback, shown) }
+        }
     }
 
-    /// The picked file is gone: Glass shows the default meanwhile.
-    private var missingMessage: String? {
-        path.isEmpty || FileManager.default.fileExists(atPath: path) ? nil
-            : "The chosen picture is gone, so Glass shows the default. Choose another."
+    /// The picked file is gone or doesn't decode: Glass shows the default meanwhile.
+    private var unreadableMessage: String? {
+        guard !path.isEmpty, let resolved, resolved.shown.path != path else { return nil }
+        return "The chosen picture can't be read, so Glass shows the default. Choose another."
+    }
+
+    /// Copied into Sukusho's folder first unless it's already there (`importWallpaper` keeps those as they are).
+    private func choose(_ url: URL) {
+        Task {
+            do {
+                path = try await store.importWallpaper(from: url).standardizedFileURL.path
+                addError = nil
+            } catch {
+                addError = "Couldn't use the picture: \(error.localizedDescription)"
+            }
+        }
     }
 
     private func add() {
@@ -233,12 +262,7 @@ private struct GlassPictureSettings: View {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            path = try store.importWallpaper(from: url).standardizedFileURL.path
-            addError = nil
-        } catch {
-            addError = "Couldn't add the picture: \(error.localizedDescription)"
-        }
+        choose(url)
     }
 }
 

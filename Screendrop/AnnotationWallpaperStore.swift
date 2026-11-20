@@ -75,17 +75,19 @@ final class AnnotationWallpaperStore {
 
     /// Copies a picked image into Sukusho's wallpapers folder, so it stays when
     /// the original moves or goes, and lists it. A file already in that
-    /// folder is listed as it is.
-    func importWallpaper(from url: URL) throws -> URL {
-        let file = try Self.copy(url, into: Self.wallpapersDirectory)
+    /// folder is listed as it is. The copy runs off the main thread: a big
+    /// picture on another volume takes a while.
+    func importWallpaper(from url: URL) async throws -> URL {
+        let directory = Self.wallpapersDirectory
+        let file = try await Task.detached(priority: .userInitiated) { try Self.copy(url, into: directory) }.value
         addRecentWallpaper(file)
         return file
     }
 
-    /// Every Add (Settings, the editor and Studio) keeps its own copy. If the
-    /// copy fails, the picked file is used where it is, as before copies.
+    /// The editor's and Studio's Add keeps its own copy too. If the copy
+    /// fails, the picked file is used where it is, as before copies.
     func addPickedWallpaper(_ url: URL) -> URL {
-        let file = (try? importWallpaper(from: url)) ?? url
+        let file = (try? Self.copy(url, into: Self.wallpapersDirectory)) ?? url
         addRecentWallpaper(file)
         return file
     }

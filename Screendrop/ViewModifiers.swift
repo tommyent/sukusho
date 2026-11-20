@@ -101,6 +101,9 @@ private final class WindowAccessorNSView: NSView {
     }
 }
 
+/// A view's own window, for its @State: held weakly, since the window holds the view.
+final class WeakWindow { weak var window: NSWindow? }
+
 extension View {
     /// Fires when this view's hosting NSWindow changes (attached or detached).
     func onWindowChange(_ onChange: @escaping (NSWindow?) -> Void) -> some View {

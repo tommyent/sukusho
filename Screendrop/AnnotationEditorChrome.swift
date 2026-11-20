@@ -171,23 +171,41 @@ struct AnnotationEditorWorkspaceBackground: View {
 }
 
 /// Glass's picture (`AppTheme.Ground.backdrop`) under a whole window: the Library, its popup and Settings, never the
-/// editor or Studio, which keep the Workspace setting. Reduce Transparency and Increase Contrast get the plain ground.
+/// editor or Studio, which keep the Workspace setting. Callers draw it only while it's drawn (`DrawnGlass`). The
+/// picture is resolved off the main thread (`GlassPicture.resolve`) for the window's own screen, and again when the
+/// window changes screen or Sukusho comes to the front, since the desktop picture may have changed meanwhile.
 struct GlassBackdrop: View {
     let backdrop: AppTheme.Backdrop
     @AppStorage(GlassPicture.pathKey) private var picked = ""
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @Environment(\.colorSchemeContrast) private var contrast
     @CurrentTheme private var theme
+    @State private var host = WeakWindow()
+    @State private var refresh = 0
+    @State private var url: URL?
+
+    private func refreshIfOwn(_ note: Notification) {
+        if let window = host.window, note.object as? NSWindow === window { refresh += 1 }
+    }
 
     var body: some View {
         let ground = theme.ground.workspace.color
         ZStack {
             Rectangle().fill(ground)
-            if !reduceTransparency && contrast != .increased {
-                WorkspaceWallpaper(url: GlassPicture.url(picked: picked, dark: colorScheme == .dark),
-                                   blur: backdrop.blur, dimming: ground.opacity(backdrop.dim))
+            if let url {
+                WorkspaceWallpaper(url: url, blur: backdrop.blur, dimming: ground.opacity(backdrop.dim),
+                                   dotsWhenUnreadable: false)
             }
+        }
+        .onWindowChange { host.window = $0; refresh += 1 }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeScreenNotification), perform: refreshIfOwn)
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification), perform: refreshIfOwn)
+        .task(id: "\(picked)#\(colorScheme == .dark)#\(refresh)") {
+            // Until the window is on a screen, which screen's picture to show isn't known (the main screen is the
+            // one with keyboard focus, perhaps another display's).
+            guard let screen = host.window?.screen else { return }
+            let desktop = NSWorkspace.shared.desktopImageURL(for: screen)
+            let resolved = await GlassPicture.resolve(picked: picked, desktop: desktop, dark: colorScheme == .dark)
+            if !Task.isCancelled, resolved != url { url = resolved }
         }
     }
 }
@@ -234,6 +252,9 @@ private struct WorkspaceWallpaper: View {
     /// In points; 0 draws the photo sharp.
     let blur: CGFloat
     let dimming: Color
+    /// The editor's Workspace shows Dots for a file it can't read; Glass, which has already fallen back
+    /// (`GlassPicture.resolve`), shows its plain ground.
+    var dotsWhenUnreadable = true
     private var blurred: Bool { blur > 0 }
 
     @Environment(\.displayScale) private var displayScale
@@ -247,7 +268,7 @@ private struct WorkspaceWallpaper: View {
                                                              height: proxy.size.height * displayScale))
             Group {
                 if failed {
-                    WorkspaceDots()
+                    if dotsWhenUnreadable { WorkspaceDots() }
                 } else if let image {
                     Image(decorative: image, scale: 1)
                         .resizable()

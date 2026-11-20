@@ -20,7 +20,8 @@ enum ScreenshotFileNaming {
     }
 
     /// `fileName` in `directory`, or the first free of `name_2`, `name_3`…
-    static func uniqueURL(
+    /// Nonisolated: a wallpaper's copy picks its name off the main thread.
+    nonisolated static func uniqueURL(
         for fileName: String,
         in directory: URL,
         reserved: Set<URL> = [],
