@@ -79,16 +79,17 @@ struct CaptureLibraryView: View {
     var body: some View {
         splitLayout
         .modifier(LibraryToolbarSeparator())
-        // Glass: no bar under the toolbar, so macOS's title sits on a glass pill, the inspector floats as a raised
-        // glass pane on macOS 26 and 27.2+, and on macOS 27.2+ the left sidebar floats too. The title field and split
-        // wrappers arrive a moment after the window, so a few tries.
+        // Glass: no bar under the toolbar, so macOS's title and window buttons sit on glass pills, the inspector
+        // floats as a raised glass pane on macOS 26 and 27.2+, and on macOS 27.2+ the left sidebar floats too. The
+        // title field, buttons and split wrappers arrive a moment after the window, so a few tries.
         .task(id: "\(title)#\(glass != nil)#\(columnVisibility)#\(inspectorVisible)#\(libraryWindow.map { ObjectIdentifier($0).hashValue } ?? 0)") {
             for _ in 0..<10 {
                 let plateDone = LibraryTitlePlate.update(libraryWindow, shown: glass != nil)
+                let buttonsDone = LibraryWindowButtonCapsule.update(libraryWindow, shown: glass != nil)
                 let sidebarDone = LibraryFloatingSidebar.update(
                     libraryWindow, floating: glass != nil, inspectorVisible: inspectorVisible
                 )
-                if plateDone && sidebarDone { break }
+                if plateDone && buttonsDone && sidebarDone { break }
                 try? await Task.sleep(for: .milliseconds(200))
                 if Task.isCancelled { break }
             }
@@ -935,6 +936,51 @@ enum LibraryTitlePlate {
                                      plate.trailingAnchor.constraint(equalTo: field.trailingAnchor, constant: 12),
                                      plate.topAnchor.constraint(equalTo: field.topAnchor, constant: -7),
                                      plate.bottomAnchor.constraint(equalTo: field.bottomAnchor, constant: 7)])
+        return true
+    }
+}
+
+/// Glass: a Liquid Glass capsule under macOS's own close, minimize and zoom buttons ("option A"), matching the title
+/// pill (`CapsuleGlassView`). The standard buttons stay untouched in the titlebar above it, so hover glyphs, the green
+/// button's menu, inactive dimming and VoiceOver/accessibility all stay native.
+enum LibraryWindowButtonCapsule {
+    private static let id = NSUserInterfaceItemIdentifier("LibraryWindowButtonCapsule")
+    private static let padding: CGFloat = 7
+
+    /// False while the standard window buttons aren't in the window frame and laid out yet.
+    static func update(_ window: NSWindow?, shown: Bool) -> Bool {
+        guard let window, let content = window.contentView, let frame = content.superview else { return true }
+        let existing = frame.subviews.filter { $0.identifier == id }
+        guard shown else {
+            existing.forEach { $0.removeFromSuperview() }
+            return true
+        }
+        guard let close = window.standardWindowButton(.closeButton),
+              let zoom = window.standardWindowButton(.zoomButton),
+              !close.isHidden, !zoom.isHidden,
+              close.frame.width > 0, zoom.frame.width > 0,
+              close.isDescendant(of: frame), zoom.isDescendant(of: frame) else {
+            existing.forEach { $0.removeFromSuperview() }
+            return false
+        }
+        if existing.count == 1, frame.constraints.contains(where: { $0.firstItem === existing[0] && $0.isActive }) {
+            return true
+        }
+        existing.forEach { $0.removeFromSuperview() }
+        var titlebar: NSView = close
+        while let up = titlebar.superview, up !== frame { titlebar = up }
+        let capsule = CapsuleGlassView()
+        capsule.identifier = id
+        capsule.style = .regular
+        capsule.cornerRadius = 14
+        capsule.translatesAutoresizingMaskIntoConstraints = false
+        frame.addSubview(capsule, positioned: .below, relativeTo: titlebar)
+        NSLayoutConstraint.activate([
+            capsule.leadingAnchor.constraint(equalTo: close.leadingAnchor, constant: -padding),
+            capsule.trailingAnchor.constraint(equalTo: zoom.trailingAnchor, constant: padding),
+            capsule.topAnchor.constraint(equalTo: close.topAnchor, constant: -padding),
+            capsule.bottomAnchor.constraint(equalTo: close.bottomAnchor, constant: padding),
+        ])
         return true
     }
 }
