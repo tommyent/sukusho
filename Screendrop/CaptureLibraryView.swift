@@ -232,7 +232,7 @@ struct CaptureLibraryView: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 8)
             }
-            .modifier(LibrarySidebarSurface())
+            .modifier(LibrarySidebarSurface(isSidebar: true))
         } detail: {
             VStack(spacing: 0) {
                 // Empty pages are only as tall as their message; fill the column anyway.
@@ -285,11 +285,13 @@ struct CaptureLibraryView: View {
         .navigationSplitViewStyle(.balanced)
         .modifier(LibraryToolbarSeparator())
         .toolbar { toolbar }
-        // Glass: no bar under the toolbar, so macOS's title would sit on the bare picture. The toolbar's title field
-        // comes a moment after the window, so a few tries.
-        .task(id: "\(title)#\(glass != nil)#\(libraryWindow.map { ObjectIdentifier($0).hashValue } ?? 0)") {
+        // Glass: no bar under the toolbar, so macOS's title sits on a glass pill, and on macOS 27.2+ the sidebar
+        // floats as a raised glass pane. The title field and split wrapper arrive a moment after the window, so a few tries.
+        .task(id: "\(title)#\(glass != nil)#\(columnVisibility)#\(libraryWindow.map { ObjectIdentifier($0).hashValue } ?? 0)") {
             for _ in 0..<10 {
-                if LibraryTitlePlate.update(libraryWindow, shown: glass != nil) { break }
+                let plateDone = LibraryTitlePlate.update(libraryWindow, shown: glass != nil)
+                let sidebarDone = LibraryFloatingSidebar.update(libraryWindow, floating: glass != nil)
+                if plateDone && sidebarDone { break }
                 try? await Task.sleep(for: .milliseconds(200))
                 if Task.isCancelled { break }
             }
@@ -805,16 +807,105 @@ enum LibraryTitlePlate {
     }
 }
 
+/// Glass on macOS 27.2+: AppKit flattened `NavigationSplitView`'s sidebar glass to an edge-to-edge strip (whereas
+/// macOS 26 already insets and rounds it). Float the Library's sidebar glass pane to match macOS 26 / Settings: inset
+/// from the window's edges, rounded corners, and a soft lift shadow, hiding the flat full-height split divider beside it.
+/// Classic, Chip, Reduce Transparency and Increase Contrast restore the flush layout untouched.
+enum LibraryFloatingSidebar {
+    private static let leadingInset: CGFloat = 8
+    private static let verticalInset: CGFloat = 8
+    private static let trailingInset: CGFloat = 4
+    private static let cornerRadius: CGFloat = 16
+
+    /// False while the sidebar glass wrapper isn't in the window and laid out yet.
+    static func update(_ window: NSWindow?, floating: Bool) -> Bool {
+        // ponytail: 27.2+ flattened NavigationSplitView's sidebar glass (26.x already floats it);
+        // drop this if a future macOS restores floating sidebars or exposes a public SwiftUI/AppKit opt-in.
+        guard #available(macOS 27.2, *) else { return true }
+        guard let content = window?.contentView else { return true }
+        guard let found = findSidebarGlass(in: content) else { return false }
+        if found.isCollapsed { return true }
+        guard found.wrapper.frame.width > 0 else { return false }
+        let (glass, wrapper, split) = (found.glass, found.wrapper, found.split)
+
+        let lead = floating ? leadingInset : 0
+        let vert = floating ? verticalInset : 0
+        let trail = floating ? trailingInset : 0
+        for constraint in wrapper.constraints {
+            guard constraint.firstItem === glass || constraint.secondItem === glass else { continue }
+            switch (constraint.firstAttribute, constraint.secondAttribute) {
+            case (.leading, .leading):
+                constraint.constant = (constraint.firstItem === glass) ? lead : -lead
+            case (.trailing, .trailing):
+                constraint.constant = (constraint.firstItem === glass) ? -trail : trail
+            case (.top, .top):
+                constraint.constant = (constraint.firstItem === glass) ? vert : -vert
+            case (.bottom, .bottom):
+                constraint.constant = (constraint.firstItem === glass) ? -vert : vert
+            case (.width, .width):
+                let horizontal = lead + trail
+                constraint.constant = (constraint.firstItem === glass) ? -horizontal : horizontal
+            default: break
+            }
+        }
+        glass.cornerRadius = floating ? cornerRadius : 0
+        if floating {
+            wrapper.clipsToBounds = false
+            glass.wantsLayer = true
+            let shadow = NSShadow()
+            shadow.shadowColor = NSColor.black.withAlphaComponent(0.22)
+            shadow.shadowBlurRadius = 14
+            shadow.shadowOffset = NSSize(width: 0, height: -2)
+            glass.shadow = shadow
+        } else {
+            glass.shadow = nil
+        }
+
+        // Hide the straight full-height divider and shadow strip along the sidebar's right edge while floating.
+        let edge = wrapper.frame.maxX
+        for sibling in split.subviews where sibling !== wrapper {
+            let name = NSStringFromClass(type(of: sibling))
+            guard (name.contains("Divider") || name.contains("Shadow")),
+                  abs(sibling.frame.minX - edge) <= 4 else { continue }
+            sibling.alphaValue = floating ? 0 : 1
+        }
+        return true
+    }
+
+    private static func findSidebarGlass(in root: NSView) -> (glass: NSGlassEffectView, wrapper: NSView, split: NSSplitView, isCollapsed: Bool)? {
+        if let split = root as? NSSplitView,
+           let controller = split.delegate as? NSSplitViewController,
+           let sidebarItem = controller.splitViewItems.first(where: { $0.behavior == .sidebar }) {
+            var current: NSView? = sidebarItem.viewController.view
+            while let view = current, view !== split {
+                if let glass = view as? NSGlassEffectView, let wrapper = glass.superview {
+                    return (glass, wrapper, split, sidebarItem.isCollapsed)
+                }
+                current = view.superview
+            }
+        }
+        for subview in root.subviews {
+            if let found = findSidebarGlass(in: subview) { return found }
+        }
+        return nil
+    }
+}
+
 /// The editor's chrome colour behind a sidebar or inspector column, so the
 /// columns and the toolbar read as one flat surface.
 /// Glass paints nothing here: macOS's own sidebar glass shows over the theme's picture.
 private struct LibrarySidebarSurface: ViewModifier {
+    var isSidebar = false
     @DrawnGlass private var glass
 
     @ViewBuilder
     func body(content: Content) -> some View {
         if glass != nil {
-            content
+            if isSidebar {
+                content.scrollEdgeEffectStyle(.soft, for: .all)
+            } else {
+                content
+            }
         } else {
             content
                 .scrollContentBackground(.hidden)
@@ -853,6 +944,7 @@ private struct LibraryColumnSeparators: ViewModifier {
     let leading: Bool
     let trailing: Bool
     @Environment(\.displayScale) private var displayScale
+    @DrawnGlass private var glass
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -862,7 +954,7 @@ private struct LibraryColumnSeparators: ViewModifier {
             content
         } else {
             content
-                .overlay(alignment: .leading) { if leading { line } }
+                .overlay(alignment: .leading) { if leading && glass == nil { line } }
                 .overlay(alignment: .trailing) { if trailing { line } }
         }
     }
@@ -878,10 +970,18 @@ private struct LibraryColumnSeparators: ViewModifier {
 
 /// The system's line under the toolbar, the one the editor shows. With the
 /// toolbar background visible it runs over the browser and inspector; a hard
-/// top scroll edge turns it on over the sidebar too.
+/// top scroll edge turns it on over the sidebar too. Glass hides the toolbar
+/// bar and floats the sidebar, so it leaves the scroll edge soft.
 private struct LibraryToolbarSeparator: ViewModifier {
+    @DrawnGlass private var glass
+
+    @ViewBuilder
     func body(content: Content) -> some View {
-        content.scrollEdgeEffectStyle(.hard, for: .top)
+        if glass != nil {
+            content
+        } else {
+            content.scrollEdgeEffectStyle(.hard, for: .top)
+        }
     }
 }
 
