@@ -85,9 +85,19 @@ enum GlassPicture {
 }
 
 /// A picture choice in Settings (Glass's, and the workspace wallpaper's): picks overlap while a slow copy runs, and
-/// only the latest lands, so an earlier copy that finishes late can't undo a newer choice, Default included.
+/// only the latest lands, so an earlier copy that finishes late can't undo a newer choice, Default included. One per
+/// preference (`for`), kept for the app's life: a picker left and opened again picks with the same one.
 final class LatestPick {
     private var latest = 0
+    private static var byPreference: [String: LatestPick] = [:]
+
+    /// The one for a preference's key.
+    static func `for`(_ key: String) -> LatestPick {
+        if let pick = byPreference[key] { return pick }
+        let pick = LatestPick()
+        byPreference[key] = pick
+        return pick
+    }
 
     /// `apply` gets the imported file's path, or `failed` the error, only while this is still the latest pick.
     /// No URL is a choice too (Glass's Default), applied at once as "".

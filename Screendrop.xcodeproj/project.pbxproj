@@ -148,6 +148,7 @@
 		7E3E00000000000000000001 /* Screendrop/AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E3E00000000000000000002 /* Screendrop/AppTheme.swift */; };
 		7E3E00000000000000000003 /* Screendrop/ThemeTuning.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E3E00000000000000000004 /* Screendrop/ThemeTuning.swift */; };
 		7E3E00000000000000000007 /* Screendrop/GlassPicture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E3E00000000000000000008 /* Screendrop/GlassPicture.swift */; };
+		7E3E00000000000000000011 /* Screendrop/StatusSuccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E3E00000000000000000012 /* Screendrop/StatusSuccess.swift */; };
 		7E3E00000000000000000005 /* Screendrop/GlassTuning.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E3E00000000000000000006 /* Screendrop/GlassTuning.swift */; };
 		C11C00000000000000000001 /* Screendrop/IconLightness.swift in Sources */ = {isa = PBXBuildFile; fileRef = C11C00000000000000000002 /* Screendrop/IconLightness.swift */; };
 		C11B0000000000000000000F /* Screendrop/LibraryArchive.swift in Sources */ = {isa = PBXBuildFile; fileRef = C11B00000000000000000010 /* Screendrop/LibraryArchive.swift */; };
@@ -365,6 +366,7 @@
 		7E3E00000000000000000002 /* Screendrop/AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/AppTheme.swift; sourceTree = SOURCE_ROOT; };
 		7E3E00000000000000000004 /* Screendrop/ThemeTuning.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ThemeTuning.swift; sourceTree = SOURCE_ROOT; };
 		7E3E00000000000000000008 /* Screendrop/GlassPicture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/GlassPicture.swift; sourceTree = SOURCE_ROOT; };
+		7E3E00000000000000000012 /* Screendrop/StatusSuccess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/StatusSuccess.swift; sourceTree = SOURCE_ROOT; };
 		7E3E00000000000000000006 /* Screendrop/GlassTuning.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/GlassTuning.swift; sourceTree = SOURCE_ROOT; };
 		C11C00000000000000000002 /* Screendrop/IconLightness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/IconLightness.swift; sourceTree = SOURCE_ROOT; };
 		C11B00000000000000000010 /* Screendrop/LibraryArchive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/LibraryArchive.swift; sourceTree = SOURCE_ROOT; };
@@ -627,6 +629,7 @@
 				7E3E00000000000000000002 /* Screendrop/AppTheme.swift */,
 				7E3E00000000000000000004 /* Screendrop/ThemeTuning.swift */,
 				7E3E00000000000000000008 /* Screendrop/GlassPicture.swift */,
+				7E3E00000000000000000012 /* Screendrop/StatusSuccess.swift */,
 				7E3E00000000000000000006 /* Screendrop/GlassTuning.swift */,
 				C11C00000000000000000002 /* Screendrop/IconLightness.swift */,
 				C11B00000000000000000010 /* Screendrop/LibraryArchive.swift */,
@@ -932,6 +935,7 @@
 				7E3E00000000000000000001 /* Screendrop/AppTheme.swift in Sources */,
 				7E3E00000000000000000003 /* Screendrop/ThemeTuning.swift in Sources */,
 				7E3E00000000000000000007 /* Screendrop/GlassPicture.swift in Sources */,
+				7E3E00000000000000000011 /* Screendrop/StatusSuccess.swift in Sources */,
 				7E3E00000000000000000005 /* Screendrop/GlassTuning.swift in Sources */,
 				C11C00000000000000000001 /* Screendrop/IconLightness.swift in Sources */,
 				C11B0000000000000000000F /* Screendrop/LibraryArchive.swift in Sources */,

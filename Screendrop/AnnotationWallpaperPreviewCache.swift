@@ -60,14 +60,15 @@ actor AnnotationWallpaperPreviewCache {
         "\(url.standardizedFileURL.path)#\(Int(maxPixelSize.rounded(.up)))#\(fileSignature(for: url))"
     }
 
+    /// The file's number as well as its size and date: a picture replaced by another of the same length and date
+    /// is another file. Read from the file system each time (a URL's resource values are cached).
     private static func fileSignature(for url: URL) -> String {
-        guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) else {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.resolvingSymlinksInPath().path) else {
             return "unknown"
         }
 
-        let fileSize = values.fileSize ?? 0
-        let modified = values.contentModificationDate?.timeIntervalSince1970 ?? 0
-        return "\(fileSize)-\(modified)"
+        let modified = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        return "\(attributes[.systemFileNumber] ?? 0)-\(attributes[.size] ?? 0)-\(modified)"
     }
 
     /// A separate actor bounds thumbnail decoding to one image at a time.

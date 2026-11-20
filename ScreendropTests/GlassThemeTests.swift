@@ -1,5 +1,6 @@
 import AppKit
 import ImageIO
+import SwiftUI
 import Testing
 import UniformTypeIdentifiers
 
@@ -154,6 +155,99 @@ struct GlassThemeTests {
         let outward = wallpapers.appendingPathComponent("outward.png")
         try FileManager.default.createSymbolicLink(at: outward, withDestinationURL: elsewhere.appendingPathComponent("moved.png"))
         #expect(try AnnotationWallpaperStore.copy(outward, into: wallpapers) != outward.standardizedFileURL)
+        // A link from outside to a picture already in Sukusho's folder gives that picture, not the link (Astra 3-L6).
+        let pointer = elsewhere.appendingPathComponent("pointer.png")
+        try FileManager.default.createSymbolicLink(at: pointer, withDestinationURL: chosen)
+        let reused = try AnnotationWallpaperStore.copy(pointer, into: wallpapers)
+        #expect(reused == chosen.standardizedFileURL)
+        try FileManager.default.moveItem(at: pointer, to: elsewhere.appendingPathComponent("pointer-moved.png"))
+        #expect(GlassPicture.decodes(reused))
+    }
+
+    /// Recents added at once all stay in the saved list, and the newest list holds them all (Astra 3).
+    @Test func recentsAddedAtOnceAllStay() async throws {
+        let folder = try temporaryFolder()
+        let suite = "GlassThemeTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var files: [URL] = []
+        for i in 0..<16 {
+            let from = folder.appendingPathComponent("from-\(i)")
+            try FileManager.default.createDirectory(at: from, withIntermediateDirectories: true)
+            files.append(try picture(white: CGFloat(i) / 16, in: from))
+        }
+        let lists = await withTaskGroup(of: AnnotationWallpaperStore.RecentList?.self) { group in
+            for file in files { group.addTask { AnnotationWallpaperStore.recentPaths(adding: file, in: defaults) } }
+            return await group.reduce(into: [AnnotationWallpaperStore.RecentList]()) { if let list = $1 { $0.append(list) } }
+        }
+        let saved = Set(defaults.stringArray(forKey: "annotationBackground.recentWallpaperPaths") ?? [])
+        #expect(saved == Set(files.map(\.standardizedFileURL.path)))
+        #expect(Set(try #require(lists.max { $0.revision < $1.revision }).paths) == saved)
+    }
+
+    /// A cached picture replaced by another of the same length and date is decoded again (Astra 3-M3).
+    @Test func aCachedPictureReplacedAtTheSamePathIsDecodedAgain() async throws {
+        let folder = try temporaryFolder(), other = try temporaryFolder()
+        let url = try flatTIFF(red: 1, blue: 0, in: folder), blue = try flatTIFF(red: 0, blue: 1, in: other)
+        let size = { (url: URL) in try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int }
+        try #require(try size(url) == size(blue))
+        // A whole second, so both files' dates are exactly the same.
+        let date = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: url.path)
+        let lease = AnnotationWallpaperPreviewCache.beginUse()
+        defer { _ = lease }
+        let first = try #require(await AnnotationWallpaperPreviewCache.shared.image(for: url, maxPixelSize: 16))
+        #expect(centre(of: first).red > 0.9)
+        _ = try FileManager.default.replaceItemAt(url, withItemAt: blue)
+        try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: url.path)
+        let second = try #require(await AnnotationWallpaperPreviewCache.shared.image(for: url, maxPixelSize: 16))
+        #expect(centre(of: second).blue > 0.9)
+    }
+
+    /// The bar's words take the primary ink under its own secondary style (Astra 3-7); only the mark is green.
+    @Test @MainActor func successWordsOnGlassTakeThePrimaryInk() throws {
+        let view = HStack { StatusSuccess(title: "Copied", systemImage: "checkmark.circle.fill", onGlass: true) }
+            .foregroundStyle(.secondary)   // as the status bar sets it
+            .font(.system(size: 24, weight: .heavy))
+            .padding(8)
+            .background(Color.white)
+            .environment(\.colorScheme, .light)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 2
+        let image = try #require(renderer.cgImage)
+        let context = try #require(CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8,
+                                             bytesPerRow: image.width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        let bytes = try #require(context.data).bindMemory(to: UInt8.self, capacity: image.width * image.height * 4)
+        var darkestGrey = 255
+        for i in stride(from: 0, to: image.width * image.height * 4, by: 4) {
+            let (r, g, b) = (Int(bytes[i]), Int(bytes[i + 1]), Int(bytes[i + 2]))
+            if abs(r - g) < 8 && abs(g - b) < 8 { darkestGrey = min(darkestGrey, r) }
+        }
+        // Black at 85% is about 38; the secondary ink, black at 50%, about 128.
+        #expect(darkestGrey < 80, "the words' ink is \(darkestGrey)")
+    }
+
+    /// A picker left and opened again picks with the same latest pick, so the old one's late copy can't undo the
+    /// new one's Default (Astra 3-M1).
+    @Test @MainActor func aPickerOpenedAgainKeepsTheLatestPick() async {
+        @MainActor final class Seen { var started = false, path = "before" }
+        let key = "GlassThemeTests-\(UUID().uuidString)", seen = Seen()
+        let (gate, open) = AsyncStream<Void>.makeStream()
+        let older = LatestPick.for(key)
+        let slow = Task { @MainActor in
+            await older.choose(URL(fileURLWithPath: "/slow.png"), importing: { url in
+                seen.started = true
+                for await _ in gate {}
+                return url
+            }, apply: { seen.path = $0 }, failed: { _ in })
+        }
+        while !seen.started { await Task.yield() }
+        await LatestPick.for(key).choose(nil, importing: { $0 }, apply: { seen.path = $0 }, failed: { _ in })
+        open.finish()
+        await slow.value
+        #expect(seen.path == "")
     }
 
     /// Imports at once of pictures with the same name each get a file of their own (Astra 2-M2).
@@ -232,6 +326,29 @@ struct GlassThemeTests {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("GlassThemeTests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         return folder
+    }
+
+    /// A flat colour TIFF, 64 pixels square and uncompressed, so two of them are the same length.
+    private func flatTIFF(red: CGFloat, blue: CGFloat, in folder: URL) throws -> URL {
+        let context = try #require(CGContext(data: nil, width: 64, height: 64, bitsPerComponent: 8, bytesPerRow: 0,
+                                             space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(CGColor(srgbRed: red, green: 0, blue: blue, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 64, height: 64))
+        let url = folder.appendingPathComponent("flat.tiff")
+        let destination = try #require(CGImageDestinationCreateWithURL(url as CFURL, UTType.tiff.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, try #require(context.makeImage()), nil)
+        #expect(CGImageDestinationFinalize(destination))
+        return url
+    }
+
+    /// The centre pixel's colour, 0 to 1.
+    private func centre(of image: CGImage) -> (red: Double, blue: Double) {
+        var pixel = [UInt8](repeating: 0, count: 4)
+        let context = CGContext(data: &pixel, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        context?.draw(image, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        return (Double(pixel[0]) / 255, Double(pixel[2]) / 255)
     }
 
     /// A flat grey PNG, 64 pixels square.

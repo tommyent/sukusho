@@ -83,7 +83,7 @@ private struct WorkspaceWallpaperSettings: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var addError: String?
-    @State private var picks = LatestPick()
+    private let picks = LatestPick.for(WorkspaceBackground.wallpaperPathKey)
 
     private let store = AnnotationWallpaperStore.shared
     private let columns = Array(repeating: GridItem(.flexible(), spacing: DS.Space.s), count: 6)
@@ -189,7 +189,7 @@ private struct GlassPictureSettings: View {
     @State private var resolved: (fallback: URL, shown: URL)?
     @State private var host = WeakWindow()
     @State private var windowChanges = 0
-    @State private var picks = LatestPick()
+    private let picks = LatestPick.for(GlassPicture.pathKey)
 
     private let store = AnnotationWallpaperStore.shared
     private let columns = Array(repeating: GridItem(.flexible(), spacing: DS.Space.s), count: 6)
