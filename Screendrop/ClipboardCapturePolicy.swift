@@ -90,6 +90,17 @@ nonisolated enum ClipboardCapturePolicy {
         return "#" + digits.uppercased()
     }
 
+    /// A hex `hexColor` gives, as sRGB components from 0 to 1.
+    static func components(ofHex hex: String) -> (red: Double, green: Double, blue: Double, alpha: Double)? {
+        var digits = String(hex.dropFirst())
+        if digits.count == 3 { digits = digits.map { "\($0)\($0)" }.joined() }
+        guard digits.count == 6 || digits.count == 8, let value = UInt64(digits, radix: 16) else { return nil }
+        let hasAlpha = digits.count == 8
+        let rgb = hasAlpha ? value >> 8 : value
+        return (Double((rgb >> 16) & 0xFF) / 255, Double((rgb >> 8) & 0xFF) / 255, Double(rgb & 0xFF) / 255,
+                hasAlpha ? Double(value & 0xFF) / 255 : 1)
+    }
+
     /// rgb(), rgba(), hsl() and hsla() as CSS writes them, with commas or spaces, an alpha after "/" or a fourth
     /// value, percentages and "deg": the hex for their swatch, or nil (Fable #3: "rgb(10, 132, 255)" was plain text).
     static func functionalColor(_ text: String) -> String? {

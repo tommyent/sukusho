@@ -8,13 +8,8 @@ extension ClipboardEntry {
 extension Color {
     /// #RGB, #RRGGBB or #RRGGBBAA, as `ClipboardCapturePolicy.hexColor` gives them.
     init?(clipboardHex hex: String) {
-        var digits = String(hex.dropFirst())
-        if digits.count == 3 { digits = digits.map { "\($0)\($0)" }.joined() }
-        guard digits.count == 6 || digits.count == 8, let value = UInt64(digits, radix: 16) else { return nil }
-        let hasAlpha = digits.count == 8
-        let rgb = hasAlpha ? value >> 8 : value
-        self.init(.sRGB, red: Double((rgb >> 16) & 0xFF) / 255, green: Double((rgb >> 8) & 0xFF) / 255,
-                  blue: Double(rgb & 0xFF) / 255, opacity: hasAlpha ? Double(value & 0xFF) / 255 : 1)
+        guard let parts = ClipboardCapturePolicy.components(ofHex: hex) else { return nil }
+        self.init(.sRGB, red: parts.red, green: parts.green, blue: parts.blue, opacity: parts.alpha)
     }
 }
 

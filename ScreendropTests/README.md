@@ -19,6 +19,8 @@ The regular Build action builds the app; the Test action builds the app and runs
 
 Fixtures should be generated in memory. Keep any required recorded regression fixture small and local to the test bundle; never depend on an agent's temporary folder or a network URL. Use `#expect`/`#require`, which remain active in optimized builds, instead of `assert` or trapping `precondition`.
 
+`AgentClipboardTests` checks the agent tools `clipboard_list`, `clipboard_get` and `clipboard_restore` against a real clipboard history store in a temporary folder: the popup's order (history by last copy, Saved by when saved, no snippets), its type menu, pages that don't repeat a clip copied again between them, a 200-character preview with the longer text only from `clipboard_get`, concealed and transient copies never coming out, one ask per agent in its own consent group, unknown ids, and a restore that puts the plain text, RTF, HTML and nspasteboard.org's markers (or an image's own bytes) back on a private named pasteboard through the popup's own write, one more copy counted. The live ask window, the general pasteboard and ⌘V need the live round.
+
 `AnnotationClipboardTests` checks annotation clipboard round-trips, new IDs, repeated paste offsets,
 unchanged geometry across screenshot sizes, internal arrow bindings, detached terminals and arcs, embedded
 pictures, newest-copy replacement and engine Undo/Redo. After a Dev build, run

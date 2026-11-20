@@ -5,7 +5,7 @@ import SQLite3
 nonisolated struct ClipboardEntry: Sendable, Equatable, Identifiable {
     let id: String
     let kind: ClipboardEntryKind
-    let text: String?
+    var text: String?
     /// A snippet's name.
     let title: String?
     /// The kept image, in the history's Blobs folder.
@@ -486,6 +486,10 @@ actor ClipboardHistoryStore {
             )
         }
     }
+
+    /// Every kept entry, for the agent tools: their pages and ids reach the whole history, not the popup's newest
+    /// 3,000 (Astra #7). SQLite reads a negative LIMIT as none.
+    func agentEntries() throws -> [ClipboardEntry] { try entries(limit: -1, includeArchive: true) }
 
     /// The text read in an image; empty when it has none, so it isn't read again.
     /// With `hash`, nothing is written when the entry's content changed while its text was read: the answer

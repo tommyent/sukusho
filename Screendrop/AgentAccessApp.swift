@@ -55,6 +55,7 @@ final class AgentAccess {
     private func apply() {
         guard isEnabled else {
             server.stop()
+            grants.endSessions()
             errorMessage = nil
             return
         }
@@ -130,9 +131,8 @@ final class AgentLiveBackend: AgentBackend {
         return text.isEmpty ? nil : text
     }
 
-    func jpeg(of item: AgentItem, maxPixels: Int) async -> Data? {
-        let url = item.fileURL
-        return await Task.detached(priority: .userInitiated) { () -> Data? in
+    func jpeg(of url: URL, maxPixels: Int) async -> Data? {
+        await Task.detached(priority: .userInitiated) { () -> Data? in
             guard let thumbnail = try? CloudGalleryAPI.thumbnail(of: url, maxPixels: maxPixels) else { return nil }
             return thumbnail.jpeg
         }.value
@@ -238,6 +238,18 @@ final class AgentLiveBackend: AgentBackend {
         return .recording(session.loadProjectMetadata())
     }
 
+    func clipboardEntries() async throws -> [ClipboardEntry]? {
+        try await ClipboardHistoryModel.shared.loadEntries()
+    }
+
+    var clipboardStore: ClipboardHistoryStore? { ClipboardMonitor.shared.store }
+
+    func appName(_ bundleID: String?) -> String? { ClipboardHistoryModel.shared.appName(bundleID) }
+
+    func restoreClip(_ entry: ClipboardEntry, shouldWrite: () -> Bool) async -> Bool {
+        await ClipboardHistoryModel.shared.restore(entry, shouldWrite: shouldWrite)
+    }
+
     /// The App Intents' capture paths.
     func capture(_ mode: AgentCaptureMode) async -> AgentCaptureOutcome {
         switch mode {
@@ -264,6 +276,8 @@ final class AgentLiveBackend: AgentBackend {
 @MainActor
 final class AgentApprovalPresenter: AgentAsker {
     private var panels: [AgentPanel] = []
+    /// The app in front when the first of the open asks appeared.
+    private var focusOwner: NSRunningApplication?
 
     func askShare(_ ask: AgentAsk, settings: AgentShareSettings,
                   answer: @escaping ((decision: AgentDecision, settings: AgentShareSettings)?) -> Void) -> () -> Void {
@@ -358,11 +372,31 @@ final class AgentApprovalPresenter: AgentAsker {
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.contentViewController = NSHostingController(rootView: view)
+        let host = NSHostingController(rootView: view)
+        panel.contentViewController = host
+        // The panel keeps its first size otherwise, and cut the ask's text off at its edge (live check, 2026-11-20).
+        panel.setContentSize(host.view.fittingSize)
         PreviewWindowCaptureExclusion.shared.register(window: panel)
+        // The app in front now gets the keyboard back, unless an earlier open ask made Sukusho the one in front (Astra #8).
+        if let front = NSWorkspace.shared.frontmostApplication,
+           AgentFocus.target(current: focusOwner?.processIdentifier, front: front.processIdentifier,
+                             own: ProcessInfo.processInfo.processIdentifier) == front.processIdentifier {
+            focusOwner = front
+        }
         panel.onClose = { [weak self, weak panel] in
             onClose()
-            self?.panels.removeAll { $0 === panel }
+            guard let self else { return }
+            panels.removeAll { $0 === panel }
+            guard panels.isEmpty else { return }
+            let others = NSApp.windows.filter { $0 !== panel }.map {
+                AgentFocus.Window(visible: $0.isVisible, ordinary: $0.styleMask.contains(.titled) && $0.level == .normal)
+            }
+            if let owner = focusOwner, !owner.isTerminated,
+               AgentFocus.returnsFocus(to: owner.processIdentifier, own: ProcessInfo.processInfo.processIdentifier,
+                                       isActive: NSApp.isActive, otherWindows: others) {
+                owner.activate()
+            }
+            focusOwner = nil
         }
         panels.append(panel)
         let offset = CGFloat(panels.count - 1) * 24
@@ -435,14 +469,16 @@ struct AgentApprovalView<Content: View>: View {
                 if !ask.thumbnails.isEmpty { AgentThumbnails(urls: ask.thumbnails) }
                 if !ask.details.isEmpty {
                     VStack(alignment: .leading, spacing: 2) {
-                        ForEach(Array(ask.details.enumerated()), id: \.offset) { Text($0.element) }
+                        ForEach(Array(ask.details.enumerated()), id: \.offset) {
+                            Text($0.element).fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 }
                 if ask.grantable {
                     Picker("Allow", selection: $choice.decision) {
-                        ForEach(AgentDecision.allCases) { Text($0.title).tag($0) }
+                        ForEach(AgentDecision.choices(for: ask.agent)) { Text($0.title).tag($0) }
                     }
                     .pickerStyle(.menu)
                     .fixedSize()
@@ -451,6 +487,16 @@ struct AgentApprovalView<Content: View>: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if !ask.agent.isResolved {
+                        Text("Sukusho can’t tell which program this is, so nothing is kept after this helper ends.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if choice.decision == .session, ask.group.sessionOutlivesHelper {
+                        Text("Until Sukusho quits.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 } else {
                     Text("Type the password here. The agent never sees it.")
@@ -467,6 +513,8 @@ struct AgentApprovalView<Content: View>: View {
                     }
                 }
             }
+            // A set width, so the lines above wrap: at their ideal width they ran past the panel's edge.
+            .frame(width: 308, alignment: .leading)
             .padding([.horizontal, .top], 16)
             .padding(.bottom, 4)
             content

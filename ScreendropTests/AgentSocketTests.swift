@@ -192,7 +192,7 @@ struct AgentSocketTests {
         try #require(replies.count == 5)
         #expect(replies[0]["welcome"] as? Bool == true)
         #expect(replies[1]["id"] as? Int == 1)
-        #expect(((replies[1]["result"] as? [String: Any])?["tools"] as? [Any])?.count == 17)
+        #expect(((replies[1]["result"] as? [String: Any])?["tools"] as? [Any])?.count == AgentToolCatalog.tools.count)
         let search = try #require((replies[2]["result"] as? [String: Any])?["structuredContent"] as? [String: Any])
         #expect(search["count"] as? Int == 1)
         let share = try #require(replies[3]["result"] as? [String: Any])

@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import OSLog
 
 /// Writes history entries back to the pasteboard so other clipboard managers
 /// can tell a paste-back from a new copy. nspasteboard.org asks a history app
@@ -20,6 +21,29 @@ nonisolated enum ClipboardWriter {
         didWrite(items)
         return true
     }
+
+    /// The popup's paste up to ⌘V: puts a history entry back with the formats it was copied with, and files it as copied
+    /// again, a Saved clip as a fresh copy in history. False when its image file is gone or the pasteboard refused the
+    /// write. A history that can't be updated is only logged: the clip is on the clipboard by then. `shouldWrite` is
+    /// asked once the formats are read, right before the write: an agent's access can end while they are.
+    static func restore(_ entry: ClipboardEntry, plain: Bool, store: ClipboardHistoryStore?, historyDirectory: URL,
+                        to pasteboard: NSPasteboard = .general, shouldWrite: () -> Bool = { true }) async -> Bool {
+        let richText = plain ? [:] : ((try? await store?.richText(for: entry.id)) ?? [:])
+        guard shouldWrite() else { return false }
+        var archivedCopy: ClipboardCapture?
+        guard write(entry, richText: richText, plain: plain, to: pasteboard, didWrite: { items in
+            archivedCopy = ClipboardPasteboardReader.archiveCopy(entry, items: items, historyDirectory: historyDirectory)
+        }) else { return false }
+        do {
+            if let archivedCopy { try await store?.record(archivedCopy) }
+            else if entry.pinnedAt == nil { try await store?.touch(entry.id) }
+        } catch {
+            logger.error("Could not update clipboard history: \(error.localizedDescription)")
+        }
+        return true
+    }
+
+    private static let logger = Logger(subsystem: "com.tommyent.Sukusho", category: "Clipboard")
 
     static func libraryItems(for entry: ClipboardEntry, richText: [String: Data], plain: Bool,
                              includeTIFF: Bool) async throws -> [NSPasteboardItem] {
