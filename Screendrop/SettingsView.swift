@@ -228,6 +228,7 @@ private struct SettingsSidebarFooter: View {
 private struct SettingsDetailView: View {
     let tab: SettingsTab
     @DrawnGlass private var glass
+    @CurrentTheme private var theme
 
     var body: some View {
         Group {
@@ -260,7 +261,17 @@ private struct SettingsDetailView: View {
         }
         .navigationTitle(tab.title)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        // Glass: its picture under the panes and, mirrored and blurred by macOS, under the sidebar's glass.
+        // Glass: the panes on the cards' frost, title bar too, so no form text meets the bare picture (a black one
+        // made Light's rows black on black); the picture shows through it and, mirrored by macOS, under the sidebar.
+        .background {
+            if glass != nil, let frost = theme.card.recipe.frost {
+                ZStack {
+                    Rectangle().fill(frost.material.material)
+                    Rectangle().fill(frost.tint.color)
+                }
+                .ignoresSafeArea()
+            }
+        }
         .background {
             if let glass { GlassBackdrop(backdrop: glass).backgroundExtensionEffect().ignoresSafeArea() }
         }

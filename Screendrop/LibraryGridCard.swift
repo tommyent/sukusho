@@ -169,6 +169,8 @@ struct LibraryCardSurface: ViewModifier {
             let frost = reduceTransparency || contrast == .increased ? nil : theme.card.recipe.frost
             content
                 .background(Color.primary.opacity(selected ? 0.075 : hovering ? 0.035 : 0.012), in: shape)
+                // Glass: the cards' whole frost, tint too; the material alone left text at 4:1 over a white picture in Dark.
+                .background { if let frost { shape.fill(frost.tint.color) } }
                 .background(frost.map { AnyShapeStyle($0.material.material) } ?? AnyShapeStyle(WorkspaceChrome.background), in: shape)
                 .overlay { LibraryCardBorder(selected: selected) }
         }
