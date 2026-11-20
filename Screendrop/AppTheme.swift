@@ -139,6 +139,8 @@ nonisolated struct AppTheme: Sendable, Equatable, Identifiable {
         var ink: ThemeColor
         /// A badge's glyph before it does anything, such as the cloud before sharing.
         var idle: ThemeColor
+        /// Whether the mark's ground is dark, so tints inside it (comments blue, likes red) and its rim follow.
+        var isDark = false
     }
 }
 
@@ -212,7 +214,7 @@ nonisolated extension AppTheme {
         card: Card(recipe: .frost(Frost(material: .regular, tint: .rgb(0x000000, opacity: 0.15), rim: .white(opacity: 0.16))),
                    radius: 16, inset: 6, gutter: nil, face: [.rgb(0x333335), .rgb(0x2B2B2D)],
                    well: .rgb(0x282627), textWell: .rgb(0x26282C), shadow: 0.4, pressedShadow: 0.3),
-        marks: .classic)
+        marks: .glassDark)
 
     /// Softened ink for the Library's window title on its Glass pill: calm over the wallpaper without shouting,
     /// while still reading cleanly in both appearances.
@@ -253,6 +255,8 @@ nonisolated extension AppTheme {
 
 nonisolated extension AppTheme.Marks {
     static let classic = AppTheme.Marks(fill: .white(opacity: 0.94), ink: .rgb(0x1D1D1F), idle: .rgb(0x48484A))
+    static let glassDark = AppTheme.Marks(fill: .rgb(0x1C1C1E, opacity: 0.90), ink: .rgb(0xF5F5F7),
+                                          idle: .rgb(0xD1D1D6), isDark: true)
 }
 
 // MARK: - Colours

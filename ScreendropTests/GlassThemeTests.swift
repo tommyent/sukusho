@@ -8,13 +8,14 @@ import UniformTypeIdentifiers
 /// Glass (the theme plan's step 2): frosted cards and macOS's own glass over a picture, Classic's colours underneath.
 struct GlassThemeTests {
     /// Everything Glass doesn't frost is Classic's, so windows it doesn't touch, and Reduce Transparency and Increase
-    /// Contrast, draw exactly as Classic.
+    /// Contrast, draw exactly as Classic. Glass Dark reverses its card marks (dark fill, light glyphs).
     @Test func glassFrostsOverAPictureAndKeepsClassicsColoursUnderneath() throws {
         for (glass, classic) in [(AppTheme.glassLight, AppTheme.classicLight), (.glassDark, .classicDark)] {
             #expect(glass.isDark == classic.isDark)
             #expect(glass.chrome.glass, "\(glass.id)")
             #expect(glass.chrome.background == classic.chrome.background && glass.chrome.panel == classic.chrome.panel)
-            #expect(glass.ink == classic.ink && glass.marks == classic.marks, "\(glass.id)")
+            #expect(glass.ink == classic.ink, "\(glass.id)")
+            #expect(glass.marks == (glass.isDark ? .glassDark : classic.marks), "\(glass.id)")
             #expect(glass.ground.workspace == classic.ground.workspace, "\(glass.id)")
             #expect(glass.card.face == classic.card.face && glass.card.well == classic.card.well, "\(glass.id)")
             #expect(glass.card.textWell == classic.card.textWell, "\(glass.id)")
@@ -22,6 +23,37 @@ struct GlassThemeTests {
             #expect(frost.material == .regular, "\(glass.id): a standard material, never Liquid Glass per card")
             let backdrop = try #require(glass.ground.backdrop, "\(glass.id)")
             #expect(backdrop.blur > 0, "\(glass.id)")
+        }
+    }
+
+    /// Glass Dark reverses card badges and pills (dark ground, light glyphs/text), while Glass Light, Classic and Chip
+    /// keep Classic's light ground with dark glyphs.
+    @Test func glassDarkReversesCardMarksAndKeepsContrast() throws {
+        let darkMarks = AppTheme.glassDark.marks
+        #expect(darkMarks.isDark)
+        for theme in AppTheme.builtIns where theme.id != AppTheme.glassDark.id {
+            #expect(theme.marks == .classic && !theme.marks.isDark, "\(theme.id)")
+        }
+        let fill = try #require(darkMarks.fill.nsColor.usingColorSpace(.sRGB))
+        let ink = try #require(darkMarks.ink.nsColor.usingColorSpace(.sRGB))
+        let idle = try #require(darkMarks.idle.nsColor.usingColorSpace(.sRGB))
+        #expect(fill.redComponent < 0.2 && fill.greenComponent < 0.2 && fill.blueComponent < 0.2)
+        #expect(ink.redComponent > 0.85 && idle.redComponent > 0.75)
+
+        func luminance(_ colour: NSColor, over bg: Double) -> Double {
+            func linear(_ v: CGFloat) -> Double {
+                let c = Double(v) * Double(colour.alphaComponent) + bg * (1 - Double(colour.alphaComponent))
+                return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+            }
+            return 0.2126 * linear(colour.redComponent) + 0.7152 * linear(colour.greenComponent) + 0.0722 * linear(colour.blueComponent)
+        }
+        for bg in [0.0, 1.0] {
+            let fillL = luminance(fill, over: bg)
+            for (name, glyph) in [("ink", ink), ("idle", idle)] {
+                let glyphL = luminance(glyph, over: bg)
+                let ratio = (max(fillL, glyphL) + 0.05) / (min(fillL, glyphL) + 0.05)
+                #expect(ratio >= 4.5, "\(name) over bg \(bg): \(ratio)")
+            }
         }
     }
 

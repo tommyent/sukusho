@@ -918,9 +918,9 @@ private struct CardMarkGround<S: InsettableShape>: ViewModifier {
     @CurrentTheme private var theme
 
     func body(content: Content) -> some View {
-        content.environment(\.colorScheme, .light)
+        content.environment(\.colorScheme, theme.marks.isDark ? .dark : .light)
             .background { shape.fill(theme.marks.fill.color).shadow(color: .black.opacity(0.25), radius: 1.5, y: 1) }
-            .overlay { shape.strokeBorder(.black.opacity(0.15), lineWidth: 0.5) }
+            .overlay { shape.strokeBorder(theme.marks.isDark ? Color.white.opacity(0.18) : Color.black.opacity(0.15), lineWidth: 0.5) }
     }
 }
 
