@@ -21,6 +21,7 @@ struct GlassThemeTests {
             #expect(glass.card.textWell == classic.card.textWell, "\(glass.id)")
             let frost = try #require(glass.card.recipe.frost, "\(glass.id)")
             #expect(frost.material == .regular, "\(glass.id): a standard material, never Liquid Glass per card")
+            #expect(frost.rim == .white(opacity: 0), "\(glass.id): Glass cards carry no resting border")
             let backdrop = try #require(glass.ground.backdrop, "\(glass.id)")
             #expect(backdrop.blur > 0, "\(glass.id)")
         }

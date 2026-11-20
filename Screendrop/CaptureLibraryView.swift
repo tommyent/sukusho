@@ -1179,8 +1179,7 @@ enum LibraryFloatingSidebar {
 
         func updateRimColor() {
             let isDark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            let rim = AppTheme.current(dark: isDark).card.recipe.frost?.rim
-                ?? .white(opacity: isDark ? 0.16 : 0.55)
+            let rim: ThemeColor = .white(opacity: isDark ? 0.16 : 0.55)
             layer?.borderColor = rim.nsColor.cgColor
         }
     }

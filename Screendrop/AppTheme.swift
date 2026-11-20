@@ -201,7 +201,7 @@ nonisolated extension AppTheme {
         ink: classicLight.ink,
         chrome: Chrome(background: .white(), panel: .white(), glass: true),
         ground: Ground(workspace: .gray(0.93), backdrop: Backdrop(blur: 30, dim: 0.1)),
-        card: Card(recipe: .frost(Frost(material: .regular, tint: .white(opacity: 0.3), rim: .white(opacity: 0.55))),
+        card: Card(recipe: .frost(Frost(material: .regular, tint: .white(opacity: 0.3), rim: .white(opacity: 0))),
                    radius: 16, inset: 6, gutter: nil, face: [.white(), .rgb(0xF7F7F8)],
                    well: .white(), textWell: .rgb(0xECEFF2), shadow: 0.12, pressedShadow: 0.08),
         marks: .classic)
@@ -211,7 +211,7 @@ nonisolated extension AppTheme {
         ink: classicDark.ink,
         chrome: Chrome(background: .windowBackground, panel: .windowBackground, glass: true),
         ground: Ground(workspace: .gray(0.16), backdrop: Backdrop(blur: 30, dim: 0.25)),
-        card: Card(recipe: .frost(Frost(material: .regular, tint: .rgb(0x000000, opacity: 0.15), rim: .white(opacity: 0.16))),
+        card: Card(recipe: .frost(Frost(material: .regular, tint: .rgb(0x000000, opacity: 0.15), rim: .white(opacity: 0))),
                    radius: 16, inset: 6, gutter: nil, face: [.rgb(0x333335), .rgb(0x2B2B2D)],
                    well: .rgb(0x282627), textWell: .rgb(0x26282C), shadow: 0.4, pressedShadow: 0.3),
         marks: .glassDark)

@@ -158,7 +158,7 @@ struct LibraryCardSurface: ViewModifier {
                         } else if !selected, let edge {
                             // Hover firms the hairline up rather than lifting the card.
                             outline.strokeBorder(edge.color, lineWidth: hovering ? 1 : 0.5).allowsHitTesting(false)
-                        } else {
+                        } else if selected || theme.card.recipe.frost == nil {
                             LibraryCardBorder(selected: selected, shape: outline)
                         }
                     }
@@ -172,7 +172,11 @@ struct LibraryCardSurface: ViewModifier {
                 // Glass: the cards' whole frost, tint too; the material alone left text at 4:1 over a white picture in Dark.
                 .background { if let frost { shape.fill(frost.tint.color) } }
                 .background(frost.map { AnyShapeStyle($0.material.material) } ?? AnyShapeStyle(WorkspaceChrome.background), in: shape)
-                .overlay { LibraryCardBorder(selected: selected) }
+                .overlay {
+                    if selected || frost == nil {
+                        LibraryCardBorder(selected: selected)
+                    }
+                }
         }
     }
 
