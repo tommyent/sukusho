@@ -288,8 +288,10 @@ struct CaptureLibraryView: View {
         // Glass: no bar under the toolbar, so macOS's title would sit on the bare picture. The toolbar's title field
         // comes a moment after the window, so a few tries.
         .task(id: "\(title)#\(glass != nil)#\(libraryWindow.map { ObjectIdentifier($0).hashValue } ?? 0)") {
-            for _ in 0..<10 where !LibraryTitlePlate.update(libraryWindow, shown: glass != nil) {
+            for _ in 0..<10 {
+                if LibraryTitlePlate.update(libraryWindow, shown: glass != nil) { break }
                 try? await Task.sleep(for: .milliseconds(200))
+                if Task.isCancelled { break }
             }
         }
         .focusedSceneValue(\.captureLibraryCardWidth, $cardWidth)
