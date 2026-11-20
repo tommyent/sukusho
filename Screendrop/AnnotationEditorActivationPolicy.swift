@@ -26,7 +26,10 @@ enum AppActivationPolicy {
         NSApp.setActivationPolicy(.regular)
         guard activate else { return }
         NSApp.unhide(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        // ponytail: experiment for sd-vcbz (a menu bar that ignores clicks). Activating in the same turn as the
+        // switch from accessory to regular can leave the menu bar dead until the app is reactivated; activating a
+        // turn later lets the new policy land first. If it persists, try activating the Dock, then Sukusho.
+        DispatchQueue.main.async { NSApp.activate(ignoringOtherApps: true) }
     }
 
     /// Call when a regular window closes.
