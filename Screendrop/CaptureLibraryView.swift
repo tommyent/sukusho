@@ -12,6 +12,7 @@ struct CaptureLibraryView: View {
     @State private var history = ScreenshotHistoryStore.shared
     @State private var projects = RecordingProjectStore.shared
     @State private var libraryWindow: NSWindow?
+    @State private var handledInitialWindowPlacement = false
     @State private var columnVisibility = NavigationSplitViewVisibility.automatic
     @AppStorage("captureLibrary.inspectorVisible") private var inspectorVisible = true
     @AppStorage("captureLibrary.tagsExpanded") private var tagsExpanded = true
@@ -117,6 +118,15 @@ struct CaptureLibraryView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
             if let window = notification.object as? NSWindow, window === libraryWindow {
+                if !handledInitialWindowPlacement {
+                    handledInitialWindowPlacement = true
+                    if glass != nil, let screen = window.screen?.visibleFrame {
+                        // SwiftUI can open at the Library's previous minimum size despite the scene's default.
+                        let size = CGSize(width: min(1180, screen.width), height: min(760, screen.height))
+                        window.setFrame(CGRect(x: screen.midX - size.width / 2, y: screen.midY - size.height / 2,
+                                               width: size.width, height: size.height), display: true)
+                    }
+                }
                 model.refresh()
                 if cloud.isShown { cloud.refresh() }
                 // The sidebar's unread counts, whichever page is open. No timer: only here, on open and on ⌘R.
