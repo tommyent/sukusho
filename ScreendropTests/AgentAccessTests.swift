@@ -49,7 +49,7 @@ final class AgentFakeBackend: AgentBackend {
         onClipRead?()
         return entries
     }
-    var isClipboardHistoryOn: Bool { clipStore != nil }
+    var clipboardStore: ClipboardHistoryStore? { clipStore }
     func appName(_ bundleID: String?) -> String? { bundleID.flatMap { appNames[$0] } }
     func restoreClip(_ entry: ClipboardEntry, shouldWrite: () -> Bool) async -> Bool {
         await ClipboardWriter.restore(entry, plain: false, store: clipStore, historyDirectory: clipHistoryDirectory, to: clipPasteboard,

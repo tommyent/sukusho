@@ -102,7 +102,8 @@ protocol AgentBackend: AnyObject {
     func messageSource(of item: AgentItem) -> ShareMessageSource
     /// Clipboard history as the popup has it, Saved clips and snippets included; nil while history is off.
     func clipboardEntries() async throws -> [ClipboardEntry]?
-    var isClipboardHistoryOn: Bool { get }
+    /// The history's store while history is on, nil while it's off; a new one each time it's turned on.
+    var clipboardStore: ClipboardHistoryStore? { get }
     /// The name Information › Source shows for an app; nil when it isn't on this Mac.
     func appName(_ bundleID: String?) -> String?
     /// The popup's paste up to ⌘V (`ClipboardWriter.restore`); false when the clip couldn't be written, or
@@ -340,13 +341,17 @@ final class AgentToolbox {
     /// group at a time: a second call waits for the first, whose answer may cover it. Each call has 60 seconds from
     /// when it came in, waiting included, and a no to the ask it waited on, or no answer, is its no too (Astra, round 2).
     private func approve(_ group: AgentGroup, items: [String], session: AgentSession, ask: AgentAsk) async -> AgentDecision? {
+        // A helper that went away asks nothing, and no grant carries it (Astra, round 3).
+        guard !session.isClosed else { return nil }
         if isAllowed(group, items: items, session: session) { return .once }
         let deadline = now().addingTimeInterval(Double(askTimeout.components.seconds))
-        let key = session.agent.key + "|" + group.rawValue
+        // A program Sukusho can't name shares its signer with every other such one: its helper waits only on its own asks.
+        let key = (session.agent.isResolved ? session.agent.key : session.id.uuidString) + "|" + group.rawValue
         while let turn = asking[key] {
             while asking[key] === turn, !session.isClosed, now() <= deadline { await sleep(poll) }
             guard asking[key] !== turn, !session.isClosed, !turn.denied else { return nil }
         }
+        guard !session.isClosed else { return nil }
         if isAllowed(group, items: items, session: session) { return .once }
         let left = deadline.timeIntervalSince(now())
         guard left > 0 else { return nil }
@@ -360,7 +365,11 @@ final class AgentToolbox {
         let id = UUID()
         openAsks[id] = (session, { pending.give(nil) })
         let close = asker.ask(ask) { [self] decision in
-            if pending.answer == nil { answeredAt = now() }
+            if pending.answer == nil {
+                answeredAt = now()
+                // Recorded here, so it holds for the waiting calls even if this helper goes before it's read.
+                if decision == nil { turn.denied = true }
+            }
             pending.give(decision)
         }
         let answer = await pending.wait(upTo: .seconds(left), poll: poll)
@@ -952,19 +961,22 @@ final class AgentToolbox {
 
     /// The history, once the owner lets this agent read it; nil when they don't. Off asks nothing. Read after the
     /// answer, so what was deleted, or history turned off, while the ask was open stays out. `stillAllowed`, asked
-    /// after each later wait, throws once history is off and is false once the helper went away or the grant the call
-    /// rode on was revoked; Just this once holds for its call.
+    /// after each later wait, throws once history is off, or was turned off and on again (a new store), and is false
+    /// once the helper went away or the grant the call rode on was revoked; Just this once holds for its call.
     private func clipboardHistory(_ session: AgentSession) async throws
         -> (entries: [ClipboardEntry], stillAllowed: () throws -> Bool)? {
-        guard backend.isClipboardHistoryOn else { throw Self.historyOff }
+        guard backend.clipboardStore != nil else { throw Self.historyOff }
         let ask = AgentAsk(agent: session.agent, group: .clipboard, action: "read your clipboard history",
                            details: ["It sees what you copied and can put a clip back on the clipboard.",
                                      "Concealed copies, such as passwords, are never kept."])
         guard await approve(.clipboard, items: [], session: session, ask: ask) != nil else { return nil }
         let byGrant = isAllowed(.clipboard, items: [], session: session)
+        let store = backend.clipboardStore
+        let revocations = grants.revocations
         let stillAllowed = { [self] () throws -> Bool in
-            guard backend.isClipboardHistoryOn else { throw Self.historyOff }
-            return !session.isClosed && (!byGrant || isAllowed(.clipboard, items: [], session: session))
+            guard let store, backend.clipboardStore === store else { throw Self.historyOff }
+            // Grants only grow between revocations, so an unchanged count means the call's grant still stands.
+            return !session.isClosed && (!byGrant || grants.revocations == revocations)
         }
         guard let entries = try await backend.clipboardEntries() else { throw Self.historyOff }
         return try stillAllowed() ? (entries, stillAllowed) : nil
@@ -1033,9 +1045,10 @@ nonisolated enum AgentClips {
     }
 
     /// The popup's list, newest first: the history by last copy, or Saved by when each was saved. Never snippets.
+    /// The type menu sorts by the same slice the row shows (`shown`), so the filter can't tell what lies past it.
     static func page(_ entries: [ClipboardEntry], filter: ClipboardFilter, saved: Bool, before: Cursor?, limit: Int)
         -> (clips: [ClipboardEntry], total: Int, next: Cursor?) {
-        let listed = entries.filter { $0.isArchived == saved && ClipboardList.matches($0, filter: filter) }
+        let listed = entries.filter { $0.isArchived == saved && ClipboardList.matches(shown($0), filter: filter) }
             .map { (cursor: Cursor($0, saved: saved), entry: $0) }
             .sorted { $0.cursor > $1.cursor }
         let rest = listed.filter { item in before.map { item.cursor < $0 } ?? true }
@@ -1067,13 +1080,19 @@ nonisolated enum AgentClips {
 
     /// A clip as the popup's row and Information show it. What was copied, and the app it names as its source, is
     /// outside text: it goes under `untrusted`. Never more than `previewLength` characters of the text.
-    static func clip(_ entry: ClipboardEntry, appName: String?) -> [String: Any] {
-        let text = entry.text ?? ""
-        // The kind, type, title, colour and domain are worked out from the same first characters the preview shows,
-        // never from the rest: the popup's title skips blank lines and names a path's file, and a colour or link is
-        // read after trimming, all of which could reach past them (Astra #4, rounds 1 and 2).
+    /// The clip with only the first `previewLength` characters of its text. The kind, type, title, colour, domain and
+    /// the type menu's sorting are worked out from these, never from the rest: the popup's title skips blank lines and
+    /// names a path's file, and a colour or link is read after trimming, all of which could reach past them
+    /// (Astra #4, rounds 1 to 3).
+    static func shown(_ entry: ClipboardEntry) -> ClipboardEntry {
         var shown = entry
         shown.text = entry.text.map { String($0.prefix(previewLength)) }
+        return shown
+    }
+
+    static func clip(_ entry: ClipboardEntry, appName: String?) -> [String: Any] {
+        let text = entry.text ?? ""
+        let shown = Self.shown(entry)
         var object: [String: Any] = [
             // A file list's type counts its files, which isn't content: that one comes from the whole list.
             "id": entry.id, "kind": kind(of: shown), "content_type": ClipboardList.typeName(of: entry.kind == .text ? shown : entry),
@@ -1110,7 +1129,8 @@ nonisolated enum AgentClips {
         }
         if let preview {
             untrusted["preview"] = String(preview.prefix(previewLength))
-            if preview.count > previewLength { untrusted["preview_truncated"] = true }
+            // The text's own length: a colour's hex stands in for a slice that may have more after it (Astra, round 3).
+            if text.count > previewLength { untrusted["preview_truncated"] = true }
         }
         if let appName { untrusted["app"] = appName }
         if let bundleID = entry.sourceBundleID { untrusted["bundle_id"] = bundleID }

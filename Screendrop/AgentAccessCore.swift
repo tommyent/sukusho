@@ -156,8 +156,13 @@ final class AgentGrantStore {
         saveGrants()
     }
 
+    /// Counts every revoke and every end of the session grants, so a call let through on a grant can tell it was
+    /// taken back even when another has been given since (Astra, round 3).
+    @ObservationIgnored private(set) var revocations = 0
+
     /// Takes back one group, or every group when `group` is nil.
     func revoke(_ key: String, group: AgentGroup? = nil) {
+        revocations += 1
         if let group, let index = sessions.firstIndex(where: { $0.agent.key == key }) {
             sessions[index].groups.remove(group)
             if sessions[index].groups.isEmpty { sessions.remove(at: index) }
@@ -185,7 +190,10 @@ final class AgentGrantStore {
         }
     }
 
-    func endSessions() { sessions = [] }
+    func endSessions() {
+        revocations += 1
+        sessions = []
+    }
 
     /// Settings' "Connected now" line for one helper: what it may do unasked, as `AgentToolbox.isAllowed` decides.
     /// Nothing kept counts for a program Sukusho can't name.
@@ -200,7 +208,10 @@ final class AgentGrantStore {
     }
 
     /// Settings' Revoke on a session row: its kept-for-the-session grants only.
-    func revokeSession(_ key: String) { sessions.removeAll { $0.agent.key == key } }
+    func revokeSession(_ key: String) {
+        revocations += 1
+        sessions.removeAll { $0.agent.key == key }
+    }
 
     func owned(by agent: AgentIdentity) -> Set<String> { owned[agent.key] ?? [] }
 

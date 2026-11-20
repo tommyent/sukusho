@@ -242,7 +242,7 @@ final class AgentLiveBackend: AgentBackend {
         try await ClipboardHistoryModel.shared.loadEntries()
     }
 
-    var isClipboardHistoryOn: Bool { ClipboardMonitor.shared.store != nil }
+    var clipboardStore: ClipboardHistoryStore? { ClipboardMonitor.shared.store }
 
     func appName(_ bundleID: String?) -> String? { ClipboardHistoryModel.shared.appName(bundleID) }
 

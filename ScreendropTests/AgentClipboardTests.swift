@@ -650,12 +650,70 @@ struct AgentClipboardTests {
         let closed = await harness.call("clipboard_get", ["id": image, "image": true])
         #expect(agentStatus(closed) == "denied")
         #expect(closed.image == nil)
+
+        // Off and on again while reading: a new store, not the history this call was allowed to read (Astra, round 3).
+        harness.backend.onJPEG = nil
+        harness.backend.clipStore = store
+        let fresh = FileManager.default.temporaryDirectory.appendingPathComponent("AgentClipboardTests-\(UUID().uuidString)")
+        harness.backend.onClipRead = { harness.backend.clipStore = try? ClipboardHistoryStore(directory: fresh, deviceID: "test-mac") }
+        let reopened = await harness.toolbox.call("clipboard_list", [:], session: AgentSession(agent: AgentHarness.agent))
+        #expect(agentStatus(reopened) == "error")
+        #expect(!String(describing: reopened.object).contains("read-while-turned-off"))
+    }
+
+    /// A helper that has gone away asks nothing, and a standing grant doesn't carry it either (Astra, round 3).
+    @Test func aClosedHelperNeverOpensAWindow() async throws {
+        let harness = try clipHarness()
+        try await record(harness, text("x"), at: start)
+        harness.toolbox.end(harness.session)
+        harness.asker.reply = .allow(.once)
+        #expect(agentStatus(await harness.call("clipboard_list")) == "denied")
+        #expect(harness.asker.asks.isEmpty)
+        harness.grants.grantAlways(.clipboard, to: AgentHarness.agent)
+        #expect(agentStatus(await harness.call("clipboard_list")) == "denied")
+        #expect(harness.asker.asks.isEmpty)
+    }
+
+    /// The owner's no holds for the calls waiting on it even when the asking helper goes before it reads the answer.
+    @Test func aDenialHoldsForWaitingCallsWhenItsHelperCloses() async throws {
+        let harness = try clipHarness()
+        harness.toolbox.askTimeout = .seconds(3600)
+        try await record(harness, text("x"), at: start)
+        harness.asker.reply = .never
+        let other = AgentSession(agent: AgentHarness.agent)
+        let first = Task { await harness.call("clipboard_list") }
+        let second = Task { await harness.toolbox.call("clipboard_list", [:], session: other) }
+        await waitUntil { harness.asker.laterDecisions.count == 1 }
+        for _ in 0..<50 { await Task.yield() }
+        harness.asker.laterDecisions[0](nil)
+        harness.toolbox.end(harness.session)
+        #expect(agentStatus(await first.value) == "denied")
+        #expect(agentStatus(await second.value) == "denied")
+        #expect(harness.asker.asks.count == 1)
+    }
+
+    /// Helpers of programs Sukusho can't name keep their grants to themselves, so they don't wait on, or share a no
+    /// with, each other's asks either (Astra, round 3).
+    @Test func unresolvedHelpersAskForThemselves() async throws {
+        let unknown = AgentIdentity(signer: "unknown", signerName: "Unknown program", clientName: "unleash")
+        let harness = try clipHarness(agent: unknown)
+        harness.toolbox.askTimeout = .seconds(3600)
+        try await record(harness, text("x"), at: start)
+        harness.asker.reply = .never
+        let first = Task { await harness.call("clipboard_list") }
+        let second = Task { await harness.toolbox.call("clipboard_list", [:], session: AgentSession(agent: unknown)) }
+        await waitUntil { harness.asker.laterDecisions.count == 2 }
+        #expect(harness.asker.asks.count == 2)
+        harness.asker.laterDecisions[0](nil)
+        if harness.asker.laterDecisions.count == 2 { harness.asker.laterDecisions[1](.once) }
+        #expect(agentStatus(await first.value) == "denied")
+        #expect(clips(await second.value).count == 1)
     }
 
     /// A restore whose helper goes away, whose grant is revoked, or whose history is turned off after the ask and
     /// before its write (while the clip's formats are read) writes nothing.
     @Test func aRestoreWritesNothingOnceAccessEndsBeforeTheWrite() async throws {
-        enum End: CaseIterable { case helper, revoke, historyOff }
+        enum End: CaseIterable { case helper, revoke, revokeAndGrantAgain, historyOff, historyReopened }
         for end in End.allCases {
             let harness = try clipHarness()
             defer { harness.backend.clipPasteboard.releaseGlobally() }
@@ -666,11 +724,19 @@ struct AgentClipboardTests {
                 switch end {
                 case .helper: harness.toolbox.end(harness.session)
                 case .revoke: harness.grants.revoke(AgentHarness.agent.key)
+                // A grant given again isn't the one this call was let through on (Astra, round 3).
+                case .revokeAndGrantAgain:
+                    harness.grants.revoke(AgentHarness.agent.key)
+                    harness.grants.grantSession(.clipboard, to: AgentHarness.agent)
                 case .historyOff: harness.backend.clipStore = nil
+                case .historyReopened:
+                    harness.backend.clipStore = try? ClipboardHistoryStore(
+                        directory: FileManager.default.temporaryDirectory.appendingPathComponent("AgentClipboardTests-\(UUID().uuidString)"),
+                        deviceID: "test-mac")
                 }
             }
             let result = await harness.call("clipboard_restore", ["id": id])
-            #expect(agentStatus(result) == (end == .historyOff ? "error" : "denied"), "\(end)")
+            #expect(agentStatus(result) == ([.historyOff, .historyReopened].contains(end) ? "error" : "denied"), "\(end)")
             #expect(harness.backend.clipPasteboard.pasteboardItems?.isEmpty ?? true, "\(end)")
         }
         // The writer itself: told not to, it leaves the pasteboard and the history alone.
@@ -718,9 +784,17 @@ struct AgentClipboardTests {
         #expect(detail.object["color"] == nil && detail.object["kind"] as? String == "text")
         #expect(!String(describing: detail.object).contains("FEDCBA"))
         #expect((await harness.call("clipboard_get", ["id": colour])).object["id"] as? String == colour)
+        // The type menu sorts by the same slice: the hidden colour is Text, not Colors (Astra, round 3).
+        #expect(!clips(await harness.call("clipboard_list", ["kind": "colors"])).contains { $0["id"] as? String == colour })
+        #expect(clips(await harness.call("clipboard_list", ["kind": "text"])).contains { $0["id"] as? String == colour })
+        // A colour in the slice with more after it still says the text goes on.
+        let more = try await record(harness, text("#123456" + String(repeating: " ", count: 193) + "and more words"), at: start + 5)
+        let shownColour = try #require(clips(await harness.call("clipboard_list")).first { $0["id"] as? String == more })
+        #expect(untrusted(shownColour)["preview"] as? String == "#123456")
+        #expect(untrusted(shownColour)["preview_truncated"] as? Bool == true)
         // A link within the preview keeps its domain.
-        try await record(harness, text("https://example.com/page"), at: start + 3)
-        let link = try #require(clips(await harness.call("clipboard_list")).first)
+        let linkID = try await record(harness, text("https://example.com/page"), at: start + 3)
+        let link = try #require(clips(await harness.call("clipboard_list")).first { $0["id"] as? String == linkID })
         #expect(untrusted(link)["domain"] as? String == "example.com")
         // Counts aren't content: a long file list still says how many files it holds.
         var files = ClipboardCapture(kind: .files, hash: "many-files", text: (1...30).map { "/Users/x/Documents/file-\($0).txt" }.joined(separator: "\n"))
