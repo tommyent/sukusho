@@ -119,6 +119,8 @@ struct AgentsSettingsPane: View {
             }
         }
         .formStyle(.grouped)
+        // As every other pane: the form's own ground would cover Glass's picture.
+        .scrollContentBackground(.hidden)
     }
 }
 
