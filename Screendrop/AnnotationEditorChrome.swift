@@ -181,7 +181,7 @@ struct GlassBackdrop: View {
     @CurrentTheme private var theme
     @State private var host = WeakWindow()
     @State private var refresh = 0
-    @State private var url: URL?
+    @State private var picture: GlassPicture.Resolved?
 
     private func refreshIfOwn(_ note: Notification) {
         if let window = host.window, note.object as? NSWindow === window { refresh += 1 }
@@ -191,9 +191,9 @@ struct GlassBackdrop: View {
         let ground = theme.ground.workspace.color
         ZStack {
             Rectangle().fill(ground)
-            if let url {
-                WorkspaceWallpaper(url: url, blur: backdrop.blur, dimming: ground.opacity(backdrop.dim),
-                                   dotsWhenUnreadable: false)
+            if let picture {
+                WorkspaceWallpaper(url: picture.url, version: picture.version, blur: backdrop.blur,
+                                   dimming: ground.opacity(backdrop.dim), dotsWhenUnreadable: false)
             }
         }
         .onWindowChange { host.window = $0; refresh += 1 }
@@ -205,7 +205,7 @@ struct GlassBackdrop: View {
             guard let screen = host.window?.screen else { return }
             let desktop = NSWorkspace.shared.desktopImageURL(for: screen)
             let resolved = await GlassPicture.resolve(picked: picked, desktop: desktop, dark: colorScheme == .dark)
-            if !Task.isCancelled, resolved != url { url = resolved }
+            if !Task.isCancelled, resolved != picture { picture = resolved }
         }
     }
 }
@@ -249,6 +249,8 @@ private struct GlassFrostBacking<S: Shape>: ViewModifier {
 /// as after the file was deleted.
 private struct WorkspaceWallpaper: View {
     let url: URL
+    /// Glass's `GlassPicture.version(of:)`: a file replaced at the same path is drawn again.
+    var version = ""
     /// In points; 0 draws the photo sharp.
     let blur: CGFloat
     let dimming: Color
@@ -281,7 +283,7 @@ private struct WorkspaceWallpaper: View {
                     Color.clear
                 }
             }
-            .task(id: "\(url.path)#\(Int(pixels.width))x\(Int(pixels.height))#\(blurred)") {
+            .task(id: "\(url.path)#\(version)#\(Int(pixels.width))x\(Int(pixels.height))#\(blurred)") {
                 await load(bounds: pixels)
             }
         }

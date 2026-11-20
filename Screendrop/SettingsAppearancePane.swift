@@ -83,6 +83,7 @@ private struct WorkspaceWallpaperSettings: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var addError: String?
+    @State private var picks = LatestPick()
 
     private let store = AnnotationWallpaperStore.shared
     private let columns = Array(repeating: GridItem(.flexible(), spacing: DS.Space.s), count: 6)
@@ -153,10 +154,15 @@ private struct WorkspaceWallpaperSettings: View {
         wallpaper.url.standardizedFileURL.path == wallpaperPath
     }
 
-    private func choose(_ url: URL) {
-        store.addRecentWallpaper(url)
-        wallpaperPath = url.standardizedFileURL.path
-        addError = nil
+    /// A tile or a found picture at once, an added one once it's copied in (`importing`); the latest pick wins.
+    private func choose(_ url: URL, importing: @escaping (URL) async throws -> URL = { $0 }) {
+        Task {
+            await picks.choose(url, importing: importing, apply: { path in
+                store.addRecentWallpaper(URL(fileURLWithPath: path))
+                wallpaperPath = path
+                addError = nil
+            }, failed: { addError = "Couldn't add the wallpaper: \($0.localizedDescription)" })
+        }
     }
 
     private func addWallpaper() {
@@ -167,13 +173,7 @@ private struct WorkspaceWallpaperSettings: View {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        Task {
-            do {
-                choose(try await store.importWallpaper(from: url))
-            } catch {
-                addError = "Couldn't add the wallpaper: \(error.localizedDescription)"
-            }
-        }
+        choose(url, importing: store.importWallpaper)
     }
 }
 
@@ -189,6 +189,7 @@ private struct GlassPictureSettings: View {
     @State private var resolved: (fallback: URL, shown: URL)?
     @State private var host = WeakWindow()
     @State private var windowChanges = 0
+    @State private var picks = LatestPick()
 
     private let store = AnnotationWallpaperStore.shared
     private let columns = Array(repeating: GridItem(.flexible(), spacing: DS.Space.s), count: 6)
@@ -203,7 +204,7 @@ private struct GlassPictureSettings: View {
             LazyVGrid(columns: columns, spacing: DS.Space.s) {
                 let own = resolved.map { $0.fallback == GlassPicture.ownPicture(dark: dark) } ?? true
                 InspectorTile(title: own ? "Sukusho's" : "Desktop", aspectRatio: 1.35, isSelected: path.isEmpty) {
-                    path = ""
+                    choose(nil)
                 } content: {
                     if let resolved {
                         AnnotationCustomWallpaperPreview(wallpaper: AnnotationCustomWallpaper(url: resolved.fallback), maxPixelSize: 320)
@@ -228,10 +229,13 @@ private struct GlassPictureSettings: View {
             }
         }
         .onWindowChange { host.window = $0; windowChanges += 1 }
+        // As the backdrop does (`GlassBackdrop`): another screen, or Sukusho back in front, may mean another picture.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeScreenNotification), perform: refreshIfOwn)
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification), perform: refreshIfOwn)
         .task(id: "\(path)#\(dark)#\(windowChanges)") {
             let desktop = host.window?.screen.flatMap { NSWorkspace.shared.desktopImageURL(for: $0) }
-            let fallback = await GlassPicture.resolve(picked: "", desktop: desktop, dark: dark)
-            let shown = path.isEmpty ? fallback : await GlassPicture.resolve(picked: path, desktop: desktop, dark: dark)
+            let fallback = await GlassPicture.resolve(picked: "", desktop: desktop, dark: dark).url
+            let shown = path.isEmpty ? fallback : await GlassPicture.resolve(picked: path, desktop: desktop, dark: dark).url
             if !Task.isCancelled { resolved = (fallback, shown) }
         }
     }
@@ -242,15 +246,16 @@ private struct GlassPictureSettings: View {
         return "The chosen picture can't be read, so Glass shows the default. Choose another."
     }
 
-    /// Copied into Sukusho's folder first unless it's already there (`importWallpaper` keeps those as they are).
-    private func choose(_ url: URL) {
+    private func refreshIfOwn(_ note: Notification) {
+        if let window = host.window, note.object as? NSWindow === window { windowChanges += 1 }
+    }
+
+    /// Copied into Sukusho's folder first unless it's already there (`importWallpaper` keeps those as they are);
+    /// nil is the default. The latest pick wins, so a slow copy can't undo a newer choice.
+    private func choose(_ url: URL?) {
         Task {
-            do {
-                path = try await store.importWallpaper(from: url).standardizedFileURL.path
-                addError = nil
-            } catch {
-                addError = "Couldn't use the picture: \(error.localizedDescription)"
-            }
+            await picks.choose(url, importing: store.importWallpaper, apply: { path = $0; addError = nil },
+                               failed: { addError = "Couldn't use the picture: \($0.localizedDescription)" })
         }
     }
 

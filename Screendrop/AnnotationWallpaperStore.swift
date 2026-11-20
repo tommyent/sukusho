@@ -4,6 +4,7 @@
 //
 
 import Foundation
+import Synchronization
 import Observation
 import UniformTypeIdentifiers
 
@@ -52,35 +53,37 @@ final class AnnotationWallpaperStore {
     }
 
     func addRecentWallpaper(_ url: URL) {
-        let standardizedPath = url.standardizedFileURL.path
-        let standardizedURL = URL(fileURLWithPath: standardizedPath)
-        guard Self.isSupportedImageFile(standardizedURL) else { return }
-
-        var paths = UserDefaults.standard.stringArray(forKey: Self.recentWallpaperPathsKey) ?? []
-        guard !paths.contains(standardizedPath) else { return }
-        paths.insert(standardizedPath, at: 0)
-
-        let filteredPaths = paths
-            .filter { path in
-                let url = URL(fileURLWithPath: path)
-                return Self.isSupportedImageFile(url)
-            }
-            .prefix(Self.maxRecentWallpaperCount)
-        let recentPaths = Array(filteredPaths)
-
-        UserDefaults.standard.set(recentPaths, forKey: Self.recentWallpaperPathsKey)
+        guard let recentPaths = Self.recentPaths(adding: url) else { return }
         recentWallpapers = recentPaths.map { AnnotationCustomWallpaper(url: URL(fileURLWithPath: $0)) }
         Task { await reload() }
     }
 
+    /// The recent list with `url` first, saved, or nil when it's already listed or isn't a picture. Checks each
+    /// listed file, so `importWallpaper` calls it off the main thread.
+    nonisolated private static func recentPaths(adding url: URL) -> [String]? {
+        let standardizedPath = url.standardizedFileURL.path
+        guard isSupportedImageFile(URL(fileURLWithPath: standardizedPath)) else { return nil }
+
+        var paths = UserDefaults.standard.stringArray(forKey: recentWallpaperPathsKey) ?? []
+        guard !paths.contains(standardizedPath) else { return nil }
+        paths.insert(standardizedPath, at: 0)
+
+        let recentPaths = Array(paths.filter { isSupportedImageFile(URL(fileURLWithPath: $0)) }.prefix(maxRecentWallpaperCount))
+        UserDefaults.standard.set(recentPaths, forKey: recentWallpaperPathsKey)
+        return recentPaths
+    }
+
     /// Copies a picked image into Sukusho's wallpapers folder, so it stays when
     /// the original moves or goes, and lists it. A file already in that
-    /// folder is listed as it is. The copy runs off the main thread: a big
-    /// picture on another volume takes a while.
+    /// folder is listed as it is. The copy and the recent list's file checks
+    /// run off the main thread: a big picture or a slow volume takes a while.
     func importWallpaper(from url: URL) async throws -> URL {
         let directory = Self.wallpapersDirectory
-        let file = try await Task.detached(priority: .userInitiated) { try Self.copy(url, into: directory) }.value
-        addRecentWallpaper(file)
+        let (file, recentPaths) = try await Task.detached(priority: .userInitiated) {
+            let file = try Self.copy(url, into: directory)
+            return (file, Self.recentPaths(adding: file))
+        }.value
+        if let recentPaths { recentWallpapers = recentPaths.map { AnnotationCustomWallpaper(url: URL(fileURLWithPath: $0)) } }
         return file
     }
 
@@ -93,16 +96,22 @@ final class AnnotationWallpaperStore {
     }
 
     /// `url` copied into `directory` (`name_2` and so on when taken), or `url`
-    /// itself when it's already inside.
+    /// itself when it's already inside. A link is followed: the file it leads
+    /// to is what's copied, and a link inside that leads out is copied too.
     nonisolated static func copy(_ url: URL, into directory: URL) throws -> URL {
-        let directory = directory.standardizedFileURL
-        let file = url.standardizedFileURL
-        guard !file.path.hasPrefix(directory.path + "/") else { return file }
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let copy = ScreenshotFileNaming.uniqueURL(for: file.lastPathComponent, in: directory)
-        try FileManager.default.copyItem(at: file, to: copy)
-        return copy
+        let folder = directory.resolvingSymlinksInPath().standardizedFileURL
+        let file = url.resolvingSymlinksInPath().standardizedFileURL
+        guard !file.path.hasPrefix(folder.path + "/") else { return url.standardizedFileURL }
+        // One copy at a time: two imports of the same name must not both pick the same free name.
+        return try copying.withLock { _ in
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let copy = ScreenshotFileNaming.uniqueURL(for: file.lastPathComponent, in: directory.standardizedFileURL)
+            try FileManager.default.copyItem(at: file, to: copy)
+            return copy
+        }
     }
+
+    nonisolated private static let copying = Mutex(())
 
     // MARK: - Off-main filesystem work
 

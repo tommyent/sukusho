@@ -49,6 +49,8 @@ struct GlassThemeTests {
         #expect(allowed("/System/Library/CoreServices/DefaultDesktop.heic"))
         #expect(allowed("/System/Library/Desktop Pictures/Sonoma.heic"))
         #expect(allowed("/Library/Desktop Pictures/Lake.heic"))
+        // The one file allowed is that file only, not a name that begins like it (Astra 2-5).
+        #expect(!allowed("/System/Library/CoreServices/DefaultDesktop.heic-backup"))
         #expect(!allowed("/Library/ExampleVendor/Marketing.png"))
         #expect(!allowed("/System/Library/CoreServices/Finder.app/Contents/Resources/Finder.icns"))
         #expect(!allowed(NSHomeDirectory() + "/Downloads/photo.heic"))
@@ -69,31 +71,46 @@ struct GlassThemeTests {
         #expect(GlassPicture.automatic(leadsIn, in: roots) == nil)
     }
 
-    /// The first of the picked picture, the desktop picture and Sukusho's own that decodes, exactly (Astra 2).
+    /// The first of the picked picture, the desktop picture and Sukusho's own that decodes, exactly (Astra 2), with a
+    /// wallpaper folder of the test's own, so no Mac's own wallpapers are needed (Astra 2-6).
     @Test func theFirstPictureThatDecodesIsShown() async throws {
         let folder = try temporaryFolder()
+        let wallpapers = folder.appendingPathComponent("Desktop Pictures")
+        try FileManager.default.createDirectory(at: wallpapers, withIntermediateDirectories: true)
+        let roots = [wallpapers.resolvingSymlinksInPath().path + "/", wallpapers.path + "/"]
         let picked = try picture(white: 0.5, in: folder)
         let corrupt = folder.appendingPathComponent("not-a-picture.png")
         try Data("plain text, not a PNG".utf8).write(to: corrupt)
         let gone = folder.appendingPathComponent("gone.png").path
         let own = GlassPicture.ownPicture(dark: false)
-        // Not DefaultDesktop.heic, which is also Sukusho's own in a test bundle without Glass's pictures.
-        let desktop = URL(fileURLWithPath: "/System/Library/Desktop Pictures/.thumbnails/Big Sur.heic")
-        // A text file Apple keeps in the wallpaper folders: allowed, but it doesn't decode.
-        let undecodableDesktop = URL(fileURLWithPath: "/System/Library/Desktop Pictures/Big Sur.madesktop")
-        try #require(FileManager.default.fileExists(atPath: desktop.path) && desktop != own)
-        try #require(FileManager.default.fileExists(atPath: undecodableDesktop.path))
-        try #require(GlassPicture.automatic(undecodableDesktop) != nil)
+        let desktop = try picture(white: 0.25, in: wallpapers)
+        // In the wallpaper folder, so allowed, but it doesn't decode.
+        let undecodableDesktop = wallpapers.appendingPathComponent("Wallpaper.madesktop")
+        try Data("a descriptor, not a picture".utf8).write(to: undecodableDesktop)
+        func shown(_ path: String, _ desktop: URL?, dark: Bool = false) async -> URL {
+            await GlassPicture.resolve(picked: path, desktop: desktop, dark: dark, roots: roots).url
+        }
 
-        #expect(await GlassPicture.resolve(picked: picked.path, desktop: desktop, dark: false) == picked)
-        #expect(await GlassPicture.resolve(picked: corrupt.path, desktop: nil, dark: false) == own)
-        #expect(await GlassPicture.resolve(picked: gone, desktop: nil, dark: false) == own)
-        #expect(await GlassPicture.resolve(picked: corrupt.path, desktop: desktop, dark: false) == desktop)
-        #expect(await GlassPicture.resolve(picked: "", desktop: undecodableDesktop, dark: false) == own)
-        #expect(await GlassPicture.resolve(picked: corrupt.path, desktop: undecodableDesktop, dark: true)
-                == GlassPicture.ownPicture(dark: true))
-        // A desktop picture outside Apple's folders is never read, even when it decodes.
-        #expect(await GlassPicture.resolve(picked: "", desktop: picked, dark: false) == own)
+        #expect(await shown(picked.path, desktop) == picked)
+        #expect(await shown(corrupt.path, nil) == own)
+        #expect(await shown(gone, nil) == own)
+        #expect(await shown(corrupt.path, desktop) == desktop)
+        #expect(await shown("", undecodableDesktop) == own)
+        #expect(await shown(corrupt.path, undecodableDesktop, dark: true) == GlassPicture.ownPicture(dark: true))
+        // A desktop picture outside the wallpaper folders is never read, even when it decodes.
+        #expect(await shown("", picked) == own)
+    }
+
+    /// A picture replaced at the same path has a new version, which the backdrop draws by, so an open window shows
+    /// the new one (Astra 2-M3).
+    @Test func aPictureReplacedAtTheSamePathHasANewVersion() async throws {
+        let folder = try temporaryFolder(), other = try temporaryFolder()
+        let url = try picture(white: 1, in: folder)
+        let before = await GlassPicture.resolve(picked: url.path, desktop: nil, dark: false)
+        _ = try FileManager.default.replaceItemAt(url, withItemAt: try picture(white: 0, in: other))
+        let after = await GlassPicture.resolve(picked: url.path, desktop: nil, dark: false)
+        #expect(before.url == url && after.url == url)
+        #expect(before.version != after.version)
     }
 
     /// A file is read again when it changes in place, and not while it stays the same (Astra 3, 7).
@@ -122,8 +139,60 @@ struct GlassThemeTests {
         let chosen = try AnnotationWallpaperStore.copy(original, into: wallpapers)
         #expect(chosen.deletingLastPathComponent().standardizedFileURL == wallpapers.standardizedFileURL)
         try FileManager.default.moveItem(at: original, to: elsewhere.appendingPathComponent("moved.png"))
-        #expect(await GlassPicture.resolve(picked: chosen.path, desktop: nil, dark: false) == chosen)
+        #expect(await GlassPicture.resolve(picked: chosen.path, desktop: nil, dark: false).url == chosen)
         #expect(try AnnotationWallpaperStore.copy(chosen, into: wallpapers) == chosen.standardizedFileURL)
+
+        // A recent that's a link: the file it leads to is copied, so moving that file keeps the choice (Astra 2-6).
+        let target = try picture(white: 0.75, in: elsewhere)
+        let link = elsewhere.appendingPathComponent("link.png")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+        let viaLink = try AnnotationWallpaperStore.copy(link, into: wallpapers)
+        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: viaLink.path)) == nil)
+        try FileManager.default.moveItem(at: target, to: elsewhere.appendingPathComponent("target-moved.png"))
+        #expect(GlassPicture.decodes(viaLink))
+        // A link inside Sukusho's folder that leads out is copied too, not kept as it is.
+        let outward = wallpapers.appendingPathComponent("outward.png")
+        try FileManager.default.createSymbolicLink(at: outward, withDestinationURL: elsewhere.appendingPathComponent("moved.png"))
+        #expect(try AnnotationWallpaperStore.copy(outward, into: wallpapers) != outward.standardizedFileURL)
+    }
+
+    /// Imports at once of pictures with the same name each get a file of their own (Astra 2-M2).
+    @Test func importsAtOnceOfOneNameEachGetAFile() async throws {
+        let folder = try temporaryFolder()
+        let wallpapers = folder.appendingPathComponent("Wallpapers")
+        var originals: [URL] = []
+        for i in 0..<24 {
+            let from = folder.appendingPathComponent("from-\(i)")
+            try FileManager.default.createDirectory(at: from, withIntermediateDirectories: true)
+            let same = from.appendingPathComponent("same.png")
+            try FileManager.default.moveItem(at: try picture(white: CGFloat(i) / 24, in: from), to: same)
+            originals.append(same)
+        }
+        let copies = try await withThrowingTaskGroup(of: URL.self) { group in
+            for original in originals { group.addTask { try AnnotationWallpaperStore.copy(original, into: wallpapers) } }
+            return try await group.reduce(into: [URL]()) { $0.append($1) }
+        }
+        #expect(Set(copies.map(\.path)).count == 24)
+    }
+
+    /// A pick whose copy finishes after a newer pick can't undo it, the default included (Astra 2-M1).
+    @Test @MainActor func aLatePickCantUndoANewerOne() async {
+        @MainActor final class Seen { var started = false, path = "before", errors = 0 }
+        let picks = LatestPick(), seen = Seen()
+        let (gate, open) = AsyncStream<Void>.makeStream()
+        let slow = Task { @MainActor in
+            await picks.choose(URL(fileURLWithPath: "/slow.png"), importing: { url in
+                seen.started = true
+                for await _ in gate {}
+                return url
+            }, apply: { seen.path = $0 }, failed: { _ in seen.errors += 1 })
+        }
+        while !seen.started { await Task.yield() }
+        await picks.choose(nil, importing: { $0 }, apply: { seen.path = $0 }, failed: { _ in seen.errors += 1 })
+        #expect(seen.path == "")
+        open.finish()
+        await slow.value
+        #expect(seen.path == "" && seen.errors == 0)
     }
 
     // MARK: - The Theme Tuner's Glass values
