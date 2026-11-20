@@ -13,6 +13,7 @@ struct CaptureLibraryView: View {
     @State private var projects = RecordingProjectStore.shared
     @State private var libraryWindow: NSWindow?
     @State private var handledInitialWindowPlacement = false
+    @State private var titlebarBeforeGlass: (transparent: Bool, separator: NSTitlebarSeparatorStyle)?
     @State private var columnVisibility = NavigationSplitViewVisibility.automatic
     @AppStorage("captureLibrary.inspectorVisible") private var inspectorVisible = true
     @AppStorage("captureLibrary.tagsExpanded") private var tagsExpanded = true
@@ -81,6 +82,19 @@ struct CaptureLibraryView: View {
         splitLayout
         .modifier(LibraryToolbarSeparator())
         .task(id: "\(glass != nil)#\(libraryWindow.map { ObjectIdentifier($0).hashValue } ?? 0)") {
+            if #available(macOS 27, *), let window = libraryWindow {
+                if glass != nil {
+                    if titlebarBeforeGlass == nil {
+                        titlebarBeforeGlass = (window.titlebarAppearsTransparent, window.titlebarSeparatorStyle)
+                    }
+                    window.titlebarAppearsTransparent = true
+                    window.titlebarSeparatorStyle = .none
+                } else if let previous = titlebarBeforeGlass {
+                    window.titlebarAppearsTransparent = previous.transparent
+                    window.titlebarSeparatorStyle = previous.separator
+                    titlebarBeforeGlass = nil
+                }
+            }
             for _ in 0..<10 {
                 if LibraryWindowButtonCapsule.update(libraryWindow, shown: glass != nil) { break }
                 try? await Task.sleep(for: .milliseconds(200))
@@ -113,6 +127,7 @@ struct CaptureLibraryView: View {
         }
         .onDisappear { AppActivationPolicy.leave() }
         .onWindowChange { window in
+            if window !== libraryWindow { titlebarBeforeGlass = nil }
             libraryWindow = window
             model.savedUndoManager = window?.undoManager
             PreviewWindowCaptureExclusion.shared.register(window: window)
@@ -223,6 +238,9 @@ struct CaptureLibraryView: View {
             .inspector(isPresented: $inspectorVisible) {
                 inspectorContent
             }
+            // Keep AppKit's full-height sidebar and window-button placement with the native toolbar empty.
+            .toolbar { ToolbarSpacer(.flexible) }
+            .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
             .overlay(alignment: .top) {
                 glassHeader
             }
@@ -1322,7 +1340,7 @@ private struct LibraryToolbarSeparator: ViewModifier {
 /// inspector's divider out of it. Backgrounds around `.inspector` keep the
 /// safe area; clips don't.
 /// Glass instead lays its picture under the whole window, mirrored and blurred under the sidebar by macOS
-/// (`backgroundExtensionEffect`), and hides the toolbar's bar so the picture runs under it too.
+/// (`backgroundExtensionEffect`).
 private struct LibraryWindowSurface: ViewModifier {
     @DrawnGlass private var glass
 
@@ -1332,11 +1350,25 @@ private struct LibraryWindowSurface: ViewModifier {
             content
                 .environment(\.overGlassPicture, true)
                 .background { GlassBackdrop(backdrop: backdrop).backgroundExtensionEffect().ignoresSafeArea() }
-                .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         } else {
             content
                 .background { WorkspaceChrome.background.ignoresSafeArea() }
                 .toolbarBackgroundVisibility(.visible, for: .windowToolbar)
+        }
+    }
+}
+
+struct LibrarySecondaryBarSurface: ViewModifier {
+    @Environment(\.overGlassPicture) private var overGlassPicture
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if overGlassPicture {
+            content
+        } else {
+            content
+                .background(.bar)
+                .overlay(alignment: .bottom) { Divider() }
         }
     }
 }

@@ -19,14 +19,12 @@ struct ClipboardLibraryPage: View {
             // The captures grid's layout: the strip a fixed column count left on the right is shared out instead.
             let cards = sections.flatMap { $0.entries.map(LibrarySavedCard.clip) }
             VStack(spacing: 0) {
-                // On a bar of its own, as the Cloud page's rows are, so the grid scrolls under it, never over it.
                 HStack(spacing: DS.Space.m) {
                     Group { if model.showsSnippets { snippetBar } else { filterBar } }
                 }
                     .padding(.horizontal, DS.Space.xl).padding(.vertical, DS.Space.m)
                     .frame(maxWidth: .infinity)
-                    .background(.bar)
-                    .overlay(alignment: .bottom) { Divider() }
+                    .modifier(LibrarySecondaryBarSurface())
                 if sections.isEmpty {
                     emptyPage.frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {

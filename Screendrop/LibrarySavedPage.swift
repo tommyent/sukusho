@@ -99,8 +99,7 @@ struct LibrarySavedPage: View {
                 .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
                 .padding(.horizontal, DS.Space.xl).padding(.vertical, DS.Space.m)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.bar)
-                .overlay(alignment: .bottom) { Divider() }
+                .modifier(LibrarySecondaryBarSurface())
             // The marks file can't be fully read: Saved shows what could be read and won't change it (Astra M1).
             // One line, the full reason in its help tag. Sized to its text (fixedSize(vertical:)), the page asked for
             // more height than the window and the Library slid up out of it (Astra F1); wrapped, its height followed
