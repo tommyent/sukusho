@@ -2,7 +2,7 @@
 //  AgentAccessApp.swift
 //  Screendrop
 //
-//  Agent access inside the app: the switch in Settings › Agents, the socket
+//  Agent access inside the app: the switch in Settings › Connected Apps, the socket
 //  while it's on, the tools' work through the Library's own code, and the
 //  windows that ask the owner.
 //
@@ -404,7 +404,7 @@ final class AgentApprovalPresenter: AgentAsker {
         panel.setFrameOrigin(NSPoint(x: panel.frame.minX + offset, y: panel.frame.minY - offset))
         NSApp.activate()
         panel.makeKeyAndOrderFront(nil)
-        AccessibilityNotification.Announcement("Sukusho is asking about an agent’s request").post()
+        AccessibilityNotification.Announcement("Sukusho is asking about an app’s request").post()
         return panel
     }
 }
@@ -463,7 +463,7 @@ struct AgentApprovalView<Content: View>: View {
                         Text(ask.agent.signerName)
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .help("The program that started Sukusho’s helper. Grants are kept for this program and agent name together.")
+                            .help("The program that started Sukusho’s helper. Grants are kept for this program and app name together.")
                     }
                 }
                 if !ask.thumbnails.isEmpty { AgentThumbnails(urls: ask.thumbnails) }
@@ -483,7 +483,7 @@ struct AgentApprovalView<Content: View>: View {
                     .pickerStyle(.menu)
                     .fixedSize()
                     if choice.decision == .always, ask.group == .publish {
-                        Text("Covers only what this agent adds or creates. Anything else from the Library still asks.")
+                        Text("Covers only what \(ask.agent.displayName) adds or creates. Anything else from the Library still asks.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -499,7 +499,7 @@ struct AgentApprovalView<Content: View>: View {
                             .foregroundStyle(.secondary)
                     }
                 } else {
-                    Text("Type the password here. The agent never sees it.")
+                    Text("Type the password here. \(ask.agent.displayName) never sees it.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

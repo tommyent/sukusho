@@ -2,9 +2,9 @@
 //  SettingsAgentsPane.swift
 //  Screendrop
 //
-//  Settings › Agents: the switch that lets coding agents use Sukusho through
-//  its MCP helper, how to add it, who is connected, what each agent may do
-//  without asking, and every call they made.
+//  Settings › Connected Apps: the switch that lets other apps (coding agents,
+//  Unleash) use Sukusho through its MCP helper, how to add it, who is
+//  connected, what each app may do without asking, and every call they made.
 //
 
 import AppKit
@@ -17,16 +17,16 @@ struct AgentsSettingsPane: View {
     var body: some View {
         Form {
             Section {
-                Toggle("Let agents use Sukusho", isOn: $access.isEnabled)
+                Toggle("Let other apps use Sukusho", isOn: $access.isEnabled)
                 if let error = access.errorMessage {
                     Text(error).font(.caption).foregroundStyle(.red)
                 }
             } footer: {
-                Text("Coding agents such as Claude Code or Codex can add screenshots, share them, request files and read feedback. Sukusho asks you first, in its own window, before anything is shared, deleted or captured. Agents never get your Cloud token or Library files.")
+                Text("Apps such as Claude Code or Codex can add screenshots, share them, request files, read feedback and use your clipboard history. Sukusho asks you first, in its own window, before anything is shared, deleted or captured, and before an app reads your clipboard history. Apps never get your Cloud token or Library files.")
             }
 
             if access.isEnabled {
-                Section("Add Sukusho to an agent") {
+                Section("Add Sukusho to an app") {
                     HStack(alignment: .firstTextBaseline) {
                         Text(access.addCommand)
                             .font(.system(.callout, design: .monospaced))
@@ -46,14 +46,14 @@ struct AgentsSettingsPane: View {
                         .buttonStyle(.borderless)
                         .actionFeedback(commandCopied, label: "Copy Command")
                     }
-                    Text("Other agents take the helper’s path as a local (stdio) MCP server.")
+                    Text("Other apps take the helper’s path as a local (stdio) MCP server.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
                 Section("Connected now") {
                     if access.server.sessions.isEmpty {
-                        Text("No agent is connected.").foregroundStyle(.secondary)
+                        Text("No app is connected.").foregroundStyle(.secondary)
                     }
                     ForEach(access.server.sessions) { session in
                         AgentRow(agent: session.agent, detail: access.grants.connectedDetail(agent: session.agent, helperGrants: session.grants))
@@ -61,7 +61,7 @@ struct AgentsSettingsPane: View {
                 }
 
                 if !access.grants.sessions.isEmpty {
-                    // Kept after a helper ends, so an agent that isn't connected now still has one (Astra #3).
+                    // Kept after a helper ends, so an app that isn’t connected now still has one (Astra #3).
                     Section("Allowed until Sukusho quits") {
                         ForEach(access.grants.sessions) { grant in
                             HStack {
@@ -75,7 +75,7 @@ struct AgentsSettingsPane: View {
 
                 Section {
                     if access.grants.grants.isEmpty {
-                        Text("No agent is always allowed anything.").foregroundStyle(.secondary)
+                        Text("No app is always allowed anything.").foregroundStyle(.secondary)
                     }
                     ForEach(access.grants.grants) { grant in
                         HStack {
@@ -88,7 +88,7 @@ struct AgentsSettingsPane: View {
                 } header: {
                     Text("Always allowed")
                 } footer: {
-                    Text("For sharing and deleting, “Always” covers only what that agent added or created; anything else from the Library still asks. For the clipboard, it covers the whole history.")
+                    Text("For sharing and deleting, “Always” covers only what that app added or created; anything else from the Library still asks. For the clipboard, it covers the whole history.")
                 }
 
                 Section {

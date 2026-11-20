@@ -34,7 +34,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .overlay: "Overlay"
         case .optimize: "Optimize"
         case .cloud: "Cloud"
-        case .agents: "Agents"
+        case .agents: "Connected Apps"
         case .about: "About"
         }
     }
@@ -51,7 +51,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .overlay: "square.on.square"
         case .optimize: "arrow.down.right.and.arrow.up.left"
         case .cloud: "cloud"
-        case .agents: "terminal"
+        case .agents: "app.connected.to.app.below.fill"
         case .about: "info.circle"
         }
     }

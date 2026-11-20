@@ -91,8 +91,8 @@ actor AppLink {
             }
         }
         guard socket >= 0 else {
-            throw Self.unavailable((started ? "Sukusho started but isn’t letting agents in." : "Sukusho isn’t letting agents in.")
-                + " Turn on Settings › Agents › Let agents use Sukusho, and check whether Sukusho is waiting on a dialog, then try again.")
+            throw Self.unavailable((started ? "Sukusho started but isn’t letting other apps in." : "Sukusho isn’t letting other apps in.")
+                + " Turn on Settings › Connected Apps › Let other apps use Sukusho, and check whether Sukusho is waiting on a dialog, then try again.")
         }
         fd = socket
         let hello: [String: Any] = ["hello": ["name": client?.name ?? "", "version": client?.version ?? ""]]
@@ -210,7 +210,7 @@ actor AppLink {
                 Task { await link.deliver(line) }
             }
         }
-        Task { await link.fail("Sukusho quit or turned agent access off.") }
+        Task { await link.fail("Sukusho quit or turned Connected Apps off.") }
     }
 }
 
