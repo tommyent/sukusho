@@ -1,6 +1,7 @@
 import AppKit
 import ImageIO
 import SwiftUI
+import Synchronization
 import Testing
 import UniformTypeIdentifiers
 
@@ -183,6 +184,18 @@ struct GlassThemeTests {
         let saved = Set(defaults.stringArray(forKey: "annotationBackground.recentWallpaperPaths") ?? [])
         #expect(saved == Set(files.map(\.standardizedFileURL.path)))
         #expect(Set(try #require(lists.max { $0.revision < $1.revision }).paths) == saved)
+    }
+
+    /// Picking a wallpaper doesn't wait for the recent list while a reload holds it, as on a slow volume (Astra 4).
+    @Test @MainActor func pickingAWallpaperDoesntWaitForTheRecentList() async throws {
+        let file = try picture(white: 0.4, in: try temporaryFolder())
+        let held = Task.detached { AnnotationWallpaperStore.recentLock.withLock { _ in Thread.sleep(forTimeInterval: 1) } }
+        try await Task.sleep(for: .milliseconds(150))   // the lock is held by now
+        let start = ContinuousClock.now
+        AnnotationWallpaperStore.shared.addRecentWallpaper(file)
+        let waited = ContinuousClock.now - start
+        await held.value
+        #expect(waited < .milliseconds(300), "the pick waited \(waited)")
     }
 
     /// A cached picture replaced by another of the same length and date is decoded again (Astra 3-M3).

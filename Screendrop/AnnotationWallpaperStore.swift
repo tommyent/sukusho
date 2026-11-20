@@ -52,10 +52,14 @@ final class AnnotationWallpaperStore {
         return wallpaper.accessibilityTitle(ordinal: ordinal)
     }
 
+    /// Lists a picked wallpaper. Off the main thread: a reload may hold the list's lock while it checks a slow
+    /// volume, and the pick itself mustn't wait for that.
     func addRecentWallpaper(_ url: URL) {
-        guard let recent = Self.recentPaths(adding: url) else { return }
-        publish(recent)
-        Task { await reload() }
+        Task {
+            let recent = await Task.detached(priority: .userInitiated) { Self.recentPaths(adding: url) }.value
+            if let recent { publish(recent) }
+            await reload()
+        }
     }
 
     /// The recent list, saved, and the count of its changes so far: imports finish in any order, and only a list
@@ -75,7 +79,7 @@ final class AnnotationWallpaperStore {
 
     /// The recent list's one owner: every read, change and save of it, pruning included, happens under this lock,
     /// so imports at once can't each save a list without the others' pictures.
-    nonisolated private static let recentLock = Mutex(0)
+    nonisolated static let recentLock = Mutex(0)
 
     /// The recent list with `url` first, saved, or nil when it's already listed or isn't a picture. Checks each
     /// listed file, so `importWallpaper` calls it off the main thread. `defaults`: another domain in tests.
