@@ -158,7 +158,8 @@ struct LibraryCardSurface: ViewModifier {
                         } else if !selected, let edge {
                             // Hover firms the hairline up rather than lifting the card.
                             outline.strokeBorder(edge.color, lineWidth: hovering ? 1 : 0.5).allowsHitTesting(false)
-                        } else if selected || theme.card.recipe.frost == nil {
+                        } else if selected || theme.card.recipe.frost == nil || reduceTransparency {
+                            // Reduce Transparency draws a frost card's opaque face, which needs its resting border.
                             LibraryCardBorder(selected: selected, shape: outline)
                         }
                     }
