@@ -13,23 +13,44 @@ struct AppearanceSettingsPane: View {
     @AppStorage(AppTheme.lightKey) private var lightTheme = AppTheme.classicLight.id
     @AppStorage(AppTheme.darkKey) private var darkTheme = AppTheme.classicDark.id
     @AppStorage(WorkspaceBackground.styleKey) private var workspaceStyle = WorkspaceBackground.Style.dots
+    @Environment(\.overGlassPicture) private var overGlassPicture
 
     var body: some View {
         Form {
             Section("Appearance") {
-                SettingsControlLabel(
-                    "Mode",
-                    detail: "Light or dark for Sukusho's windows. System follows macOS."
-                ).control { label in
-                    Picker(selection: $mode) {
-                        ForEach(AppAppearance.allCases) { Text($0.title).tag($0) }
+                if overGlassPicture {
+                    LabeledContent {
+                        InspectorSegmented(
+                            options: AppAppearance.allCases,
+                            isSelected: { $0 == mode },
+                            onTap: { mode = $0 },
+                            label: { Text($0.title).font(.system(size: 12, weight: .medium)) },
+                            height: 26,
+                            equalWidths: false
+                        )
+                        .fixedSize()
                     } label: {
-                        label
+                        SettingsControlLabel(
+                            "Mode",
+                            detail: "Light or dark for Sukusho's windows. System follows macOS."
+                        )
                     }
-                    .pickerStyle(.segmented)
-                    .fixedSize()
+                    .onChange(of: mode) { AppAppearance.apply() }
+                } else {
+                    SettingsControlLabel(
+                        "Mode",
+                        detail: "Light or dark for Sukusho's windows. System follows macOS."
+                    ).control { label in
+                        Picker(selection: $mode) {
+                            ForEach(AppAppearance.allCases) { Text($0.title).tag($0) }
+                        } label: {
+                            label
+                        }
+                        .pickerStyle(.segmented)
+                        .fixedSize()
+                    }
+                    .onChange(of: mode) { AppAppearance.apply() }
                 }
-                .onChange(of: mode) { AppAppearance.apply() }
                 themePicker("Light theme", detail: "How Sukusho looks while it's light.", dark: false, selection: $lightTheme)
                 themePicker("Dark theme", detail: "How Sukusho looks while it's dark.", dark: true, selection: $darkTheme)
             }

@@ -25,6 +25,7 @@ struct OverlayCardEditor: View {
     // Geometry of drop targets, in the "cardEditor" coordinate space.
     @State private var zoneFrames: [ZoneFrame] = []
     @State private var centerItemFrames: [CenterItemFrame] = []
+    @Environment(\.overGlassPicture) private var overGlassPicture
 
     private let cardSize = CGSize(width: 210, height: 158)
     private let spaceName = "cardEditor"
@@ -218,7 +219,7 @@ struct OverlayCardEditor: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .strokeBorder(highlighted ? Color.accentColor : .clear, lineWidth: 2)
+                .strokeBorder(highlighted ? (overGlassPicture ? Color.primary.opacity(0.6) : Color.accentColor) : .clear, lineWidth: 2)
         )
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: hoveredZone)
         .animation(.spring(response: 0.42, dampingFraction: 0.78), value: layout)
@@ -333,9 +334,10 @@ struct OverlayCardEditor: View {
 
     @ViewBuilder
     private func slotPlaceholder(isCircle: Bool, highlighted: Bool) -> some View {
-        let stroke = highlighted ? Color.accentColor : Color.white.opacity(0.28)
+        let accent = overGlassPicture ? Color.white : Color.accentColor
+        let stroke = highlighted ? accent : Color.white.opacity(0.28)
         let style = StrokeStyle(lineWidth: highlighted ? 2 : 1.5, dash: highlighted ? [] : [4, 4])
-        let fill = highlighted ? Color.accentColor.opacity(0.18) : Color.clear
+        let fill = highlighted ? accent.opacity(0.18) : Color.clear
 
         Group {
             if isCircle {
