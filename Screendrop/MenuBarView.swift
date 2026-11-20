@@ -54,6 +54,7 @@ struct CaptureMenuItems: View {
             )
         }
         .keyboardShortcut(MenuBarView.shortcut(for: .scrollingCapture))
+        .badge(Text("Beta"))   // a menu item's badge, as macOS marks new things in menus
         // A recording and a scrolling capture both use the region
         // highlight, so neither starts while the other runs.
         .disabled(ScreenRecordingManager.shared.isActive)

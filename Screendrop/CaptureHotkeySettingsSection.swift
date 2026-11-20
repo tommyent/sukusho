@@ -43,7 +43,7 @@ struct CaptureHotkeySettingsSection: View {
                 errorText(kept)
             }
             ForEach(actions) { action in
-                LabeledContent(action.title) {
+                LabeledContent {
                     HStack(spacing: DS.Space.m) {
                         shortcutField(for: action)
 
@@ -60,6 +60,11 @@ struct CaptureHotkeySettingsSection: View {
                             .controlSize(.small)
                             .disabled(shortcuts[action] == nil)
                             .help("Remove this shortcut")
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text(action.title)
+                        if action.isBeta { BetaTag() }
                     }
                 }
                 if hasNotes(action) {
@@ -389,5 +394,17 @@ private struct HotkeyKeyCap: View {
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
                     .strokeBorder(.separator.opacity(0.35))
             }
+    }
+}
+
+/// A feature still in beta, beside its name: a small grey capsule, as System Settings marks one.
+struct BetaTag: View {
+    var body: some View {
+        Text("Beta")
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .background(.quaternary, in: Capsule())
     }
 }
