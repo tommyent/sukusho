@@ -242,6 +242,8 @@ final class AgentLiveBackend: AgentBackend {
         try await ClipboardHistoryModel.shared.loadEntries()
     }
 
+    var isClipboardHistoryOn: Bool { ClipboardMonitor.shared.store != nil }
+
     func appName(_ bundleID: String?) -> String? { ClipboardHistoryModel.shared.appName(bundleID) }
 
     func restoreClip(_ entry: ClipboardEntry) async -> Bool {
@@ -375,7 +377,12 @@ final class AgentApprovalPresenter: AgentAsker {
         // The panel keeps its first size otherwise, and cut the ask's text off at its edge (live check, 2026-11-20).
         panel.setContentSize(host.view.fittingSize)
         PreviewWindowCaptureExclusion.shared.register(window: panel)
-        if panels.isEmpty { focusOwner = NSWorkspace.shared.frontmostApplication }
+        // The app in front now gets the keyboard back, unless an earlier open ask made Sukusho the one in front (Astra #8).
+        if let front = NSWorkspace.shared.frontmostApplication,
+           AgentFocus.target(current: focusOwner?.processIdentifier, front: front.processIdentifier,
+                             own: ProcessInfo.processInfo.processIdentifier) == front.processIdentifier {
+            focusOwner = front
+        }
         panel.onClose = { [weak self, weak panel] in
             onClose()
             guard let self else { return }
@@ -384,9 +391,10 @@ final class AgentApprovalPresenter: AgentAsker {
             let others = NSApp.windows.filter { $0 !== panel }.map {
                 AgentFocus.Window(visible: $0.isVisible, ordinary: $0.styleMask.contains(.titled) && $0.level == .normal)
             }
-            if AgentFocus.returnsFocus(to: focusOwner?.processIdentifier, own: ProcessInfo.processInfo.processIdentifier,
+            if let owner = focusOwner, !owner.isTerminated,
+               AgentFocus.returnsFocus(to: owner.processIdentifier, own: ProcessInfo.processInfo.processIdentifier,
                                        isActive: NSApp.isActive, otherWindows: others) {
-                focusOwner?.activate()
+                owner.activate()
             }
             focusOwner = nil
         }
@@ -480,7 +488,12 @@ struct AgentApprovalView<Content: View>: View {
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
-                    if choice.decision == .session, ask.group.sessionOutlivesHelper {
+                    if !ask.agent.isResolved {
+                        Text("Sukusho can’t tell which program this is, so nothing is kept after this helper ends.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if choice.decision == .session, ask.group.sessionOutlivesHelper {
                         Text("Until Sukusho quits.")
                             .font(.caption)
                             .foregroundStyle(.secondary)

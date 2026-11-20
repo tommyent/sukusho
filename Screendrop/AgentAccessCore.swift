@@ -46,6 +46,13 @@ nonisolated enum AgentFocus {
 
     /// `isActive`: Sukusho still has the keyboard. An ask that timed out after the owner moved to another app leaves
     /// them there.
+    /// Who gets the keyboard back as an ask opens: the app in front, unless that's Sukusho, which an earlier open ask
+    /// made active; then whoever the earlier ask had.
+    static func target(current: pid_t?, front: pid_t?, own: pid_t) -> pid_t? {
+        if let front, front != own { return front }
+        return current
+    }
+
     static func returnsFocus(to previous: pid_t?, own: pid_t, isActive: Bool, otherWindows: [Window]) -> Bool {
         guard isActive, let previous, previous != own else { return false }
         return !otherWindows.contains { $0.visible && $0.ordinary }
@@ -66,6 +73,9 @@ nonisolated struct AgentIdentity: Hashable, Codable, Sendable {
     var clientVersion: String? = nil
 
     var key: String { signer + "|" + clientName }
+    /// False when Sukusho couldn't name the program that started the helper (`AgentPeerCheck.agentSigner`): every
+    /// such program shares one signer, so nothing is kept for it past its helper.
+    var isResolved: Bool { signer != "unknown" && signer != "path:unknown" }
     var displayName: String { clientName.isEmpty ? signerName : clientName }
 }
 
@@ -112,7 +122,9 @@ final class AgentGrantStore {
     private(set) var grants: [AgentGrant] = []
     /// Library, upload, gallery and file request IDs, by agent key.
     @ObservationIgnored private var owned: [String: Set<String>] = [:]
-    @ObservationIgnored private var sessionGrants: [String: Set<AgentGroup>] = [:]
+    /// Session grants that outlive their helper (`AgentGroup.sessionOutlivesHelper`), as Settings › Agents lists
+    /// them. Never saved: they end when Sukusho quits, when agent access is turned off, or with Revoke.
+    private(set) var sessions: [AgentGrant] = []
     @ObservationIgnored private let defaults: UserDefaults
     private static let grantsKey = "agentAccessGrants"
     private static let ownedKey = "agentAccessOwned"
@@ -143,7 +155,12 @@ final class AgentGrantStore {
 
     /// Takes back one group, or every group when `group` is nil.
     func revoke(_ key: String, group: AgentGroup? = nil) {
-        if let group { sessionGrants[key]?.remove(group) } else { sessionGrants[key] = nil }
+        if let group, let index = sessions.firstIndex(where: { $0.agent.key == key }) {
+            sessions[index].groups.remove(group)
+            if sessions[index].groups.isEmpty { sessions.remove(at: index) }
+        } else if group == nil {
+            revokeSession(key)
+        }
         if let group, let index = grants.firstIndex(where: { $0.agent.key == key }) {
             grants[index].groups.remove(group)
             if grants[index].groups.isEmpty { grants.remove(at: index) }
@@ -153,13 +170,22 @@ final class AgentGrantStore {
         saveGrants()
     }
 
-    /// Session grants that outlive their helper (`AgentGroup.sessionOutlivesHelper`). Never saved: they end when
-    /// Sukusho quits, when agent access is turned off, or with Settings' revoke.
-    func hasSession(_ group: AgentGroup, for agent: AgentIdentity) -> Bool { sessionGrants[agent.key]?.contains(group) == true }
+    func hasSession(_ group: AgentGroup, for agent: AgentIdentity) -> Bool {
+        sessions.contains { $0.agent.key == agent.key && $0.groups.contains(group) }
+    }
 
-    func grantSession(_ group: AgentGroup, to agent: AgentIdentity) { sessionGrants[agent.key, default: []].insert(group) }
+    func grantSession(_ group: AgentGroup, to agent: AgentIdentity, now: Date = .now) {
+        if let index = sessions.firstIndex(where: { $0.agent.key == agent.key }) {
+            sessions[index].groups.insert(group)
+        } else {
+            sessions.append(AgentGrant(agent: agent, groups: [group], granted: now))
+        }
+    }
 
-    func endSessions() { sessionGrants = [:] }
+    func endSessions() { sessions = [] }
+
+    /// Settings' Revoke on a session row: its kept-for-the-session grants only.
+    func revokeSession(_ key: String) { sessions.removeAll { $0.agent.key == key } }
 
     func owned(by agent: AgentIdentity) -> Set<String> { owned[agent.key] ?? [] }
 

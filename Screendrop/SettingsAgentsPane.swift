@@ -56,8 +56,23 @@ struct AgentsSettingsPane: View {
                         Text("No agent is connected.").foregroundStyle(.secondary)
                     }
                     ForEach(access.server.sessions) { session in
-                        AgentRow(agent: session.agent, detail: session.grants.isEmpty ? "Asks for everything"
-                                    : "Allowed for this session: " + session.grants.map(\.title).sorted().joined(separator: ", "))
+                        // What it may do unasked now: this helper's grants and those kept until Sukusho quits.
+                        let groups = session.grants.union(AgentGroup.allCases.filter { access.grants.hasSession($0, for: session.agent) })
+                        AgentRow(agent: session.agent, detail: groups.isEmpty ? "Asks for everything"
+                                    : "Allowed for this session: " + groups.map(\.title).sorted().joined(separator: ", "))
+                    }
+                }
+
+                if !access.grants.sessions.isEmpty {
+                    // Kept after a helper ends, so an agent that isn't connected now still has one (Astra #3).
+                    Section("Allowed until Sukusho quits") {
+                        ForEach(access.grants.sessions) { grant in
+                            HStack {
+                                AgentRow(agent: grant.agent, detail: grant.groups.map(\.title).sorted().joined(separator: ", "))
+                                Spacer()
+                                Button("Revoke") { access.grants.revokeSession(grant.agent.key) }
+                            }
+                        }
                     }
                 }
 
@@ -76,7 +91,7 @@ struct AgentsSettingsPane: View {
                 } header: {
                     Text("Always allowed")
                 } footer: {
-                    Text("“Always” covers only what that agent added or created. Sharing anything else from the Library still asks.")
+                    Text("For sharing and deleting, “Always” covers only what that agent added or created; anything else from the Library still asks. For the clipboard, it covers the whole history.")
                 }
 
                 Section {

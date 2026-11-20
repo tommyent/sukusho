@@ -46,6 +46,8 @@ final class AgentAccessServer {
         socket = nil
         for connection in connections.values { connection.close() }
         connections = [:]
+        // Their open asks end with them: no answer after this counts (Astra #2).
+        for session in sessions { toolbox.end(session) }
         sessions = []
     }
 
@@ -81,8 +83,11 @@ final class AgentAccessServer {
             }
         }, onClose: { [weak self] in
             Task { @MainActor [weak self] in
-                // A session's grants end with its helper.
-                if let session = state.session { self?.sessions.removeAll { $0 === session } }
+                // A session's grants end with its helper, and so do its open asks.
+                if let session = state.session {
+                    self?.toolbox.end(session)
+                    self?.sessions.removeAll { $0 === session }
+                }
                 self?.connections[key] = nil
             }
         })

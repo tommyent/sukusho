@@ -36,7 +36,8 @@ final class AgentFakeBackend: AgentBackend {
     lazy var clipPasteboard = NSPasteboard(name: .init("AgentClipboardTest-\(UUID().uuidString)"))
     let clipHistoryDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("AgentClipHistory-\(UUID().uuidString)")
 
-    func clipboardEntries() async throws -> [ClipboardEntry]? { try await clipStore?.entries(limit: 3000, includeArchive: true) }
+    func clipboardEntries() async throws -> [ClipboardEntry]? { try await clipStore?.agentEntries() }
+    var isClipboardHistoryOn: Bool { clipStore != nil }
     func appName(_ bundleID: String?) -> String? { bundleID.flatMap { appNames[$0] } }
     func restoreClip(_ entry: ClipboardEntry) async -> Bool {
         await ClipboardWriter.restore(entry, plain: false, store: clipStore, historyDirectory: clipHistoryDirectory, to: clipPasteboard)
@@ -87,6 +88,8 @@ final class AgentFakeAsker: AgentAsker {
     private(set) var closed = 0
     /// A hand-off answer the test gives later.
     var later: ((String?) -> Void)?
+    /// Plain asks left open by `.never`, for the test to answer while the call waits.
+    var laterDecisions: [(AgentDecision?) -> Void] = []
     /// What the owner had Draft message write before Allow.
     var draftedMessage: String?
 
@@ -133,7 +136,8 @@ final class AgentFakeAsker: AgentAsker {
         switch reply {
         case .allow(let decision): answer(decision)
         case .deny: answer(nil)
-        case .never, .password: break
+        case .never: laterDecisions.append(answer)
+        case .password: break
         }
         return { self.closed += 1 }
     }

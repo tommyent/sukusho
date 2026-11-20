@@ -195,11 +195,11 @@ final class ClipboardHistoryModel {
         return true
     }
 
-    /// The history as the popup has it, read afresh rather than from `entries`, which loads only when shown; nil while
-    /// history is off.
+    /// The whole kept history for the agent tools, read afresh rather than from `entries`, which loads only when shown
+    /// and only the newest 3,000; nil while history is off.
     func loadEntries() async throws -> [ClipboardEntry]? {
         guard let store else { return nil }
-        return presented(try await store.entries(limit: 3000, includeArchive: true))
+        return presented(try await store.agentEntries())
     }
 
     /// Files an image copy Sukusho just wrote (`OptimizedImageCopy.copyNow`'s original) as a poll would, and returns

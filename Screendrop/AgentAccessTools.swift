@@ -102,6 +102,7 @@ protocol AgentBackend: AnyObject {
     func messageSource(of item: AgentItem) -> ShareMessageSource
     /// Clipboard history as the popup has it, Saved clips and snippets included; nil while history is off.
     func clipboardEntries() async throws -> [ClipboardEntry]?
+    var isClipboardHistoryOn: Bool { get }
     /// The name Information › Source shows for an app; nil when it isn't on this Mac.
     func appName(_ bundleID: String?) -> String?
     /// The popup's paste up to ⌘V (`ClipboardWriter.restore`); false when the clip couldn't be written.
@@ -146,6 +147,8 @@ final class AgentSession: Identifiable {
     let agent: AgentIdentity
     let started = Date()
     var grants: Set<AgentGroup> = []
+    /// Its helper went away, or agent access was turned off (`AgentToolbox.end`).
+    var isClosed = false
     init(agent: AgentIdentity) { self.agent = agent }
 }
 
@@ -264,7 +267,9 @@ final class AgentToolbox {
             guard let name = params["name"] as? String else { return .failure(AgentToolError("name is required.")) }
             let arguments = params["arguments"] as? [String: Any] ?? [:]
             let result = await call(name, arguments, session: session)
-            log.add(agent: session.agent.displayName, tool: name, result: result.summary, now: now())
+            // A failed clipboard call logs its status alone: its message can echo what the caller sent, copied text included.
+            let summary = result.isError && name.hasPrefix("clipboard_") ? result.object["status"] as? String ?? "error" : result.summary
+            log.add(agent: session.agent.displayName, tool: name, result: summary, now: now())
             return .success(result.mcp)
         default:
             return .failure(AgentToolError("Unknown method \(method)."))
@@ -330,30 +335,60 @@ final class AgentToolbox {
 
     // MARK: Approval
 
-    /// Nil when the owner said no or didn't answer in time.
+    /// Nil when the owner said no or didn't answer in time, or the helper went away first. One ask per agent and
+    /// group at a time: a second call waits for the first, whose answer may cover it.
     private func approve(_ group: AgentGroup, items: [String], session: AgentSession, ask: AgentAsk) async -> AgentDecision? {
         if isAllowed(group, items: items, session: session) { return .once }
+        let key = session.agent.key + "|" + group.rawValue
+        while asking.contains(key), !session.isClosed { await sleep(poll) }
+        guard !session.isClosed else { return nil }
+        if isAllowed(group, items: items, session: session) { return .once }
+        asking.insert(key)
+        defer { asking.remove(key) }
         var ask = ask
-        ask.deadline = now().addingTimeInterval(Double(askTimeout.components.seconds))
+        let deadline = now().addingTimeInterval(Double(askTimeout.components.seconds))
+        ask.deadline = deadline
         let pending = AgentPendingAnswer<AgentDecision>(sleep: sleep)
+        let id = UUID()
+        openAsks[id] = (session, { pending.give(nil) })
         let close = asker.ask(ask) { pending.give($0) }
         let answer = await pending.wait(upTo: askTimeout, poll: poll)
+        openAsks[id] = nil
         close()
-        guard let decision = answer ?? nil else { return nil }
+        // The wait counts its polls, not the clock: an answer past the window's own deadline is a no too.
+        guard !session.isClosed, now() <= deadline, let decision = answer ?? nil else { return nil }
         remember(decision, group, session)
         return decision
     }
 
+    /// Plain asks open now, so `end` can deny them.
+    private var openAsks: [UUID: (session: AgentSession, cancel: () -> Void)] = [:]
+    /// Agent and group keys with an ask on screen.
+    private var asking: Set<String> = []
+
+    /// A helper that went away, or each one when agent access is turned off: its open asks are denied and closed, and
+    /// no answer after this counts or keeps a grant.
+    func end(_ session: AgentSession) {
+        session.isClosed = true
+        for (id, open) in openAsks where open.session === session {
+            openAsks[id] = nil
+            open.cancel()
+        }
+    }
+
     private func isAllowed(_ group: AgentGroup, items: [String], session: AgentSession) -> Bool {
-        let sessionGrants = grants.hasSession(group, for: session.agent) ? session.grants.union([group]) : session.grants
-        return AgentPolicy.allowed(group, session: sessionGrants, always: grants.hasAlways(group, for: session.agent),
+        let kept = session.agent.isResolved
+        let sessionGrants = kept && grants.hasSession(group, for: session.agent) ? session.grants.union([group]) : session.grants
+        return AgentPolicy.allowed(group, session: sessionGrants, always: kept && grants.hasAlways(group, for: session.agent),
                                    items: items, owned: grants.owned(by: session.agent))
     }
 
     private func remember(_ decision: AgentDecision, _ group: AgentGroup, _ session: AgentSession) {
         switch decision {
         case .once: break
-        case .session where group.sessionOutlivesHelper: grants.grantSession(group, to: session.agent)
+        // A program Sukusho couldn't name shares its signer with every other such program: its grant stays with this helper.
+        case _ where !session.agent.isResolved: session.grants.insert(group)
+        case .session where group.sessionOutlivesHelper: grants.grantSession(group, to: session.agent, now: now())
         case .session: session.grants.insert(group)
         case .always: grants.grantAlways(group, to: session.agent, now: now())
         }
@@ -882,20 +917,22 @@ final class AgentToolbox {
         let id = try args.required("id")
         guard let entries = try await clipboardHistory(session) else { return .denied }
         guard await backend.restoreClip(try AgentClips.find(id, in: entries)) else {
-            throw AgentToolError("Sukusho couldn’t put this clip back on the clipboard: its image file is gone.")
+            throw AgentToolError("Sukusho couldn’t put this clip back on the clipboard: its image file is gone, or the clipboard refused it.")
         }
         return ToolResult(object: ["status": "restored", "id": id], summary: "restored")
     }
 
-    /// The history, once the owner lets this agent read it; nil when they don't. Off asks nothing.
+    /// The history, once the owner lets this agent read it; nil when they don't. Off asks nothing. Read after the
+    /// answer, so what was deleted, or history turned off, while the ask was open stays out.
     private func clipboardHistory(_ session: AgentSession) async throws -> [ClipboardEntry]? {
-        guard let entries = try await backend.clipboardEntries() else {
-            throw AgentToolError("Clipboard history is off in Sukusho (Settings › Clipboard › Keep clipboard history).")
-        }
+        let off = AgentToolError("Clipboard history is off in Sukusho (Settings › Clipboard › Keep clipboard history).")
+        guard backend.isClipboardHistoryOn else { throw off }
         let ask = AgentAsk(agent: session.agent, group: .clipboard, action: "read your clipboard history",
                            details: ["It sees what you copied and can put a clip back on the clipboard.",
                                      "Concealed copies, such as passwords, are never kept."])
-        return await approve(.clipboard, items: [], session: session, ask: ask) == nil ? nil : entries
+        guard await approve(.clipboard, items: [], session: session, ask: ask) != nil else { return nil }
+        guard let entries = try await backend.clipboardEntries() else { throw off }
+        return session.isClosed ? nil : entries
     }
 
     private func clip(_ entry: ClipboardEntry) -> [String: Any] {
@@ -947,11 +984,12 @@ nonisolated enum AgentClips {
         }
 
         init(text: String) throws {
-            guard let colon = text.firstIndex(of: ":"), let time = Double(text[..<colon]), time.isFinite else {
+            guard let colon = text.firstIndex(of: ":"), let time = Double(text[..<colon]), time.isFinite,
+                  case let id = String(text[text.index(after: colon)...]), !id.isEmpty else {
                 throw AgentToolError("before isn’t a cursor from clipboard_list.")
             }
             self.time = time
-            id = String(text[text.index(after: colon)...])
+            self.id = id
         }
 
         var text: String { "\(time):\(id)" }
@@ -1003,14 +1041,18 @@ nonisolated enum AgentClips {
             "saved": entry.isArchived, "from_another_device": entry.isRemote,
         ]
         if entry.isArchived, let saved = entry.pinnedAt { object["saved_at"] = saved.formatted(.iso8601) }
-        var untrusted: [String: Any] = ["title": String(ClipboardList.title(of: entry).prefix(previewLength))]
+        // The title is worked out from the same first characters the preview shows, never from the rest: the popup's
+        // title skips blank lines and names a path's file, which could reach past them (Astra #4).
+        var shown = entry
+        shown.text = entry.text.map { String($0.prefix(previewLength)) }
+        var untrusted: [String: Any] = ["title": String(ClipboardList.title(of: shown).prefix(previewLength))]
         var preview: String? = text
         switch ClipboardList.textForm(of: entry) {
         case .color(let hex):
             preview = hex
             object["color"] = color(hex)
         case .link:
-            if let host = URL(string: text)?.host() { untrusted["domain"] = host }
+            if let host = URL(string: text)?.host(), shown.text?.contains(host) == true { untrusted["domain"] = host }
         case .plain:
             object["characters"] = text.count
             object["words"] = text.split(whereSeparator: \.isWhitespace).count
