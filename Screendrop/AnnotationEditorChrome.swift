@@ -244,6 +244,59 @@ private struct GlassFrostBacking<S: Shape>: ViewModifier {
     }
 }
 
+extension View {
+    /// Glass: float a window's trailing inspector pane using the Library's shared `LibraryFloatingSidebar` helper.
+    /// Classic, Chip, Reduce Transparency and Increase Contrast restore the flush layout untouched.
+    func glassFloatingInspector(window: NSWindow?, isPresented: Bool) -> some View {
+        modifier(GlassFloatingInspectorModifier(window: window, isPresented: isPresented))
+    }
+
+    /// Glass: place the inspector toggle inside the inspector's own toolbar so it sits in the floating pane's
+    /// top-right corner while main toolbar actions stay clear of the pane's leading edge.
+    func glassInspectorToolbar<Item: View>(enabled: Bool, @ViewBuilder item: @escaping () -> Item) -> some View {
+        modifier(GlassInspectorToolbarModifier(enabled: enabled, item: item))
+    }
+}
+
+private struct GlassFloatingInspectorModifier: ViewModifier {
+    let window: NSWindow?
+    let isPresented: Bool
+    @DrawnGlass private var glass
+    @Environment(\.colorScheme) private var colorScheme
+
+    func body(content: Content) -> some View {
+        content
+            .task(id: "\(glass != nil)#\(colorScheme)#\(isPresented)#\(window.map { ObjectIdentifier($0).hashValue } ?? 0)") {
+                for _ in 0..<10 {
+                    let done = LibraryFloatingSidebar.update(
+                        window, floating: glass != nil, inspectorVisible: isPresented
+                    )
+                    if done { break }
+                    try? await Task.sleep(for: .milliseconds(200))
+                    if Task.isCancelled { break }
+                }
+            }
+    }
+}
+
+private struct GlassInspectorToolbarModifier<Item: View>: ViewModifier {
+    let enabled: Bool
+    @ViewBuilder let item: () -> Item
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if enabled {
+            content.toolbar {
+                ToolbarSpacer(.flexible)
+                ToolbarItem(placement: .primaryAction) { item() }
+                    .sharedBackgroundVisibility(.hidden)
+            }
+        } else {
+            content
+        }
+    }
+}
+
 /// The chosen photo at the window's pixel size, decoded and cached by the
 /// wallpaper thumbnails' cache. Dots stand in while it can't be read, such
 /// as after the file was deleted.

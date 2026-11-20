@@ -34,7 +34,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .overlay: "Overlay"
         case .optimize: "Optimize"
         case .cloud: "Cloud"
-        case .agents: "Connected Apps"
+        case .agents: "Apps & Agents"
         case .about: "About"
         }
     }
@@ -78,6 +78,9 @@ struct SettingsView: View {
     @State private var navigationHistory: [SettingsTab] = [.general]
     @State private var historyIndex = 0
     @State private var isHistoryNavigation = false
+    @DrawnGlass private var glass
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var settingsWindow: NSWindow?
 
     private var activeTab: SettingsTab {
         navigation.selectedTab ?? .general
@@ -86,10 +89,10 @@ struct SettingsView: View {
     var body: some View {
         NavigationSplitView(columnVisibility: .constant(.all)) {
             // The window's minimum width (`minimumWidth`) leaves this column its 200 points
-            // beside the widest pane. Below that, General's rows squeezed the column to 184
-            // and the 200-point sidebar hung over both edges, losing its left inset.
+            // beside the widest pane. Keep the sidebar flexible inside the column so Glass's
+            // floating inset pane (`LibraryFloatingSidebar`) never clips a fixed-width list.
             SettingsSidebarView(selectedTab: $navigation.selectedTab)
-                .frame(width: 200)
+                .frame(minWidth: glass != nil ? 192 : 200, idealWidth: 200, maxWidth: 200)
                 .navigationSplitViewColumnWidth(
                     min: 200,
                     ideal: 200,
@@ -102,6 +105,18 @@ struct SettingsView: View {
         .navigationTitle("Settings")
         .navigationSplitViewStyle(.balanced)
         .frame(minWidth: SettingsView.minimumWidth, minHeight: 540)
+        .onWindowChange { settingsWindow = $0 }
+        // Glass: float the sidebar on macOS 27.2+ using the Library's shared helper (macOS 26 floats it natively).
+        .task(id: "\(glass != nil)#\(colorScheme)#\(settingsWindow.map { ObjectIdentifier($0).hashValue } ?? 0)") {
+            for _ in 0..<10 {
+                let done = LibraryFloatingSidebar.update(
+                    settingsWindow, floating: glass != nil, inspectorVisible: false
+                )
+                if done { break }
+                try? await Task.sleep(for: .milliseconds(200))
+                if Task.isCancelled { break }
+            }
+        }
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
                 Button {

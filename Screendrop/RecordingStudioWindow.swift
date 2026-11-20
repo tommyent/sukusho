@@ -56,6 +56,8 @@ private struct RecordingStudioContent: View {
     @State private var isInspectorPresented = true
     @State private var closeGuard = EditorCloseGuard()
     @State private var confirmsSharedLinkDeletion = false
+    @DrawnGlass private var glass
+    @State private var studioWindow: NSWindow?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -94,9 +96,20 @@ private struct RecordingStudioContent: View {
                 }
                 StudioCanvas(model: model)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(AnnotationEditorWorkspaceBackground())
+                    .background {
+                        if glass == nil {
+                            AnnotationEditorWorkspaceBackground()
+                        }
+                    }
 
                 StudioTimelineEditor(model: model)
+            }
+        }
+        .background {
+            if glass != nil {
+                AnnotationEditorWorkspaceBackground()
+                    .backgroundExtensionEffect()
+                    .ignoresSafeArea()
             }
         }
         .frame(minWidth: 980 - (isInspectorPresented ? InspectorMetrics.columnMinWidth : 0), minHeight: 720)
@@ -109,10 +122,7 @@ private struct RecordingStudioContent: View {
         } message: {
             Text("The link and its cloud files will be deleted. The local recording stays in your Library.")
         }
-        .toolbarBackgroundVisibility(.visible, for: .windowToolbar)
-        .inspector(isPresented: $isInspectorPresented) {
-            StudioInspector(model: model)
-        }
+        .toolbarBackgroundVisibility(glass != nil ? .hidden : .visible, for: .windowToolbar)
         .toolbar(removing: .title)
         .toolbar {
             ToolbarItem(placement: .navigation) {
@@ -141,20 +151,27 @@ private struct RecordingStudioContent: View {
 
                     exportStatus
 
-                    Button {
-                        isInspectorPresented.toggle()
-                    } label: {
-                        Image(systemName: "sidebar.right")
+                    if glass == nil {
+                        inspectorToggleButton
                     }
-                    .help(isInspectorPresented ? "Hide Inspector" : "Show Inspector")
                 }
             }
             // Bare icons, as in the Library and the editor: no glass capsule.
             .sharedBackgroundVisibility(.hidden)
         }
+        .inspector(isPresented: $isInspectorPresented) {
+            StudioInspector(model: model)
+                .glassInspectorToolbar(enabled: glass != nil) {
+                    if !model.isSelectingRedaction && !model.isCroppingVideo {
+                        inspectorToggleButton
+                    }
+                }
+        }
+        .glassFloatingInspector(window: studioWindow, isPresented: isInspectorPresented)
         .navigationTitle(windowTitle)
         .navigationSubtitle(windowSubtitle)
         .onWindowChange { window in
+            studioWindow = window
             guard let window else {
                 closeGuard.detach()
                 return
@@ -186,6 +203,15 @@ private struct RecordingStudioContent: View {
             closeGuard.detach()
             AppActivationPolicy.leave(restorePreview: true)
         }
+    }
+
+    private var inspectorToggleButton: some View {
+        Button {
+            isInspectorPresented.toggle()
+        } label: {
+            Image(systemName: "sidebar.right")
+        }
+        .help(isInspectorPresented ? "Hide Inspector" : "Show Inspector")
     }
 
     /// The name the recording's Library card shows; a bare movie's is its file name.
@@ -3368,9 +3394,11 @@ private struct StudioInspector: View {
     @State private var isAudioExportOptionsPresented = false
     @State private var isMusicPickerPresented = false
     @Environment(\.colorScheme) private var colorScheme
+    @DrawnGlass private var glass
 
     var body: some View {
-        ScrollView(.vertical) {
+        VStack(spacing: 0) {
+            ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 0) {
                 // Timeline selections edit at the top, where attention lands
                 // after clicking a zoom or clip, instead of pushing the
@@ -3539,6 +3567,9 @@ private struct StudioInspector: View {
             // The Revert To bar keeps clear of the preview peek pill itself;
             // without the bar (a plain movie), the end of the list must.
             .padding(.bottom, model.isProject ? 12 : PreviewPeekTab.pillHeight * 1.1)
+            }
+            .scrollContentBackground(.hidden)
+            .scrollEdgeEffectStyle(.soft, for: .all)
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
@@ -3605,8 +3636,6 @@ private struct StudioInspector: View {
             }
             .background(sidebarBackground)
         }
-        .scrollContentBackground(.hidden)
-        .scrollEdgeEffectStyle(.soft, for: .all)
         .background(sidebarBackground)
         .inspectorColumnWidth(
             min: InspectorMetrics.columnMinWidth,
@@ -4520,7 +4549,7 @@ private struct StudioInspector: View {
     }
 
     private var sidebarBackground: Color {
-        InspectorControlPalette.panelBackground(for: colorScheme)
+        glass != nil ? .clear : InspectorControlPalette.panelBackground(for: colorScheme)
     }
 }
 

@@ -5,7 +5,7 @@
 //  Coding agents use Sukusho through its MCP helper (Contents/Helpers/sukusho-mcp),
 //  which talks to the running app over a Unix socket. This file holds what that
 //  needs apart from the app: who an agent is, what the owner allowed it, what it
-//  added, and the activity log. Off by default (Settings › Connected Apps).
+//  added, and the activity log. Off by default (Settings › Apps & Agents).
 //
 
 import Foundation
@@ -96,7 +96,7 @@ nonisolated enum AgentDecision: String, Codable, Sendable, CaseIterable, Identif
     }
 }
 
-/// One agent's standing grants, as Settings › Connected Apps lists them.
+/// One agent's standing grants, as Settings › Apps & Agents lists them.
 nonisolated struct AgentGrant: Codable, Hashable, Sendable, Identifiable {
     var agent: AgentIdentity
     var groups: Set<AgentGroup>
@@ -125,7 +125,7 @@ final class AgentGrantStore {
     private(set) var grants: [AgentGrant] = []
     /// Library, upload, gallery and file request IDs, by agent key.
     @ObservationIgnored private var owned: [String: Set<String>] = [:]
-    /// Session grants that outlive their helper (`AgentGroup.sessionOutlivesHelper`), as Settings › Connected Apps lists
+    /// Session grants that outlive their helper (`AgentGroup.sessionOutlivesHelper`), as Settings › Apps & Agents lists
     /// them. Never saved: they end when Sukusho quits, when agent access is turned off, or with Revoke.
     private(set) var sessions: [AgentGrant] = []
     @ObservationIgnored private let defaults: UserDefaults
@@ -271,7 +271,7 @@ final class AgentPendingAnswer<Value> {
     }
 }
 
-/// Every call, as Settings › Connected Apps shows it. The newest 500 stay, in a file
+/// Every call, as Settings › Apps & Agents shows it. The newest 500 stay, in a file
 /// beside the Library.
 @MainActor
 @Observable

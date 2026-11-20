@@ -30,6 +30,8 @@ struct AnnotationEditorWindow: View {
     @State private var historyID: UUID?
     @FocusState private var focusedField: AnnotationEditorFocusedField?
     @Environment(\.dismiss) private var dismissWindow
+    @DrawnGlass private var glass
+    @State private var editorWindow: NSWindow?
 
     /// What the tool dock needs, and so the narrowest the window goes.
     static let minimumWidth: CGFloat = 712
@@ -38,6 +40,13 @@ struct AnnotationEditorWindow: View {
 
     var body: some View {
         mainContent
+            .background {
+                if glass != nil {
+                    AnnotationEditorWorkspaceBackground()
+                        .backgroundExtensionEffect()
+                        .ignoresSafeArea()
+                }
+            }
             .disabled(model.isBlockingCommit)
             .allowsHitTesting(!model.isBlockingCommit)
             // The capture an outside file became on its first save, so the Library can't trash it under the editor.
@@ -45,7 +54,7 @@ struct AnnotationEditorWindow: View {
             .navigationTitle(windowTitle)
             .navigationSubtitle(model.saveStatus)
             .toolbar(removing: .title)
-            .toolbarBackgroundVisibility(.visible, for: .windowToolbar)
+            .toolbarBackgroundVisibility(glass != nil ? .hidden : .visible, for: .windowToolbar)
             .toolbar {
                 ToolbarItem(placement: .navigation) {
                     AnnotationEditorTitle(
@@ -90,6 +99,7 @@ struct AnnotationEditorWindow: View {
                 AnnotationEditorActivationPolicy.leave(restorePreview: true)
             }
             .onWindowChange { window in
+                editorWindow = window
                 guard let window else {
                     closeGuard.detach()
                     return
@@ -210,7 +220,14 @@ struct AnnotationEditorWindow: View {
                     onPickWallpaper: pickCustomWallpaper
                 )
                 .disabled(model.isBlockingCommit)
+                .glassInspectorToolbar(enabled: glass != nil) {
+                    if !model.isCropping {
+                        inspectorToggleButton
+                            .disabled(isBusy)
+                    }
+                }
             }
+            .glassFloatingInspector(window: editorWindow, isPresented: isInspectorPresented)
             // Below this the inspector folds away and the window can go down to the canvas's
             // own minimum; it was stuck at 1040 pt with the inspector (Fable #7).
             .inspectorAutoFold(isPresented: $isInspectorPresented, below: 1000)
@@ -257,6 +274,12 @@ struct AnnotationEditorWindow: View {
             .disabled(isUploading)
         }
 
+        if glass == nil {
+            inspectorToggleButton
+        }
+    }
+
+    private var inspectorToggleButton: some View {
         Button {
             clearInspectorFocus()
             isInspectorPresented.toggle()
@@ -330,7 +353,9 @@ struct AnnotationEditorWindow: View {
 
     private var mainContent: some View {
         ZStack {
-            AnnotationEditorWorkspaceBackground()
+            if glass == nil {
+                AnnotationEditorWorkspaceBackground()
+            }
 
             if let previewImage = model.previewImage, model.imageSize != .zero {
                 AnnotationCanvas(

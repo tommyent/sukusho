@@ -2,7 +2,7 @@
 //  AgentAccessApp.swift
 //  Screendrop
 //
-//  Agent access inside the app: the switch in Settings › Connected Apps, the socket
+//  Agent access inside the app: the switch in Settings › Apps & Agents, the socket
 //  while it's on, the tools' work through the Library's own code, and the
 //  windows that ask the owner.
 //
