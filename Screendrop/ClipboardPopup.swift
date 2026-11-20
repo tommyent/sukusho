@@ -265,8 +265,10 @@ struct ClipboardPopupView: View {
         .frame(width: ClipboardPopupPresenter.size.width, height: ClipboardPopupPresenter.size.height)
         // Glass: the cards' tint over the material, which alone left text at 4:1 over a white picture in Dark.
         .background { if glass != nil, let frost = theme.card.recipe.frost { RoundedRectangle(cornerRadius: 22).fill(frost.tint.color) } }
-        // Glass under Reduce Transparency or Increase Contrast: its opaque chrome, not a material over the desktop.
-        .background(theme.chrome.glass && glass == nil ? AnyShapeStyle(WorkspaceChrome.background) : AnyShapeStyle(.regularMaterial),
+        // Glass: the frost's own material, as tuned too; under Reduce Transparency or Increase Contrast, its opaque
+        // chrome, not a material over the desktop.
+        .background(glass != nil ? AnyShapeStyle((theme.card.recipe.frost?.material ?? .regular).material)
+                    : theme.chrome.glass ? AnyShapeStyle(WorkspaceChrome.background) : AnyShapeStyle(.regularMaterial),
                     in: RoundedRectangle(cornerRadius: 22))
         // Glass frosts its own picture, as the Library window does, not whatever lies behind the popup.
         .background { if let glass { GlassBackdrop(backdrop: glass) } }
