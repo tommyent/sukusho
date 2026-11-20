@@ -26,6 +26,7 @@ struct CaptureLibraryView: View {
         saved.isShown ? "Saved" : clipboard.isShown ? (clipboard.showsSnippets ? "Snippets" : "Clipboard") : comments.isShown ? "Comments" : likes.isShown ? "Likes" : cloud.isShown ? (!CloudUploader.shared.isConfigured ? "Cloud" : cloud.showsReceived ? "Received" : cloud.showsFiles ? "Files" : "Uploads") : model.tagFilter ?? activeFilter.title
     }
     @DrawnGlass private var glass
+    @Environment(\.colorScheme) private var colorScheme
 
     /// The sidebar picks a kind of capture, the cloud uploads or a tag.
     private var currentPage: CaptureLibrarySidebarSelection? {
@@ -241,9 +242,13 @@ struct CaptureLibraryView: View {
                         showsDots: comments.isShown ? comments.visibleComments.isEmpty
                             : likes.isShown ? likes.visibleLikes.isEmpty : true
                     ))
-                Divider()
-                // Glass: on the cards' frost, not the bare picture, whatever its colours.
-                statusBar.glassFrostBacking(in: Rectangle())
+                    .overlay(alignment: .bottom) {
+                        if glass != nil { glassFooter }
+                    }
+                if glass == nil {
+                    Divider()
+                    statusBar
+                }
             }
             .modifier(LibraryColumnSeparators(
                 leading: columnVisibility != .detailOnly,
@@ -524,81 +529,101 @@ struct CaptureLibraryView: View {
             .disabled(ScreenRecordingManager.shared.isActive || ScrollingCapturePresenter.shared.isRunning)
     }
 
-    private var statusBar: some View {
-        HStack(spacing: 8) {
-            if let title = model.operationTitle {
-                ProgressView().controlSize(.mini)
-                Text(title)
-                if let export = model.agentPromptExport {
-                    Text("\(Int((export.progress * 100).rounded()))%").monospacedDigit()
-                }
-            } else if let done = model.actionFeedback.message {
-                StatusSuccess(title: done, systemImage: "checkmark.circle.fill", onGlass: glass != nil)
-            } else if let folder = model.savedAgentPrompt {
-                Button {
-                    NSWorkspace.shared.activateFileViewerSelecting([folder])
-                } label: {
-                    StatusSuccess(title: "Prompt Copied", systemImage: "checkmark.circle.fill", onGlass: glass != nil)
-                }
-                .buttonStyle(.plain)
-                .help("Reveal \(folder.lastPathComponent) in Finder")
-            } else if let link = model.copiedLink {
-                Button {
-                    CloudShareLinks.copy([link], feedback: model.actionFeedback)
-                } label: {
-                    StatusSuccess(title: "Link Copied", systemImage: "checkmark.icloud", onGlass: glass != nil)
-                }
-                .buttonStyle(.plain)
-                .help("Copy the gallery link again")
-            } else if comments.isShown {
-                let count = comments.visibleComments.count
-                Text("\(count) \(count == 1 ? "comment" : "comments")")
-                if !comments.selection.isEmpty { Text("· \(comments.selection.count) selected") }
-                if !comments.deletingIDs.isEmpty { Text("· Deleting…") }
-            } else if likes.isShown {
-                let count = likes.visibleLikes.count
-                Text("\(count) \(count == 1 ? "like" : "likes")")
-                if !likes.selection.isEmpty { Text("· \(likes.selection.count) selected") }
-            } else if cloud.isShown, let fetch = cloud.previewFetch {
-                ProgressView(value: fetch.total).controlSize(.mini).frame(width: 60)
-                Text(fetch.title)
-                Button("Stop Downloading", systemImage: "xmark.circle.fill") { cloud.cancelPreview() }
-                    .labelStyle(.iconOnly)
-                    .buttonStyle(.plain)
-                    .help("Stop downloading")
-            } else if cloud.isShown {
-                let count = cloud.visibleUploads.count
-                Text("\(count) \(cloud.showsFiles || cloud.showsReceived ? (count == 1 ? "file" : "files") : count == 1 ? "upload" : "uploads")")
-                if !cloud.selection.isEmpty { Text("· \(cloud.selection.count) selected") }
-                if !cloud.deletingIDs.isEmpty { Text("· Deleting…") }
-            } else if saved.isShown {
-                let count = saved.cards.count
-                Text("\(count) saved")
-                let selected = model.selection.count + clipboard.librarySelectionIDs.count
-                if selected > 0 { Text("· \(selected) selected") }
-            } else if clipboard.isShown {
-                if clipboardEnabled {
-                    let count = clipboard.librarySections(query: model.searchText).reduce(0) { $0 + $1.entries.count }
-                    if !clipboard.librarySelectionIDs.isEmpty { Text("\(clipboard.librarySelectionIDs.count) selected ·") }
-                    Text("\(count) \(clipboard.showsSnippets ? (count == 1 ? "snippet" : "snippets") : count == 1 ? "copy" : "copies")")
-                }
-            } else {
-                Text("\(model.visibleItems.count) \(model.visibleItems.count == 1 ? "capture" : "captures")")
-                if !model.selection.isEmpty { Text("· \(model.selection.count) selected") }
+    private static let glassFooterPillHeight: CGFloat = 32
+
+    private var hasLeadingStatus: Bool {
+        if model.operationTitle != nil || model.actionFeedback.message != nil
+            || model.savedAgentPrompt != nil || model.copiedLink != nil
+            || comments.isShown || likes.isShown || cloud.isShown || saved.isShown {
+            return true
+        }
+        return !clipboard.isShown || clipboardEnabled
+    }
+
+    private var isStatusRefreshing: Bool {
+        clipboard.isShown ? false : comments.isShown ? comments.isLoading : likes.isShown ? likes.isLoading : cloud.isShown ? cloud.isLoading : model.isLoading
+    }
+
+    private var showsViewControls: Bool {
+        !comments.isShown && !likes.isShown && (!clipboard.isShown || clipboardEnabled)
+    }
+
+    @ViewBuilder private var statusLeading: some View {
+        if let title = model.operationTitle {
+            ProgressView().controlSize(.mini)
+            Text(title)
+            if let export = model.agentPromptExport {
+                Text("\(Int((export.progress * 100).rounded()))%").monospacedDigit()
             }
-            Spacer()
-            if clipboard.isShown ? false : comments.isShown ? comments.isLoading : likes.isShown ? likes.isLoading : cloud.isShown ? cloud.isLoading : model.isLoading {
-                ProgressView().controlSize(.mini)
-                    .help(comments.isShown ? "Refreshing comments" : likes.isShown ? "Refreshing likes"
-                          : cloud.isShown ? "Refreshing uploads" : "Refreshing Library")
+        } else if let done = model.actionFeedback.message {
+            StatusSuccess(title: done, systemImage: "checkmark.circle.fill", onGlass: glass != nil)
+        } else if let folder = model.savedAgentPrompt {
+            Button {
+                NSWorkspace.shared.activateFileViewerSelecting([folder])
+            } label: {
+                StatusSuccess(title: "Prompt Copied", systemImage: "checkmark.circle.fill", onGlass: glass != nil)
             }
-            if !comments.isShown, !likes.isShown, (!clipboard.isShown || clipboardEnabled) {
-                Picker("Layout", selection: $showsList) {
-                    Label("Grid", systemImage: "square.grid.2x2").tag(false)
-                    Label("List", systemImage: "list.bullet").tag(true)
-                }
-                .pickerStyle(.segmented).labelsHidden().labelStyle(.iconOnly).controlSize(.small).fixedSize()
-                if !showsList {
+            .buttonStyle(.plain)
+            .help("Reveal \(folder.lastPathComponent) in Finder")
+        } else if let link = model.copiedLink {
+            Button {
+                CloudShareLinks.copy([link], feedback: model.actionFeedback)
+            } label: {
+                StatusSuccess(title: "Link Copied", systemImage: "checkmark.icloud", onGlass: glass != nil)
+            }
+            .buttonStyle(.plain)
+            .help("Copy the gallery link again")
+        } else if comments.isShown {
+            let count = comments.visibleComments.count
+            Text("\(count) \(count == 1 ? "comment" : "comments")")
+            if !comments.selection.isEmpty { Text("· \(comments.selection.count) selected") }
+            if !comments.deletingIDs.isEmpty { Text("· Deleting…") }
+        } else if likes.isShown {
+            let count = likes.visibleLikes.count
+            Text("\(count) \(count == 1 ? "like" : "likes")")
+            if !likes.selection.isEmpty { Text("· \(likes.selection.count) selected") }
+        } else if cloud.isShown, let fetch = cloud.previewFetch {
+            ProgressView(value: fetch.total).controlSize(.mini).frame(width: 60)
+            Text(fetch.title)
+            Button("Stop Downloading", systemImage: "xmark.circle.fill") { cloud.cancelPreview() }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.plain)
+                .help("Stop downloading")
+        } else if cloud.isShown {
+            let count = cloud.visibleUploads.count
+            Text("\(count) \(cloud.showsFiles || cloud.showsReceived ? (count == 1 ? "file" : "files") : count == 1 ? "upload" : "uploads")")
+            if !cloud.selection.isEmpty { Text("· \(cloud.selection.count) selected") }
+            if !cloud.deletingIDs.isEmpty { Text("· Deleting…") }
+        } else if saved.isShown {
+            let count = saved.cards.count
+            Text("\(count) saved")
+            let selected = model.selection.count + clipboard.librarySelectionIDs.count
+            if selected > 0 { Text("· \(selected) selected") }
+        } else if clipboard.isShown {
+            if clipboardEnabled {
+                let count = clipboard.librarySections(query: model.searchText).reduce(0) { $0 + $1.entries.count }
+                if !clipboard.librarySelectionIDs.isEmpty { Text("\(clipboard.librarySelectionIDs.count) selected ·") }
+                Text("\(count) \(clipboard.showsSnippets ? (count == 1 ? "snippet" : "snippets") : count == 1 ? "copy" : "copies")")
+            }
+        } else {
+            Text("\(model.visibleItems.count) \(model.visibleItems.count == 1 ? "capture" : "captures")")
+            if !model.selection.isEmpty { Text("· \(model.selection.count) selected") }
+        }
+    }
+
+    @ViewBuilder private var statusTrailing: some View {
+        if isStatusRefreshing {
+            ProgressView().controlSize(.mini)
+                .help(comments.isShown ? "Refreshing comments" : likes.isShown ? "Refreshing likes"
+                      : cloud.isShown ? "Refreshing uploads" : "Refreshing Library")
+        }
+        if showsViewControls {
+            Picker("Layout", selection: $showsList) {
+                Label("Grid", systemImage: "square.grid.2x2").tag(false)
+                Label("List", systemImage: "list.bullet").tag(true)
+            }
+            .pickerStyle(.segmented).labelsHidden().labelStyle(.iconOnly).controlSize(.small).fixedSize()
+            if !showsList {
                 // Capped where the 640 px thumbnails stay sharp on Retina.
                 Slider(value: $cardWidth, in: LibraryCardWidth.range) {
                     EmptyView()
@@ -611,8 +636,15 @@ struct CaptureLibraryView: View {
                 .frame(width: 150)
                 .accessibilityLabel("Card size")
                 .help("Card size")
-                }
             }
+        }
+    }
+
+    private var statusBar: some View {
+        HStack(spacing: 8) {
+            statusLeading
+            Spacer()
+            statusTrailing
         }
         .font(.caption)
         .monospacedDigit()
@@ -624,6 +656,41 @@ struct CaptureLibraryView: View {
         // constraint pass until it crashed.
         .frame(minWidth: 0, maxWidth: .infinity)
         .frame(height: 30)
+    }
+
+    /// Glass: two floating Liquid Glass pills over the bottom of the browser (count on the left, view controls on the
+    /// right) with no strip behind them, so cards scroll underneath and show between them.
+    private var glassFooter: some View {
+        HStack(spacing: 12) {
+            if hasLeadingStatus {
+                HStack(spacing: 6) {
+                    statusLeading
+                }
+                .lineLimit(1)
+                .padding(.horizontal, 12)
+                .frame(height: Self.glassFooterPillHeight)
+                .background { CapsuleGlass().allowsHitTesting(false) }
+            }
+            Spacer(minLength: 0)
+            if isStatusRefreshing || showsViewControls {
+                HStack(spacing: 8) {
+                    statusTrailing
+                }
+                .padding(.leading, showsViewControls && !isStatusRefreshing ? 6 : 10)
+                .padding(.trailing, showsViewControls && showsList ? 6 : 12)
+                .frame(height: Self.glassFooterPillHeight)
+                .background { CapsuleGlass().allowsHitTesting(false) }
+            }
+        }
+        .font(.caption)
+        .monospacedDigit()
+        .foregroundStyle(AppTheme.glassTitleInk(dark: colorScheme == .dark).color)
+        // 8 pt lines the count text (8 + 12 = 20) and pill edge up with the title pill above, and aligns the pills'
+        // bottom edge with the floating sidebar's 8 pt inset.
+        .padding(.horizontal, 8)
+        .padding(.bottom, 8)
+        // Keep the footer out of the column's minimum width (see statusBar).
+        .frame(minWidth: 0, maxWidth: .infinity)
     }
 
     /// ⌘R refreshes the page. Its menu item went with the toolbar's sort
@@ -752,6 +819,27 @@ private struct LibrarySearchField: NSViewRepresentable {
     }
 }
 
+/// Liquid Glass capsule shared by the Library's title pill (`LibraryTitlePlate`) and Glass footer pills (`CapsuleGlass`).
+private final class CapsuleGlassView: NSGlassEffectView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func layout() {
+        super.layout()
+        cornerRadius = bounds.height / 2
+    }
+}
+
+private struct CapsuleGlass: NSViewRepresentable {
+    func makeNSView(context: Context) -> CapsuleGlassView {
+        let view = CapsuleGlassView()
+        view.style = .regular
+        view.cornerRadius = 16
+        return view
+    }
+
+    func updateNSView(_ view: CapsuleGlassView, context: Context) {}
+}
+
 /// Glass: a Liquid Glass pill behind macOS's window title, matching the search field's glass, since Glass hides the
 /// toolbar's bar. The title stays macOS's own, in its place and font: the pill goes behind the toolbar's title field.
 /// A macOS without that field gets no pill.
@@ -760,13 +848,6 @@ enum LibraryTitlePlate {
     private static let id = NSUserInterfaceItemIdentifier("LibraryTitlePlate")
     private static let titleColor = NSColor(name: nil) { appearance in
         AppTheme.glassTitleInk(dark: appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua).nsColor
-    }
-
-    private final class CapsuleGlassView: NSGlassEffectView {
-        override func layout() {
-            super.layout()
-            cornerRadius = bounds.height / 2
-        }
     }
 
     /// False while the title field isn't there yet.
@@ -814,8 +895,48 @@ enum LibraryTitlePlate {
 enum LibraryFloatingSidebar {
     private static let leadingInset: CGFloat = 8
     private static let verticalInset: CGFloat = 8
-    private static let trailingInset: CGFloat = 4
+    private static let trailingInset: CGFloat = 0
     private static let cornerRadius: CGFloat = 16
+    private static let rimID = NSUserInterfaceItemIdentifier("LibraryFloatingSidebarRim")
+
+    /// Subtle 0.5 pt rim matching the Glass cards' `frost.rim`, sharpening the floating sidebar pane's perimeter on
+    /// macOS 27 where AppKit's sidebar glass draws no specular border of its own.
+    private final class SidebarRimView: NSView {
+        override var wantsUpdateLayer: Bool { true }
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override init(frame frameRect: NSRect) {
+            super.init(frame: frameRect)
+            wantsLayer = true
+            layer?.borderWidth = 0.5
+            layer?.cornerRadius = LibraryFloatingSidebar.cornerRadius
+            layer?.cornerCurve = .continuous
+        }
+
+        required init?(coder: NSCoder) { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            updateRimColor()
+        }
+
+        override func viewDidChangeEffectiveAppearance() {
+            super.viewDidChangeEffectiveAppearance()
+            updateRimColor()
+        }
+
+        override func updateLayer() {
+            super.updateLayer()
+            updateRimColor()
+        }
+
+        func updateRimColor() {
+            let isDark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            let rim = AppTheme.current(dark: isDark).card.recipe.frost?.rim
+                ?? .white(opacity: isDark ? 0.16 : 0.55)
+            layer?.borderColor = rim.nsColor.cgColor
+        }
+    }
 
     /// False while the sidebar glass wrapper isn't in the window and laid out yet.
     static func update(_ window: NSWindow?, floating: Bool) -> Bool {
@@ -824,6 +945,7 @@ enum LibraryFloatingSidebar {
         guard #available(macOS 27.2, *) else { return true }
         guard let content = window?.contentView else { return true }
         guard let found = findSidebarGlass(in: content) else { return false }
+        let platterDone = updateSidebarTogglePlatter(in: window, hidden: floating && !found.isCollapsed)
         if found.isCollapsed { return true }
         guard found.wrapper.frame.width > 0 else { return false }
         let (glass, wrapper, split) = (found.glass, found.wrapper, found.split)
@@ -832,7 +954,9 @@ enum LibraryFloatingSidebar {
         let vert = floating ? verticalInset : 0
         let trail = floating ? trailingInset : 0
         for constraint in wrapper.constraints {
-            guard constraint.firstItem === glass || constraint.secondItem === glass else { continue }
+            let isGlassToWrapper = (constraint.firstItem === glass && constraint.secondItem === wrapper)
+                || (constraint.firstItem === wrapper && constraint.secondItem === glass)
+            guard isGlassToWrapper else { continue }
             switch (constraint.firstAttribute, constraint.secondAttribute) {
             case (.leading, .leading):
                 constraint.constant = (constraint.firstItem === glass) ? lead : -lead
@@ -849,6 +973,7 @@ enum LibraryFloatingSidebar {
             }
         }
         glass.cornerRadius = floating ? cornerRadius : 0
+        let existingRim = wrapper.subviews.first { $0.identifier == rimID }
         if floating {
             wrapper.clipsToBounds = false
             glass.wantsLayer = true
@@ -857,7 +982,22 @@ enum LibraryFloatingSidebar {
             shadow.shadowBlurRadius = 14
             shadow.shadowOffset = NSSize(width: 0, height: -2)
             glass.shadow = shadow
+            if let rim = existingRim as? SidebarRimView {
+                rim.updateRimColor()
+            } else {
+                let rim = SidebarRimView()
+                rim.identifier = rimID
+                rim.translatesAutoresizingMaskIntoConstraints = false
+                wrapper.addSubview(rim, positioned: .above, relativeTo: glass)
+                NSLayoutConstraint.activate([
+                    rim.leadingAnchor.constraint(equalTo: glass.leadingAnchor),
+                    rim.trailingAnchor.constraint(equalTo: glass.trailingAnchor),
+                    rim.topAnchor.constraint(equalTo: glass.topAnchor),
+                    rim.bottomAnchor.constraint(equalTo: glass.bottomAnchor),
+                ])
+            }
         } else {
+            existingRim?.removeFromSuperview()
             glass.shadow = nil
         }
 
@@ -869,7 +1009,28 @@ enum LibraryFloatingSidebar {
                   abs(sibling.frame.minX - edge) <= 4 else { continue }
             sibling.alphaValue = floating ? 0 : 1
         }
-        return true
+        return !floating || platterDone
+    }
+
+    /// On macOS 27, the sidebar toggle sits in a 36 pt circular glass platter (`top = 8`) that straddles the floating
+    /// sidebar pane's top edge. While the sidebar is floating and expanded, hide the platter's glass backdrop (leaving
+    /// the toggle glyph centered at `y = 26`, matching the traffic lights' 11 pt top margin and macOS 26's native
+    /// floating sidebar). Restore the platter when collapsed or when Glass turns off.
+    @discardableResult
+    private static func updateSidebarTogglePlatter(in window: NSWindow?, hidden: Bool) -> Bool {
+        guard let toggleView = window?.toolbar?.items
+            .first(where: { $0.itemIdentifier.rawValue.contains("toggleSidebar") })?.view else { return false }
+        var current: NSView? = toggleView.superview
+        while let view = current {
+            if let platterGlass = view as? NSGlassEffectView {
+                for subview in platterGlass.subviews where !toggleView.isDescendant(of: subview) {
+                    subview.alphaValue = hidden ? 0 : 1
+                }
+                return true
+            }
+            current = view.superview
+        }
+        return false
     }
 
     private static func findSidebarGlass(in root: NSView) -> (glass: NSGlassEffectView, wrapper: NSView, split: NSSplitView, isCollapsed: Bool)? {
