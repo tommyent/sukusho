@@ -28,6 +28,13 @@ nonisolated enum AgentGroup: String, Codable, Sendable, CaseIterable {
     }
 }
 
+extension AgentGroup {
+    /// A launcher such as Unleash starts a helper each time its panel shows, so a session that ended with the helper
+    /// would last one panel: the clipboard's lasts until Sukusho quits, for that agent. Sharing and capturing keep
+    /// theirs to the helper, as a coding agent's conversation (desk-lead for Unleash, 2026-11-20).
+    var sessionOutlivesHelper: Bool { self == .clipboard }
+}
+
 /// An agent: the code-signing identity of the program that started the helper
 /// (Claude Code's or Codex's binary, say), plus the MCP client name it gives.
 /// The name alone is self-reported, so another program calling itself
@@ -88,6 +95,7 @@ final class AgentGrantStore {
     private(set) var grants: [AgentGrant] = []
     /// Library, upload, gallery and file request IDs, by agent key.
     @ObservationIgnored private var owned: [String: Set<String>] = [:]
+    @ObservationIgnored private var sessionGrants: [String: Set<AgentGroup>] = [:]
     @ObservationIgnored private let defaults: UserDefaults
     private static let grantsKey = "agentAccessGrants"
     private static let ownedKey = "agentAccessOwned"
@@ -118,6 +126,7 @@ final class AgentGrantStore {
 
     /// Takes back one group, or every group when `group` is nil.
     func revoke(_ key: String, group: AgentGroup? = nil) {
+        if let group { sessionGrants[key]?.remove(group) } else { sessionGrants[key] = nil }
         if let group, let index = grants.firstIndex(where: { $0.agent.key == key }) {
             grants[index].groups.remove(group)
             if grants[index].groups.isEmpty { grants.remove(at: index) }
@@ -126,6 +135,14 @@ final class AgentGrantStore {
         }
         saveGrants()
     }
+
+    /// Session grants that outlive their helper (`AgentGroup.sessionOutlivesHelper`). Never saved: they end when
+    /// Sukusho quits, when agent access is turned off, or with Settings' revoke.
+    func hasSession(_ group: AgentGroup, for agent: AgentIdentity) -> Bool { sessionGrants[agent.key]?.contains(group) == true }
+
+    func grantSession(_ group: AgentGroup, to agent: AgentIdentity) { sessionGrants[agent.key, default: []].insert(group) }
+
+    func endSessions() { sessionGrants = [:] }
 
     func owned(by agent: AgentIdentity) -> Set<String> { owned[agent.key] ?? [] }
 

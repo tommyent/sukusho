@@ -345,13 +345,15 @@ final class AgentToolbox {
     }
 
     private func isAllowed(_ group: AgentGroup, items: [String], session: AgentSession) -> Bool {
-        AgentPolicy.allowed(group, session: session.grants, always: grants.hasAlways(group, for: session.agent),
-                            items: items, owned: grants.owned(by: session.agent))
+        let sessionGrants = grants.hasSession(group, for: session.agent) ? session.grants.union([group]) : session.grants
+        return AgentPolicy.allowed(group, session: sessionGrants, always: grants.hasAlways(group, for: session.agent),
+                                   items: items, owned: grants.owned(by: session.agent))
     }
 
     private func remember(_ decision: AgentDecision, _ group: AgentGroup, _ session: AgentSession) {
         switch decision {
         case .once: break
+        case .session where group.sessionOutlivesHelper: grants.grantSession(group, to: session.agent)
         case .session: session.grants.insert(group)
         case .always: grants.grantAlways(group, to: session.agent, now: now())
         }

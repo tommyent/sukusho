@@ -236,6 +236,36 @@ struct AgentClipboardTests {
         #expect(agentStatus(await harness.toolbox.call("clipboard_list", [:], session: AgentSession(agent: impostor))) == "denied")
     }
 
+    /// Unleash's helper ends each time its panel hides, so "For this session" lasts until Sukusho quits, for this agent.
+    @Test func forThisSessionOutlivesTheHelperUntilSukushoQuits() async throws {
+        let harness = try clipHarness()
+        try await record(harness, text("x"), at: start)
+        harness.asker.reply = .allow(.session)
+        #expect(clips(await harness.call("clipboard_list")).count == 1)
+        harness.asker.reply = .deny
+        // The next panel is a new helper: no ask.
+        let next = AgentSession(agent: AgentHarness.agent)
+        #expect(clips(await harness.toolbox.call("clipboard_list", [:], session: next)).count == 1)
+        #expect(harness.asker.asks.count == 1)
+        // Never saved, and never an Always: a restarted Sukusho asks again.
+        #expect(harness.grants.hasSession(.clipboard, for: AgentHarness.agent))
+        #expect(!AgentGrantStore(defaults: harness.defaults).hasSession(.clipboard, for: AgentHarness.agent))
+        #expect(harness.grants.grants.isEmpty)
+        // Another agent still asks.
+        let other = AgentIdentity(signer: "path:/tmp/other", signerName: "other", clientName: "other")
+        #expect(agentStatus(await harness.toolbox.call("clipboard_list", [:], session: AgentSession(agent: other))) == "denied")
+        // Settings' revoke ends it, and so does turning agent access off.
+        harness.grants.revoke(AgentHarness.agent.key)
+        #expect(agentStatus(await harness.toolbox.call("clipboard_list", [:], session: next)) == "denied")
+        harness.asker.reply = .allow(.session)
+        _ = await harness.call("clipboard_list")
+        harness.grants.endSessions()
+        harness.asker.reply = .deny
+        #expect(agentStatus(await harness.toolbox.call("clipboard_list", [:], session: AgentSession(agent: AgentHarness.agent))) == "denied")
+        // Sharing's session grant still ends with its helper (AgentGrantTests.sessionAsksOnceForTheRestOfTheHelper).
+        #expect(!AgentGroup.publish.sessionOutlivesHelper && !AgentGroup.capture.sessionOutlivesHelper)
+    }
+
     @Test func historyOffSaysSoWithoutAsking() async throws {
         let harness = AgentHarness()
         let result = await harness.call("clipboard_list")

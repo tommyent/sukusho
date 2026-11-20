@@ -55,6 +55,7 @@ final class AgentAccess {
     private func apply() {
         guard isEnabled else {
             server.stop()
+            grants.endSessions()
             errorMessage = nil
             return
         }
@@ -460,6 +461,11 @@ struct AgentApprovalView<Content: View>: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if choice.decision == .session, ask.group.sessionOutlivesHelper {
+                        Text("Until Sukusho quits.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 } else {
                     Text("Type the password here. The agent never sees it.")
