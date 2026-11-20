@@ -34,10 +34,14 @@ struct AppearanceSettingsPane: View {
                 themePicker("Dark theme", detail: "How Sukusho looks while it's dark.", dark: true, selection: $darkTheme)
             }
 
+            if [lightTheme, darkTheme].contains(where: { $0.hasPrefix("glass") }) {
+                Section("Glass") { GlassPictureSettings() }
+            }
+
             Section("Workspace") {
                 SettingsControlLabel(
                     "Workspace background",
-                    detail: "Behind the Library, the image editor and Studio. Captures, exports and uploads never include it."
+                    detail: "Behind the Library, the image editor and Studio; with a Glass theme, the Library shows its picture instead. Captures, exports and uploads never include it."
                 ).control { label in
                     Picker(selection: $workspaceStyle) {
                         ForEach(WorkspaceBackground.Style.allCases) { style in
@@ -167,6 +171,73 @@ private struct WorkspaceWallpaperSettings: View {
             choose(try store.importWallpaper(from: url))
         } catch {
             addError = "Couldn't add the wallpaper: \(error.localizedDescription)"
+        }
+    }
+}
+
+/// Glass's picture: the default (the desktop picture, or Sukusho's own while macOS would ask first), the wallpapers
+/// the workspace keeps, and Add…, which copies the picked file into Sukusho's folder so it stays when the original moves.
+private struct GlassPictureSettings: View {
+    @AppStorage(GlassPicture.pathKey) private var path = ""
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var addError: String?
+
+    private let store = AnnotationWallpaperStore.shared
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: DS.Space.s), count: 6)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Space.m) {
+            SettingsControlLabel(
+                "Picture",
+                detail: "Behind Glass's frosted panes. By default your desktop picture, or Sukusho's own when macOS would ask before Sukusho reads yours."
+            )
+            LazyVGrid(columns: columns, spacing: DS.Space.s) {
+                let fallback = GlassPicture.desktopPicture() == nil
+                InspectorTile(title: fallback ? "Sukusho's" : "Desktop", aspectRatio: 1.35, isSelected: path.isEmpty) {
+                    path = ""
+                } content: {
+                    AnnotationCustomWallpaperPreview(wallpaper: AnnotationCustomWallpaper(url: GlassPicture.url(picked: "", dark: colorScheme == .dark)),
+                                                     maxPixelSize: 320)
+                }
+                .accessibilityLabel(fallback ? "Sukusho's picture" : "Desktop picture")
+                ForEach(store.recentWallpapers) { wallpaper in
+                    InspectorTile(title: wallpaper.title, aspectRatio: 1.35,
+                                  isSelected: wallpaper.url.standardizedFileURL.path == path) {
+                        path = wallpaper.url.standardizedFileURL.path
+                    } content: {
+                        AnnotationCustomWallpaperPreview(wallpaper: wallpaper, maxPixelSize: 320)
+                    }
+                    .accessibilityLabel(store.accessibilityTitle(for: wallpaper))
+                }
+                AnnotationAddWallpaperTile(action: add)
+                    .help("Add a picture")
+                    .accessibilityLabel("Add Picture…")
+            }
+            if let message = addError ?? missingMessage {
+                Text(message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// The picked file is gone: Glass shows the default meanwhile.
+    private var missingMessage: String? {
+        path.isEmpty || FileManager.default.fileExists(atPath: path) ? nil
+            : "The chosen picture is gone, so Glass shows the default. Choose another."
+    }
+
+    private func add() {
+        let panel = NSOpenPanel()
+        panel.title = "Add Glass Picture"
+        panel.prompt = "Add"
+        panel.allowedContentTypes = AnnotationWallpaperStore.supportedContentTypes
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            path = try store.importWallpaper(from: url).standardizedFileURL.path
+            addError = nil
+        } catch {
+            addError = "Couldn't add the picture: \(error.localizedDescription)"
         }
     }
 }

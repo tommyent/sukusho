@@ -160,7 +160,7 @@ struct AnnotationEditorWorkspaceBackground: View {
                 } else {
                     WorkspaceWallpaper(
                         url: URL(fileURLWithPath: wallpaperPath),
-                        blurred: blurs,
+                        blur: blurs ? WorkspaceBackground.blurRadius : 0,
                         dimming: ground.opacity(WorkspaceBackground.dimOpacity(dim, dark: colorScheme == .dark))
                     )
                 }
@@ -169,13 +169,68 @@ struct AnnotationEditorWorkspaceBackground: View {
     }
 }
 
+/// Glass's picture (`AppTheme.Ground.backdrop`) under a whole window: the Library, its popup and Settings, never the
+/// editor or Studio, which keep the Workspace setting. Reduce Transparency and Increase Contrast get the plain ground.
+struct GlassBackdrop: View {
+    let backdrop: AppTheme.Backdrop
+    @AppStorage(GlassPicture.pathKey) private var picked = ""
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+    @CurrentTheme private var theme
+
+    var body: some View {
+        let ground = theme.ground.workspace.color
+        ZStack {
+            Rectangle().fill(ground)
+            if !reduceTransparency && contrast != .increased {
+                WorkspaceWallpaper(url: GlassPicture.url(picked: picked, dark: colorScheme == .dark),
+                                   blur: backdrop.blur, dimming: ground.opacity(backdrop.dim))
+            }
+        }
+    }
+}
+
+extension EnvironmentValues {
+    /// Set under a `GlassBackdrop`: text drawn straight on the window then sits on a picture and takes a plate.
+    @Entry var overGlassPicture = false
+}
+
+extension View {
+    /// Text drawn straight on Glass's picture, such as the Library's status bar, in the backdrop's ink
+    /// (`GlassPicture.lightInk`). Anywhere else, and with Reduce Transparency or Increase Contrast, nothing changes.
+    func glassInk() -> some View { modifier(GlassInk()) }
+}
+
+private struct GlassInk: ViewModifier {
+    @AppStorage(GlassPicture.pathKey) private var picked = ""
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.overGlassPicture) private var overGlassPicture
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+    @CurrentTheme private var theme
+
+    func body(content: Content) -> some View {
+        let dark = colorScheme == .dark
+        var scheme = colorScheme
+        if overGlassPicture, !reduceTransparency, contrast != .increased, let backdrop = theme.ground.backdrop {
+            let light = GlassPicture.lightInk(backdrop, picture: GlassPicture.url(picked: picked, dark: dark),
+                                              ground: theme.ground.workspace, dark: dark)
+            scheme = light ? .dark : .light
+        }
+        return content.environment(\.colorScheme, scheme)
+    }
+}
+
 /// The chosen photo at the window's pixel size, decoded and cached by the
 /// wallpaper thumbnails' cache. Dots stand in while it can't be read, such
 /// as after the file was deleted.
 private struct WorkspaceWallpaper: View {
     let url: URL
-    let blurred: Bool
+    /// In points; 0 draws the photo sharp.
+    let blur: CGFloat
     let dimming: Color
+    private var blurred: Bool { blur > 0 }
 
     @Environment(\.displayScale) private var displayScale
     @State private var image: CGImage?
@@ -195,7 +250,7 @@ private struct WorkspaceWallpaper: View {
                         .scaledToFill()
                         .frame(width: proxy.size.width, height: proxy.size.height)
                         .clipped()
-                        .blur(radius: blurred ? WorkspaceBackground.blurRadius : 0, opaque: true)
+                        .blur(radius: blur, opaque: true)
                         .overlay(dimming)
                 } else {
                     Color.clear
@@ -246,11 +301,13 @@ private struct WorkspaceTextPlate: ViewModifier {
     @AppStorage(WorkspaceBackground.styleKey) private var style = WorkspaceBackground.Style.dots
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(\.overGlassPicture) private var overGlassPicture
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if WorkspaceBackground.shown(style, reduceTransparency: reduceTransparency,
-                                     increaseContrast: contrast == .increased) != .wallpaper {
+        if overGlassPicture ? reduceTransparency || contrast == .increased
+            : WorkspaceBackground.shown(style, reduceTransparency: reduceTransparency,
+                                        increaseContrast: contrast == .increased) != .wallpaper {
             content
         } else if capsule {
             content.background(WorkspaceChrome.background, in: Capsule())

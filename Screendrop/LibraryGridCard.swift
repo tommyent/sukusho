@@ -111,6 +111,7 @@ struct LibraryCardSurface: ViewModifier {
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.appearsActive) private var active
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @CurrentTheme private var theme
 
     private var dark: Bool { scheme == .dark }
@@ -129,6 +130,7 @@ struct LibraryCardSurface: ViewModifier {
                         switch theme.card.recipe {
                         case .stock(let stock): self.stock(stock, depth, shape: outline, radius: radius).allowsHitTesting(false)
                         case .flat: flat(depth, shape: outline, radius: radius).allowsHitTesting(false)
+                        case .frost(let frost): self.frost(frost, depth, shape: outline, radius: radius).allowsHitTesting(false)
                         }
                     }
                     .overlay {
@@ -164,9 +166,10 @@ struct LibraryCardSurface: ViewModifier {
                     .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: depth)
             }
         } else {
+            let frost = reduceTransparency || contrast == .increased ? nil : theme.card.recipe.frost
             content
                 .background(Color.primary.opacity(selected ? 0.075 : hovering ? 0.035 : 0.012), in: shape)
-                .background(WorkspaceChrome.background, in: shape)
+                .background(frost.map { AnyShapeStyle($0.material.material) } ?? AnyShapeStyle(WorkspaceChrome.background), in: shape)
                 .overlay { LibraryCardBorder(selected: selected) }
         }
     }
@@ -194,6 +197,31 @@ struct LibraryCardSurface: ViewModifier {
             if let key = depth.key { shadow(key, depth: depth, radius: radius) }
             if let contact = depth.contact { shadow(contact, depth: depth, radius: radius) }
             shape.fill(LinearGradient(colors: theme.card.face.map(\.color), startPoint: .top, endPoint: .bottom))
+        }
+        .accessibilityHidden(true)
+    }
+
+    /// Frosted glass: the stock card's two shadows, kept outside the card so they can't darken the see-through face,
+    /// then the material, the theme's tint and a light rim. Increase Contrast and Reduce Transparency get the opaque face.
+    @ViewBuilder
+    private func frost(_ frost: AppTheme.Frost, _ depth: LibraryCardDepth, shape: RoundedRectangle, radius: CGFloat) -> some View {
+        ZStack {
+            ZStack {
+                if let key = depth.key { shadow(key, depth: depth, radius: radius) }
+                if let contact = depth.contact { shadow(contact, depth: depth, radius: radius) }
+            }
+            .mask {
+                Rectangle().padding(-64)
+                    .overlay { shape.fill(.black).blendMode(.destinationOut) }
+                    .compositingGroup()
+            }
+            if reduceTransparency || contrast == .increased {
+                shape.fill(LinearGradient(colors: theme.card.face.map(\.color), startPoint: .top, endPoint: .bottom))
+            } else {
+                shape.fill(frost.material.material)
+                shape.fill(frost.tint.color)
+                shape.strokeBorder(frost.rim.color, lineWidth: 0.5)
+            }
         }
         .accessibilityHidden(true)
     }

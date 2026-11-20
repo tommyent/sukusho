@@ -939,11 +939,11 @@ private struct LibraryCardChip: ViewModifier {
         let shape = RoundedRectangle(cornerRadius: radius, style: .circular)
         let strength: Double = usesTextWell ? 0.45 : 1
         let well = (usesTextWell ? theme.card.textWell : theme.card.well).color
-        if theme.card.recipe.flatEdge != nil {
+        if case .stock = theme.card.recipe {
+            stock(content, dark: dark, shape: shape, strength: strength, well: well)
+        } else {
             // A straight cut: the picture meets the label with no bevel, wash or shadow.
             content.clipShape(shape).background { shape.fill(well) }
-        } else {
-            stock(content, dark: dark, shape: shape, strength: strength, well: well)
         }
     }
 

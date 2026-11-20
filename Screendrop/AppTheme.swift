@@ -36,11 +36,29 @@ nonisolated struct AppTheme: Sendable, Equatable, Identifiable {
         var background: ThemeColor
         /// The opaque background of inspectors and side panels (`Palette.panel`).
         var panel: ThemeColor
+        /// Glass: the sidebar, inspector and toolbar show macOS's own glass over the theme's picture. `background` and
+        /// `panel` stay opaque: Reduce Transparency and Increase Contrast draw them, and so do plates under text.
+        var glass = false
     }
 
     nonisolated struct Ground: Sendable, Equatable {
         /// What the Library's cards and the editors' canvas sit on, under Dots, Plain or a wallpaper.
         var workspace: ThemeColor
+        /// A picture under the whole window in place of the Workspace setting (Glass); nil: the Workspace setting.
+        var backdrop: Backdrop? = nil
+    }
+
+    /// Glass's picture (`GlassPicture`): blurred by `blur` points, then `workspace` laid over it at `dim`.
+    nonisolated struct Backdrop: Sendable, Equatable {
+        var blur: Double
+        var dim: Double
+        /// Text drawn straight on the picture, such as the status bar's.
+        var ink = BackdropInk.auto
+    }
+
+    /// Auto keeps the appearance's text unless it reads under 4.5:1 on the picture and the other reads better.
+    nonisolated enum BackdropInk: String, Sendable, Equatable, CaseIterable, Codable {
+        case auto, light, dark
     }
 
     nonisolated struct Card: Sendable, Equatable {
@@ -76,9 +94,34 @@ nonisolated struct AppTheme: Sendable, Equatable, Identifiable {
         case stock(Stock)
         /// Square cut and flat: no lips or bevel, a hairline perimeter, the card's drop shadow (Chip).
         case flat(edge: ThemeColor)
+        /// Frosted glass over the theme's picture: a standard material, never Liquid Glass (2.1 W against 0.75 W of GPU
+        /// on m1 at 2x while scrolling, plan section 3), a tint over it and a light rim (Glass).
+        case frost(Frost)
 
         /// The flat recipe's perimeter; nil for the stock card.
         var flatEdge: ThemeColor? { if case .flat(let edge) = self { edge } else { nil } }
+        var frost: Frost? { if case .frost(let frost) = self { frost } else { nil } }
+    }
+
+    nonisolated struct Frost: Sendable, Equatable {
+        var material: FrostMaterial
+        /// Laid over the material: white lightens the frost, black deepens it.
+        var tint: ThemeColor
+        /// The hairline round the card, where light catches the glass's edge.
+        var rim: ThemeColor
+    }
+
+    /// SwiftUI's standard materials, thinnest to thickest.
+    nonisolated enum FrostMaterial: String, Sendable, Equatable, CaseIterable, Codable {
+        case ultraThin, thin, regular, thick
+        var material: Material {
+            switch self {
+            case .ultraThin: .ultraThinMaterial
+            case .thin: .thinMaterial
+            case .regular: .regularMaterial
+            case .thick: .thickMaterial
+            }
+        }
     }
 
     nonisolated struct Stock: Sendable, Equatable {
@@ -145,7 +188,31 @@ nonisolated extension AppTheme {
                         ground: classic.ground, card: card, marks: classic.marks)
     }
 
-    static let builtIns = [classicLight, classicDark, chipLight, chipDark]
+    /// Glass: a picture under the whole window (`GlassPicture`: the desktop picture when macOS lets Sukusho read it
+    /// without asking, else Sukusho's own, or one the user picks), macOS's own glass on the sidebar, inspector and
+    /// toolbar, and frosted cards. Classic's ink and marks; the opaque colours are Classic's too, for Reduce
+    /// Transparency, Increase Contrast and the plates under text.
+    static let glassLight = AppTheme(
+        id: "glass-light", name: "Glass Light", isDark: false,
+        ink: classicLight.ink,
+        chrome: Chrome(background: .white(), panel: .white(), glass: true),
+        ground: Ground(workspace: .gray(0.93), backdrop: Backdrop(blur: 30, dim: 0.1)),
+        card: Card(recipe: .frost(Frost(material: .regular, tint: .white(opacity: 0.3), rim: .white(opacity: 0.55))),
+                   radius: 16, inset: 6, gutter: nil, face: [.white(), .rgb(0xF7F7F8)],
+                   well: .white(), textWell: .rgb(0xECEFF2), shadow: 0.12, pressedShadow: 0.08),
+        marks: .classic)
+
+    static let glassDark = AppTheme(
+        id: "glass-dark", name: "Glass Dark", isDark: true,
+        ink: classicDark.ink,
+        chrome: Chrome(background: .windowBackground, panel: .windowBackground, glass: true),
+        ground: Ground(workspace: .gray(0.16), backdrop: Backdrop(blur: 30, dim: 0.25)),
+        card: Card(recipe: .frost(Frost(material: .regular, tint: .rgb(0x000000, opacity: 0.15), rim: .white(opacity: 0.16))),
+                   radius: 16, inset: 6, gutter: nil, face: [.rgb(0x333335), .rgb(0x2B2B2D)],
+                   well: .rgb(0x282627), textWell: .rgb(0x26282C), shadow: 0.4, pressedShadow: 0.3),
+        marks: .classic)
+
+    static let builtIns = [classicLight, classicDark, chipLight, chipDark, glassLight, glassDark]
 
     static let lightKey = "appTheme.light"
     static let darkKey = "appTheme.dark"

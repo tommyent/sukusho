@@ -238,7 +238,7 @@ struct CaptureLibraryView: View {
                             : likes.isShown ? likes.visibleLikes.isEmpty : true
                     ))
                 Divider()
-                statusBar
+                statusBar.glassInk()
             }
             .modifier(LibraryColumnSeparators(
                 leading: columnVisibility != .detailOnly,
@@ -741,13 +741,21 @@ private struct LibrarySearchField: NSViewRepresentable {
 
 /// The editor's chrome colour behind a sidebar or inspector column, so the
 /// columns and the toolbar read as one flat surface.
+/// Glass paints nothing here: macOS's own sidebar glass shows over the theme's picture.
 private struct LibrarySidebarSurface: ViewModifier {
+    @CurrentTheme private var theme
+
+    @ViewBuilder
     func body(content: Content) -> some View {
-        content
-            .scrollContentBackground(.hidden)
-            .background {
-                WorkspaceChrome.background.ignoresSafeArea(.container)
-            }
+        if theme.chrome.glass {
+            content
+        } else {
+            content
+                .scrollContentBackground(.hidden)
+                .background {
+                    WorkspaceChrome.background.ignoresSafeArea(.container)
+                }
+        }
     }
 }
 
@@ -757,10 +765,12 @@ private struct LibrarySidebarSurface: ViewModifier {
 /// clicks.
 private struct LibraryBrowserSurface: ViewModifier {
     let showsDots: Bool
+    @CurrentTheme private var theme
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if showsDots {
+        // Glass's picture lies under the whole window (`LibraryWindowSurface`).
+        if showsDots && !theme.chrome.glass {
             content.background { AnnotationEditorWorkspaceBackground().allowsHitTesting(false) }
         } else {
             content
@@ -813,11 +823,23 @@ private struct LibraryToolbarSeparator: ViewModifier {
 /// background, as in the editor, so the system draws its line and keeps the
 /// inspector's divider out of it. Backgrounds around `.inspector` keep the
 /// safe area; clips don't.
+/// Glass instead lays its picture under the whole window, mirrored and blurred under the sidebar by macOS
+/// (`backgroundExtensionEffect`), and hides the toolbar's bar so the picture runs under it too.
 private struct LibraryWindowSurface: ViewModifier {
+    @CurrentTheme private var theme
+
+    @ViewBuilder
     func body(content: Content) -> some View {
-        content
-            .background { WorkspaceChrome.background.ignoresSafeArea() }
-            .toolbarBackgroundVisibility(.visible, for: .windowToolbar)
+        if let backdrop = theme.ground.backdrop, theme.chrome.glass {
+            content
+                .environment(\.overGlassPicture, true)
+                .background { GlassBackdrop(backdrop: backdrop).backgroundExtensionEffect().ignoresSafeArea() }
+                .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        } else {
+            content
+                .background { WorkspaceChrome.background.ignoresSafeArea() }
+                .toolbarBackgroundVisibility(.visible, for: .windowToolbar)
+        }
     }
 }
 
