@@ -750,12 +750,19 @@ private struct LibrarySearchField: NSViewRepresentable {
     }
 }
 
-/// Glass: the opaque chrome behind macOS's window title, as the section titles have (`LibrarySectionHeader`), since
-/// Glass hides the toolbar's bar. The title stays macOS's own, in its place, font and inactive grey: the plate goes
-/// behind the toolbar's title field. A macOS without that field gets no plate, which is round 2's look.
+/// Glass: a Liquid Glass pill behind macOS's window title, matching the search field's glass, since Glass hides the
+/// toolbar's bar. The title stays macOS's own, in its place and font: the pill goes behind the toolbar's title field.
+/// A macOS without that field gets no pill.
 /// (A title of Sukusho's own as a toolbar item lost the room macOS gives its title: the search field moved up to it.)
 enum LibraryTitlePlate {
     private static let id = NSUserInterfaceItemIdentifier("LibraryTitlePlate")
+
+    private final class CapsuleGlassView: NSGlassEffectView {
+        override func layout() {
+            super.layout()
+            cornerRadius = bounds.height / 2
+        }
+    }
 
     /// False while the title field isn't there yet.
     static func update(_ window: NSWindow?, shown: Bool) -> Bool {
@@ -777,18 +784,16 @@ enum LibraryTitlePlate {
         guard let field else { return false }
         var titlebar: NSView = field
         while let up = titlebar.superview, up !== frame { titlebar = up }
-        let plate = NSBox()
+        let plate = CapsuleGlassView()
         plate.identifier = id
-        plate.boxType = .custom
-        plate.borderWidth = 0
-        plate.cornerRadius = 7
-        plate.fillColor = WorkspaceChrome.nsBackground
+        plate.style = .regular
+        plate.cornerRadius = 16
         plate.translatesAutoresizingMaskIntoConstraints = false
         frame.addSubview(plate, positioned: .below, relativeTo: titlebar)
-        NSLayoutConstraint.activate([plate.leadingAnchor.constraint(equalTo: field.leadingAnchor, constant: -8),
-                                     plate.trailingAnchor.constraint(equalTo: field.trailingAnchor, constant: 8),
-                                     plate.topAnchor.constraint(equalTo: field.topAnchor, constant: -3),
-                                     plate.bottomAnchor.constraint(equalTo: field.bottomAnchor, constant: 3)])
+        NSLayoutConstraint.activate([plate.leadingAnchor.constraint(equalTo: field.leadingAnchor, constant: -12),
+                                     plate.trailingAnchor.constraint(equalTo: field.trailingAnchor, constant: 12),
+                                     plate.topAnchor.constraint(equalTo: field.topAnchor, constant: -7),
+                                     plate.bottomAnchor.constraint(equalTo: field.bottomAnchor, constant: 7)])
         return true
     }
 }
