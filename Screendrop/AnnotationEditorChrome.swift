@@ -196,14 +196,17 @@ struct GlassBackdrop: View {
                                    dimming: ground.opacity(backdrop.dim), dotsWhenUnreadable: false)
             }
         }
-        .onWindowChange { host.window = $0; refresh += 1 }
+        // A detach reports nil; keep the live window, as a swapped accessor's late nil would leave the backdrop windowless.
+        .onWindowChange { if let window = $0 { host.window = window }; refresh += 1 }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeScreenNotification), perform: refreshIfOwn)
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification), perform: refreshIfOwn)
         .task(id: "\(picked)#\(colorScheme == .dark)#\(refresh)") {
             // Until the window is on a screen, which screen's picture to show isn't known (the main screen is the
-            // one with keyboard focus, perhaps another display's).
-            guard let screen = host.window?.screen else { return }
-            let desktop = NSWorkspace.shared.desktopImageURL(for: screen)
+            // one with keyboard focus, perhaps another display's). Only the default needs it: a picked picture never
+            // waits for a screen, or the pick would be dropped until the window next changed or became key.
+            let screen = host.window?.screen
+            guard screen != nil || !picked.isEmpty else { return }
+            let desktop = screen.flatMap { NSWorkspace.shared.desktopImageURL(for: $0) }
             let resolved = await GlassPicture.resolve(picked: picked, desktop: desktop, dark: colorScheme == .dark)
             if !Task.isCancelled, resolved != picture { picture = resolved }
         }
@@ -577,8 +580,10 @@ private struct WorkspaceWallpaper: View {
         let decodeSize = WorkspaceBackground.decodeSize(image: size, bounds: bounds, blurred: blurred)
         let loaded = await AnnotationWallpaperPreviewCache.shared.image(for: url, maxPixelSize: CGFloat(decodeSize))
         guard !Task.isCancelled else { return }
-        image = loaded
-        failed = loaded == nil
+        // The file reads (its size did), so a nil decode is passing, such as the shared cache emptied mid-decode;
+        // keep the last good image rather than latching blank, since nothing retries until the url or size changes.
+        image = loaded ?? image
+        failed = image == nil
     }
 }
 
