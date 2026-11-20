@@ -31,8 +31,10 @@ struct AppThemeTests {
         }
     }
 
-    /// Chip (sd-ygmk): square and flat, the picture edge to edge at every slider size, the caption on its own 11 pt gutter.
-    @Test func chipPicturesReachTheCardsEdges() {
+    /// Chip (sd-ygmk): square and flat, the caption on its own 11 pt gutter from the card's edge. The owner, 2026-11-19:
+    /// "padding top left and right of the image": the picture sits 8 pt in on the 220 pt card, growing with wider cards
+    /// as Classic's inset does, with square corners, its bottom on the label strip.
+    @Test func chipPicturesSitInsetOnASquareCard() {
         for theme in [AppTheme.chipLight, .chipDark] {
             #expect(theme.card.recipe.flatEdge != nil, "\(theme.id)")
             #expect(theme.card.gutter == 11)
@@ -43,7 +45,8 @@ struct AppThemeTests {
             #expect(theme.card.pictureEdge == (theme.isDark ? .rgb(0x6D6F6F, opacity: 0.35) : .rgb(0xCBCBCB, opacity: 0.69)), "\(theme.id)")
             for width: CGFloat in [140, 192, 220, 320] {
                 let density = LibraryCardDensity(width: width, inset: theme.card.inset, radius: theme.card.radius)
-                #expect(density.pictureInset == 0 && density.cornerRadius == 0 && density.pictureRadius == 0, "\(theme.id) \(width)")
+                #expect(density.pictureInset == 8 * max(1, width / 220), "\(theme.id) \(width)")
+                #expect(density.cornerRadius == 0 && density.pictureRadius == 0, "\(theme.id) \(width)")
             }
         }
     }

@@ -48,7 +48,8 @@ nonisolated struct AppTheme: Sendable, Equatable, Identifiable {
         /// Corner radius and picture inset on the 220 pt card. Classic's grow with wider cards.
         var radius: CGFloat
         var inset: CGFloat
-        /// The caption's side margin. nil: it follows the inset, one more inset in from the card's edge.
+        /// The caption's side margin from the card's edge, wherever the picture sits. nil: it follows the inset, one more
+        /// inset in from the picture.
         var gutter: CGFloat?
         /// The face under the caption, top to bottom.
         var face: [ThemeColor]
@@ -73,7 +74,7 @@ nonisolated struct AppTheme: Sendable, Equatable, Identifiable {
     nonisolated enum Recipe: Sendable, Equatable {
         /// Heavy stock: raised and rounded, two lips, two shadows, a bevelled picture (Classic).
         case stock(Stock)
-        /// Square cut and flat: no lips or bevel, the picture edge to edge, a hairline perimeter, the card's drop shadow (Chip).
+        /// Square cut and flat: no lips or bevel, a hairline perimeter, the card's drop shadow (Chip).
         case flat(edge: ThemeColor)
 
         /// The flat recipe's perimeter; nil for the stock card.
@@ -120,22 +121,24 @@ nonisolated extension AppTheme {
                    well: .rgb(0x282627), textWell: .rgb(0x26282C), shadow: 0.65, pressedShadow: 0.5),
         marks: .classic)
 
-    /// A colour chip: Classic cut square and flat, the picture edge to edge above the label (owner's pick, 2026-11-19,
+    /// A colour chip: Classic cut square and flat, the picture above the label (owner's pick, 2026-11-19,
     /// sd-ygmk). Only the shape changes; the owner kept Classic's colours ("I would keep the colours the same") and
     /// its drop shadow ("The chips are missing the shadow"), added a subtle kraft grain to the paper only, and a border:
     /// a dark outer edge in both appearances with a line under the picture ("Yes, as read back"). The edge, the line and
-    /// the paper are the owner's own values from the Theme Tuner, Light and Dark apart.
+    /// the paper are the owner's own values from the Theme Tuner, Light and Dark apart. Last, "padding top left and right
+    /// of the image": the picture sits in from the card's top and sides, like a paint chip, its bottom on the label.
     static let chipLight = chip(classicLight, id: "chip-light", name: "Chip Light")
     static let chipDark = chip(classicDark, id: "chip-dark", name: "Chip Dark")
 
-    /// Classic's colours in the flat recipe: no inset, square corners, the caption on its own 11 pt gutter, and a hairline
-    /// perimeter (the mockup's strength, which is what sets a card without shadows off the ground).
+    /// Classic's colours in the flat recipe: square corners, the picture 8 pt in (Classic's inset is 6), the caption on its
+    /// own 11 pt gutter, and a hairline perimeter (the mockup's strength, which is what sets a card without shadows off
+    /// the ground).
     private static func chip(_ classic: AppTheme, id: String, name: String) -> AppTheme {
         var card = classic.card
         card.recipe = .flat(edge: classic.isDark ? .rgb(0x191919, opacity: 0.81) : .rgb(0x000000, opacity: 0.3))
         card.pictureEdge = classic.isDark ? .rgb(0x6D6F6F, opacity: 0.35) : .rgb(0xCBCBCB, opacity: 0.69)
         card.radius = 0
-        card.inset = 0
+        card.inset = 8
         card.gutter = 11
         card.paper = classic.isDark ? 0.2 : 0.28
         return AppTheme(id: id, name: name, isDark: classic.isDark, ink: classic.ink, chrome: classic.chrome,

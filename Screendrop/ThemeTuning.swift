@@ -19,6 +19,8 @@ nonisolated struct ThemeTuning: Codable, Equatable, Sendable {
         var line: UInt32
         var lineOpacity: Double
         var lineSolid = false
+        /// The picture's inset from the card's top and sides on the 220 pt card; wider cards grow it.
+        var inset: Double
         /// The card's outer edge.
         var edge: UInt32
         var edgeOpacity: Double
@@ -32,6 +34,7 @@ nonisolated struct ThemeTuning: Codable, Equatable, Sendable {
             let line = ThemeTuning.split(chip.card.pictureEdge), edge = ThemeTuning.split(chip.card.recipe.flatEdge)
             self.line = line.hex; lineOpacity = line.opacity
             self.edge = edge.hex; edgeOpacity = edge.opacity
+            inset = chip.card.inset
             shadow = chip.card.shadow; shadowBlur = chip.card.shadowBlur; shadowOffset = chip.card.shadowOffset
             paper = chip.card.paper
         }
@@ -57,6 +60,7 @@ nonisolated struct ThemeTuning: Codable, Equatable, Sendable {
         var tuned = theme
         tuned.card.recipe = .flat(edge: Self.color(side.edge, side.edgeOpacity))
         tuned.card.pictureEdge = Self.color(side.line, side.lineSolid ? 1 : side.lineOpacity)
+        tuned.card.inset = side.inset
         tuned.card.shadow = side.shadow
         tuned.card.shadowBlur = side.shadowBlur
         tuned.card.shadowOffset = side.shadowOffset
@@ -79,6 +83,7 @@ nonisolated struct ThemeTuning: Codable, Equatable, Sendable {
         return """
             card.recipe = .flat(edge: \(both { code($0.edge, $0.edgeOpacity) }))
             card.pictureEdge = \(both { code($0.line, $0.lineSolid ? 1 : $0.lineOpacity) })
+            card.inset = \(both { number($0.inset) })
             card.shadow = \(both { number($0.shadow) })
             card.shadowBlur = \(both { number($0.shadowBlur) })
             card.shadowOffset = \(both { number($0.shadowOffset) })

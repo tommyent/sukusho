@@ -30,7 +30,8 @@ struct LibraryGridCard<Picture: View, Caption: View>: View {
                     .overlay(alignment: .bottomTrailing) { pills(marks.content, density: density) }
                 caption()
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                    .padding(.horizontal, theme.card.gutter ?? density.pictureInset)
+                    // A theme's gutter is from the card's edge, and this stack already sits the picture's inset in.
+                    .padding(.horizontal, theme.card.gutter.map { max(0, $0 - density.pictureInset) } ?? density.pictureInset)
                     .padding(.top, LibraryGridMetrics.captionTopPadding)
             }
             .environment(\.libraryCardDensity, density)
@@ -120,7 +121,8 @@ struct LibraryCardSurface: ViewModifier {
             let depth = LibraryCardDepth(hovering: hovering, pressed: pressed, deleting: deleting)
             let edge = theme.card.recipe.flatEdge
             GeometryReader { geometry in
-                let radius = LibraryCardDensity(width: geometry.size.width, inset: theme.card.inset, radius: theme.card.radius).cornerRadius
+                let density = LibraryCardDensity(width: geometry.size.width, inset: theme.card.inset, radius: theme.card.radius)
+                let radius = density.cornerRadius
                 let outline = RoundedRectangle(cornerRadius: radius, style: .circular)
                 content
                     .background {
@@ -129,16 +131,18 @@ struct LibraryCardSurface: ViewModifier {
                         case .flat: flat(depth, shape: outline, radius: radius).allowsHitTesting(false)
                         }
                     }
-                    .overlay(alignment: .bottom) {
-                        // Paper only: the caption strip under the picture, so a capture is never textured.
+                    .overlay {
+                        // Paper only: the caption strip and any margin round the picture, so a capture is never textured.
                         if theme.card.paper > 0 && contrast != .increased {
-                            CardPaperGrain().opacity(theme.card.paper).frame(height: LibraryGridMetrics.captionHeight)
+                            CardPaperGrain().opacity(theme.card.paper)
+                                .mask { CardPaper(inset: density.pictureInset).fill(style: FillStyle(eoFill: true)) }
                         }
                     }
                     .overlay(alignment: .bottom) {
-                        // The picture's bottom edge: a line on its last half point, inside the card's outer edge.
+                        // The picture's bottom edge: a line on its last half point, as wide as the picture and inside the
+                        // card's outer edge.
                         if let pictureEdge = theme.card.pictureEdge {
-                            Rectangle().fill(pictureEdge.color).frame(height: 0.5).padding(.horizontal, 0.5)
+                            Rectangle().fill(pictureEdge.color).frame(height: 0.5).padding(.horizontal, max(0.5, density.pictureInset))
                                 .padding(.bottom, LibraryGridMetrics.captionHeight).allowsHitTesting(false)
                         }
                     }
@@ -208,6 +212,19 @@ struct LibraryCardSurface: ViewModifier {
             return Color(stock: lower ? (dark ? 0x064A99 : 0x0055B3) : 0x0A6FE0)
         }
         return Color.accentColor.mix(with: .black, by: lower ? (dark ? 0.4 : 0.3) : 0.12)
+    }
+}
+
+/// A card's paper: all of it but the picture, which sits `inset` in from the top and sides and ends on the caption strip.
+/// Filled even-odd, the picture is the hole.
+nonisolated struct CardPaper: Shape {
+    let inset: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path(rect)
+        path.addRect(CGRect(x: rect.minX + inset, y: rect.minY + inset, width: rect.width - 2 * inset,
+                            height: rect.height - inset - LibraryGridMetrics.captionHeight))
+        return path
     }
 }
 

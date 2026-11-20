@@ -13,6 +13,7 @@ struct ThemeTuningTests {
         #expect(tuning.swift == """
             card.recipe = .flat(edge: classic.isDark ? .rgb(0x191919, opacity: 0.81) : .rgb(0x000000, opacity: 0.3))
             card.pictureEdge = classic.isDark ? .rgb(0x6D6F6F, opacity: 0.35) : .rgb(0xCBCBCB, opacity: 0.69)
+            card.inset = 8
             card.shadow = classic.isDark ? 0.65 : 0.18
             card.shadowBlur = 1
             card.shadowOffset = 1
@@ -26,19 +27,22 @@ struct ThemeTuningTests {
         tuning.dark.lineSolid = true
         tuning.light.edgeOpacity = 0.5
         tuning.light.shadowBlur = 1.5
+        tuning.light.inset = 10.5
         tuning.dark.paper = 0
         for theme in AppTheme.builtIns { #expect(tuning.applied(to: theme) == theme, "off: \(theme.id)") }
         tuning.on = true
         #expect(tuning.applied(to: .classicLight) == .classicLight && tuning.applied(to: .classicDark) == .classicDark)
         let dark = tuning.applied(to: .chipDark), light = tuning.applied(to: .chipLight)
         #expect(dark.card.pictureEdge == .rgb(0xD9D9D9) && dark.card.paper == 0)
-        #expect(light.card.recipe.flatEdge == .rgb(0x000000, opacity: 0.5) && light.card.shadowBlur == 1.5)
+        #expect(light.card.recipe.flatEdge == .rgb(0x000000, opacity: 0.5) && light.card.shadowBlur == 1.5 && light.card.inset == 10.5)
+        #expect(dark.card.inset == AppTheme.chipDark.card.inset)
         #expect(light.card.pictureEdge == AppTheme.chipLight.card.pictureEdge && light.card.paper == AppTheme.chipLight.card.paper)
         // Light and Dark apart where they differ, in the form `chip(_:id:name:)` takes them.
         let lines = tuning.swift.split(separator: "\n")
         #expect(lines.contains("card.recipe = .flat(edge: classic.isDark ? .rgb(0x191919, opacity: 0.81) : .rgb(0x000000, opacity: 0.5))"))
         #expect(lines.contains("card.pictureEdge = classic.isDark ? .rgb(0xD9D9D9) : .rgb(0xCBCBCB, opacity: 0.69)"))
         #expect(lines.contains("card.shadowBlur = classic.isDark ? 1 : 1.5"))
+        #expect(lines.contains("card.inset = classic.isDark ? 8 : 10.5"))
         #expect(lines.contains("card.paper = classic.isDark ? 0 : 0.28"))
     }
 

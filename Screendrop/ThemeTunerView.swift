@@ -35,6 +35,9 @@ struct ThemeTunerView: View {
                 Text("Pick Chip for \(dark ? "Dark" : "Light") in Settings › Appearance to see these values.")
                     .foregroundStyle(.secondary)
             }
+            Section("Picture") {
+                slider("Inset", \.inset, 0...20, stepsPerUnit: 2)   // half points
+            }
             Section("Line under the picture") {
                 ColorPicker("Color", selection: color(\.line), supportsOpacity: false)
                 Toggle("Solid", isOn: side(\.lineSolid))
@@ -67,7 +70,7 @@ struct ThemeTunerView: View {
             .padding(12)
             .background(.bar)
         }
-        .frame(width: 380, height: 760)
+        .frame(width: 380, height: 830)
         .onAppear { AppActivationPolicy.enter() }
         .onDisappear { AppActivationPolicy.leave() }
     }
@@ -88,12 +91,13 @@ struct ThemeTunerView: View {
         return Binding(get: { ThemeColor.rgb(hex.wrappedValue).color }, set: { hex.wrappedValue = ThemeTuning.hex($0) })
     }
 
-    private func slider(_ title: String, _ path: WritableKeyPath<ThemeTuning.Side, Double>, _ range: ClosedRange<Double>) -> some View {
+    private func slider(_ title: String, _ path: WritableKeyPath<ThemeTuning.Side, Double>, _ range: ClosedRange<Double>,
+                        stepsPerUnit: Double = 100) -> some View {
         let value = side(path)
         return LabeledContent(title) {
             HStack {
-                // Hundredths, so the copied lines are exactly what's on screen.
-                Slider(value: Binding(get: { value.wrappedValue }, set: { value.wrappedValue = ($0 * 100).rounded() / 100 }), in: range)
+                // Whole steps (hundredths by default), so the copied lines are exactly what's on screen.
+                Slider(value: Binding(get: { value.wrappedValue }, set: { value.wrappedValue = ($0 * stepsPerUnit).rounded() / stepsPerUnit }), in: range)
                     .labelsHidden()
                 Text(value.wrappedValue, format: .number.precision(.fractionLength(2)))
                     .monospacedDigit()
