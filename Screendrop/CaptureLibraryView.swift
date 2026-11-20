@@ -77,225 +77,17 @@ struct CaptureLibraryView: View {
     }
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            List(selection: sidebarSelection) {
-                // Option A (sd-ogtp.1.1): Captures is the working folder, everything taken or copied;
-                // Library is what the user chose to keep.
-                Section("Captures") {
-                    ForEach(CaptureLibraryFilter.allCases) { filter in
-                        Label {
-                            HStack {
-                                Text(filter.title)
-                                Spacer()
-                                SidebarCount(model.count(for: filter))
-                            }
-                        } icon: { Image(systemName: filter.symbol) }
-                        .tag(CaptureLibrarySidebarSelection.kind(filter))
-                    }
-                    // Copies from any app, beside the captures. While history is
-                    // off, it opens its setup page.
-                    Label {
-                        HStack {
-                            Text("Clipboard")
-                            Spacer()
-                            if clipboardEnabled {
-                                SidebarCount(clipboard.historyCount)
-                            } else {
-                                Text("Off").foregroundStyle(.secondary).font(.caption)
-                            }
-                        }
-                    } icon: { Image(systemName: "doc.on.clipboard") }
-                    .tag(CaptureLibrarySidebarSelection.clipboard)
-                }
-                Section("Library") {
-                    Label {
-                        HStack {
-                            Text("Saved")
-                            Spacer()
-                            SidebarCount(model.items.count(where: \.isSaved) + clipboard.savedCount)
-                        }
-                    } icon: { Image(systemName: "star") }
-                    .tag(CaptureLibrarySidebarSelection.saved)
-                    if clipboardEnabled {
-                        Label {
-                            HStack {
-                                Text("Snippets")
-                                Spacer()
-                                SidebarCount(clipboard.snippetCount)
-                            }
-                        } icon: { Image(systemName: "text.badge.star") }
-                        .tag(CaptureLibrarySidebarSelection.snippets)
-                    }
-                }
-                // Uploads and their comments live on the Worker, apart from
-                // the captures on this Mac. Until a Worker is set up, one row
-                // leads to setup instead of two that both end there (design
-                // pass choice 7).
-                Section("Cloud") {
-                    if CloudUploader.shared.isConfigured {
-                        Label {
-                            HStack {
-                                Text("Uploads")
-                                Spacer()
-                                if cloud.hasLoaded {
-                                    SidebarCount(cloud.count(files: false))
-                                }
-                            }
-                        } icon: { Image(systemName: "cloud") }
-                        .tag(CaptureLibrarySidebarSelection.cloud)
-                        Label {
-                            HStack {
-                                Text("Files")
-                                Spacer()
-                                if cloud.hasLoaded {
-                                    SidebarCount(cloud.count(files: true))
-                                }
-                            }
-                        } icon: { Image(systemName: "doc") }
-                        .tag(CaptureLibrarySidebarSelection.files)
-                        Label {
-                            HStack {
-                                Text("Received")
-                                Spacer()
-                                if cloud.hasLoaded {
-                                    SidebarCount(cloud.receivedCount)
-                                }
-                            }
-                        } icon: { Image(systemName: "tray.and.arrow.down") }
-                        .tag(CaptureLibrarySidebarSelection.received)
-                        Label {
-                            HStack {
-                                Text("Comments")
-                                Spacer()
-                                if comments.hasLoaded, !comments.isUnavailable {
-                                    FeedCount(total: comments.comments.count, unread: comments.unreadCount)
-                                }
-                            }
-                        } icon: { Image(systemName: "bubble.left.and.bubble.right") }
-                        .tag(CaptureLibrarySidebarSelection.comments)
-                        Label {
-                            HStack {
-                                Text("Likes")
-                                Spacer()
-                                if likes.hasLoaded, !likes.isUnavailable {
-                                    FeedCount(total: likes.likes.count, unread: likes.unreadCount)
-                                }
-                            }
-                        } icon: { Image(systemName: "heart") }
-                        .tag(CaptureLibrarySidebarSelection.likes)
-                    } else {
-                        Label("Set Up Cloud", systemImage: "cloud")
-                            .tag(CaptureLibrarySidebarSelection.cloud)
-                    }
-                }
-                if !model.tags.isEmpty {
-                    Section("Tags", isExpanded: $tagsExpanded) {
-                        ForEach(model.tags, id: \.self) { tag in
-                            Label {
-                                HStack {
-                                    Text(tag)
-                                    Spacer()
-                                    SidebarCount(model.tagCounts[tag] ?? 0)
-                                }
-                            } icon: { CaptureTagIcon(tag: tag) }
-                            .tag(CaptureLibrarySidebarSelection.tag(tag))
-                            .contextMenu { CaptureTagAppearanceMenu(tag: tag) }
-                        }
-                    }
-                }
-            }
-            .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 280)
-            .safeAreaInset(edge: .bottom) {
-                HStack(alignment: .center, spacing: 12) {
-                    Button {
-                        SettingsWindowController.show(tab: .general)
-                    } label: {
-                        // Icon only; the label still names it for VoiceOver.
-                        Label("Settings", systemImage: "gearshape")
-                            .labelStyle(.iconOnly)
-                            .padding(.vertical, 8)
-                            // A comfortable target, not just the gear's own pixels.
-                            .frame(minWidth: 28, alignment: .leading)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Settings")
-
-                    // Cloud storage against the threshold in Settings › Cloud
-                    // (sd-irc), beside the gear on every page; none until the
-                    // Worker reports it.
-                    if let usage = cloud.usage, CloudUploader.shared.isConfigured {
-                        CloudUsageBar(usage: usage)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 8)
-            }
-            .modifier(LibrarySidebarSurface(isSidebar: true))
-        } detail: {
-            VStack(spacing: 0) {
-                // Empty pages are only as tall as their message; fill the column anyway.
-                browser.frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .modifier(LibraryBrowserSurface(
-                        showsDots: comments.isShown ? comments.visibleComments.isEmpty
-                            : likes.isShown ? likes.visibleLikes.isEmpty : true
-                    ))
-                    .overlay(alignment: .bottom) {
-                        if glass != nil { glassFooter }
-                    }
-                if glass == nil {
-                    Divider()
-                    statusBar
-                }
-            }
-            .modifier(LibraryColumnSeparators(
-                leading: columnVisibility != .detailOnly,
-                trailing: inspectorVisible
-            ))
-            // New Snippet's editor is in the inspector: show it, or the typing has nowhere to go (VM check, 2026-11-17).
-            .onChange(of: clipboard.snippetAwaitingFocus) { _, id in if id != nil { inspectorVisible = true } }
-            // Inside the detail column the inspector sits under the toolbar,
-            // so the toolbar runs unbroken across it.
-            .inspector(isPresented: $inspectorVisible) {
-                Group {
-                    if (saved.isShown || clipboard.isShown), clipboard.librarySelectionIDs.count + model.selection.count > 1 {
-                        Text("\(clipboard.librarySelectionIDs.count + model.selection.count) items selected")
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else if saved.isShown, clipboard.librarySelection != nil {
-                        ClipboardLibraryInspector(model: clipboard)
-                    } else if saved.isShown {
-                        CaptureLibraryInspector(model: model, emptyMessage: "Select a capture or clip\nto take a closer look.")
-                    } else if clipboard.isShown {
-                        ClipboardLibraryInspector(model: clipboard)
-                    } else if comments.isShown {
-                        CommentInspector(comments: comments)
-                    } else if likes.isShown {
-                        LikeInspector(likes: likes)
-                    } else if cloud.isShown {
-                        CloudUploadInspector(cloud: cloud)
-                    } else {
-                        CaptureLibraryInspector(model: model)
-                    }
-                }
-                // The inspector column paints its own grey, under the
-                // toolbar too, so its content carries the sidebar's.
-                .modifier(LibrarySidebarSurface())
-                .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
-            }
-            .modifier(LibraryWindowSurface())
-            .navigationTitle(title)
-        }
-        .navigationSplitViewStyle(.balanced)
+        splitLayout
         .modifier(LibraryToolbarSeparator())
-        .toolbar { toolbar }
-        // Glass: no bar under the toolbar, so macOS's title sits on a glass pill, and on macOS 27.2+ the sidebar
-        // floats as a raised glass pane. The title field and split wrapper arrive a moment after the window, so a few tries.
-        .task(id: "\(title)#\(glass != nil)#\(columnVisibility)#\(libraryWindow.map { ObjectIdentifier($0).hashValue } ?? 0)") {
+        // Glass: no bar under the toolbar, so macOS's title sits on a glass pill, the inspector floats as a raised
+        // glass pane on macOS 26 and 27.2+, and on macOS 27.2+ the left sidebar floats too. The title field and split
+        // wrappers arrive a moment after the window, so a few tries.
+        .task(id: "\(title)#\(glass != nil)#\(columnVisibility)#\(inspectorVisible)#\(libraryWindow.map { ObjectIdentifier($0).hashValue } ?? 0)") {
             for _ in 0..<10 {
                 let plateDone = LibraryTitlePlate.update(libraryWindow, shown: glass != nil)
-                let sidebarDone = LibraryFloatingSidebar.update(libraryWindow, floating: glass != nil)
+                let sidebarDone = LibraryFloatingSidebar.update(
+                    libraryWindow, floating: glass != nil, inspectorVisible: inspectorVisible
+                )
                 if plateDone && sidebarDone { break }
                 try? await Task.sleep(for: .milliseconds(200))
                 if Task.isCancelled { break }
@@ -342,6 +134,8 @@ struct CaptureLibraryView: View {
         }
         .onChange(of: history.items) { _, _ in model.refresh() }
         .onChange(of: projects.projects) { _, _ in model.refresh() }
+        // New Snippet's editor is in the inspector: show it, or the typing has nowhere to go (VM check, 2026-11-17).
+        .onChange(of: clipboard.snippetAwaitingFocus) { _, id in if id != nil { inspectorVisible = true } }
         .onChange(of: clipboard.snippetAwaitingName) { _, id in
             if id != nil { inspectorVisible = true }
         }
@@ -400,6 +194,255 @@ struct CaptureLibraryView: View {
         )) {
             Button("OK") { model.errorMessage = nil }
         } message: { Text(model.errorMessage ?? "") }
+    }
+
+    /// Glass attaches `.inspector` to the split view so SwiftUI inserts a tracking separator between detail and
+    /// inspector: the search pill stays clear of the floating inspector pane, while the inspector toggle sits inside
+    /// its top-right corner (and stays put when collapsed). Classic, Chip, Reduce Transparency and Increase Contrast
+    /// keep the inspector inside the detail column so the opaque toolbar strip runs unbroken across it.
+    @ViewBuilder private var splitLayout: some View {
+        if glass != nil {
+            NavigationSplitView(columnVisibility: $columnVisibility) {
+                sidebarContent
+                    .modifier(GlassSidebarToggleModifier(columnVisibility: $columnVisibility))
+            } detail: {
+                detailColumn
+                    .navigationTitle(title)
+                    .toolbar { searchToolbarItem }
+            }
+            .navigationSplitViewStyle(.balanced)
+            .modifier(LibraryWindowSurface())
+            .inspector(isPresented: $inspectorVisible) {
+                inspectorContent
+                    .toolbar {
+                        ToolbarSpacer(.flexible)
+                        inspectorToggleToolbarItem
+                    }
+            }
+        } else {
+            NavigationSplitView(columnVisibility: $columnVisibility) {
+                sidebarContent
+            } detail: {
+                detailColumn
+                    .modifier(LibraryColumnSeparators(
+                        leading: columnVisibility != .detailOnly,
+                        trailing: inspectorVisible
+                    ))
+                    // Inside the detail column the inspector sits under the toolbar,
+                    // so the toolbar runs unbroken across it.
+                    .inspector(isPresented: $inspectorVisible) {
+                        inspectorContent
+                    }
+                    .modifier(LibraryWindowSurface())
+                    .navigationTitle(title)
+            }
+            .navigationSplitViewStyle(.balanced)
+            .toolbar { toolbar }
+        }
+    }
+
+    private var sidebarContent: some View {
+        List(selection: sidebarSelection) {
+            // Option A (sd-ogtp.1.1): Captures is the working folder, everything taken or copied;
+            // Library is what the user chose to keep.
+            Section("Captures") {
+                ForEach(CaptureLibraryFilter.allCases) { filter in
+                    Label {
+                        HStack {
+                            Text(filter.title)
+                            Spacer()
+                            SidebarCount(model.count(for: filter))
+                        }
+                    } icon: { Image(systemName: filter.symbol) }
+                    .tag(CaptureLibrarySidebarSelection.kind(filter))
+                }
+                // Copies from any app, beside the captures. While history is
+                // off, it opens its setup page.
+                Label {
+                    HStack {
+                        Text("Clipboard")
+                        Spacer()
+                        if clipboardEnabled {
+                            SidebarCount(clipboard.historyCount)
+                        } else {
+                            Text("Off").foregroundStyle(.secondary).font(.caption)
+                        }
+                    }
+                } icon: { Image(systemName: "doc.on.clipboard") }
+                .tag(CaptureLibrarySidebarSelection.clipboard)
+            }
+            Section("Library") {
+                Label {
+                    HStack {
+                        Text("Saved")
+                        Spacer()
+                        SidebarCount(model.items.count(where: \.isSaved) + clipboard.savedCount)
+                    }
+                } icon: { Image(systemName: "star") }
+                .tag(CaptureLibrarySidebarSelection.saved)
+                if clipboardEnabled {
+                    Label {
+                        HStack {
+                            Text("Snippets")
+                            Spacer()
+                            SidebarCount(clipboard.snippetCount)
+                        }
+                    } icon: { Image(systemName: "text.badge.star") }
+                    .tag(CaptureLibrarySidebarSelection.snippets)
+                }
+            }
+            // Uploads and their comments live on the Worker, apart from
+            // the captures on this Mac. Until a Worker is set up, one row
+            // leads to setup instead of two that both end there (design
+            // pass choice 7).
+            Section("Cloud") {
+                if CloudUploader.shared.isConfigured {
+                    Label {
+                        HStack {
+                            Text("Uploads")
+                            Spacer()
+                            if cloud.hasLoaded {
+                                SidebarCount(cloud.count(files: false))
+                            }
+                        }
+                    } icon: { Image(systemName: "cloud") }
+                    .tag(CaptureLibrarySidebarSelection.cloud)
+                    Label {
+                        HStack {
+                            Text("Files")
+                            Spacer()
+                            if cloud.hasLoaded {
+                                SidebarCount(cloud.count(files: true))
+                            }
+                        }
+                    } icon: { Image(systemName: "doc") }
+                    .tag(CaptureLibrarySidebarSelection.files)
+                    Label {
+                        HStack {
+                            Text("Received")
+                            Spacer()
+                            if cloud.hasLoaded {
+                                SidebarCount(cloud.receivedCount)
+                            }
+                        }
+                    } icon: { Image(systemName: "tray.and.arrow.down") }
+                    .tag(CaptureLibrarySidebarSelection.received)
+                    Label {
+                        HStack {
+                            Text("Comments")
+                            Spacer()
+                            if comments.hasLoaded, !comments.isUnavailable {
+                                FeedCount(total: comments.comments.count, unread: comments.unreadCount)
+                            }
+                        }
+                    } icon: { Image(systemName: "bubble.left.and.bubble.right") }
+                    .tag(CaptureLibrarySidebarSelection.comments)
+                    Label {
+                        HStack {
+                            Text("Likes")
+                            Spacer()
+                            if likes.hasLoaded, !likes.isUnavailable {
+                                FeedCount(total: likes.likes.count, unread: likes.unreadCount)
+                            }
+                        }
+                    } icon: { Image(systemName: "heart") }
+                    .tag(CaptureLibrarySidebarSelection.likes)
+                } else {
+                    Label("Set Up Cloud", systemImage: "cloud")
+                        .tag(CaptureLibrarySidebarSelection.cloud)
+                }
+            }
+            if !model.tags.isEmpty {
+                Section("Tags", isExpanded: $tagsExpanded) {
+                    ForEach(model.tags, id: \.self) { tag in
+                        Label {
+                            HStack {
+                                Text(tag)
+                                Spacer()
+                                SidebarCount(model.tagCounts[tag] ?? 0)
+                            }
+                        } icon: { CaptureTagIcon(tag: tag) }
+                        .tag(CaptureLibrarySidebarSelection.tag(tag))
+                        .contextMenu { CaptureTagAppearanceMenu(tag: tag) }
+                    }
+                }
+            }
+        }
+        .listStyle(.sidebar)
+        .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 280)
+        .safeAreaInset(edge: .bottom) {
+            HStack(alignment: .center, spacing: 12) {
+                Button {
+                    SettingsWindowController.show(tab: .general)
+                } label: {
+                    // Icon only; the label still names it for VoiceOver.
+                    Label("Settings", systemImage: "gearshape")
+                        .labelStyle(.iconOnly)
+                        .padding(.vertical, 8)
+                        // A comfortable target, not just the gear's own pixels.
+                        .frame(minWidth: 28, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Settings")
+
+                // Cloud storage against the threshold in Settings › Cloud
+                // (sd-irc), beside the gear on every page; none until the
+                // Worker reports it.
+                if let usage = cloud.usage, CloudUploader.shared.isConfigured {
+                    CloudUsageBar(usage: usage)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 8)
+        }
+        .modifier(LibrarySidebarSurface())
+    }
+
+    private var detailColumn: some View {
+        VStack(spacing: 0) {
+            // Empty pages are only as tall as their message; fill the column anyway.
+            browser.frame(maxWidth: .infinity, maxHeight: .infinity)
+                .modifier(LibraryBrowserSurface(
+                    showsDots: comments.isShown ? comments.visibleComments.isEmpty
+                        : likes.isShown ? likes.visibleLikes.isEmpty : true
+                ))
+                .overlay(alignment: .bottom) {
+                    if glass != nil { glassFooter }
+                }
+            if glass == nil {
+                Divider()
+                statusBar
+            }
+        }
+    }
+
+    private var inspectorContent: some View {
+        Group {
+            if (saved.isShown || clipboard.isShown), clipboard.librarySelectionIDs.count + model.selection.count > 1 {
+                Text("\(clipboard.librarySelectionIDs.count + model.selection.count) items selected")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if saved.isShown, clipboard.librarySelection != nil {
+                ClipboardLibraryInspector(model: clipboard)
+            } else if saved.isShown {
+                CaptureLibraryInspector(model: model, emptyMessage: "Select a capture or clip\nto take a closer look.")
+            } else if clipboard.isShown {
+                ClipboardLibraryInspector(model: clipboard)
+            } else if comments.isShown {
+                CommentInspector(comments: comments)
+            } else if likes.isShown {
+                LikeInspector(likes: likes)
+            } else if cloud.isShown {
+                CloudUploadInspector(cloud: cloud)
+            } else {
+                CaptureLibraryInspector(model: model)
+            }
+        }
+        // The inspector column paints its own grey, under the
+        // toolbar too, so its content carries the sidebar's.
+        .modifier(LibrarySidebarSurface())
+        .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
     }
 
     @ViewBuilder private var browser: some View {
@@ -709,7 +752,7 @@ struct CaptureLibraryView: View {
         .accessibilityHidden(true)
     }
 
-    @ToolbarContentBuilder private var toolbar: some ToolbarContent {
+    @ToolbarContentBuilder private var searchToolbarItem: some ToolbarContent {
         // Before the toggle, so the toggle is the last item at the far right.
         ToolbarItem(placement: .primaryAction) {
             LibrarySearchField(
@@ -722,6 +765,9 @@ struct CaptureLibraryView: View {
         // The toolbar's glass is the field's resting pill: in a toolbar the
         // field draws no bezel of its own until it's focused.
         .sharedBackgroundVisibility(.visible)
+    }
+
+    @ToolbarContentBuilder private var inspectorToggleToolbarItem: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
             Button { inspectorVisible.toggle() } label: {
                 Label(inspectorVisible ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.right")
@@ -730,6 +776,11 @@ struct CaptureLibraryView: View {
             .help(inspectorVisible ? "Hide Inspector" : "Show Inspector")
         }
         .sharedBackgroundVisibility(.hidden)
+    }
+
+    @ToolbarContentBuilder private var toolbar: some ToolbarContent {
+        searchToolbarItem
+        inspectorToggleToolbarItem
     }
 }
 
@@ -888,19 +939,76 @@ enum LibraryTitlePlate {
     }
 }
 
-/// Glass on macOS 27.2+: AppKit flattened `NavigationSplitView`'s sidebar glass to an edge-to-edge strip (whereas
-/// macOS 26 already insets and rounds it). Float the Library's sidebar glass pane to match macOS 26 / Settings: inset
-/// from the window's edges, rounded corners, and a soft lift shadow, hiding the flat full-height split divider beside it.
-/// Classic, Chip, Reduce Transparency and Increase Contrast restore the flush layout untouched.
+/// On macOS 27.2+, the default `NavigationSplitView` sidebar toggle sits inside a 36 pt circular glass platter whose
+/// top edge straddles the floating Glass sidebar pane's top edge. Replace it with an equivalent toggle whose shared
+/// platter hides while the sidebar is expanded (so the glyph sits cleanly inside the pane) and returns when collapsed.
+private struct GlassSidebarToggleModifier: ViewModifier {
+    @Binding var columnVisibility: NavigationSplitViewVisibility
+    private var isCollapsed: Bool { columnVisibility == .detailOnly }
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(macOS 27.2, *) {
+            content
+                .toolbar(removing: .sidebarToggle)
+                .toolbar {
+                    ToolbarSpacer(.flexible)
+                    // Separate branches force SwiftUI/AppKit to add or remove the toolbar's circular glass platter
+                    // dynamically as the sidebar collapses and expands.
+                    if isCollapsed {
+                        ToolbarItem(id: "glass.sidebarToggle.collapsed", placement: .primaryAction) {
+                            toggleButton
+                        }
+                        .sharedBackgroundVisibility(.visible)
+                    } else {
+                        ToolbarItem(id: "glass.sidebarToggle.expanded", placement: .primaryAction) {
+                            toggleButton
+                        }
+                        .sharedBackgroundVisibility(.hidden)
+                    }
+                }
+        } else {
+            content
+        }
+    }
+
+    private var toggleButton: some View {
+        Button {
+            withAnimation {
+                columnVisibility = isCollapsed ? .all : .detailOnly
+            }
+        } label: {
+            Label(isCollapsed ? "Show Sidebar" : "Hide Sidebar", systemImage: "sidebar.left")
+        }
+        .help(isCollapsed ? "Show Sidebar" : "Hide Sidebar")
+    }
+}
+
+/// Glass: float the Library's side panes as inset, rounded, lifted glass panes with a subtle light rim and no flat
+/// full-height split divider beside them. The left sidebar needs this only on macOS 27.2+ (macOS 26 already floats it
+/// natively); the right inspector needs it on both macOS 26 and 27.2+. Classic, Chip, Reduce Transparency and Increase
+/// Contrast restore the flush layout untouched.
 enum LibraryFloatingSidebar {
-    private static let leadingInset: CGFloat = 8
+    private static let outerInset: CGFloat = 8
     private static let verticalInset: CGFloat = 8
-    private static let trailingInset: CGFloat = 0
+    private static let innerInset: CGFloat = 0
     private static let cornerRadius: CGFloat = 16
     private static let rimID = NSUserInterfaceItemIdentifier("LibraryFloatingSidebarRim")
+    private static let paneGlassID = NSUserInterfaceItemIdentifier("LibraryFloatingPaneGlass")
 
-    /// Subtle 0.5 pt rim matching the Glass cards' `frost.rim`, sharpening the floating sidebar pane's perimeter on
-    /// macOS 27 where AppKit's sidebar glass draws no specular border of its own.
+    private struct Pane {
+        let glass: NSGlassEffectView
+        let wrapper: NSView
+        let split: NSSplitView
+        let isCollapsed: Bool
+    }
+
+    private final class FloatingPaneGlassView: NSGlassEffectView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+
+    /// Subtle 0.5 pt rim matching the Glass cards' `frost.rim`, sharpening a floating pane's perimeter where AppKit's
+    /// glass draws no specular border of its own.
     private final class SidebarRimView: NSView {
         override var wantsUpdateLayer: Bool { true }
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -938,21 +1046,37 @@ enum LibraryFloatingSidebar {
         }
     }
 
-    /// False while the sidebar glass wrapper isn't in the window and laid out yet.
-    static func update(_ window: NSWindow?, floating: Bool) -> Bool {
-        // ponytail: 27.2+ flattened NavigationSplitView's sidebar glass (26.x already floats it);
-        // drop this if a future macOS restores floating sidebars or exposes a public SwiftUI/AppKit opt-in.
-        guard #available(macOS 27.2, *) else { return true }
+    /// False while an expanded pane's glass wrapper isn't in the window and laid out yet.
+    static func update(_ window: NSWindow?, floating: Bool, inspectorVisible: Bool = true) -> Bool {
         guard let content = window?.contentView else { return true }
-        guard let found = findSidebarGlass(in: content) else { return false }
-        let platterDone = updateSidebarTogglePlatter(in: window, hidden: floating && !found.isCollapsed)
-        if found.isCollapsed { return true }
-        guard found.wrapper.frame.width > 0 else { return false }
-        let (glass, wrapper, split) = (found.glass, found.wrapper, found.split)
+        var sidebarDone = true
+        // ponytail: 27.2+ flattened NavigationSplitView's sidebar glass (26.x already floats it);
+        // drop the sidebar branch if a future macOS restores floating sidebars or exposes a public opt-in.
+        if #available(macOS 27.2, *) {
+            if let sidebar = findPane(behavior: .sidebar, in: content) {
+                sidebarDone = sidebar.isCollapsed ? true : updatePane(sidebar, floating: floating, isTrailing: false)
+            } else {
+                sidebarDone = false
+            }
+        }
+        var inspectorDone = true
+        if let inspector = findPane(behavior: .inspector, in: content) {
+            if !inspector.isCollapsed {
+                inspectorDone = updatePane(inspector, floating: floating, isTrailing: true)
+            }
+        } else if inspectorVisible {
+            inspectorDone = false
+        }
+        return sidebarDone && inspectorDone
+    }
 
-        let lead = floating ? leadingInset : 0
+    private static func updatePane(_ pane: Pane, floating: Bool, isTrailing: Bool) -> Bool {
+        guard pane.wrapper.frame.width > 0 else { return false }
+        let (glass, wrapper, split) = (pane.glass, pane.wrapper, pane.split)
+        let lead = floating ? (isTrailing ? innerInset : outerInset) : 0
+        let trail = floating ? (isTrailing ? outerInset : innerInset) : 0
         let vert = floating ? verticalInset : 0
-        let trail = floating ? trailingInset : 0
+
         for constraint in wrapper.constraints {
             let isGlassToWrapper = (constraint.firstItem === glass && constraint.secondItem === wrapper)
                 || (constraint.firstItem === wrapper && constraint.secondItem === glass)
@@ -972,17 +1096,67 @@ enum LibraryFloatingSidebar {
             default: break
             }
         }
-        glass.cornerRadius = floating ? cornerRadius : 0
+
+        // On macOS 26, the inspector's NSContainerConcentricGlassEffectView leaves its inner corners square and drops
+        // its frost scrim when inactive. Clip its layer to the floating radius (keeping its SwiftUI content intact) and
+        // back it with a regular rounded NSGlassEffectView that casts the lift shadow and holds frost when inactive.
+        let useBackdropGlass: Bool
+        if #available(macOS 27.2, *) {
+            useBackdropGlass = false
+        } else {
+            useBackdropGlass = isTrailing
+        }
+
+        let existingBackdrop = wrapper.subviews.first { $0.identifier == paneGlassID }
         let existingRim = wrapper.subviews.first { $0.identifier == rimID }
+        let shadowHost: NSView
+        if useBackdropGlass {
+            glass.wantsLayer = true
+            glass.layer?.cornerRadius = floating ? cornerRadius : 0
+            glass.layer?.cornerCurve = .continuous
+            glass.layer?.masksToBounds = floating
+            if floating {
+                let backdrop: NSView
+                if let existingBackdrop {
+                    backdrop = existingBackdrop
+                } else {
+                    let view = FloatingPaneGlassView()
+                    view.identifier = paneGlassID
+                    view.style = .regular
+                    view.cornerRadius = cornerRadius
+                    view.translatesAutoresizingMaskIntoConstraints = false
+                    wrapper.addSubview(view, positioned: .below, relativeTo: glass)
+                    NSLayoutConstraint.activate([
+                        view.leadingAnchor.constraint(equalTo: glass.leadingAnchor),
+                        view.trailingAnchor.constraint(equalTo: glass.trailingAnchor),
+                        view.topAnchor.constraint(equalTo: glass.topAnchor),
+                        view.bottomAnchor.constraint(equalTo: glass.bottomAnchor),
+                    ])
+                    backdrop = view
+                }
+                shadowHost = backdrop
+            } else {
+                existingBackdrop?.removeFromSuperview()
+                shadowHost = glass
+            }
+        } else {
+            existingBackdrop?.removeFromSuperview()
+            glass.cornerRadius = floating ? cornerRadius : 0
+            shadowHost = glass
+        }
+
         if floating {
             wrapper.clipsToBounds = false
-            glass.wantsLayer = true
+            shadowHost.wantsLayer = true
             let shadow = NSShadow()
             shadow.shadowColor = NSColor.black.withAlphaComponent(0.22)
             shadow.shadowBlurRadius = 14
             shadow.shadowOffset = NSSize(width: 0, height: -2)
-            glass.shadow = shadow
-            if let rim = existingRim as? SidebarRimView {
+            shadowHost.shadow = shadow
+            if useBackdropGlass {
+                glass.shadow = nil
+                existingRim?.removeFromSuperview()
+            } else if let rim = existingRim as? SidebarRimView {
                 rim.updateRimColor()
             } else {
                 let rim = SidebarRimView()
@@ -1001,52 +1175,31 @@ enum LibraryFloatingSidebar {
             glass.shadow = nil
         }
 
-        // Hide the straight full-height divider and shadow strip along the sidebar's right edge while floating.
-        let edge = wrapper.frame.maxX
+        // Hide the straight full-height divider and shadow strip along the pane's inner edge while floating.
+        let edge = isTrailing ? wrapper.frame.minX : wrapper.frame.maxX
         for sibling in split.subviews where sibling !== wrapper {
             let name = NSStringFromClass(type(of: sibling))
             guard (name.contains("Divider") || name.contains("Shadow")),
-                  abs(sibling.frame.minX - edge) <= 4 else { continue }
+                  abs(sibling.frame.minX - edge) <= 4 || abs(sibling.frame.maxX - edge) <= 4 else { continue }
             sibling.alphaValue = floating ? 0 : 1
         }
-        return !floating || platterDone
+        return true
     }
 
-    /// On macOS 27, the sidebar toggle sits in a 36 pt circular glass platter (`top = 8`) that straddles the floating
-    /// sidebar pane's top edge. While the sidebar is floating and expanded, hide the platter's glass backdrop (leaving
-    /// the toggle glyph centered at `y = 26`, matching the traffic lights' 11 pt top margin and macOS 26's native
-    /// floating sidebar). Restore the platter when collapsed or when Glass turns off.
-    @discardableResult
-    private static func updateSidebarTogglePlatter(in window: NSWindow?, hidden: Bool) -> Bool {
-        guard let toggleView = window?.toolbar?.items
-            .first(where: { $0.itemIdentifier.rawValue.contains("toggleSidebar") })?.view else { return false }
-        var current: NSView? = toggleView.superview
-        while let view = current {
-            if let platterGlass = view as? NSGlassEffectView {
-                for subview in platterGlass.subviews where !toggleView.isDescendant(of: subview) {
-                    subview.alphaValue = hidden ? 0 : 1
-                }
-                return true
-            }
-            current = view.superview
-        }
-        return false
-    }
-
-    private static func findSidebarGlass(in root: NSView) -> (glass: NSGlassEffectView, wrapper: NSView, split: NSSplitView, isCollapsed: Bool)? {
+    private static func findPane(behavior: NSSplitViewItem.Behavior, in root: NSView) -> Pane? {
         if let split = root as? NSSplitView,
            let controller = split.delegate as? NSSplitViewController,
-           let sidebarItem = controller.splitViewItems.first(where: { $0.behavior == .sidebar }) {
-            var current: NSView? = sidebarItem.viewController.view
+           let item = controller.splitViewItems.first(where: { $0.behavior == behavior }) {
+            var current: NSView? = item.viewController.view
             while let view = current, view !== split {
                 if let glass = view as? NSGlassEffectView, let wrapper = glass.superview {
-                    return (glass, wrapper, split, sidebarItem.isCollapsed)
+                    return Pane(glass: glass, wrapper: wrapper, split: split, isCollapsed: item.isCollapsed)
                 }
                 current = view.superview
             }
         }
         for subview in root.subviews {
-            if let found = findSidebarGlass(in: subview) { return found }
+            if let found = findPane(behavior: behavior, in: subview) { return found }
         }
         return nil
     }
@@ -1056,17 +1209,12 @@ enum LibraryFloatingSidebar {
 /// columns and the toolbar read as one flat surface.
 /// Glass paints nothing here: macOS's own sidebar glass shows over the theme's picture.
 private struct LibrarySidebarSurface: ViewModifier {
-    var isSidebar = false
     @DrawnGlass private var glass
 
     @ViewBuilder
     func body(content: Content) -> some View {
         if glass != nil {
-            if isSidebar {
-                content.scrollEdgeEffectStyle(.soft, for: .all)
-            } else {
-                content
-            }
+            content.scrollEdgeEffectStyle(.soft, for: .all)
         } else {
             content
                 .scrollContentBackground(.hidden)
@@ -1116,7 +1264,7 @@ private struct LibraryColumnSeparators: ViewModifier {
         } else {
             content
                 .overlay(alignment: .leading) { if leading && glass == nil { line } }
-                .overlay(alignment: .trailing) { if trailing { line } }
+                .overlay(alignment: .trailing) { if trailing && glass == nil { line } }
         }
     }
 
