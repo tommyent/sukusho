@@ -345,9 +345,15 @@ private struct WorkspaceTextPlate: ViewModifier {
             content
                 .frame(maxWidth: 520)
                 .background {
-                    RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
-                        .fill(WorkspaceChrome.background)
-                        .padding(-DS.Space.xl)
+                    let plate = RoundedRectangle(cornerRadius: DS.Radius.panel, style: .continuous)
+                    Group {
+                        if overGlassPicture {
+                            Color.clear.glassFrostBacking(in: plate)
+                        } else {
+                            plate.fill(WorkspaceChrome.background)
+                        }
+                    }
+                    .padding(-DS.Space.xl)
                 }
         }
     }
