@@ -165,21 +165,10 @@ final class ClipboardHistoryModel {
     func deliver(_ entry: ClipboardEntry, as delivery: Delivery, to target: NSRunningApplication?,
                  beforePaste: @escaping () -> Void = {}) {
         Task {
-            let richText = delivery.isPlain ? [:] : ((try? await store?.richText(for: entry.id)) ?? [:])
-            var archivedCopy: ClipboardCapture?
-            guard ClipboardWriter.write(entry, richText: richText, plain: delivery.isPlain, didWrite: { items in
-                archivedCopy = ClipboardPasteboardReader.archiveCopy(entry, items: items, historyDirectory: ScreenshotHistoryStore.historyDirectory)
-            }) else {
+            guard await restore(entry, plain: delivery.isPlain) else {
                 feedback.show("This entry's file is gone")
                 return
             }
-            if let store {
-                do {
-                    if let archivedCopy { try await store.record(archivedCopy) }
-                    else if entry.pinnedAt == nil { try await store.touch(entry.id) }
-                } catch { logger.error("Could not update clipboard history: \(error.localizedDescription)") }
-            }
-            refresh()
             guard !delivery.isCopy else {
                 feedback.show("Copied")
                 return
@@ -195,6 +184,22 @@ final class ClipboardHistoryModel {
             try? await Task.sleep(for: .milliseconds(150))
             ClipboardWriter.typeCommandV()
         }
+    }
+
+    /// The popup's paste up to ⌘V, for it and for agents: the clip back on the clipboard with its formats, and one
+    /// more copy in history. False when its image file is gone or the pasteboard refused it.
+    func restore(_ entry: ClipboardEntry, plain: Bool = false) async -> Bool {
+        guard await ClipboardWriter.restore(entry, plain: plain, store: store,
+                                            historyDirectory: ScreenshotHistoryStore.historyDirectory) else { return false }
+        refresh()
+        return true
+    }
+
+    /// The history as the popup has it, read afresh rather than from `entries`, which loads only when shown; nil while
+    /// history is off.
+    func loadEntries() async throws -> [ClipboardEntry]? {
+        guard let store else { return nil }
+        return presented(try await store.entries(limit: 3000, includeArchive: true))
     }
 
     /// Files an image copy Sukusho just wrote (`OptimizedImageCopy.copyNow`'s original) as a poll would, and returns

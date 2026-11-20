@@ -1,3 +1,4 @@
+import AppKit
 import Darwin
 import Foundation
 import Security
@@ -27,7 +28,19 @@ final class AgentFakeBackend: AgentBackend {
     }
 
     func text(of item: AgentItem) -> String? { texts[item.id] }
-    func jpeg(of item: AgentItem, maxPixels: Int) async -> Data? { Data([0xFF, 0xD8, 0xFF]) }
+    func jpeg(of file: URL, maxPixels: Int) async -> Data? { Data([0xFF, 0xD8, 0xFF]) }
+
+    /// Clipboard history in a real store, written back to a private pasteboard by the popup's own restore.
+    var clipStore: ClipboardHistoryStore?
+    var appNames: [String: String] = [:]
+    lazy var clipPasteboard = NSPasteboard(name: .init("AgentClipboardTest-\(UUID().uuidString)"))
+    let clipHistoryDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("AgentClipHistory-\(UUID().uuidString)")
+
+    func clipboardEntries() async throws -> [ClipboardEntry]? { try await clipStore?.entries(limit: 3000, includeArchive: true) }
+    func appName(_ bundleID: String?) -> String? { bundleID.flatMap { appNames[$0] } }
+    func restoreClip(_ entry: ClipboardEntry) async -> Bool {
+        await ClipboardWriter.restore(entry, plain: false, store: clipStore, historyDirectory: clipHistoryDirectory, to: clipPasteboard)
+    }
 
     func shareOne(_ item: AgentItem, settings: AgentShareSettings) async throws -> AgentShareResult {
         shared.append(([item.id], settings))
@@ -346,7 +359,8 @@ struct AgentToolArgumentTests {
         let names = Set(AgentToolCatalog.tools.compactMap { $0["name"] as? String })
         #expect(names == ["library_add", "library_search", "library_get", "share", "share_status", "links_list", "link_update",
                           "link_delete", "file_request_create", "file_requests_list", "file_request_close", "received_list",
-                          "received_download", "feedback_list", "agent_prompt_latest", "agent_prompt_export", "capture"])
+                          "received_download", "feedback_list", "agent_prompt_latest", "agent_prompt_export", "capture",
+                          "clipboard_list", "clipboard_get", "clipboard_restore"])
         #expect(AgentToolCatalog.tools.allSatisfy { JSONSerialization.isValidJSONObject($0) })
         #expect(AgentToolCatalog.tools.allSatisfy { ($0["inputSchema"] as? [String: Any])?["additionalProperties"] as? Bool == false })
     }

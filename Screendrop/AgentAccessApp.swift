@@ -130,9 +130,8 @@ final class AgentLiveBackend: AgentBackend {
         return text.isEmpty ? nil : text
     }
 
-    func jpeg(of item: AgentItem, maxPixels: Int) async -> Data? {
-        let url = item.fileURL
-        return await Task.detached(priority: .userInitiated) { () -> Data? in
+    func jpeg(of url: URL, maxPixels: Int) async -> Data? {
+        await Task.detached(priority: .userInitiated) { () -> Data? in
             guard let thumbnail = try? CloudGalleryAPI.thumbnail(of: url, maxPixels: maxPixels) else { return nil }
             return thumbnail.jpeg
         }.value
@@ -236,6 +235,16 @@ final class AgentLiveBackend: AgentBackend {
             return ShareMessageSource(isVideo: !item.isImage)
         }
         return .recording(session.loadProjectMetadata())
+    }
+
+    func clipboardEntries() async throws -> [ClipboardEntry]? {
+        try await ClipboardHistoryModel.shared.loadEntries()
+    }
+
+    func appName(_ bundleID: String?) -> String? { ClipboardHistoryModel.shared.appName(bundleID) }
+
+    func restoreClip(_ entry: ClipboardEntry) async -> Bool {
+        await ClipboardHistoryModel.shared.restore(entry)
     }
 
     /// The App Intents' capture paths.

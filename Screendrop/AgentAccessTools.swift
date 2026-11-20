@@ -8,7 +8,7 @@
 //  or the Cloud goes through `AgentBackend`, so this runs without the app.
 //
 
-import Foundation
+import AppKit
 
 // MARK: - What the backend works with
 
@@ -88,7 +88,8 @@ protocol AgentBackend: AnyObject {
     func libraryItems() -> [AgentItem]
     func addImages(_ files: [URL], title: String?, tags: [String]) async -> [AgentItem]
     func text(of item: AgentItem) -> String?
-    func jpeg(of item: AgentItem, maxPixels: Int) async -> Data?
+    /// A capture's or a clip's image file, downscaled.
+    func jpeg(of file: URL, maxPixels: Int) async -> Data?
     func shareOne(_ item: AgentItem, settings: AgentShareSettings) async throws -> AgentShareResult
     func shareGallery(_ items: [AgentItem], settings: AgentShareSettings) async throws -> AgentShareResult
     func createFileRequest(_ draft: CloudFileRequestDraft) async throws -> CloudFileRequest
@@ -99,6 +100,12 @@ protocol AgentBackend: AnyObject {
     func capture(_ mode: AgentCaptureMode) async -> AgentCaptureOutcome
     /// What Share Options' Draft message writes from: a recording's summary and chapters.
     func messageSource(of item: AgentItem) -> ShareMessageSource
+    /// Clipboard history as the popup has it, Saved clips and snippets included; nil while history is off.
+    func clipboardEntries() async throws -> [ClipboardEntry]?
+    /// The name Information › Source shows for an app; nil when it isn't on this Mac.
+    func appName(_ bundleID: String?) -> String?
+    /// The popup's paste up to ⌘V (`ClipboardWriter.restore`); false when the clip couldn't be written.
+    func restoreClip(_ entry: ClipboardEntry) async -> Bool
 }
 
 /// One question to the owner, in Sukusho's own window.
@@ -309,6 +316,9 @@ final class AgentToolbox {
             case "agent_prompt_latest": return try agentPromptLatest(raw)
             case "agent_prompt_export": return try await agentPromptExport(raw)
             case "capture": return try await capture(raw, session)
+            case "clipboard_list": return try await clipboardList(raw, session)
+            case "clipboard_get": return try await clipboardGet(raw, session)
+            case "clipboard_restore": return try await clipboardRestore(raw, session)
             default: return .error("Unknown tool \(name).")
             }
         } catch let error as AgentToolError {
@@ -409,7 +419,7 @@ final class AgentToolbox {
         var image: Data?
         if try args.bool("image") == true {
             guard item.isImage else { throw AgentToolError("image is for screenshots; this is a \(item.kind).") }
-            image = await backend.jpeg(of: item, maxPixels: 1568)
+            image = await backend.jpeg(of: item.fileURL, maxPixels: 1568)
             if image == nil { throw AgentToolError("Sukusho couldn’t read this image.") }
         }
         return ToolResult(object: object, image: image, summary: "read")
@@ -827,6 +837,69 @@ final class AgentToolbox {
         }
     }
 
+    // MARK: Clipboard
+
+    private func clipboardList(_ raw: [String: Any], _ session: AgentSession) async throws -> ToolResult {
+        let args = try AgentArguments(raw, allowed: ["kind", "saved", "limit", "before"])
+        guard let filter = ClipboardFilter(rawValue: try args.string("kind", maxLength: 20) ?? "all"), AgentClips.kinds.contains(filter) else {
+            throw AgentToolError("kind must be all, images, text, links, colors or files.")
+        }
+        let saved = try args.bool("saved") ?? false
+        let limit = try args.int("limit", in: 1...100) ?? 50
+        let before = try args.string("before", maxLength: 200).map(AgentClips.Cursor.init(text:))
+        guard let entries = try await clipboardHistory(session) else { return .denied }
+        let page = AgentClips.page(entries, filter: filter, saved: saved, before: before, limit: limit)
+        return ToolResult(object: ["total": page.total, "clips": page.clips.map(clip), "next_before": page.next?.text ?? NSNull()],
+                          summary: "\(page.clips.count) of \(page.total) clips")
+    }
+
+    private func clipboardGet(_ raw: [String: Any], _ session: AgentSession) async throws -> ToolResult {
+        let args = try AgentArguments(raw, allowed: ["id", "image"])
+        let id = try args.required("id")
+        let wantsImage = try args.bool("image") ?? false
+        guard let entries = try await clipboardHistory(session) else { return .denied }
+        let entry = try AgentClips.find(id, in: entries)
+        var object = clip(entry)
+        if let text = entry.text {
+            var untrusted = object["untrusted"] as? [String: Any] ?? [:]
+            untrusted["text"] = String(text.prefix(AgentClips.textLength))
+            object["untrusted"] = untrusted
+            if text.count > AgentClips.textLength { object["text_truncated"] = true }
+        }
+        var image: Data?
+        if wantsImage {
+            guard entry.kind == .image else { throw AgentToolError("image is for image clips; this is a \(AgentClips.kind(of: entry)) clip.") }
+            if let url = entry.imageURL { image = await backend.jpeg(of: url, maxPixels: 1024) }
+            if image == nil { throw AgentToolError("Sukusho couldn’t read this clip’s image.") }
+        }
+        return ToolResult(object: object, image: image, summary: "read")
+    }
+
+    private func clipboardRestore(_ raw: [String: Any], _ session: AgentSession) async throws -> ToolResult {
+        let args = try AgentArguments(raw, allowed: ["id"])
+        let id = try args.required("id")
+        guard let entries = try await clipboardHistory(session) else { return .denied }
+        guard await backend.restoreClip(try AgentClips.find(id, in: entries)) else {
+            throw AgentToolError("Sukusho couldn’t put this clip back on the clipboard: its image file is gone.")
+        }
+        return ToolResult(object: ["status": "restored", "id": id], summary: "restored")
+    }
+
+    /// The history, once the owner lets this agent read it; nil when they don't. Off asks nothing.
+    private func clipboardHistory(_ session: AgentSession) async throws -> [ClipboardEntry]? {
+        guard let entries = try await backend.clipboardEntries() else {
+            throw AgentToolError("Clipboard history is off in Sukusho (Settings › Clipboard › Keep clipboard history).")
+        }
+        let ask = AgentAsk(agent: session.agent, group: .clipboard, action: "read your clipboard history",
+                           details: ["It sees what you copied and can put a clip back on the clipboard.",
+                                     "Concealed copies, such as passwords, are never kept."])
+        return await approve(.clipboard, items: [], session: session, ask: ask) == nil ? nil : entries
+    }
+
+    private func clip(_ entry: ClipboardEntry) -> [String: Any] {
+        AgentClips.clip(entry, appName: backend.appName(entry.sourceBundleID))
+    }
+
     // MARK: Resources
 
     private func readResource(_ uri: String) async -> Result<[String: Any], AgentToolError> {
@@ -842,13 +915,135 @@ final class AgentToolbox {
         let id = String(uri.dropFirst(prefix.count))
         let images = backend.libraryItems().filter(\.isImage)
         let item = id == "latest" ? images.max { $0.createdAt < $1.createdAt } : images.first { $0.id == id }
-        guard let item, let jpeg = await backend.jpeg(of: item, maxPixels: 1568) else {
+        guard let item, let jpeg = await backend.jpeg(of: item.fileURL, maxPixels: 1568) else {
             return .failure(AgentToolError(id == "latest" ? "The Library has no screenshots." : "No screenshot with id \(id)."))
         }
         return .success(["contents": [["uri": uri, "mimeType": "image/jpeg", "blob": jpeg.base64EncodedString()]]])
     }
 
     static func iso(_ date: Date) -> String { date.formatted(.iso8601) }
+}
+
+/// Clipboard history as the clipboard tools list it: the popup's order, filters and Information.
+nonisolated enum AgentClips {
+    /// The list's preview and title, in characters.
+    static let previewLength = 200
+    /// clipboard_get's text, as library_get's.
+    static let textLength = 20_000
+    /// The popup's type menu; Saved is its own switch, and snippets aren't listed.
+    static let kinds: [ClipboardFilter] = [.all, .images, .text, .links, .colors, .files]
+
+    /// Where a page ends: a clip's place in its list, by time and then id, so clips copied at one instant page apart.
+    /// Sent as "<seconds since 1970>:<id>"; Double's text form reads back as the same number.
+    struct Cursor: Comparable {
+        let time: Double
+        let id: String
+
+        init(_ entry: ClipboardEntry, saved: Bool) {
+            time = (saved ? entry.pinnedAt ?? entry.lastCopiedAt : entry.lastCopiedAt).timeIntervalSince1970
+            id = entry.id
+        }
+
+        init(text: String) throws {
+            guard let colon = text.firstIndex(of: ":"), let time = Double(text[..<colon]), time.isFinite else {
+                throw AgentToolError("before isn’t a cursor from clipboard_list.")
+            }
+            self.time = time
+            id = String(text[text.index(after: colon)...])
+        }
+
+        var text: String { "\(time):\(id)" }
+
+        static func < (a: Cursor, b: Cursor) -> Bool { (a.time, a.id) < (b.time, b.id) }
+    }
+
+    /// The popup's list, newest first: the history by last copy, or Saved by when each was saved. Never snippets.
+    static func page(_ entries: [ClipboardEntry], filter: ClipboardFilter, saved: Bool, before: Cursor?, limit: Int)
+        -> (clips: [ClipboardEntry], total: Int, next: Cursor?) {
+        let listed = entries.filter { $0.isArchived == saved && ClipboardList.matches($0, filter: filter) }
+            .map { (cursor: Cursor($0, saved: saved), entry: $0) }
+            .sorted { $0.cursor > $1.cursor }
+        let rest = listed.filter { item in before.map { item.cursor < $0 } ?? true }
+        let page = rest.prefix(limit)
+        return (page.map(\.entry), listed.count, rest.count > limit ? page.last?.cursor : nil)
+    }
+
+    static func find(_ id: String, in entries: [ClipboardEntry]) throws -> ClipboardEntry {
+        guard let entry = entries.first(where: { $0.id == id && $0.kind != .snippet }) else {
+            throw AgentToolError("No clip with id \(id). clipboard_list lists them.")
+        }
+        return entry
+    }
+
+    /// The row's icon: the popup's kinds, with code apart from text.
+    static func kind(of entry: ClipboardEntry) -> String {
+        switch entry.kind {
+        case .image: return "image"
+        case .files: return "files"
+        case .snippet: return "snippet"
+        case .text:
+            switch ClipboardList.textForm(of: entry) {
+            case .color: return "color"
+            case .link: return "link"
+            default: return ClipboardList.looksLikeCode(entry) ? "code" : "text"
+            }
+        }
+    }
+
+    /// A clip as the popup's row and Information show it. What was copied, and the app it names as its source, is
+    /// outside text: it goes under `untrusted`. Never more than `previewLength` characters of the text.
+    static func clip(_ entry: ClipboardEntry, appName: String?) -> [String: Any] {
+        let text = entry.text ?? ""
+        var object: [String: Any] = [
+            "id": entry.id, "kind": kind(of: entry), "content_type": ClipboardList.typeName(of: entry),
+            "size_bytes": entry.byteSize, "times_copied": entry.timesCopied,
+            "first_copied_at": entry.firstCopiedAt.formatted(.iso8601), "last_copied_at": entry.lastCopiedAt.formatted(.iso8601),
+            "saved": entry.isArchived, "from_another_device": entry.isRemote,
+        ]
+        if entry.isArchived, let saved = entry.pinnedAt { object["saved_at"] = saved.formatted(.iso8601) }
+        var untrusted: [String: Any] = ["title": String(ClipboardList.title(of: entry).prefix(previewLength))]
+        var preview: String? = text
+        switch ClipboardList.textForm(of: entry) {
+        case .color(let hex):
+            preview = hex
+            object["color"] = color(hex)
+        case .link:
+            if let host = URL(string: text)?.host() { untrusted["domain"] = host }
+        case .plain:
+            object["characters"] = text.count
+            object["words"] = text.split(whereSeparator: \.isWhitespace).count
+            object["lines"] = text.split(separator: "\n", omittingEmptySubsequences: false).count
+        case nil: break
+        }
+        switch entry.kind {
+        case .image:
+            preview = nil
+            object["width"] = entry.pixelWidth
+            object["height"] = entry.pixelHeight
+            if let category = entry.category { untrusted["category"] = category }
+            if !entry.keywords.isEmpty { untrusted["keywords"] = entry.keywords }
+        case .files:
+            object["file_count"] = text.split(separator: "\n").count
+        case .text, .snippet: break
+        }
+        if let preview {
+            untrusted["preview"] = String(preview.prefix(previewLength))
+            if preview.count > previewLength { untrusted["preview_truncated"] = true }
+        }
+        if let appName { untrusted["app"] = appName }
+        if let bundleID = entry.sourceBundleID { untrusted["bundle_id"] = bundleID }
+        object["untrusted"] = AgentUntrusted.wrap(untrusted, note: AgentUntrusted.clipboardNote)
+        return object
+    }
+
+    /// Information's RGB and HSB for a color, worked out as the popup does.
+    static func color(_ hex: String) -> [String: Any]? {
+        guard let parts = ClipboardCapturePolicy.components(ofHex: hex) else { return nil }
+        let color = NSColor(srgbRed: parts.red, green: parts.green, blue: parts.blue, alpha: parts.alpha)
+        return ["hex": hex,
+                "rgb": [parts.red, parts.green, parts.blue].map { Int(($0 * 255).rounded()) },
+                "hsb": [color.hueComponent * 360, color.saturationComponent * 100, color.brightnessComponent * 100].map { Int($0.rounded()) }]
+    }
 }
 
 /// A share the owner finishes by hand, which may outlast the tool call.
