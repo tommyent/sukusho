@@ -529,14 +529,12 @@ struct CaptureLibraryView: View {
                     Text("\(Int((export.progress * 100).rounded()))%").monospacedDigit()
                 }
             } else if let done = model.actionFeedback.message {
-                Label(done, systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
+                StatusSuccess(title: done, systemImage: "checkmark.circle.fill")
             } else if let folder = model.savedAgentPrompt {
                 Button {
                     NSWorkspace.shared.activateFileViewerSelecting([folder])
                 } label: {
-                    Label("Prompt Copied", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
+                    StatusSuccess(title: "Prompt Copied", systemImage: "checkmark.circle.fill")
                 }
                 .buttonStyle(.plain)
                 .help("Reveal \(folder.lastPathComponent) in Finder")
@@ -544,8 +542,7 @@ struct CaptureLibraryView: View {
                 Button {
                     CloudShareLinks.copy([link], feedback: model.actionFeedback)
                 } label: {
-                    Label("Link Copied", systemImage: "checkmark.icloud")
-                        .foregroundStyle(.green)
+                    StatusSuccess(title: "Link Copied", systemImage: "checkmark.icloud")
                 }
                 .buttonStyle(.plain)
                 .help("Copy the gallery link again")
@@ -748,6 +745,22 @@ private struct LibrarySearchField: NSViewRepresentable {
         init(text: Binding<String>) { self.text = text }
 
         @objc func search(_ field: NSSearchField) { text.wrappedValue = field.stringValue }
+    }
+}
+
+/// A success message in the status bar, green as ever. On Glass's frost only the mark stays green and the words
+/// take the primary ink: green words over a light frost read at 1.2:1.
+private struct StatusSuccess: View {
+    let title: String
+    let systemImage: String
+    @DrawnGlass private var glass
+
+    var body: some View {
+        if glass != nil {
+            Label { Text(title) } icon: { Image(systemName: systemImage).foregroundStyle(.green) }
+        } else {
+            Label(title, systemImage: systemImage).foregroundStyle(.green)
+        }
     }
 }
 
