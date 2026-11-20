@@ -25,6 +25,15 @@ struct GlassThemeTests {
         }
     }
 
+    /// Glass's title-pill ink is softer than full primary ink in both modes while still clearly legible.
+    @Test func glassTitleInkIsSoftenedInBothModes() throws {
+        let light = try #require(AppTheme.glassTitleInk(dark: false).nsColor.usingColorSpace(.sRGB))
+        let dark = try #require(AppTheme.glassTitleInk(dark: true).nsColor.usingColorSpace(.sRGB))
+        #expect(light.alphaComponent > 0.5 && light.alphaComponent < 0.85)
+        #expect(dark.alphaComponent > 0.55 && dark.alphaComponent < 0.85)
+        #expect(light.redComponent < 0.1 && dark.redComponent > 0.9)
+    }
+
     @Test func onlyGlassPaintsAPictureOrTakesMacOSGlass() {
         for theme in AppTheme.builtIns where !theme.id.hasPrefix("glass") {
             #expect(theme.ground.backdrop == nil && !theme.chrome.glass && theme.card.recipe.frost == nil, "\(theme.id)")

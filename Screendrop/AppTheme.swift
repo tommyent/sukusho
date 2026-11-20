@@ -214,6 +214,12 @@ nonisolated extension AppTheme {
                    well: .rgb(0x282627), textWell: .rgb(0x26282C), shadow: 0.4, pressedShadow: 0.3),
         marks: .classic)
 
+    /// Softened ink for the Library's window title on its Glass pill: calm over the wallpaper without shouting,
+    /// while still reading cleanly in both appearances.
+    static func glassTitleInk(dark: Bool) -> ThemeColor {
+        dark ? .white(opacity: 0.72) : .rgb(0x000000, opacity: 0.62)
+    }
+
     static let builtIns = [classicLight, classicDark, chipLight, chipDark, glassLight, glassDark]
 
     static let lightKey = "appTheme.light"

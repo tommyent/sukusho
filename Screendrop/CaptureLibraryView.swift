@@ -756,6 +756,9 @@ private struct LibrarySearchField: NSViewRepresentable {
 /// (A title of Sukusho's own as a toolbar item lost the room macOS gives its title: the search field moved up to it.)
 enum LibraryTitlePlate {
     private static let id = NSUserInterfaceItemIdentifier("LibraryTitlePlate")
+    private static let titleColor = NSColor(name: nil) { appearance in
+        AppTheme.glassTitleInk(dark: appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua).nsColor
+    }
 
     private final class CapsuleGlassView: NSGlassEffectView {
         override func layout() {
@@ -779,9 +782,13 @@ enum LibraryTitlePlate {
         }
         walk(frame)
         plates.forEach { $0.removeFromSuperview() }
-        guard shown else { return true }
+        guard shown else {
+            field?.textColor = .labelColor
+            return true
+        }
         // In the window's frame view, just under the titlebar's container: the views around the field clip to it.
         guard let field else { return false }
+        field.textColor = titleColor
         var titlebar: NSView = field
         while let up = titlebar.superview, up !== frame { titlebar = up }
         let plate = CapsuleGlassView()
