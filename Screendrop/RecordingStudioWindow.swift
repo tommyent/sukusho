@@ -56,7 +56,7 @@ private struct RecordingStudioContent: View {
     @State private var isInspectorPresented = true
     @State private var closeGuard = EditorCloseGuard()
     @State private var confirmsSharedLinkDeletion = false
-    @DrawnGlass private var glass
+    @FloatingGlassChrome private var floatingChrome
     @State private var studioWindow: NSWindow?
     @State private var glassMetrics = GlassWindowButtonMetrics.fallback
 
@@ -98,7 +98,7 @@ private struct RecordingStudioContent: View {
                 StudioCanvas(model: model)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background {
-                        if glass == nil {
+                        if !floatingChrome {
                             AnnotationEditorWorkspaceBackground()
                         }
                     }
@@ -107,7 +107,7 @@ private struct RecordingStudioContent: View {
             }
         }
         .background {
-            if glass != nil {
+            if floatingChrome {
                 AnnotationEditorWorkspaceBackground()
                     .backgroundExtensionEffect()
                     .ignoresSafeArea()
@@ -123,7 +123,7 @@ private struct RecordingStudioContent: View {
         } message: {
             Text("The link and its cloud files will be deleted. The local recording stays in your Library.")
         }
-        .toolbarBackgroundVisibility(glass != nil ? .hidden : .visible, for: .windowToolbar)
+        .toolbarBackgroundVisibility(floatingChrome ? .hidden : .visible, for: .windowToolbar)
         .toolbar(removing: .title)
         .toolbar {
             ToolbarItem(placement: .navigation) {
@@ -152,7 +152,7 @@ private struct RecordingStudioContent: View {
 
                     exportStatus
 
-                    if glass == nil {
+                    if !floatingChrome {
                         inspectorToggleButton
                     } else if !isInspectorPresented {
                         GlassPaneToggleButton(
@@ -170,10 +170,10 @@ private struct RecordingStudioContent: View {
         }
         .inspector(isPresented: $isInspectorPresented) {
             StudioInspector(model: model)
-                .glassInspectorToolbar(enabled: glass != nil)
+                .glassInspectorToolbar(enabled: floatingChrome)
         }
         .glassInspectorToggleOverlay(
-            enabled: glass != nil && isInspectorPresented && !model.isSelectingRedaction && !model.isCroppingVideo,
+            enabled: floatingChrome && isInspectorPresented && !model.isSelectingRedaction && !model.isCroppingVideo,
             isPresented: $isInspectorPresented,
             metrics: glassMetrics
         )
@@ -3410,7 +3410,7 @@ private struct StudioInspector: View {
     @State private var isAudioExportOptionsPresented = false
     @State private var isMusicPickerPresented = false
     @Environment(\.colorScheme) private var colorScheme
-    @DrawnGlass private var glass
+    @FloatingGlassChrome private var floatingChrome
 
     var body: some View {
         VStack(spacing: 0) {
@@ -4565,7 +4565,7 @@ private struct StudioInspector: View {
     }
 
     private var sidebarBackground: Color {
-        glass != nil ? .clear : InspectorControlPalette.panelBackground(for: colorScheme)
+        floatingChrome ? .clear : InspectorControlPalette.panelBackground(for: colorScheme)
     }
 }
 

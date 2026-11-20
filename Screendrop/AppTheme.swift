@@ -251,10 +251,14 @@ nonisolated extension AppTheme {
         current(dark: appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
     }
 
-    /// Glass's picture, while it's drawn: Reduce Transparency and Increase Contrast take every Glass surface (the
-    /// picture, the sidebar, inspector and toolbar glass, the frost, the popup) to its opaque colours instead.
-    func drawnBackdrop(reduceTransparency: Bool, increaseContrast: Bool) -> Backdrop? {
-        chrome.glass && !reduceTransparency && !increaseContrast ? ground.backdrop : nil
+    /// Glass's blurred picture, while it's drawn: nil when Solid background is on, for non-Glass themes, and under
+    /// Reduce Transparency or Increase Contrast.
+    func drawnBackdrop(
+        reduceTransparency: Bool,
+        increaseContrast: Bool,
+        solidBackground: Bool = false
+    ) -> Backdrop? {
+        chrome.glass && !solidBackground && !reduceTransparency && !increaseContrast ? ground.backdrop : nil
     }
 }
 
@@ -322,14 +326,31 @@ nonisolated enum ThemeColor: Sendable, Equatable {
     }
 }
 
-/// The current theme's Glass picture while it's drawn (`AppTheme.drawnBackdrop`); nil for every other theme, and for
-/// Glass under Reduce Transparency or Increase Contrast, where its surfaces draw their opaque colours.
+/// The current theme's Glass blurred picture while it's drawn (`AppTheme.drawnBackdrop`); nil when Solid background is
+/// on, for Classic/Chip, and under Reduce Transparency or Increase Contrast.
 @propertyWrapper struct DrawnGlass: DynamicProperty {
     @CurrentTheme private var theme
+    @AppStorage(GlassPicture.solidBackgroundKey) private var solidBackground = false
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
 
     var wrappedValue: AppTheme.Backdrop? {
-        theme.drawnBackdrop(reduceTransparency: reduceTransparency, increaseContrast: contrast == .increased)
+        theme.drawnBackdrop(
+            reduceTransparency: reduceTransparency,
+            increaseContrast: contrast == .increased,
+            solidBackground: solidBackground
+        )
+    }
+}
+
+/// True when windows draw the unified floating Liquid Glass chrome (floating glass sidebars/inspectors, window-button
+/// pill, collapse circles, floating Library header/footer pills, and Liquid Glass filter chips) across Classic, Chip
+/// and Glass. False under Reduce Transparency or Increase Contrast, which restore the flush opaque layout.
+@propertyWrapper struct FloatingGlassChrome: DynamicProperty {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var wrappedValue: Bool {
+        !reduceTransparency && contrast != .increased
     }
 }

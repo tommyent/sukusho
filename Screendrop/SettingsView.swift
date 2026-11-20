@@ -79,7 +79,7 @@ struct SettingsView: View {
     @State private var historyIndex = 0
     @State private var isHistoryNavigation = false
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
-    @DrawnGlass private var glass
+    @FloatingGlassChrome private var floatingChrome
     @State private var settingsWindow: NSWindow?
     @State private var glassMetrics = GlassWindowButtonMetrics.fallback
 
@@ -88,22 +88,22 @@ struct SettingsView: View {
     }
 
     private var isSidebarCollapsed: Bool {
-        glass != nil && columnVisibility == .detailOnly
+        floatingChrome && columnVisibility == .detailOnly
     }
 
     var body: some View {
-        NavigationSplitView(columnVisibility: glass != nil ? $columnVisibility : .constant(.all)) {
+        NavigationSplitView(columnVisibility: floatingChrome ? $columnVisibility : .constant(.all)) {
             // The window's minimum width (`minimumWidth`) leaves this column its 200 points
-            // beside the widest pane. Keep the sidebar flexible inside the column so Glass's
+            // beside the widest pane. Keep the sidebar flexible inside the column so the
             // floating inset pane (`LibraryFloatingSidebar`) never clips a fixed-width list.
             SettingsSidebarView(selectedTab: $navigation.selectedTab)
-                .frame(minWidth: glass != nil ? 192 : 200, idealWidth: 200, maxWidth: 200)
+                .frame(minWidth: floatingChrome ? 192 : 200, idealWidth: 200, maxWidth: 200)
                 .navigationSplitViewColumnWidth(
                     min: 200,
                     ideal: 200,
                     max: 200
                 )
-                .glassSidebarCollapseOverlay(enabled: glass != nil, metrics: glassMetrics) {
+                .glassSidebarCollapseOverlay(enabled: floatingChrome, metrics: glassMetrics) {
                     withAnimation { columnVisibility = .detailOnly }
                 }
                 .toolbar(removing: .sidebarToggle)
@@ -114,8 +114,8 @@ struct SettingsView: View {
         .navigationSplitViewStyle(.balanced)
         .frame(minWidth: SettingsView.minimumWidth, minHeight: 540)
         .onWindowChange { settingsWindow = $0 }
-        .onChange(of: glass == nil) { _, off in
-            if off { columnVisibility = .all }
+        .onChange(of: floatingChrome) { _, on in
+            if !on { columnVisibility = .all }
         }
         .glassWindowChrome(
             window: settingsWindow,
@@ -207,11 +207,12 @@ struct SettingsView: View {
 
 private struct SettingsSidebarView: View {
     @Binding var selectedTab: SettingsTab?
-    @DrawnGlass private var glass
+    @CurrentTheme private var theme
+    @FloatingGlassChrome private var floatingChrome
 
     var body: some View {
         Group {
-            if glass != nil {
+            if theme.chrome.glass && floatingChrome {
                 List {
                     ForEach(SettingsTab.allCases) { tab in
                         GlassSettingsSidebarRow(
@@ -329,8 +330,13 @@ private struct SettingsSidebarFooter: View {
 private struct SettingsDetailView: View {
     let tab: SettingsTab
     @DrawnGlass private var glass
+    @FloatingGlassChrome private var floatingChrome
     @CurrentTheme private var theme
     @Environment(\.colorScheme) private var colorScheme
+
+    private var neutralGlassControls: Bool {
+        theme.chrome.glass && floatingChrome
+    }
 
     var body: some View {
         Group {
@@ -363,10 +369,10 @@ private struct SettingsDetailView: View {
         }
         .navigationTitle(tab.title)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .environment(\.overGlassPicture, glass != nil)
-        .tint(glass != nil ? AppTheme.glassControlTint(dark: colorScheme == .dark).color : nil)
-        // Glass: the panes on the cards' frost, title bar too, so no form text meets the bare picture (a black one
-        // made Light's rows black on black); the picture shows through it and, mirrored by macOS, under the sidebar.
+        .environment(\.overGlassPicture, neutralGlassControls)
+        .tint(neutralGlassControls ? AppTheme.glassControlTint(dark: colorScheme == .dark).color : nil)
+        // Glass with blurred picture: frost the pane over the picture so form text never meets the bare photo.
+        // Glass with solid background, Classic and Chip extend the solid workspace ground under the floating sidebar.
         .background {
             if glass != nil, let frost = theme.card.recipe.frost {
                 ZStack {
@@ -377,9 +383,13 @@ private struct SettingsDetailView: View {
             }
         }
         .background {
-            if let glass { GlassBackdrop(backdrop: glass).backgroundExtensionEffect().ignoresSafeArea() }
+            if let glass {
+                GlassBackdrop(backdrop: glass).backgroundExtensionEffect().ignoresSafeArea()
+            } else if floatingChrome {
+                Rectangle().fill(theme.ground.workspace.color).backgroundExtensionEffect().ignoresSafeArea()
+            }
         }
-        .toolbarBackgroundVisibility(glass != nil ? .hidden : .automatic, for: .windowToolbar)
+        .toolbarBackgroundVisibility(floatingChrome ? .hidden : .automatic, for: .windowToolbar)
     }
 }
 

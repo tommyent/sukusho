@@ -72,10 +72,11 @@ struct GlassThemeTests {
         }
     }
 
-    /// Reduce Transparency and Increase Contrast take every Glass surface to its opaque colours (Astra 8).
+    /// Reduce Transparency, Increase Contrast, and the Solid background toggle turn off Glass's blurred picture.
     @Test func glassIsDrawnOnlyWithoutReduceTransparencyOrIncreaseContrast() throws {
         for glass in [AppTheme.glassLight, .glassDark] {
             #expect(glass.drawnBackdrop(reduceTransparency: false, increaseContrast: false) == glass.ground.backdrop)
+            #expect(glass.drawnBackdrop(reduceTransparency: false, increaseContrast: false, solidBackground: true) == nil, "\(glass.id)")
             #expect(glass.drawnBackdrop(reduceTransparency: true, increaseContrast: false) == nil, "\(glass.id)")
             #expect(glass.drawnBackdrop(reduceTransparency: false, increaseContrast: true) == nil, "\(glass.id)")
         }

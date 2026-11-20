@@ -27,7 +27,7 @@ struct CaptureLibraryView: View {
     private var title: String {
         saved.isShown ? "Saved" : clipboard.isShown ? (clipboard.showsSnippets ? "Snippets" : "Clipboard") : comments.isShown ? "Comments" : likes.isShown ? "Likes" : cloud.isShown ? (!CloudUploader.shared.isConfigured ? "Cloud" : cloud.showsReceived ? "Received" : cloud.showsFiles ? "Files" : "Uploads") : model.tagFilter ?? activeFilter.title
     }
-    @DrawnGlass private var glass
+    @FloatingGlassChrome private var floatingChrome
     @Environment(\.colorScheme) private var colorScheme
 
     /// The sidebar picks a kind of capture, the cloud uploads or a tag.
@@ -113,7 +113,7 @@ struct CaptureLibraryView: View {
             if let window = notification.object as? NSWindow, window === libraryWindow {
                 if !handledInitialWindowPlacement {
                     handledInitialWindowPlacement = true
-                    if glass != nil, let screen = window.screen?.visibleFrame {
+                    if floatingChrome, let screen = window.screen?.visibleFrame {
                         // SwiftUI can open at the Library's previous minimum size despite the scene's default.
                         let size = CGSize(width: min(1180, screen.width), height: min(760, screen.height))
                         window.setFrame(CGRect(x: screen.midX - size.width / 2, y: screen.midY - size.height / 2,
@@ -201,7 +201,7 @@ struct CaptureLibraryView: View {
     }
 
     @ViewBuilder private var splitLayout: some View {
-        if glass != nil {
+        if floatingChrome {
             NavigationSplitView(columnVisibility: $columnVisibility) {
                 sidebarContent
                     .glassSidebarCollapseOverlay(enabled: true, metrics: glassMetrics) {
@@ -455,9 +455,9 @@ struct CaptureLibraryView: View {
                         : likes.isShown ? likes.visibleLikes.isEmpty : true
                 ))
                 .overlay(alignment: .bottom) {
-                    if glass != nil { glassFooter }
+                    if floatingChrome { glassFooter }
                 }
-            if glass == nil {
+            if !floatingChrome {
                 Divider()
                 statusBar
             }
@@ -645,12 +645,12 @@ struct CaptureLibraryView: View {
                 Text("\(Int((export.progress * 100).rounded()))%").monospacedDigit()
             }
         } else if let done = model.actionFeedback.message {
-            StatusSuccess(title: done, systemImage: "checkmark.circle.fill", onGlass: glass != nil)
+            StatusSuccess(title: done, systemImage: "checkmark.circle.fill", onGlass: floatingChrome)
         } else if let folder = model.savedAgentPrompt {
             Button {
                 NSWorkspace.shared.activateFileViewerSelecting([folder])
             } label: {
-                StatusSuccess(title: "Prompt Copied", systemImage: "checkmark.circle.fill", onGlass: glass != nil)
+                StatusSuccess(title: "Prompt Copied", systemImage: "checkmark.circle.fill", onGlass: floatingChrome)
             }
             .buttonStyle(.plain)
             .help("Reveal \(folder.lastPathComponent) in Finder")
@@ -658,7 +658,7 @@ struct CaptureLibraryView: View {
             Button {
                 CloudShareLinks.copy([link], feedback: model.actionFeedback)
             } label: {
-                StatusSuccess(title: "Link Copied", systemImage: "checkmark.icloud", onGlass: glass != nil)
+                StatusSuccess(title: "Link Copied", systemImage: "checkmark.icloud", onGlass: floatingChrome)
             }
             .buttonStyle(.plain)
             .help("Copy the gallery link again")
@@ -1315,14 +1315,15 @@ enum LibraryFloatingSidebar {
 }
 
 /// The editor's chrome colour behind a sidebar or inspector column, so the
-/// columns and the toolbar read as one flat surface.
-/// Glass paints nothing here: macOS's own sidebar glass shows over the theme's picture.
+/// columns and the toolbar read as one flat surface under Reduce Transparency
+/// or Increase Contrast. Otherwise macOS's own sidebar glass shows over the
+/// window background.
 private struct LibrarySidebarSurface: ViewModifier {
-    @DrawnGlass private var glass
+    @FloatingGlassChrome private var floatingChrome
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if glass != nil {
+        if floatingChrome {
             content.scrollEdgeEffectStyle(.soft, for: .all)
         } else {
             content
@@ -1335,17 +1336,15 @@ private struct LibrarySidebarSurface: ViewModifier {
 }
 
 /// The browser's ground: the editor's dotted workspace behind the grid and
-/// the empty pages; the list keeps the chrome colour, because dots between
-/// its full-width rows read as noise. Decorative only: the dots never take
-/// clicks.
+/// the empty pages when the floating glass layout is off; otherwise
+/// `LibraryWindowSurface` extends the ground under the whole window.
 private struct LibraryBrowserSurface: ViewModifier {
     let showsDots: Bool
-    @DrawnGlass private var glass
+    @FloatingGlassChrome private var floatingChrome
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        // Glass's picture lies under the whole window (`LibraryWindowSurface`).
-        if showsDots && glass == nil {
+        if showsDots && !floatingChrome {
             content.background { AnnotationEditorWorkspaceBackground().allowsHitTesting(false) }
         } else {
             content
@@ -1362,7 +1361,7 @@ private struct LibraryColumnSeparators: ViewModifier {
     let leading: Bool
     let trailing: Bool
     @Environment(\.displayScale) private var displayScale
-    @DrawnGlass private var glass
+    @FloatingGlassChrome private var floatingChrome
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -1372,8 +1371,8 @@ private struct LibraryColumnSeparators: ViewModifier {
             content
         } else {
             content
-                .overlay(alignment: .leading) { if leading && glass == nil { line } }
-                .overlay(alignment: .trailing) { if trailing && glass == nil { line } }
+                .overlay(alignment: .leading) { if leading && !floatingChrome { line } }
+                .overlay(alignment: .trailing) { if trailing && !floatingChrome { line } }
         }
     }
 
@@ -1388,14 +1387,14 @@ private struct LibraryColumnSeparators: ViewModifier {
 
 /// The system's line under the toolbar, the one the editor shows. With the
 /// toolbar background visible it runs over the browser and inspector; a hard
-/// top scroll edge turns it on over the sidebar too. Glass hides the toolbar
-/// bar and floats the sidebar, so it leaves the scroll edge soft.
+/// top scroll edge turns it on over the sidebar too. Floating chrome hides
+/// the toolbar bar and floats the sidebar, so it leaves the scroll edge soft.
 private struct LibraryToolbarSeparator: ViewModifier {
-    @DrawnGlass private var glass
+    @FloatingGlassChrome private var floatingChrome
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if glass != nil {
+        if floatingChrome {
             content
         } else {
             content.scrollEdgeEffectStyle(.hard, for: .top)
@@ -1403,14 +1402,14 @@ private struct LibraryToolbarSeparator: ViewModifier {
     }
 }
 
-/// The chrome colour behind the detail column. The toolbar keeps its own
-/// background, as in the editor, so the system draws its line and keeps the
-/// inspector's divider out of it. Backgrounds around `.inspector` keep the
-/// safe area; clips don't.
-/// Glass instead lays its picture under the whole window, mirrored and blurred under the sidebar by macOS
-/// (`backgroundExtensionEffect`).
+/// The window background behind the split view. Glass with blurred picture paints
+/// `GlassBackdrop`; Glass with Solid background paints the solid workspace colour;
+/// Classic and Chip extend `AnnotationEditorWorkspaceBackground` under the floating
+/// sidebars; Reduce Transparency and Increase Contrast fall back to opaque chrome.
 private struct LibraryWindowSurface: ViewModifier {
+    @CurrentTheme private var theme
     @DrawnGlass private var glass
+    @FloatingGlassChrome private var floatingChrome
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -1418,6 +1417,20 @@ private struct LibraryWindowSurface: ViewModifier {
             content
                 .environment(\.overGlassPicture, true)
                 .background { GlassBackdrop(backdrop: backdrop).backgroundExtensionEffect().ignoresSafeArea() }
+        } else if floatingChrome {
+            content
+                .background {
+                    if theme.chrome.glass {
+                        Rectangle()
+                            .fill(theme.ground.workspace.color)
+                            .backgroundExtensionEffect()
+                            .ignoresSafeArea()
+                    } else {
+                        AnnotationEditorWorkspaceBackground()
+                            .backgroundExtensionEffect()
+                            .ignoresSafeArea()
+                    }
+                }
         } else {
             content
                 .background { WorkspaceChrome.background.ignoresSafeArea() }
@@ -1427,11 +1440,11 @@ private struct LibraryWindowSurface: ViewModifier {
 }
 
 struct LibrarySecondaryBarSurface: ViewModifier {
-    @Environment(\.overGlassPicture) private var overGlassPicture
+    @FloatingGlassChrome private var floatingChrome
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if overGlassPicture {
+        if floatingChrome {
             content
         } else {
             content

@@ -111,11 +111,11 @@ struct ClipboardLibraryPage: View {
 /// Keeps whole chips on one line without imposing a minimum width on the browser.
 struct LibraryFilterRow<Content: View>: View {
     @ViewBuilder let content: Content
-    @Environment(\.overGlassPicture) private var overGlassPicture
+    @FloatingGlassChrome private var floatingChrome
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            if overGlassPicture {
+            if floatingChrome {
                 GlassEffectContainer(spacing: 0) { content }
                     .padding(2)
             } else {
@@ -128,11 +128,11 @@ struct LibraryFilterRow<Content: View>: View {
 
 struct LibraryFilterChipSurface: ViewModifier {
     let selected: Bool
-    @Environment(\.overGlassPicture) private var overGlassPicture
+    @FloatingGlassChrome private var floatingChrome
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if overGlassPicture {
+        if floatingChrome {
             content.glassEffect(.regular.tint(selected ? Color.accentColor.opacity(0.3) : nil).interactive(),
                                 in: Capsule())
         } else {

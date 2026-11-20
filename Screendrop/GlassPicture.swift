@@ -16,6 +16,8 @@ import Synchronization
 enum GlassPicture {
     /// The picked picture's path; empty: the desktop picture or Sukusho's own. No dot: @AppStorage misses dotted keys.
     static let pathKey = "GlassPicturePath"
+    /// True when Glass uses a solid background instead of its blurred picture.
+    static let solidBackgroundKey = "GlassSolidBackground"
 
     /// What Glass paints: the file and its version (`version(of:)`), so a window repaints when the file at the same
     /// path is replaced, not only when the path changes.

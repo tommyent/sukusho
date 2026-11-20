@@ -21,7 +21,7 @@ struct AnnotationEditorInspector: View {
     let onPickWallpaper: () -> Void
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @Environment(PixelProbe.self) private var probe: PixelProbe?
-    @DrawnGlass private var glass
+    @FloatingGlassChrome private var floatingChrome
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -253,7 +253,7 @@ struct AnnotationEditorInspector: View {
         )
     }
 
-    private var sidebarBackground: Color { glass != nil ? .clear : WorkspaceChrome.background }
+    private var sidebarBackground: Color { floatingChrome ? .clear : WorkspaceChrome.background }
 
     /// Revert To applies to History captures, which keep their original.
     private var showsRevertBar: Bool {

@@ -30,7 +30,7 @@ struct AnnotationEditorWindow: View {
     @State private var historyID: UUID?
     @FocusState private var focusedField: AnnotationEditorFocusedField?
     @Environment(\.dismiss) private var dismissWindow
-    @DrawnGlass private var glass
+    @FloatingGlassChrome private var floatingChrome
     @State private var editorWindow: NSWindow?
     @State private var glassMetrics = GlassWindowButtonMetrics.fallback
 
@@ -42,7 +42,7 @@ struct AnnotationEditorWindow: View {
     var body: some View {
         mainContent
             .background {
-                if glass != nil {
+                if floatingChrome {
                     AnnotationEditorWorkspaceBackground()
                         .backgroundExtensionEffect()
                         .ignoresSafeArea()
@@ -55,7 +55,7 @@ struct AnnotationEditorWindow: View {
             .navigationTitle(windowTitle)
             .navigationSubtitle(model.saveStatus)
             .toolbar(removing: .title)
-            .toolbarBackgroundVisibility(glass != nil ? .hidden : .visible, for: .windowToolbar)
+            .toolbarBackgroundVisibility(floatingChrome ? .hidden : .visible, for: .windowToolbar)
             .toolbar {
                 ToolbarItem(placement: .navigation) {
                     AnnotationEditorTitle(
@@ -221,10 +221,10 @@ struct AnnotationEditorWindow: View {
                     onPickWallpaper: pickCustomWallpaper
                 )
                 .disabled(model.isBlockingCommit)
-                .glassInspectorToolbar(enabled: glass != nil)
+                .glassInspectorToolbar(enabled: floatingChrome)
             }
             .glassInspectorToggleOverlay(
-                enabled: glass != nil && isInspectorPresented && !model.isCropping,
+                enabled: floatingChrome && isInspectorPresented && !model.isCropping,
                 isPresented: $isInspectorPresented,
                 metrics: glassMetrics,
                 isDisabled: isBusy,
@@ -283,7 +283,7 @@ struct AnnotationEditorWindow: View {
             .disabled(isUploading)
         }
 
-        if glass == nil {
+        if !floatingChrome {
             inspectorToggleButton
         } else if !isInspectorPresented {
             GlassPaneToggleButton(
@@ -371,7 +371,7 @@ struct AnnotationEditorWindow: View {
 
     private var mainContent: some View {
         ZStack {
-            if glass == nil {
+            if !floatingChrome {
                 AnnotationEditorWorkspaceBackground()
             }
 

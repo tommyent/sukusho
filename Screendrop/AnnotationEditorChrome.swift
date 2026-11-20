@@ -360,7 +360,7 @@ private struct GlassWindowChromeModifier: ViewModifier {
     let inspectorVisible: Bool
     @Binding var metrics: GlassWindowButtonMetrics
 
-    @DrawnGlass private var glass
+    @FloatingGlassChrome private var floatingChrome
     @Environment(\.colorScheme) private var colorScheme
     @State private var titlebarBeforeGlass: (transparent: Bool, separator: NSTitlebarSeparatorStyle)?
     @State private var trackedWindowID: ObjectIdentifier?
@@ -375,9 +375,9 @@ private struct GlassWindowChromeModifier: ViewModifier {
                     titlebarBeforeGlass = nil
                 }
             }
-            .task(id: "\(glass != nil)#\(windowID?.hashValue ?? 0)") {
+            .task(id: "\(floatingChrome)#\(windowID?.hashValue ?? 0)") {
                 if #available(macOS 27, *), let window {
-                    if glass != nil {
+                    if floatingChrome {
                         if titlebarBeforeGlass == nil {
                             titlebarBeforeGlass = (window.titlebarAppearsTransparent, window.titlebarSeparatorStyle)
                         }
@@ -390,7 +390,7 @@ private struct GlassWindowChromeModifier: ViewModifier {
                     }
                 }
                 for _ in 0..<10 {
-                    let done = LibraryWindowButtonCapsule.update(window, shown: glass != nil) { measured in
+                    let done = LibraryWindowButtonCapsule.update(window, shown: floatingChrome) { measured in
                         if measured != metrics { metrics = measured }
                     }
                     if done { break }
@@ -398,11 +398,11 @@ private struct GlassWindowChromeModifier: ViewModifier {
                     if Task.isCancelled { break }
                 }
             }
-            .task(id: "\(glass != nil)#\(colorScheme)#\(sidebarVisible)#\(inspectorVisible)#\(windowID?.hashValue ?? 0)") {
+            .task(id: "\(floatingChrome)#\(colorScheme)#\(sidebarVisible)#\(inspectorVisible)#\(windowID?.hashValue ?? 0)") {
                 for _ in 0..<10 {
                     let done = LibraryFloatingSidebar.update(
                         window,
-                        floating: glass != nil,
+                        floating: floatingChrome,
                         hasSidebar: hasSidebar,
                         inspectorVisible: inspectorVisible
                     )

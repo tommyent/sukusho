@@ -62,7 +62,7 @@ struct AppearanceSettingsPane: View {
             Section("Workspace") {
                 SettingsControlLabel(
                     "Workspace background",
-                    detail: "Behind the Library, the image editor and Studio; with a Glass theme, the Library shows its picture instead. Captures, exports and uploads never include it."
+                    detail: "Behind Classic and Chip Library windows, the image editor and Studio; with a Glass theme, the Glass section controls the Library background instead. Captures, exports and uploads never include it."
                 ).control { label in
                     Picker(selection: $workspaceStyle) {
                         ForEach(WorkspaceBackground.Style.allCases) { style in
@@ -203,6 +203,7 @@ private struct WorkspaceWallpaperSettings: View {
 /// from outside Sukusho's folder in, so the choice stays when the original moves. What's shown is resolved off the
 /// main thread, as the windows resolve it (`GlassPicture.resolve`).
 private struct GlassPictureSettings: View {
+    @AppStorage(GlassPicture.solidBackgroundKey) private var solidBackground = false
     @AppStorage(GlassPicture.pathKey) private var path = ""
     @Environment(\.colorScheme) private var colorScheme
     @State private var addError: String?
@@ -217,47 +218,57 @@ private struct GlassPictureSettings: View {
 
     var body: some View {
         let dark = colorScheme == .dark
-        VStack(alignment: .leading, spacing: DS.Space.m) {
-            SettingsControlLabel(
-                "Picture",
-                detail: "Behind Glass's frosted panes. By default your desktop picture, or Sukusho's own when macOS would ask before Sukusho reads yours."
-            )
-            LazyVGrid(columns: columns, spacing: DS.Space.s) {
-                let own = resolved.map { $0.fallback == GlassPicture.ownPicture(dark: dark) } ?? true
-                InspectorTile(title: own ? "Sukusho's" : "Desktop", aspectRatio: 1.35, isSelected: path.isEmpty) {
-                    choose(nil)
-                } content: {
-                    if let resolved {
-                        AnnotationCustomWallpaperPreview(wallpaper: AnnotationCustomWallpaper(url: resolved.fallback), maxPixelSize: 320)
-                    }
-                }
-                .accessibilityLabel(own ? "Sukusho's picture" : "Desktop picture")
-                ForEach(store.recentWallpapers) { wallpaper in
-                    InspectorTile(title: wallpaper.title, aspectRatio: 1.35,
-                                  isSelected: wallpaper.url.standardizedFileURL.path == path) {
-                        choose(wallpaper.url)
-                    } content: {
-                        AnnotationCustomWallpaperPreview(wallpaper: wallpaper, maxPixelSize: 320)
-                    }
-                    .accessibilityLabel(store.accessibilityTitle(for: wallpaper))
-                }
-                AnnotationAddWallpaperTile(action: add)
-                    .help("Add a picture")
-                    .accessibilityLabel("Add Picture…")
-            }
-            if let message = addError ?? unreadableMessage {
-                Text(message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
+        SettingsControlLabel(
+            "Solid background",
+            detail: "Use a solid background instead of a blurred picture behind Glass windows."
+        ).control { label in
+            Toggle(isOn: $solidBackground) { label }
         }
-        .onWindowChange { host.window = $0; windowChanges += 1 }
-        // As the backdrop does (`GlassBackdrop`): another screen, or Sukusho back in front, may mean another picture.
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeScreenNotification), perform: refreshIfOwn)
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification), perform: refreshIfOwn)
-        .task(id: "\(path)#\(dark)#\(windowChanges)") {
-            let desktop = host.window?.screen.flatMap { NSWorkspace.shared.desktopImageURL(for: $0) }
-            let fallback = await GlassPicture.resolve(picked: "", desktop: desktop, dark: dark).url
-            let shown = path.isEmpty ? fallback : await GlassPicture.resolve(picked: path, desktop: desktop, dark: dark).url
-            if !Task.isCancelled { resolved = (fallback, shown) }
+        .toggleStyle(.switch)
+
+        if !solidBackground {
+            VStack(alignment: .leading, spacing: DS.Space.m) {
+                SettingsControlLabel(
+                    "Picture",
+                    detail: "Behind Glass's frosted panes. By default your desktop picture, or Sukusho's own when macOS would ask before Sukusho reads yours."
+                )
+                LazyVGrid(columns: columns, spacing: DS.Space.s) {
+                    let own = resolved.map { $0.fallback == GlassPicture.ownPicture(dark: dark) } ?? true
+                    InspectorTile(title: own ? "Sukusho's" : "Desktop", aspectRatio: 1.35, isSelected: path.isEmpty) {
+                        choose(nil)
+                    } content: {
+                        if let resolved {
+                            AnnotationCustomWallpaperPreview(wallpaper: AnnotationCustomWallpaper(url: resolved.fallback), maxPixelSize: 320)
+                        }
+                    }
+                    .accessibilityLabel(own ? "Sukusho's picture" : "Desktop picture")
+                    ForEach(store.recentWallpapers) { wallpaper in
+                        InspectorTile(title: wallpaper.title, aspectRatio: 1.35,
+                                      isSelected: wallpaper.url.standardizedFileURL.path == path) {
+                            choose(wallpaper.url)
+                        } content: {
+                            AnnotationCustomWallpaperPreview(wallpaper: wallpaper, maxPixelSize: 320)
+                        }
+                        .accessibilityLabel(store.accessibilityTitle(for: wallpaper))
+                    }
+                    AnnotationAddWallpaperTile(action: add)
+                        .help("Add a picture")
+                        .accessibilityLabel("Add Picture…")
+                }
+                if let message = addError ?? unreadableMessage {
+                    Text(message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .onWindowChange { host.window = $0; windowChanges += 1 }
+            // As the backdrop does (`GlassBackdrop`): another screen, or Sukusho back in front, may mean another picture.
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeScreenNotification), perform: refreshIfOwn)
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification), perform: refreshIfOwn)
+            .task(id: "\(path)#\(dark)#\(windowChanges)") {
+                let desktop = host.window?.screen.flatMap { NSWorkspace.shared.desktopImageURL(for: $0) }
+                let fallback = await GlassPicture.resolve(picked: "", desktop: desktop, dark: dark).url
+                let shown = path.isEmpty ? fallback : await GlassPicture.resolve(picked: path, desktop: desktop, dark: dark).url
+                if !Task.isCancelled { resolved = (fallback, shown) }
+            }
         }
     }
 
