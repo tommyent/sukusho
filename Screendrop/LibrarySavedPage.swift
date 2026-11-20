@@ -94,9 +94,7 @@ struct LibrarySavedPage: View {
     var body: some View {
         let cards = saved.cards
         VStack(spacing: 0) {
-            // In a sideways scroll, as the Clipboard page's chips are, so they never set the column's minimum width.
-            ScrollView(.horizontal, showsIndicators: false) { filterChips }
-                .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+            LibraryFilterRow { filterChips }
                 .padding(.horizontal, DS.Space.xl).padding(.vertical, DS.Space.m)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .modifier(LibrarySecondaryBarSurface())
@@ -138,7 +136,7 @@ struct LibrarySavedPage: View {
                         .lineLimit(1)
                         .fixedSize()
                         .padding(.horizontal, DS.Space.ml).padding(.vertical, DS.Space.xs)
-                        .background(saved.filter == item ? AnyShapeStyle(.tint.opacity(0.2)) : AnyShapeStyle(.quaternary), in: Capsule())
+                        .modifier(LibraryFilterChipSurface(selected: saved.filter == item))
                 }
                 .buttonStyle(.plain)
                 .accessibilityAddTraits(saved.filter == item ? .isSelected : [])

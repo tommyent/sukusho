@@ -20,7 +20,11 @@ struct ClipboardLibraryPage: View {
             let cards = sections.flatMap { $0.entries.map(LibrarySavedCard.clip) }
             VStack(spacing: 0) {
                 HStack(spacing: DS.Space.m) {
-                    Group { if model.showsSnippets { snippetBar } else { filterBar } }
+                    if model.showsSnippets {
+                        snippetBar
+                    } else {
+                        LibraryFilterRow { filterChips }
+                    }
                 }
                     .padding(.horizontal, DS.Space.xl).padding(.vertical, DS.Space.m)
                     .frame(maxWidth: .infinity)
@@ -52,13 +56,6 @@ struct ClipboardLibraryPage: View {
         }
     }
 
-    /// Whole chips on one line; when the window is too narrow for all six, the row scrolls sideways
-    /// rather than breaking their names mid-word (Astra, 2026-11-16).
-    private var filterBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) { filterChips }
-            .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
-    }
-
     private var filterChips: some View {
         HStack(spacing: DS.Space.m) {
             ForEach(ClipboardFilter.types.filter { $0 != .snippets }) { item in
@@ -69,8 +66,7 @@ struct ClipboardLibraryPage: View {
                         .lineLimit(1)
                         .fixedSize()
                         .padding(.horizontal, DS.Space.ml).padding(.vertical, DS.Space.xs)
-                        .background(model.libraryFilter == item ? AnyShapeStyle(.tint.opacity(0.2)) : AnyShapeStyle(.quaternary),
-                                    in: Capsule())
+                        .modifier(LibraryFilterChipSurface(selected: model.libraryFilter == item))
                 }
                 .buttonStyle(.plain)
                 .accessibilityAddTraits(model.libraryFilter == item ? .isSelected : [])
@@ -108,6 +104,40 @@ struct ClipboardLibraryPage: View {
                 Text("What you copy from now on appears here and in the clipboard popup.")
             }
             .workspaceTextPlate()
+        }
+    }
+}
+
+/// Keeps whole chips on one line without imposing a minimum width on the browser.
+struct LibraryFilterRow<Content: View>: View {
+    @ViewBuilder let content: Content
+    @Environment(\.overGlassPicture) private var overGlassPicture
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            if overGlassPicture {
+                GlassEffectContainer(spacing: 0) { content }
+                    .padding(2)
+            } else {
+                content
+            }
+        }
+        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+    }
+}
+
+struct LibraryFilterChipSurface: ViewModifier {
+    let selected: Bool
+    @Environment(\.overGlassPicture) private var overGlassPicture
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if overGlassPicture {
+            content.glassEffect(.regular.tint(selected ? Color.accentColor.opacity(0.3) : nil).interactive(),
+                                in: Capsule())
+        } else {
+            content.background(selected ? AnyShapeStyle(.tint.opacity(0.2)) : AnyShapeStyle(.quaternary),
+                               in: Capsule())
         }
     }
 }
