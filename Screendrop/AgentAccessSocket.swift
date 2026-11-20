@@ -149,7 +149,13 @@ nonisolated enum AgentPeerCheck {
             return ("team:\(team):\(identifier)", "\(identifier) (\(team))")
         }
         let path = path ?? "unknown"
-        return ("path:" + path, URL(fileURLWithPath: path).lastPathComponent + ", unsigned")
+        // Signed with a certificate but no team is self-signed (Unleash's "Unleash Local"); ad hoc names no signer.
+        let signature = switch info {
+        case let info? where info.isPlatform: "part of macOS"
+        case let info? where !info.isAdHoc && info.identifier != nil: "self-signed"
+        default: "unsigned"
+        }
+        return ("path:" + path, URL(fileURLWithPath: path).lastPathComponent + ", " + signature)
     }
 }
 

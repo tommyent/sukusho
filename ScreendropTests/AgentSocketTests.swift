@@ -150,6 +150,22 @@ struct AgentSocketTests {
         #expect(info?.isAdHoc == true)
         // As an agent, an ad hoc program is known by its path, never by a name it could copy.
         #expect(AgentPeerCheck.signer(info, path: helper.path).signer == "path:" + helper.path)
+        #expect(AgentPeerCheck.signer(info, path: helper.path).name == "sukusho-mcp, unsigned")
+    }
+
+    /// sd-il4w: Unleash, signed with its own certificate and no team, was shown as unsigned.
+    @Test func namesHowAProgramWithoutATeamIsSigned() {
+        let path = "/Applications/Unleash.app/Contents/MacOS/Unleash"
+        let selfSigned = AgentPeerCheck.SigningInfo(identifier: "com.tommyent.unleash.swift", path: path)
+        #expect(AgentPeerCheck.signer(selfSigned, path: path) == ("path:" + path, "Unleash, self-signed"))
+        let adHoc = AgentPeerCheck.SigningInfo(identifier: "Unleash", path: path, isAdHoc: true)
+        #expect(AgentPeerCheck.signer(adHoc, path: path).name == "Unleash, unsigned")
+        #expect(AgentPeerCheck.signer(AgentPeerCheck.SigningInfo(path: path), path: path).name == "Unleash, unsigned")
+        #expect(AgentPeerCheck.signer(nil, path: path).name == "Unleash, unsigned")
+        let terminal = AgentPeerCheck.SigningInfo(identifier: "com.apple.Terminal", path: "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal", isPlatform: true)
+        #expect(AgentPeerCheck.signer(terminal, path: terminal.path).name == "Terminal, part of macOS")
+        let team = AgentPeerCheck.SigningInfo(team: "Q6L2SF6YDW", identifier: "com.anthropic.claude-code", path: path)
+        #expect(AgentPeerCheck.signer(team, path: path) == ("team:Q6L2SF6YDW:com.anthropic.claude-code", "com.anthropic.claude-code (Q6L2SF6YDW)"))
     }
 
     @Test func theSocketIsPrivateAndRefusesAWrongHelperWithAReason() async throws {

@@ -65,9 +65,9 @@ nonisolated enum AgentFocus {
 /// "claude-code" is a different agent.
 nonisolated struct AgentIdentity: Hashable, Codable, Sendable {
     /// "team:<team ID>:<signing identifier>" for a program signed with a
-    /// developer team, else "path:<executable path>" (ad hoc or unsigned).
+    /// developer team, else "path:<executable path>" (self-signed, ad hoc or unsigned).
     let signer: String
-    /// The signer as people read it: "Anthropic (Q6L2SF6YDW)" or a file name.
+    /// The signer as people read it: "Anthropic (Q6L2SF6YDW)", or a file name and how it is signed ("Unleash, self-signed").
     let signerName: String
     let clientName: String
     var clientVersion: String? = nil
