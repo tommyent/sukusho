@@ -244,6 +244,9 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Shown as Beta wherever it's named: Scrolling Capture ships as Beta in 1.3.0 (the owner, 2026-11-19).
+    var isBeta: Bool { self == .scrollingCapture }
+
     var title: String {
         switch self {
         case .fullscreen: "Fullscreen"
