@@ -12,7 +12,8 @@
 # 1.3.0-beta.1, and its appcast item joins the published feed on Sparkle's "beta" channel, beside the stable items.
 # PERSONAL=1 stops after the signature checks: the same Developer ID signature for the owner's own Macs, with no
 # release notes, notarization, DMG or appcast, in ../builds/personal-<version>.*. Signed like a release, such a
-# build keeps the privacy permissions a release was granted; a development-signed one loses them.
+# build keeps the privacy permissions a release was granted; a development-signed one loses them. Only a personal
+# build has the Theme Tuner (THEME_TUNER), and scripts/check-theme-tuner.sh fails a release that carries it.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PROFILE="${NOTARY_PROFILE:-notary}"
@@ -60,7 +61,7 @@ xcodebuild clean build -project Screendrop.xcodeproj -scheme Screendrop -configu
     DEVELOPMENT_TEAM="$TEAM" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="$DEVELOPER_ID" PROVISIONING_PROFILE_SPECIFIER= \
     OTHER_CODE_SIGN_FLAGS=--timestamp CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO CURRENT_PROJECT_VERSION="$BUILD" MARKETING_VERSION="$SHOWN" \
     STRIP_INSTALLED_PRODUCT=YES DEPLOYMENT_POSTPROCESSING=YES CLANG_COVERAGE_MAPPING=NO CLANG_COVERAGE_MAPPING_LINKER_ARGS=NO \
-    > "$OUT/build.log" 2>&1 || fail "build failed, see $OUT/build.log"
+    ${PERSONAL:+PERSONAL_CONDITIONS=THEME_TUNER} > "$OUT/build.log" 2>&1 || fail "build failed, see $OUT/build.log"
 SPARKLE_BIN="$DD/SourcePackages/artifacts/sparkle/Sparkle/bin"   # this build's own copy, never another folder's
 
 APP="$OUT/Sukusho.app"
@@ -98,6 +99,7 @@ ENTITLEMENTS="$(codesign -d --entitlements - --xml "$APP" 2>/dev/null)"
     && "$ENTITLEMENTS" != *get-task-allow* ]] || fail "entitlements must hold audio-input and camera, and no get-task-allow"
 EXE="$APP/Contents/MacOS/Sukusho"
 (( $(nm "$EXE" | grep -c __profc_ || true) == 0 )) || fail "the executable carries code-coverage counters"
+scripts/check-theme-tuner.sh "$APP" ${${PERSONAL:+personal}:-release} || fail "the Theme Tuner is in the wrong build"
 ARCHS="$(lipo -archs "$EXE")"
 # A helper without one of the app's architectures would be missing on those Macs: optimizing would quietly fall back.
 for helper in "$APP"/Contents/Helpers/*(.); do

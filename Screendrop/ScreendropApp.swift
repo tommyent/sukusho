@@ -38,6 +38,9 @@ struct ScreendropApp: App {
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") { SettingsWindowController.show(tab: .general) }
                     .keyboardShortcut(",", modifiers: .command)
+                #if THEME_TUNER
+                Button("Theme Tuner…") { openWindow(id: ThemeTunerView.windowID) }   // no shortcut, so none can clash
+                #endif
             }
             // Fable's #6: the menu bar holds the app, so its shortcuts can be found there.
             CommandMenu("Capture") { CaptureMenuItems() }
@@ -48,7 +51,14 @@ struct ScreendropApp: App {
                 LibraryCardSizeCommands()
             }
         }
-        
+
+        #if THEME_TUNER
+        Window("Theme Tuner", id: ThemeTunerView.windowID) { ThemeTunerView() }
+            .windowResizability(.contentSize)
+            .defaultLaunchBehavior(.suppressed)
+            .restorationBehavior(.disabled)
+        #endif
+
         WindowGroup("Sukusho Annotate", id: "ANNOTATION_EDITOR", for: URL.self) { value in
             AnnotationEditorWindow(url: value)
         }

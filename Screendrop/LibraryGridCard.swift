@@ -197,7 +197,7 @@ struct LibraryCardSurface: ViewModifier {
     private func shadow(_ spec: LibraryCardDepth.Shadow, depth: LibraryCardDepth, radius: CGFloat) -> some View {
         let alpha = depth == .pressed ? theme.card.pressedShadow : theme.card.shadow
         return LibraryShadowShape(inset: spec.inset, radius: radius).fill(.black)
-            .shadow(color: .black.opacity(alpha), radius: spec.blur / 2, y: spec.offset)
+            .shadow(color: .black.opacity(alpha), radius: spec.blur * theme.card.shadowBlur / 2, y: spec.offset * theme.card.shadowOffset)
     }
 
     private func lip(_ stock: AppTheme.Stock, lower: Bool) -> Color {

@@ -56,9 +56,12 @@ nonisolated struct AppTheme: Sendable, Equatable, Identifiable {
         var well: ThemeColor
         /// Behind text, code and link clips.
         var textWell: ThemeColor
-        /// The drop shadows' opacity at rest and while pressed; their offsets and blurs are the app's (`LibraryCardDepth`).
+        /// The drop shadows' opacity at rest and while pressed; their offsets and blurs are the app's (`LibraryCardDepth`),
+        /// scaled by `shadowBlur` and `shadowOffset`.
         var shadow: Double
         var pressedShadow: Double
+        var shadowBlur = 1.0
+        var shadowOffset = 1.0
         /// The strength of the paper grain over the caption strip, never the picture: the app's one tile
         /// (`CardPaperGrain`) at this opacity. 0: none.
         var paper = 0.0
@@ -145,7 +148,12 @@ nonisolated extension AppTheme {
 
     /// The theme a slot draws: the one chosen if it exists and fits the slot, else Classic.
     static func named(_ id: String?, dark: Bool) -> AppTheme {
-        builtIns.first { $0.id == id && $0.isDark == dark } ?? (dark ? classicDark : classicLight)
+        let theme = builtIns.first { $0.id == id && $0.isDark == dark } ?? (dark ? classicDark : classicLight)
+        #if THEME_TUNER
+        return ThemeTuning.saved.applied(to: theme)
+        #else
+        return theme
+        #endif
     }
 
     /// The theme for an appearance as saved, readable from any thread: AppKit resolves dynamic colours off the main one.
@@ -207,8 +215,14 @@ nonisolated enum ThemeColor: Sendable, Equatable {
     @AppStorage(AppTheme.lightKey) private var light = AppTheme.classicLight.id
     @AppStorage(AppTheme.darkKey) private var dark = AppTheme.classicDark.id
     @Environment(\.colorScheme) private var scheme
+    #if THEME_TUNER
+    @AppStorage(ThemeTuning.key) private var tuning: Data?
+    #endif
 
     var wrappedValue: AppTheme {
-        scheme == .dark ? AppTheme.named(dark, dark: true) : AppTheme.named(light, dark: false)
+        #if THEME_TUNER
+        _ = tuning   // so every card redraws as the tuner moves
+        #endif
+        return scheme == .dark ? AppTheme.named(dark, dark: true) : AppTheme.named(light, dark: false)
     }
 }
