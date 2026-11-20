@@ -129,11 +129,13 @@ struct LibraryFilterRow<Content: View>: View {
 struct LibraryFilterChipSurface: ViewModifier {
     let selected: Bool
     @FloatingGlassChrome private var floatingChrome
+    @Environment(\.colorScheme) private var colorScheme
 
     @ViewBuilder
     func body(content: Content) -> some View {
         if floatingChrome {
-            content.glassEffect(.regular.tint(selected ? Color.accentColor.opacity(0.3) : nil).interactive(),
+            let selectedTint = colorScheme == .dark ? Color.white.opacity(0.20) : Color.black.opacity(0.16)
+            content.glassEffect(.regular.tint(selected ? selectedTint : nil).interactive(),
                                 in: Capsule())
         } else {
             content.background(selected ? AnyShapeStyle(.tint.opacity(0.2)) : AnyShapeStyle(.quaternary),

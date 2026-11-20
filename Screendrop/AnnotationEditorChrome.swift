@@ -329,6 +329,89 @@ extension View {
     }
 }
 
+/// Neutral monochrome sidebar row with a translucent selection and hover pill, shared by Library and Settings across
+/// all themes so sidebars never fall back to solid system-blue icons or highlights.
+struct FloatingSidebarRow<Icon: View, Trailing: View>: View {
+    let title: String
+    let isSelected: Bool
+    let onSelect: () -> Void
+    @ViewBuilder let icon: () -> Icon
+    @ViewBuilder let trailing: () -> Trailing
+
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var isHovering = false
+
+    private var dark: Bool { colorScheme == .dark }
+
+    private var ink: Color {
+        isSelected ? .primary : AppTheme.glassTitleInk(dark: dark).color
+    }
+
+    private var pillFill: Color {
+        if isSelected {
+            return dark ? .white.opacity(0.14) : .black.opacity(0.09)
+        }
+        if isHovering {
+            return dark ? .white.opacity(0.06) : .black.opacity(0.04)
+        }
+        return .clear
+    }
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 6) {
+                icon()
+                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                    .frame(width: 16, alignment: .center)
+                Text(title)
+                    .font(.system(size: 13, weight: isSelected ? .medium : .regular))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                trailing()
+            }
+            .foregroundStyle(ink)
+            .padding(.horizontal, 2)
+            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .listRowBackground(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(pillFill)
+                .padding(.horizontal, 8)
+        )
+        .listRowInsets(EdgeInsets(top: 1, leading: 2, bottom: 1, trailing: 2))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+extension FloatingSidebarRow where Icon == Image, Trailing == EmptyView {
+    init(title: String, systemImage: String, isSelected: Bool, onSelect: @escaping () -> Void) {
+        self.init(title: title, isSelected: isSelected, onSelect: onSelect) {
+            Image(systemName: systemImage)
+        } trailing: {
+            EmptyView()
+        }
+    }
+}
+
+extension FloatingSidebarRow where Icon == Image {
+    init(
+        title: String,
+        systemImage: String,
+        isSelected: Bool,
+        onSelect: @escaping () -> Void,
+        @ViewBuilder trailing: @escaping () -> Trailing
+    ) {
+        self.init(title: title, isSelected: isSelected, onSelect: onSelect) {
+            Image(systemName: systemImage)
+        } trailing: {
+            trailing()
+        }
+    }
+}
+
 /// Circular Liquid Glass sidebar/inspector toggle button matching the window-button pill's glass, height and shadow.
 struct GlassPaneToggleButton: View {
     let title: String

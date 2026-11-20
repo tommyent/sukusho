@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 import SwiftUI
 
 struct CaptureLibraryView: View {
@@ -288,133 +289,15 @@ struct CaptureLibraryView: View {
     }
 
     private var sidebarContent: some View {
-        List(selection: sidebarSelection) {
-            // Option A (sd-ogtp.1.1): Captures is the working folder, everything taken or copied;
-            // Library is what the user chose to keep.
-            Section("Captures") {
-                ForEach(CaptureLibraryFilter.allCases) { filter in
-                    Label {
-                        HStack {
-                            Text(filter.title)
-                            Spacer()
-                            SidebarCount(model.count(for: filter))
-                        }
-                    } icon: { Image(systemName: filter.symbol) }
-                    .tag(CaptureLibrarySidebarSelection.kind(filter))
-                }
-                // Copies from any app, beside the captures. While history is
-                // off, it opens its setup page.
-                Label {
-                    HStack {
-                        Text("Clipboard")
-                        Spacer()
-                        if clipboardEnabled {
-                            SidebarCount(clipboard.historyCount)
-                        } else {
-                            Text("Off").foregroundStyle(.secondary).font(.caption)
-                        }
-                    }
-                } icon: { Image(systemName: "doc.on.clipboard") }
-                .tag(CaptureLibrarySidebarSelection.clipboard)
-            }
-            Section("Library") {
-                Label {
-                    HStack {
-                        Text("Saved")
-                        Spacer()
-                        SidebarCount(model.items.count(where: \.isSaved) + clipboard.savedCount)
-                    }
-                } icon: { Image(systemName: "star") }
-                .tag(CaptureLibrarySidebarSelection.saved)
-                if clipboardEnabled {
-                    Label {
-                        HStack {
-                            Text("Snippets")
-                            Spacer()
-                            SidebarCount(clipboard.snippetCount)
-                        }
-                    } icon: { Image(systemName: "text.badge.star") }
-                    .tag(CaptureLibrarySidebarSelection.snippets)
-                }
-            }
-            // Uploads and their comments live on the Worker, apart from
-            // the captures on this Mac. Until a Worker is set up, one row
-            // leads to setup instead of two that both end there (design
-            // pass choice 7).
-            Section("Cloud") {
-                if CloudUploader.shared.isConfigured {
-                    Label {
-                        HStack {
-                            Text("Uploads")
-                            Spacer()
-                            if cloud.hasLoaded {
-                                SidebarCount(cloud.count(files: false))
-                            }
-                        }
-                    } icon: { Image(systemName: "cloud") }
-                    .tag(CaptureLibrarySidebarSelection.cloud)
-                    Label {
-                        HStack {
-                            Text("Files")
-                            Spacer()
-                            if cloud.hasLoaded {
-                                SidebarCount(cloud.count(files: true))
-                            }
-                        }
-                    } icon: { Image(systemName: "doc") }
-                    .tag(CaptureLibrarySidebarSelection.files)
-                    Label {
-                        HStack {
-                            Text("Received")
-                            Spacer()
-                            if cloud.hasLoaded {
-                                SidebarCount(cloud.receivedCount)
-                            }
-                        }
-                    } icon: { Image(systemName: "tray.and.arrow.down") }
-                    .tag(CaptureLibrarySidebarSelection.received)
-                    Label {
-                        HStack {
-                            Text("Comments")
-                            Spacer()
-                            if comments.hasLoaded, !comments.isUnavailable {
-                                FeedCount(total: comments.comments.count, unread: comments.unreadCount)
-                            }
-                        }
-                    } icon: { Image(systemName: "bubble.left.and.bubble.right") }
-                    .tag(CaptureLibrarySidebarSelection.comments)
-                    Label {
-                        HStack {
-                            Text("Likes")
-                            Spacer()
-                            if likes.hasLoaded, !likes.isUnavailable {
-                                FeedCount(total: likes.likes.count, unread: likes.unreadCount)
-                            }
-                        }
-                    } icon: { Image(systemName: "heart") }
-                    .tag(CaptureLibrarySidebarSelection.likes)
-                } else {
-                    Label("Set Up Cloud", systemImage: "cloud")
-                        .tag(CaptureLibrarySidebarSelection.cloud)
-                }
-            }
-            if !model.tags.isEmpty {
-                Section("Tags", isExpanded: $tagsExpanded) {
-                    ForEach(model.tags, id: \.self) { tag in
-                        Label {
-                            HStack {
-                                Text(tag)
-                                Spacer()
-                                SidebarCount(model.tagCounts[tag] ?? 0)
-                            }
-                        } icon: { CaptureTagIcon(tag: tag) }
-                        .tag(CaptureLibrarySidebarSelection.tag(tag))
-                        .contextMenu { CaptureTagAppearanceMenu(tag: tag) }
-                    }
-                }
+        Group {
+            if floatingChrome {
+                List { sidebarSections }
+                    .listStyle(.sidebar)
+            } else {
+                List(selection: sidebarSelection) { sidebarSections }
+                    .listStyle(.sidebar)
             }
         }
-        .listStyle(.sidebar)
         .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 280)
         .safeAreaInset(edge: .bottom) {
             HStack(alignment: .center, spacing: 12) {
@@ -444,6 +327,115 @@ struct CaptureLibraryView: View {
             .padding(.vertical, 8)
         }
         .modifier(LibrarySidebarSurface())
+    }
+
+    @ViewBuilder private var sidebarSections: some View {
+        // Option A (sd-ogtp.1.1): Captures is the working folder, everything taken or copied;
+        // Library is what the user chose to keep.
+        Section("Captures") {
+            ForEach(CaptureLibraryFilter.allCases) { filter in
+                sidebarRow(filter.title, systemImage: filter.symbol, selection: .kind(filter)) {
+                    SidebarCount(model.count(for: filter))
+                }
+            }
+            // Copies from any app, beside the captures. While history is
+            // off, it opens its setup page.
+            sidebarRow("Clipboard", systemImage: "doc.on.clipboard", selection: .clipboard) {
+                if clipboardEnabled {
+                    SidebarCount(clipboard.historyCount)
+                } else {
+                    Text("Off").foregroundStyle(.secondary).font(.caption)
+                }
+            }
+        }
+        Section("Library") {
+            sidebarRow("Saved", systemImage: "star", selection: .saved) {
+                SidebarCount(model.items.count(where: \.isSaved) + clipboard.savedCount)
+            }
+            if clipboardEnabled {
+                sidebarRow("Snippets", systemImage: "text.badge.star", selection: .snippets) {
+                    SidebarCount(clipboard.snippetCount)
+                }
+            }
+        }
+        // Uploads and their comments live on the Worker, apart from
+        // the captures on this Mac. Until a Worker is set up, one row
+        // leads to setup instead of two that both end there (design
+        // pass choice 7).
+        Section("Cloud") {
+            if CloudUploader.shared.isConfigured {
+                sidebarRow("Uploads", systemImage: "cloud", selection: .cloud) {
+                    if cloud.hasLoaded { SidebarCount(cloud.count(files: false)) }
+                }
+                sidebarRow("Files", systemImage: "doc", selection: .files) {
+                    if cloud.hasLoaded { SidebarCount(cloud.count(files: true)) }
+                }
+                sidebarRow("Received", systemImage: "tray.and.arrow.down", selection: .received) {
+                    if cloud.hasLoaded { SidebarCount(cloud.receivedCount) }
+                }
+                sidebarRow("Comments", systemImage: "bubble.left.and.bubble.right", selection: .comments) {
+                    if comments.hasLoaded, !comments.isUnavailable {
+                        FeedCount(total: comments.comments.count, unread: comments.unreadCount)
+                    }
+                }
+                sidebarRow("Likes", systemImage: "heart", selection: .likes) {
+                    if likes.hasLoaded, !likes.isUnavailable {
+                        FeedCount(total: likes.likes.count, unread: likes.unreadCount)
+                    }
+                }
+            } else {
+                sidebarRow("Set Up Cloud", systemImage: "cloud", selection: .cloud) { EmptyView() }
+            }
+        }
+        if !model.tags.isEmpty {
+            Section("Tags", isExpanded: $tagsExpanded) {
+                ForEach(model.tags, id: \.self) { tag in
+                    sidebarRow(tag, selection: .tag(tag), icon: { CaptureTagIcon(tag: tag) }) {
+                        SidebarCount(model.tagCounts[tag] ?? 0)
+                    }
+                    .contextMenu { CaptureTagAppearanceMenu(tag: tag) }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sidebarRow<Trailing: View>(
+        _ title: String,
+        systemImage: String,
+        selection: CaptureLibrarySidebarSelection,
+        @ViewBuilder trailing: @escaping () -> Trailing
+    ) -> some View {
+        sidebarRow(title, selection: selection, icon: { Image(systemName: systemImage) }, trailing: trailing)
+    }
+
+    @ViewBuilder
+    private func sidebarRow<Icon: View, Trailing: View>(
+        _ title: String,
+        selection: CaptureLibrarySidebarSelection,
+        @ViewBuilder icon: @escaping () -> Icon,
+        @ViewBuilder trailing: @escaping () -> Trailing
+    ) -> some View {
+        if floatingChrome {
+            FloatingSidebarRow(
+                title: title,
+                isSelected: currentPage == selection,
+                onSelect: { sidebarSelection.wrappedValue = selection },
+                icon: icon,
+                trailing: trailing
+            )
+        } else {
+            Label {
+                HStack {
+                    Text(title)
+                    Spacer()
+                    trailing()
+                }
+            } icon: {
+                icon()
+            }
+            .tag(selection)
+        }
     }
 
     private var detailColumn: some View {
@@ -774,6 +766,7 @@ struct CaptureLibraryView: View {
         .font(.caption)
         .monospacedDigit()
         .foregroundStyle(AppTheme.glassTitleInk(dark: colorScheme == .dark).color)
+        .tint(AppTheme.glassControlTint(dark: colorScheme == .dark).color)
         // 8 pt lines the count text (8 + 12 = 20) and pill edge up with the title pill above, and aligns the pills'
         // bottom edge with the floating sidebar's 8 pt inset.
         .padding(.horizontal, 8)
@@ -1098,6 +1091,7 @@ enum LibraryFloatingSidebar {
     private static let innerInset: CGFloat = 0
     private static let cornerRadius: CGFloat = 16
     private static let rimID = NSUserInterfaceItemIdentifier("LibraryFloatingSidebarRim")
+    private static let shadowID = NSUserInterfaceItemIdentifier("LibraryFloatingSidebarShadow")
     private static let paneGlassID = NSUserInterfaceItemIdentifier("LibraryFloatingPaneGlass")
 
     private struct Pane {
@@ -1109,6 +1103,47 @@ enum LibraryFloatingSidebar {
 
     private final class FloatingPaneGlassView: NSGlassEffectView {
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+
+    /// Casts the floating pane's drop shadow strictly outside its continuous rounded rect, so the pane itself can clip
+    /// its layer (`masksToBounds = true`) with no transparent corner tips sticking out and no dark fill under the glass.
+    private final class SidebarShadowView: NSView {
+        private let shadowLayer = CALayer()
+        private let maskLayer = CAShapeLayer()
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override init(frame frameRect: NSRect) {
+            super.init(frame: frameRect)
+            wantsLayer = true
+            clipsToBounds = false
+            layer?.masksToBounds = false
+            shadowLayer.masksToBounds = false
+            shadowLayer.shadowColor = NSColor.black.withAlphaComponent(0.22).cgColor
+            shadowLayer.shadowOpacity = 1
+            shadowLayer.shadowRadius = 7
+            shadowLayer.shadowOffset = CGSize(width: 0, height: -2)
+            layer?.addSublayer(shadowLayer)
+            maskLayer.fillRule = .evenOdd
+            maskLayer.fillColor = NSColor.black.cgColor
+            layer?.mask = maskLayer
+        }
+
+        required init?(coder: NSCoder) { nil }
+
+        override func layout() {
+            super.layout()
+            guard bounds.width > 0, bounds.height > 0 else { return }
+            shadowLayer.frame = bounds
+            maskLayer.frame = bounds
+            let inner = RoundedRectangle(cornerRadius: LibraryFloatingSidebar.cornerRadius, style: .continuous)
+                .path(in: bounds)
+                .cgPath
+            shadowLayer.shadowPath = inner
+            let outer = CGMutablePath()
+            outer.addRect(bounds.insetBy(dx: -40, dy: -40))
+            outer.addPath(inner)
+            maskLayer.path = outer
+        }
     }
 
     /// Subtle 0.5 pt rim matching the Glass cards' `frost.rim`, sharpening a floating pane's perimeter where AppKit's
@@ -1217,13 +1252,18 @@ enum LibraryFloatingSidebar {
         }
 
         let existingBackdrop = wrapper.subviews.first { $0.identifier == paneGlassID }
+        let existingShadow = wrapper.subviews.first { $0.identifier == shadowID }
         let existingRim = wrapper.subviews.first { $0.identifier == rimID }
-        let shadowHost: NSView
+        // Clip the pane's layer to the continuous floating radius on both macOS 26 and 27.2+ so neither
+        // NSContainerConcentricGlassEffectView's inner corners nor scroll-edge pocket layers protrude as corner tips.
+        glass.wantsLayer = true
+        glass.layer?.cornerRadius = floating ? cornerRadius : 0
+        glass.layer?.cornerCurve = .continuous
+        glass.layer?.masksToBounds = floating
+        glass.shadow = nil
+
         if useBackdropGlass {
-            glass.wantsLayer = true
-            glass.layer?.cornerRadius = floating ? cornerRadius : 0
-            glass.layer?.cornerCurve = .continuous
-            glass.layer?.masksToBounds = floating
+            existingShadow?.removeFromSuperview()
             if floating {
                 let backdrop: NSView
                 if let existingBackdrop {
@@ -1243,45 +1283,53 @@ enum LibraryFloatingSidebar {
                     ])
                     backdrop = view
                 }
-                shadowHost = backdrop
+                wrapper.clipsToBounds = false
+                backdrop.wantsLayer = true
+                let shadow = NSShadow()
+                shadow.shadowColor = NSColor.black.withAlphaComponent(0.22)
+                shadow.shadowBlurRadius = 14
+                shadow.shadowOffset = NSSize(width: 0, height: -2)
+                backdrop.shadow = shadow
+                existingRim?.removeFromSuperview()
             } else {
                 existingBackdrop?.removeFromSuperview()
-                shadowHost = glass
+                existingRim?.removeFromSuperview()
             }
         } else {
             existingBackdrop?.removeFromSuperview()
             glass.cornerRadius = floating ? cornerRadius : 0
-            shadowHost = glass
-        }
-
-        if floating {
-            wrapper.clipsToBounds = false
-            shadowHost.wantsLayer = true
-            let shadow = NSShadow()
-            shadow.shadowColor = NSColor.black.withAlphaComponent(0.22)
-            shadow.shadowBlurRadius = 14
-            shadow.shadowOffset = NSSize(width: 0, height: -2)
-            shadowHost.shadow = shadow
-            if useBackdropGlass {
-                glass.shadow = nil
-                existingRim?.removeFromSuperview()
-            } else if let rim = existingRim as? SidebarRimView {
-                rim.updateRimColor()
+            if floating {
+                wrapper.clipsToBounds = false
+                if existingShadow == nil {
+                    let shadowView = SidebarShadowView()
+                    shadowView.identifier = shadowID
+                    shadowView.translatesAutoresizingMaskIntoConstraints = false
+                    wrapper.addSubview(shadowView, positioned: .below, relativeTo: glass)
+                    NSLayoutConstraint.activate([
+                        shadowView.leadingAnchor.constraint(equalTo: glass.leadingAnchor),
+                        shadowView.trailingAnchor.constraint(equalTo: glass.trailingAnchor),
+                        shadowView.topAnchor.constraint(equalTo: glass.topAnchor),
+                        shadowView.bottomAnchor.constraint(equalTo: glass.bottomAnchor),
+                    ])
+                }
+                if let rim = existingRim as? SidebarRimView {
+                    rim.updateRimColor()
+                } else {
+                    let rim = SidebarRimView()
+                    rim.identifier = rimID
+                    rim.translatesAutoresizingMaskIntoConstraints = false
+                    wrapper.addSubview(rim, positioned: .above, relativeTo: glass)
+                    NSLayoutConstraint.activate([
+                        rim.leadingAnchor.constraint(equalTo: glass.leadingAnchor),
+                        rim.trailingAnchor.constraint(equalTo: glass.trailingAnchor),
+                        rim.topAnchor.constraint(equalTo: glass.topAnchor),
+                        rim.bottomAnchor.constraint(equalTo: glass.bottomAnchor),
+                    ])
+                }
             } else {
-                let rim = SidebarRimView()
-                rim.identifier = rimID
-                rim.translatesAutoresizingMaskIntoConstraints = false
-                wrapper.addSubview(rim, positioned: .above, relativeTo: glass)
-                NSLayoutConstraint.activate([
-                    rim.leadingAnchor.constraint(equalTo: glass.leadingAnchor),
-                    rim.trailingAnchor.constraint(equalTo: glass.trailingAnchor),
-                    rim.topAnchor.constraint(equalTo: glass.topAnchor),
-                    rim.bottomAnchor.constraint(equalTo: glass.bottomAnchor),
-                ])
+                existingShadow?.removeFromSuperview()
+                existingRim?.removeFromSuperview()
             }
-        } else {
-            existingRim?.removeFromSuperview()
-            glass.shadow = nil
         }
 
         // Hide the straight full-height divider and shadow strip along the pane's inner edge while floating.

@@ -207,16 +207,16 @@ struct SettingsView: View {
 
 private struct SettingsSidebarView: View {
     @Binding var selectedTab: SettingsTab?
-    @CurrentTheme private var theme
     @FloatingGlassChrome private var floatingChrome
 
     var body: some View {
         Group {
-            if theme.chrome.glass && floatingChrome {
+            if floatingChrome {
                 List {
                     ForEach(SettingsTab.allCases) { tab in
-                        GlassSettingsSidebarRow(
-                            tab: tab,
+                        FloatingSidebarRow(
+                            title: tab.title,
+                            systemImage: tab.systemImage,
                             isSelected: (selectedTab ?? .general) == tab,
                             onSelect: { selectedTab = tab }
                         )
@@ -253,60 +253,6 @@ private struct SettingsSidebarRow: View {
     }
 }
 
-/// Neutral sidebar row for Glass: matches the Library sidebar's calm monochrome icons, text, and
-/// translucent selection pill so Settings reads cleanly over any Glass picture colour.
-private struct GlassSettingsSidebarRow: View {
-    let tab: SettingsTab
-    let isSelected: Bool
-    let onSelect: () -> Void
-
-    @Environment(\.colorScheme) private var colorScheme
-    @State private var isHovering = false
-
-    private var dark: Bool { colorScheme == .dark }
-
-    private var ink: Color {
-        isSelected ? .primary : AppTheme.glassTitleInk(dark: dark).color
-    }
-
-    private var pillFill: Color {
-        if isSelected {
-            return dark ? .white.opacity(0.14) : .black.opacity(0.09)
-        }
-        if isHovering {
-            return dark ? .white.opacity(0.06) : .black.opacity(0.04)
-        }
-        return .clear
-    }
-
-    var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: 6) {
-                Image(systemName: tab.systemImage)
-                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
-                    .frame(width: 16, alignment: .center)
-                Text(tab.title)
-                    .font(.system(size: 13, weight: isSelected ? .medium : .regular))
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-            }
-            .foregroundStyle(ink)
-            .padding(.horizontal, 2)
-            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovering = $0 }
-        .listRowBackground(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(pillFill)
-                .padding(.horizontal, 8)
-        )
-        .listRowInsets(EdgeInsets(top: 1, leading: 2, bottom: 1, trailing: 2))
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-    }
-}
-
 private struct SettingsSidebarFooter: View {
     var body: some View {
         HStack(spacing: 6) {
@@ -335,7 +281,7 @@ private struct SettingsDetailView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     private var neutralGlassControls: Bool {
-        theme.chrome.glass && floatingChrome
+        floatingChrome
     }
 
     var body: some View {
