@@ -2,7 +2,7 @@
 //  SettingsAgentsPane.swift
 //  Screendrop
 //
-//  Settings › Connected Apps: the switch that lets other apps (coding agents,
+//  Settings › Apps & Agents: the switch that lets other apps (coding agents,
 //  Unleash) use Sukusho through its MCP helper, how to add it, who is
 //  connected, what each app may do without asking, and every call they made.
 //
