@@ -245,31 +245,166 @@ private struct GlassFrostBacking<S: Shape>: ViewModifier {
 }
 
 extension View {
-    /// Glass: float a window's trailing inspector pane using the Library's shared `LibraryFloatingSidebar` helper.
-    /// Classic, Chip, Reduce Transparency and Increase Contrast restore the flush layout untouched.
-    func glassFloatingInspector(window: NSWindow?, isPresented: Bool) -> some View {
-        modifier(GlassFloatingInspectorModifier(window: window, isPresented: isPresented))
+    /// Glass: apply consistent floating window chrome across every window that has a sidebar or inspector — transparent
+    /// titlebar on macOS 27+, lifted Liquid Glass pill under the window buttons, and floating glass side panes via
+    /// `LibraryFloatingSidebar`. Classic, Chip, Reduce Transparency and Increase Contrast restore the native layout.
+    func glassWindowChrome(
+        window: NSWindow?,
+        hasSidebar: Bool,
+        sidebarVisible: Bool,
+        inspectorVisible: Bool,
+        metrics: Binding<GlassWindowButtonMetrics>
+    ) -> some View {
+        modifier(GlassWindowChromeModifier(
+            window: window,
+            hasSidebar: hasSidebar,
+            sidebarVisible: sidebarVisible,
+            inspectorVisible: inspectorVisible,
+            metrics: metrics
+        ))
     }
 
-    /// Glass: place the inspector toggle inside the inspector's own toolbar so it sits in the floating pane's
-    /// top-right corner while main toolbar actions stay clear of the pane's leading edge.
-    func glassInspectorToolbar<Item: View>(enabled: Bool, @ViewBuilder item: @escaping () -> Item) -> some View {
-        modifier(GlassInspectorToolbarModifier(enabled: enabled, item: item))
+    /// Glass: place the collapse-sidebar glass circle with shadow inside a floating left sidebar's top-trailing corner.
+    func glassSidebarCollapseOverlay(
+        enabled: Bool,
+        metrics: GlassWindowButtonMetrics,
+        action: @escaping () -> Void
+    ) -> some View {
+        overlay(alignment: .topTrailing) {
+            if enabled {
+                GlassPaneToggleButton(
+                    title: "Hide Sidebar",
+                    symbol: "sidebar.left",
+                    diameter: metrics.diameter,
+                    action: action
+                )
+                .padding(.top, metrics.topInsideFloatingPane)
+                .padding(.trailing, metrics.paneTrailingInset)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .ignoresSafeArea(.container, edges: .top)
+            }
+        }
+    }
+
+    /// Glass: place the collapse-inspector glass circle with shadow inside the floating trailing inspector's top-right
+    /// corner (and keep it in the same spot when collapsed so it stays reachable).
+    func glassInspectorToggleOverlay(
+        enabled: Bool,
+        isPresented: Binding<Bool>,
+        metrics: GlassWindowButtonMetrics,
+        isDisabled: Bool = false,
+        hasKeyboardShortcut: Bool = false,
+        onToggle: (() -> Void)? = nil
+    ) -> some View {
+        overlay(alignment: .topTrailing) {
+            if enabled {
+                let button = GlassPaneToggleButton(
+                    title: isPresented.wrappedValue ? "Hide Inspector" : "Show Inspector",
+                    symbol: "sidebar.right",
+                    diameter: metrics.diameter
+                ) {
+                    onToggle?()
+                    isPresented.wrappedValue.toggle()
+                }
+                .disabled(isDisabled)
+                Group {
+                    if hasKeyboardShortcut {
+                        button.keyboardShortcut("i", modifiers: [.command, .option])
+                    } else {
+                        button
+                    }
+                }
+                .padding(.top, metrics.top)
+                .padding(.trailing, LibraryFloatingSidebar.outerInset + metrics.paneTrailingInset)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .ignoresSafeArea(.container, edges: .top)
+            }
+        }
+    }
+
+    /// Glass: keep an empty toolbar inside `.inspector` so AppKit preserves the toolbar tracking separator at the
+    /// floating inspector's leading edge and main toolbar actions stay clear of the pane.
+    func glassInspectorToolbar(enabled: Bool) -> some View {
+        modifier(GlassInspectorToolbarModifier(enabled: enabled))
     }
 }
 
-private struct GlassFloatingInspectorModifier: ViewModifier {
+/// Circular Liquid Glass sidebar/inspector toggle button matching the window-button pill's glass, height and shadow.
+struct GlassPaneToggleButton: View {
+    let title: String
+    let symbol: String
+    let diameter: CGFloat
+    let action: () -> Void
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: symbol)
+                .labelStyle(.iconOnly)
+                .font(.system(size: max(12, diameter * 0.46), weight: .medium))
+                .foregroundStyle(AppTheme.glassTitleInk(dark: colorScheme == .dark).color)
+                .frame(width: diameter, height: diameter)
+                .background { CapsuleGlass(lifted: true).allowsHitTesting(false) }
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(title)
+    }
+}
+
+private struct GlassWindowChromeModifier: ViewModifier {
     let window: NSWindow?
-    let isPresented: Bool
+    let hasSidebar: Bool
+    let sidebarVisible: Bool
+    let inspectorVisible: Bool
+    @Binding var metrics: GlassWindowButtonMetrics
+
     @DrawnGlass private var glass
     @Environment(\.colorScheme) private var colorScheme
+    @State private var titlebarBeforeGlass: (transparent: Bool, separator: NSTitlebarSeparatorStyle)?
+    @State private var trackedWindowID: ObjectIdentifier?
+
+    private var windowID: ObjectIdentifier? { window.map(ObjectIdentifier.init) }
 
     func body(content: Content) -> some View {
         content
-            .task(id: "\(glass != nil)#\(colorScheme)#\(isPresented)#\(window.map { ObjectIdentifier($0).hashValue } ?? 0)") {
+            .onChange(of: windowID) { _, newID in
+                if newID != trackedWindowID {
+                    trackedWindowID = newID
+                    titlebarBeforeGlass = nil
+                }
+            }
+            .task(id: "\(glass != nil)#\(windowID?.hashValue ?? 0)") {
+                if #available(macOS 27, *), let window {
+                    if glass != nil {
+                        if titlebarBeforeGlass == nil {
+                            titlebarBeforeGlass = (window.titlebarAppearsTransparent, window.titlebarSeparatorStyle)
+                        }
+                        window.titlebarAppearsTransparent = true
+                        window.titlebarSeparatorStyle = .none
+                    } else if let previous = titlebarBeforeGlass {
+                        window.titlebarAppearsTransparent = previous.transparent
+                        window.titlebarSeparatorStyle = previous.separator
+                        titlebarBeforeGlass = nil
+                    }
+                }
+                for _ in 0..<10 {
+                    let done = LibraryWindowButtonCapsule.update(window, shown: glass != nil) { measured in
+                        if measured != metrics { metrics = measured }
+                    }
+                    if done { break }
+                    try? await Task.sleep(for: .milliseconds(200))
+                    if Task.isCancelled { break }
+                }
+            }
+            .task(id: "\(glass != nil)#\(colorScheme)#\(sidebarVisible)#\(inspectorVisible)#\(windowID?.hashValue ?? 0)") {
                 for _ in 0..<10 {
                     let done = LibraryFloatingSidebar.update(
-                        window, floating: glass != nil, inspectorVisible: isPresented
+                        window,
+                        floating: glass != nil,
+                        hasSidebar: hasSidebar,
+                        inspectorVisible: inspectorVisible
                     )
                     if done { break }
                     try? await Task.sleep(for: .milliseconds(200))
@@ -279,17 +414,14 @@ private struct GlassFloatingInspectorModifier: ViewModifier {
     }
 }
 
-private struct GlassInspectorToolbarModifier<Item: View>: ViewModifier {
+private struct GlassInspectorToolbarModifier: ViewModifier {
     let enabled: Bool
-    @ViewBuilder let item: () -> Item
 
     @ViewBuilder
     func body(content: Content) -> some View {
         if enabled {
             content.toolbar {
                 ToolbarSpacer(.flexible)
-                ToolbarItem(placement: .primaryAction) { item() }
-                    .sharedBackgroundVisibility(.hidden)
             }
         } else {
             content

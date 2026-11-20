@@ -58,6 +58,7 @@ private struct RecordingStudioContent: View {
     @State private var confirmsSharedLinkDeletion = false
     @DrawnGlass private var glass
     @State private var studioWindow: NSWindow?
+    @State private var glassMetrics = GlassWindowButtonMetrics.fallback
 
     var body: some View {
         VStack(spacing: 0) {
@@ -153,6 +154,14 @@ private struct RecordingStudioContent: View {
 
                     if glass == nil {
                         inspectorToggleButton
+                    } else if !isInspectorPresented {
+                        GlassPaneToggleButton(
+                            title: "Show Inspector",
+                            symbol: "sidebar.right",
+                            diameter: glassMetrics.diameter
+                        ) {
+                            isInspectorPresented = true
+                        }
                     }
                 }
             }
@@ -161,13 +170,20 @@ private struct RecordingStudioContent: View {
         }
         .inspector(isPresented: $isInspectorPresented) {
             StudioInspector(model: model)
-                .glassInspectorToolbar(enabled: glass != nil) {
-                    if !model.isSelectingRedaction && !model.isCroppingVideo {
-                        inspectorToggleButton
-                    }
-                }
+                .glassInspectorToolbar(enabled: glass != nil)
         }
-        .glassFloatingInspector(window: studioWindow, isPresented: isInspectorPresented)
+        .glassInspectorToggleOverlay(
+            enabled: glass != nil && isInspectorPresented && !model.isSelectingRedaction && !model.isCroppingVideo,
+            isPresented: $isInspectorPresented,
+            metrics: glassMetrics
+        )
+        .glassWindowChrome(
+            window: studioWindow,
+            hasSidebar: false,
+            sidebarVisible: false,
+            inspectorVisible: isInspectorPresented,
+            metrics: $glassMetrics
+        )
         .navigationTitle(windowTitle)
         .navigationSubtitle(windowSubtitle)
         .onWindowChange { window in

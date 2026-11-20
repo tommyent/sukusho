@@ -78,16 +78,21 @@ struct SettingsView: View {
     @State private var navigationHistory: [SettingsTab] = [.general]
     @State private var historyIndex = 0
     @State private var isHistoryNavigation = false
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @DrawnGlass private var glass
-    @Environment(\.colorScheme) private var colorScheme
     @State private var settingsWindow: NSWindow?
+    @State private var glassMetrics = GlassWindowButtonMetrics.fallback
 
     private var activeTab: SettingsTab {
         navigation.selectedTab ?? .general
     }
 
+    private var isSidebarCollapsed: Bool {
+        glass != nil && columnVisibility == .detailOnly
+    }
+
     var body: some View {
-        NavigationSplitView(columnVisibility: .constant(.all)) {
+        NavigationSplitView(columnVisibility: glass != nil ? $columnVisibility : .constant(.all)) {
             // The window's minimum width (`minimumWidth`) leaves this column its 200 points
             // beside the widest pane. Keep the sidebar flexible inside the column so Glass's
             // floating inset pane (`LibraryFloatingSidebar`) never clips a fixed-width list.
@@ -98,6 +103,9 @@ struct SettingsView: View {
                     ideal: 200,
                     max: 200
                 )
+                .glassSidebarCollapseOverlay(enabled: glass != nil, metrics: glassMetrics) {
+                    withAnimation { columnVisibility = .detailOnly }
+                }
                 .toolbar(removing: .sidebarToggle)
         } detail: {
             SettingsDetailView(tab: activeTab)
@@ -106,19 +114,27 @@ struct SettingsView: View {
         .navigationSplitViewStyle(.balanced)
         .frame(minWidth: SettingsView.minimumWidth, minHeight: 540)
         .onWindowChange { settingsWindow = $0 }
-        // Glass: float the sidebar on macOS 27.2+ using the Library's shared helper (macOS 26 floats it natively).
-        .task(id: "\(glass != nil)#\(colorScheme)#\(settingsWindow.map { ObjectIdentifier($0).hashValue } ?? 0)") {
-            for _ in 0..<10 {
-                let done = LibraryFloatingSidebar.update(
-                    settingsWindow, floating: glass != nil, inspectorVisible: false
-                )
-                if done { break }
-                try? await Task.sleep(for: .milliseconds(200))
-                if Task.isCancelled { break }
-            }
+        .onChange(of: glass == nil) { _, off in
+            if off { columnVisibility = .all }
         }
+        .glassWindowChrome(
+            window: settingsWindow,
+            hasSidebar: true,
+            sidebarVisible: !isSidebarCollapsed,
+            inspectorVisible: false,
+            metrics: $glassMetrics
+        )
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
+                if isSidebarCollapsed {
+                    GlassPaneToggleButton(
+                        title: "Show Sidebar",
+                        symbol: "sidebar.left",
+                        diameter: glassMetrics.diameter
+                    ) {
+                        withAnimation { columnVisibility = .all }
+                    }
+                }
                 Button {
                     goBack()
                 } label: {

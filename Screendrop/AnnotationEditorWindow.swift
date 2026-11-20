@@ -32,6 +32,7 @@ struct AnnotationEditorWindow: View {
     @Environment(\.dismiss) private var dismissWindow
     @DrawnGlass private var glass
     @State private var editorWindow: NSWindow?
+    @State private var glassMetrics = GlassWindowButtonMetrics.fallback
 
     /// What the tool dock needs, and so the narrowest the window goes.
     static let minimumWidth: CGFloat = 712
@@ -220,14 +221,22 @@ struct AnnotationEditorWindow: View {
                     onPickWallpaper: pickCustomWallpaper
                 )
                 .disabled(model.isBlockingCommit)
-                .glassInspectorToolbar(enabled: glass != nil) {
-                    if !model.isCropping {
-                        inspectorToggleButton
-                            .disabled(isBusy)
-                    }
-                }
+                .glassInspectorToolbar(enabled: glass != nil)
             }
-            .glassFloatingInspector(window: editorWindow, isPresented: isInspectorPresented)
+            .glassInspectorToggleOverlay(
+                enabled: glass != nil && isInspectorPresented && !model.isCropping,
+                isPresented: $isInspectorPresented,
+                metrics: glassMetrics,
+                isDisabled: isBusy,
+                onToggle: clearInspectorFocus
+            )
+            .glassWindowChrome(
+                window: editorWindow,
+                hasSidebar: false,
+                sidebarVisible: false,
+                inspectorVisible: isInspectorPresented,
+                metrics: $glassMetrics
+            )
             // Below this the inspector folds away and the window can go down to the canvas's
             // own minimum; it was stuck at 1040 pt with the inspector (Fable #7).
             .inspectorAutoFold(isPresented: $isInspectorPresented, below: 1000)
@@ -276,6 +285,15 @@ struct AnnotationEditorWindow: View {
 
         if glass == nil {
             inspectorToggleButton
+        } else if !isInspectorPresented {
+            GlassPaneToggleButton(
+                title: "Show Inspector",
+                symbol: "sidebar.right",
+                diameter: glassMetrics.diameter
+            ) {
+                clearInspectorFocus()
+                isInspectorPresented = true
+            }
         }
     }
 

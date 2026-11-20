@@ -13,7 +13,7 @@ struct CaptureLibraryView: View {
     @State private var projects = RecordingProjectStore.shared
     @State private var libraryWindow: NSWindow?
     @State private var handledInitialWindowPlacement = false
-    @State private var titlebarBeforeGlass: (transparent: Bool, separator: NSTitlebarSeparatorStyle)?
+    @State private var glassMetrics = GlassWindowButtonMetrics.fallback
     @State private var columnVisibility = NavigationSplitViewVisibility.automatic
     @AppStorage("captureLibrary.inspectorVisible") private var inspectorVisible = true
     @AppStorage("captureLibrary.tagsExpanded") private var tagsExpanded = true
@@ -81,35 +81,13 @@ struct CaptureLibraryView: View {
     var body: some View {
         splitLayout
         .modifier(LibraryToolbarSeparator())
-        .task(id: "\(glass != nil)#\(libraryWindow.map { ObjectIdentifier($0).hashValue } ?? 0)") {
-            if #available(macOS 27, *), let window = libraryWindow {
-                if glass != nil {
-                    if titlebarBeforeGlass == nil {
-                        titlebarBeforeGlass = (window.titlebarAppearsTransparent, window.titlebarSeparatorStyle)
-                    }
-                    window.titlebarAppearsTransparent = true
-                    window.titlebarSeparatorStyle = .none
-                } else if let previous = titlebarBeforeGlass {
-                    window.titlebarAppearsTransparent = previous.transparent
-                    window.titlebarSeparatorStyle = previous.separator
-                    titlebarBeforeGlass = nil
-                }
-            }
-            for _ in 0..<10 {
-                if LibraryWindowButtonCapsule.update(libraryWindow, shown: glass != nil) { break }
-                try? await Task.sleep(for: .milliseconds(200))
-                if Task.isCancelled { break }
-            }
-        }
-        .task(id: "\(glass != nil)#\(colorScheme)#\(columnVisibility)#\(inspectorVisible)#\(libraryWindow.map { ObjectIdentifier($0).hashValue } ?? 0)") {
-            for _ in 0..<10 {
-                if LibraryFloatingSidebar.update(
-                    libraryWindow, floating: glass != nil, inspectorVisible: inspectorVisible
-                ) { break }
-                try? await Task.sleep(for: .milliseconds(200))
-                if Task.isCancelled { break }
-            }
-        }
+        .glassWindowChrome(
+            window: libraryWindow,
+            hasSidebar: true,
+            sidebarVisible: columnVisibility != .detailOnly,
+            inspectorVisible: inspectorVisible,
+            metrics: $glassMetrics
+        )
         .focusedSceneValue(\.captureLibraryCardWidth, $cardWidth)
         .background { refreshShortcut }
         // 860 pt holds the sidebar, the grid and the inspector; below 900 the inspector folds
@@ -127,7 +105,6 @@ struct CaptureLibraryView: View {
         }
         .onDisappear { AppActivationPolicy.leave() }
         .onWindowChange { window in
-            if window !== libraryWindow { titlebarBeforeGlass = nil }
             libraryWindow = window
             model.savedUndoManager = window?.undoManager
             PreviewWindowCaptureExclusion.shared.register(window: window)
@@ -227,11 +204,17 @@ struct CaptureLibraryView: View {
         if glass != nil {
             NavigationSplitView(columnVisibility: $columnVisibility) {
                 sidebarContent
+                    .glassSidebarCollapseOverlay(enabled: true, metrics: glassMetrics) {
+                        withAnimation { columnVisibility = .detailOnly }
+                    }
                     .toolbar(removing: .sidebarToggle)
             } detail: {
                 detailColumn
                     .navigationTitle(title)
                     .toolbar(removing: .title)
+                    .overlay(alignment: .top) {
+                        glassDetailHeader
+                    }
             }
             .navigationSplitViewStyle(.balanced)
             .modifier(LibraryWindowSurface())
@@ -241,9 +224,12 @@ struct CaptureLibraryView: View {
             // Keep AppKit's full-height sidebar and window-button placement with the native toolbar empty.
             .toolbar { ToolbarSpacer(.flexible) }
             .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
-            .overlay(alignment: .top) {
-                glassHeader
-            }
+            .glassInspectorToggleOverlay(
+                enabled: true,
+                isPresented: $inspectorVisible,
+                metrics: glassMetrics,
+                hasKeyboardShortcut: true
+            )
         } else {
             NavigationSplitView(columnVisibility: $columnVisibility) {
                 sidebarContent
@@ -266,12 +252,22 @@ struct CaptureLibraryView: View {
         }
     }
 
-    // A window-wide overlay keeps the pills clear of the split view's moving toolbar separators.
-    private var glassHeader: some View {
+    // Detail-scoped overlay keeps the title and search pills clear of the floating sidebar and inspector panels.
+    private var glassDetailHeader: some View {
         let sidebarHidden = columnVisibility == .detailOnly
-        return HStack(spacing: 8) {
-            glassPaneButton(sidebarHidden ? "Show Sidebar" : "Hide Sidebar", symbol: "sidebar.left") {
-                withAnimation { columnVisibility = sidebarHidden ? .all : .detailOnly }
+        let headerHeight = max(34, glassMetrics.diameter)
+        let trailingReserve = inspectorVisible
+            ? 12
+            : LibraryFloatingSidebar.outerInset + glassMetrics.paneTrailingInset + glassMetrics.diameter + 8
+        return HStack(alignment: .center, spacing: 8) {
+            if sidebarHidden {
+                GlassPaneToggleButton(
+                    title: "Show Sidebar",
+                    symbol: "sidebar.left",
+                    diameter: glassMetrics.diameter
+                ) {
+                    withAnimation { columnVisibility = .all }
+                }
             }
             Text(title)
                 .font(.headline)
@@ -281,29 +277,14 @@ struct CaptureLibraryView: View {
                 .background { CapsuleGlass().allowsHitTesting(false) }
             Spacer(minLength: 12)
             searchField(onGlass: true)
-            glassPaneButton(inspectorVisible ? "Hide Inspector" : "Show Inspector", symbol: "sidebar.right") {
-                inspectorVisible.toggle()
-            }
-            .keyboardShortcut("i", modifiers: [.command, .option])
         }
         .foregroundStyle(AppTheme.glassTitleInk(dark: colorScheme == .dark).color)
-        .padding(.leading, 178)
-        .padding(.trailing, 10)
-        .padding(.top, 8)
+        .frame(height: headerHeight)
+        .padding(.leading, sidebarHidden ? glassMetrics.trailing + 8 : 12)
+        .padding(.trailing, trailingReserve)
+        .padding(.top, max(4, glassMetrics.centerY - headerHeight / 2))
         .frame(maxHeight: .infinity, alignment: .top)
         .ignoresSafeArea(.container, edges: .top)
-    }
-
-    private func glassPaneButton(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: symbol)
-                .labelStyle(.iconOnly)
-                .frame(width: 34, height: 34)
-                .background { CapsuleGlass().allowsHitTesting(false) }
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
-        .help(title)
     }
 
     private var sidebarContent: some View {
@@ -959,25 +940,87 @@ private final class GlassSearchFieldCell: NSSearchFieldCell {
     }
 }
 
-/// Liquid Glass capsule shared by the Library's floating controls.
-private final class CapsuleGlassView: NSGlassEffectView {
+/// Liquid Glass capsule shared by floating controls.
+final class CapsuleGlassView: NSGlassEffectView {
+    var onFrameMetrics: ((GlassWindowButtonMetrics) -> Void)?
+    private var lastReportedMetrics: GlassWindowButtonMetrics?
+
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        if shadow != nil {
+            superview?.clipsToBounds = false
+            superview?.superview?.clipsToBounds = false
+        }
+    }
+
+    override func setFrameOrigin(_ newOrigin: NSPoint) {
+        super.setFrameOrigin(newOrigin)
+        reportMetricsIfNeeded()
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        reportMetricsIfNeeded()
+    }
 
     override func layout() {
         super.layout()
         cornerRadius = bounds.height / 2
+        reportMetricsIfNeeded()
+    }
+
+    func reportMetricsIfNeeded() {
+        guard let onFrameMetrics, let container = superview, frame.height > 0 else { return }
+        let top = container.isFlipped ? frame.minY : container.bounds.height - frame.maxY
+        let metrics = GlassWindowButtonMetrics(
+            top: top.rounded(),
+            diameter: frame.height.rounded(),
+            trailing: frame.maxX.rounded(),
+            leading: frame.minX.rounded()
+        )
+        guard metrics != lastReportedMetrics else { return }
+        lastReportedMetrics = metrics
+        DispatchQueue.main.async { onFrameMetrics(metrics) }
+    }
+
+    func applyLiftShadow() {
+        wantsLayer = true
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.22)
+        shadow.shadowBlurRadius = 8
+        shadow.shadowOffset = NSSize(width: 0, height: -2)
+        self.shadow = shadow
     }
 }
 
-private struct CapsuleGlass: NSViewRepresentable {
+struct CapsuleGlass: NSViewRepresentable {
+    var lifted = false
+
     func makeNSView(context: Context) -> CapsuleGlassView {
         let view = CapsuleGlassView()
         view.style = .regular
         view.cornerRadius = 16
+        if lifted { view.applyLiftShadow() }
         return view
     }
 
     func updateNSView(_ view: CapsuleGlassView, context: Context) {}
+}
+
+/// Measured geometry of a window's Glass traffic-light pill, in top-down window coordinates.
+struct GlassWindowButtonMetrics: Equatable {
+    let top: CGFloat
+    let diameter: CGFloat
+    let trailing: CGFloat
+    let leading: CGFloat
+
+    var centerY: CGFloat { top + diameter / 2 }
+    var topInsideFloatingPane: CGFloat { max(4, top - LibraryFloatingSidebar.verticalInset) }
+    var paneTrailingInset: CGFloat { max(6, leading - LibraryFloatingSidebar.outerInset) }
+
+    static let fallback = GlassWindowButtonMetrics(top: 12, diameter: 28, trailing: 86, leading: 14)
 }
 
 /// Glass: a Liquid Glass capsule under macOS's own close, minimize and zoom buttons ("option A"), matching the title
@@ -988,7 +1031,11 @@ enum LibraryWindowButtonCapsule {
     private static let padding: CGFloat = 7
 
     /// False while the standard window buttons aren't in the window frame and laid out yet.
-    static func update(_ window: NSWindow?, shown: Bool) -> Bool {
+    static func update(
+        _ window: NSWindow?,
+        shown: Bool,
+        onMetrics: ((GlassWindowButtonMetrics) -> Void)? = nil
+    ) -> Bool {
         guard let window, let content = window.contentView, let frame = content.superview else { return true }
         let existing = frame.subviews.filter { $0.identifier == id }
         guard shown else {
@@ -1003,7 +1050,11 @@ enum LibraryWindowButtonCapsule {
             existing.forEach { $0.removeFromSuperview() }
             return false
         }
-        if existing.count == 1, frame.constraints.contains(where: { $0.firstItem === existing[0] && $0.isActive }) {
+        if existing.count == 1,
+           let capsule = existing[0] as? CapsuleGlassView,
+           frame.constraints.contains(where: { $0.firstItem === capsule && $0.isActive }) {
+            capsule.onFrameMetrics = onMetrics
+            capsule.reportMetricsIfNeeded()
             return true
         }
         existing.forEach { $0.removeFromSuperview() }
@@ -1013,12 +1064,8 @@ enum LibraryWindowButtonCapsule {
         capsule.identifier = id
         capsule.style = .regular
         capsule.cornerRadius = 14
-        capsule.wantsLayer = true
-        let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(0.22)
-        shadow.shadowBlurRadius = 8
-        shadow.shadowOffset = NSSize(width: 0, height: -2)
-        capsule.shadow = shadow
+        capsule.applyLiftShadow()
+        capsule.onFrameMetrics = onMetrics
         capsule.translatesAutoresizingMaskIntoConstraints = false
         frame.addSubview(capsule, positioned: .below, relativeTo: titlebar)
         NSLayoutConstraint.activate([
@@ -1027,6 +1074,16 @@ enum LibraryWindowButtonCapsule {
             capsule.topAnchor.constraint(equalTo: close.topAnchor, constant: -padding),
             capsule.bottomAnchor.constraint(equalTo: close.bottomAnchor, constant: padding),
         ])
+        let closeRect = close.convert(close.bounds, to: frame)
+        let zoomRect = zoom.convert(zoom.bounds, to: frame)
+        let top = (frame.isFlipped ? closeRect.minY : frame.bounds.height - closeRect.maxY) - padding
+        let initial = GlassWindowButtonMetrics(
+            top: top.rounded(),
+            diameter: (closeRect.height + padding * 2).rounded(),
+            trailing: (zoomRect.maxX + padding).rounded(),
+            leading: (closeRect.minX - padding).rounded()
+        )
+        DispatchQueue.main.async { onMetrics?(initial) }
         return true
     }
 }
@@ -1036,8 +1093,8 @@ enum LibraryWindowButtonCapsule {
 /// natively); the right inspector needs it on both macOS 26 and 27.2+. Classic, Chip, Reduce Transparency and Increase
 /// Contrast restore the flush layout untouched.
 enum LibraryFloatingSidebar {
-    private static let outerInset: CGFloat = 8
-    private static let verticalInset: CGFloat = 8
+    static let outerInset: CGFloat = 8
+    static let verticalInset: CGFloat = 8
     private static let innerInset: CGFloat = 0
     private static let cornerRadius: CGFloat = 16
     private static let rimID = NSUserInterfaceItemIdentifier("LibraryFloatingSidebarRim")
@@ -1094,12 +1151,17 @@ enum LibraryFloatingSidebar {
     }
 
     /// False while an expanded pane's glass wrapper isn't in the window and laid out yet.
-    static func update(_ window: NSWindow?, floating: Bool, inspectorVisible: Bool = true) -> Bool {
+    static func update(
+        _ window: NSWindow?,
+        floating: Bool,
+        hasSidebar: Bool = true,
+        inspectorVisible: Bool = true
+    ) -> Bool {
         guard let content = window?.contentView else { return true }
         var sidebarDone = true
         // ponytail: 27.2+ flattened NavigationSplitView's sidebar glass (26.x already floats it);
         // drop the sidebar branch if a future macOS restores floating sidebars or exposes a public opt-in.
-        if #available(macOS 27.2, *) {
+        if #available(macOS 27.2, *), hasSidebar {
             if let sidebar = findPane(behavior: .sidebar, in: content) {
                 sidebarDone = sidebar.isCollapsed ? true : updatePane(sidebar, floating: floating, isTrailing: false)
             } else {
