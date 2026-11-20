@@ -292,9 +292,11 @@ struct CaptureLibraryView: View {
     }
 
     private var sidebarContent: some View {
+        // Two lists on purpose: the floating rows turn off the table's own selection pill (`NeutralListSelection`),
+        // and the opaque layout must get a fresh table that still draws it.
         Group {
             if floatingChrome {
-                List { sidebarSections }
+                List(selection: sidebarSelection) { sidebarSections }
                     .listStyle(.sidebar)
             } else {
                 List(selection: sidebarSelection) { sidebarSections }
@@ -423,10 +425,10 @@ struct CaptureLibraryView: View {
             FloatingSidebarRow(
                 title: title,
                 isSelected: currentPage == selection,
-                onSelect: { sidebarSelection.wrappedValue = selection },
                 icon: icon,
                 trailing: trailing
             )
+            .tag(selection)
         } else {
             Label {
                 HStack {

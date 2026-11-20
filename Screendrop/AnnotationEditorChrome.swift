@@ -333,11 +333,12 @@ extension View {
 }
 
 /// Neutral monochrome sidebar row with a translucent selection and hover pill, shared by Library and Settings across
-/// all themes so sidebars never fall back to solid system-blue icons or highlights.
+/// all themes so sidebars never fall back to solid system-blue icons or highlights. Tag it inside a
+/// `List(selection:)`: the list keeps native clicks, arrow keys, type-select and VoiceOver selection, and this row
+/// turns off AppKit's accent pill (`NeutralListSelection`) and draws its own.
 struct FloatingSidebarRow<Icon: View, Trailing: View>: View {
     let title: String
     let isSelected: Bool
-    let onSelect: () -> Void
     @ViewBuilder let icon: () -> Icon
     @ViewBuilder let trailing: () -> Trailing
 
@@ -361,23 +362,21 @@ struct FloatingSidebarRow<Icon: View, Trailing: View>: View {
     }
 
     var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: 6) {
-                icon()
-                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
-                    .frame(width: 16, alignment: .center)
-                Text(title)
-                    .font(.system(size: 13, weight: isSelected ? .medium : .regular))
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-                trailing()
-            }
-            .foregroundStyle(ink)
-            .padding(.horizontal, 2)
-            .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
-            .contentShape(Rectangle())
+        HStack(spacing: 6) {
+            icon()
+                .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
+                .frame(width: 16, alignment: .center)
+            Text(title)
+                .font(.system(size: 13, weight: isSelected ? .medium : .regular))
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            trailing()
         }
-        .buttonStyle(.plain)
+        .foregroundStyle(ink)
+        .padding(.horizontal, 2)
+        .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+        .contentShape(Rectangle())
+        .background(NeutralListSelection())
         .onHover { isHovering = $0 }
         .listRowBackground(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -385,13 +384,38 @@ struct FloatingSidebarRow<Icon: View, Trailing: View>: View {
                 .padding(.horizontal, 8)
         )
         .listRowInsets(EdgeInsets(top: 1, leading: 2, bottom: 1, trailing: 2))
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+/// Turns off the accent selection pill of the AppKit table behind the `List` this sits in, keeping its selection:
+/// `FloatingSidebarRow` draws a neutral pill instead.
+/// ponytail: relies on SwiftUI's macOS List being an NSTableView (true through 27); if that changes, the system
+/// pill shows again under the neutral one, and keyboard selection still works.
+private struct NeutralListSelection: NSViewRepresentable {
+    func makeNSView(context: Context) -> Probe { Probe() }
+    func updateNSView(_ view: Probe, context: Context) { view.neutralize() }
+
+    final class Probe: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            neutralize()
+        }
+
+        func neutralize() {
+            var view = superview
+            while let current = view, !(current is NSTableView) { view = current.superview }
+            if let table = view as? NSTableView, table.selectionHighlightStyle != .none {
+                table.selectionHighlightStyle = .none
+            }
+        }
     }
 }
 
 extension FloatingSidebarRow where Icon == Image, Trailing == EmptyView {
-    init(title: String, systemImage: String, isSelected: Bool, onSelect: @escaping () -> Void) {
-        self.init(title: title, isSelected: isSelected, onSelect: onSelect) {
+    init(title: String, systemImage: String, isSelected: Bool) {
+        self.init(title: title, isSelected: isSelected) {
             Image(systemName: systemImage)
         } trailing: {
             EmptyView()
@@ -404,10 +428,9 @@ extension FloatingSidebarRow where Icon == Image {
         title: String,
         systemImage: String,
         isSelected: Bool,
-        onSelect: @escaping () -> Void,
         @ViewBuilder trailing: @escaping () -> Trailing
     ) {
-        self.init(title: title, isSelected: isSelected, onSelect: onSelect) {
+        self.init(title: title, isSelected: isSelected) {
             Image(systemName: systemImage)
         } trailing: {
             trailing()

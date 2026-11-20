@@ -212,14 +212,14 @@ private struct SettingsSidebarView: View {
     var body: some View {
         Group {
             if floatingChrome {
-                List {
+                List(selection: $selectedTab) {
                     ForEach(SettingsTab.allCases) { tab in
                         FloatingSidebarRow(
                             title: tab.title,
                             systemImage: tab.systemImage,
-                            isSelected: (selectedTab ?? .general) == tab,
-                            onSelect: { selectedTab = tab }
+                            isSelected: (selectedTab ?? .general) == tab
                         )
+                        .tag(tab)
                     }
                 }
                 .listStyle(.sidebar)
