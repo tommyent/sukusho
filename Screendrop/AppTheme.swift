@@ -123,7 +123,8 @@ nonisolated extension AppTheme {
     /// A colour chip: Classic cut square and flat, the picture edge to edge above the label (owner's pick, 2026-11-19,
     /// sd-ygmk). Only the shape changes; the owner kept Classic's colours ("I would keep the colours the same") and
     /// its drop shadow ("The chips are missing the shadow"), added a subtle kraft grain to the paper only, and a border:
-    /// a dark outer edge in both appearances with a light line under the picture ("Yes, as read back").
+    /// a dark outer edge in both appearances with a line under the picture ("Yes, as read back"). The edge, the line and
+    /// the paper are the owner's own values from the Theme Tuner, Light and Dark apart.
     static let chipLight = chip(classicLight, id: "chip-light", name: "Chip Light")
     static let chipDark = chip(classicDark, id: "chip-dark", name: "Chip Dark")
 
@@ -131,12 +132,12 @@ nonisolated extension AppTheme {
     /// perimeter (the mockup's strength, which is what sets a card without shadows off the ground).
     private static func chip(_ classic: AppTheme, id: String, name: String) -> AppTheme {
         var card = classic.card
-        card.recipe = .flat(edge: .rgb(0x000000, opacity: 0.3))
-        card.pictureEdge = .white(opacity: 0.35)
+        card.recipe = .flat(edge: classic.isDark ? .rgb(0x191919, opacity: 0.81) : .rgb(0x000000, opacity: 0.3))
+        card.pictureEdge = classic.isDark ? .rgb(0x6D6F6F, opacity: 0.35) : .rgb(0xCBCBCB, opacity: 0.69)
         card.radius = 0
         card.inset = 0
         card.gutter = 11
-        card.paper = 0.35   // subtle
+        card.paper = classic.isDark ? 0.2 : 0.28
         return AppTheme(id: id, name: name, isDark: classic.isDark, ink: classic.ink, chrome: classic.chrome,
                         ground: classic.ground, card: card, marks: classic.marks)
     }

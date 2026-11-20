@@ -7,16 +7,16 @@ struct ThemeTuningTests {
     @Test func untouchedValuesAreTheBuiltInChip() {
         var tuning = ThemeTuning()
         tuning.on = true
-        // Reset's values lay Chip over itself exactly, and the copied lines are today's source lines.
+        // Reset's values lay Chip over itself exactly, and copy as the owner's tuned values, as they pasted them.
         #expect(tuning.applied(to: .chipLight) == .chipLight)
         #expect(tuning.applied(to: .chipDark) == .chipDark)
         #expect(tuning.swift == """
-            card.recipe = .flat(edge: .rgb(0x000000, opacity: 0.3))
-            card.pictureEdge = .white(opacity: 0.35)
+            card.recipe = .flat(edge: classic.isDark ? .rgb(0x191919, opacity: 0.81) : .rgb(0x000000, opacity: 0.3))
+            card.pictureEdge = classic.isDark ? .rgb(0x6D6F6F, opacity: 0.35) : .rgb(0xCBCBCB, opacity: 0.69)
             card.shadow = classic.isDark ? 0.65 : 0.18
             card.shadowBlur = 1
             card.shadowOffset = 1
-            card.paper = 0.35
+            card.paper = classic.isDark ? 0.2 : 0.28
             """)
     }
 
@@ -33,13 +33,13 @@ struct ThemeTuningTests {
         let dark = tuning.applied(to: .chipDark), light = tuning.applied(to: .chipLight)
         #expect(dark.card.pictureEdge == .rgb(0xD9D9D9) && dark.card.paper == 0)
         #expect(light.card.recipe.flatEdge == .rgb(0x000000, opacity: 0.5) && light.card.shadowBlur == 1.5)
-        #expect(light.card.pictureEdge == AppTheme.chipLight.card.pictureEdge && light.card.paper == 0.35)
+        #expect(light.card.pictureEdge == AppTheme.chipLight.card.pictureEdge && light.card.paper == AppTheme.chipLight.card.paper)
         // Light and Dark apart where they differ, in the form `chip(_:id:name:)` takes them.
         let lines = tuning.swift.split(separator: "\n")
-        #expect(lines.contains("card.recipe = .flat(edge: classic.isDark ? .rgb(0x000000, opacity: 0.3) : .rgb(0x000000, opacity: 0.5))"))
-        #expect(lines.contains("card.pictureEdge = classic.isDark ? .rgb(0xD9D9D9) : .white(opacity: 0.35)"))
+        #expect(lines.contains("card.recipe = .flat(edge: classic.isDark ? .rgb(0x191919, opacity: 0.81) : .rgb(0x000000, opacity: 0.5))"))
+        #expect(lines.contains("card.pictureEdge = classic.isDark ? .rgb(0xD9D9D9) : .rgb(0xCBCBCB, opacity: 0.69)"))
         #expect(lines.contains("card.shadowBlur = classic.isDark ? 1 : 1.5"))
-        #expect(lines.contains("card.paper = classic.isDark ? 0 : 0.35"))
+        #expect(lines.contains("card.paper = classic.isDark ? 0 : 0.28"))
     }
 
     @Test func savedValuesComeBackAndBadOnesReadAsBuiltIn() {

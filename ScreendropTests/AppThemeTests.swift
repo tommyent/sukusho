@@ -36,10 +36,11 @@ struct AppThemeTests {
         for theme in [AppTheme.chipLight, .chipDark] {
             #expect(theme.card.recipe.flatEdge != nil, "\(theme.id)")
             #expect(theme.card.gutter == 11)
-            #expect(theme.card.paper == 0.35, "\(theme.id)")
-            // The owner's border: a dark outer edge in Light and Dark, a light line under the picture.
-            #expect(theme.card.recipe.flatEdge == .rgb(0x000000, opacity: 0.3), "\(theme.id)")
-            #expect(theme.card.pictureEdge == .white(opacity: 0.35), "\(theme.id)")
+            // The owner's values from the Theme Tuner (2026-11-19): a dark outer edge and a line under the picture in
+            // Light and Dark, and the paper's strength.
+            #expect(theme.card.paper == (theme.isDark ? 0.2 : 0.28), "\(theme.id)")
+            #expect(theme.card.recipe.flatEdge == (theme.isDark ? .rgb(0x191919, opacity: 0.81) : .rgb(0x000000, opacity: 0.3)), "\(theme.id)")
+            #expect(theme.card.pictureEdge == (theme.isDark ? .rgb(0x6D6F6F, opacity: 0.35) : .rgb(0xCBCBCB, opacity: 0.69)), "\(theme.id)")
             for width: CGFloat in [140, 192, 220, 320] {
                 let density = LibraryCardDensity(width: width, inset: theme.card.inset, radius: theme.card.radius)
                 #expect(density.pictureInset == 0 && density.cornerRadius == 0 && density.pictureRadius == 0, "\(theme.id) \(width)")
