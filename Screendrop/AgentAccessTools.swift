@@ -362,11 +362,13 @@ final class AgentToolbox {
         ask.deadline = deadline
         let pending = AgentPendingAnswer<AgentDecision>(sleep: sleep)
         var answeredAt: Date?
+        var revocationsAtAnswer = 0
         let id = UUID()
         openAsks[id] = (session, { pending.give(nil) })
         let close = asker.ask(ask) { [self] decision in
             if pending.answer == nil {
                 answeredAt = now()
+                revocationsAtAnswer = grants.revocations
                 // Recorded here, so it holds for the waiting calls even if this helper goes before it's read.
                 if decision == nil { turn.denied = true }
             }
@@ -377,7 +379,9 @@ final class AgentToolbox {
         close()
         guard !session.isClosed else { return nil }
         // When the owner answered, not when this wait noticed: a click inside the window counts, one past it doesn't.
-        guard let decision = answer ?? nil, let answeredAt, answeredAt <= deadline else {
+        // A Revoke in Settings after the click wins over it, so nothing is kept (Astra, round 4).
+        guard let decision = answer ?? nil, let answeredAt, answeredAt <= deadline,
+              grants.revocations == revocationsAtAnswer else {
             turn.denied = true
             return nil
         }
@@ -962,7 +966,8 @@ final class AgentToolbox {
     /// The history, once the owner lets this agent read it; nil when they don't. Off asks nothing. Read after the
     /// answer, so what was deleted, or history turned off, while the ask was open stays out. `stillAllowed`, asked
     /// after each later wait, throws once history is off, or was turned off and on again (a new store), and is false
-    /// once the helper went away or the grant the call rode on was revoked; Just this once holds for its call.
+    /// once the helper went away or a Revoke came after the approval, whether the call rode on a grant or on Just this
+    /// once. The count is Sukusho-wide, so another agent's Revoke stops it too; that fails closed.
     private func clipboardHistory(_ session: AgentSession) async throws
         -> (entries: [ClipboardEntry], stillAllowed: () throws -> Bool)? {
         guard backend.clipboardStore != nil else { throw Self.historyOff }
@@ -970,13 +975,12 @@ final class AgentToolbox {
                            details: ["It sees what you copied and can put a clip back on the clipboard.",
                                      "Concealed copies, such as passwords, are never kept."])
         guard await approve(.clipboard, items: [], session: session, ask: ask) != nil else { return nil }
-        let byGrant = isAllowed(.clipboard, items: [], session: session)
+        // Taken as approve returns, with nothing awaited between: any later Revoke shows as a change.
         let store = backend.clipboardStore
         let revocations = grants.revocations
         let stillAllowed = { [self] () throws -> Bool in
             guard let store, backend.clipboardStore === store else { throw Self.historyOff }
-            // Grants only grow between revocations, so an unchanged count means the call's grant still stands.
-            return !session.isClosed && (!byGrant || grants.revocations == revocations)
+            return !session.isClosed && grants.revocations == revocations
         }
         guard let entries = try await backend.clipboardEntries() else { throw Self.historyOff }
         return try stillAllowed() ? (entries, stillAllowed) : nil

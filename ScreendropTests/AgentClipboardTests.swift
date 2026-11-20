@@ -655,10 +655,28 @@ struct AgentClipboardTests {
         harness.backend.onJPEG = nil
         harness.backend.clipStore = store
         let fresh = FileManager.default.temporaryDirectory.appendingPathComponent("AgentClipboardTests-\(UUID().uuidString)")
-        harness.backend.onClipRead = { harness.backend.clipStore = try? ClipboardHistoryStore(directory: fresh, deviceID: "test-mac") }
+        let replacement = try ClipboardHistoryStore(directory: fresh, deviceID: "test-mac")
+        harness.backend.onClipRead = { harness.backend.clipStore = replacement }
         let reopened = await harness.toolbox.call("clipboard_list", [:], session: AgentSession(agent: AgentHarness.agent))
         #expect(agentStatus(reopened) == "error")
         #expect(!String(describing: reopened.object).contains("read-while-turned-off"))
+    }
+
+    /// A Revoke in Settings after the owner's click, before the call has read it, wins: no grant is kept and the call is
+    /// denied, for Always and Just this once alike (Astra, round 4).
+    @Test func aRevokeAfterTheClickWins() async throws {
+        for decision in [AgentDecision.always, .once] {
+            let harness = try clipHarness()
+            harness.toolbox.askTimeout = .seconds(3600)
+            try await record(harness, text("x"), at: start)
+            harness.asker.reply = .never
+            let list = Task { await harness.call("clipboard_list") }
+            await waitUntil { harness.asker.laterDecisions.count == 1 }
+            harness.asker.laterDecisions[0](decision)
+            harness.grants.revoke(AgentHarness.agent.key)
+            #expect(agentStatus(await list.value) == "denied", "\(decision)")
+            #expect(!harness.grants.hasAlways(.clipboard, for: AgentHarness.agent), "\(decision)")
+        }
     }
 
     /// A helper that has gone away asks nothing, and a standing grant doesn't carry it either (Astra, round 3).
@@ -682,8 +700,8 @@ struct AgentClipboardTests {
         harness.asker.reply = .never
         let other = AgentSession(agent: AgentHarness.agent)
         let first = Task { await harness.call("clipboard_list") }
-        let second = Task { await harness.toolbox.call("clipboard_list", [:], session: other) }
         await waitUntil { harness.asker.laterDecisions.count == 1 }
+        let second = Task { await harness.toolbox.call("clipboard_list", [:], session: other) }
         for _ in 0..<50 { await Task.yield() }
         harness.asker.laterDecisions[0](nil)
         harness.toolbox.end(harness.session)
@@ -701,6 +719,7 @@ struct AgentClipboardTests {
         try await record(harness, text("x"), at: start)
         harness.asker.reply = .never
         let first = Task { await harness.call("clipboard_list") }
+        await waitUntil { harness.asker.laterDecisions.count == 1 }
         let second = Task { await harness.toolbox.call("clipboard_list", [:], session: AgentSession(agent: unknown)) }
         await waitUntil { harness.asker.laterDecisions.count == 2 }
         #expect(harness.asker.asks.count == 2)
@@ -718,6 +737,9 @@ struct AgentClipboardTests {
             let harness = try clipHarness()
             defer { harness.backend.clipPasteboard.releaseGlobally() }
             let id = try await record(harness, text("restore-\(end)"), at: start)
+            let replacement = try ClipboardHistoryStore(
+                directory: FileManager.default.temporaryDirectory.appendingPathComponent("AgentClipboardTests-\(UUID().uuidString)"),
+                deviceID: "test-mac")
             harness.asker.reply = .allow(.session)
             #expect(clips(await harness.call("clipboard_list")).count == 1)
             harness.backend.beforeClipWrite = {
@@ -729,10 +751,7 @@ struct AgentClipboardTests {
                     harness.grants.revoke(AgentHarness.agent.key)
                     harness.grants.grantSession(.clipboard, to: AgentHarness.agent)
                 case .historyOff: harness.backend.clipStore = nil
-                case .historyReopened:
-                    harness.backend.clipStore = try? ClipboardHistoryStore(
-                        directory: FileManager.default.temporaryDirectory.appendingPathComponent("AgentClipboardTests-\(UUID().uuidString)"),
-                        deviceID: "test-mac")
+                case .historyReopened: harness.backend.clipStore = replacement
                 }
             }
             let result = await harness.call("clipboard_restore", ["id": id])
