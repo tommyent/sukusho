@@ -114,6 +114,14 @@ nonisolated struct AppTheme: Sendable, Equatable, Identifiable {
     /// SwiftUI's standard materials, thinnest to thickest.
     nonisolated enum FrostMaterial: String, Sendable, Equatable, CaseIterable, Codable {
         case ultraThin, thin, regular, thick
+        var title: String {
+            switch self {
+            case .ultraThin: "Ultra thin"
+            case .thin: "Thin"
+            case .regular: "Regular"
+            case .thick: "Thick"
+            }
+        }
         var material: Material {
             switch self {
             case .ultraThin: .ultraThinMaterial
@@ -221,7 +229,7 @@ nonisolated extension AppTheme {
     static func named(_ id: String?, dark: Bool) -> AppTheme {
         let theme = builtIns.first { $0.id == id && $0.isDark == dark } ?? (dark ? classicDark : classicLight)
         #if THEME_TUNER
-        return ThemeTuning.saved.applied(to: theme)
+        return GlassTuning.saved.applied(to: ThemeTuning.saved.applied(to: theme))
         #else
         return theme
         #endif
@@ -288,11 +296,12 @@ nonisolated enum ThemeColor: Sendable, Equatable {
     @Environment(\.colorScheme) private var scheme
     #if THEME_TUNER
     @AppStorage(ThemeTuning.key) private var tuning: Data?
+    @AppStorage(GlassTuning.key) private var glassTuning: Data?
     #endif
 
     var wrappedValue: AppTheme {
         #if THEME_TUNER
-        _ = tuning   // so every card redraws as the tuner moves
+        _ = (tuning, glassTuning)   // so every card redraws as the tuner moves
         #endif
         return scheme == .dark ? AppTheme.named(dark, dark: true) : AppTheme.named(light, dark: false)
     }

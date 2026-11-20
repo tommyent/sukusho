@@ -77,6 +77,38 @@ struct GlassThemeTests {
         #expect(GlassPicture.meanLuminance(folder.appendingPathComponent("missing.png")) == nil)
     }
 
+    // MARK: - The Theme Tuner's Glass values
+
+    @Test func untouchedGlassTuningIsTheBuiltInGlass() {
+        var tuning = GlassTuning()
+        tuning.on = true
+        #expect(tuning.applied(to: .glassLight) == .glassLight)
+        #expect(tuning.applied(to: .glassDark) == .glassDark)
+    }
+
+    @Test func tunedGlassValuesReachOnlyGlassAndOnlyWhileOn() throws {
+        var tuning = GlassTuning()
+        tuning.dark.material = .thick
+        tuning.dark.tint = 0x102030
+        tuning.dark.tintOpacity = 0.4
+        tuning.dark.rimOpacity = 0.3
+        tuning.dark.blur = 12
+        tuning.dark.dim = 0.5
+        tuning.dark.ink = .light
+        for theme in AppTheme.builtIns { #expect(tuning.applied(to: theme) == theme, "off: \(theme.id)") }
+        tuning.on = true
+        let dark = tuning.applied(to: .glassDark)
+        let frost = try #require(dark.card.recipe.frost)
+        #expect(frost.material == .thick && frost.tint == .rgb(0x102030, opacity: 0.4) && frost.rim == .white(opacity: 0.3))
+        #expect(dark.ground.backdrop == AppTheme.Backdrop(blur: 12, dim: 0.5, ink: .light))
+        #expect(tuning.applied(to: .glassLight) == .glassLight)
+        for theme in AppTheme.builtIns where !theme.id.hasPrefix("glass") { #expect(tuning.applied(to: theme) == theme) }
+        #expect(tuning.swift.contains("Backdrop(blur: 12, dim: 0.5, ink: .light)"))
+        #expect(tuning.swift.contains("Frost(material: .thick, tint: .rgb(0x102030, opacity: 0.4), rim: .white(opacity: 0.3))"))
+        #expect(GlassTuning(tuning.data) == tuning)
+        #expect(GlassTuning(Data("not json".utf8)) == GlassTuning())
+    }
+
     // MARK: - Fixtures
 
     private func temporaryFolder() throws -> URL {
