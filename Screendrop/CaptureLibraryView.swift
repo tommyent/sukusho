@@ -1013,6 +1013,12 @@ enum LibraryWindowButtonCapsule {
         capsule.identifier = id
         capsule.style = .regular
         capsule.cornerRadius = 14
+        capsule.wantsLayer = true
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.22)
+        shadow.shadowBlurRadius = 8
+        shadow.shadowOffset = NSSize(width: 0, height: -2)
+        capsule.shadow = shadow
         capsule.translatesAutoresizingMaskIntoConstraints = false
         frame.addSubview(capsule, positioned: .below, relativeTo: titlebar)
         NSLayoutConstraint.activate([
