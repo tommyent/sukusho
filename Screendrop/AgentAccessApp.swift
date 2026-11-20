@@ -370,7 +370,10 @@ final class AgentApprovalPresenter: AgentAsker {
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.contentViewController = NSHostingController(rootView: view)
+        let host = NSHostingController(rootView: view)
+        panel.contentViewController = host
+        // The panel keeps its first size otherwise, and cut the ask's text off at its edge (live check, 2026-11-20).
+        panel.setContentSize(host.view.fittingSize)
         PreviewWindowCaptureExclusion.shared.register(window: panel)
         if panels.isEmpty { focusOwner = NSWorkspace.shared.frontmostApplication }
         panel.onClose = { [weak self, weak panel] in
@@ -458,7 +461,9 @@ struct AgentApprovalView<Content: View>: View {
                 if !ask.thumbnails.isEmpty { AgentThumbnails(urls: ask.thumbnails) }
                 if !ask.details.isEmpty {
                     VStack(alignment: .leading, spacing: 2) {
-                        ForEach(Array(ask.details.enumerated()), id: \.offset) { Text($0.element) }
+                        ForEach(Array(ask.details.enumerated()), id: \.offset) {
+                            Text($0.element).fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -495,6 +500,8 @@ struct AgentApprovalView<Content: View>: View {
                     }
                 }
             }
+            // A set width, so the lines above wrap: at their ideal width they ran past the panel's edge.
+            .frame(width: 308, alignment: .leading)
             .padding([.horizontal, .top], 16)
             .padding(.bottom, 4)
             content
