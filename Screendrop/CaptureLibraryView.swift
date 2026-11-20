@@ -80,17 +80,20 @@ struct CaptureLibraryView: View {
     var body: some View {
         splitLayout
         .modifier(LibraryToolbarSeparator())
-        // Glass: no bar under the toolbar, so macOS's title and window buttons sit on glass pills, the inspector
-        // floats as a raised glass pane on macOS 26 and 27.2+, and on macOS 27.2+ the left sidebar floats too. The
-        // title field, buttons and split wrappers arrive a moment after the window, so a few tries.
-        .task(id: "\(title)#\(glass != nil)#\(colorScheme)#\(columnVisibility)#\(inspectorVisible)#\(libraryWindow.map { ObjectIdentifier($0).hashValue } ?? 0)") {
+        .task(id: "\(title)#\(glass != nil)#\(colorScheme)#\(libraryWindow.map { ObjectIdentifier($0).hashValue } ?? 0)") {
             for _ in 0..<10 {
                 let plateDone = LibraryTitlePlate.update(libraryWindow, shown: glass != nil)
                 let buttonsDone = LibraryWindowButtonCapsule.update(libraryWindow, shown: glass != nil)
-                let sidebarDone = LibraryFloatingSidebar.update(
+                if plateDone && buttonsDone { break }
+                try? await Task.sleep(for: .milliseconds(200))
+                if Task.isCancelled { break }
+            }
+        }
+        .task(id: "\(glass != nil)#\(colorScheme)#\(columnVisibility)#\(inspectorVisible)#\(libraryWindow.map { ObjectIdentifier($0).hashValue } ?? 0)") {
+            for _ in 0..<10 {
+                if LibraryFloatingSidebar.update(
                     libraryWindow, floating: glass != nil, inspectorVisible: inspectorVisible
-                )
-                if plateDone && buttonsDone && sidebarDone { break }
+                ) { break }
                 try? await Task.sleep(for: .milliseconds(200))
                 if Task.isCancelled { break }
             }
@@ -207,10 +210,6 @@ struct CaptureLibraryView: View {
         } message: { Text(model.errorMessage ?? "") }
     }
 
-    /// Glass attaches `.inspector` to the split view so SwiftUI inserts a tracking separator between detail and
-    /// inspector: the search pill stays clear of the floating inspector pane, while the inspector toggle sits inside
-    /// its top-right corner (and stays put when collapsed). Classic, Chip, Reduce Transparency and Increase Contrast
-    /// keep the inspector inside the detail column so the opaque toolbar strip runs unbroken across it.
     @ViewBuilder private var splitLayout: some View {
         if glass != nil {
             NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -219,7 +218,6 @@ struct CaptureLibraryView: View {
             } detail: {
                 detailColumn
                     .navigationTitle(title)
-                    .toolbar { searchToolbarItem }
             }
             .navigationSplitViewStyle(.balanced)
             .modifier(LibraryWindowSurface())
@@ -229,6 +227,14 @@ struct CaptureLibraryView: View {
                         ToolbarSpacer(.flexible)
                         inspectorToggleToolbarItem
                     }
+            }
+            .overlay(alignment: .topTrailing) {
+                searchField(onGlass: true)
+                    .padding(.trailing, 64)
+                    .padding(.leading, 350)
+                    .padding(.top, 8)
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .ignoresSafeArea(.container, edges: .top)
             }
         } else {
             NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -763,18 +769,22 @@ struct CaptureLibraryView: View {
         .accessibilityHidden(true)
     }
 
-    @ToolbarContentBuilder private var searchToolbarItem: some ToolbarContent {
-        // Before the toggle, so the toggle is the last item at the far right.
-        ToolbarItem(placement: .primaryAction) {
-            LibrarySearchField(
-                text: $model.searchText,
-                prompt: saved.isShown ? "Search saved" : clipboard.isShown ? (clipboard.showsSnippets ? "Search snippets" : "Search clipboard") : comments.isShown ? "Search comments" : likes.isShown ? "Search likes" : cloud.isShown ? (cloud.showsReceived ? "Search received files" : cloud.showsFiles ? "Search files" : "Search uploads") : "Search captures"
-            )
-            // About the width `.searchable` gave it; narrower when the toolbar is tight.
-            .frame(minWidth: 120, idealWidth: 320, maxWidth: 320)
+    private func searchField(onGlass: Bool) -> some View {
+        LibrarySearchField(
+            text: $model.searchText,
+            prompt: saved.isShown ? "Search saved" : clipboard.isShown ? (clipboard.showsSnippets ? "Search snippets" : "Search clipboard") : comments.isShown ? "Search comments" : likes.isShown ? "Search likes" : cloud.isShown ? (cloud.showsReceived ? "Search received files" : cloud.showsFiles ? "Search files" : "Search uploads") : "Search captures",
+            bezel: !onGlass
+        )
+        .padding(.horizontal, onGlass ? 8 : 0)
+        .frame(minWidth: 120, idealWidth: 320, maxWidth: 320)
+        .frame(height: onGlass ? 34 : nil)
+        .background {
+            if onGlass { CapsuleGlass().allowsHitTesting(false) }
         }
-        // The toolbar's glass is the field's resting pill: in a toolbar the
-        // field draws no bezel of its own until it's focused.
+    }
+
+    @ToolbarContentBuilder private var searchToolbarItem: some ToolbarContent {
+        ToolbarItem(placement: .primaryAction) { searchField(onGlass: false) }
         .sharedBackgroundVisibility(.visible)
     }
 
@@ -840,9 +850,15 @@ private struct FeedCount: View {
 private struct LibrarySearchField: NSViewRepresentable {
     @Binding var text: String
     let prompt: String
+    let bezel: Bool
 
     func makeNSView(context: Context) -> NSSearchField {
         let field = NSSearchField()
+        if !bezel {
+            field.cell = GlassSearchFieldCell(textCell: "")
+            field.isBezeled = false
+            field.isBordered = false
+        }
         field.sendsSearchStringImmediately = true
         field.target = context.coordinator
         field.action = #selector(Coordinator.search(_:))
@@ -878,6 +894,18 @@ private struct LibrarySearchField: NSViewRepresentable {
         init(text: Binding<String>) { self.text = text }
 
         @objc func search(_ field: NSSearchField) { text.wrappedValue = field.stringValue }
+    }
+}
+
+private final class GlassSearchFieldCell: NSSearchFieldCell {
+    override func searchTextRect(forBounds rect: NSRect) -> NSRect {
+        let text = super.searchTextRect(forBounds: rect)
+        let search = searchButtonRect(forBounds: rect)
+        let cancel = cancelButtonRect(forBounds: rect)
+        // The borderless cell gives its text the button's space as well.
+        let left = max(text.minX, search.maxX + 4)
+        let right = cancel.isEmpty ? text.maxX : min(text.maxX, cancel.minX - 4)
+        return NSRect(x: left, y: text.minY, width: max(0, right - left), height: text.height)
     }
 }
 
