@@ -274,6 +274,8 @@ final class AgentLiveBackend: AgentBackend {
 @MainActor
 final class AgentApprovalPresenter: AgentAsker {
     private var panels: [AgentPanel] = []
+    /// The app in front when the first of the open asks appeared.
+    private var focusOwner: NSRunningApplication?
 
     func askShare(_ ask: AgentAsk, settings: AgentShareSettings,
                   answer: @escaping ((decision: AgentDecision, settings: AgentShareSettings)?) -> Void) -> () -> Void {
@@ -370,9 +372,20 @@ final class AgentApprovalPresenter: AgentAsker {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.contentViewController = NSHostingController(rootView: view)
         PreviewWindowCaptureExclusion.shared.register(window: panel)
+        if panels.isEmpty { focusOwner = NSWorkspace.shared.frontmostApplication }
         panel.onClose = { [weak self, weak panel] in
             onClose()
-            self?.panels.removeAll { $0 === panel }
+            guard let self else { return }
+            panels.removeAll { $0 === panel }
+            guard panels.isEmpty else { return }
+            let others = NSApp.windows.filter { $0 !== panel }.map {
+                AgentFocus.Window(visible: $0.isVisible, ordinary: $0.styleMask.contains(.titled) && $0.level == .normal)
+            }
+            if AgentFocus.returnsFocus(to: focusOwner?.processIdentifier, own: ProcessInfo.processInfo.processIdentifier,
+                                       isActive: NSApp.isActive, otherWindows: others) {
+                focusOwner?.activate()
+            }
+            focusOwner = nil
         }
         panels.append(panel)
         let offset = CGFloat(panels.count - 1) * 24

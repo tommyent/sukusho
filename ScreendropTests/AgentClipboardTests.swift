@@ -266,6 +266,19 @@ struct AgentClipboardTests {
         #expect(!AgentGroup.publish.sessionOutlivesHelper && !AgentGroup.capture.sessionOutlivesHelper)
     }
 
+    @Test func closingTheLastAskGivesTheKeyboardBackOnlyWhenSukushoShowsNoWindow() {
+        let own: pid_t = 100
+        let statusItem = AgentFocus.Window(visible: true, ordinary: false)
+        let library = AgentFocus.Window(visible: true, ordinary: true)
+        let closedLibrary = AgentFocus.Window(visible: false, ordinary: true)
+        #expect(AgentFocus.returnsFocus(to: 200, own: own, isActive: true, otherWindows: [statusItem, closedLibrary]))
+        #expect(!AgentFocus.returnsFocus(to: 200, own: own, isActive: true, otherWindows: [statusItem, library]))
+        #expect(!AgentFocus.returnsFocus(to: own, own: own, isActive: true, otherWindows: []))
+        #expect(!AgentFocus.returnsFocus(to: nil, own: own, isActive: true, otherWindows: []))
+        // The ask timed out after the owner went to another app: they stay there.
+        #expect(!AgentFocus.returnsFocus(to: 200, own: own, isActive: false, otherWindows: []))
+    }
+
     @Test func historyOffSaysSoWithoutAsking() async throws {
         let harness = AgentHarness()
         let result = await harness.call("clipboard_list")

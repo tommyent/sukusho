@@ -35,6 +35,23 @@ extension AgentGroup {
     var sessionOutlivesHelper: Bool { self == .clipboard }
 }
 
+/// An ask takes the keyboard from the app in front. When the last one closes and Sukusho shows no window of its own,
+/// that app gets it back, so a launcher's paste lands at once (desk-lead for Unleash, 2026-11-20).
+nonisolated enum AgentFocus {
+    struct Window: Sendable {
+        let visible: Bool
+        /// A Library, Settings or editor window: titled, at the normal level. Not a status item, menu or panel.
+        let ordinary: Bool
+    }
+
+    /// `isActive`: Sukusho still has the keyboard. An ask that timed out after the owner moved to another app leaves
+    /// them there.
+    static func returnsFocus(to previous: pid_t?, own: pid_t, isActive: Bool, otherWindows: [Window]) -> Bool {
+        guard isActive, let previous, previous != own else { return false }
+        return !otherWindows.contains { $0.visible && $0.ordinary }
+    }
+}
+
 /// An agent: the code-signing identity of the program that started the helper
 /// (Claude Code's or Codex's binary, say), plus the MCP client name it gives.
 /// The name alone is self-reported, so another program calling itself
