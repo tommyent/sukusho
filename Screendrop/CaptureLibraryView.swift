@@ -945,14 +945,6 @@ final class CapsuleGlassView: NSGlassEffectView {
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    override func viewDidMoveToSuperview() {
-        super.viewDidMoveToSuperview()
-        if shadow != nil {
-            superview?.clipsToBounds = false
-            superview?.superview?.clipsToBounds = false
-        }
-    }
-
     override func setFrameOrigin(_ newOrigin: NSPoint) {
         super.setFrameOrigin(newOrigin)
         reportMetricsIfNeeded()
@@ -994,13 +986,10 @@ final class CapsuleGlassView: NSGlassEffectView {
 }
 
 struct CapsuleGlass: NSViewRepresentable {
-    var lifted = false
-
     func makeNSView(context: Context) -> CapsuleGlassView {
         let view = CapsuleGlassView()
         view.style = .regular
         view.cornerRadius = 16
-        if lifted { view.applyLiftShadow() }
         return view
     }
 

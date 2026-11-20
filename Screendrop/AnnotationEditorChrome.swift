@@ -454,7 +454,20 @@ struct GlassPaneToggleButton: View {
                 .font(.system(size: max(12, diameter * 0.46), weight: .medium))
                 .foregroundStyle(AppTheme.glassTitleInk(dark: colorScheme == .dark).color)
                 .frame(width: diameter, height: diameter)
-                .background { CapsuleGlass(lifted: true).allowsHitTesting(false) }
+                .background {
+                    // The window-button pill's lift (`applyLiftShadow`), drawn in SwiftUI and only outside the circle,
+                    // so no AppKit host has to stop clipping for it and the glass isn't darkened from below.
+                    Circle()
+                        .fill(.black)
+                        .shadow(color: .black.opacity(0.22), radius: 4, y: 2)
+                        .mask {
+                            Rectangle().padding(-16)
+                                .overlay { Circle().fill(.black).blendMode(.destinationOut) }
+                                .compositingGroup()
+                        }
+                        .allowsHitTesting(false)
+                }
+                .background { CapsuleGlass().allowsHitTesting(false) }
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
