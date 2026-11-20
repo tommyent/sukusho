@@ -22,6 +22,10 @@ struct CaptureLibraryView: View {
     private var layout: CaptureLibraryLayout { showsList ? .list : .grid }
 
     private var activeFilter: CaptureLibraryFilter { model.filter ?? .all }
+    private var title: String {
+        saved.isShown ? "Saved" : clipboard.isShown ? (clipboard.showsSnippets ? "Snippets" : "Clipboard") : comments.isShown ? "Comments" : likes.isShown ? "Likes" : cloud.isShown ? (!CloudUploader.shared.isConfigured ? "Cloud" : cloud.showsReceived ? "Received" : cloud.showsFiles ? "Files" : "Uploads") : model.tagFilter ?? activeFilter.title
+    }
+    @DrawnGlass private var glass
 
     /// The sidebar picks a kind of capture, the cloud uploads or a tag.
     private var currentPage: CaptureLibrarySidebarSelection? {
@@ -276,11 +280,18 @@ struct CaptureLibraryView: View {
                 .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
             }
             .modifier(LibraryWindowSurface())
-            .navigationTitle(saved.isShown ? "Saved" : clipboard.isShown ? (clipboard.showsSnippets ? "Snippets" : "Clipboard") : comments.isShown ? "Comments" : likes.isShown ? "Likes" : cloud.isShown ? (!CloudUploader.shared.isConfigured ? "Cloud" : cloud.showsReceived ? "Received" : cloud.showsFiles ? "Files" : "Uploads") : model.tagFilter ?? activeFilter.title)
+            .navigationTitle(title)
         }
         .navigationSplitViewStyle(.balanced)
         .modifier(LibraryToolbarSeparator())
         .toolbar { toolbar }
+        // Glass: no bar under the toolbar, so macOS's title would sit on the bare picture. The toolbar's title field
+        // comes a moment after the window, so a few tries.
+        .task(id: "\(title)#\(glass != nil)#\(libraryWindow.map { ObjectIdentifier($0).hashValue } ?? 0)") {
+            for _ in 0..<10 where !LibraryTitlePlate.update(libraryWindow, shown: glass != nil) {
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+        }
         .focusedSceneValue(\.captureLibraryCardWidth, $cardWidth)
         .background { refreshShortcut }
         // 860 pt holds the sidebar, the grid and the inspector; below 900 the inspector folds
@@ -737,6 +748,49 @@ private struct LibrarySearchField: NSViewRepresentable {
         init(text: Binding<String>) { self.text = text }
 
         @objc func search(_ field: NSSearchField) { text.wrappedValue = field.stringValue }
+    }
+}
+
+/// Glass: the opaque chrome behind macOS's window title, as the section titles have (`LibrarySectionHeader`), since
+/// Glass hides the toolbar's bar. The title stays macOS's own, in its place, font and inactive grey: the plate goes
+/// behind the toolbar's title field. A macOS without that field gets no plate, which is round 2's look.
+/// (A title of Sukusho's own as a toolbar item lost the room macOS gives its title: the search field moved up to it.)
+enum LibraryTitlePlate {
+    private static let id = NSUserInterfaceItemIdentifier("LibraryTitlePlate")
+
+    /// False while the title field isn't there yet.
+    static func update(_ window: NSWindow?, shown: Bool) -> Bool {
+        guard let window, let content = window.contentView, let frame = content.superview else { return true }
+        var plates: [NSView] = []
+        var field: NSTextField?
+        func walk(_ view: NSView) {
+            if view.identifier == id { plates.append(view) }
+            if field == nil, let text = view as? NSTextField, text.stringValue == window.title, !text.isHidden,
+               text.frame.width > 0, !view.isDescendant(of: content) {
+                field = text
+            }
+            view.subviews.forEach(walk)
+        }
+        walk(frame)
+        plates.forEach { $0.removeFromSuperview() }
+        guard shown else { return true }
+        // In the window's frame view, just under the titlebar's container: the views around the field clip to it.
+        guard let field else { return false }
+        var titlebar: NSView = field
+        while let up = titlebar.superview, up !== frame { titlebar = up }
+        let plate = NSBox()
+        plate.identifier = id
+        plate.boxType = .custom
+        plate.borderWidth = 0
+        plate.cornerRadius = 7
+        plate.fillColor = WorkspaceChrome.nsBackground
+        plate.translatesAutoresizingMaskIntoConstraints = false
+        frame.addSubview(plate, positioned: .below, relativeTo: titlebar)
+        NSLayoutConstraint.activate([plate.leadingAnchor.constraint(equalTo: field.leadingAnchor, constant: -8),
+                                     plate.trailingAnchor.constraint(equalTo: field.trailingAnchor, constant: 8),
+                                     plate.topAnchor.constraint(equalTo: field.topAnchor, constant: -3),
+                                     plate.bottomAnchor.constraint(equalTo: field.bottomAnchor, constant: 3)])
+        return true
     }
 }
 
