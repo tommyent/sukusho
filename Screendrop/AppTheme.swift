@@ -243,6 +243,12 @@ nonisolated extension AppTheme {
     static func current(for appearance: NSAppearance) -> AppTheme {
         current(dark: appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
     }
+
+    /// Glass's picture, while it's drawn: Reduce Transparency and Increase Contrast take every Glass surface (the
+    /// picture, the sidebar, inspector and toolbar glass, the frost, the popup) to its opaque colours instead.
+    func drawnBackdrop(reduceTransparency: Bool, increaseContrast: Bool) -> Backdrop? {
+        chrome.glass && !reduceTransparency && !increaseContrast ? ground.backdrop : nil
+    }
 }
 
 nonisolated extension AppTheme.Marks {
@@ -304,5 +310,17 @@ nonisolated enum ThemeColor: Sendable, Equatable {
         _ = (tuning, glassTuning)   // so every card redraws as the tuner moves
         #endif
         return scheme == .dark ? AppTheme.named(dark, dark: true) : AppTheme.named(light, dark: false)
+    }
+}
+
+/// The current theme's Glass picture while it's drawn (`AppTheme.drawnBackdrop`); nil for every other theme, and for
+/// Glass under Reduce Transparency or Increase Contrast, where its surfaces draw their opaque colours.
+@propertyWrapper struct DrawnGlass: DynamicProperty {
+    @CurrentTheme private var theme
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var wrappedValue: AppTheme.Backdrop? {
+        theme.drawnBackdrop(reduceTransparency: reduceTransparency, increaseContrast: contrast == .increased)
     }
 }

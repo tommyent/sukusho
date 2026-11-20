@@ -305,9 +305,8 @@ private struct WorkspaceTextPlate: ViewModifier {
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if overGlassPicture ? reduceTransparency || contrast == .increased
-            : WorkspaceBackground.shown(style, reduceTransparency: reduceTransparency,
-                                        increaseContrast: contrast == .increased) != .wallpaper {
+        if !overGlassPicture && WorkspaceBackground.shown(style, reduceTransparency: reduceTransparency,
+                                                           increaseContrast: contrast == .increased) != .wallpaper {
             content
         } else if capsule {
             content.background(WorkspaceChrome.background, in: Capsule())

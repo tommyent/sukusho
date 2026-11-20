@@ -743,11 +743,11 @@ private struct LibrarySearchField: NSViewRepresentable {
 /// columns and the toolbar read as one flat surface.
 /// Glass paints nothing here: macOS's own sidebar glass shows over the theme's picture.
 private struct LibrarySidebarSurface: ViewModifier {
-    @CurrentTheme private var theme
+    @DrawnGlass private var glass
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if theme.chrome.glass {
+        if glass != nil {
             content
         } else {
             content
@@ -765,12 +765,12 @@ private struct LibrarySidebarSurface: ViewModifier {
 /// clicks.
 private struct LibraryBrowserSurface: ViewModifier {
     let showsDots: Bool
-    @CurrentTheme private var theme
+    @DrawnGlass private var glass
 
     @ViewBuilder
     func body(content: Content) -> some View {
         // Glass's picture lies under the whole window (`LibraryWindowSurface`).
-        if showsDots && !theme.chrome.glass {
+        if showsDots && glass == nil {
             content.background { AnnotationEditorWorkspaceBackground().allowsHitTesting(false) }
         } else {
             content
@@ -826,11 +826,11 @@ private struct LibraryToolbarSeparator: ViewModifier {
 /// Glass instead lays its picture under the whole window, mirrored and blurred under the sidebar by macOS
 /// (`backgroundExtensionEffect`), and hides the toolbar's bar so the picture runs under it too.
 private struct LibraryWindowSurface: ViewModifier {
-    @CurrentTheme private var theme
+    @DrawnGlass private var glass
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if let backdrop = theme.ground.backdrop, theme.chrome.glass {
+        if let backdrop = glass {
             content
                 .environment(\.overGlassPicture, true)
                 .background { GlassBackdrop(backdrop: backdrop).backgroundExtensionEffect().ignoresSafeArea() }

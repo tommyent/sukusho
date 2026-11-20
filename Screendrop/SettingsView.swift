@@ -227,7 +227,7 @@ private struct SettingsSidebarFooter: View {
 
 private struct SettingsDetailView: View {
     let tab: SettingsTab
-    @CurrentTheme private var theme
+    @DrawnGlass private var glass
 
     var body: some View {
         Group {
@@ -262,11 +262,9 @@ private struct SettingsDetailView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         // Glass: its picture under the panes and, mirrored and blurred by macOS, under the sidebar's glass.
         .background {
-            if theme.chrome.glass, let backdrop = theme.ground.backdrop {
-                GlassBackdrop(backdrop: backdrop).backgroundExtensionEffect().ignoresSafeArea()
-            }
+            if let glass { GlassBackdrop(backdrop: glass).backgroundExtensionEffect().ignoresSafeArea() }
         }
-        .toolbarBackgroundVisibility(theme.chrome.glass ? .hidden : .automatic, for: .windowToolbar)
+        .toolbarBackgroundVisibility(glass != nil ? .hidden : .automatic, for: .windowToolbar)
     }
 }
 

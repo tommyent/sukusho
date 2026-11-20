@@ -246,6 +246,7 @@ struct ClipboardPopupView: View {
     @State private var model = ClipboardHistoryModel.shared
     @FocusState private var searchFocused: Bool
     @CurrentTheme private var theme
+    @DrawnGlass private var glass
 
     var body: some View {
         let sections = state.sections
@@ -262,9 +263,11 @@ struct ClipboardPopupView: View {
             footer(selected)
         }
         .frame(width: ClipboardPopupPresenter.size.width, height: ClipboardPopupPresenter.size.height)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22))
+        // Glass under Reduce Transparency or Increase Contrast: its opaque chrome, not a material over the desktop.
+        .background(theme.chrome.glass && glass == nil ? AnyShapeStyle(WorkspaceChrome.background) : AnyShapeStyle(.regularMaterial),
+                    in: RoundedRectangle(cornerRadius: 22))
         // Glass frosts its own picture, as the Library window does, not whatever lies behind the popup.
-        .background { if theme.chrome.glass, let backdrop = theme.ground.backdrop { GlassBackdrop(backdrop: backdrop) } }
+        .background { if let glass { GlassBackdrop(backdrop: glass) } }
         .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(0.18), lineWidth: 0.5))
         .clipShape(RoundedRectangle(cornerRadius: 22))
         .onAppear { searchFocused = true }

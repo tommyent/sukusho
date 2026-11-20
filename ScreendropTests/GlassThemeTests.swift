@@ -29,6 +29,18 @@ struct GlassThemeTests {
         }
     }
 
+    /// Reduce Transparency and Increase Contrast take every Glass surface to its opaque colours (Astra 8).
+    @Test func glassIsDrawnOnlyWithoutReduceTransparencyOrIncreaseContrast() throws {
+        for glass in [AppTheme.glassLight, .glassDark] {
+            #expect(glass.drawnBackdrop(reduceTransparency: false, increaseContrast: false) == glass.ground.backdrop)
+            #expect(glass.drawnBackdrop(reduceTransparency: true, increaseContrast: false) == nil, "\(glass.id)")
+            #expect(glass.drawnBackdrop(reduceTransparency: false, increaseContrast: true) == nil, "\(glass.id)")
+        }
+        for theme in AppTheme.builtIns where !theme.id.hasPrefix("glass") {
+            #expect(theme.drawnBackdrop(reduceTransparency: false, increaseContrast: false) == nil, "\(theme.id)")
+        }
+    }
+
     // MARK: - The picture
 
     @Test func onlyApplesOwnPicturesAreReadWithoutAsking() {
