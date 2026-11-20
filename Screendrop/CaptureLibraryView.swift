@@ -80,11 +80,9 @@ struct CaptureLibraryView: View {
     var body: some View {
         splitLayout
         .modifier(LibraryToolbarSeparator())
-        .task(id: "\(title)#\(glass != nil)#\(colorScheme)#\(libraryWindow.map { ObjectIdentifier($0).hashValue } ?? 0)") {
+        .task(id: "\(glass != nil)#\(libraryWindow.map { ObjectIdentifier($0).hashValue } ?? 0)") {
             for _ in 0..<10 {
-                let plateDone = LibraryTitlePlate.update(libraryWindow, shown: glass != nil)
-                let buttonsDone = LibraryWindowButtonCapsule.update(libraryWindow, shown: glass != nil)
-                if plateDone && buttonsDone { break }
+                if LibraryWindowButtonCapsule.update(libraryWindow, shown: glass != nil) { break }
                 try? await Task.sleep(for: .milliseconds(200))
                 if Task.isCancelled { break }
             }
@@ -214,27 +212,19 @@ struct CaptureLibraryView: View {
         if glass != nil {
             NavigationSplitView(columnVisibility: $columnVisibility) {
                 sidebarContent
-                    .modifier(GlassSidebarToggleModifier(columnVisibility: $columnVisibility))
+                    .toolbar(removing: .sidebarToggle)
             } detail: {
                 detailColumn
                     .navigationTitle(title)
+                    .toolbar(removing: .title)
             }
             .navigationSplitViewStyle(.balanced)
             .modifier(LibraryWindowSurface())
             .inspector(isPresented: $inspectorVisible) {
                 inspectorContent
-                    .toolbar {
-                        ToolbarSpacer(.flexible)
-                        inspectorToggleToolbarItem
-                    }
             }
-            .overlay(alignment: .topTrailing) {
-                searchField(onGlass: true)
-                    .padding(.trailing, 64)
-                    .padding(.leading, 350)
-                    .padding(.top, 8)
-                    .frame(maxHeight: .infinity, alignment: .top)
-                    .ignoresSafeArea(.container, edges: .top)
+            .overlay(alignment: .top) {
+                glassHeader
             }
         } else {
             NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -256,6 +246,46 @@ struct CaptureLibraryView: View {
             .navigationSplitViewStyle(.balanced)
             .toolbar { toolbar }
         }
+    }
+
+    // A window-wide overlay keeps the pills clear of the split view's moving toolbar separators.
+    private var glassHeader: some View {
+        let sidebarHidden = columnVisibility == .detailOnly
+        return HStack(spacing: 8) {
+            glassPaneButton(sidebarHidden ? "Show Sidebar" : "Hide Sidebar", symbol: "sidebar.left") {
+                withAnimation { columnVisibility = sidebarHidden ? .all : .detailOnly }
+            }
+            Text(title)
+                .font(.headline)
+                .lineLimit(1)
+                .padding(.horizontal, 12)
+                .frame(height: 34)
+                .background { CapsuleGlass().allowsHitTesting(false) }
+            Spacer(minLength: 12)
+            searchField(onGlass: true)
+            glassPaneButton(inspectorVisible ? "Hide Inspector" : "Show Inspector", symbol: "sidebar.right") {
+                inspectorVisible.toggle()
+            }
+            .keyboardShortcut("i", modifiers: [.command, .option])
+        }
+        .foregroundStyle(AppTheme.glassTitleInk(dark: colorScheme == .dark).color)
+        .padding(.leading, 178)
+        .padding(.trailing, 10)
+        .padding(.top, 8)
+        .frame(maxHeight: .infinity, alignment: .top)
+        .ignoresSafeArea(.container, edges: .top)
+    }
+
+    private func glassPaneButton(_ title: String, symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: symbol)
+                .labelStyle(.iconOnly)
+                .frame(width: 34, height: 34)
+                .background { CapsuleGlass().allowsHitTesting(false) }
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(title)
     }
 
     private var sidebarContent: some View {
@@ -856,6 +886,8 @@ private struct LibrarySearchField: NSViewRepresentable {
         let field = NSSearchField()
         if !bezel {
             field.cell = GlassSearchFieldCell(textCell: "")
+            field.isEditable = true
+            field.isSelectable = true
             field.isBezeled = false
             field.isBordered = false
         }
@@ -909,7 +941,7 @@ private final class GlassSearchFieldCell: NSSearchFieldCell {
     }
 }
 
-/// Liquid Glass capsule shared by the Library's title pill (`LibraryTitlePlate`) and Glass footer pills (`CapsuleGlass`).
+/// Liquid Glass capsule shared by the Library's floating controls.
 private final class CapsuleGlassView: NSGlassEffectView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
@@ -928,54 +960,6 @@ private struct CapsuleGlass: NSViewRepresentable {
     }
 
     func updateNSView(_ view: CapsuleGlassView, context: Context) {}
-}
-
-/// Glass: a Liquid Glass pill behind macOS's window title, matching the search field's glass, since Glass hides the
-/// toolbar's bar. The title stays macOS's own, in its place and font: the pill goes behind the toolbar's title field.
-/// A macOS without that field gets no pill.
-/// (A title of Sukusho's own as a toolbar item lost the room macOS gives its title: the search field moved up to it.)
-enum LibraryTitlePlate {
-    private static let id = NSUserInterfaceItemIdentifier("LibraryTitlePlate")
-    private static let titleColor = NSColor(name: nil) { appearance in
-        AppTheme.glassTitleInk(dark: appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua).nsColor
-    }
-
-    /// False while the title field isn't there yet.
-    static func update(_ window: NSWindow?, shown: Bool) -> Bool {
-        guard let window, let content = window.contentView, let frame = content.superview else { return true }
-        var plates: [NSView] = []
-        var field: NSTextField?
-        func walk(_ view: NSView) {
-            if view.identifier == id { plates.append(view) }
-            if field == nil, let text = view as? NSTextField, text.stringValue == window.title, !text.isHidden,
-               text.frame.width > 0, !view.isDescendant(of: content) {
-                field = text
-            }
-            view.subviews.forEach(walk)
-        }
-        walk(frame)
-        plates.forEach { $0.removeFromSuperview() }
-        guard shown else {
-            field?.textColor = .labelColor
-            return true
-        }
-        // In the window's frame view, just under the titlebar's container: the views around the field clip to it.
-        guard let field else { return false }
-        field.textColor = titleColor
-        var titlebar: NSView = field
-        while let up = titlebar.superview, up !== frame { titlebar = up }
-        let plate = CapsuleGlassView()
-        plate.identifier = id
-        plate.style = .regular
-        plate.cornerRadius = 16
-        plate.translatesAutoresizingMaskIntoConstraints = false
-        frame.addSubview(plate, positioned: .below, relativeTo: titlebar)
-        NSLayoutConstraint.activate([plate.leadingAnchor.constraint(equalTo: field.leadingAnchor, constant: -12),
-                                     plate.trailingAnchor.constraint(equalTo: field.trailingAnchor, constant: 12),
-                                     plate.topAnchor.constraint(equalTo: field.topAnchor, constant: -7),
-                                     plate.bottomAnchor.constraint(equalTo: field.bottomAnchor, constant: 7)])
-        return true
-    }
 }
 
 /// Glass: a Liquid Glass capsule under macOS's own close, minimize and zoom buttons ("option A"), matching the title
@@ -1020,51 +1004,6 @@ enum LibraryWindowButtonCapsule {
             capsule.bottomAnchor.constraint(equalTo: close.bottomAnchor, constant: padding),
         ])
         return true
-    }
-}
-
-/// On macOS 27.2+, the default `NavigationSplitView` sidebar toggle sits inside a 36 pt circular glass platter whose
-/// top edge straddles the floating Glass sidebar pane's top edge. Replace it with an equivalent toggle whose shared
-/// platter hides while the sidebar is expanded (so the glyph sits cleanly inside the pane) and returns when collapsed.
-private struct GlassSidebarToggleModifier: ViewModifier {
-    @Binding var columnVisibility: NavigationSplitViewVisibility
-    private var isCollapsed: Bool { columnVisibility == .detailOnly }
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(macOS 27.2, *) {
-            content
-                .toolbar(removing: .sidebarToggle)
-                .toolbar {
-                    ToolbarSpacer(.flexible)
-                    // Separate branches force SwiftUI/AppKit to add or remove the toolbar's circular glass platter
-                    // dynamically as the sidebar collapses and expands.
-                    if isCollapsed {
-                        ToolbarItem(id: "glass.sidebarToggle.collapsed", placement: .primaryAction) {
-                            toggleButton
-                        }
-                        .sharedBackgroundVisibility(.visible)
-                    } else {
-                        ToolbarItem(id: "glass.sidebarToggle.expanded", placement: .primaryAction) {
-                            toggleButton
-                        }
-                        .sharedBackgroundVisibility(.hidden)
-                    }
-                }
-        } else {
-            content
-        }
-    }
-
-    private var toggleButton: some View {
-        Button {
-            withAnimation {
-                columnVisibility = isCollapsed ? .all : .detailOnly
-            }
-        } label: {
-            Label(isCollapsed ? "Show Sidebar" : "Hide Sidebar", systemImage: "sidebar.left")
-        }
-        .help(isCollapsed ? "Show Sidebar" : "Hide Sidebar")
     }
 }
 
