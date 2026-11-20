@@ -436,15 +436,16 @@ struct AgentClipboardTests {
     @Test func anUnresolvedProgramNeverReusesAGrant() async throws {
         for signer in ["unknown", "path:unknown"] {
             let unknown = AgentIdentity(signer: signer, signerName: "Unknown program", clientName: "unleash")
-            let harness = try clipHarness(agent: unknown)
-            try await record(harness, text("x"), at: start)
+            // A fresh harness per decision, so the second can't ride on the first one's grant (Astra, round 2).
             for decision in [AgentDecision.always, .session] {
+                let harness = try clipHarness(agent: unknown)
+                try await record(harness, text("x"), at: start)
                 harness.asker.reply = .allow(decision)
                 #expect(clips(await harness.call("clipboard_list")).count == 1)
                 harness.asker.reply = .deny
                 #expect(agentStatus(await harness.toolbox.call("clipboard_list", [:], session: AgentSession(agent: unknown))) == "denied")
+                #expect(harness.grants.grants.isEmpty && harness.grants.sessions.isEmpty)
             }
-            #expect(harness.grants.grants.isEmpty && harness.grants.sessions.isEmpty)
             #expect(!unknown.isResolved)
         }
         #expect(AgentHarness.agent.isResolved)
@@ -475,7 +476,9 @@ struct AgentClipboardTests {
         let images = await harness.call("clipboard_list", ["kind": "images"])
         #expect(clips(images).map { $0["id"] as? String } == [old])
         #expect((await harness.call("clipboard_list")).object["total"] as? Int == 3_001)
-        #expect(agentStatus(await harness.call("clipboard_get", ["id": old])) != "error")
+        let get = await harness.call("clipboard_get", ["id": old])
+        #expect(!get.isError)
+        #expect(get.object["id"] as? String == old)
     }
 
     /// #8: a second ask that opens over another app gives the keyboard back to that app.
@@ -510,16 +513,222 @@ struct AgentClipboardTests {
         #expect(harness.asker.asks.count == 1)
     }
 
-    /// An answer that comes after the window's deadline is a no, however the waiting was counted.
-    @Test func anAnswerPastTheDeadlineIsADeny() async throws {
-        let harness = try clipHarness()
-        try await record(harness, text("x"), at: start)
-        final class Clock { var calls = 0 }
-        let clock = Clock()
+    /// A clock the test moves; with `ticking`, each of the toolbox's polls moves it too.
+    private final class Clock {
+        var now: Date
+        init(_ now: Date) { self.now = now }
+    }
+
+    private func useClock(_ clock: Clock, _ harness: AgentHarness, ticking: Bool = false) {
+        harness.toolbox.now = { clock.now }
+        harness.toolbox.sleep = { step in
+            if ticking { clock.now += Double(step.components.seconds) + Double(step.components.attoseconds) / 1e18 }
+            await Task.yield()
+        }
+    }
+
+    /// An answer counts from when the owner gave it: a click inside the window is a yes even when the call notices it
+    /// after the deadline, and a click past it is a no (Astra, round 2).
+    @Test func anAnswerCountsFromWhenItWasGiven() async throws {
         let base = Date()
-        harness.toolbox.now = { clock.calls += 1; return clock.calls == 1 ? base : base + 61 }
-        harness.asker.reply = .allow(.once)
+        for (clickedAt, expected) in [(base + 59, "clips"), (base + 61, "denied")] {
+            let harness = try clipHarness()
+            try await record(harness, text("x"), at: start)
+            let clock = Clock(base)
+            useClock(clock, harness)
+            harness.asker.reply = .never
+            let list = Task { await harness.call("clipboard_list") }
+            await waitUntil { harness.asker.laterDecisions.count == 1 }
+            #expect(harness.asker.asks.first?.deadline == base + 60)
+            clock.now = clickedAt
+            harness.asker.laterDecisions[0](.once)
+            clock.now = base + 62
+            let result = await list.value
+            #expect((expected == "clips" ? clips(result).count == 1 : agentStatus(result) == "denied"), "clicked at +\(clickedAt.timeIntervalSince(base))")
+        }
+    }
+
+    /// A call that waits behind another's ask keeps the window it came in with, and a no to that ask, or no answer,
+    /// is its no too. Just this once still covers only the call it was given to (Astra, round 2).
+    @Test func aQueuedCallKeepsItsOwnWindowAndSharesTheOwnersNo() async throws {
+        // No answer: the queued call doesn't open a fresh 60 seconds after the first times out.
+        let silent = try clipHarness()
+        try await record(silent, text("x"), at: start)
+        useClock(Clock(Date()), silent, ticking: true)
+        silent.asker.reply = .never
+        let first = Task { await silent.call("clipboard_list") }
+        let second = Task { await silent.call("clipboard_list") }
+        #expect(agentStatus(await first.value) == "denied")
+        #expect(agentStatus(await second.value) == "denied")
+        #expect(silent.asker.asks.count == 1)
+
+        // Deny: the waiting call is denied with it.
+        let denied = try clipHarness()
+        denied.toolbox.askTimeout = .seconds(3600)
+        try await record(denied, text("x"), at: start)
+        denied.asker.reply = .never
+        let asked = Task { await denied.call("clipboard_list") }
+        let waiting = Task { await denied.call("clipboard_list") }
+        await waitUntil { denied.asker.laterDecisions.count == 1 }
+        for _ in 0..<50 { await Task.yield() }
+        denied.asker.laterDecisions[0](nil)
+        #expect(agentStatus(await asked.value) == "denied")
+        #expect(agentStatus(await waiting.value) == "denied")
+        #expect(denied.asker.asks.count == 1)
+
+        // Just this once: the waiting call asks for itself, with the time it has left.
+        let once = try clipHarness()
+        try await record(once, text("x"), at: start)
+        let base = Date()
+        let clock = Clock(base)
+        useClock(clock, once)
+        once.asker.reply = .never
+        let a = Task { await once.call("clipboard_list") }
+        let b = Task { await once.call("clipboard_list") }
+        await waitUntil { once.asker.laterDecisions.count == 1 }
+        for _ in 0..<50 { await Task.yield() }
+        clock.now = base + 30
+        once.asker.laterDecisions[0](.once)
+        #expect(clips(await a.value).count == 1)
+        await waitUntil { once.asker.laterDecisions.count == 2 }
+        #expect(once.asker.asks.count == 2)
+        #expect(once.asker.asks.last?.deadline == base + 60)
+        once.asker.laterDecisions[1](.once)
+        #expect(clips(await b.value).count == 1)
+    }
+
+    // MARK: Review fixes, round 2 (Astra, 2026-11-20)
+
+    /// An unresolved launcher isn't offered Always, and an Always that comes anyway is this once: a helper-wide grant
+    /// would skip Always's rule that the owner's own Library items still ask.
+    @Test func anUnresolvedLaunchersAlwaysNeverCoversTheOwnersItems() async throws {
+        let unknown = AgentIdentity(signer: "path:unknown", signerName: "Unknown program", clientName: "unleash")
+        #expect(AgentDecision.choices(for: unknown) == [.once, .session])
+        #expect(AgentDecision.choices(for: AgentHarness.agent) == AgentDecision.allCases)
+        let harness = try clipHarness(agent: unknown)
+        harness.addItem("a")
+        harness.addItem("b")
+        harness.asker.reply = .allow(.always)
+        #expect(agentStatus(await harness.call("share", ["ids": ["a"]])) == "shared")
+        harness.asker.reply = .never
+        #expect(agentStatus(await harness.call("share", ["ids": ["b"]])) == "denied")
+        #expect(harness.asker.asks.count == 2)
+        #expect(harness.backend.shared.map { $0.ids } == [["a"]])
+        // The clipboard too: its next call asks again.
+        try await record(harness, text("x"), at: start)
+        harness.asker.reply = .allow(.always)
+        #expect(clips(await harness.call("clipboard_list")).count == 1)
+        harness.asker.reply = .deny
         #expect(agentStatus(await harness.call("clipboard_list")) == "denied")
+        #expect(harness.asker.asks.count == 4)
+    }
+
+    /// History turned off while the history is read, or while a clip's picture is made: nothing comes out.
+    @Test func historyTurnedOffDuringTheReadOrThePictureReturnsNothing() async throws {
+        let harness = try clipHarness()
+        let png = Data(UUID().uuidString.utf8) + Data(repeating: 5, count: 64)
+        let image = try await record(harness, ClipboardCapture(kind: .image, hash: ClipboardPasteboardReader.digest(png), image: png,
+                                                               imageExtension: "png", pixelWidth: 4, pixelHeight: 4, byteSize: png.count),
+                                     at: start)
+        try await record(harness, text("read-while-turned-off"), at: start + 1)
+        let store = harness.backend.clipStore
+        harness.backend.onClipRead = { harness.backend.clipStore = nil }
+        let listed = await harness.call("clipboard_list")
+        #expect(agentStatus(listed) == "error")
+        #expect(!String(describing: listed.object).contains("read-while-turned-off"))
+
+        harness.backend.onClipRead = nil
+        harness.backend.clipStore = store
+        harness.backend.onJPEG = { harness.backend.clipStore = nil }
+        let picture = await harness.call("clipboard_get", ["id": image, "image": true])
+        #expect(agentStatus(picture) == "error")
+        #expect(picture.image == nil)
+
+        // The helper going away while the picture is made: denied, no picture.
+        harness.backend.clipStore = store
+        harness.backend.onJPEG = { harness.toolbox.end(harness.session) }
+        let closed = await harness.call("clipboard_get", ["id": image, "image": true])
+        #expect(agentStatus(closed) == "denied")
+        #expect(closed.image == nil)
+    }
+
+    /// A restore whose helper goes away, whose grant is revoked, or whose history is turned off after the ask and
+    /// before its write (while the clip's formats are read) writes nothing.
+    @Test func aRestoreWritesNothingOnceAccessEndsBeforeTheWrite() async throws {
+        enum End: CaseIterable { case helper, revoke, historyOff }
+        for end in End.allCases {
+            let harness = try clipHarness()
+            defer { harness.backend.clipPasteboard.releaseGlobally() }
+            let id = try await record(harness, text("restore-\(end)"), at: start)
+            harness.asker.reply = .allow(.session)
+            #expect(clips(await harness.call("clipboard_list")).count == 1)
+            harness.backend.beforeClipWrite = {
+                switch end {
+                case .helper: harness.toolbox.end(harness.session)
+                case .revoke: harness.grants.revoke(AgentHarness.agent.key)
+                case .historyOff: harness.backend.clipStore = nil
+                }
+            }
+            let result = await harness.call("clipboard_restore", ["id": id])
+            #expect(agentStatus(result) == (end == .historyOff ? "error" : "denied"), "\(end)")
+            #expect(harness.backend.clipPasteboard.pasteboardItems?.isEmpty ?? true, "\(end)")
+        }
+        // The writer itself: told not to, it leaves the pasteboard and the history alone.
+        let harness = try clipHarness()
+        defer { harness.backend.clipPasteboard.releaseGlobally() }
+        let id = try await record(harness, text("never-written"), at: start)
+        let entry = try #require(try await harness.backend.clipStore?.agentEntries().first { $0.id == id })
+        let wrote = await ClipboardWriter.restore(entry, plain: false, store: harness.backend.clipStore,
+                                                  historyDirectory: harness.backend.clipHistoryDirectory,
+                                                  to: harness.backend.clipPasteboard, shouldWrite: { false })
+        #expect(!wrote)
+        #expect(harness.backend.clipPasteboard.pasteboardItems?.isEmpty ?? true)
+        #expect(try await harness.backend.clipStore?.agentEntries().first { $0.id == id }?.timesCopied == 1)
+    }
+
+    /// Settings' "Connected now" counts Always grants, not only this session's (Astra #3, round 2).
+    @Test func connectedNowCountsAlwaysGrants() {
+        let defaults = UserDefaults(suiteName: "AgentClipboardTests-\(UUID().uuidString)")!
+        let grants = AgentGrantStore(defaults: defaults)
+        let agent = AgentHarness.agent
+        #expect(grants.connectedDetail(agent: agent, helperGrants: []) == "Asks for everything")
+        grants.grantAlways(.clipboard, to: agent)
+        #expect(grants.connectedDetail(agent: agent, helperGrants: []) == "Always allowed: Read my clipboard history")
+        grants.grantSession(.clipboard, to: agent)
+        #expect(grants.connectedDetail(agent: agent, helperGrants: [.capture])
+            == "Allowed for this session: Capture the screen, Read my clipboard history")
+        // A program Sukusho can't name gets nothing kept, so the row says only what its helper has.
+        let unknown = AgentIdentity(signer: "unknown", signerName: "Unknown program", clientName: agent.clientName)
+        grants.grantAlways(.publish, to: unknown)
+        #expect(grants.connectedDetail(agent: unknown, helperGrants: []) == "Asks for everything")
+    }
+
+    /// A colour, a content type or a domain is worked out from the first 200 characters only (Astra #4, round 2).
+    @Test func noColorTypeOrDomainComesFromPastThePreview() async throws {
+        let harness = try clipHarness()
+        let colour = try await record(harness, text(String(repeating: " ", count: 300) + "#ABCDEF"), at: start)
+        let deep = try await record(harness, text(String(repeating: " ", count: AgentClips.textLength + 5) + "#FEDCBA"), at: start + 1)
+        try await record(harness, text("https://user-SECRET.example" + String(repeating: "x", count: 200) + "@SECRET.example/page"),
+                         at: start + 2)
+        let result = await harness.call("clipboard_list")
+        let json = try #require(result.mcp["content"] as? [[String: Any]]).first?["text"] as? String ?? ""
+        #expect(!json.contains("ABCDEF") && !json.contains("FEDCBA"))
+        #expect(!json.contains("\"color\"") && !json.contains("\"domain\"") && !json.contains("Color"))
+        let detail = await harness.call("clipboard_get", ["id": deep])
+        #expect(detail.object["color"] == nil && detail.object["kind"] as? String == "text")
+        #expect(!String(describing: detail.object).contains("FEDCBA"))
+        #expect((await harness.call("clipboard_get", ["id": colour])).object["id"] as? String == colour)
+        // A link within the preview keeps its domain.
+        try await record(harness, text("https://example.com/page"), at: start + 3)
+        let link = try #require(clips(await harness.call("clipboard_list")).first)
+        #expect(untrusted(link)["domain"] as? String == "example.com")
+        // Counts aren't content: a long file list still says how many files it holds.
+        var files = ClipboardCapture(kind: .files, hash: "many-files", text: (1...30).map { "/Users/x/Documents/file-\($0).txt" }.joined(separator: "\n"))
+        files.byteSize = 1
+        let many = try await record(harness, files, at: start + 4)
+        let listedFiles = try #require(clips(await harness.call("clipboard_list")).first { $0["id"] as? String == many })
+        #expect(listedFiles["content_type"] as? String == "30 files")
+        #expect(listedFiles["file_count"] as? Int == 30)
     }
 
     @Test func catalogListsTheClipboardTools() {

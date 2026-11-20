@@ -28,19 +28,32 @@ final class AgentFakeBackend: AgentBackend {
     }
 
     func text(of item: AgentItem) -> String? { texts[item.id] }
-    func jpeg(of file: URL, maxPixels: Int) async -> Data? { Data([0xFF, 0xD8, 0xFF]) }
+    /// Runs while a picture is made, for a test to change things then.
+    var onJPEG: (() -> Void)?
+    func jpeg(of file: URL, maxPixels: Int) async -> Data? {
+        onJPEG?()
+        return Data([0xFF, 0xD8, 0xFF])
+    }
 
     /// Clipboard history in a real store, written back to a private pasteboard by the popup's own restore.
     var clipStore: ClipboardHistoryStore?
     var appNames: [String: String] = [:]
     lazy var clipPasteboard = NSPasteboard(name: .init("AgentClipboardTest-\(UUID().uuidString)"))
     let clipHistoryDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("AgentClipHistory-\(UUID().uuidString)")
+    /// Run as the history read ends, and as a restore's formats have been read, before it writes.
+    var onClipRead: (() -> Void)?
+    var beforeClipWrite: (() -> Void)?
 
-    func clipboardEntries() async throws -> [ClipboardEntry]? { try await clipStore?.agentEntries() }
+    func clipboardEntries() async throws -> [ClipboardEntry]? {
+        let entries = try await clipStore?.agentEntries()
+        onClipRead?()
+        return entries
+    }
     var isClipboardHistoryOn: Bool { clipStore != nil }
     func appName(_ bundleID: String?) -> String? { bundleID.flatMap { appNames[$0] } }
-    func restoreClip(_ entry: ClipboardEntry) async -> Bool {
-        await ClipboardWriter.restore(entry, plain: false, store: clipStore, historyDirectory: clipHistoryDirectory, to: clipPasteboard)
+    func restoreClip(_ entry: ClipboardEntry, shouldWrite: () -> Bool) async -> Bool {
+        await ClipboardWriter.restore(entry, plain: false, store: clipStore, historyDirectory: clipHistoryDirectory, to: clipPasteboard,
+                                      shouldWrite: { beforeClipWrite?(); return shouldWrite() })
     }
 
     func shareOne(_ item: AgentItem, settings: AgentShareSettings) async throws -> AgentShareResult {

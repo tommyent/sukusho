@@ -84,6 +84,9 @@ nonisolated enum AgentDecision: String, Codable, Sendable, CaseIterable, Identif
     case once, session, always
 
     var id: String { rawValue }
+    /// What the ask offers. Always is kept for the agent's signer and name, so a program Sukusho can't name isn't
+    /// offered it (Astra, round 2).
+    static func choices(for agent: AgentIdentity) -> [AgentDecision] { agent.isResolved ? allCases : [.once, .session] }
     var title: String {
         switch self {
         case .once: "Just this once"
@@ -183,6 +186,18 @@ final class AgentGrantStore {
     }
 
     func endSessions() { sessions = [] }
+
+    /// Settings' "Connected now" line for one helper: what it may do unasked, as `AgentToolbox.isAllowed` decides.
+    /// Nothing kept counts for a program Sukusho can't name.
+    func connectedDetail(agent: AgentIdentity, helperGrants: Set<AgentGroup>) -> String {
+        let kept = agent.isResolved ? AgentGroup.allCases : []
+        let session = helperGrants.union(kept.filter { hasSession($0, for: agent) })
+        let always = kept.filter { hasAlways($0, for: agent) && !session.contains($0) }
+        let parts = [("Allowed for this session: ", Array(session)), ("Always allowed: ", always)].compactMap { label, groups in
+            groups.isEmpty ? nil : label + groups.map(\.title).sorted().joined(separator: ", ")
+        }
+        return parts.isEmpty ? "Asks for everything" : parts.joined(separator: " · ")
+    }
 
     /// Settings' Revoke on a session row: its kept-for-the-session grants only.
     func revokeSession(_ key: String) { sessions.removeAll { $0.agent.key == key } }

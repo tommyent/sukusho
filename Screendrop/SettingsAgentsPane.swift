@@ -56,10 +56,7 @@ struct AgentsSettingsPane: View {
                         Text("No agent is connected.").foregroundStyle(.secondary)
                     }
                     ForEach(access.server.sessions) { session in
-                        // What it may do unasked now: this helper's grants and those kept until Sukusho quits.
-                        let groups = session.grants.union(AgentGroup.allCases.filter { access.grants.hasSession($0, for: session.agent) })
-                        AgentRow(agent: session.agent, detail: groups.isEmpty ? "Asks for everything"
-                                    : "Allowed for this session: " + groups.map(\.title).sorted().joined(separator: ", "))
+                        AgentRow(agent: session.agent, detail: access.grants.connectedDetail(agent: session.agent, helperGrants: session.grants))
                     }
                 }
 

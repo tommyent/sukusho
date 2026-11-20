@@ -188,9 +188,10 @@ final class ClipboardHistoryModel {
 
     /// The popup's paste up to ⌘V, for it and for agents: the clip back on the clipboard with its formats, and one
     /// more copy in history. False when its image file is gone or the pasteboard refused it.
-    func restore(_ entry: ClipboardEntry, plain: Bool = false) async -> Bool {
+    func restore(_ entry: ClipboardEntry, plain: Bool = false, shouldWrite: () -> Bool = { true }) async -> Bool {
         guard await ClipboardWriter.restore(entry, plain: plain, store: store,
-                                            historyDirectory: ScreenshotHistoryStore.historyDirectory) else { return false }
+                                            historyDirectory: ScreenshotHistoryStore.historyDirectory,
+                                            shouldWrite: shouldWrite) else { return false }
         refresh()
         return true
     }

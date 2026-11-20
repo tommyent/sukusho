@@ -246,8 +246,8 @@ final class AgentLiveBackend: AgentBackend {
 
     func appName(_ bundleID: String?) -> String? { ClipboardHistoryModel.shared.appName(bundleID) }
 
-    func restoreClip(_ entry: ClipboardEntry) async -> Bool {
-        await ClipboardHistoryModel.shared.restore(entry)
+    func restoreClip(_ entry: ClipboardEntry, shouldWrite: () -> Bool) async -> Bool {
+        await ClipboardHistoryModel.shared.restore(entry, shouldWrite: shouldWrite)
     }
 
     /// The App Intents' capture paths.
@@ -478,7 +478,7 @@ struct AgentApprovalView<Content: View>: View {
                 }
                 if ask.grantable {
                     Picker("Allow", selection: $choice.decision) {
-                        ForEach(AgentDecision.allCases) { Text($0.title).tag($0) }
+                        ForEach(AgentDecision.choices(for: ask.agent)) { Text($0.title).tag($0) }
                     }
                     .pickerStyle(.menu)
                     .fixedSize()

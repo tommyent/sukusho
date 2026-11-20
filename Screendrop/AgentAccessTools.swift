@@ -105,8 +105,9 @@ protocol AgentBackend: AnyObject {
     var isClipboardHistoryOn: Bool { get }
     /// The name Information › Source shows for an app; nil when it isn't on this Mac.
     func appName(_ bundleID: String?) -> String?
-    /// The popup's paste up to ⌘V (`ClipboardWriter.restore`); false when the clip couldn't be written.
-    func restoreClip(_ entry: ClipboardEntry) async -> Bool
+    /// The popup's paste up to ⌘V (`ClipboardWriter.restore`); false when the clip couldn't be written, or
+    /// `shouldWrite` said no just before the write.
+    func restoreClip(_ entry: ClipboardEntry, shouldWrite: () -> Bool) async -> Bool
 }
 
 /// One question to the owner, in Sukusho's own window.
@@ -336,35 +337,53 @@ final class AgentToolbox {
     // MARK: Approval
 
     /// Nil when the owner said no or didn't answer in time, or the helper went away first. One ask per agent and
-    /// group at a time: a second call waits for the first, whose answer may cover it.
+    /// group at a time: a second call waits for the first, whose answer may cover it. Each call has 60 seconds from
+    /// when it came in, waiting included, and a no to the ask it waited on, or no answer, is its no too (Astra, round 2).
     private func approve(_ group: AgentGroup, items: [String], session: AgentSession, ask: AgentAsk) async -> AgentDecision? {
         if isAllowed(group, items: items, session: session) { return .once }
-        let key = session.agent.key + "|" + group.rawValue
-        while asking.contains(key), !session.isClosed { await sleep(poll) }
-        guard !session.isClosed else { return nil }
-        if isAllowed(group, items: items, session: session) { return .once }
-        asking.insert(key)
-        defer { asking.remove(key) }
-        var ask = ask
         let deadline = now().addingTimeInterval(Double(askTimeout.components.seconds))
+        let key = session.agent.key + "|" + group.rawValue
+        while let turn = asking[key] {
+            while asking[key] === turn, !session.isClosed, now() <= deadline { await sleep(poll) }
+            guard asking[key] !== turn, !session.isClosed, !turn.denied else { return nil }
+        }
+        if isAllowed(group, items: items, session: session) { return .once }
+        let left = deadline.timeIntervalSince(now())
+        guard left > 0 else { return nil }
+        let turn = AskTurn()
+        asking[key] = turn
+        defer { asking[key] = nil }
+        var ask = ask
         ask.deadline = deadline
         let pending = AgentPendingAnswer<AgentDecision>(sleep: sleep)
+        var answeredAt: Date?
         let id = UUID()
         openAsks[id] = (session, { pending.give(nil) })
-        let close = asker.ask(ask) { pending.give($0) }
-        let answer = await pending.wait(upTo: askTimeout, poll: poll)
+        let close = asker.ask(ask) { [self] decision in
+            if pending.answer == nil { answeredAt = now() }
+            pending.give(decision)
+        }
+        let answer = await pending.wait(upTo: .seconds(left), poll: poll)
         openAsks[id] = nil
         close()
-        // The wait counts its polls, not the clock: an answer past the window's own deadline is a no too.
-        guard !session.isClosed, now() <= deadline, let decision = answer ?? nil else { return nil }
+        guard !session.isClosed else { return nil }
+        // When the owner answered, not when this wait noticed: a click inside the window counts, one past it doesn't.
+        guard let decision = answer ?? nil, let answeredAt, answeredAt <= deadline else {
+            turn.denied = true
+            return nil
+        }
         remember(decision, group, session)
         return decision
     }
 
     /// Plain asks open now, so `end` can deny them.
     private var openAsks: [UUID: (session: AgentSession, cancel: () -> Void)] = [:]
-    /// Agent and group keys with an ask on screen.
-    private var asking: Set<String> = []
+    /// The ask on screen for each agent and group key, which other calls with that key wait on.
+    private var asking: [String: AskTurn] = [:]
+    private final class AskTurn {
+        /// The owner said no or didn't answer: the calls waiting on it are denied too.
+        var denied = false
+    }
 
     /// A helper that went away, or each one when agent access is turned off: its open asks are denied and closed, and
     /// no answer after this counts or keeps a grant.
@@ -386,8 +405,11 @@ final class AgentToolbox {
     private func remember(_ decision: AgentDecision, _ group: AgentGroup, _ session: AgentSession) {
         switch decision {
         case .once: break
-        // A program Sukusho couldn't name shares its signer with every other such program: its grant stays with this helper.
-        case _ where !session.agent.isResolved: session.grants.insert(group)
+        // A program Sukusho couldn't name shares its signer with every other such program: its grant stays with this
+        // helper, and Always, which it isn't offered, is this once. A helper grant would skip Always's rule that what
+        // the agent didn't add still asks (Astra, round 2).
+        case .always where !session.agent.isResolved: break
+        case .session where !session.agent.isResolved: session.grants.insert(group)
         case .session where group.sessionOutlivesHelper: grants.grantSession(group, to: session.agent, now: now())
         case .session: session.grants.insert(group)
         case .always: grants.grantAlways(group, to: session.agent, now: now())
@@ -884,8 +906,8 @@ final class AgentToolbox {
         let saved = try args.bool("saved") ?? false
         let limit = try args.int("limit", in: 1...100) ?? 50
         let before = try args.string("before", maxLength: 200).map(AgentClips.Cursor.init(text:))
-        guard let entries = try await clipboardHistory(session) else { return .denied }
-        let page = AgentClips.page(entries, filter: filter, saved: saved, before: before, limit: limit)
+        guard let history = try await clipboardHistory(session) else { return .denied }
+        let page = AgentClips.page(history.entries, filter: filter, saved: saved, before: before, limit: limit)
         return ToolResult(object: ["total": page.total, "clips": page.clips.map(clip), "next_before": page.next?.text ?? NSNull()],
                           summary: "\(page.clips.count) of \(page.total) clips")
     }
@@ -894,8 +916,8 @@ final class AgentToolbox {
         let args = try AgentArguments(raw, allowed: ["id", "image"])
         let id = try args.required("id")
         let wantsImage = try args.bool("image") ?? false
-        guard let entries = try await clipboardHistory(session) else { return .denied }
-        let entry = try AgentClips.find(id, in: entries)
+        guard let history = try await clipboardHistory(session) else { return .denied }
+        let entry = try AgentClips.find(id, in: history.entries)
         var object = clip(entry)
         if let text = entry.text {
             var untrusted = object["untrusted"] as? [String: Any] ?? [:]
@@ -905,8 +927,9 @@ final class AgentToolbox {
         }
         var image: Data?
         if wantsImage {
-            guard entry.kind == .image else { throw AgentToolError("image is for image clips; this is a \(AgentClips.kind(of: entry)) clip.") }
+            guard entry.kind == .image else { throw AgentToolError("image is for image clips; this is a \(object["kind"] as? String ?? "text") clip.") }
             if let url = entry.imageURL { image = await backend.jpeg(of: url, maxPixels: 1024) }
+            guard try history.stillAllowed() else { return .denied }
             if image == nil { throw AgentToolError("Sukusho couldn’t read this clip’s image.") }
         }
         return ToolResult(object: object, image: image, summary: "read")
@@ -915,24 +938,36 @@ final class AgentToolbox {
     private func clipboardRestore(_ raw: [String: Any], _ session: AgentSession) async throws -> ToolResult {
         let args = try AgentArguments(raw, allowed: ["id"])
         let id = try args.required("id")
-        guard let entries = try await clipboardHistory(session) else { return .denied }
-        guard await backend.restoreClip(try AgentClips.find(id, in: entries)) else {
+        guard let history = try await clipboardHistory(session) else { return .denied }
+        // Asked again as it writes: the clip's formats are read first, and access can end meanwhile (Astra, round 2).
+        guard await backend.restoreClip(try AgentClips.find(id, in: history.entries),
+                                        shouldWrite: { (try? history.stillAllowed()) == true }) else {
+            guard try history.stillAllowed() else { return .denied }
             throw AgentToolError("Sukusho couldn’t put this clip back on the clipboard: its image file is gone, or the clipboard refused it.")
         }
         return ToolResult(object: ["status": "restored", "id": id], summary: "restored")
     }
 
+    private static let historyOff = AgentToolError("Clipboard history is off in Sukusho (Settings › Clipboard › Keep clipboard history).")
+
     /// The history, once the owner lets this agent read it; nil when they don't. Off asks nothing. Read after the
-    /// answer, so what was deleted, or history turned off, while the ask was open stays out.
-    private func clipboardHistory(_ session: AgentSession) async throws -> [ClipboardEntry]? {
-        let off = AgentToolError("Clipboard history is off in Sukusho (Settings › Clipboard › Keep clipboard history).")
-        guard backend.isClipboardHistoryOn else { throw off }
+    /// answer, so what was deleted, or history turned off, while the ask was open stays out. `stillAllowed`, asked
+    /// after each later wait, throws once history is off and is false once the helper went away or the grant the call
+    /// rode on was revoked; Just this once holds for its call.
+    private func clipboardHistory(_ session: AgentSession) async throws
+        -> (entries: [ClipboardEntry], stillAllowed: () throws -> Bool)? {
+        guard backend.isClipboardHistoryOn else { throw Self.historyOff }
         let ask = AgentAsk(agent: session.agent, group: .clipboard, action: "read your clipboard history",
                            details: ["It sees what you copied and can put a clip back on the clipboard.",
                                      "Concealed copies, such as passwords, are never kept."])
         guard await approve(.clipboard, items: [], session: session, ask: ask) != nil else { return nil }
-        guard let entries = try await backend.clipboardEntries() else { throw off }
-        return session.isClosed ? nil : entries
+        let byGrant = isAllowed(.clipboard, items: [], session: session)
+        let stillAllowed = { [self] () throws -> Bool in
+            guard backend.isClipboardHistoryOn else { throw Self.historyOff }
+            return !session.isClosed && (!byGrant || isAllowed(.clipboard, items: [], session: session))
+        }
+        guard let entries = try await backend.clipboardEntries() else { throw Self.historyOff }
+        return try stillAllowed() ? (entries, stillAllowed) : nil
     }
 
     private func clip(_ entry: ClipboardEntry) -> [String: Any] {
@@ -1034,25 +1069,28 @@ nonisolated enum AgentClips {
     /// outside text: it goes under `untrusted`. Never more than `previewLength` characters of the text.
     static func clip(_ entry: ClipboardEntry, appName: String?) -> [String: Any] {
         let text = entry.text ?? ""
+        // The kind, type, title, colour and domain are worked out from the same first characters the preview shows,
+        // never from the rest: the popup's title skips blank lines and names a path's file, and a colour or link is
+        // read after trimming, all of which could reach past them (Astra #4, rounds 1 and 2).
+        var shown = entry
+        shown.text = entry.text.map { String($0.prefix(previewLength)) }
         var object: [String: Any] = [
-            "id": entry.id, "kind": kind(of: entry), "content_type": ClipboardList.typeName(of: entry),
+            // A file list's type counts its files, which isn't content: that one comes from the whole list.
+            "id": entry.id, "kind": kind(of: shown), "content_type": ClipboardList.typeName(of: entry.kind == .text ? shown : entry),
             "size_bytes": entry.byteSize, "times_copied": entry.timesCopied,
             "first_copied_at": entry.firstCopiedAt.formatted(.iso8601), "last_copied_at": entry.lastCopiedAt.formatted(.iso8601),
             "saved": entry.isArchived, "from_another_device": entry.isRemote,
         ]
         if entry.isArchived, let saved = entry.pinnedAt { object["saved_at"] = saved.formatted(.iso8601) }
-        // The title is worked out from the same first characters the preview shows, never from the rest: the popup's
-        // title skips blank lines and names a path's file, which could reach past them (Astra #4).
-        var shown = entry
-        shown.text = entry.text.map { String($0.prefix(previewLength)) }
         var untrusted: [String: Any] = ["title": String(ClipboardList.title(of: shown).prefix(previewLength))]
         var preview: String? = text
-        switch ClipboardList.textForm(of: entry) {
+        switch ClipboardList.textForm(of: shown) {
         case .color(let hex):
             preview = hex
             object["color"] = color(hex)
         case .link:
-            if let host = URL(string: text)?.host(), shown.text?.contains(host) == true { untrusted["domain"] = host }
+            // Only a host the cut leaves whole: the same one the whole link has.
+            if let host = URL(string: shown.text ?? "")?.host(), host == URL(string: text)?.host() { untrusted["domain"] = host }
         case .plain:
             object["characters"] = text.count
             object["words"] = text.split(whereSeparator: \.isWhitespace).count
