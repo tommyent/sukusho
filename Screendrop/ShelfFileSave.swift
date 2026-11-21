@@ -13,12 +13,19 @@ import Foundation
 
 nonisolated enum ShelfFileSave {
     enum Outcome: Equatable, Sendable {
-        /// `originalKept`: a Replace whose new file is in place, but whose original could not be moved to the
-        /// Trash and is still beside it.
-        case saved(URL, originalKept: Bool = false)
+        /// `keptOriginal`: a Replace whose new file is in place, but whose original (or its retained backup)
+        /// could not be moved to the Trash and remains at this URL.
+        case saved(URL, keptOriginal: URL? = nil)
         /// The source isn't the file that was optimized any more; nothing was written or moved.
         case changed
         case failed(String)
+    }
+
+    struct Summary: Equatable, Sendable {
+        let title: String
+        let detail: String
+        let isFailure: Bool
+        let saved: [URL]
     }
 
     /// Writes `result` beside `original` ("name optimized.png", or "name.webp" for another format), in
@@ -53,18 +60,17 @@ nonisolated enum ShelfFileSave {
             guard identity == FileIdentity(original) else { return .changed }
 
             if replacing, sameFormat {
-                // The original goes to the Trash only now, and comes back if the new file can't take its place.
-                let retired = try retire(original)
+                let ext = original.pathExtension
+                let backupName = "\(base) (original \(UUID().uuidString.prefix(8)))" + (ext.isEmpty ? "" : ".\(ext)")
+                let backup = folder.appendingPathComponent(backupName)
+                // Install atomically with a retained backup so the original never leaves its folder before
+                // the replacement is in place; only then move the backup to the Trash.
+                _ = try files.replaceItemAt(original, withItemAt: staged, backupItemName: backupName,
+                                            options: [.withoutDeletingBackupItem])
                 do {
-                    try files.moveItem(at: staged, to: original)
+                    _ = try retire(backup)
                 } catch {
-                    do {
-                        try files.moveItem(at: retired, to: original)
-                    } catch {
-                        // Neither file is in place now. The original is whole where `retire` put it, so say where.
-                        return .failed("The file could not be replaced or put back. The original is kept at \(retired.path).")
-                    }
-                    throw error
+                    return .saved(original, keptOriginal: backup)
                 }
                 return .saved(original)
             }
@@ -77,12 +83,57 @@ nonisolated enum ShelfFileSave {
             do {
                 _ = try retire(original)
             } catch {
-                return .saved(destination, originalKept: true)
+                return .saved(destination, keptOriginal: original)
             }
             return .saved(destination)
         } catch {
             return .failed(error.localizedDescription)
         }
+    }
+
+    /// Builds the user-facing summary for a batch of Save/Replace outcomes, preserving any kept backup
+    /// recovery paths even when another file in the batch fails.
+    static func summary(of outcomes: [Outcome], replacing: Bool, folder: URL? = nil) -> Summary {
+        var saved: [URL] = []
+        var changed = 0
+        var kept: [URL] = []
+        var failures: [String] = []
+        for outcome in outcomes {
+            switch outcome {
+            case .saved(let file, let keptOriginal):
+                saved.append(file)
+                if let keptOriginal { kept.append(keptOriginal) }
+            case .changed: changed += 1
+            case .failed(let reason):
+                if !failures.contains(reason) { failures.append(reason) }
+            }
+        }
+        var notes: [String] = []
+        if !kept.isEmpty {
+            notes.append(kept.count == 1
+                ? "Original kept at \(kept[0].path)."
+                : "Originals kept at \(kept.map(\.path).joined(separator: ", ")).")
+        }
+        if changed > 0 {
+            notes.append(changed == 1
+                ? "1 file changed since it was optimized and was left alone."
+                : "\(changed) files changed since they were optimized and were left alone.")
+        }
+        if !failures.isEmpty {
+            return Summary(title: "Couldn’t Save",
+                           detail: ([failures[0]] + notes).joined(separator: " "),
+                           isFailure: true, saved: saved)
+        }
+        if saved.isEmpty {
+            return Summary(title: "Nothing to Save",
+                           detail: notes.first ?? "No file came out smaller.",
+                           isFailure: false, saved: [])
+        }
+        let destination = replacing ? "The originals are in the Trash."
+            : folder.map { "In \($0.lastPathComponent)" } ?? "Beside the originals"
+        return Summary(title: saved.count == 1 ? "Saved" : "\(saved.count) Files Saved",
+                       detail: notes.isEmpty ? destination : notes.joined(separator: " "),
+                       isFailure: false, saved: saved)
     }
 
     static func moveToTrash(_ url: URL) throws -> URL {

@@ -120,7 +120,9 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
 
         #expect(desk.save(result, of: original, replacing: true) == .saved(original))
         #expect(desk.text(original) == "smaller")
-        #expect(desk.text(desk.trash.appending(path: "shot.png")) == "original pixels, long")
+        let trashedNames = try FileManager.default.contentsOfDirectory(atPath: desk.trash.path)
+        #expect(trashedNames.count == 1)
+        #expect(desk.text(desk.trash.appending(path: trashedNames[0])) == "original pixels, long")
         #expect(desk.names == ["shot.png"])
 
         // Another format takes another name; the original is retired once that file is in place.
@@ -167,36 +169,36 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
         #expect(try FileManager.default.contentsOfDirectory(atPath: desk.trash.path).isEmpty)
     }
 
-    /// Astra's second review: when the new file can't be put in place and the original can't be put back
-    /// either, the failure says so and says where the original is.
-    @Test func aReplaceThatCannotBeUndoneSaysWhereTheOriginalIs() throws {
+    /// Same-format Replace installs via replaceItemAt with a retained backup before touching Trash: if Trash
+    /// fails, the new file is already in place, the backup stays intact, and its path is preserved across
+    /// a batch summary even if another file fails later.
+    @Test func aSameFormatReplaceKeepsBackupAndPreservesRecoveryDetailAcrossABatch() throws {
         let desk = try Desk()
-        defer {
-            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: desk.folder.path)
-            desk.remove()
-        }
+        defer { desk.remove() }
         let original = try desk.file("shot.png", "original pixels, long")
         let result = try desk.file("shot.png", "smaller", in: desk.results)
-        let retired = desk.trash.appending(path: "shot.png")
 
-        // The folder stops taking files right after the original has left it.
-        let outcome = desk.save(result, of: original, replacing: true) { url in
-            let destination = try desk.retire(url)
-            try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: desk.folder.path)
-            return destination
+        let outcome = desk.save(result, of: original, replacing: true) { _ in
+            throw CocoaError(.fileWriteNoPermission)
         }
-        guard case .failed(let reason) = outcome else {
-            Issue.record("a replace that could not finish: \(outcome)")
+        guard case .saved(let installed, let keptBackup?) = outcome else {
+            Issue.record("expected saved with kept backup: \(outcome)")
             return
         }
-        #expect(reason.contains("put back"))
-        #expect(reason.contains(retired.path))
-        #expect(!FileManager.default.fileExists(atPath: original.path))
-        #expect(desk.text(retired) == "original pixels, long")
+        #expect(installed == original)
+        #expect(desk.text(original) == "smaller")
+        #expect(desk.text(keptBackup) == "original pixels, long")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: desk.trash.path).isEmpty)
+
+        // A later failure in the same batch must not overwrite the recovery path in the summary.
+        let summary = ShelfFileSave.summary(of: [outcome, .failed("Disk full.")], replacing: true)
+        #expect(summary.isFailure)
+        #expect(summary.detail.contains("Disk full."))
+        #expect(summary.detail.contains(keptBackup.path))
     }
 
     /// editor-opus L4: a Replace in another format whose new file is in place, but whose original the Trash
-    /// won't take, has saved. It says so, with a note that the original is still there.
+    /// won't take, has saved. It says so, with the path of the kept original.
     @Test func aReplaceThatSavedButKeptTheOriginalIsNotAFailure() throws {
         let desk = try Desk()
         defer { desk.remove() }
@@ -205,7 +207,7 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
         let outcome = desk.save(webP, of: photo, replacing: true) { _ in
             throw CocoaError(.fileWriteNoPermission)
         }
-        #expect(outcome == .saved(desk.folder.appending(path: "photo.webp"), originalKept: true))
+        #expect(outcome == .saved(desk.folder.appending(path: "photo.webp"), keptOriginal: photo))
         #expect(desk.text(desk.folder.appending(path: "photo.webp")) == "webp")
         #expect(desk.text(photo) == "png bytes")
         #expect(desk.names == ["photo.png", "photo.webp"])
@@ -214,7 +216,10 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
     /// Astra OR2: the original must not be gone when the new file can't be put in place.
     @Test func aFailedReplaceLeavesTheOriginalWhereItWas() throws {
         let desk = try Desk()
-        defer { desk.remove() }
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: desk.folder.path)
+            desk.remove()
+        }
         let original = try desk.file("shot.png", "original pixels, long")
         let missing = desk.results.appending(path: "shot.png")   // a result that is no longer there
 
@@ -227,16 +232,15 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
         #expect(try FileManager.default.contentsOfDirectory(atPath: desk.trash.path).isEmpty)
         #expect(desk.names == ["shot.png"])
 
-        // The Trash refusing the original stops the replace before anything moves.
+        // A read-only folder fails before anything moves, leaving the original untouched.
         let result = try desk.file("shot.png", "smaller", in: desk.results)
-        let refused = desk.save(result, of: original, replacing: true) { _ in
-            throw CocoaError(.fileWriteNoPermission)
-        }
-        guard case .failed = refused else {
-            Issue.record("replaced without retiring the original")
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: desk.folder.path)
+        guard case .failed = desk.save(result, of: original, replacing: true) else {
+            Issue.record("replaced in a read-only folder")
             return
         }
         #expect(desk.text(original) == "original pixels, long")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: desk.trash.path).isEmpty)
         #expect(desk.names == ["shot.png"])
     }
 

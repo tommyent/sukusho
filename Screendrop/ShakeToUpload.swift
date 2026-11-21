@@ -468,37 +468,16 @@ final class ShakeToUpload {
 
     /// Says what a Save did. A file changed since it was optimized was left exactly as it is.
     private func report(_ outcomes: [ShelfFileSave.Outcome], replacing: Bool, folder: URL? = nil) {
-        var saved: [URL] = []
-        var changed = 0
-        var kept = 0
-        var failure: String?
-        for outcome in outcomes {
-            switch outcome {
-            case .saved(let file, let originalKept):
-                saved.append(file)
-                if originalKept { kept += 1 }
-            case .changed: changed += 1
-            case .failed(let reason): failure = reason
-            }
-        }
+        let summary = ShelfFileSave.summary(of: outcomes, replacing: replacing, folder: folder)
         let toast = CaptureTextFeedbackPresenter.shared
-        var skipped = changed == 0 ? nil : changed == 1 ? "1 file changed since it was optimized and was left alone."
-            : "\(changed) files changed since they were optimized and were left alone."
-        if kept > 0, skipped == nil {
-            skipped = kept == 1 ? "1 original couldn’t be moved to the Trash and is still there."
-                : "\(kept) originals couldn’t be moved to the Trash and are still there."
-        }
-        if let failure {
-            toast.showDone("Couldn’t Save", detail: failure, symbol: "exclamationmark.triangle", displayID: Self.display)
-        } else if saved.isEmpty {
-            toast.showDone("Nothing to Save", detail: skipped ?? "No file came out smaller.", symbol: "equal.circle", displayID: Self.display)
+        if summary.isFailure {
+            toast.showDone(summary.title, detail: summary.detail, symbol: "exclamationmark.triangle", displayID: Self.display)
+        } else if summary.saved.isEmpty {
+            toast.showDone(summary.title, detail: summary.detail, symbol: "equal.circle", displayID: Self.display)
         } else {
-            let destination = replacing ? "The originals are in the Trash."
-                : folder.map { "In \($0.lastPathComponent)" } ?? "Beside the originals"
-            toast.showDone(saved.count == 1 ? "Saved" : "\(saved.count) Files Saved",
-                           detail: skipped ?? destination, displayID: Self.display)
+            toast.showDone(summary.title, detail: summary.detail, displayID: Self.display)
         }
-        if !saved.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(saved) }
+        if !summary.saved.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(summary.saved) }
     }
 
     func start(_ files: [URL], gallery: Bool, options: CloudUploadOptions) {
