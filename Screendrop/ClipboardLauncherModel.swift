@@ -126,7 +126,8 @@ final class ClipboardLauncherModel {
             apps: catalog,
             folders: folderCatalog,
             favorites: favorites,
-            includeWindowCommands: includeWindowCommands
+            includeWindowCommands: includeWindowCommands,
+            activeWindowShortcutLabel: { HotkeyManager.shared.activeWindowShortcutLabel(for: $0) }
         )
     }
 

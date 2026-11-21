@@ -212,12 +212,20 @@ struct WindowManagementTests {
         var unregistered: [Int] = []
         var handleCounter = 0
 
-        func sync(enabled: Bool, excluding: [HotkeyShortcut] = []) {
+        func sync(
+            enabled: Bool,
+            excluding: [WindowHotkeyRegistry<Int>.Claim] = [],
+            refusing: Set<WindowAction> = []
+        ) {
             registry.sync(
                 enabled: enabled,
                 excluding: excluding,
                 nextID: { defer { nextID += 1 }; return nextID },
                 register: { shortcut, id in
+                    if let action = WindowAction.allCases.first(where: { $0.hotkeyShortcut == shortcut }),
+                       refusing.contains(action) {
+                        return nil
+                    }
                     registered.append((shortcut, id))
                     handleCounter += 1
                     return handleCounter
@@ -226,9 +234,11 @@ struct WindowManagementTests {
             )
         }
 
-        // Setting off: nothing is registered.
+        // Setting off: nothing is registered and no issues are reported.
         sync(enabled: false)
         #expect(registry.entries.isEmpty)
+        #expect(registry.statuses.isEmpty)
+        #expect(registry.issueMessages.isEmpty)
         #expect(registered.isEmpty)
         #expect(unregistered.isEmpty)
 
@@ -236,8 +246,10 @@ struct WindowManagementTests {
         sync(enabled: true)
         #expect(registry.entries.count == 11)
         #expect(registered.count == 11)
+        #expect(registry.issueMessages.isEmpty)
         for entry in registry.entries {
             #expect(registry.action(for: entry.id) == entry.action)
+            #expect(registry.activeShortcutLabel(for: entry.action) == entry.action.shortcutLabel)
         }
 
         // Exact shortcut bindings match Unleash and never clash with Sukusho's default shortcuts.
@@ -252,15 +264,39 @@ struct WindowManagementTests {
         #expect(WindowAction.center.hotkeyShortcut == HotkeyShortcut(modifiers: [.control, .option, .command], keyCode: Int(kVK_ANSI_C)))
         #expect(WindowAction.nextDisplay.hotkeyShortcut == HotkeyShortcut(modifiers: [.control, .option, .command], keyCode: Int(kVK_ANSI_N)))
 
-        // Turning off unregisters all 11 and leaves zero active registrations.
+        // Turning off unregisters all 11 and clears status/issues.
         sync(enabled: false)
         #expect(registry.entries.isEmpty)
+        #expect(registry.statuses.isEmpty)
         #expect(unregistered.count == 11)
 
-        // User-recorded capture shortcut overlapping a window shortcut takes precedence.
-        sync(enabled: true, excluding: [WindowAction.maximize.hotkeyShortcut])
-        #expect(registry.entries.count == 10)
-        #expect(!registry.entries.contains { $0.action == .maximize })
+        // Yielded capture shortcut & Carbon refusal hide advertised shortcut labels, report reasons, and keep Apps runnable.
+        sync(
+            enabled: true,
+            excluding: [.init(shortcut: WindowAction.maximize.hotkeyShortcut, owner: "Fullscreen")],
+            refusing: [.center]
+        )
+        #expect(registry.entries.count == 9)
+        #expect(registry.statuses[.maximize] == .yielded(to: "Fullscreen"))
+        #expect(registry.statuses[.center] == .refused)
+        #expect(registry.activeShortcutLabel(for: .maximize) == nil)
+        #expect(registry.activeShortcutLabel(for: .center) == nil)
+        #expect(registry.activeShortcutLabel(for: .leftHalf) == "⌃⌥⌘←")
+        #expect(registry.issueMessages.count == 2)
+        #expect(registry.issueMessages[0].contains("Maximize") && registry.issueMessages[0].contains("Fullscreen"))
+        #expect(registry.issueMessages[1].contains("Center") && registry.issueMessages[1].contains("couldn’t be registered"))
+
+        // Apps search still lists Maximize and Center without advertising their inactive shortcuts.
+        let maxRows = LauncherList.sections(
+            query: "max",
+            apps: .empty,
+            folders: .empty,
+            favorites: LauncherFavorites(),
+            includeWindowCommands: true,
+            activeWindowShortcutLabel: { registry.activeShortcutLabel(for: $0) }
+        ).flatMap(\.rows)
+        #expect(maxRows.first?.kind == .windowCommand(.maximize))
+        #expect(maxRows.first?.detail == nil)
     }
 
     @Test func axTimeoutAndDeadTargetAbortImmediately() {

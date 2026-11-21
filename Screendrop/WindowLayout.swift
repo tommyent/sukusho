@@ -315,6 +315,13 @@ nonisolated enum WindowLayout {
     }
 }
 
+/// Registration outcome for one of the 11 window management shortcuts.
+nonisolated enum WindowHotkeyStatus: Equatable, Sendable {
+    case registered
+    case yielded(to: String)
+    case refused
+}
+
 /// Manages active registrations for the 11 window management hotkeys.
 /// Parameterized by `Handle` so tests verify registration/unregistration without Carbon.
 final class WindowHotkeyRegistry<Handle> {
@@ -325,36 +332,72 @@ final class WindowHotkeyRegistry<Handle> {
         let handle: Handle
     }
 
+    struct Claim {
+        let shortcut: HotkeyShortcut
+        let owner: String
+    }
+
     private(set) var entries: [Entry] = []
+    private(set) var statuses: [WindowAction: WindowHotkeyStatus] = [:]
 
     /// Registers every window shortcut not already taken by `excluding` when `enabled` is true;
     /// unregisters everything and leaves zero registrations when `enabled` is false.
     func sync(
         enabled: Bool,
-        excluding: [HotkeyShortcut] = [],
+        excluding: [Claim] = [],
         nextID: () -> UInt32,
         register: (HotkeyShortcut, UInt32) -> Handle?,
         unregister: (Handle) -> Void
     ) {
-        unregisterAll(unregister: unregister)
+        unregisterAll(unregister: unregister, clearStatuses: true)
         guard enabled else { return }
         for action in WindowAction.allCases {
             let shortcut = action.hotkeyShortcut
-            guard !excluding.contains(where: shortcut.overlaps) else { continue }
+            if let claim = excluding.first(where: { $0.shortcut.overlaps(shortcut) }) {
+                statuses[action] = .yielded(to: claim.owner)
+                continue
+            }
             let id = nextID()
             if let handle = register(shortcut, id) {
                 entries.append(Entry(action: action, shortcut: shortcut, id: id, handle: handle))
+                statuses[action] = .registered
+            } else {
+                statuses[action] = .refused
             }
         }
     }
 
-    func unregisterAll(unregister: (Handle) -> Void) {
+    func unregisterAll(unregister: (Handle) -> Void, clearStatuses: Bool = false) {
         for entry in entries { unregister(entry.handle) }
         entries.removeAll()
+        if clearStatuses { statuses.removeAll() }
     }
 
     func action(for id: UInt32) -> WindowAction? {
         entries.first { $0.id == id }?.action
+    }
+
+    /// Returns the shortcut label only when this action's binding is actively registered.
+    func activeShortcutLabel(for action: WindowAction) -> String? {
+        statuses[action] == .registered ? action.shortcutLabel : nil
+    }
+
+    /// Human-readable reasons for any window shortcut that yielded to a capture shortcut or was refused by Carbon.
+    var issueMessages: [String] {
+        Self.issueMessages(from: statuses)
+    }
+
+    static func issueMessages(from statuses: [WindowAction: WindowHotkeyStatus]) -> [String] {
+        WindowAction.allCases.compactMap { action in
+            switch statuses[action] {
+            case .yielded(let owner):
+                "\(action.title) (\(action.shortcutLabel)) is inactive because \(owner) uses that shortcut. Still available in Apps."
+            case .refused:
+                "\(action.title) (\(action.shortcutLabel)) couldn’t be registered — it may be used by another app. Still available in Apps."
+            case .registered, nil:
+                nil
+            }
+        }
     }
 }
 

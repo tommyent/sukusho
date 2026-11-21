@@ -720,8 +720,8 @@ struct ClipboardPopupView: View {
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("Favorite")
             }
-            if case .windowCommand(let action) = row.kind {
-                Text(action.shortcutLabel)
+            if case .windowCommand = row.kind, let shortcut = row.detail {
+                Text(shortcut)
                     .font(.system(size: 11.5, weight: .medium, design: .monospaced))
                     .foregroundStyle(.secondary)
             }

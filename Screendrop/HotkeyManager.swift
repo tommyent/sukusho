@@ -49,6 +49,16 @@ final class HotkeyManager {
     @ObservationIgnored private let modifierTaps = ModifierTapMonitor()
     /// Registered Carbon hotkeys for Window Management (empty while the setting is off).
     @ObservationIgnored private let windowHotkeys = WindowHotkeyRegistry<EventHotKeyRef>()
+    /// Observed registration state for each window shortcut so Settings and Apps reflect reality.
+    private(set) var windowHotkeyStatuses: [WindowAction: WindowHotkeyStatus] = [:]
+
+    func activeWindowShortcutLabel(for action: WindowAction) -> String? {
+        windowHotkeyStatuses[action] == .registered ? action.shortcutLabel : nil
+    }
+
+    var windowHotkeyIssues: [String] {
+        WindowHotkeyRegistry<EventHotKeyRef>.issueMessages(from: windowHotkeyStatuses)
+    }
     
     private init() {}
 
@@ -81,6 +91,7 @@ final class HotkeyManager {
         guard !isPaused else { return }
 
         var registeredShortcuts: [HotkeyShortcut] = []
+        var registeredClaims: [WindowHotkeyRegistry<EventHotKeyRef>.Claim] = []
         for action in CaptureHotkeyAction.allCases {
             guard let shortcut = CaptureHotkeyPreferences.shortcut(for: action) else { continue }
             // An off feature mustn't take ⌃⌘V from other apps.
@@ -91,6 +102,7 @@ final class HotkeyManager {
                 continue
             }
             registeredShortcuts.append(shortcut)
+            registeredClaims.append(.init(shortcut: shortcut, owner: action.title))
             if shortcut.taps != nil {
                 tapActions[shortcut] = action
                 continue
@@ -102,14 +114,15 @@ final class HotkeyManager {
                 registrationErrors[action] = error.localizedDescription
             }
         }
-        syncWindowHotkeys(excluding: registeredShortcuts)
+        syncWindowHotkeys(excluding: registeredClaims)
         watchModifierTaps()
     }
 
-    private func syncWindowHotkeys(excluding shortcuts: [HotkeyShortcut]) {
+    private func syncWindowHotkeys(excluding claims: [WindowHotkeyRegistry<EventHotKeyRef>.Claim]) {
+        let enabled = ScreendropPreferences.windowManagementEnabled
         windowHotkeys.sync(
-            enabled: ScreendropPreferences.windowManagementEnabled && !isPaused,
-            excluding: shortcuts,
+            enabled: enabled && !isPaused,
+            excluding: claims,
             nextID: newHotKeyID,
             register: { [self] shortcut, id in
                 guard eventHandlerRef != nil else { return nil }
@@ -117,13 +130,19 @@ final class HotkeyManager {
             },
             unregister: { _ = UnregisterEventHotKey($0) }
         )
+        if !enabled {
+            windowHotkeyStatuses = [:]
+        } else if !isPaused {
+            windowHotkeyStatuses = windowHotkeys.statuses
+        }
     }
 
-    private func activeCaptureShortcuts() -> [HotkeyShortcut] {
+    private func activeCaptureClaims() -> [WindowHotkeyRegistry<EventHotKeyRef>.Claim] {
         CaptureHotkeyAction.allCases.compactMap { action in
             if action == .drawing, ScreenRecordingManager.shared.state != .recording { return nil }
             if action == .clipboardHistory, !ScreendropPreferences.clipboardHistoryEnabled, !ScreendropPreferences.clipboardLauncherEnabled { return nil }
-            return CaptureHotkeyPreferences.shortcut(for: action)
+            guard let shortcut = CaptureHotkeyPreferences.shortcut(for: action) else { return nil }
+            return .init(shortcut: shortcut, owner: action.title)
         }
     }
 
@@ -243,7 +262,7 @@ final class HotkeyManager {
             CaptureHotkeyPreferences.saveShortcut(nil, for: action)
             registrationErrors[action] = nil
             stopWatchingTap(for: action)
-            syncWindowHotkeys(excluding: activeCaptureShortcuts())
+            syncWindowHotkeys(excluding: activeCaptureClaims())
             return
         }
         if action == .drawing, ScreenRecordingManager.shared.state != .recording {
@@ -268,7 +287,7 @@ final class HotkeyManager {
         if overlappingWindow { windowHotkeys.unregisterAll { _ = UnregisterEventHotKey($0) } }
         defer {
             if overlappingWindow || (ScreendropPreferences.windowManagementEnabled && windowHotkeys.entries.count < WindowAction.allCases.count) {
-                syncWindowHotkeys(excluding: activeCaptureShortcuts())
+                syncWindowHotkeys(excluding: activeCaptureClaims())
             }
         }
         let newRef = try registerHotKey(action: action, shortcut: shortcut)

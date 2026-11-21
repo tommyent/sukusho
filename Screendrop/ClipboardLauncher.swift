@@ -425,6 +425,7 @@ nonisolated enum LauncherList {
         folders: LauncherCatalog,
         favorites: LauncherFavorites,
         includeWindowCommands: Bool = false,
+        activeWindowShortcutLabel: (WindowAction) -> String? = { $0.shortcutLabel },
         home: String = NSHomeDirectory()
     ) -> [LauncherSection] {
         let favSet = Set(favorites.paths)
@@ -459,7 +460,7 @@ nonisolated enum LauncherList {
                 kind: .windowCommand(action),
                 path: action.itemID,
                 title: action.title,
-                detail: action.shortcutLabel,
+                detail: activeWindowShortcutLabel(action),
                 isFavorite: favSet.contains(action.itemID)
             )
         }

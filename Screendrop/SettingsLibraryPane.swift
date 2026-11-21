@@ -124,6 +124,18 @@ struct ShortcutsSettingsPane: View {
                                 .help("Allow Sukusho in Privacy & Security › Accessibility")
                         }
                     }
+                    if windowManagementEnabled {
+                        ForEach(HotkeyManager.shared.windowHotkeyIssues, id: \.self) { message in
+                            Label {
+                                Text(message)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            } icon: {
+                                Image(systemName: "exclamationmark.triangle.fill").symbolRenderingMode(.multicolor)
+                            }
+                            .font(.caption)
+                        }
+                    }
                 }
             }
             .formStyle(.grouped)
