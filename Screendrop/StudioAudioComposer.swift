@@ -390,6 +390,181 @@ nonisolated enum StudioAudioComposer {
         try build(plan, sources: sources, into: composition, strict: true)
     }
 
+    /// One playable stretch of a video segment's own audio, shared verbatim
+    /// between playback/export composition and Detach Audio so detaching never
+    /// drops a playable slice or changes its effective level.
+    struct SegmentSlice: Equatable, Sendable {
+        enum Kind: Equatable, Sendable {
+            case recording
+            case replacement
+        }
+
+        var kind: Kind
+        var sourceStart: TimeInterval
+        var sourceEnd: TimeInterval
+        var mediaStart: TimeInterval
+        var mediaEnd: TimeInterval
+        var editorStart: TimeInterval
+        var editorEnd: TimeInterval
+    }
+
+    static let minimumInsertDuration: TimeInterval = 0.005
+
+    static func segmentSlices(
+        for segment: RecordingClipSegment,
+        editorStart: TimeInterval,
+        editorEnd: TimeInterval,
+        sync: RecordingAudioSync?,
+        hasReplacement: Bool,
+        replacementDuration: TimeInterval,
+        hasRecording: Bool
+    ) -> [SegmentSlice] {
+        let speed = max(segment.speed, RecordingClipSegment.minimumSpeed)
+        var result: [SegmentSlice] = []
+
+        func appendSlice(
+            _ kind: SegmentSlice.Kind,
+            sourceStart: TimeInterval,
+            sourceEnd: TimeInterval,
+            mediaStart: TimeInterval,
+            mediaEnd: TimeInterval
+        ) {
+            let start = editorStart + (sourceStart - segment.sourceStart) / speed
+            let end = min(editorEnd, editorStart + (sourceEnd - segment.sourceStart) / speed)
+            guard mediaEnd - mediaStart > minimumInsertDuration,
+                  end - start > minimumInsertDuration else { return }
+            result.append(SegmentSlice(
+                kind: kind,
+                sourceStart: sourceStart,
+                sourceEnd: sourceEnd,
+                mediaStart: mediaStart,
+                mediaEnd: mediaEnd,
+                editorStart: start,
+                editorEnd: end
+            ))
+        }
+
+        guard hasReplacement, let sync else {
+            if hasRecording {
+                appendSlice(
+                    .recording,
+                    sourceStart: segment.sourceStart,
+                    sourceEnd: segment.sourceEnd,
+                    mediaStart: segment.sourceStart,
+                    mediaEnd: segment.sourceEnd
+                )
+            }
+            return result
+        }
+
+        var cursor = segment.sourceStart
+        let pieces = sync.pieces(
+            from: segment.sourceStart,
+            to: segment.sourceEnd,
+            fileDuration: replacementDuration
+        )
+        for piece in pieces {
+            if hasRecording, piece.sourceStart - cursor > minimumInsertDuration {
+                appendSlice(
+                    .recording,
+                    sourceStart: cursor,
+                    sourceEnd: piece.sourceStart,
+                    mediaStart: cursor,
+                    mediaEnd: piece.sourceStart
+                )
+            }
+            appendSlice(
+                .replacement,
+                sourceStart: piece.sourceStart,
+                sourceEnd: piece.sourceEnd,
+                mediaStart: piece.fileStart,
+                mediaEnd: piece.fileEnd
+            )
+            cursor = piece.sourceEnd
+        }
+        if hasRecording, segment.sourceEnd - cursor > minimumInsertDuration {
+            appendSlice(
+                .recording,
+                sourceStart: cursor,
+                sourceEnd: segment.sourceEnd,
+                mediaStart: cursor,
+                mediaEnd: segment.sourceEnd
+            )
+        }
+        return result
+    }
+
+    /// Builds detached audio clips from the exact same slices and effective
+    /// level playback uses. Returns nil if any playable slice cannot be
+    /// preserved, so the caller only mutes the video segment on a lossless move.
+    static func detachedClips(
+        for segment: RecordingClipSegment,
+        editorStart: TimeInterval,
+        editorEnd: TimeInterval,
+        projectVolume: Double,
+        sync: RecordingAudioSync?,
+        replacementFileName: String?,
+        replacementDisplayName: String?,
+        replacementDuration: TimeInterval,
+        recordingDisplayName: String,
+        sourceDuration: TimeInterval,
+        hasRecording: Bool,
+        lane: Int
+    ) -> [RecordingAudioClip]? {
+        let hasReplacement = replacementDisplayName != nil && sync != nil && replacementDuration > minimumInsertDuration
+        let slices = segmentSlices(
+            for: segment,
+            editorStart: editorStart,
+            editorEnd: editorEnd,
+            sync: sync,
+            hasReplacement: hasReplacement,
+            replacementDuration: replacementDuration,
+            hasRecording: hasRecording
+        )
+        guard !slices.isEmpty else { return nil }
+        let effectiveVolume = min(
+            max(segment.audibleVolume * RecordingAudioGain.normalized(projectVolume), RecordingAudioClip.volumeRange.lowerBound),
+            RecordingAudioClip.volumeRange.upperBound
+        )
+        var clips: [RecordingAudioClip] = []
+        for slice in slices {
+            let length = slice.editorEnd - slice.editorStart
+            let mediaSpan = slice.mediaEnd - slice.mediaStart
+            guard length > minimumInsertDuration, mediaSpan > minimumInsertDuration else { return nil }
+            let fileDuration: TimeInterval
+            let source: RecordingAudioClip.Source
+            let fileName: String
+            let displayName: String
+            switch slice.kind {
+            case .recording:
+                source = .recording
+                fileName = ""
+                displayName = recordingDisplayName
+                fileDuration = max(sourceDuration, slice.mediaEnd)
+            case .replacement:
+                source = .replacement
+                fileName = replacementFileName ?? ""
+                displayName = replacementDisplayName ?? recordingDisplayName
+                fileDuration = max(replacementDuration, slice.mediaEnd)
+            }
+            var clip = RecordingAudioClip(
+                fileName: fileName,
+                displayName: displayName,
+                start: slice.editorStart,
+                fileDuration: fileDuration
+            )
+            clip.source = source
+            clip.trimStart = slice.mediaStart
+            clip.trimEnd = slice.mediaEnd
+            clip.speed = mediaSpan / length
+            clip.volume = effectiveVolume
+            clip.isLinked = true
+            clip.lane = lane
+            clips.append(clip)
+        }
+        return clips.count == slices.count ? clips : nil
+    }
+
     private static func build(
         _ plan: StudioAudioPlan,
         sources: StudioAudioSources,
@@ -399,69 +574,42 @@ nonisolated enum StudioAudioComposer {
         var builder = Builder(composition: composition, strict: strict)
         let ranges = editorRanges(for: plan.timeline)
         let hasSoundtrack = plan.sync != nil && !sources.replacement.isEmpty
+        let hasRecording = !sources.recording.isEmpty
 
         for (segment, range) in zip(plan.timeline.segments, ranges) {
             let owner = StudioAudioLayout.Owner.segment(segment.id)
-            let speed = max(segment.speed, RecordingClipSegment.minimumSpeed)
-            let editorStart = range.start.seconds
-
-            func insert(
-                _ tracks: [StudioAudioSources.Track],
-                group: String,
-                sourceStart: TimeInterval,
-                sourceEnd: TimeInterval,
-                mediaStart: TimeInterval,
-                mediaEnd: TimeInterval
-            ) throws {
-                let start = editorStart + (sourceStart - segment.sourceStart) / speed
-                let end = min(range.end.seconds, editorStart + (sourceEnd - segment.sourceStart) / speed)
-                try builder.insert(
-                    tracks, group: group,
-                    mediaStart: mediaStart, mediaEnd: mediaEnd,
-                    editorStart: start, editorEnd: end,
-                    owner: owner
-                )
-            }
-
-            guard hasSoundtrack, let sync = plan.sync else {
-                try insert(
-                    sources.recording, group: "recording",
-                    sourceStart: segment.sourceStart, sourceEnd: segment.sourceEnd,
-                    mediaStart: segment.sourceStart, mediaEnd: segment.sourceEnd
-                )
-                continue
-            }
-
-            // The soundtrack wherever it covers this clip; the recording's
-            // own audio fills anything it was never made for, such as video
-            // brought back by opening up a trim.
-            var cursor = segment.sourceStart
-            let pieces = sync.pieces(
-                from: segment.sourceStart,
-                to: segment.sourceEnd,
-                fileDuration: sources.replacementDuration
+            let slices = segmentSlices(
+                for: segment,
+                editorStart: range.start.seconds,
+                editorEnd: range.end.seconds,
+                sync: plan.sync,
+                hasReplacement: hasSoundtrack,
+                replacementDuration: sources.replacementDuration,
+                hasRecording: hasRecording
             )
-            for piece in pieces {
-                if piece.sourceStart - cursor > 0.01 {
-                    try insert(
-                        sources.recording, group: "recording",
-                        sourceStart: cursor, sourceEnd: piece.sourceStart,
-                        mediaStart: cursor, mediaEnd: piece.sourceStart
+            for slice in slices {
+                switch slice.kind {
+                case .recording:
+                    try builder.insert(
+                        sources.recording,
+                        group: "recording",
+                        mediaStart: slice.mediaStart,
+                        mediaEnd: slice.mediaEnd,
+                        editorStart: slice.editorStart,
+                        editorEnd: slice.editorEnd,
+                        owner: owner
+                    )
+                case .replacement:
+                    try builder.insert(
+                        sources.replacement,
+                        group: "soundtrack",
+                        mediaStart: slice.mediaStart,
+                        mediaEnd: slice.mediaEnd,
+                        editorStart: slice.editorStart,
+                        editorEnd: slice.editorEnd,
+                        owner: owner
                     )
                 }
-                try insert(
-                    sources.replacement, group: "soundtrack",
-                    sourceStart: piece.sourceStart, sourceEnd: piece.sourceEnd,
-                    mediaStart: piece.fileStart, mediaEnd: piece.fileEnd
-                )
-                cursor = piece.sourceEnd
-            }
-            if segment.sourceEnd - cursor > 0.01 {
-                try insert(
-                    sources.recording, group: "recording",
-                    sourceStart: cursor, sourceEnd: segment.sourceEnd,
-                    mediaStart: cursor, mediaEnd: segment.sourceEnd
-                )
             }
         }
 

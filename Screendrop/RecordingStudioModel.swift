@@ -2146,73 +2146,36 @@ final class RecordingStudioModel {
               let editorRange = clipTimeline.editorRange(for: id) else { return }
         flushPendingAudioEdits()
         var segment = clipTimeline.segments[index]
-        let speed = max(segment.speed, RecordingClipSegment.minimumSpeed)
         let lane = (audioClips.map(\.lane).max() ?? -1) + 1
+        let pinnedFileName = (session != nil ? replacementAudio?.url.lastPathComponent : nil) ?? ""
 
-        func piece(
-            _ source: RecordingAudioClip.Source,
-            fileName: String = "",
-            name: String,
-            sourceStart: TimeInterval,
-            sourceEnd: TimeInterval,
-            fileStart: TimeInterval,
-            fileEnd: TimeInterval,
-            fileDuration: TimeInterval
-        ) -> RecordingAudioClip? {
-            let length = (sourceEnd - sourceStart) / speed
-            guard length >= RecordingAudioClip.minimumDuration, fileEnd > fileStart else { return nil }
-            var clip = RecordingAudioClip(
-                fileName: fileName,
-                displayName: name,
-                start: editorRange.lowerBound + (sourceStart - segment.sourceStart) / speed,
-                fileDuration: max(fileDuration, fileEnd)
-            )
-            clip.source = source
-            clip.trimStart = fileStart
-            clip.trimEnd = fileEnd
-            clip.speed = (fileEnd - fileStart) / length
-            clip.volume = min(segment.volume, RecordingAudioClip.volumeRange.upperBound)
-            clip.isLinked = true
-            clip.lane = lane
-            return clip
-        }
+        guard let detached = StudioAudioComposer.detachedClips(
+            for: segment,
+            editorStart: editorRange.lowerBound,
+            editorEnd: editorRange.upperBound,
+            projectVolume: Double(audioVolume),
+            sync: replacementAudio == nil ? nil : replacementAudioSync,
+            replacementFileName: pinnedFileName.isEmpty ? nil : pinnedFileName,
+            replacementDisplayName: replacementAudio?.displayName,
+            replacementDuration: replacementAudio?.duration ?? 0,
+            recordingDisplayName: "\(projectDisplayName) audio",
+            sourceDuration: sourceDuration,
+            hasRecording: hasRecordedAudio,
+            lane: lane
+        ) else { return }
 
-        var detached: [RecordingAudioClip] = []
-        var cursor = segment.sourceStart
-        func recorded(to end: TimeInterval) {
-            guard hasRecordedAudio, end - cursor > 0.01,
-                  let clip = piece(.recording, name: "\(projectDisplayName) audio",
-                                   sourceStart: cursor, sourceEnd: end,
-                                   fileStart: cursor, fileEnd: end,
-                                   fileDuration: sourceDuration) else { return }
-            detached.append(clip)
-        }
-        if let replacementAudio, let sync = replacementAudioSync {
-            let pinnedFileName = session != nil ? replacementAudio.url.lastPathComponent : ""
-            if !pinnedFileName.isEmpty {
-                audioSources.pinnedReplacements[pinnedFileName] = [
-                    StudioAudioSources.Track(track: replacementAudio.track, range: replacementAudio.range, asset: replacementAudio.asset)
-                ]
-                if let existingPeaks = audioPeaks[Self.soundtrackPeaksKey] {
-                    audioPeaks[pinnedFileName] = existingPeaks
-                } else {
-                    loadPeaks(for: pinnedFileName, url: replacementAudio.url)
-                }
-                undoReferencedFiles.insert(pinnedFileName)
+        if let replacementAudio, !pinnedFileName.isEmpty,
+           detached.contains(where: { $0.source == .replacement }) {
+            audioSources.pinnedReplacements[pinnedFileName] = [
+                StudioAudioSources.Track(track: replacementAudio.track, range: replacementAudio.range, asset: replacementAudio.asset)
+            ]
+            if let existingPeaks = audioPeaks[Self.soundtrackPeaksKey] {
+                audioPeaks[pinnedFileName] = existingPeaks
+            } else {
+                loadPeaks(for: pinnedFileName, url: replacementAudio.url)
             }
-            for part in sync.pieces(from: segment.sourceStart, to: segment.sourceEnd, fileDuration: replacementAudio.duration) {
-                recorded(to: part.sourceStart)
-                if let clip = piece(.replacement, fileName: pinnedFileName, name: replacementAudio.displayName,
-                                    sourceStart: part.sourceStart, sourceEnd: part.sourceEnd,
-                                    fileStart: part.fileStart, fileEnd: part.fileEnd,
-                                    fileDuration: replacementAudio.duration) {
-                    detached.append(clip)
-                }
-                cursor = part.sourceEnd
-            }
+            undoReferencedFiles.insert(pinnedFileName)
         }
-        recorded(to: segment.sourceEnd)
-        guard !detached.isEmpty else { return }
 
         segment.isMuted = true
         clearTimelineSelection()

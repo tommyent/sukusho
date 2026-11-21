@@ -607,6 +607,40 @@ struct StudioAudioTests {
         #expect(goertzel(samplesAfterReset, at: 1.25, length: 0.4, frequency: 520) > 0.25)
     }
 
+    @Test func detachAudioMatchesPlaybackSlicesAndEffectiveLevel() throws {
+        let segment = RecordingClipSegment(sourceStart: 0, sourceEnd: 2.0, volume: 1.0)
+        let sync = RecordingAudioSync(
+            spans: [.init(sourceStart: 0, sourceEnd: 2.0, fileStart: 0, rate: 1)],
+            offset: 0.05 // 50 ms positive offset leaves 50 ms of original audio at head
+        )
+
+        let detached = try #require(StudioAudioComposer.detachedClips(
+            for: segment,
+            editorStart: 0,
+            editorEnd: 2.0,
+            projectVolume: 0.25,
+            sync: sync,
+            replacementFileName: "audio-replacement.1.wav",
+            replacementDisplayName: "Clean.wav",
+            replacementDuration: 2.0,
+            recordingDisplayName: "Take audio",
+            sourceDuration: 2.0,
+            hasRecording: true,
+            lane: 0
+        ))
+        // Both the 50 ms original audio head and the 1.95 s replacement piece are preserved at 25% level!
+        #expect(detached.count == 2)
+        #expect(detached[0].source == .recording)
+        #expect(abs(detached[0].start - 0) < 0.001)
+        #expect(abs(detached[0].duration - 0.05) < 0.001)
+        #expect(abs(detached[0].volume - 0.25) < 0.001)
+        #expect(detached[1].source == .replacement)
+        #expect(detached[1].fileName == "audio-replacement.1.wav")
+        #expect(abs(detached[1].start - 0.05) < 0.001)
+        #expect(abs(detached[1].duration - 1.95) < 0.001)
+        #expect(abs(detached[1].volume - 0.25) < 0.001)
+    }
+
     // MARK: - Helpers
 
     private func makeDirectory() throws -> URL {
