@@ -90,6 +90,37 @@ struct StudioTimelineBlocksTests {
         #expect(frame.minX == scale.contentWidth - StudioBlockMetrics.minimumWidth)
     }
 
+    @Test @MainActor func selectedGripsTuckInsideAtTimelineEndsForBothDrawingAndHitTesting() {
+        let scale = StudioTimelineScale(viewportWidth: 500, duration: 100, zoom: 1) // 5 pt/s
+        let leadingID = UUID()
+        let trailingID = UUID()
+        let leadingFrame = StudioBlockFrame(editorStart: 0, editorEnd: 10, scale: scale)    // 0...50
+        let trailingFrame = StudioBlockFrame(editorStart: 99, editorEnd: 100, scale: scale) // 476...500 (slid inward)
+
+        // Leading block at x = 0: leading grip stays inside [0, 8), trailing grip stays outside (48, 58].
+        #expect(leadingFrame.leadingHandleInside)
+        #expect(!leadingFrame.trailingHandleInside)
+        #expect(leadingFrame.selectionMinX == 0)
+        #expect(leadingFrame.selectionMaxX == 50 + StudioBlockMetrics.handleWidth)
+        let leadingTester = StudioBlockHitTester(entries: [.init(id: leadingID, frame: leadingFrame)], selectedID: leadingID)
+        #expect(leadingTester.target(atX: 0) == .edge(leadingID, .leading))
+        #expect(leadingTester.target(atX: 7.9) == .edge(leadingID, .leading))
+        #expect(leadingTester.target(atX: 8.1) == .body(leadingID))
+        #expect(leadingTester.target(atX: 57.5) == .edge(leadingID, .trailing))
+
+        // Trailing short block slid inward to x = 476...500: trailing grip stays inside (492, 500],
+        // leading grip stays outside [468, 478), and middle [478, 492] still moves it.
+        #expect(!trailingFrame.leadingHandleInside)
+        #expect(trailingFrame.trailingHandleInside)
+        #expect(trailingFrame.selectionMinX == trailingFrame.minX - StudioBlockMetrics.handleWidth)
+        #expect(trailingFrame.selectionMaxX == scale.contentWidth)
+        let trailingTester = StudioBlockHitTester(entries: [.init(id: trailingID, frame: trailingFrame)], selectedID: trailingID)
+        #expect(trailingTester.target(atX: 468) == .edge(trailingID, .leading))
+        #expect(trailingTester.target(atX: 485) == .body(trailingID))
+        #expect(trailingTester.target(atX: 492.1) == .edge(trailingID, .trailing))
+        #expect(trailingTester.target(atX: 500) == .edge(trailingID, .trailing))
+    }
+
     // MARK: - Neighbour clamping in editor time across a speed change
 
     @Test @MainActor func movingBlockAcrossSpeedChangeClampsAtNeighbourAndPreservesEditorLength() throws {

@@ -448,6 +448,11 @@ struct StudioBlockAccessibility: Equatable {
 struct StudioBlockFrame: Equatable {
     let minX: CGFloat
     let width: CGFloat
+    /// When a selected block sits against a timeline end, an outside handle
+    /// would be clipped by the scroll view, so that grip and its hit region
+    /// move just inside the block's end instead.
+    let leadingHandleInside: Bool
+    let trailingHandleInside: Bool
 
     var maxX: CGFloat { minX + width }
 
@@ -458,8 +463,43 @@ struct StudioBlockFrame: Equatable {
         // drawn wider than it lasts slides inward to stay whole.
         let visible = min(natural, scale.contentWidth - startX)
         let width = min(max(StudioBlockMetrics.minimumWidth, visible), scale.contentWidth)
+        let minX = min(startX, max(0, scale.contentWidth - width))
         self.width = width
-        self.minX = min(startX, max(0, scale.contentWidth - width))
+        self.minX = minX
+        self.leadingHandleInside = minX < StudioBlockMetrics.handleWidth
+        self.trailingHandleInside = (minX + width) > scale.contentWidth - StudioBlockMetrics.handleWidth
+    }
+
+    var selectionMinX: CGFloat {
+        leadingHandleInside ? minX : minX - StudioBlockMetrics.handleWidth
+    }
+
+    var selectionMaxX: CGFloat {
+        trailingHandleInside ? maxX : maxX + StudioBlockMetrics.handleWidth
+    }
+
+    var selectionWidth: CGFloat {
+        max(0, selectionMaxX - selectionMinX)
+    }
+
+    /// Hit range for the selected block's leading trim handle, driven from the
+    /// same geometry as `StudioSelectionFrame`.
+    var selectedLeadingHandleRange: Range<CGFloat> {
+        let lower = selectionMinX
+        let upper = leadingHandleInside
+            ? minX + StudioBlockMetrics.handleWidth
+            : minX + StudioBlockMetrics.handleOverlap
+        return lower..<max(lower, upper)
+    }
+
+    /// Hit range for the selected block's trailing trim handle, driven from the
+    /// same geometry as `StudioSelectionFrame`.
+    var selectedTrailingHandleRange: ClosedRange<CGFloat> {
+        let upper = selectionMaxX
+        let lower = trailingHandleInside
+            ? maxX - StudioBlockMetrics.handleWidth
+            : maxX - StudioBlockMetrics.handleOverlap
+        return min(lower, upper)...upper
     }
 
     /// How far into this block, when unselected, its ends trim.
@@ -498,16 +538,15 @@ struct StudioBlockHitTester {
     let selectedID: UUID?
 
     func target(atX x: CGFloat) -> StudioBlockTarget {
-        // The selected block draws on top with its handles outside its
-        // ends, so it answers first: the handles trim, the block moves.
+        // The selected block draws on top with its handles driven from the
+        // same frame as `StudioSelectionFrame`, so it answers first: the
+        // handles trim, the block moves.
         if let selected = entries.last(where: { $0.id == selectedID }) {
             let frame = selected.frame
-            let reach = StudioBlockMetrics.handleWidth
-            let overlap = StudioBlockMetrics.handleOverlap
-            if x >= frame.minX - reach, x < frame.minX + overlap {
+            if frame.selectedLeadingHandleRange.contains(x) {
                 return .edge(selected.id, .leading)
             }
-            if x > frame.maxX - overlap, x <= frame.maxX + reach {
+            if x > frame.selectedTrailingHandleRange.lowerBound, x <= frame.selectedTrailingHandleRange.upperBound {
                 return .edge(selected.id, .trailing)
             }
             if x >= frame.minX, x <= frame.maxX {
@@ -629,9 +668,9 @@ where Item.ID == UUID {
             }
 
             if let selected, let frame = frames[selected.id] {
-                StudioSelectionFrame(blockWidth: frame.width, blockHeight: blockHeight)
+                StudioSelectionFrame(width: frame.selectionWidth, blockHeight: blockHeight)
                     .offset(
-                        x: frame.minX - StudioBlockMetrics.handleWidth,
+                        x: frame.selectionMinX,
                         y: StudioBlockMetrics.inset - StudioBlockMetrics.rimWidth
                     )
                     .allowsHitTesting(false)
@@ -1220,10 +1259,21 @@ struct StudioBlockLabel: View {
 }
 
 /// Selection: a yellow rim around the block, widening past each end into a
-/// handle marked with a line. The block itself is left exactly as it was.
+/// handle marked with a line (or tucked inside an end against the timeline's
+/// edge so it is never clipped). The block itself is left as it was.
 struct StudioSelectionFrame: View {
-    let blockWidth: CGFloat
+    let width: CGFloat
     let blockHeight: CGFloat
+
+    init(width: CGFloat, blockHeight: CGFloat) {
+        self.width = width
+        self.blockHeight = blockHeight
+    }
+
+    init(blockWidth: CGFloat, blockHeight: CGFloat) {
+        self.width = blockWidth + StudioBlockMetrics.handleWidth * 2
+        self.blockHeight = blockHeight
+    }
 
     var body: some View {
         StudioSelectionFrameShape()
@@ -1231,7 +1281,7 @@ struct StudioSelectionFrame: View {
             .overlay(alignment: .leading) { grip }
             .overlay(alignment: .trailing) { grip }
             .frame(
-                width: blockWidth + StudioBlockMetrics.handleWidth * 2,
+                width: width,
                 height: blockHeight + StudioBlockMetrics.rimWidth * 2
             )
     }
