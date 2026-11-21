@@ -125,7 +125,7 @@ nonisolated struct StudioAudioSources: @unchecked Sendable {
         var seenFiles: Set<String> = []
         for clip in clips where clip.source == .file {
             let isAudible = !clip.isMuted && clip.audibleVolume > 0
-                && min(clip.end, videoDuration) - max(clip.start, 0) >= 0.01
+                && min(clip.end, videoDuration) - max(clip.start, 0) >= RecordingAudioClip.minimumPlayableDuration
             guard RecordingAudioClip.isSafeFileName(clip.fileName), let mediaDirectory else {
                 if strictMissingClips && isAudible {
                     throw StudioAudioComposer.AudioError.missingAudioClip(clip.displayName)
@@ -155,7 +155,7 @@ nonisolated struct StudioAudioSources: @unchecked Sendable {
         var seenPinned: Set<String> = []
         for clip in clips where clip.source == .replacement && !clip.fileName.isEmpty {
             let isAudible = !clip.isMuted && clip.audibleVolume > 0
-                && min(clip.end, videoDuration) - max(clip.start, 0) >= 0.01
+                && min(clip.end, videoDuration) - max(clip.start, 0) >= RecordingAudioClip.minimumPlayableDuration
             let resolvedURL: URL?
             if let externalURL = externalReplacementURLs[clip.fileName] {
                 resolvedURL = externalURL
@@ -421,7 +421,7 @@ nonisolated enum StudioAudioComposer {
         var editorEnd: TimeInterval
     }
 
-    static let minimumInsertDuration: TimeInterval = 0.005
+    static let minimumInsertDuration: TimeInterval = RecordingAudioClip.minimumPlayableDuration
 
     static func segmentSlices(
         for segment: RecordingClipSegment,
@@ -444,8 +444,8 @@ nonisolated enum StudioAudioComposer {
         ) {
             let start = editorStart + (sourceStart - segment.sourceStart) / speed
             let end = min(editorEnd, editorStart + (sourceEnd - segment.sourceStart) / speed)
-            guard mediaEnd - mediaStart > minimumInsertDuration,
-                  end - start > minimumInsertDuration else { return }
+            guard mediaEnd - mediaStart >= RecordingAudioClip.minimumFileSpan,
+                  end - start >= minimumInsertDuration else { return }
             result.append(SegmentSlice(
                 kind: kind,
                 sourceStart: sourceStart,
@@ -478,7 +478,7 @@ nonisolated enum StudioAudioComposer {
         )
         let fillGaps = hasRecording && sync.fillsGapsWithRecording
         for piece in pieces {
-            if fillGaps, piece.sourceStart - cursor > minimumInsertDuration {
+            if fillGaps, piece.sourceStart - cursor >= RecordingAudioClip.minimumFileSpan {
                 appendSlice(
                     .recording,
                     sourceStart: cursor,
@@ -496,7 +496,7 @@ nonisolated enum StudioAudioComposer {
             )
             cursor = piece.sourceEnd
         }
-        if fillGaps, segment.sourceEnd - cursor > minimumInsertDuration {
+        if fillGaps, segment.sourceEnd - cursor >= RecordingAudioClip.minimumFileSpan {
             appendSlice(
                 .recording,
                 sourceStart: cursor,
@@ -510,7 +510,8 @@ nonisolated enum StudioAudioComposer {
 
     /// Builds detached audio clips from the exact same slices and effective
     /// level playback uses. Returns nil if any playable slice cannot be
-    /// preserved, so the caller only mutes the video segment on a lossless move.
+    /// represented faithfully in the lane, so the caller only mutes the video
+    /// segment on a lossless move.
     static func detachedClips(
         for segment: RecordingClipSegment,
         editorStart: TimeInterval,
@@ -525,7 +526,7 @@ nonisolated enum StudioAudioComposer {
         hasRecording: Bool,
         lane: Int
     ) -> [RecordingAudioClip]? {
-        let hasReplacement = replacementDisplayName != nil && sync != nil && replacementDuration > minimumInsertDuration
+        let hasReplacement = replacementDisplayName != nil && sync != nil && replacementDuration >= RecordingAudioClip.minimumFileSpan
         let slices = segmentSlices(
             for: segment,
             editorStart: editorStart,
@@ -536,15 +537,16 @@ nonisolated enum StudioAudioComposer {
             hasRecording: hasRecording
         )
         guard !slices.isEmpty else { return nil }
-        let effectiveVolume = min(
-            max(segment.audibleVolume * RecordingAudioGain.normalized(projectVolume), RecordingAudioClip.volumeRange.lowerBound),
-            RecordingAudioClip.volumeRange.upperBound
-        )
+        let effectiveVolume = segment.audibleVolume * RecordingAudioGain.normalized(projectVolume)
+        guard RecordingAudioClip.derivedVolumeRange.contains(effectiveVolume) else { return nil }
         var clips: [RecordingAudioClip] = []
         for slice in slices {
             let length = slice.editorEnd - slice.editorStart
             let mediaSpan = slice.mediaEnd - slice.mediaStart
-            guard length > minimumInsertDuration, mediaSpan > minimumInsertDuration else { return nil }
+            guard length >= RecordingAudioClip.minimumPlayableDuration,
+                  mediaSpan >= RecordingAudioClip.minimumFileSpan else { return nil }
+            let rate = mediaSpan / length
+            guard RecordingAudioClip.derivedSpeedRange.contains(rate) else { return nil }
             let fileDuration: TimeInterval
             let source: RecordingAudioClip.Source
             let fileName: String
@@ -570,7 +572,7 @@ nonisolated enum StudioAudioComposer {
             clip.source = source
             clip.trimStart = slice.mediaStart
             clip.trimEnd = slice.mediaEnd
-            clip.speed = mediaSpan / length
+            clip.speed = rate
             clip.volume = effectiveVolume
             clip.isLinked = true
             clip.lane = lane
@@ -632,7 +634,7 @@ nonisolated enum StudioAudioComposer {
         for clip in plan.clips.sorted(by: { ($0.lane, $0.start) < ($1.lane, $1.start) }) {
             let visibleStart = max(clip.start, 0)
             let visibleEnd = min(clip.end, videoDuration)
-            guard visibleEnd - visibleStart >= 0.01 else { continue }
+            guard visibleEnd - visibleStart >= RecordingAudioClip.minimumPlayableDuration else { continue }
             let tracks = sources.tracks(for: clip)
             if strict, tracks.isEmpty, !clip.isMuted, clip.audibleVolume > 0, clip.source != .recording {
                 throw AudioError.missingAudioClip(clip.displayName)
@@ -674,7 +676,8 @@ nonisolated enum StudioAudioComposer {
             editorEnd: TimeInterval,
             owner: StudioAudioLayout.Owner
         ) throws {
-            guard mediaEnd - mediaStart > 0.005, editorEnd - editorStart > 0.005 else { return }
+            guard mediaEnd - mediaStart >= RecordingAudioClip.minimumFileSpan,
+                  editorEnd - editorStart >= RecordingAudioClip.minimumPlayableDuration else { return }
             let rate = (mediaEnd - mediaStart) / (editorEnd - editorStart)
 
             for (index, source) in sources.enumerated() {
@@ -682,7 +685,7 @@ nonisolated enum StudioAudioComposer {
                 // what is cut from the head moves the start along.
                 let wanted = CMTimeRange(start: time(mediaStart), end: time(mediaEnd))
                 let available = CMTimeRangeGetIntersection(wanted, otherRange: source.range)
-                guard available.duration.seconds > 0.005 else { continue }
+                guard available.duration.seconds >= RecordingAudioClip.minimumFileSpan else { continue }
                 let headTrim = (available.start - wanted.start).seconds
 
                 // The group's first track with room at this moment; sound

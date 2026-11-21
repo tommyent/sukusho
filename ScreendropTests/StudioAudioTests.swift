@@ -1189,6 +1189,66 @@ struct StudioAudioTests {
         #expect(goertzel(samplesReset, at: 1.25, length: 0.4, frequency: 520) > 0.2)
     }
 
+    @Test func detachAudioMatchesLaneComposerAt7Point5msBoundaryAnd4xAmplifiedGain() async throws {
+        let dir = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let screenURL = try makeTone(in: dir, name: "screen", frequency: 440, amplitude: 0.2, duration: 2.0)
+        let replURL = try makeTone(in: dir, name: "repl", frequency: 880, amplitude: 0.2, duration: 2.0)
+
+        // Replacement at 1x, offset +60 ms, video sped up to 8x => 7.5 ms recorded lead-in,
+        // plus 200% segment volume * 200% project volume = 4x effective gain!
+        let segment = RecordingClipSegment(sourceStart: 0, sourceEnd: 2.0, speed: 8.0, volume: 2.0)
+        let sync = RecordingAudioSync(
+            spans: [.init(sourceStart: 0, sourceEnd: 2.0, fileStart: 0, rate: 1)],
+            offset: 0.06
+        )
+        let editorDuration = segment.editorDuration // 0.25 s
+
+        let detached = try #require(StudioAudioComposer.detachedClips(
+            for: segment,
+            editorStart: 0,
+            editorEnd: editorDuration,
+            projectVolume: 2.0,
+            sync: sync,
+            replacementFileName: replURL.lastPathComponent,
+            replacementDisplayName: "Repl",
+            replacementDuration: 2.0,
+            recordingDisplayName: "Take",
+            sourceDuration: 2.0,
+            hasRecording: true,
+            lane: 0
+        ))
+        #expect(detached.count == 2)
+        // 7.5 ms lead-in survives detach, sanitize, AND lane composition!
+        #expect(abs(detached[0].duration - 0.0075) < 0.000_5)
+        #expect(abs(detached[0].volume - 4.0) < 0.001)
+        #expect(abs(detached[0].sanitized().volume - 4.0) < 0.001)
+        #expect(abs(detached[1].volume - 4.0) < 0.001)
+
+        var mutedSegment = segment
+        mutedSegment.isMuted = true
+        let timeline = RecordingClipTimeline(segments: [mutedSegment])
+        let sources = try await StudioAudioSources.load(
+            screenAsset: AVURLAsset(url: screenURL),
+            replacementURL: replURL,
+            clips: detached,
+            mediaDirectory: nil,
+            externalReplacementURLs: [replURL.lastPathComponent: replURL],
+            timeline: timeline,
+            strictMissingClips: true
+        )
+        let plan = StudioAudioPlan(timeline: timeline, sync: sync, clips: detached, volume: 2.0)
+        let (_, layout) = try StudioAudioComposer.makeExportComposition(plan: plan, sources: sources)
+        // Both the 7.5 ms lead-in clip AND the replacement clip were placed into the lane composition!
+        #expect(layout.placements.contains { $0.owner == .clip(detached[0].id) })
+        #expect(layout.placements.contains { $0.owner == .clip(detached[1].id) })
+        let spans = StudioAudioComposer.envelopeSpans(for: layout, plan: plan)
+        let leadTrack = try #require(layout.placements.first { $0.owner == .clip(detached[0].id) }?.trackID)
+        let leadMaxGain = spans[leadTrack]?.map { max($0.startGain, $0.endGain) }.max() ?? 0
+        #expect(abs(leadMaxGain - 4.0) < 0.01)
+    }
+
     // MARK: - Helpers
 
     private func makeDirectory() throws -> URL {

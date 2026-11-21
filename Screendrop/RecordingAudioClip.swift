@@ -32,12 +32,17 @@ nonisolated struct RecordingAudioClip: Identifiable, Codable, Equatable, Hashabl
     }
 
     static let minimumDuration: TimeInterval = 0.1
-    /// Shortest derived or conformed clip that plays in the composer.
-    static let minimumPlayableDuration: TimeInterval = 0.01
-    /// Shortest source file span that inserts cleanly into the composer (> 5 ms).
+    /// Single shared minimum playable duration/span across segment playback,
+    /// Detach Audio, conform, sanitization, and lane composition.
+    static let minimumPlayableDuration: TimeInterval = 0.006
+    /// Shortest source file span that inserts cleanly into the composer.
     static let minimumFileSpan: TimeInterval = 0.006
     static let fadeRange: ClosedRange<TimeInterval> = 0...5
+    /// User-chosen volume slider range (0%...200%).
     static let volumeRange: ClosedRange<Double> = 0...2
+    /// Effective gain range matching a segment's volume (up to 200%) times
+    /// project volume (up to 200%), so Detach Audio preserves level verbatim.
+    static let derivedVolumeRange: ClosedRange<Double> = 0...4
     /// User-chosen speed range for unlinked clips.
     static let speedRange: ClosedRange<Double> = 0.25...8
     /// Playable speed range including derived rates when linked clips follow sped-up video.
@@ -77,7 +82,7 @@ nonisolated struct RecordingAudioClip: Identifiable, Codable, Equatable, Hashabl
     var duration: TimeInterval { fileSpan / max(speed, 0.01) }
     var end: TimeInterval { start + duration }
     var audibleVolume: Double {
-        isMuted ? 0 : min(max(volume, Self.volumeRange.lowerBound), Self.volumeRange.upperBound)
+        isMuted ? 0 : min(max(volume, Self.derivedVolumeRange.lowerBound), Self.derivedVolumeRange.upperBound)
     }
 
     init(fileName: String, displayName: String, start: TimeInterval, fileDuration: TimeInterval) {
@@ -144,7 +149,7 @@ nonisolated struct RecordingAudioClip: Identifiable, Codable, Equatable, Hashabl
         clip.trimStart = min(max(0, rawTrimStart), max(0, clip.fileDuration - boundedMinSpan))
         clip.trimEnd = min(max(rawTrimEnd, clip.trimStart + boundedMinSpan), max(clip.fileDuration, clip.trimStart + boundedMinSpan))
         clip.start = clip.start.isFinite ? max(0, clip.start) : 0
-        clip.volume = min(max(clip.volume.isFinite ? clip.volume : 1, Self.volumeRange.lowerBound), Self.volumeRange.upperBound)
+        clip.volume = min(max(clip.volume.isFinite ? clip.volume : 1, Self.derivedVolumeRange.lowerBound), Self.derivedVolumeRange.upperBound)
         clip.fadeIn = min(max(clip.fadeIn.isFinite ? clip.fadeIn : 0, Self.fadeRange.lowerBound), Self.fadeRange.upperBound)
         clip.fadeOut = min(max(clip.fadeOut.isFinite ? clip.fadeOut : 0, Self.fadeRange.lowerBound), Self.fadeRange.upperBound)
         clip.lane = max(0, clip.lane)

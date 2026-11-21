@@ -557,7 +557,7 @@ struct StudioAudioClipInspectorControls: View {
                     InspectorSlider(
                         "Volume",
                         value: value(\.volume, action: "Change Audio Volume"),
-                        range: CGFloat(RecordingAudioClip.volumeRange.lowerBound)...CGFloat(RecordingAudioClip.volumeRange.upperBound),
+                        range: CGFloat(RecordingAudioClip.volumeRange.lowerBound)...max(CGFloat(RecordingAudioClip.volumeRange.upperBound), CGFloat(clip.volume)),
                         format: .percent()
                     )
                     .disabled(clip.isMuted)
