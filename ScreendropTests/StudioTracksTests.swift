@@ -480,6 +480,40 @@ struct StudioTracksTests {
         #expect(abs(moved.end - 8.0) < 0.0001)
     }
 
+    @Test func insertingAtTailTrimmedEndClampsIntoKeptFootage() throws {
+        // 10s recording trimmed to source 0...5s, playhead at edited end (5.0s).
+        let trimmed = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 5, speed: 1)
+        ])
+        let textRange = try #require(trimmed.insertionSourceRange(
+            atEditorTime: trimmed.duration,
+            length: RecordingTextOverlay.defaultDuration,
+            minimum: RecordingTextOverlay.minimumDuration
+        ))
+        #expect(textRange.lowerBound >= 0)
+        #expect(textRange.upperBound <= 5)
+        #expect(abs((textRange.upperBound - textRange.lowerBound) - RecordingTextOverlay.minimumDuration) < 0.0001)
+
+        let text = RecordingTextOverlay(start: textRange.lowerBound, end: textRange.upperBound)
+        let blocks = RecordingOverlayTimelineBlock.blocks(for: [text], clipTimeline: trimmed) { ($0.start, $0.end) }
+        #expect(blocks.count == 1)
+        #expect(blocks[0].editorEnd > blocks[0].editorStart)
+
+        // Multi-segment timeline with a cut and trimmed tail (0...3, 6...8), playhead at edited end (5.0s).
+        let multi = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 3, speed: 1),
+            RecordingClipSegment(sourceStart: 6, sourceEnd: 8, speed: 1)
+        ])
+        let imageRange = try #require(multi.insertionSourceRange(
+            atEditorTime: multi.duration,
+            length: RecordingImageOverlay.defaultDuration,
+            minimum: RecordingImageOverlay.minimumDuration
+        ))
+        #expect(imageRange.lowerBound >= 6)
+        #expect(imageRange.upperBound <= 8)
+        #expect(multi.editorSpan(overlapping: imageRange.lowerBound, sourceEnd: imageRange.upperBound) != nil)
+    }
+
     // MARK: - Preview vs Export pixel comparison (including animated GIF + Text)
 
     @Test func previewAndExportRenderMatchingFramesForTextAndAnimatedGIF() throws {

@@ -532,6 +532,25 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
             .map { $0.editorStart..<$0.editorEnd }
     }
 
+    /// Source-time range for inserting a block of `length` seconds at `editorTime`,
+    /// clamped into kept footage even when the playhead sits at a tail-trimmed end.
+    func insertionSourceRange(
+        atEditorTime editorTime: TimeInterval,
+        length: TimeInterval,
+        minimum: TimeInterval
+    ) -> ClosedRange<TimeInterval>? {
+        guard let location = location(at: editorTime), let last = segments.last else { return nil }
+        let segment = segments[location.segmentIndex]
+        let keptEnd = last.sourceEnd
+        let usableMinimum = min(minimum, last.duration)
+        guard usableMinimum > 0 else { return nil }
+        let maxStart = max(last.sourceStart, keptEnd - usableMinimum)
+        let start = min(max(segment.sourceStart, location.sourceTime), maxStart)
+        let end = min(keptEnd, max(start + usableMinimum, start + length))
+        guard end > start else { return nil }
+        return start...end
+    }
+
     func isUnedited(sourceDuration: TimeInterval) -> Bool {
         guard segments.count == 1, let only = segments.first else { return false }
         return abs(only.sourceStart) < 0.000_001

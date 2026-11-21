@@ -3967,9 +3967,11 @@ final class RecordingStudioModel {
         minimum: TimeInterval
     ) -> ClosedRange<TimeInterval>? {
         guard sourceDuration >= minimum else { return nil }
-        let source = clipTimeline.sourceTime(at: min(max(editorTime, 0), duration))
-        let start = min(max(0, source), sourceDuration - minimum)
-        return start...min(sourceDuration, start + length)
+        return clipTimeline.insertionSourceRange(
+            atEditorTime: min(max(editorTime, 0), duration),
+            length: length,
+            minimum: minimum
+        )
     }
 
     private func sourceRange(
@@ -3980,7 +3982,15 @@ final class RecordingStudioModel {
         guard sourceDuration >= minimum else { return nil }
         let low = studioSourceStart(atEditorTime: min(editorStart, editorEnd), in: clipTimeline)
         let high = studioSourceEnd(atEditorTime: max(editorStart, editorEnd), in: clipTimeline)
-        return clampedSourceRange(start: low, end: high, minimum: minimum)
+        let keptEnd = clipTimeline.segments.last?.sourceEnd ?? sourceDuration
+        let keptStart = clipTimeline.segments.first?.sourceStart ?? 0
+        let upperLimit = min(sourceDuration, keptEnd)
+        let lowerLimit = max(0, keptStart)
+        let usableMinimum = min(minimum, max(0, upperLimit - lowerLimit))
+        guard usableMinimum > 0 else { return nil }
+        let lower = min(max(lowerLimit, low), max(lowerLimit, upperLimit - usableMinimum))
+        let upper = min(max(high, lower + usableMinimum), upperLimit)
+        return lower...max(lower, upper)
     }
 
     private func clampedSourceRange(start: TimeInterval, end: TimeInterval, minimum: TimeInterval) -> ClosedRange<TimeInterval> {
@@ -4334,9 +4344,13 @@ final class RecordingStudioModel {
     func cancelRedaction() { isSelectingRedaction = false }
 
     func addRedaction() {
-        guard isSelectingRedaction else { return }
-        let start = min(sourceTime(atEditorTime: currentTime), max(0, sourceDuration - 0.01))
-        let region = RecordingRedaction(start: start, end: sourceDuration, rect: workingVideoCropRect)
+        guard isSelectingRedaction,
+              let range = sourceRange(
+                startingAt: currentTime,
+                length: sourceDuration,
+                minimum: RecordingRedaction.minimumDuration
+              ) else { return }
+        let region = RecordingRedaction(start: range.lowerBound, end: range.upperBound, rect: workingVideoCropRect)
         applyRedactions(redactions + [region], actionName: "Add Redaction")
         selectRedaction(id: region.id)
         isSelectingRedaction = false
