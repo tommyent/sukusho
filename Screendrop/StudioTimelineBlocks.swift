@@ -416,6 +416,15 @@ struct StudioBlockState {
     let isHovered: Bool
 }
 
+/// Accessible label, value, and step size for a timeline block so VoiceOver can
+/// select, move, and trim even a narrow block reduced to a glyph.
+struct StudioBlockAccessibility: Equatable {
+    let label: String
+    let value: String
+    /// Step size (in editor seconds) for named move and trim actions.
+    var step: TimeInterval = 0.5
+}
+
 // MARK: - Geometry and hit-testing
 
 /// Where a block draws on its track. Rendering and hit-testing both use it,
@@ -544,6 +553,7 @@ where Item.ID == UUID {
     @ViewBuilder let content: (StudioLaneBlock<Item>, StudioBlockState) -> Content
     @ViewBuilder let menu: (StudioLaneBlock<Item>) -> Menu
     let help: (StudioLaneBlock<Item>) -> String
+    let accessibility: (StudioLaneBlock<Item>) -> StudioBlockAccessibility
 
     /// A press on the track, from mouse-down to mouse-up.
     private enum Press {
@@ -637,6 +647,7 @@ where Item.ID == UUID {
             isHovered: activeTarget.blockID == block.id
         )
         let cornerRadius = isSelected ? StudioBlockMetrics.selectedCornerRadius : StudioBlockMetrics.cornerRadius
+        let a11y = accessibility(block)
         content(block, state)
             .environment(\.studioBlockCornerRadius, cornerRadius)
             .frame(width: frame.width, height: blockHeight, alignment: .leading)
@@ -652,7 +663,50 @@ where Item.ID == UUID {
             .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .contextMenu { menu(block) }
             .help(help(block))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(a11y.label)
+            .accessibilityValue(a11y.value)
+            .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+            .accessibilityHint("Activate to select. Use actions to move or resize.")
+            .accessibilityAction {
+                model.pause()
+                actions.select(block.item)
+            }
+            .accessibilityAction(named: "Move Earlier") {
+                performAccessibleEdit(block, kind: .move, delta: -a11y.step)
+            }
+            .accessibilityAction(named: "Move Later") {
+                performAccessibleEdit(block, kind: .move, delta: a11y.step)
+            }
+            .accessibilityAction(named: "Trim Start Earlier") {
+                performAccessibleEdit(block, kind: .trimLeading, delta: -a11y.step)
+            }
+            .accessibilityAction(named: "Trim Start Later") {
+                performAccessibleEdit(block, kind: .trimLeading, delta: a11y.step)
+            }
+            .accessibilityAction(named: "Trim End Earlier") {
+                performAccessibleEdit(block, kind: .trimTrailing, delta: -a11y.step)
+            }
+            .accessibilityAction(named: "Trim End Later") {
+                performAccessibleEdit(block, kind: .trimTrailing, delta: a11y.step)
+            }
             .offset(x: frame.minX, y: StudioBlockMetrics.inset)
+    }
+
+    private func performAccessibleEdit(_ block: StudioLaneBlock<Item>, kind: StudioBlockEditKind, delta: TimeInterval) {
+        model.pause()
+        actions.select(block.item)
+        let clamped = overlap.clampedDelta(
+            delta,
+            blockID: block.id,
+            editorStart: block.editorStart,
+            editorEnd: block.editorEnd,
+            kind: kind,
+            duration: scale.duration
+        )
+        actions.begin(kind)
+        actions.edit(StudioBlockEdit(base: block, kind: kind, delta: clamped))
+        actions.end(kind)
     }
 
     // MARK: Pointer
@@ -829,7 +883,8 @@ extension StudioBlockLane where Decoration == EmptyView {
         actions: StudioBlockLaneActions<Item>,
         @ViewBuilder content: @escaping (StudioLaneBlock<Item>, StudioBlockState) -> Content,
         @ViewBuilder menu: @escaping (StudioLaneBlock<Item>) -> Menu,
-        help: @escaping (StudioLaneBlock<Item>) -> String
+        help: @escaping (StudioLaneBlock<Item>) -> String,
+        accessibility: @escaping (StudioLaneBlock<Item>) -> StudioBlockAccessibility
     ) {
         self.init(
             model: model,
@@ -844,7 +899,8 @@ extension StudioBlockLane where Decoration == EmptyView {
             decoration: { EmptyView() },
             content: content,
             menu: menu,
-            help: help
+            help: help,
+            accessibility: accessibility
         )
     }
 }

@@ -2613,11 +2613,15 @@ private struct StudioPlayheadLayer: View {
             scrollX: scrollX,
             skimX: hoverTime.map { scale.x(for: $0) - scrollX },
             showsSkim: hoverTime != nil,
-            isScrubbing: isScrubbing
-        ) { time in
-            model.pause()
-            model.seek(to: time)
-        }
+            isScrubbing: isScrubbing,
+            onScrub: { time in
+                model.pause()
+                model.seek(to: time)
+            },
+            onStep: { delta in
+                model.stepFrames(delta)
+            }
+        )
         .transaction { $0.animation = nil }
         .onChange(of: model.currentTime) { _, time in onMove(time) }
     }
@@ -2787,6 +2791,7 @@ private struct StudioTimelinePlayhead: View {
     /// head opens into its readout as if it were dragged.
     var isScrubbing = false
     let onScrub: (TimeInterval) -> Void
+    let onStep: (Int) -> Void
 
     @State private var isHovering = false
     @State private var isDragging = false
@@ -2905,6 +2910,17 @@ private struct StudioTimelinePlayhead: View {
                         if !active { endDrag() }
                     }
                     .onDisappear { endDrag() }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Playhead")
+                    .accessibilityValue(studioPreciseTimecode(time))
+                    .accessibilityHint("Adjust to step frame by frame.")
+                    .accessibilityAdjustableAction { direction in
+                        switch direction {
+                        case .increment: onStep(1)
+                        case .decrement: onStep(-1)
+                        @unknown default: break
+                        }
+                    }
                     .position(x: headX, y: Metrics.hitSize.height / 2 - 2)
                     .allowsHitTesting(isVisible)
             }
@@ -3190,7 +3206,8 @@ private struct StudioZoomLane: View {
                 block.item.isEnabled
                     ? "Drag to move, drag an end to resize, right-click for options"
                     : "Turned off. Right-click to turn it back on."
-            }
+            },
+            accessibility: { block in accessibility(for: block) }
         )
         .opacity(model.zoomEnabled ? 1 : 0.45)
         .contextMenu {
@@ -3241,6 +3258,18 @@ private struct StudioZoomLane: View {
                     .overlay { StudioBlockHatch(color: .primary.opacity(0.10)) }
             }
         }
+    }
+
+    private func accessibility(for block: StudioLaneBlock<ZoomCue>) -> StudioBlockAccessibility {
+        let cue = block.item
+        let label = if cue.isEnabled {
+            "Zoom \(InspectorValueFormat.magnification(fractionDigits: 1).displayString(for: cue.zoom)), \(cue.anchorMode.inspectorTitle)"
+        } else {
+            "Zoom, Off"
+        }
+        let range = "\(studioPreciseTimecode(block.editorStart)) to \(studioPreciseTimecode(block.editorEnd))"
+        let value = model.zoomEnabled ? range : "\(range), zooms off"
+        return StudioBlockAccessibility(label: label, value: value)
     }
 
     private func apply(_ edit: StudioBlockEdit<ZoomCue>) {
