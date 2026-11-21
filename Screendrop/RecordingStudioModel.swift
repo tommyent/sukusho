@@ -413,7 +413,7 @@ final class RecordingStudioModel {
     /// cut of the video cut the soundtrack in the same place.
     private(set) var replacementAudioSync: RecordingAudioSync?
     /// Keep the document's selection even if its file cannot be loaded.
-    private var replacementAudioReference: (fileName: String, displayName: String?)?
+    private var replacementAudioReference: StudioReplacementReference?
     /// Every soundtrack and audio file this editor has used since it opened.
     private var undoReferencedFiles = Set<String>()
     private var soundtrackOffsetSnapshot: TimeInterval?
@@ -991,15 +991,26 @@ final class RecordingStudioModel {
         // Resolve the imported soundtrack before the first player item is
         // built, so the editor opens already playing what it will export.
         if let session, let fileName = document?.replacementAudioFileName {
+            let reference = StudioReplacementReference(
+                fileName: fileName,
+                displayName: document?.replacementAudioDisplayName
+            )
             let url = session.directoryURL.appendingPathComponent(fileName)
+            let loadedAudio: RecordingReplacementAudio?
             if FileManager.default.fileExists(atPath: url.path) {
-                let loadedAudio = await RecordingReplacementAudio.load(
+                loadedAudio = await RecordingReplacementAudio.load(
                     url: url,
-                    displayName: document?.replacementAudioDisplayName ?? fileName
+                    displayName: reference.label
                 )
                 guard !isTornDown, !Task.isCancelled else { return }
-                adoptReplacementAudio(loadedAudio, sync: document?.replacementAudioSync)
+            } else {
+                loadedAudio = nil
             }
+            adoptReplacementAudio(
+                loadedAudio,
+                reference: loadedAudio == nil ? reference : nil,
+                sync: document?.replacementAudioSync
+            )
         }
         audioClips = StudioAudioConform.resolvingLanes(audioClips.map { $0.sanitized() })
         await resolveAudioClipSources()
@@ -1073,7 +1084,7 @@ final class RecordingStudioModel {
         backgroundMusicSettings = document.backgroundMusic
         voiceIsolationError = nil
         replacementAudioReference = document.replacementAudioFileName.map {
-            ($0, document.replacementAudioDisplayName)
+            StudioReplacementReference(fileName: $0, displayName: document.replacementAudioDisplayName)
         }
         replacementAudioSync = document.replacementAudioFileName == nil ? nil : document.replacementAudioSync
         if replacementAudio?.url.lastPathComponent != document.replacementAudioFileName {
@@ -3040,19 +3051,32 @@ final class RecordingStudioModel {
         selectedClipID = nil
 
         if let fileName = document.replacementAudioFileName {
+            let reference = StudioReplacementReference(
+                fileName: fileName,
+                displayName: document.replacementAudioDisplayName
+            )
             let url = session.directoryURL.appendingPathComponent(fileName)
-            if url != replacementAudio?.url, FileManager.default.fileExists(atPath: url.path) {
-                let loadedAudio = await RecordingReplacementAudio.load(
-                    url: url,
-                    displayName: document.replacementAudioDisplayName ?? fileName
+            if url != replacementAudio?.url {
+                let loadedAudio: RecordingReplacementAudio?
+                if FileManager.default.fileExists(atPath: url.path) {
+                    loadedAudio = await RecordingReplacementAudio.load(
+                        url: url,
+                        displayName: reference.label
+                    )
+                    guard !isTornDown, !Task.isCancelled else { return }
+                } else {
+                    loadedAudio = nil
+                }
+                adoptReplacementAudio(
+                    loadedAudio,
+                    reference: loadedAudio == nil ? reference : nil,
+                    sync: document.replacementAudioSync
                 )
-                guard !isTornDown, !Task.isCancelled else { return }
-                adoptReplacementAudio(loadedAudio, sync: document.replacementAudioSync)
-            } else if replacementAudio != nil {
+            } else if let replacementAudio {
                 adoptReplacementAudio(replacementAudio, sync: document.replacementAudioSync)
             }
         } else {
-            adoptReplacementAudio(nil, sync: nil)
+            adoptReplacementAudio(nil, reference: nil, sync: nil)
         }
         audioClips = StudioAudioConform.resolvingLanes(audioClips.map { $0.sanitized() })
         await resolveAudioClipSources()
@@ -4941,21 +4965,37 @@ final class RecordingStudioModel {
         }
     }
 
-    private func adoptReplacementAudio(_ audio: RecordingReplacementAudio?, sync: RecordingAudioSync?) {
+    private func adoptReplacementAudio(
+        _ audio: RecordingReplacementAudio?,
+        reference: StudioReplacementReference? = nil,
+        sync: RecordingAudioSync?
+    ) {
         replacementAudio = audio
-        replacementAudioReference = nil
-        if let audio { undoReferencedFiles.insert(audio.url.lastPathComponent) }
         audioPeaks[Self.soundtrackPeaksKey] = nil
-        guard let audio else {
-            replacementAudioSync = nil
-            audioSources.replacement = []
+        if let audio {
+            replacementAudioReference = nil
+            replacementAudioError = nil
+            undoReferencedFiles.insert(audio.url.lastPathComponent)
+            replacementAudioSync = sync ?? .flat(over: clipTimeline)
+            audioSources.replacement = [
+                StudioAudioSources.Track(track: audio.track, range: audio.range, asset: audio.asset)
+            ]
+            loadPeaks(for: Self.soundtrackPeaksKey, url: audio.url)
             return
         }
-        replacementAudioSync = sync ?? .flat(over: clipTimeline)
-        audioSources.replacement = [
-            StudioAudioSources.Track(track: audio.track, range: audio.range, asset: audio.asset)
-        ]
-        loadPeaks(for: Self.soundtrackPeaksKey, url: audio.url)
+        let outcome = StudioReplacementReference.resolve(
+            fileName: reference?.fileName,
+            displayName: reference?.displayName,
+            sync: sync,
+            loadedExists: false
+        )
+        replacementAudioReference = outcome.unresolvedReference
+        replacementAudioSync = outcome.sync
+        replacementAudioError = outcome.error
+        if let fileName = outcome.unresolvedReference?.fileName {
+            undoReferencedFiles.insert(fileName)
+        }
+        audioSources.replacement = []
     }
 
     /// Slides the soundtrack against the picture. A slider sweep undoes
@@ -5013,21 +5053,28 @@ final class RecordingStudioModel {
     }
 
     /// The soundtrack and everything that depends on it, as one undoable
-    /// value. Holding the resolved audio makes undo synchronous.
+    /// value. Holding the resolved audio and unresolved reference makes undo
+    /// synchronous without losing a missing or unreadable replacement.
     private struct SoundtrackState {
         var audio: RecordingReplacementAudio?
+        var reference: StudioReplacementReference? = nil
         var sync: RecordingAudioSync?
         var clips: [RecordingAudioClip]
     }
 
     private func setSoundtrack(_ state: SoundtrackState, actionName: String) {
         flushPendingAudioEdits()
-        let previous = SoundtrackState(audio: replacementAudio, sync: replacementAudioSync, clips: audioClips)
+        let previous = SoundtrackState(
+            audio: replacementAudio,
+            reference: replacementAudioReference,
+            sync: replacementAudioSync,
+            clips: audioClips
+        )
         registerUndo(actionName) { target in
             target.setSoundtrack(previous, actionName: actionName)
         }
         pause()
-        adoptReplacementAudio(state.audio, sync: state.sync)
+        adoptReplacementAudio(state.audio, reference: state.reference, sync: state.sync)
         audioClips = StudioAudioConform.resolvingLanes(state.clips)
         if let selectedAudioClipID, !audioClips.contains(where: { $0.id == selectedAudioClipID }) {
             self.selectedAudioClipID = nil
@@ -5069,8 +5116,9 @@ final class RecordingStudioModel {
             savedDocument?.replacementAudioFileName,
             draftDocument?.replacementAudioFileName,
             lastSavedDocument?.replacementAudioFileName,
-            replacementAudio?.url.lastPathComponent
-        ].compactMap { $0 } + keptDocuments.compactMap(\.replacementAudioFileName))
+            replacementAudio?.url.lastPathComponent,
+            replacementAudioReference?.fileName
+        ].compactMap { $0 } + keptDocuments.compactMap(\.replacementAudioFileName) + Array(undoReferencedFiles))
         let names = (try? FileManager.default.contentsOfDirectory(
             atPath: session.directoryURL.path
         )) ?? []

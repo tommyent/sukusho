@@ -18,6 +18,30 @@
 
 import Foundation
 
+// MARK: - Replacement reference
+
+/// Unresolved persisted reference to an imported soundtrack whose file is
+/// missing or unreadable, kept so saving or undoing never drops it.
+nonisolated struct StudioReplacementReference: Equatable, Sendable {
+    var fileName: String
+    var displayName: String?
+
+    var label: String { displayName ?? fileName }
+
+    /// Outcome of resolving a saved replacement reference against disk.
+    static func resolve(
+        fileName: String?,
+        displayName: String?,
+        sync: RecordingAudioSync?,
+        loadedExists: Bool
+    ) -> (unresolvedReference: StudioReplacementReference?, sync: RecordingAudioSync?, error: String?) {
+        guard let fileName else { return (nil, nil, nil) }
+        if loadedExists { return (nil, sync, nil) }
+        let ref = StudioReplacementReference(fileName: fileName, displayName: displayName)
+        return (ref, sync, "Could not load “\(ref.label)”. Reset to recorded audio or import it again.")
+    }
+}
+
 // MARK: - Soundtrack sync
 
 /// Where an imported soundtrack lines up with the recording. A soundtrack

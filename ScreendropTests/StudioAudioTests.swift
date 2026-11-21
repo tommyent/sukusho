@@ -422,6 +422,35 @@ struct StudioAudioTests {
         #expect(peakAmplitude(in: samples, from: 1.52, to: 2.5, sampleRate: 48_000) > 0.35)
     }
 
+    @Test func unresolvedReplacementPreservesReferenceSyncAndError() {
+        let sync = RecordingAudioSync(
+            spans: [.init(sourceStart: 0, sourceEnd: 8, fileStart: 0, rate: 1)],
+            offset: 0.15
+        )
+        let unresolved = StudioReplacementReference.resolve(
+            fileName: "audio-replacement.123.wav",
+            displayName: "Cleaned Voice.wav",
+            sync: sync,
+            loadedExists: false
+        )
+        #expect(unresolved.unresolvedReference == StudioReplacementReference(
+            fileName: "audio-replacement.123.wav",
+            displayName: "Cleaned Voice.wav"
+        ))
+        #expect(unresolved.sync == sync)
+        #expect(unresolved.error?.contains("Cleaned Voice.wav") == true)
+
+        let cleared = StudioReplacementReference.resolve(
+            fileName: nil,
+            displayName: nil,
+            sync: sync,
+            loadedExists: false
+        )
+        #expect(cleared.unresolvedReference == nil)
+        #expect(cleared.sync == nil)
+        #expect(cleared.error == nil)
+    }
+
     // MARK: - Helpers
 
     private func makeDirectory() throws -> URL {
