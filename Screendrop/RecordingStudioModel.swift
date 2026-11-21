@@ -4050,6 +4050,7 @@ final class RecordingStudioModel {
 
     func beginTextEdit() {
         commitPendingOverlayEdits(excluding: .text)
+        if pendingTextEdit.isCoalescing { endTextEdit() }
         pendingTextEdit.begin(from: textOverlays)
     }
 
@@ -4079,10 +4080,11 @@ final class RecordingStudioModel {
     }
 
     func editText(_ overlay: RecordingTextOverlay, actionName: String) {
+        commitPendingOverlayEdits(excluding: .text)
         if pendingTextEdit.isActive, !pendingTextEdit.actionName.isEmpty, pendingTextEdit.actionName != actionName {
             endTextEdit()
         }
-        beginTextEdit()
+        pendingTextEdit.begin(from: textOverlays, actionName: actionName)
         setText(overlay)
         pendingTextEdit.scheduleCommit(actionName: actionName) { [weak self] in
             self?.endTextEdit(actionName: actionName)
@@ -4248,6 +4250,7 @@ final class RecordingStudioModel {
 
     func beginImageEdit() {
         commitPendingOverlayEdits(excluding: .image)
+        if pendingImageEdit.isCoalescing { endImageEdit() }
         pendingImageEdit.begin(from: imageOverlays)
     }
 
@@ -4279,10 +4282,11 @@ final class RecordingStudioModel {
     }
 
     func editImage(_ overlay: RecordingImageOverlay, actionName: String) {
+        commitPendingOverlayEdits(excluding: .image)
         if pendingImageEdit.isActive, !pendingImageEdit.actionName.isEmpty, pendingImageEdit.actionName != actionName {
             endImageEdit()
         }
-        beginImageEdit()
+        pendingImageEdit.begin(from: imageOverlays, actionName: actionName)
         setImage(overlay)
         pendingImageEdit.scheduleCommit(actionName: actionName) { [weak self] in
             self?.endImageEdit(actionName: actionName)
@@ -4387,6 +4391,7 @@ final class RecordingStudioModel {
 
     func beginRedactionEdit() {
         commitPendingOverlayEdits(excluding: .redaction)
+        if pendingRedactionEdit.isCoalescing { endRedactionEdit() }
         pendingRedactionEdit.begin(from: redactions)
     }
 
@@ -4451,10 +4456,11 @@ final class RecordingStudioModel {
     }
 
     func editRedaction(_ redaction: RecordingRedaction, actionName: String) {
+        commitPendingOverlayEdits(excluding: .redaction)
         if pendingRedactionEdit.isActive, !pendingRedactionEdit.actionName.isEmpty, pendingRedactionEdit.actionName != actionName {
             endRedactionEdit()
         }
-        beginRedactionEdit()
+        pendingRedactionEdit.begin(from: redactions, actionName: actionName)
         setRedaction(redaction)
         pendingRedactionEdit.scheduleCommit(actionName: actionName) { [weak self] in
             self?.endRedactionEdit(actionName: actionName)

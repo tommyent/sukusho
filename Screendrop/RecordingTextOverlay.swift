@@ -745,6 +745,7 @@ final class StudioPendingEdit<State: Equatable> {
     private var coalesceTask: Task<Void, Never>?
 
     var isActive: Bool { snapshot != nil }
+    var isCoalescing: Bool { coalesceTask != nil }
 
     func isDirty(current: State) -> Bool {
         guard let snapshot else { return false }

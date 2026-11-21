@@ -1733,7 +1733,7 @@ private struct StudioTextLane: View {
             onScrubbing: onScrubbing,
             actions: StudioBlockLaneActions(
                 select: { model.selectText(id: $0.id) },
-                begin: { _ in model.beginTextEdit() },
+                begin: { _, _ in model.beginTextEdit() },
                 edit: { edit in
                     var text = edit.base.item
                     let range = studioOverlaySourceRange(for: edit, model: model, start: text.start, end: text.end)
@@ -1741,7 +1741,7 @@ private struct StudioTextLane: View {
                     text.end = range.end
                     model.setText(text)
                 },
-                end: { kind in model.endTextEdit(actionName: kind == .move ? "Move Text" : "Resize Text") }
+                end: { _, kind in model.endTextEdit(actionName: kind == .move ? "Move Text" : "Resize Text") }
             ),
             content: { block, state in
                 StudioOverlayBlockContent(
@@ -1827,15 +1827,19 @@ private struct StudioRedactionLane: View {
                     case .redaction(let redaction): model.selectRedaction(id: redaction.id)
                     }
                 },
-                begin: { _ in
-                    model.beginImageEdit()
-                    model.beginRedactionEdit()
+                begin: { item, _ in
+                    switch item {
+                    case .image: model.beginImageEdit()
+                    case .redaction: model.beginRedactionEdit()
+                    }
                 },
                 edit: apply,
-                end: { kind in
+                end: { item, kind in
                     let verb = kind == .move ? "Move" : "Resize"
-                    model.endImageEdit(actionName: "\(verb) Image")
-                    model.endRedactionEdit(actionName: "\(verb) Redaction")
+                    switch item {
+                    case .image: model.endImageEdit(actionName: "\(verb) Image")
+                    case .redaction: model.endRedactionEdit(actionName: "\(verb) Redaction")
+                    }
                 }
             ),
             content: { block, state in
@@ -2017,9 +2021,9 @@ private struct StudioZoomLane: View {
             onScrubbing: onScrubbing,
             actions: StudioBlockLaneActions(
                 select: { model.selectZoomCue(id: $0.id) },
-                begin: { _ in model.beginZoomCueEdit() },
+                begin: { _, _ in model.beginZoomCueEdit() },
                 edit: apply,
-                end: { kind in model.endZoomCueEdit(actionName: kind == .move ? "Move Zoom" : "Resize Zoom") }
+                end: { _, kind in model.endZoomCueEdit(actionName: kind == .move ? "Move Zoom" : "Resize Zoom") }
             ),
             decoration: { pressMarks },
             content: { block, state in content(for: block, state: state) },

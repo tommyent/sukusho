@@ -5,6 +5,7 @@ import CoreVideo
 import Darwin
 import Foundation
 import ImageIO
+import SwiftUI
 import Testing
 import UniformTypeIdentifiers
 
@@ -432,6 +433,189 @@ struct StudioTracksTests {
         #expect(flow.redactions.first?.strength == 0.95)
         flow.undo()
         #expect(flow.redactions.first?.strength == 0.8)
+    }
+
+    @MainActor
+    @Test func sharedEffectsLaneTransactionsIsolateEditedItemAndFlushInspectorEdits() throws {
+        enum EffectsItem: Identifiable {
+            case image(RecordingImageOverlay)
+            case redaction(RecordingRedaction)
+
+            var id: UUID {
+                switch self {
+                case .image(let img): img.id
+                case .redaction(let red): red.id
+                }
+            }
+        }
+
+        final class LaneHost: StudioBlockLaneHost {
+            var isDraggingTimelineBlock = false
+            let undoManager: UndoManager = {
+                let m = UndoManager()
+                m.groupsByEvent = false
+                return m
+            }()
+            let pendingImage = StudioPendingEdit<[RecordingImageOverlay]>()
+            let pendingRedaction = StudioPendingEdit<[RecordingRedaction]>()
+            var images: [RecordingImageOverlay] = []
+            var redactions: [RecordingRedaction] = []
+            var selectedID: UUID?
+            var beganImage = 0
+            var beganRedaction = 0
+
+            func pause() {}
+            func seek(to time: TimeInterval) {}
+            func clearTimelineSelection() { selectedID = nil }
+
+            func commitPending(excluding kind: String? = nil) {
+                if kind != "image", pendingImage.isActive { endImageEdit() }
+                if kind != "redaction", pendingRedaction.isActive { endRedactionEdit() }
+            }
+
+            func beginImageEdit() {
+                commitPending(excluding: "image")
+                if pendingImage.isCoalescing { endImageEdit() }
+                pendingImage.begin(from: images)
+                beganImage += 1
+            }
+
+            func endImageEdit(actionName: String = "Edit Image") {
+                guard let commit = pendingImage.takeCommit(current: images, fallbackActionName: actionName) else { return }
+                registerUndo(commit.actionName) { $0.applyImages(commit.previous, actionName: commit.actionName) }
+            }
+
+            func editImageInspector(_ updated: RecordingImageOverlay, actionName: String) {
+                commitPending(excluding: "image")
+                if pendingImage.isActive, !pendingImage.actionName.isEmpty, pendingImage.actionName != actionName {
+                    endImageEdit()
+                }
+                pendingImage.begin(from: images, actionName: actionName)
+                images = images.map { $0.id == updated.id ? updated : $0 }
+                pendingImage.scheduleCommit(actionName: actionName, delay: .seconds(5)) { [weak self] in
+                    self?.endImageEdit(actionName: actionName)
+                }
+            }
+
+            func beginRedactionEdit() {
+                commitPending(excluding: "redaction")
+                if pendingRedaction.isCoalescing { endRedactionEdit() }
+                pendingRedaction.begin(from: redactions)
+                beganRedaction += 1
+            }
+
+            func endRedactionEdit(actionName: String = "Edit Redaction") {
+                guard let commit = pendingRedaction.takeCommit(current: redactions, fallbackActionName: actionName) else { return }
+                registerUndo(commit.actionName) { $0.applyRedactions(commit.previous, actionName: commit.actionName) }
+            }
+
+            func registerUndo(_ name: String, _ op: @escaping (LaneHost) -> Void) {
+                let openGroup = !undoManager.isUndoing && !undoManager.isRedoing
+                if openGroup {
+                    commitPending()
+                    undoManager.beginUndoGrouping()
+                }
+                undoManager.registerUndo(withTarget: self) { op($0) }
+                undoManager.setActionName(name)
+                if openGroup { undoManager.endUndoGrouping() }
+            }
+
+            func applyImages(_ next: [RecordingImageOverlay], actionName: String) {
+                let prev = images
+                registerUndo(actionName) { $0.applyImages(prev, actionName: actionName) }
+                images = next
+            }
+
+            func applyRedactions(_ next: [RecordingRedaction], actionName: String) {
+                let prev = redactions
+                registerUndo(actionName) { $0.applyRedactions(prev, actionName: actionName) }
+                redactions = next
+            }
+        }
+
+        let host = LaneHost()
+        let img = RecordingImageOverlay(fileName: "logo.png", displayName: "logo", start: 1.0, end: 3.0)
+        let red = RecordingRedaction(start: 4.0, end: 6.0, rect: CGRect(x: 0.1, y: 0.1, width: 0.2, height: 0.2))
+        host.images = [img]
+        host.redactions = [red]
+
+        let imageBlock = StudioLaneBlock(item: EffectsItem.image(img), editorStart: 1.0, editorEnd: 3.0)
+        let redactionBlock = StudioLaneBlock(item: EffectsItem.redaction(red), editorStart: 4.0, editorEnd: 6.0)
+        let lane = StudioBlockLane(
+            model: host,
+            blocks: [imageBlock, redactionBlock],
+            selectedID: host.selectedID,
+            scale: StudioTimelineScale(viewportWidth: 800, duration: 10, zoom: 1),
+            height: 28,
+            empty: .scrub,
+            actions: StudioBlockLaneActions(
+                select: { host.selectedID = $0.id },
+                begin: { item, _ in
+                    switch item {
+                    case .image: host.beginImageEdit()
+                    case .redaction: host.beginRedactionEdit()
+                    }
+                },
+                edit: { edit in
+                    switch edit.base.item {
+                    case .image(var overlay):
+                        overlay.start += edit.delta
+                        overlay.end += edit.delta
+                        host.images = host.images.map { $0.id == overlay.id ? overlay : $0 }
+                    case .redaction(var region):
+                        if edit.kind == .trimTrailing { region.end += edit.delta }
+                        host.redactions = host.redactions.map { $0.id == region.id ? region : $0 }
+                    }
+                },
+                end: { item, kind in
+                    let verb = kind == .move ? "Move" : "Resize"
+                    switch item {
+                    case .image: host.endImageEdit(actionName: "\(verb) Image")
+                    case .redaction: host.endRedactionEdit(actionName: "\(verb) Redaction")
+                    }
+                }
+            ),
+            content: { _, _ in Color.clear },
+            menu: { _ in EmptyView() },
+            help: { _ in "" },
+            accessibility: { _ in StudioBlockAccessibility(label: "", value: "") }
+        )
+
+        // 1. Moving an image block through the shared lane begins ONLY the image transaction
+        //    (never flushed by beginRedactionEdit) and registers an undoable Move Image step.
+        lane.performAccessibleEdit(imageBlock, kind: .move, delta: 0.5)
+        #expect(host.beganImage == 1)
+        #expect(host.beganRedaction == 0)
+        #expect(abs(host.images[0].start - 1.5) < 0.0001)
+        #expect(host.undoManager.canUndo)
+        #expect(host.undoManager.undoActionName == "Move Image")
+        host.undoManager.undo()
+        #expect(abs(host.images[0].start - 1.0) < 0.0001)
+
+        // 2. Trimming a redaction block through the shared lane begins ONLY the redaction transaction.
+        lane.performAccessibleEdit(redactionBlock, kind: .trimTrailing, delta: 0.5)
+        #expect(host.beganImage == 1)
+        #expect(host.beganRedaction == 1)
+        #expect(abs(host.redactions[0].end - 6.5) < 0.0001)
+        #expect(host.undoManager.undoActionName == "Resize Redaction")
+        host.undoManager.undo()
+        #expect(abs(host.redactions[0].end - 6.0) < 0.0001)
+
+        // 3. A pending inspector opacity edit is finalized as its own undo step when a
+        //    same-kind lane gesture begins immediately after.
+        var faded = host.images[0]; faded.opacity = 0.5
+        host.editImageInspector(faded, actionName: "Change Image Opacity")
+        let fadedBlock = StudioLaneBlock(item: EffectsItem.image(faded), editorStart: 1.0, editorEnd: 3.0)
+        lane.performAccessibleEdit(fadedBlock, kind: .move, delta: 0.5)
+        #expect(abs(host.images[0].start - 1.5) < 0.0001)
+        #expect(host.images[0].opacity == 0.5)
+        #expect(host.undoManager.undoActionName == "Move Image")
+        host.undoManager.undo()
+        #expect(abs(host.images[0].start - 1.0) < 0.0001)
+        #expect(host.images[0].opacity == 0.5)
+        #expect(host.undoManager.undoActionName == "Change Image Opacity")
+        host.undoManager.undo()
+        #expect(host.images[0].opacity == 1.0)
     }
 
     // MARK: - Byte-bounded animated frame cache

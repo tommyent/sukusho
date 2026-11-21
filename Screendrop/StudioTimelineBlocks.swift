@@ -451,11 +451,11 @@ func studioDrawnSourceSpan(
 /// How a track turns block edits into model changes.
 struct StudioBlockLaneActions<Item: Identifiable> where Item.ID == UUID {
     let select: (Item) -> Void
-    /// An edit is starting: open one undo step.
-    let begin: (StudioBlockEditKind) -> Void
+    /// An edit is starting: open one undo step for the edited item.
+    let begin: (Item, StudioBlockEditKind) -> Void
     let edit: (StudioBlockEdit<Item>) -> Void
-    /// The edit is done: close the undo step.
-    let end: (StudioBlockEditKind) -> Void
+    /// The edit is done: close the undo step for the edited item.
+    let end: (Item, StudioBlockEditKind) -> Void
 }
 
 /// What a block's content needs to know to draw itself.
@@ -803,7 +803,7 @@ where Item.ID == UUID {
             .offset(x: frame.minX, y: StudioBlockMetrics.inset)
     }
 
-    private func performAccessibleEdit(_ block: StudioLaneBlock<Item>, kind: StudioBlockEditKind, delta: TimeInterval) {
+    func performAccessibleEdit(_ block: StudioLaneBlock<Item>, kind: StudioBlockEditKind, delta: TimeInterval) {
         guard kind == .move || block.allowsTrim else { return }
         model.pause()
         actions.select(block.item)
@@ -815,9 +815,9 @@ where Item.ID == UUID {
             kind: kind,
             duration: scale.duration
         )
-        actions.begin(kind)
+        actions.begin(block.item, kind)
         actions.edit(StudioBlockEdit(base: block, kind: kind, delta: clamped))
-        actions.end(kind)
+        actions.end(block.item, kind)
     }
 
     // MARK: Pointer
@@ -903,7 +903,7 @@ where Item.ID == UUID {
         switch press {
         case .block(let block, let kind):
             guard kind.startsDrag(translation: translation, vertical: vertical) else { return }
-            actions.begin(kind)
+            actions.begin(block.item, kind)
             press = .editing(block, kind)
             // The preview stays on the playhead while a block is dragged,
             // instead of chasing the pointer.
@@ -954,9 +954,9 @@ where Item.ID == UUID {
         press = nil
         draft = nil
         switch activePress {
-        case .editing(_, let kind):
+        case .editing(let block, let kind):
             model.isDraggingTimelineBlock = false
-            actions.end(kind)
+            actions.end(block.item, kind)
         case .creating:
             if commitDraft, let pendingDraft, case .create(_, _, let commit) = empty {
                 commit(pendingDraft)
