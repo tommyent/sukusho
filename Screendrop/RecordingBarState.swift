@@ -115,6 +115,11 @@ nonisolated enum BarHoverText {
         }
     }
 
+    static func includeAppWindows(isOn: Bool) -> BarHover {
+        isOn ? BarHover("Sukusho windows will be captured", "Click to hide Sukusho windows from captures")
+            : BarHover("Sukusho windows are hidden", "Click to include Sukusho windows in captures")
+    }
+
     static func bugReport(isOn: Bool) -> BarHover {
         isOn ? BarHover("Bug report is on", "Stop writes a bug report instead of opening Studio")
             : BarHover("Bug report is off", "Click to write a bug report when you stop")

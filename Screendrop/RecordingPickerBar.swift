@@ -124,6 +124,28 @@ struct RecordingPickerControls: View {
 
             Button {
                 tooltipDismiss()
+                includeAppWindows.toggle()
+                bugReportAddedAppWindows = false
+            } label: {
+                BarToggleLabel(
+                    id: .includeAppWindows,
+                    state: includeAppWindows ? .on : .off,
+                    hover: BarHoverText.includeAppWindows(isOn: includeAppWindows),
+                    offSymbol: "eye.slash",
+                    onSymbol: "eye.fill",
+                    look: .helper
+                )
+            }
+            .buttonStyle(BarButtonStyle())
+            .accessibilityLabel("Include Sukusho windows in captures")
+            .accessibilityValue(includeAppWindows ? "On" : "Off")
+            .accessibilityHint(includeAppWindows
+                ? "Sukusho windows are visible in screenshots and recordings. Click to hide them."
+                : "Sukusho windows stay hidden from screenshots and recordings. Click to include them.")
+            .disabled(CaptureCountdownPresenter.shared.isRunning)
+
+            Button {
+                tooltipDismiss()
                 bugReport.toggle()
             } label: {
                 BarToggleLabel(

@@ -40,5 +40,9 @@ struct RecordingBarStateTests {
         #expect(BarHoverText.timer(seconds: 3).title == "Timer: 3 seconds")
         #expect(BarHoverText.timer(seconds: 1).title == "Timer: 1 second")
         #expect(BarHoverText.cleanDesktop(.unavailable(.ruledOut)).detail == "A bug report shows the whole desktop")
+        #expect(BarHoverText.includeAppWindows(isOn: true)
+            == BarHover("Sukusho windows will be captured", "Click to hide Sukusho windows from captures"))
+        #expect(BarHoverText.includeAppWindows(isOn: false)
+            == BarHover("Sukusho windows are hidden", "Click to include Sukusho windows in captures"))
     }
 }

@@ -298,7 +298,10 @@ private struct RecordingBarView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             .coordinateSpace(.named(BarCoordinateSpace.panel))
             .environment(tooltip)
-            .onChange(of: includeAppWindowsInCaptures) { _, _ in
+            .onChange(of: includeAppWindowsInCaptures) { _, isOn in
+                if !isOn {
+                    UserDefaults.standard.set(false, forKey: ScreendropPreferences.recordingBugReportAddedAppWindowsKey)
+                }
                 PreviewWindowCaptureExclusion.shared.refreshRegisteredWindows()
                 Task { await RecordingSourceCatalog.shared.refresh() }
             }
