@@ -56,6 +56,7 @@ actor CaptureLibraryThumbnails {
     }
 
     private func image(at url: URL, owner: URL, isVideo: Bool, version: String, maxPixelSize: Int, top: Bool) async -> CGImage? {
+        let generation = cacheGeneration
         guard !Task.isCancelled else { return nil }
         let preview: RecordingPreviewSource?
         do { preview = isVideo ? try await RecordingPreviewSource(url) : nil }
@@ -82,7 +83,6 @@ actor CaptureLibraryThumbnails {
             return Task.isCancelled || !FileManager.default.fileExists(atPath: url.path) ? nil : result
         }
         let disk = disk
-        let generation = cacheGeneration
         let shouldTrim = requestsSinceTrim % 32 == 0
         requestsSinceTrim += 1
         let decode = Task.detached(priority: .utility) { () -> CGImage? in
