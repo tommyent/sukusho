@@ -240,6 +240,27 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
         #expect(summary.detail.contains(relocated.path))
     }
 
+    /// Sol 6.2 re-check #2: same-format Replace on a 244-byte filename (240-char stem + ".png") succeeds
+    /// because the backup name uses a short fixed prefix + full UUID independent of the original stem.
+    @Test func sameFormatReplaceWorksOnLongFilenamesNearThe255ByteLimit() throws {
+        let desk = try Desk()
+        defer { desk.remove() }
+        let longName = String(repeating: "a", count: 240) + ".png"
+        #expect(longName.utf8.count == 244)
+        let original = try desk.file(longName, "long-name original bytes")
+        let result = try desk.file("shot.png", "smaller", in: desk.results)
+
+        let outcome = desk.save(result, of: original, replacing: true)
+        #expect(outcome == .saved(original))
+        #expect(desk.text(original) == "smaller")
+        let trashed = try FileManager.default.contentsOfDirectory(atPath: desk.trash.path)
+        #expect(trashed.count == 1)
+        #expect(trashed[0].hasPrefix("sukusho-original-"))
+        #expect(trashed[0].hasSuffix(".png"))
+        #expect(trashed[0].utf8.count <= 64)
+        #expect(desk.text(desk.trash.appending(path: trashed[0])) == "long-name original bytes")
+    }
+
     /// editor-opus L4: a Replace in another format whose new file is in place, but whose original the Trash
     /// won't take, has saved. It says so, with the path of the kept original.
     @Test func aReplaceThatSavedButKeptTheOriginalIsNotAFailure() throws {

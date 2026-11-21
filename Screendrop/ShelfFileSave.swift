@@ -104,8 +104,7 @@ nonisolated enum ShelfFileSave {
                     let targetBase = coordinatedOriginal.deletingPathExtension().lastPathComponent
                     do {
                         if sameFormat {
-                            let ext = coordinatedOriginal.pathExtension
-                            let backupName = "\(targetBase) (original \(UUID().uuidString.prefix(8)))" + (ext.isEmpty ? "" : ".\(ext)")
+                            let backupName = Self.backupFileName(extension: coordinatedOriginal.pathExtension)
                             let backup = targetFolder.appendingPathComponent(backupName)
                             // Install atomically with a retained backup so the original never leaves its folder before
                             // the replacement is in place; only then move the backup to the Trash.
@@ -221,6 +220,14 @@ nonisolated enum ShelfFileSave {
         return Summary(title: saved.count == 1 ? "Saved" : "\(saved.count) Files Saved",
                        detail: notes.isEmpty ? destination : notes.joined(separator: "\n\n"),
                        isFailure: false, saved: saved, recoveryURLs: recoveryURLs)
+    }
+
+    /// Short, fixed-prefix + full-UUID backup name independent of the original stem length so 240+ byte
+    /// filenames never exceed the 255-byte filesystem component limit during `replaceItemAt`.
+    static func backupFileName(extension ext: String) -> String {
+        let stem = "sukusho-original-\(UUID().uuidString)"
+        guard !ext.isEmpty, ext.utf8.count <= 32 else { return stem }
+        return "\(stem).\(ext)"
     }
 
     static func moveToTrash(_ url: URL) throws -> URL {
