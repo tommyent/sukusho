@@ -93,6 +93,8 @@ struct AppearanceSettingsPane: View {
                         set: { choice.wrappedValue.solidRGB = ThemeColor.hex($0) }
                     ), supportsOpacity: false)
                     .accessibilityLabel("Background color")
+                    Button("Use Theme Color") { choice.wrappedValue.solidRGB = nil }
+                        .disabled(choice.wrappedValue.solidRGB == nil)
                 }
             }
             if backgrounds.preferences.app.usesNight || backgrounds.preferences.editors.usesNight {
