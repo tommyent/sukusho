@@ -306,17 +306,27 @@ nonisolated enum StudioAudioConform {
             )
             let editorEnd = editorStart + (f1 - f0) / derivedSpeed
 
-            // Avoid duplicating a range already restored by edge healing.
-            let alreadyCovered = result.contains { existing in
+            // Avoid duplicating a range already restored by edge healing, while
+            // restoring outer fades that edge healing alone cannot recover.
+            if let coveredIndex = result.firstIndex(where: { existing in
                 existing.isLinked
                     && existing.source == entry.clip.source
                     && existing.fileName == entry.clip.fileName
                     && existing.start <= editorStart + 0.005
                     && existing.end >= editorEnd - 0.005
-            }
-            if !alreadyCovered,
-               f1 - f0 >= RecordingAudioClip.minimumFileSpan,
-               editorEnd - editorStart >= RecordingAudioClip.minimumPlayableDuration {
+            }) {
+                if abs(f0 - entry.clip.trimStart) <= 0.002,
+                   abs(result[coveredIndex].trimStart - entry.clip.trimStart) <= 0.002,
+                   entry.clip.fadeIn > 0, result[coveredIndex].fadeIn == 0 {
+                    result[coveredIndex].fadeIn = entry.clip.fadeIn
+                }
+                if abs(f1 - entry.clip.trimEnd) <= 0.002,
+                   abs(result[coveredIndex].trimEnd - entry.clip.trimEnd) <= 0.002,
+                   entry.clip.fadeOut > 0, result[coveredIndex].fadeOut == 0 {
+                    result[coveredIndex].fadeOut = entry.clip.fadeOut
+                }
+            } else if f1 - f0 >= RecordingAudioClip.minimumFileSpan,
+                      editorEnd - editorStart >= RecordingAudioClip.minimumPlayableDuration {
                 var restored = entry.clip
                 if result.contains(where: { $0.id == restored.id }) { restored.id = UUID() }
                 restored.start = editorStart
