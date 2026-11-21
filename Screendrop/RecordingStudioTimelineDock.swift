@@ -1088,19 +1088,9 @@ private struct StudioMediaDropDelegate: DropDelegate {
         guard canDrop else { return false }
         let at = time(info.location)
         let providers = info.itemProviders(for: [.fileURL])
-        Task { @MainActor in
-            var urls: [URL] = []
-            for provider in providers {
-                let url: URL? = await withCheckedContinuation { continuation in
-                    _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                        continuation.resume(returning: url)
-                    }
-                }
-                if let url { urls.append(url) }
-            }
+        return StudioMediaDropLoader.loadFileURLs(from: providers) { urls in
             if !urls.isEmpty { onDrop(urls, at) }
         }
-        return true
     }
 }
 

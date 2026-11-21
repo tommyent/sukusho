@@ -188,6 +188,49 @@ nonisolated final class RecordingOverlayImage: @unchecked Sendable {
     }
 }
 
+/// Starts every Finder drop provider request synchronously inside `performDrop`
+/// so the drop session's file-access window is still open, then delivers the
+/// loaded URLs in their original drop order on the main actor.
+nonisolated enum StudioMediaDropLoader {
+    private final class Collector: @unchecked Sendable {
+        private let lock = NSLock()
+        private var urls: [URL?]
+        private var remaining: Int
+
+        init(count: Int) {
+            urls = Array(repeating: nil, count: count)
+            remaining = count
+        }
+
+        func record(_ url: URL?, at index: Int) -> [URL]? {
+            lock.withLock {
+                urls[index] = url
+                remaining -= 1
+                guard remaining == 0 else { return nil }
+                return urls.compactMap { $0 }
+            }
+        }
+    }
+
+    @discardableResult
+    static func loadFileURLs(
+        from providers: [NSItemProvider],
+        completion: @escaping @MainActor @Sendable ([URL]) -> Void
+    ) -> Bool {
+        guard !providers.isEmpty else { return false }
+        let collector = Collector(count: providers.count)
+        for (index, provider) in providers.enumerated() {
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                guard let finished = collector.record(url, at: index) else { return }
+                Task { @MainActor in
+                    completion(finished)
+                }
+            }
+        }
+        return true
+    }
+}
+
 /// Decoded overlay images by file, shared by the preview and the exporter.
 /// The preview asks without loading, so a draw never decodes on the main
 /// thread; the exporter loads on demand from its own thread.

@@ -163,6 +163,41 @@ struct StudioTracksTests {
         }
     }
 
+    // MARK: - Finder drop loader
+
+    @Test func finderDropStartsEveryProviderSynchronouslyAndPreservesOrder() async throws {
+        let expected = [
+            URL(fileURLWithPath: "/tmp/first.png"),
+            URL(fileURLWithPath: "/tmp/second.gif"),
+            URL(fileURLWithPath: "/tmp/third.webp")
+        ]
+        let lock = NSLock()
+        var started: [Int] = []
+        let providers: [NSItemProvider] = expected.enumerated().map { index, url in
+            let provider = NSItemProvider()
+            provider.registerDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier, visibility: .all) { handler in
+                lock.withLock { started.append(index) }
+                // Complete in reverse order so ordering depends on slot index, not arrival.
+                let delayMs = (expected.count - index) * 15
+                DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(delayMs)) {
+                    handler(url.dataRepresentation, nil)
+                }
+                return nil
+            }
+            return provider
+        }
+
+        let delivered: [URL] = await withCheckedContinuation { continuation in
+            let accepted = StudioMediaDropLoader.loadFileURLs(from: providers) { urls in
+                continuation.resume(returning: urls)
+            }
+            #expect(accepted)
+            let startedBeforeReturn = lock.withLock { started }
+            #expect(startedBeforeReturn.count == expected.count)
+        }
+        #expect(delivered == expected)
+    }
+
     // MARK: - Source-time placement across cuts and speed ramps
 
     @Test func textAndImageBlocksMapAcrossCutsAndSpeedRamps() {
