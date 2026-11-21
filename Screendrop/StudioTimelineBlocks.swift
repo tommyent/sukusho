@@ -561,6 +561,10 @@ where Item.ID == UUID {
     /// The block a drag across empty track will add on release.
     @State private var draft: ClosedRange<TimeInterval>?
     @State private var hover: StudioBlockTarget = .empty
+    /// Tracks whether SwiftUI's drag recognizer is still live so a cancelled
+    /// gesture (where `onEnded` never runs) still closes any active edit,
+    /// discards an uncommitted draft, and resets scrub state.
+    @GestureState private var isGestureActive = false
 
     private var blockHeight: CGFloat {
         height - StudioBlockMetrics.inset * 2
@@ -607,6 +611,10 @@ where Item.ID == UUID {
         .frame(height: height, alignment: .topLeading)
         .contentShape(Rectangle())
         .gesture(dragGesture(frames: frames))
+        .onChange(of: isGestureActive) { _, active in
+            if !active { finish(commitDraft: false) }
+        }
+        .onDisappear { finish(commitDraft: false) }
         .onContinuousHover { phase in
             switch phase {
             case .active(let location):
@@ -681,6 +689,9 @@ where Item.ID == UUID {
 
     private func dragGesture(frames: [UUID: StudioBlockFrame]) -> some Gesture {
         DragGesture(minimumDistance: 0)
+            .updating($isGestureActive) { _, active, _ in
+                active = true
+            }
             .onChanged { value in
                 guard scale.pointsPerSecond > 0 else { return }
                 if press == nil {
@@ -692,7 +703,7 @@ where Item.ID == UUID {
                     x: value.location.x
                 )
             }
-            .onEnded { _ in finish() }
+            .onEnded { _ in finish(commitDraft: true) }
     }
 
     private func begin(at x: CGFloat, frames: [UUID: StudioBlockFrame]) {
@@ -765,22 +776,31 @@ where Item.ID == UUID {
         actions.edit(StudioBlockEdit(base: block, kind: kind, delta: delta, verticalTranslation: vertical))
     }
 
-    private func finish() {
-        switch press {
+    /// Ends the current press. Idempotent so both `onEnded` and `@GestureState`
+    /// cancellation (or `onDisappear`) can invoke it safely; cancellation closes
+    /// an applied edit as one Undo step, discards an uncommitted draft, and
+    /// clears scrub state.
+    private func finish(commitDraft: Bool) {
+        guard let activePress = press else {
+            draft = nil
+            return
+        }
+        let pendingDraft = draft
+        press = nil
+        draft = nil
+        switch activePress {
         case .editing(_, let kind):
             model.isDraggingTimelineBlock = false
             actions.end(kind)
         case .creating:
-            if let draft, case .create(_, _, let commit) = empty {
-                commit(draft)
+            if commitDraft, let pendingDraft, case .create(_, _, let commit) = empty {
+                commit(pendingDraft)
             }
         case .empty, .scrubbing:
             onScrubbing?(false)
-        case .block, nil:
+        case .block:
             break
         }
-        press = nil
-        draft = nil
     }
 
     /// The block a drag from `start` to `current` would add, or nil when

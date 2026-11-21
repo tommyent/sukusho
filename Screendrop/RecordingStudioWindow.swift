@@ -2790,6 +2790,7 @@ private struct StudioTimelinePlayhead: View {
 
     @State private var isHovering = false
     @State private var isDragging = false
+    @GestureState private var isScrubGestureActive = false
 
     private enum Metrics {
         static let headSize = CGSize(width: 17, height: 12)
@@ -2889,14 +2890,21 @@ private struct StudioTimelinePlayhead: View {
                             minimumDistance: 0,
                             coordinateSpace: .named(Self.coordinateSpace)
                         )
+                        .updating($isScrubGestureActive) { _, active, _ in
+                            active = true
+                        }
                         .onChanged { value in
                             isDragging = true
                             onScrub(scale.time(forX: value.location.x + scrollX))
                         }
                         .onEnded { _ in
-                            isDragging = false
+                            endDrag()
                         }
                     )
+                    .onChange(of: isScrubGestureActive) { _, active in
+                        if !active { endDrag() }
+                    }
+                    .onDisappear { endDrag() }
                     .position(x: headX, y: Metrics.hitSize.height / 2 - 2)
                     .allowsHitTesting(isVisible)
             }
@@ -2905,6 +2913,10 @@ private struct StudioTimelinePlayhead: View {
         // Opening into the readout and folding back is the one spring left
         // on the timeline.
         .motion(.morphQuick, value: isHovering || isDragging || isScrubbing)
+    }
+
+    private func endDrag() {
+        isDragging = false
     }
 }
 
