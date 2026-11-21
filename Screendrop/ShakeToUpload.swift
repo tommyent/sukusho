@@ -601,6 +601,18 @@ private final class ShakeShelfPanel: NSPanel {
     override func cancelOperation(_ sender: Any?) {
         ShakeToUpload.shared.escape()
     }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if ShakeShelfFiles.isSaveToFolderShortcut(eventType: event.type,
+                                                  characters: event.charactersIgnoringModifiers,
+                                                  modifiers: event.modifierFlags),
+           let holding = ShakeToUpload.shared.holding,
+           !holding.isWorking, !holding.isFinishing, holding.canSave {
+            ShakeToUpload.shared.finishHolding(.save(replacing: false, askWhere: true))
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
 }
 
 /// One glass panel of drop tiles, with what's being dragged below them.

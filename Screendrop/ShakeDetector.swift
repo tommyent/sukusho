@@ -100,4 +100,10 @@ nonisolated enum ShakeShelfFiles {
         guard eventType == .leftMouseUp || eventType == .leftMouseDown else { return false }
         return modifiers.intersection([.option, .control, .command, .shift]) == .option
     }
+
+    /// Explicit keyboard route (⇧⌘S) for Save to Folder…, independent of Option-click and VoiceOver activation.
+    static func isSaveToFolderShortcut(eventType: NSEvent.EventType?, characters: String?, modifiers: NSEvent.ModifierFlags) -> Bool {
+        guard eventType == .keyDown, characters?.lowercased() == "s" else { return false }
+        return modifiers.intersection([.command, .shift, .option, .control]) == [.command, .shift]
+    }
 }

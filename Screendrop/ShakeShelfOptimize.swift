@@ -153,7 +153,7 @@ struct ShakeShelfHolding: View {
                 finish(.save(replacing: false, askWhere: true))
             }
             .disabled(!model.canSave)
-            .help("Save beside originals (⌥ to choose folder)")
+            .help("Save beside originals (⌥-click or ⇧⌘S to choose folder)")
 
             actionButton("doc.on.doc", label: "Copy", help: "Copy", disabled: !model.canHandOver) {
                 finish(.copy)

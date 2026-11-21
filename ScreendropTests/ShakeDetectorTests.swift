@@ -129,5 +129,12 @@ struct ShakeDetectorTests {
         #expect(!ShakeShelfFiles.wantsFolderPicker(eventType: .keyDown, modifiers: [.control, .option]))
         #expect(!ShakeShelfFiles.wantsFolderPicker(eventType: .keyDown, modifiers: .option))
         #expect(!ShakeShelfFiles.wantsFolderPicker(eventType: nil, modifiers: .option))
+
+        // Explicit keyboard route for Save to Folder… is ⇧⌘S only.
+        #expect(ShakeShelfFiles.isSaveToFolderShortcut(eventType: .keyDown, characters: "S", modifiers: [.command, .shift]))
+        #expect(ShakeShelfFiles.isSaveToFolderShortcut(eventType: .keyDown, characters: "s", modifiers: [.command, .shift]))
+        #expect(!ShakeShelfFiles.isSaveToFolderShortcut(eventType: .keyDown, characters: "s", modifiers: [.command]))
+        #expect(!ShakeShelfFiles.isSaveToFolderShortcut(eventType: .keyDown, characters: " ", modifiers: [.control, .option]))
+        #expect(!ShakeShelfFiles.isSaveToFolderShortcut(eventType: .keyUp, characters: "s", modifiers: [.command, .shift]))
     }
 }
