@@ -82,11 +82,15 @@ nonisolated enum RecordingChapterPlanner {
     }
 
     static func chapterText(_ cues: [RecordingSubtitleCue], through timeline: RecordingClipTimeline, start: TimeInterval, end: TimeInterval) -> String {
-        let sourceStart = timeline.sourceTime(at: start)
-        return cues.filter {
-            guard let time = timeline.editorTime(forSourceTime: $0.start) else { return false }
-            return $0.end > sourceStart && time < end
-        }.map(\.text).joined(separator: " ")
+        cues.compactMap { cue -> (editorStart: TimeInterval, text: String)? in
+            let intersecting = timeline.slices(overlapping: cue.start, sourceEnd: cue.end)
+                .filter { $0.editorEnd > start + 0.000_001 && $0.editorStart < end - 0.000_001 }
+            guard let first = intersecting.first else { return nil }
+            return (first.editorStart, cue.text)
+        }
+        .sorted { $0.editorStart < $1.editorStart }
+        .map(\.text)
+        .joined(separator: " ")
     }
 
     static func shareData(_ chapters: [RecordingChapter], through timeline: RecordingClipTimeline, cues: [RecordingSubtitleCue] = [], words: [RecordingTranscriptWord] = []) throws -> Data {
@@ -102,7 +106,7 @@ nonisolated enum RecordingChapterPlanner {
     }
 
     static func survivingCues(_ cues: [RecordingSubtitleCue], words: [RecordingTranscriptWord], through timeline: RecordingClipTimeline) -> [RecordingSubtitleCue] {
-        cues.compactMap { cue in
+        cues.compactMap { cue -> (editorStart: TimeInterval, cue: RecordingSubtitleCue)? in
             let slices = timeline.slices(overlapping: cue.start, sourceEnd: cue.end)
             guard let first = slices.first, !cue.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
             let cueWords = words.filter { $0.midpoint >= cue.start && $0.midpoint < cue.end }
@@ -119,8 +123,13 @@ nonisolated enum RecordingChapterPlanner {
             }
             var surviving = cue
             surviving.start = max(cue.start, first.sourceStart)
-            return surviving
-        }.sorted { $0.start < $1.start }
+            return (first.editorStart, surviving)
+        }
+        .sorted { lhs, rhs in
+            if abs(lhs.editorStart - rhs.editorStart) > 0.000_001 { return lhs.editorStart < rhs.editorStart }
+            return lhs.cue.start < rhs.cue.start
+        }
+        .map(\.cue)
     }
 
     static func suggest(
@@ -139,12 +148,11 @@ nonisolated enum RecordingChapterPlanner {
         var result = existing
         var lastSuggestion: TimeInterval?
         for (index, interval) in surviving.enumerated() {
-            let time = timeline.editorTime(forSourceTime: interval.0)!
+            guard let time = timeline.editorTime(forSourceEventTime: interval.0) else { continue }
             guard index == 0 || interval.0 - surviving[index - 1].1 >= 2 else { continue }
             guard lastSuggestion.map({ time - $0 >= 20 }) ?? true else { continue }
             guard !mapped(existing, through: timeline).contains(where: { abs($0.start - time) < 20 }) else { continue }
-            let text = readableCues.filter { $0.end > interval.0 && $0.start < interval.0 + 20 }
-                .map(\.text).joined(separator: " ")
+            let text = chapterText(readableCues, through: timeline, start: time, end: time + 20)
             let name = title(from: text)
             result.append(RecordingChapter(title: name.isEmpty ? "Chapter \(result.count + 1)" : name, start: interval.0, autoTitle: true))
             lastSuggestion = time

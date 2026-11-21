@@ -185,6 +185,33 @@ struct StudioEditingTests {
             RecordingClipSegment(sourceStart: 8, sourceEnd: 12),
         ])
         #expect(excised.editorTime(forSourceEventTime: 4.0) == nil)
+
+        // Automatic chapter titles and openingSentenceTitle follow editor playback order:
+        // [6..12, 0..6] with speech at source 7..8 (editor 1..2) and none in 0..6 (editor 6..12).
+        let reorderedSpeech = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 6, sourceEnd: 12),
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 6),
+        ])
+        let spokenCues = [
+            RecordingSubtitleCue(start: 7.0, end: 8.0, text: "First clip intro."),
+        ]
+        let autoChapters = [
+            RecordingChapter(title: "Chapter 1", start: 6.0, autoTitle: true),
+            RecordingChapter(title: "Chapter 2", start: 0.0, autoTitle: true),
+        ]
+        let titled = RecordingChapterPlanner.mapped(autoChapters, through: reorderedSpeech, cues: spokenCues)
+        #expect(titled.count == 2)
+        #expect(titled[0].title == "First clip intro")
+        #expect(titled[1].title == "Chapter 2")
+
+        // When both clips have speech, openingSentenceTitle picks the clip that now plays first.
+        let twoClipCues = [
+            RecordingSubtitleCue(start: 1.0, end: 2.0, text: "Later playback."),
+            RecordingSubtitleCue(start: 7.0, end: 8.0, text: "Now plays first."),
+        ]
+        #expect(RecordingChapterPlanner.openingSentenceTitle(
+            cues: twoClipCues, words: [], through: reorderedSpeech
+        ) == "Now plays first")
     }
 
     // MARK: - Reordering, hardCuts, editorSpan, ViewportTimeline & PointerTimeline
