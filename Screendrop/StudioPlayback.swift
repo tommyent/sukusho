@@ -64,6 +64,50 @@ nonisolated enum StudioShuttleResolution: Equatable, Sendable {
     case ignore
 }
 
+nonisolated struct StudioCameraSeekCoordinator: Equatable, Sendable {
+    enum Completion: Equatable, Sendable {
+        case ignore
+        case applyPlaybackRate
+        case startCoalescedSeek(generation: Int, target: TimeInterval)
+    }
+
+    private(set) var generation: Int = 0
+    private(set) var isSeeking = false
+    private(set) var pendingTarget: TimeInterval?
+
+    /// Keeps at most one camera seek in flight. Returns `(generation, target)`
+    /// to dispatch immediately when idle, or `nil` while a seek is already in
+    /// flight (coalescing `target` to run once the active seek settles).
+    mutating func requestSeek(to target: TimeInterval) -> (generation: Int, target: TimeInterval)? {
+        if isSeeking {
+            pendingTarget = target
+            return nil
+        }
+        generation &+= 1
+        isSeeking = true
+        pendingTarget = nil
+        return (generation, target)
+    }
+
+    mutating func completeSeek(generation seekGeneration: Int, finished: Bool) -> Completion {
+        guard seekGeneration == generation, isSeeking else { return .ignore }
+        if let next = pendingTarget {
+            generation &+= 1
+            pendingTarget = nil
+            isSeeking = true
+            return .startCoalescedSeek(generation: generation, target: next)
+        }
+        isSeeking = false
+        return finished ? .applyPlaybackRate : .ignore
+    }
+
+    mutating func invalidate() {
+        generation &+= 1
+        isSeeking = false
+        pendingTarget = nil
+    }
+}
+
 nonisolated struct StudioPlaybackBoundaryState: Equatable, Sendable {
     var isPlaying: Bool
     var shuttleRate: Float

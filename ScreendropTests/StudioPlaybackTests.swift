@@ -353,6 +353,46 @@ struct StudioPlaybackTests {
         ))
     }
 
+    @Test func cameraSeekCoordinatorKeepsOneSeekInFlightCoalescesAndInvalidates() throws {
+        var coordinator = StudioCameraSeekCoordinator()
+
+        // First request dispatches immediately.
+        let firstRequest = coordinator.requestSeek(to: 1.0)
+        let first = try #require(firstRequest)
+        #expect(coordinator.isSeeking)
+
+        // Later targets while in flight coalesce to the latest without starting concurrent seeks.
+        #expect(coordinator.requestSeek(to: 2.0) == nil)
+        #expect(coordinator.requestSeek(to: 3.5) == nil)
+        #expect(coordinator.pendingTarget == 3.5)
+
+        // Completing the first seek dispatches one coalesced seek to 3.5.
+        let next = coordinator.completeSeek(generation: first.generation, finished: true)
+        guard case .startCoalescedSeek(let secondGen, let secondTarget) = next else {
+            Issue.record("Expected coalesced seek, got \(next)")
+            return
+        }
+        #expect(secondTarget == 3.5)
+        #expect(coordinator.isSeeking)
+
+        // Completing the coalesced seek applies the playback rate.
+        #expect(coordinator.completeSeek(generation: secondGen, finished: true) == .applyPlaybackRate)
+        #expect(!coordinator.isSeeking)
+
+        // Invalidating on pause or lead-in rejects stale completions and allows a fresh seek.
+        let thirdRequest = coordinator.requestSeek(to: 5.0)
+        let third = try #require(thirdRequest)
+        coordinator.invalidate()
+        #expect(!coordinator.isSeeking)
+        #expect(coordinator.completeSeek(generation: third.generation, finished: true) == .ignore)
+
+        // An interrupted seek with no pending target clears isSeeking without applying a rate.
+        let fourthRequest = coordinator.requestSeek(to: 6.0)
+        let fourth = try #require(fourthRequest)
+        #expect(coordinator.completeSeek(generation: fourth.generation, finished: false) == .ignore)
+        #expect(!coordinator.isSeeking)
+    }
+
     @Test func studioNoticesGetFreshIdentityForRepeatedText() {
         let first = StudioNotice(text: "2×")
         let second = StudioNotice(text: "2×")

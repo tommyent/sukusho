@@ -233,7 +233,7 @@ final class RecordingStudioModel {
     /// One frame of the recording, for approximate frame-step fallback.
     private(set) var frameDuration: TimeInterval = StudioPlayback.defaultFrameDuration
     private var canUseSampleCursors = false
-    private var cameraSeekGeneration = 0
+    private var cameraSeek = StudioCameraSeekCoordinator()
     private var lastCameraSegmentID: UUID?
     /// A short word shown over the picture when a key does something that is
     /// otherwise hard to see ("2×", "◀ 1×").
@@ -1018,7 +1018,7 @@ final class RecordingStudioModel {
         screenAsset = nil
         screenVideoTrack = nil
         canUseSampleCursors = false
-        cameraSeekGeneration &+= 1
+        cameraSeek.invalidate()
         lastCameraSegmentID = nil
         isolatedMicrophone = nil
         backgroundMusic = nil
@@ -1112,7 +1112,7 @@ final class RecordingStudioModel {
         guard isPlaying else { return }
         isPlaying = false
         shuttleRate = 1
-        cameraSeekGeneration &+= 1
+        cameraSeek.invalidate()
         lastCameraSegmentID = nil
         screenPlayer.pause()
         cameraPlayer.pause()
@@ -1316,7 +1316,7 @@ final class RecordingStudioModel {
 
     private func moveCameraPlayer(to editorTime: TimeInterval) {
         guard hasCameraVideo else { return }
-        cameraSeekGeneration &+= 1
+        cameraSeek.invalidate()
         let location = clipTimeline.location(at: editorTime)
         lastCameraSegmentID = location?.segmentID
         let sourceTime = location?.sourceTime ?? 0
@@ -1713,12 +1713,11 @@ final class RecordingStudioModel {
 
     private func syncCameraPlayback() {
         guard hasCameraVideo else { return }
-        cameraSeekGeneration &+= 1
-        let generation = cameraSeekGeneration
         let location = clipTimeline.location(at: currentTime)
         lastCameraSegmentID = location?.segmentID
         let sourceTime = location?.sourceTime ?? 0
         guard sourceTime >= cameraOffset else {
+            cameraSeek.invalidate()
             cameraPlayer.pause()
             cameraPlayer.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
             return
@@ -1727,22 +1726,51 @@ final class RecordingStudioModel {
         // composition to bake speed into, so a sped-up clip must also play
         // the camera bubble at that rate or the two drift apart immediately.
         let initialRate = Float(speed(atEditorTime: currentTime)) * shuttleRate
-        let cameraTime = CMTime(seconds: max(0, sourceTime - cameraOffset), preferredTimescale: 600)
+        let cameraSeconds = max(0, sourceTime - cameraOffset)
         guard Self.playbackCapabilities(of: cameraPlayer.currentItem).supports(rate: initialRate) else {
+            cameraSeek.invalidate()
             cameraPlayer.pause()
+            let cameraTime = CMTime(seconds: cameraSeconds, preferredTimescale: StudioPlayback.seekTimescale)
             cameraPlayer.seek(to: cameraTime, toleranceBefore: .zero, toleranceAfter: .zero)
             return
         }
+        if let dispatch = cameraSeek.requestSeek(to: cameraSeconds) {
+            dispatchCameraSeek(generation: dispatch.generation, seconds: dispatch.target)
+        }
+    }
+
+    private func dispatchCameraSeek(generation: Int, seconds: TimeInterval) {
+        let cameraTime = CMTime(seconds: max(0, seconds), preferredTimescale: StudioPlayback.seekTimescale)
         cameraPlayer.seek(to: cameraTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
-            guard finished else { return }
             Task { @MainActor [weak self] in
-                guard let self, self.isPlaying, self.cameraSeekGeneration == generation else { return }
-                let currentRate = Float(self.speed(atEditorTime: self.currentTime)) * self.shuttleRate
-                if Self.playbackCapabilities(of: self.cameraPlayer.currentItem).supports(rate: currentRate) {
-                    self.cameraPlayer.rate = currentRate
-                } else {
-                    self.cameraPlayer.pause()
-                }
+                self?.finishCameraSeek(generation: generation, finished: finished)
+            }
+        }
+    }
+
+    private func finishCameraSeek(generation: Int, finished: Bool) {
+        guard hasCameraVideo, isPlaying else {
+            cameraSeek.invalidate()
+            return
+        }
+        switch cameraSeek.completeSeek(generation: generation, finished: finished) {
+        case .ignore:
+            return
+        case .startCoalescedSeek(let nextGeneration, let nextTarget):
+            let sourceTime = clipTimeline.sourceTime(at: currentTime)
+            guard sourceTime >= cameraOffset else {
+                cameraSeek.invalidate()
+                cameraPlayer.pause()
+                cameraPlayer.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+                return
+            }
+            dispatchCameraSeek(generation: nextGeneration, seconds: nextTarget)
+        case .applyPlaybackRate:
+            let currentRate = Float(speed(atEditorTime: currentTime)) * shuttleRate
+            if Self.playbackCapabilities(of: cameraPlayer.currentItem).supports(rate: currentRate) {
+                cameraPlayer.rate = currentRate
+            } else {
+                cameraPlayer.pause()
             }
         }
     }
@@ -1753,6 +1781,7 @@ final class RecordingStudioModel {
         let segmentID = location?.segmentID
         let sourceTime = location?.sourceTime ?? 0
         guard sourceTime >= cameraOffset else {
+            cameraSeek.invalidate()
             lastCameraSegmentID = segmentID
             cameraPlayer.pause()
             return
@@ -1760,14 +1789,24 @@ final class RecordingStudioModel {
         let targetRate = Float(speed(atEditorTime: currentTime)) * shuttleRate
         let expected = sourceTime - cameraOffset
         guard Self.playbackCapabilities(of: cameraPlayer.currentItem).supports(rate: targetRate) else {
+            cameraSeek.invalidate()
             lastCameraSegmentID = segmentID
             if cameraPlayer.rate != 0 { cameraPlayer.pause() }
             if expected.isFinite {
                 cameraPlayer.seek(
-                    to: CMTime(seconds: max(0, expected), preferredTimescale: 600),
+                    to: CMTime(seconds: max(0, expected), preferredTimescale: StudioPlayback.seekTimescale),
                     toleranceBefore: .zero,
                     toleranceAfter: .zero
                 )
+            }
+            return
+        }
+        if cameraSeek.isSeeking {
+            // Let the in-flight seek complete instead of cancelling it on every
+            // observer tick; coalesce a follow-up target only if a cut was crossed.
+            if segmentID != lastCameraSegmentID, expected.isFinite {
+                lastCameraSegmentID = segmentID
+                _ = cameraSeek.requestSeek(to: max(0, expected))
             }
             return
         }
