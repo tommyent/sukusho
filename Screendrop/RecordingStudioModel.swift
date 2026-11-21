@@ -268,6 +268,8 @@ final class RecordingStudioModel {
     /// recording's own audio and the soundtrack replacing it under
     /// `recordingPeaksKey` and `soundtrackPeaksKey`.
     private(set) var audioPeaks: [String: [Float]] = [:]
+    /// File names of audio clips whose files are missing or unreadable.
+    private(set) var missingAudioClipFiles: Set<String> = []
     static let recordingPeaksKey = "\u{1}recording"
     static let soundtrackPeaksKey = "\u{1}soundtrack"
     /// Why the last media import was turned down, if it was.
@@ -1228,6 +1230,7 @@ final class RecordingStudioModel {
         selectedAudioClipID = nil
         selectedAudioClipIDs.removeAll()
         audioPeaks.removeAll()
+        missingAudioClipFiles.removeAll()
         editUndoManager.removeAllActions()
         zoomEditSnapshot = nil
         viewportRebuildTask?.cancel()
@@ -4467,6 +4470,7 @@ final class RecordingStudioModel {
             return nil
         }
         audioSources.files[fileName] = tracks
+        missingAudioClipFiles.remove(fileName)
         undoReferencedFiles.insert(fileName)
         loadPeaks(for: fileName, url: storedURL)
         // Dropped at the very end, it ends there instead of starting past everything.
@@ -4500,19 +4504,41 @@ final class RecordingStudioModel {
     /// Resolves audio clip tracks from disk before building playback, and
     /// kicks off background peak extraction for waveforms.
     private func resolveAudioClipSources() async {
-        guard let directory = mediaDirectoryURL, !audioClips.isEmpty else { return }
-        let fileNames = Set(audioClips.filter { $0.source == .file }.map(\.fileName))
-            .filter(RecordingAudioClip.isSafeFileName)
-        undoReferencedFiles.formUnion(fileNames)
+        missingAudioClipFiles.removeAll()
+        guard !audioClips.isEmpty else { return }
+        let fileClips = audioClips.filter { $0.source == .file }
+        guard let directory = mediaDirectoryURL else {
+            missingAudioClipFiles.formUnion(fileClips.map(\.fileName))
+            return
+        }
+        let fileNames = Set(fileClips.map(\.fileName))
         for name in fileNames {
+            guard RecordingAudioClip.isSafeFileName(name) else {
+                missingAudioClipFiles.insert(name)
+                continue
+            }
+            undoReferencedFiles.insert(name)
             let url = directory.appendingPathComponent(name)
             if audioSources.files[name] == nil {
-                let tracks = Array(await StudioAudioSources.Track.loadAll(of: AVURLAsset(url: url)).prefix(1))
-                guard !Task.isCancelled, !isTornDown else { return }
-                if !tracks.isEmpty { audioSources.files[name] = tracks }
+                let tracks: [StudioAudioSources.Track]
+                if FileManager.default.fileExists(atPath: url.path) {
+                    tracks = Array(await StudioAudioSources.Track.loadAll(of: AVURLAsset(url: url)).prefix(1))
+                    guard !Task.isCancelled, !isTornDown else { return }
+                } else {
+                    tracks = []
+                }
+                if tracks.isEmpty {
+                    missingAudioClipFiles.insert(name)
+                    continue
+                }
+                audioSources.files[name] = tracks
             }
             loadPeaks(for: name, url: url)
         }
+    }
+
+    func isAudioClipMissing(_ clip: RecordingAudioClip) -> Bool {
+        clip.source == .file && missingAudioClipFiles.contains(clip.fileName)
     }
 
     var selectedAudioClip: RecordingAudioClip? {

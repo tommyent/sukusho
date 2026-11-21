@@ -451,6 +451,72 @@ struct StudioAudioTests {
         #expect(cleared.error == nil)
     }
 
+    @Test func missingAudibleImportedClipFailsExportWhileMutedMissingClipSucceeds() async throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StudioAudioMissingTest-\(UUID().uuidString)", isDirectory: true)
+        let mediaDir = dir.appendingPathComponent("media", isDirectory: true)
+        try FileManager.default.createDirectory(at: mediaDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let screenURL = dir.appendingPathComponent("screen.wav")
+        try makeToneWAV(at: screenURL, frequency: 440, duration: 1.5, amplitude: 0.4)
+        let musicURL = dir.appendingPathComponent("music.wav")
+        try makeToneWAV(at: musicURL, frequency: 660, duration: 1.5, amplitude: 0.3)
+
+        let missingClip = RecordingAudioClip(
+            fileName: "deleted-narration.wav",
+            displayName: "Narration",
+            start: 0.2,
+            fileDuration: 1.0
+        )
+        let timeline = RecordingClipTimeline.full(sourceDuration: 1.5)
+        let musicSettings = RecordingBackgroundMusic(
+            fileName: "music.wav",
+            displayName: "Bed",
+            volume: 0.5,
+            startOffset: 0,
+            ducking: 0
+        )
+
+        var threwMissing = false
+        do {
+            _ = try await StudioAudioComposer.prepareExport(
+                screenAsset: AVURLAsset(url: screenURL),
+                screenURL: screenURL,
+                timeline: timeline,
+                replacementURL: nil,
+                replacementSync: nil,
+                clips: [missingClip],
+                mediaDirectory: mediaDir,
+                volume: 1,
+                microphoneTrackID: nil,
+                isolatedMicrophoneURL: nil,
+                backgroundMusic: .init(url: musicURL, settings: musicSettings)
+            )
+        } catch StudioAudioComposer.AudioError.missingAudioClip(let name) {
+            threwMissing = (name == "Narration")
+        }
+        #expect(threwMissing)
+
+        // Muting the missing clip allows export to succeed cleanly.
+        var mutedClip = missingClip
+        mutedClip.isMuted = true
+        let prepared = try await StudioAudioComposer.prepareExport(
+            screenAsset: AVURLAsset(url: screenURL),
+            screenURL: screenURL,
+            timeline: timeline,
+            replacementURL: nil,
+            replacementSync: nil,
+            clips: [mutedClip],
+            mediaDirectory: mediaDir,
+            volume: 1,
+            microphoneTrackID: nil,
+            isolatedMicrophoneURL: nil,
+            backgroundMusic: .init(url: musicURL, settings: musicSettings)
+        )
+        #expect(!prepared.composition.tracks(withMediaType: .audio).isEmpty)
+    }
+
     // MARK: - Helpers
 
     private func makeDirectory() throws -> URL {

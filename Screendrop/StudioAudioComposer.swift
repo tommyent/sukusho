@@ -76,14 +76,17 @@ nonisolated struct StudioAudioSources: @unchecked Sendable {
     }
 
     /// Everything a project's export needs, read from disk. Validates explicit
-    /// replacement and voice-isolation URLs rather than silently falling back.
+    /// replacement, voice-isolation, and (when `strictMissingClips` is true)
+    /// audible imported audio clips rather than silently falling back.
     static func load(
         screenAsset: AVAsset,
         replacementURL: URL?,
         clips: [RecordingAudioClip],
         mediaDirectory: URL?,
         microphoneTrackID: CMPersistentTrackID? = nil,
-        isolatedMicrophoneURL: URL? = nil
+        isolatedMicrophoneURL: URL? = nil,
+        timeline: RecordingClipTimeline? = nil,
+        strictMissingClips: Bool = false
     ) async throws -> StudioAudioSources {
         var sources = StudioAudioSources()
         sources.recording = await Track.loadAll(of: screenAsset)
@@ -110,12 +113,36 @@ nonisolated struct StudioAudioSources: @unchecked Sendable {
             }
             sources.replacement = [Track(track: loaded.track, range: loaded.range, asset: loaded.asset)]
         }
-        if let mediaDirectory {
-            let names = Set(clips.filter { $0.source == .file }.map(\.fileName))
-            for name in names where RecordingAudioClip.isSafeFileName(name) {
-                let asset = AVURLAsset(url: mediaDirectory.appendingPathComponent(name))
-                let tracks = Array(await Track.loadAll(of: asset).prefix(1))
-                if !tracks.isEmpty { sources.files[name] = tracks }
+        let videoDuration = timeline?.duration ?? .infinity
+        let fileClips = clips.filter { $0.source == .file }
+        var seen: Set<String> = []
+        for clip in fileClips {
+            let isAudible = !clip.isMuted && clip.audibleVolume > 0
+                && min(clip.end, videoDuration) - max(clip.start, 0) >= 0.01
+            guard RecordingAudioClip.isSafeFileName(clip.fileName), let mediaDirectory else {
+                if strictMissingClips && isAudible {
+                    throw StudioAudioComposer.AudioError.missingAudioClip(clip.displayName)
+                }
+                continue
+            }
+            if !seen.insert(clip.fileName).inserted {
+                if strictMissingClips && isAudible && sources.files[clip.fileName] == nil {
+                    throw StudioAudioComposer.AudioError.missingAudioClip(clip.displayName)
+                }
+                continue
+            }
+            let url = mediaDirectory.appendingPathComponent(clip.fileName)
+            let tracks: [Track]
+            if FileManager.default.fileExists(atPath: url.path) {
+                let asset = AVURLAsset(url: url)
+                tracks = Array(await Track.loadAll(of: asset).prefix(1))
+            } else {
+                tracks = []
+            }
+            if !tracks.isEmpty {
+                sources.files[clip.fileName] = tracks
+            } else if strictMissingClips && isAudible {
+                throw StudioAudioComposer.AudioError.missingAudioClip(clip.displayName)
             }
         }
         return sources
@@ -180,6 +207,20 @@ nonisolated struct StudioAudioLayout: Sendable {
 }
 
 nonisolated enum StudioAudioComposer {
+    enum AudioError: LocalizedError {
+        case missingAudioClip(String)
+        case compositionInsertFailed(Error)
+
+        var errorDescription: String? {
+            switch self {
+            case .missingAudioClip(let name):
+                "Audio clip “\(name)” is missing or unreadable. Mute or remove it before exporting."
+            case .compositionInsertFailed(let error):
+                "Could not assemble audio for export: \(error.localizedDescription)"
+            }
+        }
+    }
+
     private static let timescale: CMTimeScale = 600
 
     private static func time(_ seconds: TimeInterval) -> CMTime {
@@ -217,7 +258,9 @@ nonisolated enum StudioAudioComposer {
             clips: clips,
             mediaDirectory: mediaDirectory,
             microphoneTrackID: microphoneTrackID,
-            isolatedMicrophoneURL: isolatedMicrophoneURL
+            isolatedMicrophoneURL: isolatedMicrophoneURL,
+            timeline: timeline,
+            strictMissingClips: true
         )
         let plan = StudioAudioPlan(
             timeline: timeline,
@@ -225,7 +268,7 @@ nonisolated enum StudioAudioComposer {
             clips: clips,
             volume: volume
         )
-        let (composition, layout) = makeComposition(plan: plan, sources: sources)
+        let (composition, layout) = try makeExportComposition(plan: plan, sources: sources)
         let baseMix = mix(for: layout, plan: plan)
         let preparedMusic = try await RecordingBackgroundMusicMixer.addPreparedMusic(
             to: composition,
@@ -269,7 +312,7 @@ nonisolated enum StudioAudioComposer {
 
     // MARK: Composition
 
-    /// A composition holding only the project's sound, for export.
+    /// A composition holding only the project's sound, for tests/previews.
     static func makeComposition(
         plan: StudioAudioPlan,
         sources: StudioAudioSources
@@ -279,15 +322,44 @@ nonisolated enum StudioAudioComposer {
         return (composition, layout)
     }
 
+    /// Strict variant for exports: fails if an audible audio clip has no
+    /// resolved tracks or if AVFoundation rejects a composition insertion.
+    static func makeExportComposition(
+        plan: StudioAudioPlan,
+        sources: StudioAudioSources
+    ) throws -> (composition: AVMutableComposition, layout: StudioAudioLayout) {
+        let composition = AVMutableComposition()
+        let layout = try addStrict(plan, sources: sources, to: composition)
+        return (composition, layout)
+    }
+
     /// Adds the project's sound to a composition that already holds its
-    /// picture (or nothing).
+    /// picture (or nothing). Best-effort for live playback.
     @discardableResult
     static func add(
         _ plan: StudioAudioPlan,
         sources: StudioAudioSources,
         to composition: AVMutableComposition
     ) -> StudioAudioLayout {
-        var builder = Builder(composition: composition)
+        (try? build(plan, sources: sources, into: composition, strict: false)) ?? StudioAudioLayout()
+    }
+
+    @discardableResult
+    static func addStrict(
+        _ plan: StudioAudioPlan,
+        sources: StudioAudioSources,
+        to composition: AVMutableComposition
+    ) throws -> StudioAudioLayout {
+        try build(plan, sources: sources, into: composition, strict: true)
+    }
+
+    private static func build(
+        _ plan: StudioAudioPlan,
+        sources: StudioAudioSources,
+        into composition: AVMutableComposition,
+        strict: Bool
+    ) throws -> StudioAudioLayout {
+        var builder = Builder(composition: composition, strict: strict)
         let ranges = editorRanges(for: plan.timeline)
         let hasSoundtrack = plan.sync != nil && !sources.replacement.isEmpty
 
@@ -303,10 +375,10 @@ nonisolated enum StudioAudioComposer {
                 sourceEnd: TimeInterval,
                 mediaStart: TimeInterval,
                 mediaEnd: TimeInterval
-            ) {
+            ) throws {
                 let start = editorStart + (sourceStart - segment.sourceStart) / speed
                 let end = min(range.end.seconds, editorStart + (sourceEnd - segment.sourceStart) / speed)
-                builder.insert(
+                try builder.insert(
                     tracks, group: group,
                     mediaStart: mediaStart, mediaEnd: mediaEnd,
                     editorStart: start, editorEnd: end,
@@ -315,7 +387,7 @@ nonisolated enum StudioAudioComposer {
             }
 
             guard hasSoundtrack, let sync = plan.sync else {
-                insert(
+                try insert(
                     sources.recording, group: "recording",
                     sourceStart: segment.sourceStart, sourceEnd: segment.sourceEnd,
                     mediaStart: segment.sourceStart, mediaEnd: segment.sourceEnd
@@ -334,13 +406,13 @@ nonisolated enum StudioAudioComposer {
             )
             for piece in pieces {
                 if piece.sourceStart - cursor > 0.01 {
-                    insert(
+                    try insert(
                         sources.recording, group: "recording",
                         sourceStart: cursor, sourceEnd: piece.sourceStart,
                         mediaStart: cursor, mediaEnd: piece.sourceStart
                     )
                 }
-                insert(
+                try insert(
                     sources.replacement, group: "soundtrack",
                     sourceStart: piece.sourceStart, sourceEnd: piece.sourceEnd,
                     mediaStart: piece.fileStart, mediaEnd: piece.fileEnd
@@ -348,7 +420,7 @@ nonisolated enum StudioAudioComposer {
                 cursor = piece.sourceEnd
             }
             if segment.sourceEnd - cursor > 0.01 {
-                insert(
+                try insert(
                     sources.recording, group: "recording",
                     sourceStart: cursor, sourceEnd: segment.sourceEnd,
                     mediaStart: cursor, mediaEnd: segment.sourceEnd
@@ -362,9 +434,13 @@ nonisolated enum StudioAudioComposer {
             let visibleStart = max(clip.start, 0)
             let visibleEnd = min(clip.end, videoDuration)
             guard visibleEnd - visibleStart >= 0.01 else { continue }
+            let tracks = sources.tracks(for: clip)
+            if strict, tracks.isEmpty, !clip.isMuted, clip.audibleVolume > 0, clip.source != .recording {
+                throw AudioError.missingAudioClip(clip.displayName)
+            }
             let speed = max(clip.speed, 0.01)
-            builder.insert(
-                sources.tracks(for: clip),
+            try builder.insert(
+                tracks,
                 group: "lane\(clip.lane)",
                 mediaStart: clip.trimStart + (visibleStart - clip.start) * speed,
                 mediaEnd: clip.trimStart + (visibleEnd - clip.start) * speed,
@@ -381,11 +457,13 @@ nonisolated enum StudioAudioComposer {
     /// never overlap; AVFoundation mixes far fewer tracks more happily.
     private struct Builder {
         let composition: AVMutableComposition
+        let strict: Bool
         var layout = StudioAudioLayout()
         private var tracks: [String: AVMutableCompositionTrack] = [:]
 
-        init(composition: AVMutableComposition) {
+        init(composition: AVMutableComposition, strict: Bool = false) {
             self.composition = composition
+            self.strict = strict
         }
 
         mutating func insert(
@@ -396,7 +474,7 @@ nonisolated enum StudioAudioComposer {
             editorStart: TimeInterval,
             editorEnd: TimeInterval,
             owner: StudioAudioLayout.Owner
-        ) {
+        ) throws {
             guard mediaEnd - mediaStart > 0.005, editorEnd - editorStart > 0.005 else { return }
             let rate = (mediaEnd - mediaStart) / (editorEnd - editorStart)
 
@@ -445,6 +523,7 @@ nonisolated enum StudioAudioComposer {
                         track.scaleTimeRange(CMTimeRange(start: at, duration: available.duration), toDuration: target)
                     }
                 } catch {
+                    if strict { throw AudioError.compositionInsertFailed(error) }
                     continue
                 }
                 let placedDuration = abs(rate - 1) > 0.000_1 ? target : available.duration

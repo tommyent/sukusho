@@ -81,7 +81,10 @@ struct StudioAudioLane: View {
             content: { block, state in content(for: block.item, state: state) },
             menu: { block in menu(for: block.item) },
             help: { block in
-                block.item.end > model.duration + 0.01
+                if model.isAudioClipMissing(block.item) {
+                    return "\(block.item.displayName) is missing from this project."
+                }
+                return block.item.end > model.duration + 0.01
                     ? "\(block.item.displayName). Continues past the end of the video."
                     : "\(block.item.displayName). Drag to move, drag an end to trim, ⇧-click to select more, right-click for more."
             },
@@ -106,6 +109,7 @@ struct StudioAudioLane: View {
         let clip = block.item
         var traits: [String] = []
         if clip.isMuted { traits.append("muted") }
+        if model.isAudioClipMissing(clip) { traits.append("missing") }
         if clip.isLinked { traits.append("linked") }
         traits.append("lane \(clip.lane + 1)")
         let range = "\(studioPreciseTimecode(block.editorStart)) to \(studioPreciseTimecode(block.editorEnd))"
@@ -184,12 +188,13 @@ struct StudioAudioLane: View {
                 fadeOut: CGFloat(min(clip.fadeOut, clip.duration / 2)) * pointsPerSecond
             )
 
+            let isMissing = model.isAudioClipMissing(clip)
             StudioBlockLabel(
-                systemImage: clip.isMuted ? "speaker.slash.fill" : clip.isLinked ? "link" : glyph(for: clip),
+                systemImage: isMissing ? "exclamationmark.triangle.fill" : clip.isMuted ? "speaker.slash.fill" : clip.isLinked ? "link" : glyph(for: clip),
                 title: clip.displayName,
-                detail: studioTimecode(clip.duration),
+                detail: isMissing ? "Missing" : studioTimecode(clip.duration),
                 state: state,
-                color: style.onTint,
+                color: isMissing ? Color(nsColor: .systemOrange) : style.onTint,
                 verticalAlignment: .top
             )
             .padding(.top, 2)
@@ -213,6 +218,10 @@ struct StudioAudioLane: View {
             if isAlsoSelected {
                 StudioBlockMetrics.shape
                     .strokeBorder(Color(nsColor: .systemYellow), lineWidth: 2)
+                    .allowsHitTesting(false)
+            } else if model.isAudioClipMissing(clip) {
+                StudioBlockMetrics.shape
+                    .strokeBorder(Color(nsColor: .systemOrange), lineWidth: 1.5)
                     .allowsHitTesting(false)
             }
         }
@@ -524,6 +533,13 @@ struct StudioAudioClipInspectorControls: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: InspectorMetrics.groupSpacing) {
+            if model.isAudioClipMissing(clip) {
+                InspectorHint(
+                    "Audio file “\(clip.displayName)” is missing from this project. Export will fail until it is muted or removed.",
+                    tint: .orange
+                )
+            }
+
             VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
                 InspectorFieldPair {
                     InspectorSlider(
