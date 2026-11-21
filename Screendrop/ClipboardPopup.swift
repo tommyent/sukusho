@@ -79,6 +79,8 @@ final class ClipboardPopupPresenter {
     let state = ClipboardPopupState()
     /// Where Paste goes: the app that was in front when the popup opened.
     private(set) var target: NSRunningApplication?
+    /// Exact window captured before the popup became key, so Apps window commands never move a different window.
+    private var capturedWindowTarget: CapturedWindowTarget?
     private var panel: ClipboardPopupPanel?
     private var keyMonitor: Any?
     private var confirmingDeletion = false
@@ -99,6 +101,8 @@ final class ClipboardPopupPresenter {
     private func present(_ panel: ClipboardPopupPanel) {
         if !isVisible {
             target = NSWorkspace.shared.frontmostApplication
+            capturedWindowTarget = ScreendropPreferences.windowManagementEnabled
+                ? WindowManager.shared.captureTargetBeforePopup() : nil
         }
         let initialMode = ClipboardPopupMode.initial(
             clipboardHistoryEnabled: ScreendropPreferences.clipboardHistoryEnabled,
@@ -142,6 +146,8 @@ final class ClipboardPopupPresenter {
         panel?.orderOut(nil)
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
+        WindowManager.shared.releaseCapturedTarget(capturedWindowTarget)
+        capturedWindowTarget = nil
         ClipboardLauncherModel.shared.popupClosed()
         state.reset()
     }
@@ -169,9 +175,18 @@ final class ClipboardPopupPresenter {
             }
         case .windowCommand(let action):
             guard !secondary else { return }
-            let targetApp = target
-            close()
-            WindowManager.shared.perform(action, targetApp: targetApp)
+            let captured = capturedWindowTarget ?? .unavailable
+            WindowManager.shared.perform(
+                action,
+                on: captured,
+                onWillMove: { [weak self] in
+                    self?.capturedWindowTarget = nil
+                    self?.close()
+                },
+                onFailure: { message in
+                    ClipboardLauncherModel.shared.feedback.show(message)
+                }
+            )
         }
     }
 

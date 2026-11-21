@@ -327,3 +327,41 @@ nonisolated enum WindowAXPolicy {
         }
     }
 }
+
+/// Pure resolution of a window target captured before opening the Apps popup.
+/// An explicit capture never falls back to a different app or window if the original disappears.
+nonisolated enum WindowTargetState<OwnWindow: Equatable, ExternalWindow: Equatable>: Equatable {
+    case own(OwnWindow?)
+    case external(isTerminated: Bool, window: ExternalWindow?)
+    case externalNeedsAccessibility
+    case unavailable
+
+    enum Resolution: Equatable {
+        case moveOwn(OwnWindow)
+        case moveExternal(ExternalWindow)
+        case needsAccessibility
+        case gone(String)
+    }
+
+    static var goneMessage: String { "The window you opened Apps from is no longer open." }
+    static var unavailableMessage: String { "No movable window was active when Apps opened." }
+
+    func resolve(ownIsVisible: (OwnWindow) -> Bool) -> Resolution {
+        switch self {
+        case .own(let window):
+            guard let window, ownIsVisible(window) else {
+                return .gone(Self.goneMessage)
+            }
+            return .moveOwn(window)
+        case .external(let isTerminated, let window):
+            guard !isTerminated, let window else {
+                return .gone(Self.goneMessage)
+            }
+            return .moveExternal(window)
+        case .externalNeedsAccessibility:
+            return .needsAccessibility
+        case .unavailable:
+            return .gone(Self.unavailableMessage)
+        }
+    }
+}

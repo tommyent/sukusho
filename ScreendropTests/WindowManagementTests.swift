@@ -271,4 +271,26 @@ struct WindowManagementTests {
         #expect(!WindowAXPolicy.shouldAbort(.attributeUnsupported))
         #expect(!WindowAXPolicy.shouldAbort(.success))
     }
+
+    @Test func capturedWindowTargetNeverFallsBackWhenOriginalDisappears() {
+        // External target terminated or window closed -> fails with feedback instead of falling back.
+        #expect(WindowTargetState<String, String>.external(isTerminated: true, window: "A").resolve(ownIsVisible: { _ in true })
+                == .gone(WindowTargetState<String, String>.goneMessage))
+        #expect(WindowTargetState<String, String>.external(isTerminated: false, window: nil).resolve(ownIsVisible: { _ in true })
+                == .gone(WindowTargetState<String, String>.goneMessage))
+        #expect(WindowTargetState<String, String>.external(isTerminated: false, window: "A").resolve(ownIsVisible: { _ in true })
+                == .moveExternal("A"))
+
+        // Own window closed or hidden -> fails with feedback instead of picking a different Sukusho window.
+        #expect(WindowTargetState<String, String>.own(nil).resolve(ownIsVisible: { _ in true })
+                == .gone(WindowTargetState<String, String>.goneMessage))
+        #expect(WindowTargetState<String, String>.own("Library").resolve(ownIsVisible: { _ in false })
+                == .gone(WindowTargetState<String, String>.goneMessage))
+        #expect(WindowTargetState<String, String>.own("Library").resolve(ownIsVisible: { _ in true })
+                == .moveOwn("Library"))
+
+        // Unavailable target reports why.
+        #expect(WindowTargetState<String, String>.unavailable.resolve(ownIsVisible: { _ in true })
+                == .gone(WindowTargetState<String, String>.unavailableMessage))
+    }
 }

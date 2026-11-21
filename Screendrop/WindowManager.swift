@@ -1,6 +1,27 @@
 import AppKit
 import ApplicationServices
 
+/// Weak reference to an AppKit window captured before the clipboard popup becomes key.
+@MainActor
+final class WeakWindowBox {
+    weak var window: NSWindow?
+    init(_ window: NSWindow) { self.window = window }
+}
+
+/// Snapshot of the exact window that was frontmost before the Apps popup opened.
+@MainActor
+enum CapturedWindowTarget {
+    case own(WeakWindowBox)
+    case external(app: NSRunningApplication, captureID: UInt64)
+    case externalNeedsAccessibility(NSRunningApplication)
+    case unavailable
+
+    var captureID: UInt64? {
+        if case .external(_, let id) = self { return id }
+        return nil
+    }
+}
+
 /// Moves and resizes the frontmost app's focused window via macOS Accessibility (`AXUIElement`),
 /// ported from Unleash. Prompts for Accessibility permission only on first use, never at launch.
 /// All external `AXUIElement` IPC runs on a serial background queue so a hung app can never freeze Sukusho.
@@ -9,33 +30,58 @@ final class WindowManager {
     static let shared = WindowManager()
 
     private let axWorker = WindowAXWorker()
+    private var nextCaptureID: UInt64 = 0
     private var didPromptAccessibility = false
 
     private init() {}
 
-    /// Applies `action` to `targetApp`'s focused window (or the current frontmost app if nil).
-    func perform(_ action: WindowAction, targetApp: NSRunningApplication? = nil) {
-        let liveTarget = targetApp.flatMap { $0.isTerminated ? nil : $0 }
-        guard let app = liveTarget ?? NSWorkspace.shared.frontmostApplication else {
+    // MARK: - Capturing a target before opening the popup
+
+    /// Captures the actual window that is active right before the clipboard popup becomes key.
+    /// External AX lookup runs asynchronously on the serial AX queue so opening the popup never blocks.
+    func captureTargetBeforePopup() -> CapturedWindowTarget {
+        guard let front = NSWorkspace.shared.frontmostApplication else {
+            return .unavailable
+        }
+        if front == NSRunningApplication.current {
+            guard let window = ownActiveWindow() else { return .unavailable }
+            return .own(WeakWindowBox(window))
+        }
+        guard AXIsProcessTrusted() else {
+            return .externalNeedsAccessibility(front)
+        }
+        nextCaptureID &+= 1
+        let captureID = nextCaptureID
+        axWorker.captureFocusedWindow(pid: front.processIdentifier, captureID: captureID)
+        return .external(app: front, captureID: captureID)
+    }
+
+    func releaseCapturedTarget(_ target: CapturedWindowTarget?) {
+        if let captureID = target?.captureID {
+            axWorker.clearCapturedWindow(captureID: captureID)
+        }
+    }
+
+    // MARK: - Performing actions
+
+    /// Global shortcut path: resolves the live frontmost app and its focused window.
+    func perform(_ action: WindowAction) {
+        guard let app = NSWorkspace.shared.frontmostApplication else {
             NSSound.beep()
             return
         }
 
-        // Calling synchronous AX IPC on our own process from the main thread deadlocks until
-        // axTimeout; snap Sukusho's own standard windows directly through AppKit instead.
         if app == NSRunningApplication.current {
-            performOnOwnWindow(action)
+            guard let window = ownActiveWindow() else {
+                NSSound.beep()
+                return
+            }
+            perform(action, onOwnWindow: window)
             return
         }
 
-        // Reuse Sukusho's Accessibility check and one-time prompt flow (same TCC permission as
-        // clipboard paste and auto-scroll).
         guard AXIsProcessTrusted() else {
-            if !didPromptAccessibility {
-                didPromptAccessibility = true
-                // kAXTrustedCheckOptionPrompt's value, spelled out: the imported constant is a mutable global.
-                _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
-            }
+            promptAccessibilityOnce()
             NSSound.beep()
             return
         }
@@ -47,24 +93,121 @@ final class WindowManager {
         }
 
         let pid = app.processIdentifier
-        axWorker.perform(action, pid: pid, screens: screens) { ok in
+        axWorker.performFrontmost(action, pid: pid, screens: screens) { ok in
             if !ok {
                 Task { @MainActor in NSSound.beep() }
             }
         }
     }
 
+    /// Apps command path: moves only the exact window captured before the popup opened.
+    /// Never falls back to another app or window if the captured target disappeared.
+    func perform(
+        _ action: WindowAction,
+        on captured: CapturedWindowTarget,
+        onWillMove: @escaping () -> Void,
+        onFailure: @escaping (String) -> Void
+    ) {
+        switch captured {
+        case .own(let box):
+            switch WindowTargetState<NSWindow, Int>.own(box.window).resolve(ownIsVisible: { $0.isVisible }) {
+            case .moveOwn(let window):
+                onWillMove()
+                perform(action, onOwnWindow: window)
+            case .gone(let message):
+                NSSound.beep()
+                onFailure(message)
+            case .moveExternal, .needsAccessibility:
+                break
+            }
+
+        case .unavailable:
+            NSSound.beep()
+            onFailure(WindowTargetState<Int, Int>.unavailableMessage)
+
+        case .externalNeedsAccessibility(let app):
+            if app.isTerminated {
+                NSSound.beep()
+                onFailure(WindowTargetState<Int, Int>.goneMessage)
+                return
+            }
+            guard AXIsProcessTrusted() else {
+                promptAccessibilityOnce()
+                NSSound.beep()
+                onFailure("Allow Sukusho in Accessibility to move windows.")
+                return
+            }
+            // Permission was granted while the popup was open; capture wasn't possible earlier.
+            let screens = currentScreens()
+            guard !screens.isEmpty else {
+                NSSound.beep()
+                onFailure("Couldn’t read display layout.")
+                return
+            }
+            onWillMove()
+            axWorker.performFrontmost(action, pid: app.processIdentifier, screens: screens) { ok in
+                if !ok {
+                    Task { @MainActor in NSSound.beep() }
+                }
+            }
+
+        case .external(let app, let captureID):
+            guard !app.isTerminated else {
+                axWorker.clearCapturedWindow(captureID: captureID)
+                NSSound.beep()
+                onFailure(WindowTargetState<Int, Int>.goneMessage)
+                return
+            }
+            guard AXIsProcessTrusted() else {
+                promptAccessibilityOnce()
+                NSSound.beep()
+                onFailure("Allow Sukusho in Accessibility to move windows.")
+                return
+            }
+            let screens = currentScreens()
+            guard !screens.isEmpty else {
+                NSSound.beep()
+                onFailure("Couldn’t read display layout.")
+                return
+            }
+            axWorker.performCaptured(
+                action,
+                captureID: captureID,
+                screens: screens,
+                onValidated: {
+                    Task { @MainActor in onWillMove() }
+                },
+                completion: { outcome in
+                    Task { @MainActor in
+                        switch outcome {
+                        case .moved:
+                            break
+                        case .gone:
+                            NSSound.beep()
+                            onFailure(WindowTargetState<Int, Int>.goneMessage)
+                        case .failed:
+                            NSSound.beep()
+                        }
+                    }
+                }
+            )
+        }
+    }
+
+    private func promptAccessibilityOnce() {
+        guard !didPromptAccessibility else { return }
+        didPromptAccessibility = true
+        // kAXTrustedCheckOptionPrompt's value, spelled out: the imported constant is a mutable global.
+        _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+    }
+
     // MARK: - Own windows (AppKit)
 
-    private func performOnOwnWindow(_ action: WindowAction) {
-        guard let window = movableOwnWindow() else {
-            NSSound.beep()
-            return
-        }
+    private func perform(_ action: WindowAction, onOwnWindow window: NSWindow) {
         if window.styleMask.contains(.fullScreen) {
             window.toggleFullScreen(nil)
             DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(500)) { [weak self, weak window] in
-                guard let self, let window else { return }
+                guard let self, let window, window.isVisible else { return }
                 self.apply(action, toOwnWindow: window)
             }
             return
@@ -106,8 +249,8 @@ final class WindowManager {
         }
     }
 
-    private func movableOwnWindow() -> NSWindow? {
-        let candidates = [NSApp.mainWindow, NSApp.keyWindow].compactMap { $0 } + NSApp.orderedWindows
+    private func ownActiveWindow() -> NSWindow? {
+        let candidates = [NSApp.keyWindow, NSApp.mainWindow].compactMap { $0 }
         return candidates.first { window in
             window.isVisible && window.canBecomeMain && !(window is ClipboardPopupPanel)
         }
@@ -130,13 +273,47 @@ final class WindowManager {
 /// Runs external `AXUIElement` calls on a dedicated serial background queue so an unresponsive
 /// foreground app never stalls Sukusho's main thread.
 private nonisolated final class WindowAXWorker: @unchecked Sendable {
+    enum CapturedOutcome: Sendable {
+        case moved
+        case gone
+        case failed
+    }
+
+    private struct CapturedAX {
+        let captureID: UInt64
+        let app: AXUIElement
+        let window: AXUIElement
+    }
+
     private static let axTimeout: Float = 0.5
     private static let enhancedUIAttr = "AXEnhancedUserInterface" as CFString
     private static let fullScreenAttr = "AXFullScreen" as CFString
 
     private let queue = DispatchQueue(label: "com.tommyent.Sukusho.window-ax", qos: .userInteractive)
+    private var captured: CapturedAX?
 
-    func perform(
+    func captureFocusedWindow(pid: pid_t, captureID: UInt64) {
+        queue.async {
+            let axApp = AXUIElementCreateApplication(pid)
+            AXUIElementSetMessagingTimeout(axApp, Self.axTimeout)
+            guard let window = self.focusedWindow(of: axApp) else {
+                if self.captured?.captureID != captureID { self.captured = nil }
+                return
+            }
+            AXUIElementSetMessagingTimeout(window, Self.axTimeout)
+            self.captured = CapturedAX(captureID: captureID, app: axApp, window: window)
+        }
+    }
+
+    func clearCapturedWindow(captureID: UInt64) {
+        queue.async {
+            if self.captured?.captureID == captureID {
+                self.captured = nil
+            }
+        }
+    }
+
+    func performFrontmost(
         _ action: WindowAction,
         pid: pid_t,
         screens: [DisplayScreen],
@@ -150,19 +327,54 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
                 return
             }
             AXUIElementSetMessagingTimeout(window, Self.axTimeout)
+            self.perform(action, window: window, in: axApp, screens: screens, completion: completion)
+        }
+    }
 
-            if self.boolAttribute(Self.fullScreenAttr, on: window) == true {
-                AXUIElementSetAttributeValue(window, Self.fullScreenAttr, kCFBooleanFalse)
-                self.queue.asyncAfter(deadline: .now() + .milliseconds(500)) {
-                    let ok = self.apply(action, to: window, in: axApp, screens: screens)
-                    completion(ok)
-                }
+    func performCaptured(
+        _ action: WindowAction,
+        captureID: UInt64,
+        screens: [DisplayScreen],
+        onValidated: @escaping @Sendable () -> Void,
+        completion: @escaping @Sendable (CapturedOutcome) -> Void
+    ) {
+        queue.async {
+            guard let entry = self.captured, entry.captureID == captureID else {
+                completion(.gone)
                 return
             }
-
-            let ok = self.apply(action, to: window, in: axApp, screens: screens)
-            completion(ok)
+            // Confirm the captured window still exists before dismissing the popup or attempting a move.
+            guard self.readFrame(of: entry.window) != nil else {
+                self.captured = nil
+                completion(.gone)
+                return
+            }
+            self.captured = nil
+            onValidated()
+            self.perform(action, window: entry.window, in: entry.app, screens: screens) { ok in
+                completion(ok ? .moved : .failed)
+            }
         }
+    }
+
+    private func perform(
+        _ action: WindowAction,
+        window: AXUIElement,
+        in axApp: AXUIElement,
+        screens: [DisplayScreen],
+        completion: @escaping @Sendable (Bool) -> Void
+    ) {
+        if boolAttribute(Self.fullScreenAttr, on: window) == true {
+            AXUIElementSetAttributeValue(window, Self.fullScreenAttr, kCFBooleanFalse)
+            queue.asyncAfter(deadline: .now() + .milliseconds(500)) {
+                let ok = self.apply(action, to: window, in: axApp, screens: screens)
+                completion(ok)
+            }
+            return
+        }
+
+        let ok = apply(action, to: window, in: axApp, screens: screens)
+        completion(ok)
     }
 
     private func apply(
@@ -256,7 +468,6 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
             if err == .success, let value, CFGetTypeID(value) == AXUIElementGetTypeID() {
                 return (value as! AXUIElement)
             }
-            // Return immediately on messaging timeout or dead/disabled target instead of stacking another timeout.
             if WindowAXPolicy.shouldAbort(err) { return nil }
         }
         return nil
