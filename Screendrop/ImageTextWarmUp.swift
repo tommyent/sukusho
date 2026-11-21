@@ -3,7 +3,7 @@ import CoreText
 import Foundation
 import Vision
 
-/// Launch and Capture Text share one warm-up, including while Vision is cold.
+/// Capture Text and background image readers share one on-demand Vision warm-up.
 @MainActor
 final class ImageTextWarmUp {
     static let shared = ImageTextWarmUp()

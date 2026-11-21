@@ -280,7 +280,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         HotkeyManager.shared.registerHotkeys()
         // The Library's Grid/List choice, saved before List view went (sd-vkd).
         UserDefaults.standard.removeObject(forKey: "captureLibrary.layout")
-        ImageTextWarmUp.shared.start()
         CaptureLibraryIndex.shared.start()
         FileRequestsModel.shared.start()
         ShakeToUpload.shared.update()
