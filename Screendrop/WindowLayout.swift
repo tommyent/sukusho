@@ -271,6 +271,48 @@ nonisolated enum WindowLayout {
         let y = min(max(desired.y, visible.y), maxY)
         return (x, y)
     }
+
+    static func framesMatch(_ actual: ScreenBounds, _ desired: ScreenBounds, tolerance: Double = 2.0) -> Bool {
+        abs(actual.x - desired.x) <= tolerance
+            && abs(actual.y - desired.y) <= tolerance
+            && abs(actual.width - desired.width) <= tolerance
+            && abs(actual.height - desired.height) <= tolerance
+    }
+
+    /// Computes the clamped expected origin from `actual`'s size and returns it if either coordinate
+    /// differs by more than `tolerance` (catches right/bottom overhang, left/top encroachment, and wrong-half placement).
+    static func finalOriginCorrection(
+        actual: ScreenBounds,
+        target: Target,
+        tolerance: Double = 2.0
+    ) -> (x: Double, y: Double)? {
+        let expected = clampedPosition(
+            desired: target.frame,
+            actualWidth: actual.width,
+            actualHeight: actual.height,
+            within: target.visibleFrame
+        )
+        if abs(actual.x - expected.x) > tolerance || abs(actual.y - expected.y) > tolerance {
+            return expected
+        }
+        return nil
+    }
+
+    /// Retries the requested frame first when the initial read disagrees, then computes the final
+    /// origin from the post-retry actual size and corrects either coordinate if off.
+    static func settle(
+        target: Target,
+        tolerance: Double = 2.0,
+        readFrame: () -> ScreenBounds?,
+        writeFrame: (ScreenBounds) -> Bool,
+        writePosition: (Double, Double) -> Void
+    ) {
+        guard let actual = readFrame(), !framesMatch(actual, target.frame, tolerance: tolerance) else { return }
+        guard writeFrame(target.frame), let afterRetry = readFrame() else { return }
+        if let corrected = finalOriginCorrection(actual: afterRetry, target: target, tolerance: tolerance) {
+            writePosition(corrected.x, corrected.y)
+        }
+    }
 }
 
 /// Manages active registrations for the 11 window management hotkeys.

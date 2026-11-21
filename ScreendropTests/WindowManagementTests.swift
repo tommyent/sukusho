@@ -377,4 +377,70 @@ struct WindowManagementTests {
         )
         #expect(readFailed == .readFailed)
     }
+
+    @Test func settleRetriesRequestedFrameThenPlacesFromActualSizeIncludingLeftTopEncroachment() {
+        // 1440-wide visible frame; Right Half wants x=720, width=720.
+        let screen = DisplayScreen.fromAppKit(
+            frame: (0, 0, 1440, 900),
+            visibleFrame: (0, 0, 1440, 875),
+            primaryHeight: 900
+        )
+        let target = WindowLayout.target(
+            for: .rightHalf,
+            window: ScreenBounds(x: 100, y: 100, width: 1000, height: 875),
+            screens: [screen]
+        )!
+        #expect(target.frame == ScreenBounds(x: 720, y: 25, width: 720, height: 875))
+
+        // Case 1: First read still has stale width=1000; retry requests (720, 25, 720, 875) and resize succeeds.
+        // Window must land at x=720 (not shifted to x=440 or left at x=1160).
+        var frame1 = ScreenBounds(x: 720, y: 25, width: 1000, height: 875)
+        var writtenFrames1: [ScreenBounds] = []
+        var positionWrites1: [(Double, Double)] = []
+        WindowLayout.settle(
+            target: target,
+            readFrame: { frame1 },
+            writeFrame: { requested in
+                writtenFrames1.append(requested)
+                frame1 = requested
+                return true
+            },
+            writePosition: { x, y in
+                positionWrites1.append((x, y))
+                frame1.x = x; frame1.y = y
+            }
+        )
+        #expect(writtenFrames1 == [target.frame])
+        #expect(positionWrites1.isEmpty)
+        #expect(frame1 == ScreenBounds(x: 720, y: 25, width: 720, height: 875))
+
+        // Case 2: App genuinely refuses width < 1000; after retrying requested frame, final origin shifts left to x=440.
+        var frame2 = ScreenBounds(x: 720, y: 25, width: 1000, height: 875)
+        WindowLayout.settle(
+            target: target,
+            readFrame: { frame2 },
+            writeFrame: { requested in
+                frame2 = ScreenBounds(x: requested.x, y: requested.y, width: max(1000, requested.width), height: requested.height)
+                return true
+            },
+            writePosition: { x, y in frame2.x = x; frame2.y = y }
+        )
+        #expect(frame2 == ScreenBounds(x: 440, y: 25, width: 1000, height: 875))
+
+        // Case 3: Left Dock (70 pt) + menu bar (25 pt) encroachment is caught on both x and y.
+        let leftDock = DisplayScreen.fromAppKit(
+            frame: (0, 0, 1440, 900),
+            visibleFrame: (70, 0, 1370, 875),
+            primaryHeight: 900
+        )
+        let leftTarget = WindowLayout.target(
+            for: .leftHalf,
+            window: ScreenBounds(x: 100, y: 100, width: 600, height: 600),
+            screens: [leftDock]
+        )!
+        let encroaching = ScreenBounds(x: 0, y: 0, width: 685, height: 875)
+        let corrected = WindowLayout.finalOriginCorrection(actual: encroaching, target: leftTarget)
+        #expect(corrected?.x == 70.0)
+        #expect(corrected?.y == 25.0)
+    }
 }

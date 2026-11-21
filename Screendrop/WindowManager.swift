@@ -279,12 +279,7 @@ final class WindowManager {
             width: Double(after.width), height: Double(after.height),
             primaryHeight: Double(primaryHeight)
         )
-        let tol = 2.0
-        if actual.maxX > target.visibleFrame.maxX + tol || actual.maxY > target.visibleFrame.maxY + tol {
-            let pos = WindowLayout.clampedPosition(
-                desired: target.frame, actualWidth: actual.width, actualHeight: actual.height,
-                within: target.visibleFrame
-            )
+        if let pos = WindowLayout.finalOriginCorrection(actual: actual, target: target) {
             let clamped = ScreenBounds(x: pos.x, y: pos.y, width: actual.width, height: actual.height)
             window.setFrameOrigin(clamped.toAppKit(primaryHeight: Double(primaryHeight)).origin)
         }
@@ -496,32 +491,17 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
     }
 
     private func settle(window: AXUIElement, target: WindowLayout.Target) {
-        guard let actual = readFrame(of: window) else { return }
-        let tol = 2.0
-        let needsRetry = abs(actual.x - target.frame.x) > tol
-            || abs(actual.y - target.frame.y) > tol
-            || abs(actual.width - target.frame.width) > tol
-            || abs(actual.height - target.frame.height) > tol
-        guard needsRetry else { return }
-
-        let clamped = WindowLayout.clampedPosition(
-            desired: target.frame, actualWidth: actual.width, actualHeight: actual.height,
-            within: target.visibleFrame
+        WindowLayout.settle(
+            target: target,
+            readFrame: { self.readFrame(of: window) },
+            writeFrame: { frame in
+                let (sizeErr, posErr) = self.writeFrame(frame, to: window)
+                return !WindowAXPolicy.shouldAbort(sizeErr) && !WindowAXPolicy.shouldAbort(posErr)
+            },
+            writePosition: { x, y in
+                _ = self.writePosition(x: x, y: y, to: window)
+            }
         )
-        var retry = target.frame
-        retry.x = clamped.x
-        retry.y = clamped.y
-        let (sizeErr, posErr) = writeFrame(retry, to: window)
-        if WindowAXPolicy.shouldAbort(sizeErr) || WindowAXPolicy.shouldAbort(posErr) { return }
-
-        if let final = readFrame(of: window),
-           final.maxX > target.visibleFrame.maxX + tol || final.maxY > target.visibleFrame.maxY + tol {
-            let pos = WindowLayout.clampedPosition(
-                desired: target.frame, actualWidth: final.width, actualHeight: final.height,
-                within: target.visibleFrame
-            )
-            _ = writePosition(x: pos.x, y: pos.y, to: window)
-        }
     }
 
     // MARK: - AX helpers
