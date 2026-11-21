@@ -140,8 +140,8 @@ final class ClipboardPopupPresenter {
         focusSearchField()
     }
 
-    func performSelectedLauncherRow(secondary: Bool = false) {
-        guard let row = state.selectedLauncherRow else { return }
+    func performLauncherRow(_ row: LauncherRow?, secondary: Bool = false) {
+        guard let row else { return }
         switch row.kind {
         case .app:
             close()
@@ -156,8 +156,8 @@ final class ClipboardPopupPresenter {
         }
     }
 
-    func toggleFavoriteSelectedLauncherRow() {
-        guard let row = state.selectedLauncherRow else { return }
+    func toggleFavoriteLauncherRow(_ row: LauncherRow?) {
+        guard let row else { return }
         let wasInFavorites = row.id.inFavorites
         let pinned = ClipboardLauncherModel.shared.toggleFavorite(row.path)
         state.launcherSelection = LauncherRowID(inFavorites: wasInFavorites && pinned, path: row.path)
@@ -249,9 +249,9 @@ final class ClipboardPopupPresenter {
         case (kVK_UpArrow, []), (kVK_ANSI_P, [.control]): state.moveLauncher(by: -1)
         case (kVK_DownArrow, []), (kVK_ANSI_N, [.control]): state.moveLauncher(by: 1)
         case (kVK_Escape, []): close()
-        case (kVK_Return, []), (kVK_ANSI_KeypadEnter, []): performSelectedLauncherRow(secondary: false)
-        case (kVK_Return, [.command]), (kVK_ANSI_KeypadEnter, [.command]): performSelectedLauncherRow(secondary: true)
-        case (kVK_ANSI_F, [.command, .shift]): toggleFavoriteSelectedLauncherRow()
+        case (kVK_Return, []), (kVK_ANSI_KeypadEnter, []): performLauncherRow(state.selectedLauncherRow, secondary: false)
+        case (kVK_Return, [.command]), (kVK_ANSI_KeypadEnter, [.command]): performLauncherRow(state.selectedLauncherRow, secondary: true)
+        case (kVK_ANSI_F, [.command, .shift]): toggleFavoriteLauncherRow(state.selectedLauncherRow)
         case (kVK_ANSI_K, [.command]): showLauncherActions()
         default: return false
         }
@@ -279,20 +279,20 @@ final class ClipboardPopupPresenter {
         popUpFooterMenu(menu, in: view)
     }
 
-    func showLauncherActions() {
-        guard let row = state.selectedLauncherRow, let view = panel?.contentView else { return }
+    func showLauncherActions(for targetRow: LauncherRow? = nil) {
+        guard let row = targetRow ?? state.selectedLauncherRow, let view = panel?.contentView else { return }
         let menu = NSMenu()
         switch row.kind {
         case .app:
-            addMenuItem(to: menu, "Open", "\r") { [weak self] in self?.performSelectedLauncherRow(secondary: false) }
-            addMenuItem(to: menu, "Show in Finder", "\r", .command) { [weak self] in self?.performSelectedLauncherRow(secondary: true) }
+            addMenuItem(to: menu, "Open", "\r") { [weak self] in self?.performLauncherRow(row, secondary: false) }
+            addMenuItem(to: menu, "Show in Finder", "\r", .command) { [weak self] in self?.performLauncherRow(row, secondary: true) }
         case .folder:
-            addMenuItem(to: menu, "Open in Finder", "\r") { [weak self] in self?.performSelectedLauncherRow(secondary: false) }
-            addMenuItem(to: menu, "Copy Path", "\r", .command) { [weak self] in self?.performSelectedLauncherRow(secondary: true) }
+            addMenuItem(to: menu, "Open in Finder", "\r") { [weak self] in self?.performLauncherRow(row, secondary: false) }
+            addMenuItem(to: menu, "Copy Path", "\r", .command) { [weak self] in self?.performLauncherRow(row, secondary: true) }
         }
         menu.addItem(.separator())
         addMenuItem(to: menu, row.isFavorite ? "Remove from Favorites" : "Add to Favorites", "f", [.command, .shift]) { [weak self] in
-            self?.toggleFavoriteSelectedLauncherRow()
+            self?.toggleFavoriteLauncherRow(row)
         }
         popUpFooterMenu(menu, in: view)
     }
@@ -650,14 +650,14 @@ struct ClipboardPopupView: View {
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
             state.launcherSelection = row.id
-            presenter.performSelectedLauncherRow()
+            presenter.performLauncherRow(row)
         }
         .onTapGesture { state.launcherSelection = row.id }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction(named: row.kind == .folder ? "Open in Finder" : "Open") {
             state.launcherSelection = row.id
-            presenter.performSelectedLauncherRow()
+            presenter.performLauncherRow(row)
         }
     }
 
@@ -676,7 +676,7 @@ struct ClipboardPopupView: View {
                 Text("Type z to jump to a folder · ⇧⌘F favorite").foregroundStyle(.tertiary)
             }
             Spacer()
-            Button { presenter.performSelectedLauncherRow() } label: {
+            Button { presenter.performLauncherRow(selected) } label: {
                 HStack(spacing: DS.Space.s) {
                     Text(primaryLabel)
                     KeyCap("↩")
@@ -684,7 +684,7 @@ struct ClipboardPopupView: View {
             }
             .buttonStyle(.bordered)
             .disabled(selected == nil)
-            Button { presenter.showLauncherActions() } label: {
+            Button { presenter.showLauncherActions(for: selected) } label: {
                 HStack(spacing: DS.Space.s) { Text("Actions"); KeyCap("⌘"); KeyCap("K") }
             }
             .buttonStyle(.plain)
