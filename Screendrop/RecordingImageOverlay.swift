@@ -67,11 +67,19 @@ nonisolated struct RecordingImageOverlay: Identifiable, Codable, Equatable, Hash
         displayName = try container.decodeIfPresent(String.self, forKey: .displayName) ?? fileName
         start = try container.decode(TimeInterval.self, forKey: .start)
         end = try container.decode(TimeInterval.self, forKey: .end)
-        center = try container.decodeIfPresent(CGPoint.self, forKey: .center) ?? CGPoint(x: 0.5, y: 0.5)
-        width = try container.decodeIfPresent(Double.self, forKey: .width) ?? 0.3
-        aspect = try container.decodeIfPresent(Double.self, forKey: .aspect) ?? 1
-        rotation = try container.decodeIfPresent(Double.self, forKey: .rotation) ?? 0
-        opacity = try container.decodeIfPresent(Double.self, forKey: .opacity) ?? 1
+        let rawCenter = try container.decodeIfPresent(CGPoint.self, forKey: .center) ?? CGPoint(x: 0.5, y: 0.5)
+        center = CGPoint(
+            x: rawCenter.x.isFinite ? min(max(rawCenter.x, 0), 1) : 0.5,
+            y: rawCenter.y.isFinite ? min(max(rawCenter.y, 0), 1) : 0.5
+        )
+        let rawWidth = try container.decodeIfPresent(Double.self, forKey: .width) ?? 0.3
+        width = rawWidth.isFinite ? min(max(rawWidth, Self.widthRange.lowerBound), Self.widthRange.upperBound) : 0.3
+        let rawAspect = try container.decodeIfPresent(Double.self, forKey: .aspect) ?? 1
+        aspect = (rawAspect.isFinite && rawAspect > 0) ? max(rawAspect, 0.01) : 1
+        let rawRotation = try container.decodeIfPresent(Double.self, forKey: .rotation) ?? 0
+        rotation = rawRotation.isFinite ? rawRotation : 0
+        let rawOpacity = try container.decodeIfPresent(Double.self, forKey: .opacity) ?? 1
+        opacity = rawOpacity.isFinite ? min(max(rawOpacity, 0), 1) : 1
         cornerRadius = try container.decodeIfPresent(Double.self, forKey: .cornerRadius) ?? 0
         shadow = try container.decodeIfPresent(Double.self, forKey: .shadow) ?? 0
         fadeIn = try container.decodeIfPresent(TimeInterval.self, forKey: .fadeIn) ?? 0
@@ -119,6 +127,17 @@ nonisolated struct RecordingImageOverlay: Identifiable, Codable, Equatable, Hash
         copy.width = min(max(width + delta, Self.widthRange.lowerBound), Self.widthRange.upperBound)
         return copy
     }
+}
+
+/// Formats a normalized fraction as a percentage for VoiceOver without
+/// trapping on non-finite or huge decoded values.
+nonisolated func studioAccessiblePercent(_ fraction: Double) -> String {
+    guard fraction.isFinite else { return "0%" }
+    let percent = (fraction * 100).rounded()
+    guard percent.isFinite else { return "0%" }
+    if percent >= 10_000 { return "10000%" }
+    if percent <= -10_000 { return "-10000%" }
+    return "\(Int(percent))%"
 }
 
 // MARK: - Decoded images

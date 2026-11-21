@@ -701,7 +701,7 @@ struct StudioTracksTests {
         let _ = try #require(RecordingOverlayImage(url: gifURL, cache: probeCache))
         let oneFrameBytes = probeCache.currentBytes
 
-        final class DecodeLog: @unchecked Sendable {
+        nonisolated final class DecodeLog: @unchecked Sendable {
             private let lock = NSLock()
             private var indices: [Int] = []
             func record(_ index: Int) { lock.withLock { indices.append(index) } }
@@ -813,6 +813,34 @@ struct StudioTracksTests {
         #expect(abs(narrowed.rect.width - RecordingRedaction.minimumSide) < 0.0001)
         #expect(abs(narrowed.rect.height - RecordingRedaction.minimumSide) < 0.0001)
         try narrowed.validate(sourceDuration: 5)
+    }
+
+    @Test func accessiblePercentNeverTrapsOnHugeOrNonFiniteDecodedValues() throws {
+        #expect(studioAccessiblePercent(0.345) == "35%")
+        #expect(studioAccessiblePercent(0) == "0%")
+        #expect(studioAccessiblePercent(1.0) == "100%")
+        #expect(studioAccessiblePercent(1e20) == "10000%")
+        #expect(studioAccessiblePercent(-1e20) == "-10000%")
+        #expect(studioAccessiblePercent(.infinity) == "0%")
+        #expect(studioAccessiblePercent(-.infinity) == "0%")
+        #expect(studioAccessiblePercent(.nan) == "0%")
+
+        let damagedJSON = """
+        {
+            "fileName": "logo.png",
+            "displayName": "Logo",
+            "start": 0,
+            "end": 2,
+            "center": [1e30, -1e30],
+            "width": 1e20,
+            "aspect": 1.0
+        }
+        """
+        let decoded = try JSONDecoder().decode(RecordingImageOverlay.self, from: Data(damagedJSON.utf8))
+        #expect(RecordingImageOverlay.widthRange.contains(decoded.width))
+        #expect(studioAccessiblePercent(decoded.width) == "150%")
+        #expect(studioAccessiblePercent(decoded.center.x) == "100%")
+        #expect(studioAccessiblePercent(decoded.center.y) == "0%")
     }
 
     // MARK: - Source-time placement across cuts and speed ramps

@@ -102,7 +102,7 @@ struct StudioImageEditingLayer: View {
                     .gesture(moveGesture(for: overlay))
                     .help("Drag to move. Drag the corner handle to resize.")
                     .accessibilityLabel(overlay.isAnimated ? "GIF, \(overlay.displayName)" : "Image, \(overlay.displayName)")
-                    .accessibilityValue("Position \(percentText(overlay.center.x)) across, \(percentText(overlay.center.y)) down, width \(percentText(overlay.width))")
+                    .accessibilityValue("Position \(studioAccessiblePercent(overlay.center.x)) across, \(studioAccessiblePercent(overlay.center.y)) down, width \(studioAccessiblePercent(overlay.width))")
                     .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
                     .accessibilityAction { model.selectImage(id: overlay.id) }
                     .accessibilityAction(named: "Move Left") { accessibleEdit(overlay, action: "Move Image") { $0.nudged(dx: -Self.nudgeStep, dy: 0) } }
@@ -220,7 +220,7 @@ struct StudioTextEditingLayer: View {
                     .gesture(moveGesture(for: overlay))
                     .help("Drag to move. Edit the text in the inspector.")
                     .accessibilityLabel("Text, \(overlay.text.isEmpty ? "Empty" : overlay.text)")
-                    .accessibilityValue("Position \(percentText(overlay.center.x)) across, \(percentText(overlay.center.y)) down")
+                    .accessibilityValue("Position \(studioAccessiblePercent(overlay.center.x)) across, \(studioAccessiblePercent(overlay.center.y)) down")
                     .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
                     .accessibilityAction { model.selectText(id: overlay.id) }
                     .accessibilityAction(named: "Move Left") { nudge(overlay, dx: -Self.nudgeStep, dy: 0) }
@@ -302,7 +302,7 @@ struct StudioRedactionEditingLayer: View {
     }
 
     private func redactionBox(for redaction: RecordingRedaction, rect: CGRect, isSelected: Bool) -> some View {
-        let valueText = "Position \(percentText(redaction.rect.minX)) across, \(percentText(redaction.rect.minY)) down, size \(percentText(redaction.rect.width)) by \(percentText(redaction.rect.height))"
+        let valueText = "Position \(studioAccessiblePercent(redaction.rect.minX)) across, \(studioAccessiblePercent(redaction.rect.minY)) down, size \(studioAccessiblePercent(redaction.rect.width)) by \(studioAccessiblePercent(redaction.rect.height))"
         let base = Rectangle()
             .fill(Color.white.opacity(0.001))
             .overlay {
@@ -399,10 +399,6 @@ struct StudioRedactionEditingLayer: View {
                 model.endRedactionEdit(actionName: handle == nil ? "Move Redaction" : "Resize Redaction")
             }
     }
-}
-
-private func percentText(_ fraction: Double) -> String {
-    "\(Int((fraction * 100).rounded()))%"
 }
 
 /// A region's resize handle: a square at the corners, a bar on the edges,
