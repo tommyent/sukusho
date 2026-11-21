@@ -142,6 +142,68 @@ struct EditorResourceTests {
         print("PASS: redaction reuse across frame moves, source-pixel keying, invalidation, and opaque fallback")
     }
 
+    /// A 4800x2700 blur on a 5K screenshot exceeds the 32 MiB cache at native
+    /// resolution (51.8 MB). Preview tiles must be bounded before filtering so
+    /// they fit in the cache and are reused across animated viewport transforms.
+    @Test static func oversized5KBlurRedactionIsBoundedAndReusedAcrossFrames() {
+        let width = 5120
+        let height = 2880
+        let sourceContext = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: space,
+            bitmapInfo: bitmapInfo
+        )!
+        sourceContext.setFillColor(CGColor(red: 0.2, green: 0.5, blue: 0.8, alpha: 1))
+        sourceContext.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        let source5K = sourceContext.makeImage()!
+
+        let blurRect = CGRect(x: 160, y: 90, width: 4800, height: 2700)
+        #expect(Int(blurRect.width) * Int(blurRect.height) * 4 > AnnoRedactionPreviewCache.defaultByteLimit)
+
+        let doc = AnnoDocument()
+        let redaction = AnnoShape(
+            id: AnnoShapeID("r5k"),
+            x: Double(blurRect.minX), y: Double(blurRect.minY), rotation: 0,
+            kind: .redaction(RedactionProps(kind: .blur, w: Double(blurRect.width), h: Double(blurRect.height), density: 0.5))
+        )
+        doc.restore(AnnoDocument.Snapshot(shapes: [redaction], bindings: []))
+
+        let cache = AnnoRedactionPreviewCache()
+        cache.configure(source: source5K)
+
+        let canvas = CGContext(data: nil, width: 256, height: 144, bitsPerComponent: 8,
+                               bytesPerRow: 256 * 4, space: space, bitmapInfo: bitmapInfo)!
+        for step in 0..<4 {
+            let scale = 0.04 + CGFloat(step) * 0.005
+            let target = AnnoShapeDrawing.Target(
+                transform: CGAffineTransform(translationX: CGFloat(step) * 4, y: CGFloat(step) * 2).scaledBy(x: scale, y: scale),
+                pageSize: CGSize(width: width, height: height),
+                sample: nil,
+                spotlightClip: nil,
+                isFlippedContext: true,
+                redactionPreviewCache: cache,
+                redactionSource: source5K,
+                sampleScale: 1
+            )
+            AnnoShapeDrawing.draw(doc, in: canvas, target: target)
+        }
+
+        var extraRenders = 0
+        let cached = cache.image(kind: RedactionKind.blur.rawValue, density: 0.5, bounds: blurRect) {
+            extraRenders += 1
+            return nil
+        }
+        #expect(cached != nil && extraRenders == 0, "Oversized 5K blur tile must be cached and reused across viewport frames")
+        if let cached {
+            #expect(cached.bytesPerRow * cached.height <= AnnoRedactionPreviewCache.defaultByteLimit)
+            #expect(cached.width < Int(blurRect.width) && cached.height < Int(blurRect.height))
+        }
+    }
+
     static func buffer(width: Int = 17, height: Int = 11, alignment: Int = 64) -> CVPixelBuffer {
         var buffer: CVPixelBuffer?
         #expect(CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_32BGRA,

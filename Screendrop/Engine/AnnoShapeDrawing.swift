@@ -356,8 +356,16 @@ enum AnnoShapeDrawing {
                         guard let sampled = source.cropping(to: sourceBounds) else { return nil }
                         return autoreleasepool {
                             switch props.kind {
-                            case .blur: blurred(sampled, density: props.density, scale: target.sampleScale)
-                            case .pixelate: pixelated(sampled, density: props.density, scale: target.sampleScale)
+                            case .blur:
+                                let (working, tileScale) = boundedPreviewTile(sampled, maxBytes: cache.maxTileBytes)
+                                return blurred(working, density: props.density, scale: target.sampleScale * tileScale)
+                            case .pixelate:
+                                return pixelated(
+                                    sampled,
+                                    density: props.density,
+                                    scale: target.sampleScale,
+                                    maxBytes: cache.maxTileBytes
+                                )
                             }
                         }
                     }
@@ -424,6 +432,39 @@ enum AnnoShapeDrawing {
         context.restoreGState()
     }
 
+    /// Bounds an oversized preview tile before filtering so the resulting
+    /// bitmap fits in `AnnoRedactionPreviewCache`, returning the tile and its
+    /// linear scale relative to `image` so blur radii match full resolution.
+    private static func boundedPreviewTile(_ image: CGImage, maxBytes: Int) -> (CGImage, CGFloat) {
+        let bytesPerPixel = Swift.max(4, (image.bitsPerPixel + 7) / 8)
+        let alignedRowBytes = ((image.width * bytesPerPixel) + 63) & ~63
+        guard alignedRowBytes * image.height > maxBytes else {
+            return (image, 1)
+        }
+        // Output is 8-bit RGBA (4 bytes/pixel); leave room for row alignment.
+        let rawRGBA = Double(image.width) * Double(image.height) * 4.0
+        let scale = Swift.min(1.0, (Double(maxBytes) / Swift.max(rawRGBA, 1.0)).squareRoot())
+        let width = Swift.max(1, Int((Double(image.width) * scale).rounded(.down)))
+        let height = Swift.max(1, Int((Double(image.height) * scale).rounded(.down)))
+        let space = image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil } ?? CGColorSpaceCreateDeviceRGB()
+        guard let down = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: space,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            return (image, 1)
+        }
+        down.interpolationQuality = .medium
+        down.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let scaled = down.makeImage() else { return (image, 1) }
+        let linearScale = (CGFloat(width) / CGFloat(image.width) + CGFloat(height) / CGFloat(image.height)) / 2
+        return (scaled, linearScale)
+    }
+
     private static func blurred(_ image: CGImage, density: Double, scale: CGFloat) -> CGImage? {
         let input = CIImage(cgImage: image)
         let filter = CIFilter.gaussianBlur()
@@ -433,10 +474,23 @@ enum AnnoShapeDrawing {
         return ciContext.createCGImage(output, from: input.extent)
     }
 
-    private static func pixelated(_ image: CGImage, density: Double, scale: CGFloat) -> CGImage? {
+    private static func pixelated(
+        _ image: CGImage,
+        density: Double,
+        scale: CGFloat,
+        maxBytes: Int? = nil
+    ) -> CGImage? {
         let block = Swift.max(1, RedactionImageProcessor.pixelBlockSize(for: CGFloat(density)) * scale)
-        let lowWidth = Swift.max(1, Int(CGFloat(image.width) / block))
-        let lowHeight = Swift.max(1, Int(CGFloat(image.height) / block))
+        var lowWidth = Swift.max(1, Int(CGFloat(image.width) / block))
+        var lowHeight = Swift.max(1, Int(CGFloat(image.height) / block))
+        if let maxBytes {
+            let rawRGBA = Double(lowWidth) * Double(lowHeight) * 4.0
+            if rawRGBA > Double(maxBytes) {
+                let shrink = (Double(maxBytes) / rawRGBA).squareRoot()
+                lowWidth = Swift.max(1, Int((Double(lowWidth) * shrink).rounded(.down)))
+                lowHeight = Swift.max(1, Int((Double(lowHeight) * shrink).rounded(.down)))
+            }
+        }
         let space = image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil } ?? CGColorSpaceCreateDeviceRGB()
         guard let low = CGContext(
             data: nil,
