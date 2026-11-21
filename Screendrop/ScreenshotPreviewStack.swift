@@ -82,11 +82,18 @@ final class ScreenshotPreviewStack {
     /// Whether the image went on the clipboard: false when something newer got there while it was read. The turn is
     /// the one a card's Copy took when it was clicked, if it was one (`OptimizedImageCopy.takeTurn`).
     @ObservationIgnored private let copyImage: (URL, OptimizedImageCopy.Turn?) async throws -> Bool
+    @ObservationIgnored private let presentFailure: @MainActor (String, Error) -> Void
 
-    init(copyImage: @escaping (URL, OptimizedImageCopy.Turn?) async throws -> Bool = {
-        try await ScreenshotFileActions.copyImageToClipboard(from: $0, turn: $1)
-    }) {
+    init(
+        copyImage: @escaping (URL, OptimizedImageCopy.Turn?) async throws -> Bool = {
+            try await ScreenshotFileActions.copyImageToClipboard(from: $0, turn: $1)
+        },
+        presentFailure: @escaping @MainActor (String, Error) -> Void = {
+            FailureAlert.present(message: $0, error: $1)
+        }
+    ) {
         self.copyImage = copyImage
+        self.presentFailure = presentFailure
     }
 
     /// Tuck the overlay into the peek tab (no-op when there's nothing to show).
@@ -586,9 +593,9 @@ final class ScreenshotPreviewStack {
                 compressionTasks[id] = nil
                 compressingItemIDs.remove(id)
             } catch {
-                print("Failed to compress screenshot: \(error)")
                 compressionTasks[id] = nil
                 compressingItemIDs.remove(id)
+                presentFailure("The screenshot could not be compressed", error)
             }
         }
     }
@@ -804,7 +811,7 @@ final class ScreenshotPreviewStack {
             do {
                 try ScreenshotFileActions.replaceExistingExport(from: item.url, at: existingURL)
             } catch {
-                print("Failed to update saved screenshot: \(error)")
+                presentFailure("The saved screenshot could not be updated", error)
             }
         } else if ScreendropPreferences.autoSave {
             items[index].autoSavedURL = saveToDefaultLocation(from: item.url)
@@ -939,7 +946,7 @@ final class ScreenshotPreviewStack {
                 self?.showOptimizedNote(saving, on: itemID)
             }
         } catch {
-            print("Failed to copy screenshot: \(error)")
+            presentFailure("The screenshot could not be copied", error)
         }
     }
 
@@ -990,7 +997,7 @@ final class ScreenshotPreviewStack {
             if original { return try await ScreenshotFileActions.copyImageToClipboard(from: url, original: true, turn: turn) }
             return try await copyImage(url, turn)
         } catch {
-            print("Failed to copy screenshot: \(error)")
+            presentFailure("The screenshot could not be copied", error)
             return false
         }
     }
@@ -999,7 +1006,7 @@ final class ScreenshotPreviewStack {
         do {
             return try ScreenshotFileActions.saveToDefaultLocation(from: url)
         } catch {
-            print("Failed to auto save: \(error)")
+            presentFailure("The screenshot could not be saved", error)
             return nil
         }
     }
@@ -1009,7 +1016,7 @@ final class ScreenshotPreviewStack {
         do {
             destinationURL = try ScreenshotFileActions.prepareDefaultSaveURL(for: url, reserving: true)
         } catch {
-            print("Failed to auto save: \(error)")
+            presentFailure("The screenshot could not be saved", error)
             return nil
         }
         defer { ScreenshotFileActions.releaseReservedSaveURL(destinationURL) }
@@ -1017,8 +1024,8 @@ final class ScreenshotPreviewStack {
         let isPNG = format == .png
         let contentTypeIdentifier = format.contentType.identifier
         let quality = ScreendropPreferences.compressionQuality
-        return await Task.detached(priority: .userInitiated) {
-            do {
+        do {
+            try await Task.detached(priority: .userInitiated) {
                 try ScreenshotFileActions.save(
                     from: url,
                     to: destinationURL,
@@ -1026,12 +1033,12 @@ final class ScreenshotPreviewStack {
                     contentTypeIdentifier: contentTypeIdentifier,
                     compressionQuality: quality
                 )
-                return destinationURL
-            } catch {
-                print("Failed to auto save: \(error)")
-                return nil
-            }
-        }.value
+            }.value
+            return destinationURL
+        } catch {
+            presentFailure("The screenshot could not be saved", error)
+            return nil
+        }
     }
 
     /// Copying and saving both hand the file to the user, so both resolve the

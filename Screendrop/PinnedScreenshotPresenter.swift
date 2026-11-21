@@ -181,7 +181,7 @@ private struct PinnedScreenshotView: View {
                 guard try await ScreenshotFileActions.copyPNGToClipboard(from: url, turn: turn) else { return }
                 copied.show()
             } catch {
-                print("Failed to copy pinned screenshot: \(error)")
+                FailureAlert.present(message: "The screenshot could not be copied", error: error)
             }
         }
     }
@@ -201,7 +201,7 @@ private struct PinnedScreenshotView: View {
             do {
                 try ScreenshotFileActions.save(from: url, to: destURL)
             } catch {
-                print("Failed to save pinned screenshot: \(error)")
+                FailureAlert.present(message: "The screenshot could not be saved", error: error)
             }
         }
     }
