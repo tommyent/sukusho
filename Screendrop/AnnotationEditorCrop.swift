@@ -136,14 +136,29 @@ extension AnnotationEditorModel {
         applyCropDrag()
     }
 
-    func endCropDrag() {
+    func endCropDrag(at pointer: CGPoint? = nil) {
+        if let pointer {
+            updateCropDrag(to: pointer)
+        }
         cropDrag = nil
     }
 
-    /// Scrolls the canvas while a drag holds the pointer near a viewport edge,
-    /// then re-applies the drag so the selection keeps following the pointer.
-    /// An edge the drag began near only scrolls once the pointer moves further
-    /// in, so grabbing a handle at the viewport edge doesn't set it sliding.
+    /// Re-applies the active crop drag at its stored viewport pointer after the
+    /// canvas pans, zooms, or auto-scrolls underneath a held drag.
+    func reapplyCropDragAfterViewportChange() {
+        guard var drag = cropDrag else { return }
+        if !drag.hasTravelled, drag.target != .newSelection {
+            drag.hasTravelled = true
+            cropDrag = drag
+        }
+        applyCropDrag()
+    }
+
+    /// Scrolls the canvas while a drag holds the pointer near a viewport edge;
+    /// the viewport change re-applies the drag so the selection keeps following
+    /// the pointer. An edge the drag began near only scrolls once the pointer
+    /// moves further in, so grabbing a handle at the viewport edge doesn't set
+    /// it sliding.
     func autoscrollCropDrag(elapsed: TimeInterval) {
         guard let drag = cropDrag, drag.hasTravelled, let layout = canvasViewport.layout else { return }
         let zone = Self.cropAutoscrollZone
@@ -166,10 +181,7 @@ extension AnnotationEditorModel {
         )
         guard velocity != .zero else { return }
 
-        let before = canvasViewport.frame.origin
         canvasViewport.pan(by: CGSize(width: velocity.width * elapsed, height: velocity.height * elapsed))
-        guard canvasViewport.frame.origin != before else { return }
-        applyCropDrag()
     }
 
     private func applyCropDrag() {

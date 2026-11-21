@@ -802,7 +802,7 @@ struct AnnotationCanvas: View {
                 }
                 guard hasActiveInteraction else { return }
                 if isCropGesture {
-                    model.endCropDrag()
+                    model.endCropDrag(at: value.location)
                     isCropGesture = false
                     hasActiveInteraction = false
                     updateCursor(at: value.location, imageFrame: imageFrame, boundaryFrame: boundaryFrame)

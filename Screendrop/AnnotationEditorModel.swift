@@ -126,7 +126,13 @@ final class AnnotationEditorModel {
 
     // MARK: Zoom & pan
     /// The rendered camera and active gesture are committed as one value.
-    var canvasViewport = AnnotationCanvasViewport()
+    var canvasViewport = AnnotationCanvasViewport() {
+        didSet {
+            if isCropDragging, canvasViewport.frame != oldValue.frame {
+                reapplyCropDragAfterViewportChange()
+            }
+        }
+    }
     /// Bumped when the viewport has been placed where the image already shows
     /// and should now animate to the fit; the canvas runs that animation.
     var canvasRevealID = 0
