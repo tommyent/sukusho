@@ -753,19 +753,42 @@ nonisolated struct StudioAudioLaneSolo: Equatable, Sendable {
         clips: [RecordingAudioClip],
         current: StudioAudioLaneSolo?
     ) -> (clips: [RecordingAudioClip], solo: StudioAudioLaneSolo?, actionName: String) {
-        var next = clips
-        if let current {
-            next = next.map { clip in
-                var clip = clip
-                if let wasMuted = current.previousMutes[clip.id] { clip.isMuted = wasMuted }
-                return clip
-            }
-        }
+        var next = persistedClips(clips, solo: current)
         next = next.map { clip in
             var clip = clip
             if clip.lane == targetLane { clip.isMuted = muted }
             return clip
         }
         return (next, nil, muted ? "Mute Lane" : "Unmute Lane")
+    }
+
+    /// Returns clips with their underlying saved mute flags rather than
+    /// temporary solo mutes, so saving/reloading while soloed never persists
+    /// temporary solo state.
+    static func persistedClips(
+        _ clips: [RecordingAudioClip],
+        solo: StudioAudioLaneSolo?
+    ) -> [RecordingAudioClip] {
+        guard let solo else { return clips }
+        return clips.map { clip in
+            var copy = clip
+            if let savedMuted = solo.previousMutes[clip.id] {
+                copy.isMuted = savedMuted
+            }
+            return copy
+        }
+    }
+
+    /// When an edit removes or moves every clip off the soloed lane, ends solo
+    /// and restores the pre-solo mute state on all surviving clips.
+    static func reconcile(
+        _ clips: [RecordingAudioClip],
+        solo: StudioAudioLaneSolo?
+    ) -> (clips: [RecordingAudioClip], solo: StudioAudioLaneSolo?) {
+        guard let solo else { return (clips, nil) }
+        if clips.contains(where: { $0.lane == solo.lane }) {
+            return (clips, solo)
+        }
+        return (persistedClips(clips, solo: solo), nil)
     }
 }

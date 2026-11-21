@@ -1288,6 +1288,33 @@ struct StudioAudioTests {
         #expect(afterReopen.hidden.isEmpty)
     }
 
+    @Test func deletingSoloedLaneRestoresPreSoloMutesAndDocumentSavesUnderlyingMutes() {
+        var c0 = RecordingAudioClip(fileName: "a.wav", displayName: "A", start: 0, fileDuration: 2)
+        c0.lane = 0
+        var c1 = RecordingAudioClip(fileName: "b.wav", displayName: "B", start: 0, fileDuration: 2)
+        c1.lane = 1
+        var c2 = RecordingAudioClip(fileName: "c.wav", displayName: "C", start: 0, fileDuration: 2)
+        c2.lane = 2
+        c2.isMuted = true
+
+        // Solo lane 1: lane 0 becomes temporarily muted, lane 2 stays muted.
+        let soloed = StudioAudioLaneSolo.toggle(lane: 1, clips: [c0, c1, c2], current: nil)
+        #expect(soloed.solo?.lane == 1)
+        #expect(soloed.clips[0].isMuted == true)
+
+        // Saving while soloed writes underlying mutes (lane 0 unmuted, lane 2 muted), NOT temporary solo mutes.
+        let saved = StudioAudioLaneSolo.persistedClips(soloed.clips, solo: soloed.solo)
+        #expect(saved.map(\.isMuted) == [false, false, true])
+
+        // Deleting lane 1's only clip ends solo and restores lane 0 to unmuted while preserving lane 2's mute.
+        let afterDelete = soloed.clips.filter { $0.id != c1.id }
+        let reconciled = StudioAudioLaneSolo.reconcile(afterDelete, solo: soloed.solo)
+        #expect(reconciled.solo == nil)
+        #expect(reconciled.clips.count == 2)
+        #expect(reconciled.clips[0].id == c0.id && reconciled.clips[0].isMuted == false)
+        #expect(reconciled.clips[1].id == c2.id && reconciled.clips[1].isMuted == true)
+    }
+
     // MARK: - Helpers
 
     private func makeDirectory() throws -> URL {
