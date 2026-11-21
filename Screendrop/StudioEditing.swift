@@ -57,6 +57,57 @@ nonisolated enum StudioTrimPreviewTarget: Equatable, Sendable {
     case sourceTime(TimeInterval)
 }
 
+/// Coordinates cut-item rebuilds and temporary source-asset trim previews under
+/// a single generation counter so competing async redaction tasks can never
+/// leave an unedited source item active after trim release.
+nonisolated struct StudioPlayerItemGate: Equatable, Sendable {
+    private(set) var generation: UInt64 = 0
+    private(set) var isCutReady = false
+    private(set) var isShowingSourcePreview = false
+
+    mutating func beginCutBuild(isAsync: Bool) -> UInt64 {
+        generation &+= 1
+        isShowingSourcePreview = false
+        isCutReady = !isAsync
+        return generation
+    }
+
+    mutating func finishCutBuild(generation token: UInt64) -> Bool {
+        guard token == generation else { return false }
+        isCutReady = true
+        return true
+    }
+
+    /// Starts direct source preview only when a ready cut item exists to
+    /// restore on release; returns nil while a cut rebuild is still in flight.
+    mutating func beginSourcePreview(isAsync: Bool) -> UInt64? {
+        guard isCutReady, !isShowingSourcePreview else { return nil }
+        generation &+= 1
+        isShowingSourcePreview = true
+        _ = isAsync
+        return generation
+    }
+
+    mutating func finishSourcePreview(generation token: UInt64) -> Bool {
+        token == generation && isShowingSourcePreview
+    }
+
+    /// Ends direct source preview, returning true when the saved cut item
+    /// should be restored onto the player.
+    mutating func endSourcePreview() -> Bool {
+        guard isShowingSourcePreview else { return false }
+        generation &+= 1
+        isShowingSourcePreview = false
+        return isCutReady
+    }
+
+    mutating func invalidate() {
+        generation &+= 1
+        isCutReady = false
+        isShowingSourcePreview = false
+    }
+}
+
 nonisolated enum StudioEditing {
     /// How near, in points, a trimmed edge has to come to a snap point to catch.
     static let snapTolerancePoints: CGFloat = 7
@@ -307,12 +358,14 @@ nonisolated enum StudioEditing {
 
     /// Picks whether live trim preview can seek the current cut composition or
     /// needs the source asset directly (when extending an edge restores cut
-    /// footage, or once a drag has already switched to source preview).
+    /// footage, or once a drag has already switched to source preview). Gates
+    /// direct source preview on a ready cut item so no race can lose the cut.
     static func trimPreviewTarget(
         forSourceTime sourceTime: TimeInterval,
         in timeline: RecordingClipTimeline,
         sourceDuration: TimeInterval,
-        usingSourceAsset: Bool
+        usingSourceAsset: Bool,
+        hasReadyCutItem: Bool = true
     ) -> StudioTrimPreviewTarget? {
         guard sourceTime.isFinite else { return nil }
         let limit = max(sourceDuration.isFinite ? sourceDuration : 0, 0)
@@ -321,6 +374,7 @@ nonisolated enum StudioEditing {
            let editorTime = timeline.editorTime(forSourceEventTime: clamped, includeTimelineEnd: true) {
             return .editedTime(editorTime)
         }
+        guard hasReadyCutItem else { return nil }
         return .sourceTime(clamped)
     }
 

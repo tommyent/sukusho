@@ -860,7 +860,7 @@ struct StudioEditingTests {
 
     // MARK: - Live trim preview of restored footage
 
-    @Test func trimPreviewSwitchesToSourceAssetWhenRestoringCutFootage() {
+    @Test func trimPreviewSwitchesToSourceAssetWhenRestoringCutFootage() throws {
         // After ripple-deleting source 4..6, extending clip 1's trailing edge to source 5.0
         // cannot be shown by the cut composition; it requests direct source-asset preview.
         let cut = RecordingClipTimeline(segments: [
@@ -890,6 +890,36 @@ struct StudioEditingTests {
             sourceDuration: 10,
             usingSourceAsset: true
         ) == .sourceTime(3.5))
+
+        // While a redacted cut rebuild is still preparing (no ready cut item yet), source preview is gated off.
+        #expect(StudioEditing.trimPreviewTarget(
+            forSourceTime: 5.0,
+            in: cut,
+            sourceDuration: 10,
+            usingSourceAsset: false,
+            hasReadyCutItem: false
+        ) == nil)
+
+        // Single-owner gate prevents competing cut/source redaction tasks from leaving source item active.
+        var gate = StudioPlayerItemGate()
+        let cutGen1 = gate.beginCutBuild(isAsync: true)
+        #expect(!gate.isCutReady)
+        #expect(gate.beginSourcePreview(isAsync: true) == nil) // blocked until cut is ready
+        #expect(gate.finishCutBuild(generation: cutGen1))
+        #expect(gate.isCutReady)
+
+        // Start async source preview, then supersede it with a new cut rebuild: stale source task is rejected.
+        let sourceGen = try #require(gate.beginSourcePreview(isAsync: true))
+        let cutGen2 = gate.beginCutBuild(isAsync: true)
+        #expect(!gate.finishSourcePreview(generation: sourceGen))
+        #expect(gate.finishCutBuild(generation: cutGen2))
+        #expect(!gate.isShowingSourcePreview)
+
+        // Normal source preview -> release restores saved cut item cleanly.
+        let sourceGen2 = try #require(gate.beginSourcePreview(isAsync: false))
+        #expect(gate.finishSourcePreview(generation: sourceGen2))
+        #expect(gate.endSourcePreview())
+        #expect(!gate.isShowingSourcePreview && gate.isCutReady)
     }
 
     private func writeSolidColorMovie(
