@@ -26,6 +26,23 @@ nonisolated struct RecordingImageOverlay: Identifiable, Codable, Equatable, Hash
     static let cornerRadiusRange: ClosedRange<Double> = 0...200
     static let fadeRange: ClosedRange<TimeInterval> = 0...2
 
+    /// Initial width fraction for an imported image: at most 40% of the canvas
+    /// wide and half of it tall, even when a tall image falls below the
+    /// inspector slider's minimum.
+    static func initialWidth(aspect: Double, canvasSize: CGSize) -> Double {
+        guard aspect.isFinite, aspect > 0 else { return 0.4 }
+        let heightLimited = canvasSize.width > 0 ? 0.5 * canvasSize.height * aspect / canvasSize.width : 0.4
+        return min(0.4, max(heightLimited, .leastNormalMagnitude))
+    }
+
+    /// Preserves any finite positive width up to `widthRange.upperBound` so
+    /// tall imported images narrower than the inspector slider's minimum
+    /// round-trip without growing on reopen or non-size edits.
+    static func sanitizedWidth(_ rawWidth: Double, fallback: Double = 0.3) -> Double {
+        guard rawWidth.isFinite, rawWidth > 0 else { return fallback }
+        return min(rawWidth, widthRange.upperBound)
+    }
+
     var id = UUID()
     /// The copy inside the project's media folder.
     var fileName: String
@@ -73,7 +90,7 @@ nonisolated struct RecordingImageOverlay: Identifiable, Codable, Equatable, Hash
             y: rawCenter.y.isFinite ? min(max(rawCenter.y, 0), 1) : 0.5
         )
         let rawWidth = try container.decodeIfPresent(Double.self, forKey: .width) ?? 0.3
-        width = rawWidth.isFinite ? min(max(rawWidth, Self.widthRange.lowerBound), Self.widthRange.upperBound) : 0.3
+        width = Self.sanitizedWidth(rawWidth)
         let rawAspect = try container.decodeIfPresent(Double.self, forKey: .aspect) ?? 1
         aspect = (rawAspect.isFinite && rawAspect > 0) ? max(rawAspect, 0.01) : 1
         let rawRotation = try container.decodeIfPresent(Double.self, forKey: .rotation) ?? 0

@@ -4190,9 +4190,7 @@ final class RecordingStudioModel {
         overlay.aspect = decoded.aspect
         overlay.isAnimated = decoded.isAnimated
         // At most 40% of the canvas wide and half of it tall.
-        let canvas = basePreviewCanvasSize
-        let heightLimitedWidth = canvas.width > 0 ? 0.5 * canvas.height * decoded.aspect / canvas.width : 0.4
-        overlay.width = min(0.4, heightLimitedWidth)
+        overlay.width = RecordingImageOverlay.initialWidth(aspect: decoded.aspect, canvasSize: basePreviewCanvasSize)
         overlayImageRevision &+= 1
         applyImages(imageOverlays + [overlay], actionName: "Add Image")
         selectImage(id: overlay.id)
@@ -4274,8 +4272,10 @@ final class RecordingStudioModel {
         let range = clampedSourceRange(start: overlay.start, end: overlay.end, minimum: RecordingImageOverlay.minimumDuration)
         updated.start = range.lowerBound
         updated.end = range.upperBound
-        updated.width = min(max(updated.width, RecordingImageOverlay.widthRange.lowerBound),
-                            RecordingImageOverlay.widthRange.upperBound)
+        updated.width = RecordingImageOverlay.sanitizedWidth(
+            updated.width,
+            fallback: RecordingImageOverlay.widthRange.lowerBound
+        )
         updated.center = CGPoint(x: min(max(updated.center.x, 0), 1), y: min(max(updated.center.y, 0), 1))
         updated.opacity = min(max(updated.opacity, 0), 1)
         var all = imageOverlays

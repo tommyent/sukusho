@@ -906,6 +906,40 @@ struct StudioTracksTests {
         #expect(studioAccessiblePercent(decoded.center.y) == "0%")
     }
 
+    @Test func tallImportedImageWidthBelowSliderMinimumRoundTripsWithoutGrowing() throws {
+        // 32 × 1600 image on a 1280 × 720 canvas: width = 0.005625 (< 0.02 slider minimum), height = 360 pt.
+        let canvas = CGSize(width: 1280, height: 720)
+        let aspect = 32.0 / 1600.0
+        var image = RecordingImageOverlay(fileName: "tall.png", displayName: "Tall", start: 0, end: 4)
+        image.aspect = aspect
+        image.width = RecordingImageOverlay.initialWidth(aspect: aspect, canvasSize: canvas)
+
+        #expect(abs(image.width - 0.005625) < 0.000001)
+        #expect(image.width < RecordingImageOverlay.widthRange.lowerBound)
+        #expect(abs(image.rect(canvasSize: canvas).height - 360) < 0.01)
+
+        let data = try JSONEncoder().encode(image)
+        let decoded = try JSONDecoder().decode(RecordingImageOverlay.self, from: data)
+        #expect(abs(decoded.width - image.width) < 0.000001)
+        #expect(abs(decoded.rect(canvasSize: canvas).height - 360) < 0.01)
+        #expect(studioAccessiblePercent(decoded.width) == "1%")
+
+        // Non-size edits keep the stored narrow width, while non-positive decoded widths still fall back.
+        #expect(abs(RecordingImageOverlay.sanitizedWidth(decoded.width) - 0.005625) < 0.000001)
+        let zeroWidthJSON = """
+        {
+            "fileName": "tall.png",
+            "displayName": "Tall",
+            "start": 0,
+            "end": 4,
+            "width": 0,
+            "aspect": 0.02
+        }
+        """
+        let zeroDecoded = try JSONDecoder().decode(RecordingImageOverlay.self, from: Data(zeroWidthJSON.utf8))
+        #expect(abs(zeroDecoded.width - 0.3) < 0.000001)
+    }
+
     @Test func narrowTimelineDockUsesPopoverForExpandedAddTools() {
         #expect(StudioAddToolsLayout.forDockWidth(640) == .popover)
         #expect(StudioAddToolsLayout.forDockWidth(720) == .popover)
