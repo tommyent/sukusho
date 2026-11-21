@@ -148,7 +148,12 @@ nonisolated struct StudioPlaybackBoundaryState: Equatable, Sendable {
 
 nonisolated enum StudioPlaybackEndTrigger: Equatable, Sendable {
     case periodic(seconds: TimeInterval)
-    case itemDidPlayToEnd(reverseEnd: TimeInterval, forwardEnd: TimeInterval)
+    case itemDidPlayToEnd(
+        isCurrentItem: Bool,
+        itemSeconds: TimeInterval?,
+        reverseEnd: TimeInterval,
+        forwardEnd: TimeInterval
+    )
 }
 
 nonisolated enum StudioPlayback {
@@ -243,9 +248,14 @@ nonisolated enum StudioPlayback {
             } else {
                 return nil
             }
-        case .itemDidPlayToEnd(let reverseEnd, let forwardEnd):
+        case .itemDidPlayToEnd(let isCurrentItem, let itemSeconds, let reverseEnd, let forwardEnd):
+            guard isCurrentItem, let itemSeconds, itemSeconds.isFinite else { return nil }
             let raw = state.shuttleRate < 0 ? reverseEnd : forwardEnd
             endpoint = min(max(raw.isFinite ? raw : (state.shuttleRate < 0 ? 0 : limit), 0), limit)
+            // Half the minimum clip duration (0.12 s), so a delayed reverse
+            // notification at 0 cannot match a forward boundary after L starts
+            // forward playback (or vice versa).
+            guard abs(itemSeconds - endpoint) <= 0.05 else { return nil }
         }
         state.isPlaying = false
         state.shuttleRate = 1

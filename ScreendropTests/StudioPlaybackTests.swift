@@ -410,7 +410,7 @@ struct StudioPlaybackTests {
         // Late end notification must not overwrite currentTime with duration.
         #expect(StudioPlayback.resolvePlaybackEnd(
             state: &orderA,
-            trigger: .itemDidPlayToEnd(reverseEnd: 0, forwardEnd: 10),
+            trigger: .itemDidPlayToEnd(isCurrentItem: true, itemSeconds: 0, reverseEnd: 0, forwardEnd: 10),
             duration: 10
         ) == nil)
         #expect(orderA == StudioPlaybackBoundaryState(isPlaying: false, shuttleRate: 1, currentTime: 0))
@@ -419,7 +419,7 @@ struct StudioPlaybackTests {
         var orderB = StudioPlaybackBoundaryState(isPlaying: true, shuttleRate: -4, currentTime: 4.5)
         #expect(StudioPlayback.resolvePlaybackEnd(
             state: &orderB,
-            trigger: .itemDidPlayToEnd(reverseEnd: 0, forwardEnd: 10),
+            trigger: .itemDidPlayToEnd(isCurrentItem: true, itemSeconds: 0, reverseEnd: 0, forwardEnd: 10),
             duration: 10
         ) == 0)
         #expect(orderB == StudioPlaybackBoundaryState(isPlaying: false, shuttleRate: 1, currentTime: 0))
@@ -430,11 +430,29 @@ struct StudioPlaybackTests {
         var forward = StudioPlaybackBoundaryState(isPlaying: true, shuttleRate: 2, currentTime: 9.9)
         #expect(StudioPlayback.resolvePlaybackEnd(
             state: &forward,
-            trigger: .itemDidPlayToEnd(reverseEnd: 0, forwardEnd: 10),
+            trigger: .itemDidPlayToEnd(isCurrentItem: true, itemSeconds: 10, reverseEnd: 0, forwardEnd: 10),
             duration: 10
         ) == 10)
         #expect(forward == StudioPlaybackBoundaryState(isPlaying: false, shuttleRate: 1, currentTime: 10))
         #expect(StudioPlayback.resolvePlaybackEnd(state: &forward, trigger: .periodic(seconds: 10), duration: 10) == nil)
+
+        // Delayed reverse notification arriving after L has started forward playback is ignored.
+        var reversedThenForward = StudioPlaybackBoundaryState(isPlaying: true, shuttleRate: 1, currentTime: 0.02)
+        #expect(StudioPlayback.resolvePlaybackEnd(
+            state: &reversedThenForward,
+            trigger: .itemDidPlayToEnd(isCurrentItem: true, itemSeconds: 0, reverseEnd: 0, forwardEnd: 10),
+            duration: 10
+        ) == nil)
+        #expect(reversedThenForward == StudioPlaybackBoundaryState(isPlaying: true, shuttleRate: 1, currentTime: 0.02))
+
+        // Notification from a non-current item is ignored even at the matching boundary.
+        var staleItem = StudioPlaybackBoundaryState(isPlaying: true, shuttleRate: 1, currentTime: 10)
+        #expect(StudioPlayback.resolvePlaybackEnd(
+            state: &staleItem,
+            trigger: .itemDidPlayToEnd(isCurrentItem: false, itemSeconds: 10, reverseEnd: 0, forwardEnd: 10),
+            duration: 10
+        ) == nil)
+        #expect(staleItem.isPlaying)
     }
 
     // MARK: - Window key routing

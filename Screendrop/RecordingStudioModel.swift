@@ -1386,12 +1386,19 @@ final class RecordingStudioModel {
             queue: .main
         ) { [weak self] notification in
             MainActor.assumeIsolated {
-                guard let self else { return }
-                let item = (notification.object as? AVPlayerItem) ?? self.screenPlayer.currentItem
-                let reverseEnd = item.flatMap { $0.reversePlaybackEndTime.isNumeric ? $0.reversePlaybackEndTime.seconds : nil } ?? 0
-                let forwardEnd = item.flatMap { $0.forwardPlaybackEndTime.isNumeric ? $0.forwardPlaybackEndTime.seconds : nil } ?? self.duration
+                guard let self, let item = notification.object as? AVPlayerItem else { return }
+                let isCurrentItem = item === self.screenPlayer.currentItem
+                let itemTime = item.currentTime()
+                let itemSeconds = itemTime.isNumeric ? itemTime.seconds : nil
+                let reverseEnd = item.reversePlaybackEndTime.isNumeric ? item.reversePlaybackEndTime.seconds : 0
+                let forwardEnd = item.forwardPlaybackEndTime.isNumeric ? item.forwardPlaybackEndTime.seconds : self.duration
                 _ = self.handlePlaybackBoundary(
-                    .itemDidPlayToEnd(reverseEnd: reverseEnd, forwardEnd: forwardEnd)
+                    .itemDidPlayToEnd(
+                        isCurrentItem: isCurrentItem,
+                        itemSeconds: itemSeconds,
+                        reverseEnd: reverseEnd,
+                        forwardEnd: forwardEnd
+                    )
                 )
             }
         }
