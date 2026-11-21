@@ -2,11 +2,9 @@
 //  GlassPicture.swift
 //  Screendrop
 //
-//  Glass's picture, painted under the whole window (`AppTheme.Ground.backdrop`): the one the user picked in
-//  Settings › Appearance, else the desktop picture of the window's own screen when it's one of Apple's own (which
-//  Sukusho reads without a folder-access prompt), else Sukusho's own for the appearance; the first of those that
-//  decodes. A picked picture is copied into Sukusho's wallpapers folder first (`AnnotationWallpaperStore.importWallpaper`),
-//  so it stays when the original moves. Screen only, like every theme.
+//  Resolves the picture for a window background. It tries the picture chosen in Settings › Appearance › Background,
+//  the window display's desktop picture if it's in Apple's wallpaper folders, then Sukusho's built-in picture for
+//  the current appearance. Imported pictures live in Sukusho's Wallpapers folder.
 //
 
 import AppKit
@@ -14,9 +12,8 @@ import ImageIO
 import Synchronization
 
 enum GlassPicture {
-    /// The picked picture's path; empty: the desktop picture or Sukusho's own. No dot: @AppStorage misses dotted keys.
+    /// Legacy keys read during the Window Background migration.
     static let pathKey = "GlassPicturePath"
-    /// True when Glass uses a solid background instead of its blurred picture.
     static let solidBackgroundKey = "GlassSolidBackground"
 
     /// What Glass paints: the file and its version (`version(of:)`), so a window repaints when the file at the same

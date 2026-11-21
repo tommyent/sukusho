@@ -9,9 +9,8 @@ import CoreGraphics
 import Foundation
 import ImageIO
 
-/// What the Library's browser, the image editor and Studio draw behind their
-/// content (Settings › Appearance › Workspace). Screen only: no export, Copy,
-/// upload or Agent Prompt path reads these settings.
+/// Window backgrounds in Settings › Appearance › Background.
+/// These settings apply to the app's windows on screen.
 nonisolated enum WorkspaceBackground {
     enum Style: String, Codable, CaseIterable, Identifiable, Sendable {
         case dots, plain, wallpaper

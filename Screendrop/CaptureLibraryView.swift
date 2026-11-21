@@ -1478,10 +1478,8 @@ private struct LibraryToolbarSeparator: ViewModifier {
     }
 }
 
-/// The window background behind the split view. Glass with blurred picture paints
-/// `GlassBackdrop`; Glass with Solid background paints the solid workspace colour;
-/// Classic and Chip extend `AnnotationEditorWorkspaceBackground` under the floating
-/// sidebars; Reduce Transparency and Increase Contrast fall back to opaque chrome.
+/// Extends the App Windows background under the floating sidebars.
+/// Reduce Transparency and Increase Contrast use opaque chrome.
 private struct LibraryWindowSurface: ViewModifier {
     @CurrentTheme private var theme
     @DrawnGlass private var glass

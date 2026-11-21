@@ -53,8 +53,7 @@ struct EditorInspectorTests {
         #expect(settings.alignmentAvailability == .available, "scene blur needs a canvas too")
     }
 
-    /// The pinned tool slot follows the dock: Crop, Pick Color and Measure outrank the tool, so
-    /// the slot never shows the previous tool while one of them is on (Fable #1).
+    /// Crop, Pick Color and Measure take precedence over the dock's selected tool.
     @Test static func toolSlotFollowsTheDock() {
         func slot(_ tool: AnnotationTool?, _ count: Int = 0, crop: Bool = false, pick: Bool = false, measure: Bool = false) -> AnnotationToolSlot {
             .current(tool: tool, selectionCount: count, isCropping: crop, isPickingColor: pick, isMeasuring: measure)

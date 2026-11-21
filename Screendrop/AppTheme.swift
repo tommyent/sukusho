@@ -44,7 +44,7 @@ nonisolated struct AppTheme: Sendable, Equatable, Identifiable {
     nonisolated struct Ground: Sendable, Equatable {
         /// What the Library's cards and the editors' canvas sit on, under Dots, Plain or a wallpaper.
         var workspace: ThemeColor
-        /// A picture under the whole window in place of the Workspace setting (Glass); nil: the Workspace setting.
+        /// Glass's default picture effects. Classic and Chip have no theme-specific picture effects.
         var backdrop: Backdrop? = nil
     }
 
@@ -333,8 +333,7 @@ nonisolated enum ThemeColor: Sendable, Equatable {
     }
 }
 
-/// The current theme's Glass blurred picture while it's drawn (`AppTheme.drawnBackdrop`); nil when Solid background is
-/// on, for Classic/Chip, and under Reduce Transparency or Increase Contrast.
+/// The current theme's Glass treatment when App Windows use a picture and transparency is enabled.
 @propertyWrapper struct DrawnGlass: DynamicProperty {
     @CurrentTheme private var theme
     private var solidBackground: Bool { WindowBackgroundStore.shared.choice(for: .app, theme: theme).style != .wallpaper }
