@@ -192,6 +192,7 @@
 		ED2C00000000000000000001 /* Screendrop/RecordingTimelineThumbnails.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED2C00000000000000000002 /* Screendrop/RecordingTimelineThumbnails.swift */; };
 		ED2C00000000000000000003 /* Screendrop/RecordingClipTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED2C00000000000000000004 /* Screendrop/RecordingClipTimelineView.swift */; };
 		C11D00000000000000000001 /* Screendrop/ClipboardLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = C11D00000000000000000002 /* Screendrop/ClipboardLauncher.swift */; };
+		C11E00000000000000000001 /* Screendrop/WindowLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = C11E00000000000000000002 /* Screendrop/WindowLayout.swift */; };
 		ED2D00000000000000000001 /* Screendrop/StudioTimelineBlocks.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED2D00000000000000000002 /* Screendrop/StudioTimelineBlocks.swift */; };
 		ED2D00000000000000000003 /* Screendrop/DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED2D00000000000000000004 /* Screendrop/DesignSystem.swift */; };
 		ED2D00000000000000000005 /* Screendrop/RecordingViewportTimeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED2D00000000000000000006 /* Screendrop/RecordingViewportTimeline.swift */; };
@@ -412,6 +413,7 @@
 		ED2C00000000000000000002 /* Screendrop/RecordingTimelineThumbnails.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingTimelineThumbnails.swift; sourceTree = SOURCE_ROOT; };
 		ED2C00000000000000000004 /* Screendrop/RecordingClipTimelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingClipTimelineView.swift; sourceTree = SOURCE_ROOT; };
 		C11D00000000000000000002 /* Screendrop/ClipboardLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ClipboardLauncher.swift; sourceTree = SOURCE_ROOT; };
+		C11E00000000000000000002 /* Screendrop/WindowLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/WindowLayout.swift; sourceTree = SOURCE_ROOT; };
 		ED2D00000000000000000002 /* Screendrop/StudioTimelineBlocks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/StudioTimelineBlocks.swift; sourceTree = SOURCE_ROOT; };
 		ED2D00000000000000000004 /* Screendrop/DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/DesignSystem.swift; sourceTree = SOURCE_ROOT; };
 		ED2D00000000000000000006 /* Screendrop/RecordingViewportTimeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingViewportTimeline.swift; sourceTree = SOURCE_ROOT; };
@@ -676,6 +678,7 @@
 				ED2C00000000000000000002 /* Screendrop/RecordingTimelineThumbnails.swift */,
 				ED2C00000000000000000004 /* Screendrop/RecordingClipTimelineView.swift */,
 				C11D00000000000000000002 /* Screendrop/ClipboardLauncher.swift */,
+				C11E00000000000000000002 /* Screendrop/WindowLayout.swift */,
 				ED2D00000000000000000002 /* Screendrop/StudioTimelineBlocks.swift */,
 				ED2D00000000000000000004 /* Screendrop/DesignSystem.swift */,
 				ED2D00000000000000000006 /* Screendrop/RecordingViewportTimeline.swift */,
@@ -992,6 +995,7 @@
 				ED2C00000000000000000001 /* Screendrop/RecordingTimelineThumbnails.swift in Sources */,
 				ED2C00000000000000000003 /* Screendrop/RecordingClipTimelineView.swift in Sources */,
 				C11D00000000000000000001 /* Screendrop/ClipboardLauncher.swift in Sources */,
+				C11E00000000000000000001 /* Screendrop/WindowLayout.swift in Sources */,
 				ED2D00000000000000000001 /* Screendrop/StudioTimelineBlocks.swift in Sources */,
 				ED2D00000000000000000003 /* Screendrop/DesignSystem.swift in Sources */,
 				ED2D00000000000000000005 /* Screendrop/RecordingViewportTimeline.swift in Sources */,

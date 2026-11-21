@@ -47,6 +47,8 @@ final class HotkeyManager {
     /// Actions on a modifier key alone, which the event tap watches for instead of Carbon.
     @ObservationIgnored private var tapActions: [HotkeyShortcut: CaptureHotkeyAction] = [:]
     @ObservationIgnored private let modifierTaps = ModifierTapMonitor()
+    /// Registered Carbon hotkeys for Window Management (empty while the setting is off).
+    @ObservationIgnored private let windowHotkeys = WindowHotkeyRegistry<EventHotKeyRef>()
     
     private init() {}
 
@@ -100,7 +102,29 @@ final class HotkeyManager {
                 registrationErrors[action] = error.localizedDescription
             }
         }
+        syncWindowHotkeys(excluding: registeredShortcuts)
         watchModifierTaps()
+    }
+
+    private func syncWindowHotkeys(excluding shortcuts: [HotkeyShortcut]) {
+        windowHotkeys.sync(
+            enabled: ScreendropPreferences.windowManagementEnabled && !isPaused,
+            excluding: shortcuts,
+            nextID: newHotKeyID,
+            register: { [self] shortcut, id in
+                guard eventHandlerRef != nil else { return nil }
+                return registerCarbonHotKey(shortcut, id: id)
+            },
+            unregister: { _ = UnregisterEventHotKey($0) }
+        )
+    }
+
+    private func activeCaptureShortcuts() -> [HotkeyShortcut] {
+        CaptureHotkeyAction.allCases.compactMap { action in
+            if action == .drawing, ScreenRecordingManager.shared.state != .recording { return nil }
+            if action == .clipboardHistory, !ScreendropPreferences.clipboardHistoryEnabled, !ScreendropPreferences.clipboardLauncherEnabled { return nil }
+            return CaptureHotkeyPreferences.shortcut(for: action)
+        }
     }
 
     /// Runs the event tap while some action is a modifier key on its own; without Input Monitoring those actions say so.
@@ -219,6 +243,7 @@ final class HotkeyManager {
             CaptureHotkeyPreferences.saveShortcut(nil, for: action)
             registrationErrors[action] = nil
             stopWatchingTap(for: action)
+            syncWindowHotkeys(excluding: activeCaptureShortcuts())
             return
         }
         if action == .drawing, ScreenRecordingManager.shared.state != .recording {
@@ -239,6 +264,13 @@ final class HotkeyManager {
         }
         if shortcut == CaptureHotkeyPreferences.shortcut(for: action), hotKeyRefs[action] != nil { return }
         installEventHandlerIfNeeded()
+        let overlappingWindow = windowHotkeys.entries.contains { $0.shortcut.overlaps(shortcut) }
+        if overlappingWindow { windowHotkeys.unregisterAll { _ = UnregisterEventHotKey($0) } }
+        defer {
+            if overlappingWindow || (ScreendropPreferences.windowManagementEnabled && windowHotkeys.entries.count < WindowAction.allCases.count) {
+                syncWindowHotkeys(excluding: activeCaptureShortcuts())
+            }
+        }
         let newRef = try registerHotKey(action: action, shortcut: shortcut)
         if let old = hotKeyRefs[action] { UnregisterEventHotKey(old.ref) }
         hotKeyRefs[action] = newRef
@@ -288,6 +320,7 @@ final class HotkeyManager {
         hotKeyRefs.removeAll()
         tapActions.removeAll()
         modifierTaps.stop()
+        windowHotkeys.unregisterAll { _ = UnregisterEventHotKey($0) }
     }
     
     /// Nil when the key is taken; the caller goes on without it. While Settings records a shortcut, it's registered when
@@ -326,6 +359,10 @@ final class HotkeyManager {
         // only what's registered at this moment runs.
         guard !isPaused else { return }
         if let entry = temporaryHotKeys.values.first(where: { $0.ref != nil && $0.carbonID == id }) { return entry.action() }
+        if let action = windowHotkeys.action(for: id) {
+            WindowManager.shared.perform(action)
+            return
+        }
         hotKeyRefs.first { $0.value.id == id }?.key.perform()
     }
 }

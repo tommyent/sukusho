@@ -80,6 +80,8 @@ struct LibrarySettingsPane: View {
 /// Settings › Shortcuts: every system-wide shortcut in one place, in the order 1 to 5, then O, L and V
 /// (the owner, 2026-11-17).
 struct ShortcutsSettingsPane: View {
+    @AppStorage(ScreendropPreferences.windowManagementEnabledKey) private var windowManagementEnabled = false
+
     var body: some View {
         // The section scrolls a row's messages into view with this.
         ScrollViewReader { proxy in
@@ -88,6 +90,18 @@ struct ShortcutsSettingsPane: View {
                     actions: CaptureHotkeyAction.settingsOrder,
                     scroller: proxy
                 )
+                Section("Window Management") {
+                    SettingsControlLabel(
+                        "Window management",
+                        detail: "Halves ⌃⌥⌘ ← → ↑ ↓ · Quarters ⌃⌥⇧ ← ↑ ↓ → · Maximize ⌃⌥⌘M · Center ⌃⌥⌘C · Next display ⌃⌥⌘N."
+                    ).control { label in
+                        Toggle(isOn: $windowManagementEnabled) { label }
+                    }
+                    .toggleStyle(.switch)
+                    .onChange(of: windowManagementEnabled) { _, _ in
+                        HotkeyManager.shared.reloadHotkeys()
+                    }
+                }
             }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)

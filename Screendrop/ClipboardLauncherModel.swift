@@ -120,8 +120,14 @@ final class ClipboardLauncherModel {
 
     // MARK: - Querying
 
-    func sections(query: String) -> [LauncherSection] {
-        LauncherList.sections(query: query, apps: catalog, folders: folderCatalog, favorites: favorites)
+    func sections(query: String, includeWindowCommands: Bool) -> [LauncherSection] {
+        LauncherList.sections(
+            query: query,
+            apps: catalog,
+            folders: folderCatalog,
+            favorites: favorites,
+            includeWindowCommands: includeWindowCommands
+        )
     }
 
     // MARK: - Scanning & FSEvents

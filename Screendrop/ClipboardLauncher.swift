@@ -143,6 +143,7 @@ nonisolated struct LauncherAppEntry: Codable, Hashable, Sendable {
 nonisolated enum LauncherItemKind: Equatable, Sendable {
     case app
     case folder
+    case windowCommand(WindowAction)
 }
 
 /// Composite row identity so a favorited item listed under both Favorites and its source section has distinct IDs.
@@ -407,14 +408,23 @@ nonisolated struct LauncherCatalog: Sendable {
     }
 }
 
-/// Builds the Apps view's sections: Favorites + Applications + Folders when empty, `z ` full-path
-/// zoxide matching in score order, or merged app+folder fuzzy search (matching Unleash's `Launcher.swift`).
+/// Builds the Apps view's sections: Favorites + Applications + (Window Management) + Folders when
+/// empty, `z ` full-path zoxide matching in score order, or merged fuzzy search (matching Unleash's `Launcher.swift`).
 nonisolated enum LauncherList {
+    private static let windowCommandsCatalog = LauncherCatalog(
+        WindowAction.allCases.map { LauncherAppEntry(path: $0.itemID, name: $0.title) },
+        sorted: false
+    )
+    private static let windowActionByID = Dictionary(
+        uniqueKeysWithValues: WindowAction.allCases.map { ($0.itemID, $0) }
+    )
+
     static func sections(
         query: String,
         apps: LauncherCatalog,
         folders: LauncherCatalog,
         favorites: LauncherFavorites,
+        includeWindowCommands: Bool = false,
         home: String = NSHomeDirectory()
     ) -> [LauncherSection] {
         let favSet = Set(favorites.paths)
@@ -443,10 +453,22 @@ nonisolated enum LauncherList {
             )
         }
 
+        func windowRow(_ action: WindowAction, inFavorites: Bool) -> LauncherRow {
+            LauncherRow(
+                id: LauncherRowID(inFavorites: inFavorites, path: action.itemID),
+                kind: .windowCommand(action),
+                path: action.itemID,
+                title: action.title,
+                detail: action.shortcutLabel,
+                isFavorite: favSet.contains(action.itemID)
+            )
+        }
+
         if query.allSatisfy({ $0 == " " }) {
             var out: [LauncherSection] = []
             let pinnedRows: [LauncherRow] = favorites.paths.compactMap { path in
                 if let i = apps.index(ofPath: path) { return appRow(i, inFavorites: true) }
+                if includeWindowCommands, let action = windowActionByID[path] { return windowRow(action, inFavorites: true) }
                 if let i = folders.index(ofPath: path) { return folderRow(i, inFavorites: true) }
                 return nil
             }
@@ -456,6 +478,10 @@ nonisolated enum LauncherList {
             if apps.count > 0 {
                 out.append(LauncherSection(title: "Applications", inFavorites: false,
                                            rows: apps.apps.indices.map { appRow($0, inFavorites: false) }))
+            }
+            if includeWindowCommands {
+                out.append(LauncherSection(title: "Window Management", inFavorites: false,
+                                           rows: WindowAction.allCases.map { windowRow($0, inFavorites: false) }))
             }
             if folders.count > 0 {
                 out.append(LauncherSection(title: "Folders", inFavorites: false,
@@ -473,7 +499,7 @@ nonisolated enum LauncherList {
             return [LauncherSection(title: "Folders", inFavorites: false, rows: rows)]
         }
 
-        // Normal search: interleave apps and demoted folders by match tier, favorites first within tier.
+        // Normal search: interleave apps, window commands, and demoted folders by match tier, favorites first within tier.
         func pinnedIndices(in catalog: LauncherCatalog) -> [Int?] {
             var pinned = [Int?](repeating: nil, count: catalog.count)
             for (place, path) in favorites.paths.enumerated() {
@@ -486,12 +512,24 @@ nonisolated enum LauncherList {
             let row = appRow($0.index, inFavorites: false)
             return (value: row, id: row.path, tier: $0.tier)
         }
+        let windowMatches: [(value: LauncherRow, id: String, tier: LauncherMatchTier)]
+        if includeWindowCommands {
+            windowMatches = windowCommandsCatalog.searchRanked(query, pinned: pinnedIndices(in: windowCommandsCatalog)).compactMap {
+                guard let action = windowActionByID[windowCommandsCatalog.apps[$0.index].path] else { return nil }
+                let row = windowRow(action, inFavorites: false)
+                return (value: row, id: row.path, tier: $0.tier)
+            }
+        } else {
+            windowMatches = []
+        }
         let folderMatches = folders.searchRanked(query, pinned: pinnedIndices(in: folders)).map {
             let row = folderRow($0.index, inFavorites: false)
             return (value: row, id: row.path, tier: $0.tier)
         }
         let merged = LauncherRanking.merge(
-            [(matches: appMatches, demoted: false), (matches: folderMatches, demoted: true)],
+            [(matches: appMatches, demoted: false),
+             (matches: windowMatches, demoted: false),
+             (matches: folderMatches, demoted: true)],
             favorites: favorites.paths
         )
         guard !merged.isEmpty else { return [] }

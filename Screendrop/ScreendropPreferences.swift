@@ -64,6 +64,7 @@ enum ScreendropPreferences {
     private static let libraryInsightsSinceKey = "libraryInsightsSince"
     static let clipboardHistoryEnabledKey = "clipboardHistoryEnabled"
     static let clipboardLauncherEnabledKey = "clipboardLauncherEnabled"
+    static let windowManagementEnabledKey = "windowManagementEnabled"
     static let clipboardRetentionDaysKey = "clipboardRetentionDays"
     static let clipboardMaxStorageMBKey = "clipboardMaxStorageMB"
     static let clipboardIgnoredAppsKey = "clipboardIgnoredApps"
@@ -82,6 +83,11 @@ enum ScreendropPreferences {
     /// Adds Apps and z (zoxide folders) tabs to the clipboard popup, switched with Tab. Off by default.
     static var clipboardLauncherEnabled: Bool {
         UserDefaults.standard.bool(forKey: clipboardLauncherEnabledKey)
+    }
+
+    /// Registers the 11 window management shortcuts and exposes window commands in Apps. Off by default.
+    static var windowManagementEnabled: Bool {
+        UserDefaults.standard.bool(forKey: windowManagementEnabledKey)
     }
 
     /// Nil keeps everything. Option A (owner, 2026-11-16): copies age out only through this setting, off by

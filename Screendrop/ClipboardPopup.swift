@@ -25,7 +25,11 @@ final class ClipboardPopupState {
     }
 
     var launcherSections: [LauncherSection] {
-        ClipboardLauncherModel.shared.sections(query: query)
+        launcherSections(includeWindowCommands: ScreendropPreferences.windowManagementEnabled)
+    }
+
+    func launcherSections(includeWindowCommands: Bool) -> [LauncherSection] {
+        ClipboardLauncherModel.shared.sections(query: query, includeWindowCommands: includeWindowCommands)
     }
 
     var visibleLauncherRows: [LauncherRow] { launcherSections.flatMap(\.rows) }
@@ -93,7 +97,9 @@ final class ClipboardPopupPresenter {
     }
 
     private func present(_ panel: ClipboardPopupPanel) {
-        target = NSWorkspace.shared.frontmostApplication
+        if !isVisible {
+            target = NSWorkspace.shared.frontmostApplication
+        }
         let initialMode = ClipboardPopupMode.initial(
             clipboardHistoryEnabled: ScreendropPreferences.clipboardHistoryEnabled,
             launcherEnabled: ScreendropPreferences.clipboardLauncherEnabled
@@ -161,6 +167,11 @@ final class ClipboardPopupPresenter {
                 close()
                 ClipboardLauncherModel.shared.openFolder(at: row.path)
             }
+        case .windowCommand(let action):
+            guard !secondary else { return }
+            let targetApp = target
+            close()
+            WindowManager.shared.perform(action, targetApp: targetApp)
         }
     }
 
@@ -318,6 +329,8 @@ final class ClipboardPopupPresenter {
         case .folder:
             addMenuItem(to: menu, "Open in Finder", "\r") { [weak self] in self?.performLauncherRow(row, secondary: false) }
             addMenuItem(to: menu, "Copy Path", "\r", .command) { [weak self] in self?.performLauncherRow(row, secondary: true) }
+        case .windowCommand:
+            addMenuItem(to: menu, "Run", "\r") { [weak self] in self?.performLauncherRow(row, secondary: false) }
         }
         menu.addItem(.separator())
         addMenuItem(to: menu, row.isFavorite ? "Remove from Favorites" : "Add to Favorites", "f", [.command, .shift]) { [weak self] in
@@ -387,6 +400,7 @@ struct ClipboardPopupView: View {
     @State private var model = ClipboardHistoryModel.shared
     @State private var launcher = ClipboardLauncherModel.shared
     @AppStorage(ScreendropPreferences.clipboardLauncherEnabledKey) private var launcherEnabled = false
+    @AppStorage(ScreendropPreferences.windowManagementEnabledKey) private var windowManagementEnabled = false
     @FocusState private var searchFocused: Bool
     @CurrentTheme private var theme
     @DrawnGlass private var glass
@@ -437,7 +451,9 @@ struct ClipboardPopupView: View {
     }
 
     private var searchPlaceholder: String {
-        if activeMode == .apps { return "Search apps and folders…" }
+        if activeMode == .apps {
+            return windowManagementEnabled ? "Search apps, folders, and commands…" : "Search apps and folders…"
+        }
         return state.filter == .snippets ? "Search snippets…" : "Search clipboard…"
     }
 
@@ -601,7 +617,7 @@ struct ClipboardPopupView: View {
     // MARK: - Apps & z views
 
     private var launcherList: some View {
-        let sections = state.launcherSections
+        let sections = state.launcherSections(includeWindowCommands: windowManagementEnabled)
         let selected = state.selectedLauncherRow
         let showHeaders = state.query.allSatisfy { $0 == " " }
         let isZQuery = Zoxide.keywordQuery(state.query) != nil
@@ -648,12 +664,24 @@ struct ClipboardPopupView: View {
     }
 
     private func launcherRow(_ row: LauncherRow, isSelected: Bool) -> some View {
-        HStack(spacing: DS.Space.ml) {
-            if row.kind == .app {
+        let primaryActionTitle: String = switch row.kind {
+        case .app: "Open"
+        case .folder: "Open in Finder"
+        case .windowCommand: "Run"
+        }
+        return HStack(spacing: DS.Space.ml) {
+            switch row.kind {
+            case .app:
                 LauncherAppIconView(path: row.path, launcher: launcher)
-            } else {
+            case .folder:
                 Image(nsImage: launcher.folderIcon)
                     .resizable()
+                    .frame(width: 26, height: 26)
+                    .accessibilityHidden(true)
+            case .windowCommand(let action):
+                Image(systemName: action.symbolName)
+                    .font(.system(size: 16, weight: .regular))
+                    .foregroundStyle(.secondary)
                     .frame(width: 26, height: 26)
                     .accessibilityHidden(true)
             }
@@ -661,7 +689,9 @@ struct ClipboardPopupView: View {
                 .font(.system(size: 13.5))
                 .lineLimit(1)
                 .truncationMode(.tail)
-            if let detail = row.detail {
+            if case .windowCommand = row.kind {
+                // Shortcut sits on the trailing edge below in the popup's style.
+            } else if let detail = row.detail {
                 Text(detail)
                     .font(.system(size: 12.5))
                     .foregroundStyle(.secondary)
@@ -675,6 +705,11 @@ struct ClipboardPopupView: View {
                     .foregroundStyle(.secondary)
                     .accessibilityLabel("Favorite")
             }
+            if case .windowCommand(let action) = row.kind {
+                Text(action.shortcutLabel)
+                    .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(.horizontal, DS.Space.ml)
         .frame(height: 36)
@@ -687,7 +722,7 @@ struct ClipboardPopupView: View {
         .onTapGesture { state.launcherSelection = row.id }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-        .accessibilityAction(named: row.kind == .folder ? "Open in Finder" : "Open") {
+        .accessibilityAction(named: primaryActionTitle) {
             state.launcherSelection = row.id
             presenter.performLauncherRow(row)
         }
@@ -695,7 +730,11 @@ struct ClipboardPopupView: View {
 
     private var launcherFooter: some View {
         let selected = state.selectedLauncherRow
-        let primaryLabel = selected?.kind == .folder ? "Open in Finder" : "Open"
+        let primaryLabel: String = switch selected?.kind {
+        case .folder: "Open in Finder"
+        case .windowCommand: "Run"
+        case .app, nil: "Open"
+        }
         return HStack(spacing: DS.Space.m) {
             if let message = launcher.feedback.message {
                 Label(message, systemImage: "checkmark.circle").foregroundStyle(.secondary)
