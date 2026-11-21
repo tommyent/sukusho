@@ -108,49 +108,158 @@ nonisolated struct RecordingImageOverlay: Identifiable, Codable, Equatable, Hash
 
 // MARK: - Decoded images
 
-/// A decoded image: one frame, or an animated image's frames and timing.
+/// Byte-bounded LRU cache of decoded overlay frames shared across preview,
+/// exporter, and multiple animated assets so long animations stay within a
+/// fixed memory budget.
+nonisolated final class RecordingOverlayFrameCache: @unchecked Sendable {
+    /// 96 MiB shared budget across all open Studio previews and exports.
+    static let defaultByteLimit = 96 * 1024 * 1024
+    static let shared = RecordingOverlayFrameCache()
+
+    private struct Key: Hashable {
+        let url: URL
+        let frameIndex: Int
+    }
+
+    private struct Entry {
+        let image: CGImage
+        let bytes: Int
+        var lastUsed: UInt64
+    }
+
+    let byteLimit: Int
+    private let lock = NSLock()
+    private var entries: [Key: Entry] = [:]
+    private var totalBytes = 0
+    private var clock: UInt64 = 0
+
+    init(byteLimit: Int = RecordingOverlayFrameCache.defaultByteLimit) {
+        self.byteLimit = max(0, byteLimit)
+    }
+
+    var currentBytes: Int {
+        lock.withLock { totalBytes }
+    }
+
+    static func byteCost(of image: CGImage) -> Int {
+        max(image.bytesPerRow * image.height, image.width * image.height * 4)
+    }
+
+    func image(for url: URL, frameIndex: Int) -> CGImage? {
+        let key = Key(url: url, frameIndex: frameIndex)
+        return lock.withLock {
+            guard var entry = entries[key] else { return nil }
+            clock &+= 1
+            entry.lastUsed = clock
+            entries[key] = entry
+            return entry.image
+        }
+    }
+
+    @discardableResult
+    func insert(_ image: CGImage, for url: URL, frameIndex: Int) -> Bool {
+        let cost = Self.byteCost(of: image)
+        guard cost > 0, cost <= byteLimit else { return false }
+        let key = Key(url: url, frameIndex: frameIndex)
+        lock.withLock {
+            if let existing = entries.removeValue(forKey: key) {
+                totalBytes -= existing.bytes
+            }
+            // ponytail: O(n) eviction scan over cached frames (~dozens of entries at 96 MiB); upgrade to intrusive LRU list if tiny icons ever grow n past ~1k.
+            while totalBytes + cost > byteLimit,
+                  let oldestKey = entries.min(by: { $0.value.lastUsed < $1.value.lastUsed })?.key,
+                  let removed = entries.removeValue(forKey: oldestKey) {
+                totalBytes -= removed.bytes
+            }
+            clock &+= 1
+            entries[key] = Entry(image: image, bytes: cost, lastUsed: clock)
+            totalBytes += cost
+        }
+        return true
+    }
+
+    func removeFrames(for url: URL) {
+        lock.withLock {
+            for key in entries.keys where key.url == url {
+                if let removed = entries.removeValue(forKey: key) {
+                    totalBytes -= removed.bytes
+                }
+            }
+        }
+    }
+
+    func removeAll() {
+        lock.withLock {
+            entries.removeAll()
+            totalBytes = 0
+        }
+    }
+}
+
+/// An overlay image's timing table and on-demand frame decoder backed by a
+/// byte-bounded frame cache rather than retaining every decoded animation frame.
 nonisolated final class RecordingOverlayImage: @unchecked Sendable {
-    let frames: [CGImage]
+    let url: URL
+    let frameCount: Int
     /// When each frame ends, from the first frame's start.
     private let frameEnds: [TimeInterval]
     let loopDuration: TimeInterval
     let aspect: Double
+    private let source: CGImageSource
+    private let sourceLock = NSLock()
+    private let frameCache: RecordingOverlayFrameCache
 
-    var isAnimated: Bool { frames.count > 1 }
+    var isAnimated: Bool { frameCount > 1 }
 
     /// Longest side frames are decoded at. Overlays rarely cover more than
     /// a fraction of the canvas, and a long GIF's frames add up.
     private static let maximumPixelSize = 1600
 
-    init?(url: URL) {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+    init?(url: URL, cache: RecordingOverlayFrameCache = .shared) {
+        let sourceOptions: [CFString: Any] = [kCGImageSourceShouldCache: false]
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions as CFDictionary) else { return nil }
         let count = CGImageSourceGetCount(source)
         guard count > 0 else { return nil }
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: Self.maximumPixelSize,
-            kCGImageSourceShouldCacheImmediately: true
-        ]
-        var frames: [CGImage] = []
+        // Decode only the first frame eagerly to validate readability, aspect,
+        // and that a single decoded frame fits within the cache budget.
+        guard let first = Self.decodeFrame(from: source, at: 0),
+              first.height > 0,
+              cache.insert(first, for: url, frameIndex: 0) else {
+            return nil
+        }
+
         var ends: [TimeInterval] = []
+        ends.reserveCapacity(count)
         var elapsed: TimeInterval = 0
         for index in 0..<count {
-            guard let frame = CGImageSourceCreateThumbnailAtIndex(source, index, options as CFDictionary) else { continue }
-            frames.append(frame)
             elapsed += count > 1 ? Self.delay(of: source, at: index) : 0
             ends.append(elapsed)
         }
-        guard let first = frames.first, first.height > 0 else { return nil }
-        self.frames = frames
-        frameEnds = ends
-        loopDuration = elapsed
-        aspect = Double(first.width) / Double(first.height)
+
+        self.url = url
+        self.frameCount = count
+        self.frameEnds = ends
+        self.loopDuration = elapsed
+        self.aspect = Double(first.width) / Double(first.height)
+        self.source = source
+        self.frameCache = cache
     }
 
     /// The frame showing `local` seconds after the image first appears.
-    func frame(at local: TimeInterval) -> CGImage {
-        guard frames.count > 1, loopDuration > 0 else { return frames[0] }
+    func frame(at local: TimeInterval) -> CGImage? {
+        let index = frameIndex(at: local)
+        if let cached = frameCache.image(for: url, frameIndex: index) {
+            return cached
+        }
+        guard let decoded = sourceLock.withLock({ Self.decodeFrame(from: source, at: index) }) else {
+            return nil
+        }
+        _ = frameCache.insert(decoded, for: url, frameIndex: index)
+        return decoded
+    }
+
+    private func frameIndex(at local: TimeInterval) -> Int {
+        guard frameCount > 1, loopDuration > 0 else { return 0 }
         let safeLocal = local.isFinite ? max(0, local) : 0
         let time = safeLocal.truncatingRemainder(dividingBy: loopDuration)
         var low = 0
@@ -159,7 +268,18 @@ nonisolated final class RecordingOverlayImage: @unchecked Sendable {
             let mid = (low + high) / 2
             if frameEnds[mid] > time { high = mid } else { low = mid + 1 }
         }
-        return frames[low]
+        return low
+    }
+
+    private static func decodeFrame(from source: CGImageSource, at index: Int) -> CGImage? {
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maximumPixelSize,
+            kCGImageSourceShouldCache: false,
+            kCGImageSourceShouldCacheImmediately: true
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, index, options as CFDictionary)
     }
 
     /// A frame's delay. Like browsers, delays under 11 ms - which many GIFs
@@ -326,12 +446,16 @@ nonisolated enum StudioMediaDropLoader {
     }
 }
 
-/// Decoded overlay images by file, shared by the preview and the exporter.
-/// The preview asks without loading, so a draw never decodes on the main
-/// thread; the exporter loads on demand from its own thread.
+/// Decoded overlay image metadata by file, backed by a shared byte-bounded
+/// frame cache across preview and export.
 nonisolated final class RecordingOverlayImageStore: @unchecked Sendable {
     private let lock = NSLock()
     private var images: [URL: RecordingOverlayImage] = [:]
+    private let frameCache: RecordingOverlayFrameCache
+
+    init(frameCache: RecordingOverlayFrameCache = .shared) {
+        self.frameCache = frameCache
+    }
 
     func cachedImage(at url: URL) -> RecordingOverlayImage? {
         lock.withLock { images[url] }
@@ -339,13 +463,20 @@ nonisolated final class RecordingOverlayImageStore: @unchecked Sendable {
 
     func image(at url: URL) -> RecordingOverlayImage? {
         if let cached = cachedImage(at: url) { return cached }
-        guard let image = RecordingOverlayImage(url: url) else { return nil }
+        guard let image = RecordingOverlayImage(url: url, cache: frameCache) else { return nil }
         lock.withLock { images[url] = image }
         return image
     }
 
     func removeAll() {
-        lock.withLock { images.removeAll() }
+        let urls = lock.withLock { () -> [URL] in
+            let keys = Array(images.keys)
+            images.removeAll()
+            return keys
+        }
+        for url in urls {
+            frameCache.removeFrames(for: url)
+        }
     }
 }
 
@@ -362,8 +493,8 @@ nonisolated enum RecordingImageOverlayRenderer {
         in context: CGContext
     ) {
         let fade = overlay.fade(atSourceTime: sourceTime)
-        guard fade > 0.001, overlay.opacity > 0.001 else { return }
-        let frame = image.frame(at: sourceTime - overlay.start)
+        guard fade > 0.001, overlay.opacity > 0.001,
+              let frame = image.frame(at: sourceTime - overlay.start) else { return }
         let rect = overlay.rect(canvasSize: canvasSize)
         guard rect.width >= 1, rect.height >= 1 else { return }
         // Measurements follow the canvas's shorter side, so portrait and

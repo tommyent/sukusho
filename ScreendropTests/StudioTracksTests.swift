@@ -387,6 +387,55 @@ struct StudioTracksTests {
         #expect(flow.redactions.first?.strength == 0.8)
     }
 
+    // MARK: - Byte-bounded animated frame cache
+
+    @Test func animatedFrameCacheEnforcesByteBudgetAcrossAssetsAndRejectsOversizedFrames() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StudioFrameCache-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let gifA = tempDir.appendingPathComponent("a.gif")
+        let gifB = tempDir.appendingPathComponent("b.gif")
+        try writeAnimatedGIF(to: gifA, frameCount: 8, width: 64, height: 64, delay: 0.1)
+        try writeAnimatedGIF(to: gifB, frameCount: 4, width: 64, height: 64, delay: 0.1)
+
+        // Probe one 64x64 decoded frame cost, then budget for only 3 frames across BOTH assets.
+        let probeCache = RecordingOverlayFrameCache(byteLimit: 1024 * 1024)
+        let probe = try #require(RecordingOverlayImage(url: gifA, cache: probeCache))
+        let oneFrameBytes = probeCache.currentBytes
+        #expect(oneFrameBytes > 0)
+        #expect(probe.frameCount == 8)
+
+        let budget = oneFrameBytes * 3
+        let sharedCache = RecordingOverlayFrameCache(byteLimit: budget)
+        let storeA = RecordingOverlayImageStore(frameCache: sharedCache)
+        let storeB = RecordingOverlayImageStore(frameCache: sharedCache)
+
+        // Opening both assets only decodes frame 0 of each (2 frames <= 3-frame budget).
+        let imageA = try #require(storeA.image(at: gifA))
+        let imageB = try #require(storeB.image(at: gifB))
+        #expect(sharedCache.currentBytes <= budget)
+        #expect(sharedCache.currentBytes == oneFrameBytes * 2)
+
+        // Scrubbing through every frame of both assets never exceeds the shared byte budget.
+        for index in 0..<8 {
+            let fA = try #require(imageA.frame(at: Double(index) * 0.1 + 0.02))
+            #expect(fA.width == 64 && fA.height == 64)
+            #expect(sharedCache.currentBytes <= budget)
+        }
+        for index in 0..<4 {
+            let fB = try #require(imageB.frame(at: Double(index) * 0.1 + 0.02))
+            #expect(fB.width == 64 && fB.height == 64)
+            #expect(sharedCache.currentBytes <= budget)
+        }
+
+        // An image whose single frame exceeds the cache budget fails init without retaining memory.
+        let tinyCache = RecordingOverlayFrameCache(byteLimit: max(1, oneFrameBytes / 2))
+        #expect(RecordingOverlayImage(url: gifA, cache: tinyCache) == nil)
+        #expect(tinyCache.currentBytes == 0)
+    }
+
     // MARK: - Source-time placement across cuts and speed ramps
 
     @Test func textAndImageBlocksMapAcrossCutsAndSpeedRamps() {
@@ -444,7 +493,7 @@ struct StudioTracksTests {
         try writeTwoFrameAnimatedGIF(to: gifURL)
         let decodedGIF = try #require(RecordingOverlayImage(url: gifURL))
         #expect(decodedGIF.isAnimated)
-        #expect(decodedGIF.frames.count == 2)
+        #expect(decodedGIF.frameCount == 2)
         #expect(abs(decodedGIF.loopDuration - 0.2) < 0.02)
 
         var imageOverlay = RecordingImageOverlay(fileName: "anim.gif", displayName: "anim", start: 0, end: 5)
@@ -532,16 +581,23 @@ struct StudioTracksTests {
     }
 
     private func writeTwoFrameAnimatedGIF(to url: URL) throws {
-        let dest = try #require(CGImageDestinationCreateWithURL(url as CFURL, UTType.gif.identifier as CFString, 2, nil))
+        try writeAnimatedGIF(to: url, frameCount: 2, width: 64, height: 64, delay: 0.1)
+    }
+
+    private func writeAnimatedGIF(to url: URL, frameCount: Int, width: Int, height: Int, delay: Double) throws {
+        let dest = try #require(CGImageDestinationCreateWithURL(url as CFURL, UTType.gif.identifier as CFString, frameCount, nil))
         let gifProps: [CFString: Any] = [
             kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]
         ]
         CGImageDestinationSetProperties(dest, gifProps as CFDictionary)
         let frameProps: [CFString: Any] = [
-            kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFUnclampedDelayTime: 0.1]
+            kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFUnclampedDelayTime: delay]
         ]
-        for color in [(UInt8(240), UInt8(30), UInt8(30)), (UInt8(30), UInt8(60), UInt8(240))] {
-            let img = try solidImage(width: 64, height: 64, r: color.0, g: color.1, b: color.2)
+        for index in 0..<frameCount {
+            let r = UInt8((index * 53 + 30) % 256)
+            let g = UInt8((index * 97 + 60) % 256)
+            let b = UInt8((index * 131 + 90) % 256)
+            let img = try solidImage(width: width, height: height, r: r, g: g, b: b)
             CGImageDestinationAddImage(dest, img, frameProps as CFDictionary)
         }
         #expect(CGImageDestinationFinalize(dest))
