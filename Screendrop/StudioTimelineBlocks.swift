@@ -76,6 +76,22 @@ struct StudioTimelineScale: Equatable {
         let upper = time(forX: scrollX + viewportWidth + margin)
         return lower...max(lower, upper)
     }
+
+    /// Time scrubbed to by a playhead drag that preserves the initial pointer
+    /// offset from the stem (so grabbing the center of an off-center end flag
+    /// does not jump away from the end on press).
+    func playheadDragTime(
+        locationX: CGFloat,
+        startX: CGFloat,
+        stemX: CGFloat,
+        grabOffset: inout CGFloat?,
+        scrollX: CGFloat
+    ) -> TimeInterval {
+        if grabOffset == nil {
+            grabOffset = startX - stemX
+        }
+        return time(forX: locationX - (grabOffset ?? 0) + scrollX)
+    }
 }
 
 // MARK: - Metrics

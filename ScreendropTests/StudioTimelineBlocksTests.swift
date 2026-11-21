@@ -417,4 +417,32 @@ struct StudioTimelineBlocksTests {
             control.cacheDisplay(in: control.bounds, to: rep)
         }
     }
+
+    // MARK: - Playhead flag grab offset
+
+    @Test @MainActor func grabbingExpandedEndFlagPreservesEndTimeWithoutJump() {
+        // 611 pt track with a 9 s recording: stem is at x = 611, expanded flag center is 28 pt left (583).
+        let scale = StudioTimelineScale(viewportWidth: 611, duration: 9, zoom: 1)
+        var grabOffset: CGFloat?
+
+        let onPress = scale.playheadDragTime(
+            locationX: 583,
+            startX: 583,
+            stemX: 611,
+            grabOffset: &grabOffset,
+            scrollX: 0
+        )
+        #expect(grabOffset == -28)
+        #expect(abs(onPress - 9.0) < 0.0001)
+
+        // Dragging 61.1 pt left from the flag center moves 0.9 s left from the end (8.1 s).
+        let afterDrag = scale.playheadDragTime(
+            locationX: 583 - 61.1,
+            startX: 583,
+            stemX: 611,
+            grabOffset: &grabOffset,
+            scrollX: 0
+        )
+        #expect(abs(afterDrag - 8.1) < 0.0001)
+    }
 }

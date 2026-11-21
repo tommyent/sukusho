@@ -2795,6 +2795,7 @@ private struct StudioTimelinePlayhead: View {
 
     @State private var isHovering = false
     @State private var isDragging = false
+    @State private var grabOffset: CGFloat?
     @GestureState private var isScrubGestureActive = false
 
     private enum Metrics {
@@ -2900,7 +2901,13 @@ private struct StudioTimelinePlayhead: View {
                         }
                         .onChanged { value in
                             isDragging = true
-                            onScrub(scale.time(forX: value.location.x + scrollX))
+                            onScrub(scale.playheadDragTime(
+                                locationX: value.location.x,
+                                startX: value.startLocation.x,
+                                stemX: x,
+                                grabOffset: &grabOffset,
+                                scrollX: scrollX
+                            ))
                         }
                         .onEnded { _ in
                             endDrag()
@@ -2933,6 +2940,7 @@ private struct StudioTimelinePlayhead: View {
 
     private func endDrag() {
         isDragging = false
+        grabOffset = nil
     }
 }
 
