@@ -455,12 +455,26 @@ nonisolated enum StudioAddToolsLayout: Equatable, Sendable {
     case inlineIcons
     case inlineLabels
 
+    /// Width needed for `+` plus the three icon-only add pills and gaps.
+    static let inlineIconsWidth: CGFloat = 148
+    /// Width needed for `+` plus the three labeled add pills and gaps.
+    static let inlineLabelsWidth: CGFloat = 324
+    /// Minimum breathing room between the rightmost expanded pill and the centered transport.
+    static let transportClearance: CGFloat = 12
+
     /// Picks the widest layout that keeps the expanded edit cluster clear of
-    /// the centered playback cluster (`clip pill + history pill + add tools`
-    /// on the left vs half the centered timecode + transport on each side).
-    static func forDockWidth(_ dockWidth: CGFloat) -> Self {
-        if dockWidth >= 1140 { return .inlineLabels }
-        if dockWidth >= 890 { return .inlineIcons }
+    /// the centered playback cluster (including hour-long timecodes and the
+    /// shuttle badge) using the measured widths of the transport row, the
+    /// centered transport, and the fixed tools to the left of `+`.
+    static func forAvailableWidth(
+        rowWidth: CGFloat,
+        centeredTransportWidth: CGFloat,
+        leadingToolsWidth: CGFloat
+    ) -> Self {
+        guard rowWidth > 0, centeredTransportWidth > 0 else { return .popover }
+        let freeWidth = (rowWidth - centeredTransportWidth) / 2 - leadingToolsWidth - transportClearance
+        if freeWidth >= inlineLabelsWidth { return .inlineLabels }
+        if freeWidth >= inlineIconsWidth { return .inlineIcons }
         return .popover
     }
 }

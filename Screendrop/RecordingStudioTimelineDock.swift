@@ -46,6 +46,9 @@ struct StudioTimelineEditor: View {
     @State private var resizeBase: CGFloat?
     @State private var scrollY: CGFloat = 0
     @State private var verticalScrollPosition = ScrollPosition(edge: .top)
+    @State private var transportRowWidth: CGFloat = 0
+    @State private var playbackControlsWidth: CGFloat = 0
+    @State private var leadingToolsWidth: CGFloat = 0
     @Namespace private var glass
 
     /// Step per zoom button press / keyboard shortcut.
@@ -55,7 +58,11 @@ struct StudioTimelineEditor: View {
     private static let followMargin: CGFloat = 48
 
     private var addToolsLayout: StudioAddToolsLayout {
-        StudioAddToolsLayout.forDockWidth(viewportWidth + StudioTimelineMetrics.gutterWidth)
+        StudioAddToolsLayout.forAvailableWidth(
+            rowWidth: transportRowWidth,
+            centeredTransportWidth: playbackControlsWidth,
+            leadingToolsWidth: leadingToolsWidth
+        )
     }
 
     private var scale: StudioTimelineScale {
@@ -597,51 +604,62 @@ struct StudioTimelineEditor: View {
             }
 
             playbackControls
+                .onGeometryChange(for: CGFloat.self, of: \.size.width) { width in
+                    if abs(playbackControlsWidth - width) > 0.5 { playbackControlsWidth = width }
+                }
         }
         .frame(height: 36)
+        .onGeometryChange(for: CGFloat.self, of: \.size.width) { width in
+            if abs(transportRowWidth - width) > 0.5 { transportRowWidth = width }
+        }
         .motion(.morph, value: [isAddOpen, zoom > 1.0001])
     }
 
     private var editControls: some View {
         GlassEffectContainer(spacing: GlassMetrics.containerSpacing) {
             HStack(spacing: GlassMetrics.gap) {
-                StudioTransportTray {
-                    timelineButton("Split at Playhead (⌘B)", systemImage: "scissors") {
-                        if let audioID = model.selectedAudioClipID {
-                            model.splitAudioClip(id: audioID, at: model.currentTime)
-                        } else {
-                            model.splitClip(at: model.currentTime)
+                HStack(spacing: GlassMetrics.gap) {
+                    StudioTransportTray {
+                        timelineButton("Split at Playhead (⌘B)", systemImage: "scissors") {
+                            if let audioID = model.selectedAudioClipID {
+                                model.splitAudioClip(id: audioID, at: model.currentTime)
+                            } else {
+                                model.splitClip(at: model.currentTime)
+                            }
                         }
-                    }
-                    .keyboardShortcut("b", modifiers: .command)
-                    .disabled(!model.isLoaded)
+                        .keyboardShortcut("b", modifiers: .command)
+                        .disabled(!model.isLoaded)
 
-                    timelineButton("Delete Selection", systemImage: "trash") {
-                        deleteSelection()
-                    }
-                    .disabled(!canDeleteSelection)
+                        timelineButton("Delete Selection", systemImage: "trash") {
+                            deleteSelection()
+                        }
+                        .disabled(!canDeleteSelection)
 
-                    timelineButton("Reset All Clip Edits…", systemImage: "arrow.counterclockwise") {
-                        isResetClipsConfirmationPresented = true
+                        timelineButton("Reset All Clip Edits…", systemImage: "arrow.counterclockwise") {
+                            isResetClipsConfirmationPresented = true
+                        }
+                        .disabled(!model.hasClipEdits)
                     }
-                    .disabled(!model.hasClipEdits)
+                    .glassEffectID("clipTools", in: glass)
+
+                    StudioTransportTray {
+                        timelineButton("Undo (⌘Z)", systemImage: "arrow.uturn.backward") {
+                            model.undo()
+                        }
+                        .keyboardShortcut("z", modifiers: .command)
+                        .disabled(!model.canUndo)
+
+                        timelineButton("Redo (⇧⌘Z)", systemImage: "arrow.uturn.forward") {
+                            model.redo()
+                        }
+                        .keyboardShortcut("z", modifiers: [.command, .shift])
+                        .disabled(!model.canRedo)
+                    }
+                    .glassEffectID("history", in: glass)
                 }
-                .glassEffectID("clipTools", in: glass)
-
-                StudioTransportTray {
-                    timelineButton("Undo (⌘Z)", systemImage: "arrow.uturn.backward") {
-                        model.undo()
-                    }
-                    .keyboardShortcut("z", modifiers: .command)
-                    .disabled(!model.canUndo)
-
-                    timelineButton("Redo (⇧⌘Z)", systemImage: "arrow.uturn.forward") {
-                        model.redo()
-                    }
-                    .keyboardShortcut("z", modifiers: [.command, .shift])
-                    .disabled(!model.canRedo)
+                .onGeometryChange(for: CGFloat.self, of: \.size.width) { width in
+                    if abs(leadingToolsWidth - width) > 0.5 { leadingToolsWidth = width }
                 }
-                .glassEffectID("history", in: glass)
 
                 addTools
             }

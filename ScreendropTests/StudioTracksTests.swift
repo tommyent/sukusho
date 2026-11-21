@@ -972,12 +972,33 @@ struct StudioTracksTests {
     }
 
     @Test func narrowTimelineDockUsesPopoverForExpandedAddTools() {
-        #expect(StudioAddToolsLayout.forDockWidth(640) == .popover)
-        #expect(StudioAddToolsLayout.forDockWidth(720) == .popover)
-        #expect(StudioAddToolsLayout.forDockWidth(889) == .popover)
-        #expect(StudioAddToolsLayout.forDockWidth(890) == .inlineIcons)
-        #expect(StudioAddToolsLayout.forDockWidth(1139) == .inlineIcons)
-        #expect(StudioAddToolsLayout.forDockWidth(1140) == .inlineLabels)
+        // Unmeasured geometry falls back safely to popover.
+        #expect(StudioAddToolsLayout.forAvailableWidth(
+            rowWidth: 0, centeredTransportWidth: 220, leadingToolsWidth: 154
+        ) == .popover)
+
+        // At an 890 pt dock (858 pt row inside padding):
+        // - Short recording (~220 pt centered transport) fits inline icons beside 154 pt leading tools.
+        #expect(StudioAddToolsLayout.forAvailableWidth(
+            rowWidth: 858, centeredTransportWidth: 220, leadingToolsWidth: 154
+        ) == .inlineIcons)
+        // - Hour-long timecode + shuttle badge (~296 pt centered transport) at the exact same 890 pt dock
+        //   does not have room for inline expansion, so it stays in a popover instead of colliding.
+        #expect(StudioAddToolsLayout.forAvailableWidth(
+            rowWidth: 858, centeredTransportWidth: 296, leadingToolsWidth: 154
+        ) == .popover)
+        // - Wider leading tool cluster (with Snapping/Marker pill) also stays in a popover at 890 pt.
+        #expect(StudioAddToolsLayout.forAvailableWidth(
+            rowWidth: 858, centeredTransportWidth: 220, leadingToolsWidth: 220
+        ) == .popover)
+
+        // Wide enough for inline icons or inline labels even with an hour-long shuttling transport.
+        #expect(StudioAddToolsLayout.forAvailableWidth(
+            rowWidth: 1100, centeredTransportWidth: 296, leadingToolsWidth: 154
+        ) == .inlineIcons)
+        #expect(StudioAddToolsLayout.forAvailableWidth(
+            rowWidth: 1320, centeredTransportWidth: 296, leadingToolsWidth: 154
+        ) == .inlineLabels)
     }
 
     // MARK: - Source-time placement across cuts and speed ramps
