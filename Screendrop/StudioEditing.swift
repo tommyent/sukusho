@@ -46,6 +46,14 @@ nonisolated enum StudioEditingKeyAction: Equatable, Sendable {
     case consume
 }
 
+/// Where live trim preview should seek the player: either an editor time on
+/// the current cut composition, or a direct source time on the unedited source
+/// asset when extending an edge restores footage outside the current cut.
+nonisolated enum StudioTrimPreviewTarget: Equatable, Sendable {
+    case editedTime(TimeInterval)
+    case sourceTime(TimeInterval)
+}
+
 nonisolated enum StudioEditing {
     /// How near, in points, a trimmed edge has to come to a snap point to catch.
     static let snapTolerancePoints: CGFloat = 7
@@ -270,6 +278,25 @@ nonisolated enum StudioEditing {
             .filter { $0 >= clip.sourceEnd - 0.000_5 }
             .min() ?? safeDuration
         return (previousEnd, nextStart)
+    }
+
+    /// Picks whether live trim preview can seek the current cut composition or
+    /// needs the source asset directly (when extending an edge restores cut
+    /// footage, or once a drag has already switched to source preview).
+    static func trimPreviewTarget(
+        forSourceTime sourceTime: TimeInterval,
+        in timeline: RecordingClipTimeline,
+        sourceDuration: TimeInterval,
+        usingSourceAsset: Bool
+    ) -> StudioTrimPreviewTarget? {
+        guard sourceTime.isFinite else { return nil }
+        let limit = max(sourceDuration.isFinite ? sourceDuration : 0, 0)
+        let clamped = min(max(sourceTime, 0), limit)
+        if !usingSourceAsset,
+           let editorTime = timeline.editorTime(forSourceEventTime: clamped, includeTimelineEnd: true) {
+            return .editedTime(editorTime)
+        }
+        return .sourceTime(clamped)
     }
 
     /// Slot boundary index `0...segments.count` where a clip dragged to `time`

@@ -283,10 +283,16 @@ final class RecordingStudioModel {
     /// Cut/iMovie skimming. `nil` shows the real playhead again.
     var hoverPreviewTime: TimeInterval? {
         didSet {
-            guard isLoaded, duration > 0, !isPlaying else { return }
+            guard isLoaded, duration > 0, !isPlaying, trimPreviewSourceTime == nil else { return }
             movePlayers(to: hoverPreviewTime ?? currentTime)
         }
     }
+    /// Saved edited player item while a trim drag temporarily swaps
+    /// `screenPlayer` onto the unedited source asset to preview footage being
+    /// restored outside the current cut.
+    @ObservationIgnored private var trimPreviewSavedItem: AVPlayerItem?
+    @ObservationIgnored private var trimPreviewTask: Task<Void, Never>?
+    @ObservationIgnored private var trimPreviewSourceTime: TimeInterval?
     var exportState: RecordingStudioExportState = .idle
     /// The running export is the Bug Report's (its Agent Prompt), so its button shows the progress.
     private(set) var isExportingAgentPrompt = false
@@ -1025,6 +1031,7 @@ final class RecordingStudioModel {
         isLoaded = false
         StudioProjectRegistry.shared.unregister(self)
         exportTask?.cancel()
+        endTrimSourcePreview(restoreItem: false)
         redactionPreviewTask?.cancel()
         if let redactionFailureObserver { NotificationCenter.default.removeObserver(redactionFailureObserver) }
         redactionFailureObserver = nil
@@ -1080,6 +1087,7 @@ final class RecordingStudioModel {
         viewportRebuildTask?.cancel()
         viewportRebuildTask = nil
         isDraggingTimelineBlock = false
+        endTrimSourcePreview(restoreItem: false)
         isTrimmingClip = false
         rangeSelection = nil
         markers.removeAll()
@@ -1139,6 +1147,10 @@ final class RecordingStudioModel {
     }
 
     private func startPlayback() {
+        if endTrimSourcePreview(restoreItem: true) {
+            isTrimmingClip = false
+            movePlayers(to: currentTime)
+        }
         guard !isRestoringDocument, !isEditingSourceRegion, !isPreparingRedactionPreview, redactionPreviewError == nil else {
             shuttleRate = 1
             return
@@ -1639,20 +1651,108 @@ final class RecordingStudioModel {
     }
 
     /// Shows the exact recording frame at the edge being trimmed; `nil` hands
-    /// the preview back to the playhead.
+    /// the preview back to the playhead. Extending an edge into previously cut
+    /// footage temporarily previews the source asset (with source-clock
+    /// redactions applied) and restores the cut player item on release.
     func previewSourceTime(_ time: TimeInterval?) {
         guard let time else {
+            let restored = endTrimSourcePreview(restoreItem: true)
             isTrimmingClip = false
             hoverPreviewTime = nil
+            if restored, isLoaded, duration > 0, !isPlaying {
+                movePlayers(to: currentTime)
+            }
             return
         }
-        guard isLoaded else { return }
+        guard isLoaded,
+              let target = StudioEditing.trimPreviewTarget(
+                  forSourceTime: time,
+                  in: clipTimeline,
+                  sourceDuration: sourceDuration,
+                  usingSourceAsset: trimPreviewSavedItem != nil || trimPreviewTask != nil
+              ) else { return }
         pause()
         isTrimmingClip = true
-        if let editor = clipTimeline.editorTime(forSourceTime: time) {
+
+        switch target {
+        case .editedTime(let editor):
             hoverPreviewTime = editor
-        } else if let fallback = nearestEditorTime(forSourceTime: time) {
-            hoverPreviewTime = fallback
+        case .sourceTime(let source):
+            trimPreviewSourceTime = source
+            hoverPreviewTime = nearestEditorTime(forSourceTime: source) ?? currentTime
+            beginTrimSourcePreviewIfNeeded()
+            if trimPreviewTask == nil {
+                seekSourcePreviewPlayers(to: source)
+            }
+        }
+    }
+
+    private func beginTrimSourcePreviewIfNeeded() {
+        guard trimPreviewSavedItem == nil, trimPreviewTask == nil, let screenAsset else { return }
+        trimPreviewSavedItem = screenPlayer.currentItem
+        let item = AVPlayerItem(asset: screenAsset)
+        if redactions.isEmpty {
+            screenPlayer.replaceCurrentItem(with: item)
+            return
+        }
+        // Never expose an unmasked source frame while redactions build.
+        isPreparingRedactionPreview = true
+        screenPlayer.replaceCurrentItem(with: nil)
+        let regions = redactions
+        trimPreviewTask = Task { [weak self] in
+            do {
+                item.videoComposition = try await RecordingRedactionFilter.composition(
+                    asset: screenAsset,
+                    redactions: regions,
+                    timeline: nil
+                )
+                guard let self, !Task.isCancelled, !self.isTornDown, self.isTrimmingClip else { return }
+                self.trimPreviewTask = nil
+                self.screenPlayer.replaceCurrentItem(with: item)
+                self.isPreparingRedactionPreview = false
+                if let source = self.trimPreviewSourceTime {
+                    self.seekSourcePreviewPlayers(to: source)
+                }
+            } catch {
+                guard let self, !Task.isCancelled else { return }
+                self.trimPreviewTask = nil
+                self.isPreparingRedactionPreview = false
+                self.redactionPreviewError = error.localizedDescription
+            }
+        }
+    }
+
+    @discardableResult
+    private func endTrimSourcePreview(restoreItem: Bool) -> Bool {
+        trimPreviewTask?.cancel()
+        trimPreviewTask = nil
+        trimPreviewSourceTime = nil
+        guard let saved = trimPreviewSavedItem else { return false }
+        trimPreviewSavedItem = nil
+        if restoreItem {
+            isPreparingRedactionPreview = false
+            screenPlayer.replaceCurrentItem(with: saved)
+            if timeObserver != nil {
+                installEndObserver()
+            }
+        }
+        return true
+    }
+
+    private func seekSourcePreviewPlayers(to sourceTime: TimeInterval) {
+        let target = CMTime(seconds: max(0, sourceTime), preferredTimescale: StudioPlayback.seekTimescale)
+        screenPlayer.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
+        guard hasCameraVideo else { return }
+        cameraSeek.invalidate()
+        if sourceTime >= cameraOffset {
+            let cameraTime = CMTime(
+                seconds: max(0, sourceTime - cameraOffset),
+                preferredTimescale: StudioPlayback.seekTimescale
+            )
+            cameraPlayer.seek(to: cameraTime, toleranceBefore: .zero, toleranceAfter: .zero)
+        } else {
+            cameraPlayer.pause()
+            cameraPlayer.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
         }
     }
 
@@ -1811,6 +1911,7 @@ final class RecordingStudioModel {
         }
 
         pause()
+        endTrimSourcePreview(restoreItem: false)
         hoverPreviewTime = nil
         isTrimmingClip = false
         rangeSelection = nil
@@ -1873,6 +1974,7 @@ final class RecordingStudioModel {
             playbackMusicTrackID = combined.trackID
         }
 
+        endTrimSourcePreview(restoreItem: false)
         redactionPreviewTask?.cancel()
         if let redactionFailureObserver { NotificationCenter.default.removeObserver(redactionFailureObserver) }
         redactionFailureObserver = nil

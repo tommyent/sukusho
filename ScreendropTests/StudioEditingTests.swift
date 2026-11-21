@@ -643,6 +643,40 @@ struct StudioEditingTests {
         #expect(abs(mappedTrackCues[2].start - 8.0) < 0.0001 && abs(mappedTrackCues[2].end - 9.0) < 0.0001)
     }
 
+    // MARK: - Live trim preview of restored footage
+
+    @Test func trimPreviewSwitchesToSourceAssetWhenRestoringCutFootage() {
+        // After ripple-deleting source 4..6, extending clip 1's trailing edge to source 5.0
+        // cannot be shown by the cut composition; it requests direct source-asset preview.
+        let cut = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 4),
+            RecordingClipSegment(sourceStart: 6, sourceEnd: 10),
+        ])
+        // Inside current cut -> fast path on edited clock.
+        #expect(StudioEditing.trimPreviewTarget(
+            forSourceTime: 3.2,
+            in: cut,
+            sourceDuration: 10,
+            usingSourceAsset: false
+        ) == .editedTime(3.2))
+
+        // Inside deleted gap (5.0) -> switches to source-asset preview at 5.0 (NOT boundary 6.0).
+        #expect(StudioEditing.trimPreviewTarget(
+            forSourceTime: 5.0,
+            in: cut,
+            sourceDuration: 10,
+            usingSourceAsset: false
+        ) == .sourceTime(5.0))
+
+        // Once on source-asset preview during a drag, dragging back into 3.5 stays on source clock cleanly.
+        #expect(StudioEditing.trimPreviewTarget(
+            forSourceTime: 3.5,
+            in: cut,
+            sourceDuration: 10,
+            usingSourceAsset: true
+        ) == .sourceTime(3.5))
+    }
+
     private func writeSolidColorMovie(
         to url: URL,
         size: CGSize,
