@@ -739,7 +739,6 @@ final class RecordingStudioModel {
     private var clipSoundSnapshot: RecordingClipTimeline?
     private var clipSoundCoalesceTask: Task<Void, Never>?
     private var audioPlaybackRebuildTask: Task<Void, Never>?
-    private var audioMediaLoadTask: Task<Void, Never>?
     /// Every audio track the project plays, resolved once so the player
     /// item can be rebuilt synchronously.
     private var audioSources = StudioAudioSources()
@@ -1211,8 +1210,6 @@ final class RecordingStudioModel {
         clipSoundCoalesceTask = nil
         audioPlaybackRebuildTask?.cancel()
         audioPlaybackRebuildTask = nil
-        audioMediaLoadTask?.cancel()
-        audioMediaLoadTask = nil
         audioSources = StudioAudioSources()
         playbackAudioLayout = StudioAudioLayout()
         playbackAudioPlacement = nil
@@ -4532,36 +4529,6 @@ final class RecordingStudioModel {
         case .recording: audioPeaks[Self.recordingPeaksKey] ?? []
         case .replacement: audioPeaks[Self.soundtrackPeaksKey] ?? []
         }
-    }
-
-    /// The loudness of the video's own sound over a stretch of the
-    /// recording, 0...1, for the waveform along the clips: the soundtrack
-    /// where one stands in, the recorded audio elsewhere.
-    func clipSoundPeak(fromSource start: TimeInterval, to end: TimeInterval) -> Float {
-        let perSecond = Double(RecordingAudioPeaks.peaksPerSecond)
-        func peak(_ peaks: [Float], _ from: TimeInterval, _ to: TimeInterval) -> Float {
-            guard !peaks.isEmpty else { return 0 }
-            let low = max(0, min(peaks.count - 1, Int(from * perSecond)))
-            let high = max(low + 1, min(peaks.count, Int((to * perSecond).rounded(.up))))
-            var value: Float = 0
-            for index in low..<high { value = max(value, peaks[index]) }
-            return value
-        }
-        if let replacementAudio, let sync = replacementAudioSync,
-           let part = sync.pieces(from: start, to: max(end, start + 0.001), fileDuration: replacementAudio.duration).first {
-            return peak(audioPeaks[Self.soundtrackPeaksKey] ?? [], part.fileStart, part.fileEnd)
-        }
-        return peak(audioPeaks[Self.recordingPeaksKey] ?? [], start, end)
-    }
-
-    /// Bumped whenever the clips' waveform would draw differently.
-    var clipSoundRevision: Int {
-        var hasher = Hasher()
-        hasher.combine(audioPeaks[Self.recordingPeaksKey]?.count ?? 0)
-        hasher.combine(audioPeaks[Self.soundtrackPeaksKey]?.count ?? 0)
-        hasher.combine(replacementAudio?.url)
-        hasher.combine(replacementAudioSync?.spans.count ?? 0)
-        return hasher.finalize()
     }
 
     func selectAudioClip(id: UUID) {
