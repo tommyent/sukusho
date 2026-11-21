@@ -169,6 +169,18 @@ final class RecordingBarPresenter {
         return BarPanelGeometry.screenRect(forPanelRect: barFrameInPanel, in: panel.frame)
     }
 
+    /// The visible bar together with the amber visibility pill when shown, so a satellite flipped
+    /// below the bar clears the pill too while still aligning to `barFrame.maxY` above.
+    var visibleContentFrame: CGRect? {
+        guard let panel, panel.isVisible, barFrameInPanel != .zero else { return nil }
+        let content = BarPanelGeometry.visibleContentInPanel(
+            barFrame: barFrameInPanel,
+            bannerFrame: visibilityBannerFrameInPanel,
+            showsBanner: showsVisibilityBanner
+        )
+        return BarPanelGeometry.screenRect(forPanelRect: content, in: panel.frame)
+    }
+
     /// The display owning the visible bar (resolved from its midpoint, ignoring transparent panel
     /// slack that can spill across a display seam).
     var barScreen: NSScreen? {

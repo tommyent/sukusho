@@ -114,4 +114,21 @@ struct RecordingBarStateTests {
         #expect(panel.intersects(left))
         #expect(BarPanelGeometry.screenIndex(forVisibleBar: visibleBar, screenFrames: [left, right]) == 1)
     }
+
+    @Test func satelliteFlipsBelowTopEdgeBarAndClampsToDisplay() {
+        let visible = CGRect(x: 0, y: 40, width: 1440, height: 835)
+        let composerSize = CGSize(width: 360, height: 240)
+
+        // Bottom-centered bar: composer sits 12pt above the bar.
+        let lowBar = CGRect(x: 470, y: 88, width: 500, height: 52)
+        let above = BarPanelGeometry.satelliteOrigin(size: composerSize, anchoringTo: lowBar, gap: 12, within: visible)
+        #expect(above == CGPoint(x: 540, y: lowBar.maxY + 12))
+
+        // Top-edge bar near the right edge: flips 12pt below the bar and clamps inside maxX.
+        let topRightBar = CGRect(x: 1120, y: 815, width: 320, height: 52)
+        let below = BarPanelGeometry.satelliteOrigin(size: composerSize, anchoringTo: topRightBar, gap: 12, within: visible)
+        #expect(below.y == topRightBar.minY - 12 - composerSize.height)
+        #expect(below.x + composerSize.width == visible.maxX)
+        #expect(below.y >= visible.minY && below.y + composerSize.height <= visible.maxY)
+    }
 }

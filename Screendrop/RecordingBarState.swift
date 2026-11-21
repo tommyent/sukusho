@@ -220,6 +220,34 @@ nonisolated enum BarPanelGeometry {
             height: panelFrame.height
         )
     }
+
+    /// Places a satellite panel centered above `anchor` by `gap` points when it fits inside
+    /// `visibleScreenFrame`, otherwise below `anchor` when there is less room above than below,
+    /// and clamps the resulting frame to `visibleScreenFrame`.
+    static func satelliteOrigin(
+        size: CGSize,
+        anchoringTo anchor: CGRect,
+        gap: CGFloat,
+        within visibleScreenFrame: CGRect
+    ) -> CGPoint {
+        let aboveY = anchor.maxY + gap
+        let belowY = anchor.minY - gap - size.height
+        let roomAbove = visibleScreenFrame.maxY - aboveY
+        let roomBelow = anchor.minY - gap - visibleScreenFrame.minY
+        let rawY = (aboveY + size.height <= visibleScreenFrame.maxY || roomAbove >= roomBelow)
+            ? aboveY
+            : belowY
+        let rawX = anchor.midX - size.width / 2
+
+        let clampedX = size.width >= visibleScreenFrame.width
+            ? visibleScreenFrame.minX
+            : min(max(rawX, visibleScreenFrame.minX), visibleScreenFrame.maxX - size.width)
+        let clampedY = size.height >= visibleScreenFrame.height
+            ? visibleScreenFrame.maxY - size.height
+            : min(max(rawY, visibleScreenFrame.minY), visibleScreenFrame.maxY - size.height)
+
+        return CGPoint(x: clampedX, y: clampedY)
+    }
 }
 
 /// Ownership rules for "Include Sukusho windows in captures": Bug report enables it automatically

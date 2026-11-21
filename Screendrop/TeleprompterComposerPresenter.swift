@@ -69,14 +69,18 @@ final class TeleprompterComposerPresenter {
         return panel
     }
 
-    /// Sits just above the pre-record bar when it's on screen; otherwise
-    /// falls back to the bar's usual bottom-center spot.
+    /// Sits just above the pre-record bar when there is room, flips below it near the top edge,
+    /// and clamps to the bar's display; otherwise falls back to the bar's usual bottom-center spot.
     private func position(_ panel: NSPanel) {
         let size = panel.frame.size
-        if let barFrame = RecordingBarPresenter.shared.barFrame {
-            panel.setFrameOrigin(CGPoint(
-                x: barFrame.midX - size.width / 2,
-                y: barFrame.maxY + 12
+        if let anchor = RecordingBarPresenter.shared.visibleContentFrame {
+            let screen = RecordingBarPresenter.shared.barScreen ?? NSScreen.main
+            let visibleFrame = screen?.visibleFrame ?? CGRect(x: 0, y: 0, width: 800, height: 600)
+            panel.setFrameOrigin(BarPanelGeometry.satelliteOrigin(
+                size: size,
+                anchoringTo: anchor,
+                gap: 12,
+                within: visibleFrame
             ))
             return
         }
