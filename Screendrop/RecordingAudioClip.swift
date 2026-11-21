@@ -32,9 +32,16 @@ nonisolated struct RecordingAudioClip: Identifiable, Codable, Equatable, Hashabl
     }
 
     static let minimumDuration: TimeInterval = 0.1
+    /// Shortest derived or conformed clip that plays in the composer.
+    static let minimumPlayableDuration: TimeInterval = 0.01
+    /// Shortest source file span that inserts cleanly into the composer (> 5 ms).
+    static let minimumFileSpan: TimeInterval = 0.006
     static let fadeRange: ClosedRange<TimeInterval> = 0...5
     static let volumeRange: ClosedRange<Double> = 0...2
+    /// User-chosen speed range for unlinked clips.
     static let speedRange: ClosedRange<Double> = 0.25...8
+    /// Playable speed range including derived rates when linked clips follow sped-up video.
+    static let derivedSpeedRange: ClosedRange<Double> = 0.03...64
     /// Speeds offered for an unlinked clip; a linked one follows the video.
     static let speedPresets: [Double] = [0.5, 0.75, 1, 1.25, 1.5, 2]
 
@@ -124,16 +131,18 @@ nonisolated struct RecordingAudioClip: Identifiable, Codable, Equatable, Hashabl
         if isMuted { try container.encode(isMuted, forKey: .isMuted) }
     }
 
-    /// Kept inside its file, its ranges and the video.
+    /// Kept inside its file, its ranges and the video without clamping valid
+    /// derived rates or short playable splits/conformed spans.
     func sanitized() -> RecordingAudioClip {
         var clip = self
-        let minimum = Self.minimumDuration
-        clip.fileDuration = clip.fileDuration.isFinite ? max(minimum, clip.fileDuration) : minimum
-        clip.speed = min(max(clip.speed.isFinite ? clip.speed : 1, Self.speedRange.lowerBound), Self.speedRange.upperBound)
+        clip.speed = min(max(clip.speed.isFinite ? clip.speed : 1, Self.derivedSpeedRange.lowerBound), Self.derivedSpeedRange.upperBound)
+        let minFileSpan = max(Self.minimumFileSpan, Self.minimumPlayableDuration * clip.speed)
+        clip.fileDuration = clip.fileDuration.isFinite ? max(Self.minimumFileSpan, clip.fileDuration) : Self.minimumDuration
         let rawTrimStart = clip.trimStart.isFinite ? clip.trimStart : 0
         let rawTrimEnd = clip.trimEnd.isFinite ? clip.trimEnd : clip.fileDuration
-        clip.trimStart = min(max(0, rawTrimStart), max(0, clip.fileDuration - minimum))
-        clip.trimEnd = min(max(rawTrimEnd, clip.trimStart + minimum), max(clip.fileDuration, clip.trimStart + minimum))
+        let boundedMinSpan = min(minFileSpan, clip.fileDuration)
+        clip.trimStart = min(max(0, rawTrimStart), max(0, clip.fileDuration - boundedMinSpan))
+        clip.trimEnd = min(max(rawTrimEnd, clip.trimStart + boundedMinSpan), max(clip.fileDuration, clip.trimStart + boundedMinSpan))
         clip.start = clip.start.isFinite ? max(0, clip.start) : 0
         clip.volume = min(max(clip.volume.isFinite ? clip.volume : 1, Self.volumeRange.lowerBound), Self.volumeRange.upperBound)
         clip.fadeIn = min(max(clip.fadeIn.isFinite ? clip.fadeIn : 0, Self.fadeRange.lowerBound), Self.fadeRange.upperBound)

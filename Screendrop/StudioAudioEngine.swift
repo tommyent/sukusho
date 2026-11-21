@@ -337,11 +337,15 @@ nonisolated enum StudioAudioConform {
             for slice in slices(of: new, overlapping: sourceLow, sourceHigh, preferring: segment.id) {
                 let fileStart = fileLow + (slice.sourceStart - sourceLow) * filePerSource
                 let fileEnd = fileLow + (slice.sourceEnd - sourceLow) * filePerSource
+                let derivedSpeed = min(
+                    max(filePerSource * slice.speed, RecordingAudioClip.derivedSpeedRange.lowerBound),
+                    RecordingAudioClip.derivedSpeedRange.upperBound
+                )
                 append(
                     start: slice.editorStart,
                     fileStart: fileStart,
                     fileEnd: min(fileEnd, clip.trimEnd),
-                    speed: filePerSource * slice.speed
+                    speed: derivedSpeed
                 )
             }
         }
@@ -358,7 +362,10 @@ nonisolated enum StudioAudioConform {
             )
         }
 
-        pieces = pieces.filter { $0.duration >= RecordingAudioClip.minimumDuration / 2 }
+        pieces = pieces.filter {
+            $0.duration >= RecordingAudioClip.minimumPlayableDuration
+                && $0.fileSpan >= RecordingAudioClip.minimumFileSpan
+        }
         for index in pieces.indices {
             if index > 0 { pieces[index].id = UUID() }
             // A fade belongs to the clip's own end, not to a cut inside it.
@@ -465,6 +472,8 @@ nonisolated enum StudioAudioConform {
         let minimum = RecordingAudioClip.minimumDuration
         guard time - clip.start >= minimum, clip.end - time >= minimum else { return nil }
         let fileTime = clip.trimStart + (time - clip.start) * max(clip.speed, 0.01)
+        guard fileTime - clip.trimStart >= RecordingAudioClip.minimumFileSpan,
+              clip.trimEnd - fileTime >= RecordingAudioClip.minimumFileSpan else { return nil }
         var leading = clip
         leading.trimEnd = fileTime
         leading.fadeOut = 0

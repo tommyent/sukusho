@@ -4753,7 +4753,8 @@ final class RecordingStudioModel {
     /// Plays an unlinked clip faster or slower; it keeps its start.
     func setAudioClipSpeed(_ speed: Double, id: UUID) {
         guard let clip = audioClips.first(where: { $0.id == id }), !clip.isLinked else { return }
-        changeAudioClip(id: id, actionName: "Change Audio Speed") { $0.speed = speed }
+        let clamped = min(max(speed, RecordingAudioClip.speedRange.lowerBound), RecordingAudioClip.speedRange.upperBound)
+        changeAudioClip(id: id, actionName: "Change Audio Speed") { $0.speed = clamped }
     }
 
     /// Moves a clip a lane up or down. Whatever is in the way there makes

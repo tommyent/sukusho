@@ -637,6 +637,43 @@ struct StudioAudioTests {
         #expect(abs(detached[1].volume - 0.25) < 0.001)
     }
 
+    @Test func consistentPlayableSpanAndDerivedRateBoundsAcrossConformSplitAndReload() throws {
+        // 1. Linked 0.32 s sting over video sped up to 8x (40 ms editor duration) survives conform and reload.
+        let seg = RecordingClipSegment(sourceStart: 0, sourceEnd: 10, speed: 1)
+        let old = RecordingClipTimeline(segments: [seg])
+        var fastSeg = seg
+        fastSeg.speed = 8
+        let fast = RecordingClipTimeline(segments: [fastSeg])
+        var sting = RecordingAudioClip(fileName: "sting.wav", displayName: "Sting", start: 2.0, fileDuration: 0.32)
+        sting.isLinked = true
+        let conformedSting = StudioAudioConform.conform([sting], from: old, to: fast)
+        #expect(conformedSting.count == 1)
+        #expect(abs(conformedSting[0].duration - 0.04) < 0.001)
+        #expect(abs(conformedSting[0].speed - 8.0) < 0.001)
+        let reloadedSting = try JSONDecoder().decode(RecordingAudioClip.self, from: JSONEncoder().encode(conformedSting[0])).sanitized()
+        #expect(abs(reloadedSting.duration - 0.04) < 0.001)
+        #expect(abs(reloadedSting.fileSpan - 0.32) < 0.001)
+
+        // 2. 0.5x clip split 120 ms from start (60 ms file span) keeps its exact 60 ms span after reload.
+        var halfSpeed = RecordingAudioClip(fileName: "pad.wav", displayName: "Pad", start: 1.0, fileDuration: 4.0)
+        halfSpeed.speed = 0.5
+        let halves = try #require(StudioAudioConform.split(halfSpeed, at: 1.12))
+        #expect(abs(halves.leading.fileSpan - 0.06) < 0.000_5)
+        let reloadedLeading = try JSONDecoder().decode(RecordingAudioClip.self, from: JSONEncoder().encode(halves.leading)).sanitized()
+        #expect(abs(reloadedLeading.fileSpan - 0.06) < 0.000_5)
+        #expect(abs(reloadedLeading.duration - 0.12) < 0.000_5)
+
+        // 3. Imported 2x clip linked over 1x video acquires 16x derived rate when video speeds to 8x and keeps 16x on reload.
+        var doubleClip = RecordingAudioClip(fileName: "fast.wav", displayName: "Fast", start: 0, fileDuration: 4.0)
+        doubleClip.speed = 2.0
+        doubleClip.isLinked = true
+        let conformedDouble = StudioAudioConform.conform([doubleClip], from: old, to: fast)
+        #expect(conformedDouble.count == 1)
+        #expect(abs(conformedDouble[0].speed - 16.0) < 0.001)
+        let reloadedDouble = try JSONDecoder().decode(RecordingAudioClip.self, from: JSONEncoder().encode(conformedDouble[0])).sanitized()
+        #expect(abs(reloadedDouble.speed - 16.0) < 0.001)
+    }
+
     // MARK: - Helpers
 
     private func makeDirectory() throws -> URL {
