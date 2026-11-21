@@ -61,7 +61,7 @@ nonisolated struct RecordingRedaction: Codable, Equatable, Hashable, Identifiabl
         id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         start = try container.decode(TimeInterval.self, forKey: .start)
         end = try container.decode(TimeInterval.self, forKey: .end)
-        rect = try container.decodeIfPresent(CGRect.self, forKey: .rect) ?? Self.defaultRect
+        rect = try container.decode(CGRect.self, forKey: .rect)
         mode = try container.decodeIfPresent(Mode.self, forKey: .mode)
             ?? compat.decodeIfPresent(Mode.self, forKey: .style)
             ?? .blur

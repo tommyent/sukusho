@@ -64,6 +64,30 @@ struct StudioTracksTests {
         try decoded.validate(sourceDuration: 5)
     }
 
+    @Test func redactionDecodingRequiresBoundsAndRejectsMissingOrNullRect() throws {
+        let missingRect = """
+        { "start": 0.5, "end": 2.0, "mode": "pixelate", "strength": 0.8 }
+        """
+        let nullRect = """
+        { "start": 0.5, "end": 2.0, "rect": null, "mode": "blur", "strength": 0.8 }
+        """
+        #expect(throws: DecodingError.self) {
+            _ = try JSONDecoder().decode(RecordingRedaction.self, from: Data(missingRect.utf8))
+        }
+        #expect(throws: DecodingError.self) {
+            _ = try JSONDecoder().decode(RecordingRedaction.self, from: Data(nullRect.utf8))
+        }
+
+        // Optional styling keys still default cleanly when bounds are present.
+        let minimalValid = """
+        { "start": 0.5, "end": 2.0, "rect": [[0.1, 0.1], [0.2, 0.2]] }
+        """
+        let decoded = try JSONDecoder().decode(RecordingRedaction.self, from: Data(minimalValid.utf8))
+        #expect(decoded.rect == CGRect(x: 0.1, y: 0.1, width: 0.2, height: 0.2))
+        #expect(decoded.mode == .blur)
+        #expect(decoded.strength == 0.8)
+    }
+
     @Test(arguments: RecordingRedaction.Mode.allCases)
     func exportedRedactionMasksFullRectangleAndCornersOnFirstAndLastIntersectingFrames(_ mode: RecordingRedaction.Mode) async throws {
         let tempDir = FileManager.default.temporaryDirectory
