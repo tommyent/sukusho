@@ -218,7 +218,7 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
                     code: NSFileWriteUnknownError,
                     userInfo: [
                         NSLocalizedDescriptionKey: "Replacement failed mid-swap.",
-                        NSFileOriginalItemLocationKey: relocated,
+                        ShelfFileSave.originalItemLocationKey: relocated,
                     ]
                 )
             },

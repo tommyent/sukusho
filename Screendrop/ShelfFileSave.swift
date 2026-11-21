@@ -45,13 +45,17 @@ nonisolated enum ShelfFileSave {
                                               options: [.withoutDeletingBackupItem])
     }
 
+    /// Foundation's documented userInfo key for `replaceItemAt` when the original was relocated before failing
+    /// (not exported as a Swift constant in Foundation).
+    static let originalItemLocationKey = "NSFileOriginalItemLocationKey"
+
     /// Extracts `NSFileOriginalItemLocationKey` from an error thrown by `FileManager.replaceItemAt`, walking
     /// underlying errors if needed.
     static func relocatedOriginal(from error: Error) -> URL? {
         var current: NSError? = error as NSError
         while let nsError = current {
-            if let url = nsError.userInfo[NSFileOriginalItemLocationKey] as? URL { return url }
-            if let path = nsError.userInfo[NSFileOriginalItemLocationKey] as? String { return URL(fileURLWithPath: path) }
+            if let url = nsError.userInfo[originalItemLocationKey] as? URL { return url }
+            if let path = nsError.userInfo[originalItemLocationKey] as? String { return URL(fileURLWithPath: path) }
             current = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
         }
         return nil
