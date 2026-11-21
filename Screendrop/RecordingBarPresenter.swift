@@ -261,6 +261,10 @@ private final class RecordingBarHostingView<Content: View>: NSHostingView<Conten
         false
     }
 
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
     /// The panel is much larger than the bar - fixed size, so a morph never
     /// resizes the window, plus slack for tooltips and shadows. AppKit
     /// hit-tests by view bounds, not alpha, so without this all that empty
@@ -301,20 +305,23 @@ private struct RecordingBarView: View {
     }
 
     private var bar: some View {
-        Group {
-            switch presenter.mode {
-            case .picker where CaptureCountdownPresenter.shared.isCountingDownToRecord:
-                RecordingCountdownControls()
-            case .picker:
-                RecordingPickerControls()
-            case .recording:
-                RecordingSessionControls()
+        HStack(spacing: 0) {
+            barDragHandle
+            Group {
+                switch presenter.mode {
+                case .picker where CaptureCountdownPresenter.shared.isCountingDownToRecord:
+                    RecordingCountdownControls()
+                case .picker:
+                    RecordingPickerControls()
+                case .recording:
+                    RecordingSessionControls()
+                }
             }
+            // The outgoing controls leave instantly so the bar starts narrowing
+            // immediately; a fading-out set would hold its layout width and the
+            // bar would visibly bulge to fit both before collapsing.
+            .transition(.asymmetric(insertion: .opacity, removal: .identity))
         }
-        // The outgoing controls leave instantly so the bar starts narrowing
-        // immediately; a fading-out set would hold its layout width and the
-        // bar would visibly bulge to fit both before collapsing.
-        .transition(.asymmetric(insertion: .opacity, removal: .identity))
         .padding(.horizontal, BarMetrics.horizontalPadding)
         .frame(height: BarMetrics.height)
         // Clipped to the same shape the glass takes, so a morph reveals and
@@ -325,6 +332,11 @@ private struct RecordingBarView: View {
         .overlay {
             barShape.strokeBorder(BarMetrics.edge, lineWidth: 0.5)
         }
+        .contentShape(barShape)
+        // `NSHostingView` over `.glassEffect` claims the bar's region from
+        // WindowServer's `isMovableByWindowBackground`, so attach SwiftUI's
+        // window drag directly; child buttons and menus still take priority.
+        .gesture(WindowDragGesture())
         .background(alignment: .bottom) {
             if presenter.mode == .picker && includeAppWindowsInCaptures {
                 visibilityBanner
@@ -339,6 +351,28 @@ private struct RecordingBarView: View {
         } action: {
             presenter.barFrameInPanel = $0
         }
+    }
+
+    /// Subtle leading grip so the bar has an obvious grab target in addition to
+    /// dragging any non-control part of its background.
+    private var barDragHandle: some View {
+        HStack(spacing: 2.5) {
+            ForEach(0..<2, id: \.self) { _ in
+                VStack(spacing: 3) {
+                    ForEach(0..<3, id: \.self) { _ in
+                        Circle()
+                            .frame(width: 2.5, height: 2.5)
+                    }
+                }
+            }
+        }
+        .foregroundStyle(BarMetrics.activeTint.opacity(0.32))
+        .padding(.leading, 4)
+        .padding(.trailing, 2)
+        .frame(height: BarMetrics.controlSize)
+        .contentShape(Rectangle())
+        .pointerStyle(.grabIdle)
+        .accessibilityHidden(true)
     }
 
     /// Amber is caution: Sukusho's own windows will be in this recording. The switch turns that
@@ -367,6 +401,8 @@ private struct RecordingBarView: View {
         .overlay {
             Capsule().strokeBorder(BarMetrics.caution.opacity(0.5), lineWidth: 1)
         }
+        .contentShape(Capsule())
+        .gesture(WindowDragGesture())
         .onGeometryChange(for: CGRect.self) {
             $0.frame(in: .named(BarCoordinateSpace.panel))
         } action: {
