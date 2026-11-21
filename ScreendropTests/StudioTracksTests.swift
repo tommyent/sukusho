@@ -254,19 +254,66 @@ struct StudioTracksTests {
             #expect(error == .missingOrInvalid("Hero Art"))
         }
 
-        // Cleanup removes only unreferenced regular image files; keeps referenced files,
-        // non-image files, symlinks, and directories named like images.
+        // Cleanup removes only unreferenced UUID-named regular image imports; keeps referenced files,
+        // non-owned regular images, non-image files, symlinks, and directories named like images.
         let orphanName = try #require(RecordingOverlayMedia.copyRegularFile(from: externalPNG, into: mediaDir))
+        let handPlaced = mediaDir.appendingPathComponent("custom-logo.png")
+        try writeSolidPNG(to: handPlaced, width: 16, height: 16, r: 90, g: 90, b: 90)
         let audioFile = mediaDir.appendingPathComponent("voice.m4a")
         try Data("audio".utf8).write(to: audioFile)
 
         RecordingOverlayMedia.cleanupUnreferencedImages(in: mediaDir, referenced: [copiedName])
         #expect(FileManager.default.fileExists(atPath: mediaDir.appendingPathComponent(copiedName).path))
         #expect(!FileManager.default.fileExists(atPath: mediaDir.appendingPathComponent(orphanName).path))
+        #expect(FileManager.default.fileExists(atPath: handPlaced.path))
         #expect(FileManager.default.fileExists(atPath: audioFile.path))
         #expect(FileManager.default.fileExists(atPath: nestedChild.path))
         var linkStat = stat()
         #expect(lstat(mediaSymlink.path, &linkStat) == 0)
+    }
+
+    @Test func mediaResolverAndCleanupRejectSymlinkedMediaRootDirectory() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StudioLinkedMediaRoot-\(UUID().uuidString)", isDirectory: true)
+        let packageDir = tempDir.appendingPathComponent("demo.sukushorec", isDirectory: true)
+        let externalPictures = tempDir.appendingPathComponent("Pictures", isDirectory: true)
+        try FileManager.default.createDirectory(at: packageDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: externalPictures, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let externalPhoto = externalPictures.appendingPathComponent("vacation.png")
+        let externalUUIDPhoto = externalPictures.appendingPathComponent("\(UUID().uuidString).png")
+        try writeSolidPNG(to: externalPhoto, width: 32, height: 32, r: 10, g: 180, b: 80)
+        try writeSolidPNG(to: externalUUIDPhoto, width: 32, height: 32, r: 180, g: 80, b: 10)
+
+        let linkedMediaRoot = packageDir.appendingPathComponent("media", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: linkedMediaRoot, withDestinationURL: externalPictures)
+
+        // Resolver rejects files through a linked media root.
+        #expect(RecordingOverlayMedia.resolveRealMediaDirectory(linkedMediaRoot) == nil)
+        #expect(RecordingOverlayMedia.resolveRegularFile(named: externalPhoto.lastPathComponent, in: linkedMediaRoot) == nil)
+        #expect(RecordingOverlayMedia.resolveRegularFile(named: externalUUIDPhoto.lastPathComponent, in: linkedMediaRoot) == nil)
+
+        // Copy rejects importing into a linked media root.
+        let sourcePNG = tempDir.appendingPathComponent("fresh.png")
+        try writeSolidPNG(to: sourcePNG, width: 16, height: 16, r: 50, g: 50, b: 200)
+        #expect(RecordingOverlayMedia.copyRegularFile(from: sourcePNG, into: linkedMediaRoot) == nil)
+        #expect((try FileManager.default.contentsOfDirectory(atPath: externalPictures.path)).count == 2)
+
+        // Export validation fails naming the overlay rather than reading through the linked root.
+        let timeline = RecordingClipTimeline.full(sourceDuration: 4)
+        let overlay = RecordingImageOverlay(fileName: externalUUIDPhoto.lastPathComponent, displayName: "Linked Root Asset", start: 0, end: 2)
+        do {
+            try RecordingOverlayMedia.validateOverlays([overlay], in: linkedMediaRoot, clipTimeline: timeline, store: RecordingOverlayImageStore())
+            Issue.record("Expected linked media root to fail export validation")
+        } catch let error as RecordingOverlayMedia.ResolutionError {
+            #expect(error == .missingOrInvalid("Linked Root Asset"))
+        }
+
+        // Cleanup NEVER enumerates or deletes anything inside the symlinked target directory.
+        RecordingOverlayMedia.cleanupUnreferencedImages(in: linkedMediaRoot, referenced: [])
+        #expect(FileManager.default.fileExists(atPath: externalPhoto.path))
+        #expect(FileManager.default.fileExists(atPath: externalUUIDPhoto.path))
     }
 
     // MARK: - Pending overlay edit flushing before Undo, Redo, or a new edit

@@ -367,14 +367,36 @@ nonisolated enum RecordingOverlayMedia {
         return (info.st_mode & S_IFMT) == S_IFREG
     }
 
-    static func resolveRegularFile(named fileName: String, in mediaDirectory: URL) -> URL? {
-        guard isSimpleFileName(fileName) else { return nil }
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: mediaDirectory.path, isDirectory: &isDirectory),
-              isDirectory.boolValue else {
+    static func isRealDirectoryNoFollow(at url: URL) -> Bool {
+        var info = stat()
+        guard lstat(url.path, &info) == 0 else { return false }
+        return (info.st_mode & S_IFMT) == S_IFDIR
+    }
+
+    /// Resolves `mediaDirectory` only when it is a real directory (never a
+    /// symlink) sitting directly inside its real parent package directory.
+    static func resolveRealMediaDirectory(_ mediaDirectory: URL) -> URL? {
+        guard isRealDirectoryNoFollow(at: mediaDirectory) else { return nil }
+        let parent = mediaDirectory.deletingLastPathComponent()
+        guard isRealDirectoryNoFollow(at: parent) else { return nil }
+        let realParent = parent.resolvingSymlinksInPath().standardizedFileURL
+        let realMedia = mediaDirectory.resolvingSymlinksInPath().standardizedFileURL
+        guard realMedia.deletingLastPathComponent().path == realParent.path,
+              realMedia.lastPathComponent == mediaDirectory.lastPathComponent else {
             return nil
         }
-        let realDirectory = mediaDirectory.resolvingSymlinksInPath().standardizedFileURL
+        return realMedia
+    }
+
+    static func isOwnedImportFileName(_ name: String) -> Bool {
+        guard isSimpleFileName(name) else { return false }
+        let stem = (name as NSString).deletingPathExtension
+        return UUID(uuidString: stem) != nil
+    }
+
+    static func resolveRegularFile(named fileName: String, in mediaDirectory: URL) -> URL? {
+        guard isSimpleFileName(fileName),
+              let realDirectory = resolveRealMediaDirectory(mediaDirectory) else { return nil }
         let candidate = realDirectory.appendingPathComponent(fileName, isDirectory: false)
         guard isRegularFileNoFollow(at: candidate) else { return nil }
         let resolved = candidate.resolvingSymlinksInPath().standardizedFileURL
@@ -389,8 +411,17 @@ nonisolated enum RecordingOverlayMedia {
             let accessing = sourceURL.startAccessingSecurityScopedResource()
             defer { if accessing { sourceURL.stopAccessingSecurityScopedResource() } }
             guard isRegularFileNoFollow(at: sourceURL) else { return nil }
-            try FileManager.default.createDirectory(at: mediaDirectory, withIntermediateDirectories: true)
-            let destination = mediaDirectory.appendingPathComponent(fileName, isDirectory: false)
+            // Never create through or copy into a symlinked media root.
+            var existing = stat()
+            if lstat(mediaDirectory.path, &existing) == 0 {
+                guard (existing.st_mode & S_IFMT) == S_IFDIR else { return nil }
+            } else {
+                let parent = mediaDirectory.deletingLastPathComponent()
+                guard isRealDirectoryNoFollow(at: parent) else { return nil }
+                try FileManager.default.createDirectory(at: mediaDirectory, withIntermediateDirectories: false)
+            }
+            guard let realDirectory = resolveRealMediaDirectory(mediaDirectory) else { return nil }
+            let destination = realDirectory.appendingPathComponent(fileName, isDirectory: false)
             try FileManager.default.copyItem(at: sourceURL, to: destination)
             guard resolveRegularFile(named: fileName, in: mediaDirectory) != nil else {
                 try? FileManager.default.removeItem(at: destination)
@@ -420,9 +451,11 @@ nonisolated enum RecordingOverlayMedia {
     }
 
     static func cleanupUnreferencedImages(in mediaDirectory: URL, referenced: Set<String>) {
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: mediaDirectory.path)) ?? []
-        for name in names where isSimpleFileName(name) && !referenced.contains(name) {
-            guard let fileURL = resolveRegularFile(named: name, in: mediaDirectory),
+        // Verify the media root is a real package directory BEFORE enumerating it.
+        guard let realDirectory = resolveRealMediaDirectory(mediaDirectory) else { return }
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: realDirectory.path)) ?? []
+        for name in names where isOwnedImportFileName(name) && !referenced.contains(name) {
+            guard let fileURL = resolveRegularFile(named: name, in: realDirectory),
                   RecordingOverlayImage.canImport(fileURL) else { continue }
             try? FileManager.default.removeItem(at: fileURL)
         }
