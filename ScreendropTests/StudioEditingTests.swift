@@ -235,12 +235,37 @@ struct StudioEditingTests {
         #expect(abs(span.lowerBound - 6.0) < 0.0001)
         #expect(abs(span.upperBound - 10.0) < 0.0001)
 
-        // studioOccupiedLaneSpans uses editorSpan so reordered zooms draw as their longest run, not 0..10.
+        // studioOccupiedLaneSpans emits ALL surviving runs plus a zero-width hardCut barrier at 4.0.
         let zoomCue = ZoomCue(start: 2, end: 9)
         let laneSpans = studioOccupiedLaneSpans(cues: [zoomCue], clipTimeline: normalized)
-        #expect(laneSpans.count == 1)
-        #expect(abs(laneSpans[0].editorStart - 6.0) < 0.0001)
-        #expect(abs(laneSpans[0].editorEnd - 10.0) < 0.0001)
+        let cueSpans = laneSpans.filter { $0.id == zoomCue.id }
+        #expect(cueSpans.count == 2)
+        #expect(abs(cueSpans[0].editorStart - 0.0) < 0.0001 && abs(cueSpans[0].editorEnd - 3.0) < 0.0001)
+        #expect(abs(cueSpans[1].editorStart - 6.0) < 0.0001 && abs(cueSpans[1].editorEnd - 10.0) < 0.0001)
+        #expect(laneSpans.contains { $0.id != zoomCue.id && abs($0.editorStart - 4.0) < 0.0001 && abs($0.editorEnd - 4.0) < 0.0001 })
+
+        // On [8..12, 0..4], drawing or moving a zoom across the backward join at editor 4.0
+        // stays constrained to one monotonic source run rather than collapsing to zero.
+        let backward = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 8, sourceEnd: 12),
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 4),
+        ])
+        let emptySpans = studioOccupiedLaneSpans(cues: [], clipTimeline: backward)
+        let gap = try #require(studioGap(around: 3.0, toward: 5.0, spans: emptySpans, duration: backward.duration))
+        #expect(abs(gap.lowerBound - 0.0) < 0.0001 && abs(gap.upperBound - 4.0) < 0.0001)
+        let draft = try #require(studioDraftRange(anchor: 3.0, pointer: 5.0, gap: gap, minimumLength: ZoomCue.minimumDuration))
+        #expect(abs(draft.lowerBound - 3.0) < 0.0001 && abs(draft.upperBound - 4.0) < 0.0001)
+        let drawn = try #require(studioDrawnSourceSpan(
+            for: 3.0...5.0,
+            clipTimeline: backward,
+            sourceDuration: 12,
+            among: [],
+            minimum: ZoomCue.minimumDuration
+        ))
+        #expect(abs(drawn.lowerBound - 11.0) < 0.0001 && abs(drawn.upperBound - 12.0) < 0.0001)
+
+        let moved = studioMovedSourceRange(clipTimeline: backward, editorStart: 3.0, editorLength: 2.0)
+        #expect(abs(moved.start - 10.0) < 0.0001 && abs(moved.end - 12.0) < 0.0001)
 
         // moving(segmentID:to:) reorders and returns nil for no-op or unknown ID.
         let moved = try #require(normalized.moving(segmentID: overlappingThird.id, to: 0))

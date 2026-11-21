@@ -364,19 +364,28 @@ func studioSourceEnd(
     return clipTimeline.segments.last?.sourceEnd ?? 0
 }
 
-/// Editor-time spans for every zoom cue, including cues hidden inside a cut as
-/// zero-width barriers at their cut's editor time so drafts and drags stop
-/// cleanly at the cut instead of colliding in source time on commit.
+/// Editor-time spans for every zoom cue (all surviving touching runs, not just
+/// the longest), hidden cues inside forward cuts as zero-width barriers, and
+/// zero-width barriers at backward joins (`hardCuts`) so single-source-range
+/// draw/move/trim gestures stay inside one monotonic source run.
 func studioOccupiedLaneSpans(
     cues: [ZoomCue],
     clipTimeline: RecordingClipTimeline
 ) -> [StudioLaneSpan] {
-    cues.compactMap { cue -> StudioLaneSpan? in
-        guard cue.end > cue.start else { return nil }
-        if let span = clipTimeline.editorSpan(overlapping: cue.start, sourceEnd: cue.end) {
-            return StudioLaneSpan(id: cue.id, editorStart: span.lowerBound, editorEnd: span.upperBound)
+    var spans: [StudioLaneSpan] = []
+    for cue in cues where cue.end > cue.start {
+        let runs = clipTimeline.editorRuns(overlapping: cue.start, sourceEnd: cue.end)
+        if !runs.isEmpty {
+            for run in runs {
+                spans.append(StudioLaneSpan(
+                    id: cue.id,
+                    editorStart: run.editorStart,
+                    editorEnd: run.editorEnd
+                ))
+            }
+            continue
         }
-        guard clipTimeline.isInRecordingOrder else { return nil }
+        guard clipTimeline.isInRecordingOrder else { continue }
         var cutTime: TimeInterval = 0
         for segment in clipTimeline.segments {
             if cue.end <= segment.sourceStart + 0.000_001 {
@@ -384,8 +393,26 @@ func studioOccupiedLaneSpans(
             }
             cutTime += segment.editorDuration
         }
-        return StudioLaneSpan(id: cue.id, editorStart: cutTime, editorEnd: cutTime)
+        spans.append(StudioLaneSpan(id: cue.id, editorStart: cutTime, editorEnd: cutTime))
     }
+    for cut in clipTimeline.hardCuts {
+        spans.append(StudioLaneSpan(id: UUID(), editorStart: cut, editorEnd: cut))
+    }
+    return spans
+}
+
+/// The contiguous editor-time run containing `anchor` that contains no
+/// backward jump (`hardCut`) in source time.
+private func studioMonotonicRun(
+    around anchor: TimeInterval,
+    in clipTimeline: RecordingClipTimeline
+) -> ClosedRange<TimeInterval> {
+    let duration = max(0, clipTimeline.duration)
+    let clamped = min(max(anchor, 0), duration)
+    let cuts = clipTimeline.hardCuts
+    let floor = cuts.last { $0 <= clamped + 0.000_001 } ?? 0
+    let ceiling = cuts.first { $0 > clamped + 0.000_001 } ?? duration
+    return floor...max(floor, ceiling)
 }
 
 /// The recording under a range drawn on a track whose blocks can't overlap.
@@ -400,8 +427,11 @@ func studioDrawnSourceSpan(
     among occupied: [ClosedRange<TimeInterval>],
     minimum: TimeInterval
 ) -> ClosedRange<TimeInterval>? {
-    var lower = min(max(0, studioSourceStart(atEditorTime: range.lowerBound, in: clipTimeline)), sourceDuration)
-    let end = min(max(lower, studioSourceEnd(atEditorTime: range.upperBound, in: clipTimeline)), sourceDuration)
+    let run = studioMonotonicRun(around: range.lowerBound, in: clipTimeline)
+    let clampedLower = min(max(range.lowerBound, run.lowerBound), run.upperBound)
+    let clampedUpper = min(max(range.upperBound, clampedLower), run.upperBound)
+    var lower = min(max(0, studioSourceStart(atEditorTime: clampedLower, in: clipTimeline)), sourceDuration)
+    let end = min(max(lower, studioSourceEnd(atEditorTime: clampedUpper, in: clipTimeline)), sourceDuration)
     while let covering = occupied.first(where: { $0.lowerBound <= lower && lower < $0.upperBound }) {
         lower = covering.upperBound
     }
@@ -965,16 +995,21 @@ extension StudioBlockLane where Decoration == EmptyView {
 
 /// Where a dragged block lands in the recording. It keeps its length on the
 /// timeline, not in the recording, so sliding it from a sped-up clip onto a
-/// normal one doesn't stretch it (or squeeze it the other way).
+/// normal one doesn't stretch it (or squeeze it the other way). Constrained to
+/// one monotonic source run so moving across a backward join never collapses
+/// the source range.
 func studioMovedSourceRange(
     clipTimeline: RecordingClipTimeline,
     editorStart: TimeInterval,
     editorLength: TimeInterval
 ) -> (start: TimeInterval, end: TimeInterval) {
-    let start = min(max(0, editorStart), max(0, clipTimeline.duration - editorLength))
+    let clampedStart = min(max(0, editorStart), max(0, clipTimeline.duration - editorLength))
+    let run = studioMonotonicRun(around: clampedStart, in: clipTimeline)
+    let start = min(max(run.lowerBound, clampedStart), max(run.lowerBound, run.upperBound - editorLength))
+    let end = min(start + max(0, editorLength), run.upperBound)
     let sourceStart = studioSourceStart(atEditorTime: start, in: clipTimeline)
-    guard editorLength > 0 else { return (sourceStart, sourceStart) }
-    let sourceEnd = max(sourceStart, studioSourceEnd(atEditorTime: start + editorLength, in: clipTimeline))
+    guard end > start else { return (sourceStart, sourceStart) }
+    let sourceEnd = max(sourceStart, studioSourceEnd(atEditorTime: end, in: clipTimeline))
     return (sourceStart, sourceEnd)
 }
 
