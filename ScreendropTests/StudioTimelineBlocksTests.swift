@@ -353,6 +353,50 @@ struct StudioTimelineBlocksTests {
         #expect(abs(normalTrailing[0].end - 2.5) < 0.0001)
     }
 
+    @Test @MainActor func zeroDeltaMovePreservesAndRestoresCutOverhangingZoomCue() throws {
+        // Source zoom 3..7 s; first clip trimmed to start at source 5 s (5..15 s at 1x -> editor 0..10 s).
+        let clipTimeline = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 5, sourceEnd: 15, speed: 1),
+        ])
+        let sourceDuration: TimeInterval = 15
+        let original = ZoomCue(start: 3, end: 7)
+        let originalCues = [original]
+
+        // Visible editor block is 0..2 s.
+        let slices = clipTimeline.slices(overlapping: original.start, sourceEnd: original.end)
+        let block = StudioLaneBlock(
+            item: original,
+            editorStart: try #require(slices.first).editorStart,
+            editorEnd: try #require(slices.last).editorEnd
+        )
+        #expect(abs(block.editorStart - 0) < 0.0001)
+        #expect(abs(block.editorEnd - 2) < 0.0001)
+
+        // Dragging straight up (vertical >= 3 pt, horizontal delta == 0) keeps source 3..7 s intact
+        // so cues compare equal and the project is not marked edited.
+        let zeroMove = StudioBlockEdit(base: block, kind: .move, delta: 0, verticalTranslation: -5)
+        let resolvedZero = studioMovedZoomCue(for: zeroMove, clipTimeline: clipTimeline)
+        let placedZero = try #require(studioPlaceMovedZoomCue(resolvedZero, in: originalCues, sourceDuration: sourceDuration))
+        #expect(placedZero == originalCues)
+        #expect(placedZero[0].start == 3 && placedZero[0].end == 7)
+
+        // Moving away (+2 s -> source 7..9 s) and returning to delta == 0 restores the original 3..7 s cue.
+        let movedAway = studioMovedZoomCue(
+            for: StudioBlockEdit(base: block, kind: .move, delta: 2),
+            clipTimeline: clipTimeline
+        )
+        let placedAway = try #require(studioPlaceMovedZoomCue(movedAway, in: originalCues, sourceDuration: sourceDuration))
+        #expect(abs(placedAway[0].start - 7) < 0.0001 && abs(placedAway[0].end - 9) < 0.0001)
+
+        let returnedToStart = studioMovedZoomCue(
+            for: StudioBlockEdit(base: block, kind: .move, delta: 0),
+            clipTimeline: clipTimeline
+        )
+        let placedBack = try #require(studioPlaceMovedZoomCue(returnedToStart, in: placedAway, sourceDuration: sourceDuration))
+        #expect(placedBack == originalCues)
+        #expect(placedBack[0].start == 3 && placedBack[0].end == 7)
+    }
+
     // MARK: - Drawn drafts land exactly where shown
 
     @Test @MainActor func draftRangeAndSourceSpanLandExactlyWhereDrawnAcrossSpeedChanges() throws {

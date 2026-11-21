@@ -1123,6 +1123,26 @@ func studioPlaceTrimmedZoomCue(
     return next
 }
 
+/// Resolves a zoom cue for a move edit. A zero clamped editor delta keeps the
+/// drag's original source cue unchanged (preserving any overhang into a cut,
+/// and restoring it when the pointer moves away and returns to its start).
+func studioMovedZoomCue(
+    for edit: StudioBlockEdit<ZoomCue>,
+    clipTimeline: RecordingClipTimeline
+) -> ZoomCue {
+    let base = edit.base
+    guard abs(edit.delta) >= 0.000_001 else { return base.item }
+    var cue = base.item
+    let range = studioMovedSourceRange(
+        clipTimeline: clipTimeline,
+        editorStart: base.editorStart + edit.delta,
+        editorLength: base.editorLength
+    )
+    cue.start = range.start
+    cue.end = range.end
+    return cue
+}
+
 /// Resolves the target source time for a leading or trailing trim edit on a
 /// zoom block; a zero editor delta preserves the drag's original source edge.
 func studioTrimmedZoomSourceTime(

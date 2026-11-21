@@ -3282,17 +3282,9 @@ private struct StudioZoomLane: View {
 
     private func apply(_ edit: StudioBlockEdit<ZoomCue>) {
         let base = edit.base
-        var cue = base.item
         switch edit.kind {
         case .move:
-            let range = studioMovedSourceRange(
-                model: model,
-                editorStart: base.editorStart + edit.delta,
-                editorLength: base.editorLength
-            )
-            cue.start = range.start
-            cue.end = range.end
-            model.moveZoomCue(cue)
+            model.moveZoomCue(studioMovedZoomCue(for: edit, clipTimeline: model.clipTimeline))
         case .trimLeading, .trimTrailing:
             if let trim = studioTrimmedZoomSourceTime(for: edit, clipTimeline: model.clipTimeline) {
                 model.trimZoomCue(
