@@ -425,6 +425,9 @@ final class RecordingStudioModel {
     private(set) var replacementAudioSync: RecordingAudioSync?
     /// Keep the document's selection even if its file cannot be loaded.
     private var replacementAudioReference: StudioReplacementReference?
+    /// Session-scoped external URLs for detached replacement clips in standalone
+    /// movies (which have no project folder to copy into).
+    private var externalPinnedReplacementURLs: [String: URL] = [:]
     /// Every soundtrack and audio file this editor has used since it opened.
     private var undoReferencedFiles = Set<String>()
     private var soundtrackOffsetSnapshot: TimeInterval?
@@ -1223,6 +1226,7 @@ final class RecordingStudioModel {
         replacementAudio = nil
         replacementAudioSync = nil
         replacementAudioReference = nil
+        externalPinnedReplacementURLs.removeAll()
         undoReferencedFiles.removeAll()
         soundtrackOffsetTask?.cancel()
         soundtrackOffsetTask = nil
@@ -2162,7 +2166,7 @@ final class RecordingStudioModel {
         flushPendingAudioEdits()
         var segment = clipTimeline.segments[index]
         let lane = (audioClips.map(\.lane).max() ?? -1) + 1
-        let pinnedFileName = (session != nil ? replacementAudio?.url.lastPathComponent : nil) ?? ""
+        let pinnedFileName = replacementAudio.map { pinnedReplacementKey(for: $0.url) } ?? ""
 
         guard let detached = StudioAudioComposer.detachedClips(
             for: segment,
@@ -2181,6 +2185,9 @@ final class RecordingStudioModel {
 
         if let replacementAudio, !pinnedFileName.isEmpty,
            detached.contains(where: { $0.source == .replacement }) {
+            if session == nil {
+                externalPinnedReplacementURLs[pinnedFileName] = replacementAudio.url
+            }
             audioSources.pinnedReplacements[pinnedFileName] = [
                 StudioAudioSources.Track(track: replacementAudio.track, range: replacementAudio.range, asset: replacementAudio.asset)
             ]
@@ -4087,6 +4094,7 @@ final class RecordingStudioModel {
             backgroundMusic: backgroundMusicConfiguration(includeAudio: !settings.removeAudio && !settings.effectiveExportsGIF),
             audioClips: audioClips,
             mediaDirectory: mediaDirectoryURL,
+            externalReplacementURLs: externalPinnedReplacementURLs,
             reframe: reframe,
             fitContentAspect: fitContentAspect,
             usesUniformPadding: exportAspect == .original,
@@ -4964,7 +4972,8 @@ final class RecordingStudioModel {
             backgroundMusic: includeMix ? backgroundMusicConfiguration(includeAudio: true) : nil,
             replacementSync: replacementURL == nil ? nil : replacementAudioSync,
             audioClips: includeMix ? audioClips : [],
-            mediaDirectory: includeMix ? mediaDirectoryURL : nil
+            mediaDirectory: includeMix ? mediaDirectoryURL : nil,
+            externalReplacementURLs: includeMix ? externalPinnedReplacementURLs : [:]
         )
         let suggestedFileName = audioExportSuggestedFileName
         let dockProgressID = DockExportProgressCoordinator.shared.start()
@@ -5062,6 +5071,21 @@ final class RecordingStudioModel {
         }
     }
 
+    /// Stable key identifying a replacement soundtrack file: the session file
+    /// name for packaged projects, or a session-scoped token mapped in
+    /// `externalPinnedReplacementURLs` for standalone movies.
+    private func pinnedReplacementKey(for url: URL) -> String {
+        if session != nil { return url.lastPathComponent }
+        let standardized = url.standardizedFileURL
+        if let existing = externalPinnedReplacementURLs.first(where: { $0.value.standardizedFileURL == standardized }) {
+            return existing.key
+        }
+        let ext = url.pathExtension.isEmpty ? "m4a" : url.pathExtension
+        let key = "external-replacement.\(UUID().uuidString).\(ext)"
+        externalPinnedReplacementURLs[key] = standardized
+        return key
+    }
+
     private func adoptReplacementAudio(
         _ audio: RecordingReplacementAudio?,
         reference: StudioReplacementReference? = nil,
@@ -5073,11 +5097,12 @@ final class RecordingStudioModel {
         if let audio {
             replacementAudioReference = nil
             replacementAudioError = nil
-            undoReferencedFiles.insert(audio.url.lastPathComponent)
+            let pinnedKey = pinnedReplacementKey(for: audio.url)
+            undoReferencedFiles.insert(pinnedKey)
             replacementAudioSync = sync ?? .legacyFlat(over: clipTimeline)
             let track = StudioAudioSources.Track(track: audio.track, range: audio.range, asset: audio.asset)
             audioSources.replacement = [track]
-            audioSources.pinnedReplacements[audio.url.lastPathComponent] = [track]
+            audioSources.pinnedReplacements[pinnedKey] = [track]
             loadPeaks(for: Self.soundtrackPeaksKey, url: audio.url)
             return
         }

@@ -89,6 +89,8 @@ nonisolated final class RecordingAudioExporter: @unchecked Sendable {
         /// Audio clips under the video, mixed in as the video export does.
         var audioClips: [RecordingAudioClip] = []
         var mediaDirectory: URL? = nil
+        /// External replacement file URLs pinned by detached clips in standalone movies.
+        var externalReplacementURLs: [String: URL] = [:]
     }
 
     enum ExportError: LocalizedError {
@@ -139,6 +141,7 @@ nonisolated final class RecordingAudioExporter: @unchecked Sendable {
             replacementSync: configuration.replacementSync,
             clips: configuration.audioClips,
             mediaDirectory: configuration.mediaDirectory,
+            externalReplacementURLs: configuration.externalReplacementURLs,
             volume: configuration.volume,
             microphoneTrackID: configuration.microphoneTrackID,
             isolatedMicrophoneURL: configuration.isolatedMicrophoneURL,

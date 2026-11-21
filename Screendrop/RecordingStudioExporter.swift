@@ -67,6 +67,8 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
         let audioClips: [RecordingAudioClip]
         /// The project's media folder holding imported audio clip files.
         let mediaDirectory: URL?
+        /// External replacement file URLs pinned by detached clips in standalone movies.
+        let externalReplacementURLs: [String: URL]
         /// Non-nil when exporting into a different aspect ratio; drives the
         /// crop-and-follow virtual camera in place of the zoom viewport.
         let reframe: ReframeTrack?
@@ -105,6 +107,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             backgroundMusic: RecordingBackgroundMusicMixer.Configuration? = nil,
             audioClips: [RecordingAudioClip] = [],
             mediaDirectory: URL? = nil,
+            externalReplacementURLs: [String: URL] = [:],
             reframe: ReframeTrack? = nil,
             fitContentAspect: CGFloat? = nil,
             usesUniformPadding: Bool = false,
@@ -135,6 +138,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             self.backgroundMusic = backgroundMusic
             self.audioClips = audioClips
             self.mediaDirectory = mediaDirectory
+            self.externalReplacementURLs = externalReplacementURLs
             self.reframe = reframe
             self.fitContentAspect = fitContentAspect
             self.usesUniformPadding = usesUniformPadding
@@ -259,6 +263,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
                 replacementSync: configuration.audioReplacementSync,
                 clips: configuration.audioClips,
                 mediaDirectory: configuration.mediaDirectory,
+                externalReplacementURLs: configuration.externalReplacementURLs,
                 volume: configuration.audioVolume,
                 microphoneTrackID: configuration.microphoneTrackID,
                 isolatedMicrophoneURL: configuration.isolatedMicrophoneURL,

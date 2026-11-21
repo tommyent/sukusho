@@ -86,6 +86,7 @@ nonisolated struct StudioAudioSources: @unchecked Sendable {
         replacementURL: URL?,
         clips: [RecordingAudioClip],
         mediaDirectory: URL?,
+        externalReplacementURLs: [String: URL] = [:],
         microphoneTrackID: CMPersistentTrackID? = nil,
         isolatedMicrophoneURL: URL? = nil,
         timeline: RecordingClipTimeline? = nil,
@@ -155,7 +156,15 @@ nonisolated struct StudioAudioSources: @unchecked Sendable {
         for clip in clips where clip.source == .replacement && !clip.fileName.isEmpty {
             let isAudible = !clip.isMuted && clip.audibleVolume > 0
                 && min(clip.end, videoDuration) - max(clip.start, 0) >= 0.01
-            guard RecordingAudioClip.isSafeFileName(clip.fileName), let sessionDirectory else {
+            let resolvedURL: URL?
+            if let externalURL = externalReplacementURLs[clip.fileName] {
+                resolvedURL = externalURL
+            } else if RecordingAudioClip.isSafeFileName(clip.fileName), let sessionDirectory {
+                resolvedURL = sessionDirectory.appendingPathComponent(clip.fileName)
+            } else {
+                resolvedURL = nil
+            }
+            guard let url = resolvedURL else {
                 if strictMissingClips && isAudible {
                     throw StudioAudioComposer.AudioError.missingAudioClip(clip.displayName)
                 }
@@ -168,7 +177,6 @@ nonisolated struct StudioAudioSources: @unchecked Sendable {
                 }
                 continue
             }
-            let url = sessionDirectory.appendingPathComponent(clip.fileName)
             let tracks: [Track]
             if FileManager.default.fileExists(atPath: url.path) {
                 let asset = AVURLAsset(url: url)
@@ -287,6 +295,7 @@ nonisolated enum StudioAudioComposer {
         replacementSync: RecordingAudioSync?,
         clips: [RecordingAudioClip],
         mediaDirectory: URL?,
+        externalReplacementURLs: [String: URL] = [:],
         volume: Double,
         microphoneTrackID: CMPersistentTrackID?,
         isolatedMicrophoneURL: URL?,
@@ -297,6 +306,7 @@ nonisolated enum StudioAudioComposer {
             replacementURL: replacementURL,
             clips: clips,
             mediaDirectory: mediaDirectory,
+            externalReplacementURLs: externalReplacementURLs,
             microphoneTrackID: microphoneTrackID,
             isolatedMicrophoneURL: isolatedMicrophoneURL,
             timeline: timeline,

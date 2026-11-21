@@ -1129,6 +1129,66 @@ struct StudioAudioTests {
         #expect(barsDrawn >= 245 && barsDrawn <= 255)
     }
 
+    @Test func standaloneMovieDetachedReplacementUsesStableExternalReferenceAcrossSwapResetAndExport() async throws {
+        let dir = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let screenURL = try makeTone(in: dir, name: "standalone", frequency: 220, amplitude: 0.3, duration: 2.0)
+        let extA = try makeTone(in: dir, name: "externalA", frequency: 520, amplitude: 0.4, duration: 2.0)
+        let extB = try makeTone(in: dir, name: "externalB", frequency: 980, amplitude: 0.4, duration: 1.0)
+
+        let seg0 = RecordingClipSegment(sourceStart: 0, sourceEnd: 1.0)
+        var seg1 = RecordingClipSegment(sourceStart: 1.0, sourceEnd: 2.0)
+        seg1.isMuted = true
+        let timeline = RecordingClipTimeline(segments: [seg0, seg1])
+
+        let keyA = "external-replacement.\(UUID().uuidString).wav"
+        var detachedA = RecordingAudioClip(fileName: keyA, displayName: "externalA.wav", start: 1.0, fileDuration: 2.0)
+        detachedA.source = .replacement
+        detachedA.trimStart = 1.0
+        detachedA.trimEnd = 2.0
+
+        // Standalone movie: mediaDirectory is nil, externalReplacementURLs holds keyA -> extA.
+        // Replacing active soundtrack with B keeps detached clip playing A.
+        let withB = try await StudioAudioComposer.prepareExport(
+            screenAsset: AVURLAsset(url: screenURL),
+            screenURL: screenURL,
+            timeline: timeline,
+            replacementURL: extB,
+            replacementSync: .flat(over: timeline),
+            clips: [detachedA],
+            mediaDirectory: nil,
+            externalReplacementURLs: [keyA: extA],
+            volume: 1,
+            microphoneTrackID: nil,
+            isolatedMicrophoneURL: nil,
+            backgroundMusic: nil
+        )
+        let samplesB = try await renderMonoSamples(asset: withB.composition, mix: withB.mix, duration: 2.0)
+        #expect(goertzel(samplesB, at: 0.25, length: 0.4, frequency: 980) > 0.2)
+        #expect(goertzel(samplesB, at: 1.25, length: 0.4, frequency: 520) > 0.2)
+        #expect(goertzel(samplesB, at: 1.25, length: 0.4, frequency: 980) < 0.03)
+
+        // Resetting active replacement to nil keeps detached clip playing A via audio-only export too.
+        let exportedURL = try await RecordingAudioExporter().export(
+            RecordingAudioExporter.Configuration(
+                screenURL: screenURL,
+                clipTimeline: timeline,
+                replacementURL: nil,
+                format: .wav,
+                volume: 1,
+                audioClips: [detachedA],
+                mediaDirectory: nil,
+                externalReplacementURLs: [keyA: extA]
+            ),
+            progress: { _ in }
+        )
+        defer { try? FileManager.default.removeItem(at: exportedURL) }
+        let samplesReset = try await renderMonoSamples(asset: AVURLAsset(url: exportedURL), mix: nil, duration: 2.0)
+        #expect(goertzel(samplesReset, at: 0.25, length: 0.4, frequency: 220) > 0.15)
+        #expect(goertzel(samplesReset, at: 1.25, length: 0.4, frequency: 520) > 0.2)
+    }
+
     // MARK: - Helpers
 
     private func makeDirectory() throws -> URL {
