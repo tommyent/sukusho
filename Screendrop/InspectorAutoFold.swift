@@ -6,22 +6,34 @@
 import AppKit
 import SwiftUI
 
+/// A view's own window, for its @State or modifiers: held weakly, since the window holds the view.
+final class WeakWindow {
+    weak var window: NSWindow?
+
+    init(_ window: NSWindow? = nil) {
+        self.window = window
+    }
+}
+
 /// Folds an inspector away on its own whenever its window is made narrower while below `foldBelow`,
 /// so the window can keep getting narrower, and brings it back once there is room again, unless
 /// someone hid it themselves in the meantime. Read the window frame only after initial placement.
 struct InspectorAutoFold: ViewModifier {
     @Binding var isPresented: Bool
     let foldBelow: CGFloat
-    let window: NSWindow?
+    let host: WeakWindow
+    let windowID: ObjectIdentifier?
     @Binding var state: InspectorFoldState
 
     func body(content: Content) -> some View {
         content
-            .onChange(of: window, initial: true) { _, window in
-                if let window { resize(to: window.frame.width) }
+            .onChange(of: windowID, initial: true) { _, id in
+                if id != nil, let window = host.window { resize(to: window.frame.width) }
             }
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResizeNotification)) { notification in
-                if let window, notification.object as? NSWindow === window { resize(to: window.frame.width) }
+                if windowID != nil, let window = host.window, notification.object as? NSWindow === window {
+                    resize(to: window.frame.width)
+                }
             }
             .onChange(of: isPresented) { _, presented in
                 // Shown by hand while folded: it stays until the next fold.
@@ -97,14 +109,16 @@ enum InspectorVisibilityStore {
 private struct OwnedInspectorAutoFold: ViewModifier {
     @Binding var isPresented: Bool
     let foldBelow: CGFloat
-    let window: NSWindow?
+    let host: WeakWindow
+    let windowID: ObjectIdentifier?
     @State private var state = InspectorFoldState()
 
     func body(content: Content) -> some View {
         content.modifier(InspectorAutoFold(
             isPresented: $isPresented,
             foldBelow: foldBelow,
-            window: window,
+            host: host,
+            windowID: windowID,
             state: $state
         ))
     }
@@ -114,25 +128,29 @@ extension View {
     func inspectorAutoFold(
         isPresented: Binding<Bool>,
         below width: CGFloat,
-        window: NSWindow?
+        host: WeakWindow,
+        windowID: ObjectIdentifier?
     ) -> some View {
         modifier(OwnedInspectorAutoFold(
             isPresented: isPresented,
             foldBelow: width,
-            window: window
+            host: host,
+            windowID: windowID
         ))
     }
 
     func inspectorAutoFold(
         isPresented: Binding<Bool>,
         below width: CGFloat,
-        window: NSWindow?,
+        host: WeakWindow,
+        windowID: ObjectIdentifier?,
         state: Binding<InspectorFoldState>
     ) -> some View {
         modifier(InspectorAutoFold(
             isPresented: isPresented,
             foldBelow: width,
-            window: window,
+            host: host,
+            windowID: windowID,
             state: state
         ))
     }

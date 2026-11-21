@@ -80,7 +80,6 @@ struct SettingsView: View {
     @State private var isHistoryNavigation = false
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @FloatingGlassChrome private var floatingChrome
-    @State private var settingsWindow: NSWindow?
     @State private var glassMetrics = GlassWindowButtonMetrics.fallback
 
     private var activeTab: SettingsTab {
@@ -113,12 +112,10 @@ struct SettingsView: View {
         .navigationTitle("Settings")
         .navigationSplitViewStyle(.balanced)
         .frame(minWidth: SettingsView.minimumWidth, minHeight: 540)
-        .onWindowChange { settingsWindow = $0 }
         .onChange(of: floatingChrome) { _, on in
             if !on { columnVisibility = .all }
         }
         .glassWindowChrome(
-            window: settingsWindow,
             hasSidebar: true,
             sidebarVisible: !isSidebarCollapsed,
             inspectorVisible: false,

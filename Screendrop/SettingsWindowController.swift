@@ -101,6 +101,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             AppActivationPolicy.leave()
             didEnterActivationPolicy = false
         }
+        window?.delegate = nil
+        window?.contentViewController = nil
         Self.shared = nil
     }
 }

@@ -171,7 +171,7 @@ struct InspectorSlider: View {
     @State private var dragStartValue: CGFloat?
     @State private var keyboardSteps = 0
     @State private var scrubberFocusID = UUID()
-    @State private var hostWindow: NSWindow?
+    @State private var hostWindow = WeakWindow()
 
     private enum FocusedPart: Hashable {
         case scrubber
@@ -221,10 +221,10 @@ struct InspectorSlider: View {
             StudioKeyCommands.setInspectorScrubberFocused(scrubberFocusID, in: nil, focused: false)
         }
         .onWindowChange { window in
-            if let previous = hostWindow, previous !== window {
+            if let previous = hostWindow.window, previous !== window {
                 StudioKeyCommands.setInspectorScrubberFocused(scrubberFocusID, in: previous, focused: false)
             }
-            hostWindow = window
+            hostWindow.window = window
             StudioKeyCommands.setInspectorScrubberFocused(scrubberFocusID, in: window, focused: focusedPart == .scrubber)
         }
         // A held key retains its first action; apply steps here with the current binding.
@@ -236,7 +236,7 @@ struct InspectorSlider: View {
             syncDraftText()
         }
         .onChange(of: focusedPart) { oldPart, newPart in
-            StudioKeyCommands.setInspectorScrubberFocused(scrubberFocusID, in: hostWindow, focused: newPart == .scrubber)
+            StudioKeyCommands.setInspectorScrubberFocused(scrubberFocusID, in: hostWindow.window, focused: newPart == .scrubber)
             if newPart == .value {
                 beginValueEditing()
             } else if oldPart == .value {

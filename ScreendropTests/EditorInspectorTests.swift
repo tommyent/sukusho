@@ -184,4 +184,33 @@ struct EditorInspectorTests {
         let reopened = StoredBackground(settings).settings
         #expect(AnnotationCameraSwitch.isOn(reopened.camera))
     }
+
+    /// `InspectorAutoFold` must hold its window weakly so SwiftUI's view graph never pins a closed `NSWindow`.
+    @Test static func inspectorAutoFoldDoesNotRetainWindow() {
+        weak var weakWindow: NSWindow?
+        var modifier: InspectorAutoFold?
+        var presented = true
+        var foldState = InspectorFoldState()
+        autoreleasepool {
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+                styleMask: [.titled, .closable, .resizable],
+                backing: .buffered,
+                defer: true
+            )
+            window.isReleasedWhenClosed = false
+            weakWindow = window
+            let host = WeakWindow(window)
+            modifier = InspectorAutoFold(
+                isPresented: Binding(get: { presented }, set: { presented = $0 }),
+                foldBelow: 1000,
+                host: host,
+                windowID: ObjectIdentifier(window),
+                state: Binding(get: { foldState }, set: { foldState = $0 })
+            )
+        }
+        #expect(modifier != nil)
+        #expect(weakWindow == nil, "InspectorAutoFold retained its NSWindow strongly")
+        modifier = nil
+    }
 }

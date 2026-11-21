@@ -12,6 +12,44 @@ import UniformTypeIdentifiers
 struct AnnotationEditorWindow: View {
     @Binding var url: URL?
 
+    @State private var isOpen = true
+    @State private var hostWindow = WeakWindow()
+
+    /// What the tool dock needs, and so the narrowest the window goes.
+    static let minimumWidth: CGFloat = 712
+
+    /// Focus can return to a field editor even when nobody is typing.
+    static func allowsIdleSave(in window: NSWindow, keyWindow: NSWindow?) -> Bool {
+        let isComposing = (window.firstResponder as? NSTextView)?.hasMarkedText() == true
+        let popoverIsComposing = keyWindow?.parent == window
+            && (keyWindow?.firstResponder as? NSTextView)?.hasMarkedText() == true
+        return !isComposing && !popoverIsComposing && window.attachedSheet == nil
+    }
+
+    var body: some View {
+        Group {
+            if isOpen {
+                AnnotationEditorContent(url: $url)
+            } else {
+                Color.clear
+            }
+        }
+        .onAppear { isOpen = true }
+        .onWindowChange { hostWindow.window = $0 }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { note in
+            guard let key = note.object as? NSWindow, key === hostWindow.window, !isOpen else { return }
+            isOpen = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { note in
+            guard let closing = note.object as? NSWindow, closing === hostWindow.window else { return }
+            isOpen = false
+        }
+    }
+}
+
+private struct AnnotationEditorContent: View {
+    @Binding var url: URL?
+
     @State private var model = AnnotationEditorModel()
     @State private var probe = PixelProbe()
     @State private var wallpaperStore = AnnotationWallpaperStore.shared
@@ -36,12 +74,12 @@ struct AnnotationEditorWindow: View {
     @FocusState private var focusedField: AnnotationEditorFocusedField?
     @Environment(\.dismiss) private var dismissWindow
     @FloatingGlassChrome private var floatingChrome
-    @State private var editorWindow: NSWindow?
+    @State private var hostWindow = WeakWindow()
+    @State private var editorWindowID: ObjectIdentifier?
     @State private var handledInitialWindowPlacement = false
     @State private var glassMetrics = GlassWindowButtonMetrics.fallback
 
-    /// What the tool dock needs, and so the narrowest the window goes.
-    static let minimumWidth: CGFloat = 712
+    private static let minimumWidth: CGFloat = AnnotationEditorWindow.minimumWidth
 
     private var isBusy: Bool { isSaving || isFinishing || isUploading || model.isBlockingCommit }
 
@@ -106,21 +144,22 @@ struct AnnotationEditorWindow: View {
                 AnnotationEditorActivationPolicy.leave(restorePreview: true)
             }
             .onWindowChange { window in
-                editorWindow = window
+                hostWindow.window = window
+                editorWindowID = window.map(ObjectIdentifier.init)
                 guard let window else {
                     handledInitialWindowPlacement = false
                     closeGuard.detach()
                     return
                 }
                 if !handledInitialWindowPlacement {
-                    DispatchQueue.main.async {
-                        guard editorWindow === window, !handledInitialWindowPlacement else { return }
+                    DispatchQueue.main.async { [weak window, hostWindow] in
+                        guard let window, hostWindow.window === window, !handledInitialWindowPlacement else { return }
                         handledInitialWindowPlacement = true
                     }
                 }
                 model.allowsIdleSave = { [weak window] in
                     guard let window else { return false }
-                    return Self.allowsIdleSave(in: window, keyWindow: NSApp.keyWindow)
+                    return AnnotationEditorWindow.allowsIdleSave(in: window, keyWindow: NSApp.keyWindow)
                 }
                 configureCloseGuard()
                 closeGuard.attach(to: window)
@@ -247,7 +286,6 @@ struct AnnotationEditorWindow: View {
             )
             .environment(\.backgroundDestination, .editors)
             .glassWindowChrome(
-                window: editorWindow,
                 hasSidebar: false,
                 sidebarVisible: false,
                 inspectorVisible: isInspectorPresented,
@@ -258,7 +296,8 @@ struct AnnotationEditorWindow: View {
             .inspectorAutoFold(
                 isPresented: $isInspectorPresented,
                 below: 1000,
-                window: handledInitialWindowPlacement ? editorWindow : nil
+                host: hostWindow,
+                windowID: handledInitialWindowPlacement ? editorWindowID : nil
             )
             .environment(probe)
     }
@@ -607,14 +646,6 @@ struct AnnotationEditorWindow: View {
     private func saveAtPause(in window: NSWindow) {
         guard model.canSaveInBackground, window.attachedSheet == nil else { return }
         save(idle: true)
-    }
-
-    /// Focus can return to a field editor even when nobody is typing.
-    static func allowsIdleSave(in window: NSWindow, keyWindow: NSWindow?) -> Bool {
-        let isComposing = (window.firstResponder as? NSTextView)?.hasMarkedText() == true
-        let popoverIsComposing = keyWindow?.parent == window
-            && (keyWindow?.firstResponder as? NSTextView)?.hasMarkedText() == true
-        return !isComposing && !popoverIsComposing && window.attachedSheet == nil
     }
 
     private func save(idle: Bool = false) {

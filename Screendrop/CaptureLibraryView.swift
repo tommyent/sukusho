@@ -55,7 +55,8 @@ struct CaptureLibraryView: View {
     @AppStorage(ScreendropPreferences.clipboardHistoryEnabledKey) private var clipboardEnabled = false
     @State private var history = ScreenshotHistoryStore.shared
     @State private var projects = RecordingProjectStore.shared
-    @State private var libraryWindow: NSWindow?
+    @State private var hostWindow = WeakWindow()
+    @State private var libraryWindowID: ObjectIdentifier?
     @State private var searchFocusRequest = 0
     @State private var glassMetrics = GlassWindowButtonMetrics.fallback
 
@@ -127,7 +128,6 @@ struct CaptureLibraryView: View {
         splitLayout
         .modifier(LibraryToolbarSeparator())
         .glassWindowChrome(
-            window: libraryWindow,
             hasSidebar: true,
             sidebarVisible: columnVisibility != .detailOnly,
             inspectorVisible: inspectorVisible,
@@ -140,7 +140,8 @@ struct CaptureLibraryView: View {
         .inspectorAutoFold(
             isPresented: $inspectorVisible,
             below: 900,
-            window: handledInitialWindowPlacement ? libraryWindow : nil,
+            host: hostWindow,
+            windowID: handledInitialWindowPlacement ? libraryWindowID : nil,
             state: $inspectorFoldState
         )
         .onAppear {
@@ -154,15 +155,16 @@ struct CaptureLibraryView: View {
         }
         .onDisappear { AppActivationPolicy.leave() }
         .onWindowChange { window in
-            libraryWindow = window
+            hostWindow.window = window
+            libraryWindowID = window.map(ObjectIdentifier.init)
             model.savedUndoManager = window?.undoManager
             PreviewWindowCaptureExclusion.shared.register(window: window)
             // Every theme: SwiftUI can open at the Library's previous minimum size despite the scene's default. Sized
             // once as the window arrives (after SwiftUI's own sizing this turn), not on a later key event, which could
             // come only after the user clicked away and back, and jump the window then.
             if let window {
-                DispatchQueue.main.async {
-                    guard libraryWindow === window else { return }
+                DispatchQueue.main.async { [weak window, hostWindow] in
+                    guard let window, hostWindow.window === window else { return }
                     if !handledInitialWindowPlacement {
                         handledInitialWindowPlacement = true
                         if let screen = (window.screen ?? NSScreen.main)?.visibleFrame {
@@ -179,7 +181,7 @@ struct CaptureLibraryView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
-            if let window = notification.object as? NSWindow, window === libraryWindow {
+            if let window = notification.object as? NSWindow, window === hostWindow.window {
                 model.refresh()
                 if cloud.isShown { cloud.refresh() }
                 // The sidebar's unread counts, whichever page is open. No timer: only here, on open and on ⌘R.
@@ -1059,6 +1061,11 @@ final class CapsuleGlassView: NSGlassEffectView {
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        super.viewWillMove(toWindow: newWindow)
+        if newWindow == nil { onFrameMetrics = nil }
+    }
+
     override func setFrameOrigin(_ newOrigin: NSPoint) {
         super.setFrameOrigin(newOrigin)
         reportMetricsIfNeeded()
@@ -1131,6 +1138,14 @@ struct GlassWindowButtonMetrics: Equatable {
 enum LibraryWindowButtonCapsule {
     private static let id = NSUserInterfaceItemIdentifier("LibraryWindowButtonCapsule")
     private static let padding: CGFloat = 7
+
+    /// Releases callback closures attached to the window frame when the window closes.
+    static func detach(_ window: NSWindow?) {
+        guard let frame = window?.contentView?.superview else { return }
+        for case let capsule as CapsuleGlassView in frame.subviews where capsule.identifier == id {
+            capsule.onFrameMetrics = nil
+        }
+    }
 
     /// False while the standard window buttons aren't in the window frame and laid out yet.
     static func update(

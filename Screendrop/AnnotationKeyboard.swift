@@ -51,7 +51,7 @@ struct AnnotationKeyCommandHandler: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ nsView: AnnotationKeyCommandHandlerView, coordinator: ()) {
-        nsView.detachClipboardResponder()
+        nsView.detach()
     }
 
     private func apply(to view: AnnotationKeyCommandHandlerView) {
@@ -120,19 +120,66 @@ final class AnnotationKeyCommandHandlerView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         detachClipboardResponder()
-        if let window {
-            clipboardResponder.owner = self
-            clipboardResponder.nextResponder = window.nextResponder
-            window.nextResponder = clipboardResponder
-            clipboardWindow = window
+        if let resignKeyObserver {
+            NotificationCenter.default.removeObserver(resignKeyObserver)
+            self.resignKeyObserver = nil
         }
+        guard let window else {
+            removeEventMonitors()
+            return
+        }
+        clipboardResponder.owner = self
+        clipboardResponder.nextResponder = window.nextResponder
+        window.nextResponder = clipboardResponder
+        clipboardWindow = window
         updateLocalKeyMonitor()
         // A key released while another window has focus never reaches us.
-        if let resignKeyObserver { NotificationCenter.default.removeObserver(resignKeyObserver) }
-        resignKeyObserver = window.map { window in
-            NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: window, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.endMeasuring() }
-            }
+        resignKeyObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: window, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.endMeasuring() }
+        }
+    }
+
+    func detach() {
+        detachClipboardResponder()
+        removeEventMonitors()
+        if let resignKeyObserver {
+            NotificationCenter.default.removeObserver(resignKeyObserver)
+            self.resignKeyObserver = nil
+        }
+        isEnabled = nil
+        onDelete = nil
+        onSave = nil
+        onCopy = nil
+        onCopyOriginal = nil
+        onUndo = nil
+        onRedo = nil
+        onSelectAll = nil
+        onSelectTool = nil
+        onZoomIn = nil
+        onZoomOut = nil
+        onStepTextSize = nil
+        onFitCanvas = nil
+        onActualSize = nil
+        onToggleCrop = nil
+        onApplyCrop = nil
+        onCancelCrop = nil
+        onNudgeCrop = nil
+        isCropping = nil
+        onCopyColor = nil
+        onPaste = nil
+        onMeasure = nil
+        onNudge = nil
+        onEscape = nil
+    }
+
+    private func removeEventMonitors() {
+        if let localKeyMonitor {
+            NSEvent.removeMonitor(localKeyMonitor)
+            self.localKeyMonitor = nil
+        }
+        if let localKeyUpMonitor {
+            NSEvent.removeMonitor(localKeyUpMonitor)
+            self.localKeyUpMonitor = nil
         }
     }
 

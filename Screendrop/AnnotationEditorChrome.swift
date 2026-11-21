@@ -234,14 +234,13 @@ extension View {
     /// titlebar on macOS 27+, lifted Liquid Glass pill under the window buttons, and floating glass side panes via
     /// `LibraryFloatingSidebar`. Classic, Chip, Reduce Transparency and Increase Contrast restore the native layout.
     func glassWindowChrome(
-        window: NSWindow?,
+        window: NSWindow? = nil,
         hasSidebar: Bool,
         sidebarVisible: Bool,
         inspectorVisible: Bool,
         metrics: Binding<GlassWindowButtonMetrics>
     ) -> some View {
         modifier(GlassWindowChromeModifier(
-            window: window,
             hasSidebar: hasSidebar,
             sidebarVisible: sidebarVisible,
             inspectorVisible: inspectorVisible,
@@ -456,7 +455,6 @@ struct GlassPaneToggleButton: View {
 }
 
 private struct GlassWindowChromeModifier: ViewModifier {
-    let window: NSWindow?
     let hasSidebar: Bool
     let sidebarVisible: Bool
     let inspectorVisible: Bool
@@ -464,37 +462,46 @@ private struct GlassWindowChromeModifier: ViewModifier {
 
     @FloatingGlassChrome private var floatingChrome
     @Environment(\.colorScheme) private var colorScheme
+    @State private var host = WeakWindow()
+    @State private var windowID: ObjectIdentifier?
     @State private var titlebarBeforeGlass: (transparent: Bool, separator: NSTitlebarSeparatorStyle)?
     @State private var trackedWindowID: ObjectIdentifier?
     @State private var fullScreenRevision = 0
 
-    private var windowID: ObjectIdentifier? { window.map(ObjectIdentifier.init) }
-
     func body(content: Content) -> some View {
         content
+            .onWindowChange { window in
+                host.window = window
+                windowID = window.map(ObjectIdentifier.init)
+            }
             .onChange(of: windowID) { _, newID in
                 if newID != trackedWindowID {
                     trackedWindowID = newID
                     titlebarBeforeGlass = nil
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { note in
+                if let window = host.window, note.object as? NSWindow === window {
+                    LibraryWindowButtonCapsule.detach(window)
+                }
+            }
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.willEnterFullScreenNotification)) { note in
-                if let window, note.object as? NSWindow === window {
+                if let window = host.window, note.object as? NSWindow === window {
                     _ = LibraryWindowButtonCapsule.update(window, shown: false)
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { note in
-                if let window, note.object as? NSWindow === window {
+                if let window = host.window, note.object as? NSWindow === window {
                     fullScreenRevision += 1
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { note in
-                if let window, note.object as? NSWindow === window {
+                if let window = host.window, note.object as? NSWindow === window {
                     fullScreenRevision += 1
                 }
             }
             .task(id: "\(floatingChrome)#\(windowID?.hashValue ?? 0)#\(fullScreenRevision)") {
-                if #available(macOS 27, *), let window {
+                if #available(macOS 27, *), let window = host.window {
                     if floatingChrome {
                         if titlebarBeforeGlass == nil {
                             titlebarBeforeGlass = (window.titlebarAppearsTransparent, window.titlebarSeparatorStyle)
@@ -507,9 +514,10 @@ private struct GlassWindowChromeModifier: ViewModifier {
                         titlebarBeforeGlass = nil
                     }
                 }
+                let metricsBinding = $metrics
                 for _ in 0..<10 {
-                    let done = LibraryWindowButtonCapsule.update(window, shown: floatingChrome) { measured in
-                        if measured != metrics { metrics = measured }
+                    let done = LibraryWindowButtonCapsule.update(host.window, shown: floatingChrome) { measured in
+                        if measured != metricsBinding.wrappedValue { metricsBinding.wrappedValue = measured }
                     }
                     if done { break }
                     try? await Task.sleep(for: .milliseconds(200))
@@ -519,7 +527,7 @@ private struct GlassWindowChromeModifier: ViewModifier {
             .task(id: "\(floatingChrome)#\(colorScheme)#\(sidebarVisible)#\(inspectorVisible)#\(windowID?.hashValue ?? 0)") {
                 for _ in 0..<10 {
                     let done = LibraryFloatingSidebar.update(
-                        window,
+                        host.window,
                         floating: floatingChrome,
                         hasSidebar: hasSidebar,
                         inspectorVisible: inspectorVisible
