@@ -108,6 +108,38 @@ nonisolated struct StudioCameraSeekCoordinator: Equatable, Sendable {
     }
 }
 
+nonisolated struct StudioScrubberFocusRegistry: Equatable, Sendable {
+    private var focusedByWindow: [ObjectIdentifier: Set<UUID>] = [:]
+
+    mutating func setFocused(_ id: UUID, in windowID: ObjectIdentifier, focused: Bool) {
+        if focused {
+            focusedByWindow[windowID, default: []].insert(id)
+        } else {
+            remove(id, from: windowID)
+        }
+    }
+
+    mutating func remove(_ id: UUID, from windowID: ObjectIdentifier? = nil) {
+        if let windowID {
+            focusedByWindow[windowID]?.remove(id)
+            if focusedByWindow[windowID]?.isEmpty == true {
+                focusedByWindow.removeValue(forKey: windowID)
+            }
+        } else {
+            for key in Array(focusedByWindow.keys) {
+                focusedByWindow[key]?.remove(id)
+                if focusedByWindow[key]?.isEmpty == true {
+                    focusedByWindow.removeValue(forKey: key)
+                }
+            }
+        }
+    }
+
+    func hasFocusedScrubber(in windowID: ObjectIdentifier) -> Bool {
+        !(focusedByWindow[windowID]?.isEmpty ?? true)
+    }
+}
+
 nonisolated struct StudioPlaybackBoundaryState: Equatable, Sendable {
     var isPlaying: Bool
     var shuttleRate: Float

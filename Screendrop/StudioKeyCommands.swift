@@ -18,19 +18,20 @@ import SwiftUI
 
 struct StudioKeyCommands: NSViewRepresentable {
     /// Inspector scrub handles currently focused via SwiftUI `@FocusState`,
-    /// which own Left/Right arrow keys outside AppKit's `NSText`/`NSControl`
-    /// responder hierarchy.
-    private static var focusedInspectorScrubbers: Set<UUID> = []
+    /// scoped by owning window so a retained focus in one window (such as the
+    /// annotation editor or another Studio window) never makes another Studio
+    /// window yield arrow or navigation keys.
+    private static var inspectorScrubberFocus = StudioScrubberFocusRegistry()
 
-    static var isInspectorScrubberFocused: Bool {
-        !focusedInspectorScrubbers.isEmpty
+    static func isInspectorScrubberFocused(in window: NSWindow) -> Bool {
+        inspectorScrubberFocus.hasFocusedScrubber(in: ObjectIdentifier(window))
     }
 
-    static func setInspectorScrubberFocused(_ id: UUID, focused: Bool) {
-        if focused {
-            focusedInspectorScrubbers.insert(id)
+    static func setInspectorScrubberFocused(_ id: UUID, in window: NSWindow?, focused: Bool) {
+        if focused, let window {
+            inspectorScrubberFocus.setFocused(id, in: ObjectIdentifier(window), focused: true)
         } else {
-            focusedInspectorScrubbers.remove(id)
+            inspectorScrubberFocus.remove(id, from: window.map(ObjectIdentifier.init))
         }
     }
 
@@ -121,7 +122,8 @@ struct StudioKeyCommands: NSViewRepresentable {
             let hasShift = modifiers.contains(.shift)
             let hasOtherModifiers = !modifiers.subtracting(.shift).isEmpty
 
-            let hasFocusedControl = (window.firstResponder is NSControl) || StudioKeyCommands.isInspectorScrubberFocused
+            let hasFocusedControl = (window.firstResponder is NSControl)
+                || StudioKeyCommands.isInspectorScrubberFocused(in: window)
 
             guard let action = StudioPlayback.keyAction(
                 keyCode: event.keyCode,

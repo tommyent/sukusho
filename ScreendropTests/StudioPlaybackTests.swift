@@ -471,6 +471,21 @@ struct StudioPlaybackTests {
         #expect(StudioPlayback.keyAction(keyCode: 115, characters: nil, hasShift: false, hasOtherModifiers: false, isKHeld: false, isARepeat: false, hasFocusedControl: true) == nil)
         #expect(StudioPlayback.keyAction(keyCode: 119, characters: nil, hasShift: false, hasOtherModifiers: false, isKHeld: false, isARepeat: false, hasFocusedControl: true) == nil)
 
+        // Scrubber focus is scoped to its owning window: a focused slider in window A
+        // must not make window B yield Left/Right/Home/End.
+        final class WindowToken {}
+        let windowA = WindowToken()
+        let windowB = WindowToken()
+        let idA = ObjectIdentifier(windowA)
+        let idB = ObjectIdentifier(windowB)
+        let sliderID = UUID()
+        var registry = StudioScrubberFocusRegistry()
+        registry.setFocused(sliderID, in: idA, focused: true)
+        #expect(registry.hasFocusedScrubber(in: idA))
+        #expect(!registry.hasFocusedScrubber(in: idB))
+        registry.remove(sliderID)
+        #expect(!registry.hasFocusedScrubber(in: idA))
+
         // Modified letters and Sukusho's existing shortcuts pass through untouched.
         #expect(StudioPlayback.keyAction(keyCode: 37, characters: "l", hasShift: true, hasOtherModifiers: false, isKHeld: false, isARepeat: false) == nil)
         #expect(StudioPlayback.keyAction(keyCode: 37, characters: "l", hasShift: false, hasOtherModifiers: true, isKHeld: false, isARepeat: false) == nil)
