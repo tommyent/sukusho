@@ -438,8 +438,8 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
                 requestExit: {
                     AXUIElementSetAttributeValue(window, Self.fullScreenAttr, kCFBooleanFalse)
                 },
-                readIsFullScreen: {
-                    self.boolAttribute(Self.fullScreenAttr, on: window)
+                pollFullScreen: {
+                    self.pollFullScreen(on: window)
                 },
                 waitStep: {
                     self.gate.wait(token: token, duration: 0.05)
@@ -537,6 +537,14 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
         if WindowAXPolicy.shouldAbort(err) { return nil }
         guard err == .success, let num = value as? NSNumber else { return false }
         return num.boolValue
+    }
+
+    /// Strict poll for `AXFullScreen` exit: only `.success` with Boolean `false` confirms exit.
+    private func pollFullScreen(on window: AXUIElement) -> WindowFullScreenPoll {
+        var value: CFTypeRef?
+        let err = AXUIElementCopyAttributeValue(window, Self.fullScreenAttr, &value)
+        let boolValue = (err == .success) ? (value as? NSNumber)?.boolValue : nil
+        return WindowFullScreenPoll.from(error: err, boolValue: boolValue)
     }
 
     private static func lookupFocusedWindow(of app: AXUIElement) -> AXUIElement? {

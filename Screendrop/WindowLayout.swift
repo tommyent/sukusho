@@ -541,6 +541,24 @@ nonisolated final class WindowOperationGate: Sendable {
     }
 }
 
+/// Result of reading `AXFullScreen` during an exit-confirmation poll.
+/// Only an explicit `.success` read of Boolean `false` confirms exit; transient read failures
+/// (`.noValue`, `.failure`, non-Boolean values) during the transition keep polling instead of placing early.
+nonisolated enum WindowFullScreenPoll: Equatable, Sendable {
+    case fullScreen
+    case exited
+    case transientFailure
+    case abort
+
+    static func from(error: AXError, boolValue: Bool?) -> Self {
+        if error == .success, let boolValue {
+            return boolValue ? .fullScreen : .exited
+        }
+        if WindowAXPolicy.shouldAbort(error) { return .abort }
+        return .transientFailure
+    }
+}
+
 /// Bounded confirmation loop for exiting full screen before placing an external AX window.
 nonisolated enum WindowFullScreenExit {
     enum Outcome: Equatable, Sendable {
@@ -555,15 +573,21 @@ nonisolated enum WindowFullScreenExit {
         maxPolls: Int = 40,
         shouldContinue: () -> Bool = { true },
         requestExit: () -> AXError,
-        readIsFullScreen: () -> Bool?,
+        pollFullScreen: () -> WindowFullScreenPoll,
         waitStep: () -> Bool
     ) -> Outcome {
         guard shouldContinue() else { return .cancelled }
         guard requestExit() == .success else { return .writeFailed }
         for _ in 0..<maxPolls {
             guard waitStep() else { return .cancelled }
-            guard let stillFullScreen = readIsFullScreen() else { return .readFailed }
-            if !stillFullScreen { return .exited }
+            switch pollFullScreen() {
+            case .exited:
+                return .exited
+            case .fullScreen, .transientFailure:
+                continue
+            case .abort:
+                return .readFailed
+            }
         }
         return .timedOut
     }

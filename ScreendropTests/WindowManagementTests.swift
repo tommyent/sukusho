@@ -418,34 +418,64 @@ struct WindowManagementTests {
         #expect(!gate.isCurrent(second))
     }
 
-    @Test func fullScreenExitConfirmsBeforePlacingAndStopsOnRejectionOrTimeout() {
+    @Test func fullScreenExitConfirmsOnlyOnExplicitFalseAndHandlesTransientErrors() {
+        // Error classification: only `.success` + `false` confirms exit; `.noValue`/`.failure` stay transient.
+        #expect(WindowFullScreenPoll.from(error: .success, boolValue: false) == .exited)
+        #expect(WindowFullScreenPoll.from(error: .success, boolValue: true) == .fullScreen)
+        #expect(WindowFullScreenPoll.from(error: .noValue, boolValue: nil) == .transientFailure)
+        #expect(WindowFullScreenPoll.from(error: .failure, boolValue: nil) == .transientFailure)
+        #expect(WindowFullScreenPoll.from(error: .success, boolValue: nil) == .transientFailure)
+        #expect(WindowFullScreenPoll.from(error: .cannotComplete, boolValue: nil) == .abort)
+        #expect(WindowFullScreenPoll.from(error: .invalidUIElement, boolValue: nil) == .abort)
+
+        // Cancelled before exit write never writes AXFullScreen = false.
+        var exitWrites = 0
+        let cancelledBeforeWrite = WindowFullScreenExit.exitAndConfirm(
+            maxPolls: 5,
+            shouldContinue: { false },
+            requestExit: { exitWrites += 1; return .success },
+            pollFullScreen: { .exited },
+            waitStep: { true }
+        )
+        #expect(cancelledBeforeWrite == .cancelled)
+        #expect(exitWrites == 0)
+
         // Rejected AXFullScreen write stops immediately without polling.
         var polls = 0
         let rejected = WindowFullScreenExit.exitAndConfirm(
             maxPolls: 5,
             requestExit: { .attributeUnsupported },
-            readIsFullScreen: { polls += 1; return false },
+            pollFullScreen: { polls += 1; return .exited },
             waitStep: { true }
         )
         #expect(rejected == .writeFailed)
         #expect(polls == 0)
 
-        // Delayed exit confirms once AXFullScreen reports false.
-        var states = [true, true, false]
+        // Transient `.noValue`/`.failure` polls during transition do NOT falsely confirm exit; waits for `.exited`.
+        var states: [WindowFullScreenPoll] = [.fullScreen, .transientFailure, .transientFailure, .exited]
         let exited = WindowFullScreenExit.exitAndConfirm(
-            maxPolls: 5,
+            maxPolls: 6,
             requestExit: { .success },
-            readIsFullScreen: { states.removeFirst() },
+            pollFullScreen: { states.removeFirst() },
             waitStep: { true }
         )
         #expect(exited == .exited)
         #expect(states.isEmpty)
 
+        // Persistent transient failures time out instead of placing prematurely.
+        let transientTimeout = WindowFullScreenExit.exitAndConfirm(
+            maxPolls: 3,
+            requestExit: { .success },
+            pollFullScreen: { .transientFailure },
+            waitStep: { true }
+        )
+        #expect(transientTimeout == .timedOut)
+
         // Window that stays full-screen past maxPolls times out instead of placing while full-screen.
         let timedOut = WindowFullScreenExit.exitAndConfirm(
             maxPolls: 3,
             requestExit: { .success },
-            readIsFullScreen: { true },
+            pollFullScreen: { .fullScreen },
             waitStep: { true }
         )
         #expect(timedOut == .timedOut)
@@ -454,16 +484,16 @@ struct WindowManagementTests {
         let cancelled = WindowFullScreenExit.exitAndConfirm(
             maxPolls: 5,
             requestExit: { .success },
-            readIsFullScreen: { true },
+            pollFullScreen: { .fullScreen },
             waitStep: { false }
         )
         #expect(cancelled == .cancelled)
 
-        // Messaging timeout / read error mid-exit stops immediately.
+        // Messaging timeout / dead target aborts immediately.
         let readFailed = WindowFullScreenExit.exitAndConfirm(
             maxPolls: 5,
             requestExit: { .success },
-            readIsFullScreen: { nil },
+            pollFullScreen: { .abort },
             waitStep: { true }
         )
         #expect(readFailed == .readFailed)
