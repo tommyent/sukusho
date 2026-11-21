@@ -310,7 +310,9 @@ nonisolated enum StudioPlayback {
     }
 
     /// Seconds from `ss`, `m:ss`, or `h:mm:ss`, allowing a decimal fraction on
-    /// the last component.
+    /// the last component. Bare seconds may be 60 or larger; components after
+    /// the first colon must stay below 60, and the accumulated total must stay
+    /// finite.
     static func seconds(from text: String) -> TimeInterval? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
@@ -326,7 +328,11 @@ nonisolated enum StudioPlayback {
             guard allowed, let value = Double(part), value.isFinite, value >= 0 else {
                 return nil
             }
+            if index > 0, value >= 60 {
+                return nil
+            }
             total = total * 60 + value
+            guard total.isFinite else { return nil }
         }
         return total
     }

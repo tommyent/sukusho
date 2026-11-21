@@ -8,15 +8,19 @@ struct StudioPlaybackTests {
         #expect(StudioPlayback.seconds(from: "0") == 0)
         #expect(StudioPlayback.seconds(from: "12") == 12)
         #expect(StudioPlayback.seconds(from: "12.5") == 12.5)
+        #expect(StudioPlayback.seconds(from: "60") == 60)
+        #expect(StudioPlayback.seconds(from: "125.5") == 125.5)
         #expect(StudioPlayback.seconds(from: ".25") == 0.25)
         #expect(StudioPlayback.seconds(from: "1:05") == 65)
         #expect(StudioPlayback.seconds(from: "01:05.5") == 65.5)
+        #expect(StudioPlayback.seconds(from: "90:59.9") == 5459.9)
         #expect(StudioPlayback.seconds(from: "1:02:03") == 3723)
         #expect(StudioPlayback.seconds(from: "1:02:03.25") == 3723.25)
         #expect(StudioPlayback.seconds(from: "  00:12.4\n") == 12.4)
     }
 
     @Test func timecodeParserRejectsMalformedInputs() {
+        let overflowMinutes = String(repeating: "9", count: 308) + ":0"
         let invalid = [
             "",
             "   ",
@@ -25,6 +29,12 @@ struct StudioPlaybackTests {
             "5:",
             "1::5",
             "1:2:3:4",
+            "1:60",
+            "1:60.0",
+            "1:60:00",
+            "1:00:60",
+            "1:00:60.5",
+            overflowMinutes,
             "-5",
             "1:-05",
             "+5",
