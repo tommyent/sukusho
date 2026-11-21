@@ -332,6 +332,7 @@ final class RecordingClipTimelineControl: NSView {
                 : max(clip.sourceStart, clip.sourceEnd - 0.001)
             trimPreviewDidChange?(initialSource)
         } else if event.modifierFlags.contains(.option), timeline.segments.count > 1, reorderRequested != nil {
+            clearHover()
             dragTarget = .reorder(clipID: location.segmentID)
             reorderDestination = location.segmentIndex
         } else {

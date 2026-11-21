@@ -357,9 +357,11 @@ struct StudioEditingTests {
         let trimmed = try #require(committed)
         #expect(abs(trimmed.sourceEnd - 4.0) < 0.001)
 
-        // ⌥-drag on clip 2 to the start of clip 1 requests reorder to index 0.
+        // ⌥-drag on clip 2 to the start of clip 1 clears stale hover preview and requests reorder to index 0.
         var reordered: (UUID, Int)?
+        var lastHover: TimeInterval? = 9.0
         control.reorderRequested = { reordered = ($0, $1) }
+        control.hoverTimeDidChange = { lastHover = $0 }
         control.update(
             timeline: timeline,
             sourceDuration: 10,
@@ -367,7 +369,10 @@ struct StudioEditingTests {
             selectedClipID: second.id,
             playheadTime: 4.0
         )
+        control.mouseMoved(with: try mouse(.mouseMoved, x: 375))
+        #expect(lastHover != nil)
         control.mouseDown(with: try mouse(.leftMouseDown, x: 375, flags: .option))
+        #expect(lastHover == nil)
         control.mouseDragged(with: try mouse(.leftMouseDragged, x: 40, flags: .option))
         // Drawing mid-reorder renders the ghost + insertion bar without crashing.
         if let rep = control.bitmapImageRepForCachingDisplay(in: control.bounds) {
