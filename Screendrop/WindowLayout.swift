@@ -458,6 +458,15 @@ nonisolated enum WindowTargetState<OwnWindow: Equatable, ExternalWindow: Equatab
     }
 }
 
+/// Pure check run right before making the popup key: keeps the captured window target only if the
+/// same app is still frontmost after the bounded off-main lookup finished.
+nonisolated enum WindowCaptureFocusCheck {
+    static func accept(capturedPID: pid_t?, currentFrontPID: pid_t?) -> Bool {
+        guard let capturedPID, let currentFrontPID else { return false }
+        return capturedPID == currentFrontPID
+    }
+}
+
 /// Two-phase execution for an Apps command on a captured external window:
 /// validates the window, waits for the main actor to confirm it closed the originating popup session,
 /// and starts placement only after that confirmation.

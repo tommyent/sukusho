@@ -334,6 +334,12 @@ struct WindowManagementTests {
                 == .needsAccessibility)
         #expect(WindowTargetState<String, String>.externalNeedsAccessibility(isTrustedNow: true).resolve(ownIsVisible: { _ in true })
                 == .reopenAfterGrant(WindowTargetState<String, String>.reopenAfterGrantMessage))
+
+        // Focus check before presenting: accepts only when the same app is still frontmost.
+        #expect(WindowCaptureFocusCheck.accept(capturedPID: 42, currentFrontPID: 42))
+        #expect(!WindowCaptureFocusCheck.accept(capturedPID: 42, currentFrontPID: 99))
+        #expect(!WindowCaptureFocusCheck.accept(capturedPID: 42, currentFrontPID: nil))
+        #expect(!WindowCaptureFocusCheck.accept(capturedPID: nil, currentFrontPID: 42))
     }
 
     @Test func capturedExecutionAcknowledgesOriginatingPopupCloseBeforePlacement() {

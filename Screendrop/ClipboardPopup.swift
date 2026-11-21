@@ -117,7 +117,15 @@ final class ClipboardPopupPresenter {
             let captured = await WindowManager.shared.captureTargetBeforePopup(for: front)
             guard let self, !Task.isCancelled, self.openGeneration == gen else { return }
             self.pendingOpenTask = nil
-            self.present(panel, capturedWindow: captured)
+            // If foreground focus switched while the off-main lookup was in flight, open without a
+            // window target so Apps never moves a window from the app that lost focus.
+            let currentFront = NSWorkspace.shared.frontmostApplication
+            let sameApp = WindowCaptureFocusCheck.accept(
+                capturedPID: front?.processIdentifier,
+                currentFrontPID: currentFront?.processIdentifier
+            )
+            if !sameApp { self.target = currentFront }
+            self.present(panel, capturedWindow: sameApp ? captured : .unavailable)
         }
     }
 
