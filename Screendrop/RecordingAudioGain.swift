@@ -165,7 +165,7 @@ nonisolated enum RecordingAudioGain {
                 let duration = range.duration.isNumeric && range.duration.seconds > 0
                     ? range.duration.seconds
                     : Double(count) / max(format.mSampleRate, 1)
-                applyEnvelope(
+                RecordingAudioGain.applyEnvelope(
                     to: buffers,
                     frameCount: count,
                     startTime: start,
