@@ -488,3 +488,18 @@ nonisolated enum WindowFullScreenExit {
         return .timedOut
     }
 }
+
+/// Pure decision for an explicit user action requiring macOS Accessibility permission:
+/// first attempt triggers macOS's prompt, subsequent explicit attempts open Privacy & Security › Accessibility.
+nonisolated enum AccessibilityPermissionFlow {
+    enum Action: Equatable, Sendable {
+        case granted
+        case promptSystem
+        case openSettings
+    }
+
+    static func decide(isTrusted: Bool, hasPromptedBefore: Bool) -> Action {
+        if isTrusted { return .granted }
+        return hasPromptedBefore ? .openSettings : .promptSystem
+    }
+}

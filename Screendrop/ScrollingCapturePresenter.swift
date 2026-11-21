@@ -88,9 +88,6 @@ final class ScrollingCapturePresenter {
     @ObservationIgnored private var lastSampleTime: TimeInterval = 0
     /// The display time of the first frame refused since the last one placed.
     @ObservationIgnored private var waitingSince: TimeInterval = 0
-    /// macOS shows the Accessibility prompt at most once, so it's asked for
-    /// on the first press only; after that the button opens Settings.
-    @ObservationIgnored private var didRequestScrollPermission = false
 
     private init() {}
 
@@ -349,16 +346,7 @@ final class ScrollingCapturePresenter {
     func toggleAutoScroll() {
         guard let autoScroller else { return }
         if isAutoScrolling { return autoScroller.stop() }
-        guard AXIsProcessTrusted() else {
-            if didRequestScrollPermission, let url = URL(
-                string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-                NSWorkspace.shared.open(url)
-            } else {
-                didRequestScrollPermission = true
-                // kAXTrustedCheckOptionPrompt's value, spelled out: the imported
-                // constant is a mutable global.
-                _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
-            }
+        guard AccessibilityPermission.ensureGrantedOnUserAction() else {
             needsScrollPermission = true
             return
         }

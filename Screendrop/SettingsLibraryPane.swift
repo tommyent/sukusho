@@ -3,6 +3,7 @@
 //  Screendrop
 //
 
+import AppKit
 import SwiftUI
 
 /// Settings › Library: what the Library reads from captures and names them with.
@@ -81,6 +82,7 @@ struct LibrarySettingsPane: View {
 /// (the owner, 2026-11-17).
 struct ShortcutsSettingsPane: View {
     @AppStorage(ScreendropPreferences.windowManagementEnabledKey) private var windowManagementEnabled = false
+    @State private var accessibilityGranted = false
 
     var body: some View {
         // The section scrolls a row's messages into view with this.
@@ -99,14 +101,40 @@ struct ShortcutsSettingsPane: View {
                     }
                     .toggleStyle(.switch)
                     .onChange(of: windowManagementEnabled) { _, on in
-                        if !on { WindowManager.shared.cancelPending() }
+                        if on {
+                            accessibilityGranted = AccessibilityPermission.isGranted
+                        } else {
+                            WindowManager.shared.cancelPending()
+                        }
                         HotkeyManager.shared.reloadHotkeys()
+                    }
+                    if windowManagementEnabled, !accessibilityGranted {
+                        HStack(alignment: .center, spacing: DS.Space.m) {
+                            Label {
+                                Text("Moving other apps’ windows uses Accessibility (the same permission clipboard paste and auto-scroll use).")
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            } icon: {
+                                Image(systemName: "exclamationmark.triangle.fill").symbolRenderingMode(.multicolor)
+                            }
+                            .font(.caption)
+                            Spacer(minLength: 0)
+                            Button("Open Accessibility…") { AccessibilityPermission.openSettings() }
+                                .controlSize(.small)
+                                .help("Allow Sukusho in Privacy & Security › Accessibility")
+                        }
                     }
                 }
             }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
             .contentMargins(.top, 8, for: .scrollContent)
+            .onAppear {
+                if windowManagementEnabled { accessibilityGranted = AccessibilityPermission.isGranted }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+                if windowManagementEnabled { accessibilityGranted = AccessibilityPermission.isGranted }
+            }
         }
     }
 }

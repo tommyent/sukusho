@@ -2,6 +2,40 @@ import AppKit
 import ApplicationServices
 import OSLog
 
+/// Shared macOS Accessibility check and explicit-action recovery flow (reused by window management
+/// and auto-scroll): never prompts at launch; first explicit use asks macOS to prompt, repeat
+/// explicit use opens Privacy & Security › Accessibility.
+@MainActor
+enum AccessibilityPermission {
+    static let settingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
+    static let windowGuidance = "Allow Sukusho in Accessibility to move windows."
+    private static var hasPrompted = false
+
+    static var isGranted: Bool { AXIsProcessTrusted() }
+
+    /// Checks Accessibility on an explicit user action. Returns `true` if granted; otherwise triggers
+    /// macOS's prompt once and opens Privacy & Security › Accessibility on subsequent explicit attempts.
+    @discardableResult
+    static func ensureGrantedOnUserAction() -> Bool {
+        switch AccessibilityPermissionFlow.decide(isTrusted: AXIsProcessTrusted(), hasPromptedBefore: hasPrompted) {
+        case .granted:
+            return true
+        case .promptSystem:
+            hasPrompted = true
+            // kAXTrustedCheckOptionPrompt's value, spelled out: the imported constant is a mutable global.
+            _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+            return false
+        case .openSettings:
+            openSettings()
+            return false
+        }
+    }
+
+    static func openSettings() {
+        NSWorkspace.shared.open(settingsURL)
+    }
+}
+
 /// Weak reference to an AppKit window captured before the clipboard popup becomes key.
 @MainActor
 final class WeakWindowBox {
@@ -33,7 +67,6 @@ final class WindowManager {
     private let gate = WindowOperationGate()
     private lazy var axWorker = WindowAXWorker(gate: gate)
     private var nextCaptureID: UInt64 = 0
-    private var didPromptAccessibility = false
     private var fullScreenExitObserver: NSObjectProtocol?
     private var fullScreenExitTimeout: DispatchWorkItem?
 
@@ -102,8 +135,7 @@ final class WindowManager {
             return
         }
 
-        guard AXIsProcessTrusted() else {
-            promptAccessibilityOnce()
+        guard AccessibilityPermission.ensureGrantedOnUserAction() else {
             NSSound.beep()
             return
         }
@@ -154,10 +186,9 @@ final class WindowManager {
                 onFailure(WindowTargetState<Int, Int>.goneMessage)
                 return
             }
-            guard AXIsProcessTrusted() else {
-                promptAccessibilityOnce()
+            guard AccessibilityPermission.ensureGrantedOnUserAction() else {
                 NSSound.beep()
-                onFailure("Allow Sukusho in Accessibility to move windows.")
+                onFailure(AccessibilityPermission.windowGuidance)
                 return
             }
             // Permission was granted while the popup was open; capture wasn't possible earlier.
@@ -182,10 +213,9 @@ final class WindowManager {
                 onFailure(WindowTargetState<Int, Int>.goneMessage)
                 return
             }
-            guard AXIsProcessTrusted() else {
-                promptAccessibilityOnce()
+            guard AccessibilityPermission.ensureGrantedOnUserAction() else {
                 NSSound.beep()
-                onFailure("Allow Sukusho in Accessibility to move windows.")
+                onFailure(AccessibilityPermission.windowGuidance)
                 return
             }
             let screens = currentScreens()
@@ -218,13 +248,6 @@ final class WindowManager {
                 }
             )
         }
-    }
-
-    private func promptAccessibilityOnce() {
-        guard !didPromptAccessibility else { return }
-        didPromptAccessibility = true
-        // kAXTrustedCheckOptionPrompt's value, spelled out: the imported constant is a mutable global.
-        _ = AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
     }
 
     // MARK: - Own windows (AppKit)

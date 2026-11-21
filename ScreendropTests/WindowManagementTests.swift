@@ -443,4 +443,11 @@ struct WindowManagementTests {
         #expect(corrected?.x == 70.0)
         #expect(corrected?.y == 25.0)
     }
+
+    @Test func accessibilityFlowPromptsOnceThenOpensSettingsOnRepeatUserAction() {
+        #expect(AccessibilityPermissionFlow.decide(isTrusted: true, hasPromptedBefore: false) == .granted)
+        #expect(AccessibilityPermissionFlow.decide(isTrusted: true, hasPromptedBefore: true) == .granted)
+        #expect(AccessibilityPermissionFlow.decide(isTrusted: false, hasPromptedBefore: false) == .promptSystem)
+        #expect(AccessibilityPermissionFlow.decide(isTrusted: false, hasPromptedBefore: true) == .openSettings)
+    }
 }
