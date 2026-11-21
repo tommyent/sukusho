@@ -60,6 +60,63 @@ nonisolated enum ClipboardPopupMode: String, CaseIterable, Identifiable, Sendabl
     }
 }
 
+/// Which responder currently holds keyboard focus inside the clipboard popup.
+nonisolated enum ClipboardPopupFocus: Equatable, Sendable {
+    case search
+    case control
+    case other
+}
+
+/// Pure routing decision for key events when the launcher option is enabled.
+nonisolated enum ClipboardPopupKeyPolicy {
+    enum Decision: Equatable, Sendable {
+        case toggleMode
+        case handlePopupKey
+        case passThroughWithoutRefocus
+    }
+
+    static let tabKeyCode = 48
+    static let spaceKeyCode = 49
+    static let returnKeyCode = 36
+    static let keypadEnterKeyCode = 76
+    static let escapeKeyCode = 53
+    static let arrowKeyCodes: Set<Int> = [123, 124, 125, 126]
+
+    /// Decides how to handle a key press when `launcherEnabled` is true:
+    /// - Marked text (IME composition) in the search field passes straight through.
+    /// - Plain Tab toggles Clipboard ↔ Apps only while the search field has focus.
+    /// - Shift-Tab always passes through without refocusing search (so keyboard navigation works).
+    /// - When a non-search control has focus, Tab, Space, Return, and arrows pass through to that control
+    ///   without stealing focus back to search; Escape and modified shortcuts still reach the popup.
+    static func decide(
+        keyCode: Int,
+        hasShift: Bool,
+        hasCommandOrControlOrOption: Bool,
+        focus: ClipboardPopupFocus,
+        hasMarkedText: Bool
+    ) -> Decision {
+        if focus == .search, hasMarkedText {
+            return .passThroughWithoutRefocus
+        }
+        if keyCode == tabKeyCode, !hasCommandOrControlOrOption {
+            if !hasShift, focus == .search {
+                return .toggleMode
+            }
+            return .passThroughWithoutRefocus
+        }
+        if focus == .control, !hasCommandOrControlOrOption {
+            if keyCode == escapeKeyCode, !hasShift {
+                return .handlePopupKey
+            }
+            if keyCode == spaceKeyCode || keyCode == returnKeyCode || keyCode == keypadEnterKeyCode
+                || arrowKeyCodes.contains(keyCode) {
+                return .passThroughWithoutRefocus
+            }
+        }
+        return .handlePopupKey
+    }
+}
+
 // MARK: - App Catalog & Scanner (ported from Unleash)
 
 /// One app or folder entry. `path` is the identity (favorites are kept by path).

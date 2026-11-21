@@ -190,38 +190,59 @@ final class ClipboardPopupPresenter {
         return panel
     }
 
+    private func currentFocus() -> ClipboardPopupFocus {
+        guard let panel else { return .other }
+        let responder = panel.firstResponder
+        if let field = Self.searchField(in: panel.contentView),
+           responder === field || (field.currentEditor() != nil && responder === field.currentEditor()) {
+            return .search
+        }
+        if responder == nil || responder === panel || responder === panel.contentView {
+            return .other
+        }
+        return .control
+    }
+
     /// Keys reach the popup while its search field has the focus.
     private func installKeyMonitor() {
         guard keyMonitor == nil else { return }
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, !confirmingDeletion, event.window === panel else { return event }
-            guard handle(event) else {
-                // A keystroke the popup doesn't handle is typing: it goes to the search field, focused first if
-                // something took the focus away, so a quick first word isn't lost.
-                focusSearchField()
+            if !ScreendropPreferences.clipboardLauncherEnabled {
+                // Exact baseline path when the launcher option is off.
+                guard handleClipboardKey(event) else {
+                    focusSearchField()
+                    return event
+                }
+                return nil
+            }
+            let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
+            let focus = currentFocus()
+            let hasMarkedText = (panel?.firstResponder as? NSTextView)?.hasMarkedText() ?? false
+            let decision = ClipboardPopupKeyPolicy.decide(
+                keyCode: Int(event.keyCode),
+                hasShift: flags.contains(.shift),
+                hasCommandOrControlOrOption: !flags.intersection([.command, .control, .option]).isEmpty,
+                focus: focus,
+                hasMarkedText: hasMarkedText
+            )
+            switch decision {
+            case .toggleMode:
+                toggleMode()
+                return nil
+            case .passThroughWithoutRefocus:
+                return event
+            case .handlePopupKey:
+                let handled = state.mode == .apps ? handleAppsKey(event, flags: flags) : handleClipboardKey(event)
+                if handled { return nil }
+                if focus != .control { focusSearchField() }
                 return event
             }
-            return nil
         }
     }
 
-    private func handle(_ event: NSEvent) -> Bool {
-        if let editor = panel?.firstResponder as? NSTextView, editor.hasMarkedText() {
-            return false
-        }
+    private func handleClipboardKey(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
-        let launcherEnabled = ScreendropPreferences.clipboardLauncherEnabled
-        if Int(event.keyCode) == kVK_Tab, flags.isEmpty || flags == [.shift] {
-            let next = state.mode.afterTab(shifted: flags == [.shift], launcherEnabled: launcherEnabled)
-            if next != state.mode {
-                toggleMode()
-                return true
-            }
-        }
-        let activeMode: ClipboardPopupMode = launcherEnabled ? state.mode : .clipboard
-        if activeMode == .apps {
-            return handleAppsKey(event, flags: flags)
-        }
         switch (Int(event.keyCode), flags) {
         case (kVK_UpArrow, []): state.move(by: -1)
         case (kVK_DownArrow, []): state.move(by: 1)

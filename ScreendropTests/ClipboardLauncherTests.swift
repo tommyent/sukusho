@@ -435,4 +435,47 @@ struct ClipboardPopupTabToggleTests {
         #expect(!session.isCurrent(first))
         #expect(session.isCurrent(second))
     }
+
+    @Test func keyPolicyScopesTabAndRowKeysToSearchAndPassesThroughControlsAndIME() {
+        // Plain Tab toggles only when the search field has focus.
+        #expect(ClipboardPopupKeyPolicy.decide(
+            keyCode: ClipboardPopupKeyPolicy.tabKeyCode, hasShift: false,
+            hasCommandOrControlOrOption: false, focus: .search, hasMarkedText: false
+        ) == .toggleMode)
+        #expect(ClipboardPopupKeyPolicy.decide(
+            keyCode: ClipboardPopupKeyPolicy.tabKeyCode, hasShift: true,
+            hasCommandOrControlOrOption: false, focus: .search, hasMarkedText: false
+        ) == .passThroughWithoutRefocus)
+        #expect(ClipboardPopupKeyPolicy.decide(
+            keyCode: ClipboardPopupKeyPolicy.tabKeyCode, hasShift: false,
+            hasCommandOrControlOrOption: false, focus: .control, hasMarkedText: false
+        ) == .passThroughWithoutRefocus)
+
+        // IME composition in the search field lets Tab, Return, Escape, and arrows reach the field editor.
+        for code in [ClipboardPopupKeyPolicy.tabKeyCode, ClipboardPopupKeyPolicy.returnKeyCode,
+                     ClipboardPopupKeyPolicy.escapeKeyCode, 125] {
+            #expect(ClipboardPopupKeyPolicy.decide(
+                keyCode: code, hasShift: false, hasCommandOrControlOrOption: false,
+                focus: .search, hasMarkedText: true
+            ) == .passThroughWithoutRefocus)
+        }
+
+        // Focused non-search controls keep Space, Return, Tab, and arrows without stealing focus back to search.
+        for code in [ClipboardPopupKeyPolicy.spaceKeyCode, ClipboardPopupKeyPolicy.returnKeyCode,
+                     ClipboardPopupKeyPolicy.keypadEnterKeyCode, ClipboardPopupKeyPolicy.tabKeyCode, 125, 126] {
+            #expect(ClipboardPopupKeyPolicy.decide(
+                keyCode: code, hasShift: false, hasCommandOrControlOrOption: false,
+                focus: .control, hasMarkedText: false
+            ) == .passThroughWithoutRefocus)
+        }
+        // Escape and Command shortcuts still reach the popup while a control is focused.
+        #expect(ClipboardPopupKeyPolicy.decide(
+            keyCode: ClipboardPopupKeyPolicy.escapeKeyCode, hasShift: false,
+            hasCommandOrControlOrOption: false, focus: .control, hasMarkedText: false
+        ) == .handlePopupKey)
+        #expect(ClipboardPopupKeyPolicy.decide(
+            keyCode: 40, hasShift: false,
+            hasCommandOrControlOrOption: true, focus: .control, hasMarkedText: false
+        ) == .handlePopupKey)
+    }
 }
