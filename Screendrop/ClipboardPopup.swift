@@ -196,15 +196,20 @@ final class ClipboardPopupPresenter {
             }
         case .windowCommand(let action):
             guard !secondary else { return }
+            let sessionID = openGeneration
             let captured = capturedWindowTarget ?? .unavailable
             WindowManager.shared.perform(
                 action,
                 on: captured,
-                onWillMove: { [weak self] in
-                    self?.capturedWindowTarget = nil
-                    self?.close()
+                confirmClose: { [weak self] in
+                    guard let self, self.openGeneration == sessionID, self.isVisible else { return false }
+                    self.capturedWindowTarget = nil
+                    self.close()
+                    return true
                 },
-                onFailure: { message in
+                onFailure: { [weak self] message in
+                    guard let self, self.openGeneration == sessionID, self.isVisible else { return }
+                    NSSound.beep()
                     ClipboardLauncherModel.shared.feedback.show(message)
                 }
             )

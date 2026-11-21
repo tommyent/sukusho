@@ -150,34 +150,32 @@ final class WindowManager {
     }
 
     /// Apps command path: moves only the exact window captured before the popup opened.
-    /// Never falls back to another app or window if the captured target disappeared.
+    /// `confirmClose` runs on `@MainActor` and returns `true` only if it closed the originating popup
+    /// session; placement starts only after that acknowledgement, and stale callbacks never touch a newer popup.
     func perform(
         _ action: WindowAction,
         on captured: CapturedWindowTarget,
-        onWillMove: @escaping () -> Void,
-        onFailure: @escaping (String) -> Void
+        confirmClose: @escaping @MainActor () -> Bool,
+        onFailure: @escaping @MainActor (String) -> Void
     ) {
         switch captured {
         case .own(let box):
             switch WindowTargetState<NSWindow, Int>.own(box.window).resolve(ownIsVisible: { $0.isVisible }) {
             case .moveOwn(let window):
+                guard confirmClose() else { return }
                 let token = gate.begin()
-                onWillMove()
                 perform(action, onOwnWindow: window, token: token)
             case .gone(let message):
-                NSSound.beep()
                 onFailure(message)
             case .moveExternal, .needsAccessibility, .reopenAfterGrant:
                 break
             }
 
         case .unavailable:
-            NSSound.beep()
             onFailure(WindowTargetState<Int, Int>.unavailableMessage)
 
         case .externalNeedsAccessibility(let app):
             if app.isTerminated {
-                NSSound.beep()
                 onFailure(WindowTargetState<Int, Int>.goneMessage)
                 return
             }
@@ -186,10 +184,8 @@ final class WindowManager {
             let granted = AccessibilityPermission.ensureGrantedOnUserAction()
             switch WindowTargetState<Int, Int>.externalNeedsAccessibility(isTrustedNow: granted).resolve(ownIsVisible: { _ in false }) {
             case .needsAccessibility:
-                NSSound.beep()
                 onFailure(AccessibilityPermission.windowGuidance)
             case .reopenAfterGrant(let message):
-                NSSound.beep()
                 onFailure(message)
             case .moveOwn, .moveExternal, .gone:
                 break
@@ -197,18 +193,15 @@ final class WindowManager {
 
         case .external(let app, let axApp, let window):
             guard !app.isTerminated else {
-                NSSound.beep()
                 onFailure(WindowTargetState<Int, Int>.goneMessage)
                 return
             }
             guard AccessibilityPermission.ensureGrantedOnUserAction() else {
-                NSSound.beep()
                 onFailure(AccessibilityPermission.windowGuidance)
                 return
             }
             let screens = currentScreens()
             guard !screens.isEmpty else {
-                NSSound.beep()
                 onFailure("Couldn’t read display layout.")
                 return
             }
@@ -219,16 +212,24 @@ final class WindowManager {
                 window: window,
                 screens: screens,
                 token: token,
-                onValidated: {
-                    Task { @MainActor in onWillMove() }
+                confirmCloseOnMain: {
+                    // Called from the serial AX background queue; main actor never waits on the AX queue.
+                    let sem = DispatchSemaphore(value: 0)
+                    let closedBox = OSAllocatedUnfairLock(initialState: false)
+                    DispatchQueue.main.async {
+                        let closed = MainActor.assumeIsolated { confirmClose() }
+                        closedBox.withLock { $0 = closed }
+                        sem.signal()
+                    }
+                    _ = sem.wait(timeout: .now() + .seconds(2))
+                    return closedBox.withLock { $0 }
                 },
                 completion: { outcome in
                     Task { @MainActor in
                         switch outcome {
-                        case .moved, .cancelled:
+                        case .moved, .cancelled, .sessionEnded:
                             break
                         case .gone:
-                            NSSound.beep()
                             onFailure(WindowTargetState<Int, Int>.goneMessage)
                         case .failed:
                             NSSound.beep()
@@ -321,13 +322,6 @@ final class WindowManager {
 /// Runs external `AXUIElement` calls on a dedicated serial background queue so an unresponsive
 /// foreground app never stalls Sukusho's main thread.
 private nonisolated final class WindowAXWorker: @unchecked Sendable {
-    enum CapturedOutcome: Sendable {
-        case moved
-        case cancelled
-        case gone
-        case failed
-    }
-
     private static let axTimeout: Float = 0.5
     private static let enhancedUIAttr = "AXEnhancedUserInterface" as CFString
     private static let fullScreenAttr = "AXFullScreen" as CFString
@@ -404,25 +398,19 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
         window: AXElementBox,
         screens: [DisplayScreen],
         token: UInt64,
-        onValidated: @escaping @Sendable () -> Void,
-        completion: @escaping @Sendable (CapturedOutcome) -> Void
+        confirmCloseOnMain: @escaping @Sendable () -> Bool,
+        completion: @escaping @Sendable (WindowCapturedExecution.Outcome) -> Void
     ) {
         queue.async {
-            guard self.gate.isCurrent(token) else {
-                completion(.cancelled)
-                return
-            }
-            guard self.readFrame(of: window.element) != nil else {
-                completion(.gone)
-                return
-            }
-            onValidated()
-            let ok = self.performSerialized(action, window: window.element, in: axApp.element, screens: screens, token: token)
-            if !self.gate.isCurrent(token) {
-                completion(.cancelled)
-            } else {
-                completion(ok ? .moved : .failed)
-            }
+            let outcome = WindowCapturedExecution.run(
+                isCurrent: { self.gate.isCurrent(token) },
+                validateWindow: { self.readFrame(of: window.element) != nil },
+                confirmCloseOriginatingPopup: confirmCloseOnMain,
+                place: {
+                    self.performSerialized(action, window: window.element, in: axApp.element, screens: screens, token: token)
+                }
+            )
+            completion(outcome)
         }
     }
 

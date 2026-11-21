@@ -454,6 +454,35 @@ nonisolated enum WindowTargetState<OwnWindow: Equatable, ExternalWindow: Equatab
     }
 }
 
+/// Two-phase execution for an Apps command on a captured external window:
+/// validates the window, waits for the main actor to confirm it closed the originating popup session,
+/// and starts placement only after that confirmation.
+nonisolated enum WindowCapturedExecution {
+    enum Outcome: Equatable, Sendable {
+        case moved
+        case gone
+        case sessionEnded
+        case cancelled
+        case failed
+    }
+
+    static func run(
+        isCurrent: () -> Bool,
+        validateWindow: () -> Bool,
+        confirmCloseOriginatingPopup: () -> Bool,
+        place: () -> Bool
+    ) -> Outcome {
+        guard isCurrent() else { return .cancelled }
+        guard validateWindow() else { return .gone }
+        guard isCurrent() else { return .cancelled }
+        guard confirmCloseOriginatingPopup() else { return .sessionEnded }
+        guard isCurrent() else { return .cancelled }
+        let ok = place()
+        if !isCurrent() { return .cancelled }
+        return ok ? .moved : .failed
+    }
+}
+
 /// Thread-safe generation and cancellation gate for serialized window operations.
 /// Starting a newer command (`begin()`) or disabling Window Management (`cancelAll()`)
 /// immediately supersedes and wakes any sleeping retry or full-screen wait.

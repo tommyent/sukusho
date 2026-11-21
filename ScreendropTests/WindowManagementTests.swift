@@ -336,6 +336,55 @@ struct WindowManagementTests {
                 == .reopenAfterGrant(WindowTargetState<String, String>.reopenAfterGrantMessage))
     }
 
+    @Test func capturedExecutionAcknowledgesOriginatingPopupCloseBeforePlacement() {
+        // Matching session: validates, closes originating popup on main, and only then places.
+        var trace: [String] = []
+        let moved = WindowCapturedExecution.run(
+            isCurrent: { true },
+            validateWindow: { trace.append("validate"); return true },
+            confirmCloseOriginatingPopup: { trace.append("close"); return true },
+            place: { trace.append("place"); return true }
+        )
+        #expect(moved == .moved)
+        #expect(trace == ["validate", "close", "place"])
+
+        // Popup dismissed or reopened before validation finished: newer popup untouched, placement never runs.
+        var placedAfterEnd = false
+        let ended = WindowCapturedExecution.run(
+            isCurrent: { true },
+            validateWindow: { true },
+            confirmCloseOriginatingPopup: { false },
+            place: { placedAfterEnd = true; return true }
+        )
+        #expect(ended == .sessionEnded)
+        #expect(!placedAfterEnd)
+
+        // Disappeared window fails with .gone without closing the popup or placing.
+        var closedOnGone = false
+        var placedOnGone = false
+        let gone = WindowCapturedExecution.run(
+            isCurrent: { true },
+            validateWindow: { false },
+            confirmCloseOriginatingPopup: { closedOnGone = true; return true },
+            place: { placedOnGone = true; return true }
+        )
+        #expect(gone == .gone)
+        #expect(!closedOnGone)
+        #expect(!placedOnGone)
+
+        // Cancellation between close confirmation and placement prevents placement.
+        var current = true
+        var placedAfterCancel = false
+        let cancelled = WindowCapturedExecution.run(
+            isCurrent: { current },
+            validateWindow: { true },
+            confirmCloseOriginatingPopup: { current = false; return true },
+            place: { placedAfterCancel = true; return true }
+        )
+        #expect(cancelled == .cancelled)
+        #expect(!placedAfterCancel)
+    }
+
     @Test func operationGateSupersedesAndCancelsWaitingRetriesImmediately() {
         let gate = WindowOperationGate()
         let first = gate.begin()
