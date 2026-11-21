@@ -12,11 +12,13 @@ nonisolated struct RecordingReplacementAudio {
         }
     }
     // AVAssetTrack holds its asset weakly; keep the source alive for rebuilds.
-    private let asset: AVURLAsset
+    let asset: AVURLAsset
     let url: URL
     /// The file's name as the user chose it, for the inspector.
     let displayName: String
     let track: AVAssetTrack
+    /// The part of the file that holds sound.
+    let range: CMTimeRange
     let duration: TimeInterval
 
     /// Resolves a picked file, or nil when it carries no audio.
@@ -24,6 +26,8 @@ nonisolated struct RecordingReplacementAudio {
         let asset = AVURLAsset(url: url)
         guard let track = try? await asset.loadTracks(withMediaType: .audio).first,
               let duration = try? await asset.load(.duration).seconds,
+              let range = try? await track.load(.timeRange),
+              range.duration > .zero,
               duration.isFinite, duration > 0 else {
             return nil
         }
@@ -32,6 +36,7 @@ nonisolated struct RecordingReplacementAudio {
             url: url,
             displayName: displayName,
             track: track,
+            range: range,
             duration: duration
         )
     }

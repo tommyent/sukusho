@@ -130,6 +130,40 @@ nonisolated enum RecordingCompositionBuilder {
         }
         return composition
     }
+
+    /// The cut's picture alone, from a video track resolved ahead of time
+    /// so Studio can rebuild its player item synchronously on every edit.
+    /// `StudioAudioComposer` adds the sound.
+    static func makeVideoComposition(
+        videoTrack: AVAssetTrack,
+        timeline: RecordingClipTimeline
+    ) throws -> AVMutableComposition {
+        let composition = AVMutableComposition()
+        guard let video = composition.addMutableTrack(
+            withMediaType: .video,
+            preferredTrackID: kCMPersistentTrackID_Invalid
+        ) else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        video.preferredTransform = videoTrack.preferredTransform
+
+        // The same ranges the sound is laid on, so both share every cut.
+        let ranges = StudioAudioComposer.editorRanges(for: timeline)
+        for (clip, editorRange) in zip(timeline.segments, ranges) {
+            let range = CMTimeRange(
+                start: CMTime(seconds: clip.sourceStart, preferredTimescale: 600),
+                duration: CMTime(seconds: clip.duration, preferredTimescale: 600)
+            )
+            try video.insertTimeRange(range, of: videoTrack, at: editorRange.start)
+            if abs(clip.speed - 1) > 0.000_001 {
+                video.scaleTimeRange(
+                    CMTimeRange(start: editorRange.start, duration: range.duration),
+                    toDuration: editorRange.duration
+                )
+            }
+        }
+        return composition
+    }
 }
 
 /// Sequential decoder for the camera movie that answers "latest camera frame

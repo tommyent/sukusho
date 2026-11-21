@@ -13,6 +13,7 @@ nonisolated struct RecordingClipSegment: Identifiable, Codable, Equatable, Senda
     static let minimumDuration: TimeInterval = 0.12
     static let minimumSpeed: Double = 1
     static let maximumSpeed: Double = 8
+    static let volumeRange: ClosedRange<Double> = 0...2
 
     /// Rounding-scale tolerance so clamping an edge to `end - minimumDuration`
     /// (e.g. `10 - (10 - 0.12) == 0.11999999999999922`) survives normalization,
@@ -32,27 +33,40 @@ nonisolated struct RecordingClipSegment: Identifiable, Codable, Equatable, Senda
     /// into the composition via `AVMutableComposition.scaleTimeRange`, so
     /// video and audio speed up together and stay in sync.
     var speed: Double
+    /// Level of this clip's own sound (the recording's audio, or the
+    /// soundtrack standing in for it), 0...2, on top of the project volume.
+    var volume: Double = 1
+    /// Silences this clip's own sound without touching its level.
+    var isMuted = false
 
     init(
         id: UUID = UUID(),
         sourceStart: TimeInterval,
         sourceEnd: TimeInterval,
-        speed: Double = 1
+        speed: Double = 1,
+        volume: Double = 1,
+        isMuted: Bool = false
     ) {
         self.id = id
         self.sourceStart = sourceStart
         self.sourceEnd = sourceEnd
         self.speed = speed
+        self.volume = volume
+        self.isMuted = isMuted
     }
 
-    /// This clip over another source range, keeping its speed and any other
-    /// per-clip attributes.
+    /// This clip over another source range, keeping its speed and sound.
     func covering(_ start: TimeInterval, _ end: TimeInterval, id: UUID? = nil) -> RecordingClipSegment {
         var copy = self
         copy.id = id ?? self.id
         copy.sourceStart = start
         copy.sourceEnd = end
         return copy
+    }
+
+    /// What its sound plays at before the project volume: 0 when muted.
+    var audibleVolume: Double {
+        isMuted ? 0 : min(max(volume, Self.volumeRange.lowerBound), Self.volumeRange.upperBound)
     }
 
     /// Raw duration of the source range this clip covers.
@@ -71,6 +85,8 @@ nonisolated struct RecordingClipSegment: Identifiable, Codable, Equatable, Senda
         case sourceStart
         case sourceEnd
         case speed
+        case volume
+        case isMuted
     }
 
     /// Accepted for migration from the first experimental split schema.
@@ -88,6 +104,20 @@ nonisolated struct RecordingClipSegment: Identifiable, Codable, Equatable, Senda
         sourceEnd = try container.decodeIfPresent(TimeInterval.self, forKey: .sourceEnd)
             ?? legacy.decode(TimeInterval.self, forKey: .end)
         speed = try container.decodeIfPresent(Double.self, forKey: .speed) ?? 1
+        volume = try container.decodeIfPresent(Double.self, forKey: .volume) ?? 1
+        isMuted = try container.decodeIfPresent(Bool.self, forKey: .isMuted) ?? false
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(sourceStart, forKey: .sourceStart)
+        try container.encode(sourceEnd, forKey: .sourceEnd)
+        try container.encode(speed, forKey: .speed)
+        // Written only when changed, so projects that never touch a clip's
+        // sound stay byte-identical on disk.
+        if volume != 1 { try container.encode(volume, forKey: .volume) }
+        if isMuted { try container.encode(isMuted, forKey: .isMuted) }
     }
 }
 
@@ -182,8 +212,14 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
                 max(segment.speed.isFinite ? segment.speed : 1, RecordingClipSegment.minimumSpeed),
                 RecordingClipSegment.maximumSpeed
             )
+            let volume = min(
+                max(segment.volume.isFinite ? segment.volume : 1, RecordingClipSegment.volumeRange.lowerBound),
+                RecordingClipSegment.volumeRange.upperBound
+            )
             var clip = segment.covering(start, end, id: id)
             clip.speed = speed
+            clip.volume = volume
+            clip.isMuted = segment.isMuted
             return clip
         }
 
@@ -501,6 +537,7 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
         return abs(only.sourceStart) < 0.000_001
             && abs(only.sourceEnd - sourceDuration) < 0.000_001
             && abs(only.speed - 1) < 0.000_001
+            && only.volume == 1 && !only.isMuted
     }
 
     /// Every cut on the edited timeline: where each clip starts, and the end.
