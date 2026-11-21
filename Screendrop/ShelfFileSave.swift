@@ -84,7 +84,8 @@ nonisolated enum ShelfFileSave {
         // The whole new file first, on the destination's own volume: after this, putting it in place is a rename.
         let staging = folder.appendingPathComponent(".sukusho-save-\(UUID().uuidString)", isDirectory: true)
         let staged = staging.appendingPathComponent(result.lastPathComponent)
-        defer { try? files.removeItem(at: staging) }
+        var keepStaging = false
+        defer { if !keepStaging { try? files.removeItem(at: staging) } }
         do {
             try files.createDirectory(at: staging, withIntermediateDirectories: false)
             try files.copyItem(at: result, to: staged)
@@ -115,8 +116,11 @@ nonisolated enum ShelfFileSave {
                             do {
                                 _ = try replaceItem(coordinatedOriginal, staged, backupName)
                             } catch {
-                                coordinatedOutcome = .failed(error.localizedDescription,
-                                                             recoveryURL: relocatedOriginal(from: error))
+                                let relocated = relocatedOriginal(from: error)
+                                if let relocated, Self.isInside(relocated, directory: staging) {
+                                    keepStaging = true
+                                }
+                                coordinatedOutcome = .failed(error.localizedDescription, recoveryURL: relocated)
                                 return
                             }
                             do {
@@ -232,6 +236,12 @@ nonisolated enum ShelfFileSave {
         let stem = "sukusho-original-\(UUID().uuidString)"
         guard !ext.isEmpty, ext.utf8.count <= 32 else { return stem }
         return "\(stem).\(ext)"
+    }
+
+    private static func isInside(_ url: URL, directory: URL) -> Bool {
+        let item = url.resolvingSymlinksInPath().standardizedFileURL.path
+        let root = directory.resolvingSymlinksInPath().standardizedFileURL.path
+        return item == root || item.hasPrefix(root.hasSuffix("/") ? root : root + "/")
     }
 
     static func moveToTrash(_ url: URL) throws -> URL {
