@@ -98,7 +98,8 @@ struct ShortcutsSettingsPane: View {
                         Toggle(isOn: $windowManagementEnabled) { label }
                     }
                     .toggleStyle(.switch)
-                    .onChange(of: windowManagementEnabled) { _, _ in
+                    .onChange(of: windowManagementEnabled) { _, on in
+                        if !on { WindowManager.shared.cancelPending() }
                         HotkeyManager.shared.reloadHotkeys()
                     }
                 }

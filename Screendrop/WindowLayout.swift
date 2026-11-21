@@ -2,6 +2,7 @@ import ApplicationServices
 import Carbon.HIToolbox
 import CoreGraphics
 import Foundation
+import os
 
 /// A rectangle in screen coordinates. Unless named `*AppKit`, coordinates are in macOS
 /// Accessibility / CoreGraphics space: origin at the primary display's top-left, Y growing down.
@@ -362,6 +363,60 @@ nonisolated enum WindowTargetState<OwnWindow: Equatable, ExternalWindow: Equatab
             return .needsAccessibility
         case .unavailable:
             return .gone(Self.unavailableMessage)
+        }
+    }
+}
+
+/// Thread-safe generation and cancellation gate for serialized window operations.
+/// Starting a newer command (`begin()`) or disabling Window Management (`cancelAll()`)
+/// immediately supersedes and wakes any sleeping retry or full-screen wait.
+nonisolated final class WindowOperationGate: Sendable {
+    private struct State {
+        var generation: UInt64 = 0
+        var waiters: [DispatchSemaphore] = []
+    }
+
+    private let state = OSAllocatedUnfairLock(initialState: State())
+
+    func begin() -> UInt64 {
+        let (gen, toWake): (UInt64, [DispatchSemaphore]) = state.withLock { s in
+            s.generation &+= 1
+            let w = s.waiters
+            s.waiters.removeAll()
+            return (s.generation, w)
+        }
+        for sem in toWake { sem.signal() }
+        return gen
+    }
+
+    func cancelAll() {
+        let toWake: [DispatchSemaphore] = state.withLock { s in
+            s.generation &+= 1
+            let w = s.waiters
+            s.waiters.removeAll()
+            return w
+        }
+        for sem in toWake { sem.signal() }
+    }
+
+    func isCurrent(_ token: UInt64) -> Bool {
+        state.withLock { $0.generation == token }
+    }
+
+    /// Waits up to `duration` on a background executor, waking immediately when `token` is superseded or cancelled.
+    /// Returns `true` if `token` is still current after waiting, `false` otherwise.
+    func wait(token: UInt64, duration: TimeInterval) -> Bool {
+        let sem = DispatchSemaphore(value: 0)
+        let shouldWait: Bool = state.withLock { s in
+            guard s.generation == token else { return false }
+            s.waiters.append(sem)
+            return true
+        }
+        guard shouldWait else { return false }
+        _ = sem.wait(timeout: .now() + duration)
+        return state.withLock { s in
+            s.waiters.removeAll { $0 === sem }
+            return s.generation == token
         }
     }
 }

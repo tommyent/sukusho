@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import OSLog
 
 /// Weak reference to an AppKit window captured before the clipboard popup becomes key.
 @MainActor
@@ -29,11 +30,18 @@ enum CapturedWindowTarget {
 final class WindowManager {
     static let shared = WindowManager()
 
-    private let axWorker = WindowAXWorker()
+    private let gate = WindowOperationGate()
+    private lazy var axWorker = WindowAXWorker(gate: gate)
     private var nextCaptureID: UInt64 = 0
     private var didPromptAccessibility = false
 
     private init() {}
+
+    /// Cancels any pending window move (full-screen exit wait or cross-display settle), e.g. when
+    /// the user turns Window Management off. Any already-disabled `AXEnhancedUserInterface` is still restored.
+    func cancelPending() {
+        gate.cancelAll()
+    }
 
     // MARK: - Capturing a target before opening the popup
 
@@ -71,12 +79,13 @@ final class WindowManager {
             return
         }
 
+        let token = gate.begin()
         if app == NSRunningApplication.current {
             guard let window = ownActiveWindow() else {
                 NSSound.beep()
                 return
             }
-            perform(action, onOwnWindow: window)
+            perform(action, onOwnWindow: window, token: token)
             return
         }
 
@@ -93,7 +102,7 @@ final class WindowManager {
         }
 
         let pid = app.processIdentifier
-        axWorker.performFrontmost(action, pid: pid, screens: screens) { ok in
+        axWorker.performFrontmost(action, pid: pid, screens: screens, token: token) { ok in
             if !ok {
                 Task { @MainActor in NSSound.beep() }
             }
@@ -112,8 +121,9 @@ final class WindowManager {
         case .own(let box):
             switch WindowTargetState<NSWindow, Int>.own(box.window).resolve(ownIsVisible: { $0.isVisible }) {
             case .moveOwn(let window):
+                let token = gate.begin()
                 onWillMove()
-                perform(action, onOwnWindow: window)
+                perform(action, onOwnWindow: window, token: token)
             case .gone(let message):
                 NSSound.beep()
                 onFailure(message)
@@ -144,8 +154,9 @@ final class WindowManager {
                 onFailure("Couldn’t read display layout.")
                 return
             }
+            let token = gate.begin()
             onWillMove()
-            axWorker.performFrontmost(action, pid: app.processIdentifier, screens: screens) { ok in
+            axWorker.performFrontmost(action, pid: app.processIdentifier, screens: screens, token: token) { ok in
                 if !ok {
                     Task { @MainActor in NSSound.beep() }
                 }
@@ -170,17 +181,19 @@ final class WindowManager {
                 onFailure("Couldn’t read display layout.")
                 return
             }
+            let token = gate.begin()
             axWorker.performCaptured(
                 action,
                 captureID: captureID,
                 screens: screens,
+                token: token,
                 onValidated: {
                     Task { @MainActor in onWillMove() }
                 },
                 completion: { outcome in
                     Task { @MainActor in
                         switch outcome {
-                        case .moved:
+                        case .moved, .cancelled:
                             break
                         case .gone:
                             NSSound.beep()
@@ -203,11 +216,11 @@ final class WindowManager {
 
     // MARK: - Own windows (AppKit)
 
-    private func perform(_ action: WindowAction, onOwnWindow window: NSWindow) {
+    private func perform(_ action: WindowAction, onOwnWindow window: NSWindow, token: UInt64) {
         if window.styleMask.contains(.fullScreen) {
             window.toggleFullScreen(nil)
             DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(500)) { [weak self, weak window] in
-                guard let self, let window, window.isVisible else { return }
+                guard let self, self.gate.isCurrent(token), let window, window.isVisible else { return }
                 self.apply(action, toOwnWindow: window)
             }
             return
@@ -275,6 +288,7 @@ final class WindowManager {
 private nonisolated final class WindowAXWorker: @unchecked Sendable {
     enum CapturedOutcome: Sendable {
         case moved
+        case cancelled
         case gone
         case failed
     }
@@ -289,8 +303,14 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
     private static let enhancedUIAttr = "AXEnhancedUserInterface" as CFString
     private static let fullScreenAttr = "AXFullScreen" as CFString
 
+    private let gate: WindowOperationGate
     private let queue = DispatchQueue(label: "com.tommyent.Sukusho.window-ax", qos: .userInteractive)
+    private let logger = Logger(subsystem: "com.tommyent.Sukusho", category: "WindowManager")
     private var captured: CapturedAX?
+
+    init(gate: WindowOperationGate) {
+        self.gate = gate
+    }
 
     func captureFocusedWindow(pid: pid_t, captureID: UInt64) {
         queue.async {
@@ -317,9 +337,11 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
         _ action: WindowAction,
         pid: pid_t,
         screens: [DisplayScreen],
+        token: UInt64,
         completion: @escaping @Sendable (Bool) -> Void
     ) {
         queue.async {
+            guard self.gate.isCurrent(token) else { return }
             let axApp = AXUIElementCreateApplication(pid)
             AXUIElementSetMessagingTimeout(axApp, Self.axTimeout)
             guard let window = self.focusedWindow(of: axApp) else {
@@ -327,7 +349,10 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
                 return
             }
             AXUIElementSetMessagingTimeout(window, Self.axTimeout)
-            self.perform(action, window: window, in: axApp, screens: screens, completion: completion)
+            let ok = self.performSerialized(action, window: window, in: axApp, screens: screens, token: token)
+            if self.gate.isCurrent(token) {
+                completion(ok)
+            }
         }
     }
 
@@ -335,15 +360,19 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
         _ action: WindowAction,
         captureID: UInt64,
         screens: [DisplayScreen],
+        token: UInt64,
         onValidated: @escaping @Sendable () -> Void,
         completion: @escaping @Sendable (CapturedOutcome) -> Void
     ) {
         queue.async {
+            guard self.gate.isCurrent(token) else {
+                completion(.cancelled)
+                return
+            }
             guard let entry = self.captured, entry.captureID == captureID else {
                 completion(.gone)
                 return
             }
-            // Confirm the captured window still exists before dismissing the popup or attempting a move.
             guard self.readFrame(of: entry.window) != nil else {
                 self.captured = nil
                 completion(.gone)
@@ -351,37 +380,39 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
             }
             self.captured = nil
             onValidated()
-            self.perform(action, window: entry.window, in: entry.app, screens: screens) { ok in
+            let ok = self.performSerialized(action, window: entry.window, in: entry.app, screens: screens, token: token)
+            if !self.gate.isCurrent(token) {
+                completion(.cancelled)
+            } else {
                 completion(ok ? .moved : .failed)
             }
         }
     }
 
-    private func perform(
+    /// Runs full-screen exit, placement, cross-display settle, and `AXEnhancedUserInterface` restoration
+    /// inside a single serialized queue step so a newer command or disable cancels retries cleanly
+    /// while still restoring `AXEnhancedUserInterface` if this command disabled it.
+    private func performSerialized(
         _ action: WindowAction,
         window: AXUIElement,
         in axApp: AXUIElement,
         screens: [DisplayScreen],
-        completion: @escaping @Sendable (Bool) -> Void
-    ) {
+        token: UInt64
+    ) -> Bool {
         if boolAttribute(Self.fullScreenAttr, on: window) == true {
             AXUIElementSetAttributeValue(window, Self.fullScreenAttr, kCFBooleanFalse)
-            queue.asyncAfter(deadline: .now() + .milliseconds(500)) {
-                let ok = self.apply(action, to: window, in: axApp, screens: screens)
-                completion(ok)
-            }
-            return
+            guard gate.wait(token: token, duration: 0.5) else { return false }
         }
-
-        let ok = apply(action, to: window, in: axApp, screens: screens)
-        completion(ok)
+        guard gate.isCurrent(token) else { return false }
+        return apply(action, to: window, in: axApp, screens: screens, token: token)
     }
 
     private func apply(
         _ action: WindowAction,
         to window: AXUIElement,
         in axApp: AXUIElement,
-        screens: [DisplayScreen]
+        screens: [DisplayScreen],
+        token: UInt64
     ) -> Bool {
         guard let current = readFrame(of: window) else { return false }
         guard let target = WindowLayout.target(for: action, window: current, screens: screens) else {
@@ -389,27 +420,39 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
         }
 
         // Chromium/Electron apps fight or animate AX frame writes when AXEnhancedUserInterface
-        // is enabled; toggle it off for the move and restore it afterwards.
+        // is enabled; toggle it off only when the write succeeds and always restore it before
+        // releasing the serial queue (even if a newer command or disable cancels a delayed retry).
         let restoreEnhancedUI = disableEnhancedUIIfNeeded(on: axApp)
+        var restored = !restoreEnhancedUI
+        func restoreIfNeeded() -> Bool {
+            guard !restored else { return true }
+            restored = true
+            let err = setEnhancedUI(true, on: axApp)
+            if err != .success {
+                logger.error("Failed to restore AXEnhancedUserInterface (AXError \(err.rawValue))")
+                return false
+            }
+            return true
+        }
+        defer { _ = restoreIfNeeded() }
 
         let (sizeErr, posErr) = writeFrame(target.frame, to: window)
         if WindowAXPolicy.shouldAbort(sizeErr) || WindowAXPolicy.shouldAbort(posErr)
             || (sizeErr != .success && posErr != .success) {
-            if restoreEnhancedUI { setEnhancedUI(true, on: axApp) }
             return false
         }
         settle(window: window, target: target)
 
+        // Cross-display moves can apply size late on macOS; wait inside this serialized operation
+        // so a superseding command or disable wakes immediately and never races with our retry.
         if target.crossDisplay {
-            queue.asyncAfter(deadline: .now() + .milliseconds(25)) {
-                _ = self.writeFrame(target.frame, to: window)
-                self.settle(window: window, target: target)
-                if restoreEnhancedUI { self.setEnhancedUI(true, on: axApp) }
+            guard gate.wait(token: token, duration: 0.025) else { return false }
+            let (retrySizeErr, retryPosErr) = writeFrame(target.frame, to: window)
+            if !WindowAXPolicy.shouldAbort(retrySizeErr) && !WindowAXPolicy.shouldAbort(retryPosErr) {
+                settle(window: window, target: target)
             }
-        } else if restoreEnhancedUI {
-            setEnhancedUI(true, on: axApp)
         }
-        return true
+        return restoreIfNeeded()
     }
 
     private func settle(window: AXUIElement, target: WindowLayout.Target) {
@@ -445,11 +488,11 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
 
     private func disableEnhancedUIIfNeeded(on axApp: AXUIElement) -> Bool {
         guard boolAttribute(Self.enhancedUIAttr, on: axApp) == true else { return false }
-        setEnhancedUI(false, on: axApp)
-        return true
+        return setEnhancedUI(false, on: axApp) == .success
     }
 
-    private func setEnhancedUI(_ enabled: Bool, on axApp: AXUIElement) {
+    @discardableResult
+    private func setEnhancedUI(_ enabled: Bool, on axApp: AXUIElement) -> AXError {
         AXUIElementSetAttributeValue(axApp, Self.enhancedUIAttr, enabled ? kCFBooleanTrue : kCFBooleanFalse)
     }
 

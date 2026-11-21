@@ -293,4 +293,37 @@ struct WindowManagementTests {
         #expect(WindowTargetState<String, String>.unavailable.resolve(ownIsVisible: { _ in true })
                 == .gone(WindowTargetState<String, String>.unavailableMessage))
     }
+
+    @Test func operationGateSupersedesAndCancelsWaitingRetriesImmediately() {
+        let gate = WindowOperationGate()
+        let first = gate.begin()
+        #expect(gate.isCurrent(first))
+
+        // Superseding with a newer command wakes a waiting retry immediately instead of sleeping its full duration.
+        let started = DispatchSemaphore(value: 0)
+        let done = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) var waitOutcome = true
+        nonisolated(unsafe) var restored = false
+        let startTime = Date()
+        DispatchQueue.global().async {
+            defer {
+                restored = true
+                done.signal()
+            }
+            started.signal()
+            waitOutcome = gate.wait(token: first, duration: 5.0)
+        }
+        _ = started.wait(timeout: .now() + 2)
+        let second = gate.begin()
+        #expect(done.wait(timeout: .now() + 2) == .success)
+        #expect(!waitOutcome, "superseded retry must not run")
+        #expect(restored, "deferred AXEnhancedUserInterface restore still runs")
+        #expect(Date().timeIntervalSince(startTime) < 1.0)
+        #expect(!gate.isCurrent(first))
+        #expect(gate.isCurrent(second))
+
+        // Switching Window Management off cancels any pending command.
+        gate.cancelAll()
+        #expect(!gate.isCurrent(second))
+    }
 }
