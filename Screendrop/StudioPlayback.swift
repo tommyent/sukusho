@@ -559,6 +559,6 @@ private nonisolated func studioClockText(wholeSeconds total: Int) -> String {
     let minutes = (total % 3600) / 60
     let remainingSeconds = total % 60
     return hours > 0
-        ? String(format: "%d:%02d:%02d", hours, minutes, remainingSeconds)
+        ? "\(hours):\(String(format: "%02d:%02d", minutes, remainingSeconds))"
         : String(format: "%d:%02d", minutes, remainingSeconds)
 }

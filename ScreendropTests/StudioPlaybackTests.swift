@@ -86,15 +86,24 @@ struct StudioPlaybackTests {
         #expect(studioPreciseTimecode(3599.96) == "1:00:00.0")
         #expect(studioPreciseTimecode(3661.44) == "1:01:01.4")
 
-        // Invalid or negative inputs clamp to zero; huge finite inputs never overflow.
+        // Invalid or negative inputs clamp to zero; huge 64-bit hour counts stay positive and parseable.
         for bad: Double in [-5, -0.1, .nan, .infinity, -.infinity] {
             #expect(studioTimecode(bad) == "0:00")
             #expect(studioClock(bad) == "0:00")
             #expect(studioPreciseTimecode(bad) == "0:00.0")
         }
-        #expect(!studioTimecode(.greatestFiniteMagnitude).isEmpty)
-        #expect(!studioClock(.greatestFiniteMagnitude).isEmpty)
-        #expect(!studioPreciseTimecode(.greatestFiniteMagnitude).isEmpty)
+        let int32OverflowHoursSeconds = 7_730_941_132_800.0 // 2^31 hours (Int32.max + 1)
+        #expect(studioTimecode(int32OverflowHoursSeconds) == "2147483648:00:00")
+        #expect(studioClock(int32OverflowHoursSeconds) == "2147483648:00:00")
+        #expect(studioPreciseTimecode(int32OverflowHoursSeconds) == "2147483648:00:00.0")
+        #expect(StudioPlayback.seconds(from: studioPreciseTimecode(int32OverflowHoursSeconds)) == int32OverflowHoursSeconds)
+
+        let clampedTimecode = studioTimecode(.greatestFiniteMagnitude)
+        let clampedClock = studioClock(.greatestFiniteMagnitude)
+        let clampedPrecise = studioPreciseTimecode(.greatestFiniteMagnitude)
+        #expect(!clampedTimecode.hasPrefix("-") && StudioPlayback.seconds(from: clampedTimecode) != nil)
+        #expect(!clampedClock.hasPrefix("-") && StudioPlayback.seconds(from: clampedClock) != nil)
+        #expect(!clampedPrecise.hasPrefix("-") && StudioPlayback.seconds(from: clampedPrecise) != nil)
     }
 
     @Test func preciseTimecodeCarriesTenthsAndUnchangedPrefillSkipsSeek() {
