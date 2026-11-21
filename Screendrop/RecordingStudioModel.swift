@@ -1863,7 +1863,9 @@ final class RecordingStudioModel {
     // MARK: - Zoom cues
 
     private func replaceZoomCues(_ cues: [ZoomCue]) {
-        zoomCues = cues.sorted { $0.start < $1.start }
+        let sorted = cues.sorted { $0.start < $1.start }
+        guard sorted != zoomCues else { return }
+        zoomCues = sorted
         if zoomEditSnapshot != nil {
             // A drag reports dozens of moves a second, and planning the
             // camera integrates the whole recording. The block follows the
