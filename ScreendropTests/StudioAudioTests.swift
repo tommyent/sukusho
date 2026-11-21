@@ -997,6 +997,113 @@ struct StudioAudioTests {
         #expect(muteWhileSoloed.clips.map(\.isMuted) == [true, false, true])
     }
 
+    @Test func envelopeTapScalesPacked24BitAndPadded24In32PCMWithCorrectStride() {
+        // 1. Packed signed 24-bit little-endian (3 bytes/sample), 2 frames mono:
+        //    frame 0 = +4_000_000 at gain 0.5 -> +2_000_000;
+        //    frame 1 = -6_000_000 at gain 2.0 -> clipped to -8_388_608.
+        var packedBytes: [UInt8] = [
+            UInt8(4_000_000 & 0xFF), UInt8((4_000_000 >> 8) & 0xFF), UInt8((4_000_000 >> 16) & 0xFF),
+            UInt8(UInt32(bitPattern: -6_000_000) & 0xFF),
+            UInt8((UInt32(bitPattern: -6_000_000) >> 8) & 0xFF),
+            UInt8((UInt32(bitPattern: -6_000_000) >> 16) & 0xFF)
+        ]
+        let packedFormat = AudioStreamBasicDescription(
+            mSampleRate: 48_000,
+            mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
+            mBytesPerPacket: 3,
+            mFramesPerPacket: 1,
+            mBytesPerFrame: 3,
+            mChannelsPerFrame: 1,
+            mBitsPerChannel: 24,
+            mReserved: 0
+        )
+        packedBytes.withUnsafeMutableBytes { raw in
+            var abl = AudioBufferList(
+                mNumberBuffers: 1,
+                mBuffers: AudioBuffer(mNumberChannels: 1, mDataByteSize: UInt32(raw.count), mData: raw.baseAddress)
+            )
+            RecordingAudioGain.applyEnvelope(
+                to: &abl,
+                frameCount: 2,
+                startTime: 0,
+                duration: 2.0,
+                format: packedFormat,
+                gainAt: { $0 < 0.5 ? 0.5 : 2.0 }
+            )
+        }
+        let s0 = ((Int32(packedBytes[0]) | (Int32(packedBytes[1]) << 8) | (Int32(packedBytes[2]) << 16)) << 8) >> 8
+        let s1 = ((Int32(packedBytes[3]) | (Int32(packedBytes[4]) << 8) | (Int32(packedBytes[5]) << 16)) << 8) >> 8
+        #expect(s0 == 2_000_000)
+        #expect(s1 == -8_388_608)
+
+        // 2. 24-bit valid bits inside 32-bit container (4 bytes/sample, stereo interleaved => 8 bytes/frame),
+        //    high-aligned: frame 0 scaled by 0.5, frame 1 muted to 0 without touching adjacent samples!
+        var paddedHigh: [Int32] = [
+            4_000_000 << 8, -2_000_000 << 8, // frame 0 L, R
+            3_000_000 << 8, -1_000_000 << 8  // frame 1 L, R
+        ]
+        let paddedHighFormat = AudioStreamBasicDescription(
+            mSampleRate: 48_000,
+            mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsAlignedHigh,
+            mBytesPerPacket: 8,
+            mFramesPerPacket: 1,
+            mBytesPerFrame: 8,
+            mChannelsPerFrame: 2,
+            mBitsPerChannel: 24,
+            mReserved: 0
+        )
+        paddedHigh.withUnsafeMutableBytes { raw in
+            var abl = AudioBufferList(
+                mNumberBuffers: 1,
+                mBuffers: AudioBuffer(mNumberChannels: 2, mDataByteSize: UInt32(raw.count), mData: raw.baseAddress)
+            )
+            RecordingAudioGain.applyEnvelope(
+                to: &abl,
+                frameCount: 2,
+                startTime: 0,
+                duration: 2.0,
+                format: paddedHighFormat,
+                gainAt: { $0 < 0.5 ? 0.5 : 0.0 }
+            )
+        }
+        #expect((paddedHigh[0] >> 8) == 2_000_000)
+        #expect((paddedHigh[1] >> 8) == -1_000_000)
+        #expect(paddedHigh[2] == 0)
+        #expect(paddedHigh[3] == 0)
+
+        // 3. 24-bit valid bits inside 32-bit container, low-aligned:
+        var paddedLow: [Int32] = [4_000_000, -2_000_000]
+        let paddedLowFormat = AudioStreamBasicDescription(
+            mSampleRate: 48_000,
+            mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kAudioFormatFlagIsSignedInteger,
+            mBytesPerPacket: 4,
+            mFramesPerPacket: 1,
+            mBytesPerFrame: 4,
+            mChannelsPerFrame: 1,
+            mBitsPerChannel: 24,
+            mReserved: 0
+        )
+        paddedLow.withUnsafeMutableBytes { raw in
+            var abl = AudioBufferList(
+                mNumberBuffers: 1,
+                mBuffers: AudioBuffer(mNumberChannels: 1, mDataByteSize: UInt32(raw.count), mData: raw.baseAddress)
+            )
+            RecordingAudioGain.applyEnvelope(
+                to: &abl,
+                frameCount: 2,
+                startTime: 0,
+                duration: 2.0,
+                format: paddedLowFormat,
+                gainAt: { _ in 0.5 }
+            )
+        }
+        #expect(paddedLow[0] == 2_000_000)
+        #expect(paddedLow[1] == -1_000_000)
+    }
+
     // MARK: - Helpers
 
     private func makeDirectory() throws -> URL {

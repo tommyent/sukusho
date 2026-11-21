@@ -165,43 +165,14 @@ nonisolated enum RecordingAudioGain {
                 let duration = range.duration.isNumeric && range.duration.seconds > 0
                     ? range.duration.seconds
                     : Double(count) / max(format.mSampleRate, 1)
-                let step = duration / Double(count)
-                let isFloat = format.mFormatFlags & kAudioFormatFlagIsFloat != 0
-                let isSigned = format.mFormatFlags & kAudioFormatFlagIsSignedInteger != 0
-                let bits = format.mBitsPerChannel
-
-                for buffer in UnsafeMutableAudioBufferListPointer(buffers) {
-                    guard let data = buffer.mData else { continue }
-                    let channels = max(1, Int(buffer.mNumberChannels))
-                    let bytesPerSample = Int(bits / 8)
-                    guard bytesPerSample > 0 else { continue }
-                    let available = Int(buffer.mDataByteSize) / (bytesPerSample * channels)
-                    for frame in 0..<min(count, available) {
-                        let gain = state.gain(at: start + Double(frame) * step)
-                        if gain == 1 { continue }
-                        for channel in 0..<channels {
-                            let index = frame * channels + channel
-                            if isFloat, bits == 32 {
-                                let samples = data.assumingMemoryBound(to: Float.self)
-                                samples[index] = min(1, max(-1, samples[index] * gain))
-                            } else if isFloat, bits == 64 {
-                                let samples = data.assumingMemoryBound(to: Double.self)
-                                samples[index] = min(1, max(-1, samples[index] * Double(gain)))
-                            } else if isSigned, bits == 16 {
-                                let samples = data.assumingMemoryBound(to: Int16.self)
-                                samples[index] = Int16(min(Double(Int16.max), max(Double(Int16.min), Double(samples[index]) * Double(gain))))
-                            } else if isSigned, bits == 32 {
-                                let samples = data.assumingMemoryBound(to: Int32.self)
-                                samples[index] = Int32(min(Double(Int32.max), max(Double(Int32.min), Double(samples[index]) * Double(gain))))
-                            } else if gain < 0.000_1 {
-                                // A format this can't scale still goes
-                                // silent where it should: mute must never
-                                // let sound through.
-                                memset(data + index * bytesPerSample, 0, bytesPerSample)
-                            }
-                        }
-                    }
-                }
+                applyEnvelope(
+                    to: buffers,
+                    frameCount: count,
+                    startTime: start,
+                    duration: duration,
+                    format: format,
+                    gainAt: { state.gain(at: $0) }
+                )
             }
         )
         var tap: MTAudioProcessingTap?
@@ -212,5 +183,104 @@ nonisolated enum RecordingAudioGain {
             return nil
         }
         return tap
+    }
+
+    /// Applies `gainAt` sample-by-sample across an `AudioBufferList` honoring
+    /// the prepared ASBD's frame byte stride, interleaving, bit depth,
+    /// alignment, and endianness without allocating or locking.
+    static func applyEnvelope(
+        to buffers: UnsafeMutablePointer<AudioBufferList>,
+        frameCount: Int,
+        startTime: Double,
+        duration: Double,
+        format: AudioStreamBasicDescription,
+        gainAt: (Double) -> Float
+    ) {
+        guard frameCount > 0 else { return }
+        let step = duration / Double(frameCount)
+        let flags = format.mFormatFlags
+        let isFloat = flags & kAudioFormatFlagIsFloat != 0
+        let isSigned = flags & kAudioFormatFlagIsSignedInteger != 0
+        let isBigEndian = flags & kAudioFormatFlagIsBigEndian != 0
+        let isAlignedHigh = flags & kAudioFormatFlagIsAlignedHigh != 0
+        let isNonInterleaved = flags & kAudioFormatFlagIsNonInterleaved != 0
+        let bits = Int(format.mBitsPerChannel)
+
+        for buffer in UnsafeMutableAudioBufferListPointer(buffers) {
+            guard let data = buffer.mData else { continue }
+            let channels = max(1, Int(buffer.mNumberChannels))
+            let frameStride: Int
+            if format.mBytesPerFrame > 0 {
+                frameStride = Int(format.mBytesPerFrame)
+            } else {
+                frameStride = max(1, (bits + 7) / 8) * channels
+            }
+            let bytesPerSample = isNonInterleaved ? frameStride : (frameStride / channels)
+            guard bytesPerSample > 0, frameStride >= bytesPerSample * channels else { continue }
+            let available = Int(buffer.mDataByteSize) / frameStride
+            let totalFrames = min(frameCount, available)
+            guard totalFrames > 0 else { continue }
+
+            for frame in 0..<totalFrames {
+                let gain = gainAt(startTime + Double(frame) * step)
+                if gain == 1 { continue }
+                let frameBase = data + frame * frameStride
+                for channel in 0..<channels {
+                    let ptr = frameBase + channel * bytesPerSample
+                    if isFloat, bits == 32, bytesPerSample == 4 {
+                        let raw = ptr.loadUnaligned(as: UInt32.self)
+                        let sample = Float(bitPattern: isBigEndian ? UInt32(bigEndian: raw) : UInt32(littleEndian: raw))
+                        let scaled = min(1, max(-1, sample * gain)).bitPattern
+                        ptr.storeBytes(of: isBigEndian ? scaled.bigEndian : scaled.littleEndian, as: UInt32.self)
+                    } else if isFloat, bits == 64, bytesPerSample == 8 {
+                        let raw = ptr.loadUnaligned(as: UInt64.self)
+                        let sample = Double(bitPattern: isBigEndian ? UInt64(bigEndian: raw) : UInt64(littleEndian: raw))
+                        let scaled = min(1, max(-1, sample * Double(gain))).bitPattern
+                        ptr.storeBytes(of: isBigEndian ? scaled.bigEndian : scaled.littleEndian, as: UInt64.self)
+                    } else if isSigned, bits == 16, bytesPerSample == 2 {
+                        let raw = ptr.loadUnaligned(as: Int16.self)
+                        let sample = isBigEndian ? Int16(bigEndian: raw) : Int16(littleEndian: raw)
+                        let scaled = Int16(min(Double(Int16.max), max(Double(Int16.min), (Double(sample) * Double(gain)).rounded())))
+                        ptr.storeBytes(of: isBigEndian ? scaled.bigEndian : scaled.littleEndian, as: Int16.self)
+                    } else if isSigned, bits == 24, bytesPerSample == 3 {
+                        let bytes = ptr.assumingMemoryBound(to: UInt8.self)
+                        let raw: Int32 = isBigEndian
+                            ? (Int32(bytes[0]) << 16) | (Int32(bytes[1]) << 8) | Int32(bytes[2])
+                            : Int32(bytes[0]) | (Int32(bytes[1]) << 8) | (Int32(bytes[2]) << 16)
+                        let signed = (raw << 8) >> 8
+                        let clamped = Int32(min(8_388_607.0, max(-8_388_608.0, (Double(signed) * Double(gain)).rounded())))
+                        let u = UInt32(bitPattern: clamped)
+                        if isBigEndian {
+                            bytes[0] = UInt8((u >> 16) & 0xFF)
+                            bytes[1] = UInt8((u >> 8) & 0xFF)
+                            bytes[2] = UInt8(u & 0xFF)
+                        } else {
+                            bytes[0] = UInt8(u & 0xFF)
+                            bytes[1] = UInt8((u >> 8) & 0xFF)
+                            bytes[2] = UInt8((u >> 16) & 0xFF)
+                        }
+                    } else if isSigned, bytesPerSample == 4, (bits == 32 || bits == 24) {
+                        let raw = ptr.loadUnaligned(as: Int32.self)
+                        let host = isBigEndian ? Int32(bigEndian: raw) : Int32(littleEndian: raw)
+                        let scaledHost: Int32
+                        if bits == 32 {
+                            scaledHost = Int32(min(Double(Int32.max), max(Double(Int32.min), (Double(host) * Double(gain)).rounded())))
+                        } else if isAlignedHigh {
+                            let sample24 = host >> 8
+                            let clamped = Int32(min(8_388_607.0, max(-8_388_608.0, (Double(sample24) * Double(gain)).rounded())))
+                            scaledHost = clamped << 8
+                        } else {
+                            let sample24 = (host << 8) >> 8
+                            scaledHost = Int32(min(8_388_607.0, max(-8_388_608.0, (Double(sample24) * Double(gain)).rounded())))
+                        }
+                        ptr.storeBytes(of: isBigEndian ? scaledHost.bigEndian : scaledHost.littleEndian, as: Int32.self)
+                    } else if gain < 0.000_1 {
+                        // A format this can't scale still goes silent where it
+                        // should using the container's exact sample stride.
+                        memset(ptr, 0, bytesPerSample)
+                    }
+                }
+            }
+        }
     }
 }
