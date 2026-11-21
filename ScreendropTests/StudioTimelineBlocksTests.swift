@@ -445,4 +445,26 @@ struct StudioTimelineBlocksTests {
         )
         #expect(abs(afterDrag - 8.1) < 0.0001)
     }
+
+    // MARK: - Saved zoom cue normalization
+
+    @Test @MainActor func normalizingSavedZoomCuesDeduplicatesIDsDropsInvertedRangesAndTrimsOverlaps() {
+        let sharedID = UUID()
+        let raw: [ZoomCue] = [
+            ZoomCue(id: sharedID, start: 5, end: 4),           // inverted -> dropped
+            ZoomCue(id: sharedID, start: 2, end: 2),           // empty -> dropped
+            ZoomCue(id: sharedID, start: .nan, end: 3),        // non-finite -> dropped
+            ZoomCue(id: sharedID, start: 1, end: 4, zoom: 9),  // valid, zoom clamped to 4
+            ZoomCue(id: sharedID, start: 3, end: 6),           // duplicate ID + overlaps 1..4 -> new ID, trimmed to 4..6
+            ZoomCue(start: 8, end: 15),                        // past sourceDuration 10 -> clamped to 8..10
+        ]
+
+        let normalized = studioNormalizedZoomCues(raw, sourceDuration: 10)
+        #expect(normalized.count == 3)
+        #expect(Set(normalized.map(\.id)).count == 3)
+        #expect(normalized[0].start == 1 && normalized[0].end == 4 && normalized[0].zoom == 4)
+        #expect(normalized[1].start == 4 && normalized[1].end == 6)
+        #expect(normalized[2].start == 8 && normalized[2].end == 10)
+        #expect(normalized.allSatisfy { $0.end > $0.start })
+    }
 }

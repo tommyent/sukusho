@@ -955,7 +955,7 @@ final class RecordingStudioModel {
         }
         style = document.style.value
         zoomEnabled = document.zoomEnabled
-        zoomCues = document.zoomCues
+        zoomCues = studioNormalizedZoomCues(document.zoomCues, sourceDuration: sourceDuration)
         // A project that never chose its own settings inherits whatever
         // was picked last, so "export as MP4" sticks across recordings.
         exportSettings = document.exportSettings ?? RecordingExportPreferences.lastSettings
@@ -1950,7 +1950,7 @@ final class RecordingStudioModel {
             for: range,
             clipTimeline: clipTimeline,
             sourceDuration: sourceDuration,
-            among: zoomCues.map { $0.start...$0.end },
+            among: zoomCues.compactMap { $0.end > $0.start ? $0.start...$0.end : nil },
             minimum: ZoomCue.minimumDuration
         ) else { return }
         appendZoomCue(span)

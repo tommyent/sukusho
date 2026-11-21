@@ -597,9 +597,12 @@ where Item.ID == UUID {
     }
 
     var body: some View {
-        let frames = Dictionary(uniqueKeysWithValues: blocks.map {
-            ($0.id, StudioBlockFrame(editorStart: $0.editorStart, editorEnd: $0.editorEnd, scale: scale))
-        })
+        let frames = Dictionary(
+            blocks.map {
+                ($0.id, StudioBlockFrame(editorStart: $0.editorStart, editorEnd: $0.editorEnd, scale: scale))
+            },
+            uniquingKeysWith: { _, latest in latest }
+        )
         let selected = blocks.first { $0.id == selectedID }
 
         ZStack(alignment: .topLeading) {
@@ -934,6 +937,42 @@ func studioMovedSourceRange(
     guard editorLength > 0 else { return (sourceStart, sourceStart) }
     let sourceEnd = max(sourceStart, studioSourceEnd(atEditorTime: start + editorLength, in: clipTimeline))
     return (sourceStart, sourceEnd)
+}
+
+/// Normalizes stored zoom cues at document ingestion: drops non-finite or
+/// inverted/empty ranges, clamps fields to valid bounds, assigns fresh IDs to
+/// duplicate IDs, sorts by start time, and trims overlaps forward.
+func studioNormalizedZoomCues(
+    _ cues: [ZoomCue],
+    sourceDuration: TimeInterval
+) -> [ZoomCue] {
+    let safeDuration = max(0, sourceDuration.isFinite ? sourceDuration : 0)
+    guard safeDuration > 0 else { return [] }
+    var seenIDs = Set<UUID>()
+    let sanitized = cues.compactMap { raw -> ZoomCue? in
+        guard raw.start.isFinite, raw.end.isFinite, raw.end > raw.start else { return nil }
+        var cue = studioSanitizedZoomCue(raw, sourceDuration: safeDuration)
+        guard cue.end - cue.start > 0.000_001 else { return nil }
+        if !seenIDs.insert(cue.id).inserted {
+            cue.id = UUID()
+        }
+        return cue
+    }
+    .sorted {
+        if abs($0.start - $1.start) > 0.000_001 {
+            return $0.start < $1.start
+        }
+        return $0.end < $1.end
+    }
+
+    var previousEnd: TimeInterval = 0
+    return sanitized.compactMap { raw in
+        var cue = raw
+        cue.start = max(cue.start, previousEnd)
+        guard cue.end - cue.start > 0.000_001 else { return nil }
+        previousEnd = cue.end
+        return cue
+    }
 }
 
 /// Sanitizes a zoom cue's scalar fields without altering neighbor placement.
