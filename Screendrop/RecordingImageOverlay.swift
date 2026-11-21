@@ -329,6 +329,14 @@ nonisolated final class RecordingOverlayImage: @unchecked Sendable {
     /// animated frame), or keeps the last completed frame visible while
     /// decoding the requested frame in the background.
     func previewFrame(at local: TimeInterval, onDecoded: (@Sendable () -> Void)? = nil) -> CGImage {
+        previewFrame(at: local, beforePrefetch: nil, onDecoded: onDecoded)
+    }
+
+    func previewFrame(
+        at local: TimeInterval,
+        beforePrefetch: (() -> Void)?,
+        onDecoded: (@Sendable () -> Void)? = nil
+    ) -> CGImage {
         let index = frameIndex(at: local)
         if let cached = frameCache.image(for: url, frameIndex: index) {
             stateLock.withLock { lastCompletedFrame = cached }
@@ -337,16 +345,31 @@ nonisolated final class RecordingOverlayImage: @unchecked Sendable {
             }
             return cached
         }
-        prefetchIfNeeded(index: index, onDecoded: onDecoded)
+        beforePrefetch?()
+        if let cached = prefetchIfNeeded(index: index, onDecoded: onDecoded) {
+            stateLock.withLock { lastCompletedFrame = cached }
+            if isAnimated {
+                prefetchIfNeeded(index: (index + 1) % frameCount, onDecoded: nil)
+            }
+            return cached
+        }
         if isAnimated {
             prefetchIfNeeded(index: (index + 1) % frameCount, onDecoded: nil)
         }
         return stateLock.withLock { lastCompletedFrame }
     }
 
-    private func prefetchIfNeeded(index: Int, onDecoded: (@Sendable () -> Void)?) {
-        guard frameCache.image(for: url, frameIndex: index) == nil else { return }
+    @discardableResult
+    private func prefetchIfNeeded(index: Int, onDecoded: (@Sendable () -> Void)?) -> CGImage? {
+        if let cached = frameCache.image(for: url, frameIndex: index) {
+            return cached
+        }
+        var hitAfterLock: CGImage?
         let shouldStart = stateLock.withLock { () -> Bool in
+            if let cached = frameCache.image(for: url, frameIndex: index) {
+                hitAfterLock = cached
+                return false
+            }
             if pendingDecodeCallbacks[index] != nil {
                 if let onDecoded {
                     pendingDecodeCallbacks[index]?.append(onDecoded)
@@ -356,7 +379,10 @@ nonisolated final class RecordingOverlayImage: @unchecked Sendable {
             pendingDecodeCallbacks[index] = onDecoded.map { [$0] } ?? []
             return true
         }
-        guard shouldStart else { return }
+        if let hitAfterLock {
+            return hitAfterLock
+        }
+        guard shouldStart else { return nil }
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             let decoded = self.sourceLock.withLock { self.frameDecoder(self.source, index) }
@@ -376,6 +402,7 @@ nonisolated final class RecordingOverlayImage: @unchecked Sendable {
                 }
             }
         }
+        return nil
     }
 
     private func frameIndex(at local: TimeInterval) -> Int {

@@ -794,6 +794,37 @@ struct StudioTracksTests {
         #expect(held.frame1DecodeCount == 1)
     }
 
+    @Test func pausedSeekReturnsFrameInsertedBetweenCacheLookups() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StudioBetweenLookups-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let gifURL = tempDir.appendingPathComponent("two.gif")
+        try writeAnimatedGIF(to: gifURL, frameCount: 2, width: 64, height: 64, delay: 0.1)
+
+        // Decode frame 1 upfront so we can simulate look-ahead inserting it into the
+        // frame cache after the visible draw's first lookup misses and before
+        // lastCompletedFrame is updated.
+        let source = try #require(CGImageSourceCreateWithURL(gifURL as CFURL, nil))
+        let frame1 = try #require(RecordingOverlayImage.decodeFrame(from: source, at: 1))
+
+        let cache = RecordingOverlayFrameCache(byteLimit: 4 * 1024 * 1024)
+        let image = try #require(RecordingOverlayImage(url: gifURL, cache: cache) { source, index in
+            index == 0 ? RecordingOverlayImage.decodeFrame(from: source, at: 0) : nil
+        })
+        let frame0 = try #require(cache.image(for: gifURL, frameIndex: 0))
+
+        // First lookup in previewFrame misses frame 1; beforePrefetch inserts frame 1
+        // into the cache while lastCompletedFrame is still frame 0. previewFrame must
+        // return frame 1 directly rather than falling back to stale frame 0.
+        let drawn = image.previewFrame(at: 0.15, beforePrefetch: {
+            _ = cache.insert(frame1, for: gifURL, frameIndex: 1)
+        })
+        #expect(drawn === frame1)
+        #expect(drawn !== frame0)
+    }
+
     // MARK: - Animated frame delay rules (GIF vs APNG, WebP, HEIC)
 
     @Test func gifDelayFallbackAppliesOnlyToGIFAndPreservesShortDelaysInOtherFormats() throws {
