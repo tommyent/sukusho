@@ -30,6 +30,7 @@ nonisolated enum ShelfFileSave {
     static func save(_ result: URL, of original: URL, identity: FileIdentity?,
                      outputIdentity: FileIdentity?, replacing: Bool,
                      in destinationFolder: URL? = nil,
+                     beforeInstall: (URL) throws -> Void = { _ in },
                      retire: (URL) throws -> URL = moveToTrash) -> Outcome {
         guard let identity, identity == FileIdentity(original) else { return .changed }
         guard let outputIdentity else { return .failed("The optimized file couldn't be verified.") }
@@ -69,8 +70,7 @@ nonisolated enum ShelfFileSave {
             }
 
             let name = (replacing || !sameFormat ? base : "\(base) optimized") + "." + result.pathExtension
-            let destination = unused(name, in: folder)
-            try files.moveItem(at: staged, to: destination)
+            let destination = try installUniquely(from: staged, named: name, in: folder, beforeInstall: beforeInstall)
             // Another format gets another name, so the original is retired after its replacement is in place.
             // If it can't be, the new file is saved all the same, and that is what is reported.
             guard replacing else { return .saved(destination) }
@@ -91,15 +91,32 @@ nonisolated enum ShelfFileSave {
         return (trashed as URL?) ?? url
     }
 
-    /// "name.webp", or "name 2.webp" and so on while that is taken.
-    private static func unused(_ name: String, in folder: URL) -> URL {
+    /// Installs `staged` in `folder` as "name.webp", "name 2.webp", … using exclusive rename so a late
+    /// collision picks the next free name instead of failing or overwriting.
+    private static func installUniquely(from staged: URL, named name: String, in folder: URL,
+                                        beforeInstall: (URL) throws -> Void) throws -> URL {
         let first = folder.appendingPathComponent(name)
-        guard FileManager.default.fileExists(atPath: first.path) else { return first }
         let base = first.deletingPathExtension().lastPathComponent
-        for number in 2...10_000 {
-            let next = folder.appendingPathComponent("\(base) \(number)").appendingPathExtension(first.pathExtension)
-            if !FileManager.default.fileExists(atPath: next.path) { return next }
+        let ext = first.pathExtension
+        func candidate(_ number: Int) -> URL {
+            guard number > 1 else { return first }
+            let numbered = folder.appendingPathComponent("\(base) \(number)")
+            return ext.isEmpty ? numbered : numbered.appendingPathExtension(ext)
         }
-        return folder.appendingPathComponent("\(base) \(UUID().uuidString)").appendingPathExtension(first.pathExtension)
+        for number in 1...10_000 {
+            let destination = candidate(number)
+            if FileManager.default.fileExists(atPath: destination.path) { continue }
+            try beforeInstall(destination)
+            do {
+                try ScreenshotFileActions.installExport(from: staged, at: destination, replacingExisting: false)
+                return destination
+            } catch let error as POSIXError where error.code == .EEXIST {
+                continue
+            }
+        }
+        let fallback = folder.appendingPathComponent("\(base) \(UUID().uuidString)")
+        let destination = ext.isEmpty ? fallback : fallback.appendingPathExtension(ext)
+        try ScreenshotFileActions.installExport(from: staged, at: destination, replacingExisting: false)
+        return destination
     }
 }

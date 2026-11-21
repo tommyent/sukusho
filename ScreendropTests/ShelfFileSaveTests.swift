@@ -50,10 +50,13 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
 
         /// Convenience wrapper for tests whose result file hasn't been tampered with.
         func save(_ result: URL, of original: URL, identity: FileIdentity? = nil, outputIdentity: FileIdentity? = nil,
-                  replacing: Bool, in folder: URL? = nil, retire: ((URL) throws -> URL)? = nil) -> ShelfFileSave.Outcome {
+                  replacing: Bool, in folder: URL? = nil,
+                  beforeInstall: (URL) throws -> Void = { _ in },
+                  retire: ((URL) throws -> URL)? = nil) -> ShelfFileSave.Outcome {
             ShelfFileSave.save(result, of: original, identity: identity ?? FileIdentity(original),
                                outputIdentity: outputIdentity ?? FileIdentity(result),
-                               replacing: replacing, in: folder, retire: retire ?? self.retire)
+                               replacing: replacing, in: folder, beforeInstall: beforeInstall,
+                               retire: retire ?? self.retire)
         }
 
         var names: [String] {
@@ -258,6 +261,37 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
         }
         #expect(desk.text(original) == "original png bytes")
         #expect(desk.names == ["photo.png"])
+        #expect(try FileManager.default.contentsOfDirectory(atPath: desk.trash.path).isEmpty)
+    }
+
+    @Test func aLateCollisionPicksTheNextFreeNameAndLeavesTheSourceUntouchedOnFailure() throws {
+        let desk = try Desk()
+        defer { desk.remove() }
+        let photo = try desk.file("photo.png", "original png")
+        let webP = try desk.file("photo.webp", "new webp", in: desk.results)
+        var collided = false
+
+        // Another app creates photo.webp after the shelf picks it, right before exclusive rename.
+        let outcome = desk.save(webP, of: photo, replacing: false, beforeInstall: { candidate in
+            if !collided, candidate.lastPathComponent == "photo.webp" {
+                collided = true
+                try Data("raced file".utf8).write(to: candidate)
+            }
+        })
+        #expect(outcome == .saved(desk.folder.appending(path: "photo 2.webp")))
+        #expect(desk.text(desk.folder.appending(path: "photo.webp")) == "raced file")
+        #expect(desk.text(desk.folder.appending(path: "photo 2.webp")) == "new webp")
+        #expect(desk.text(photo) == "original png")
+
+        // A non-collision install failure leaves the source untouched and Trash empty.
+        let failed = desk.save(webP, of: photo, replacing: true, beforeInstall: { _ in
+            throw CocoaError(.fileWriteNoPermission)
+        })
+        guard case .failed = failed else {
+            Issue.record("expected install failure: \(failed)")
+            return
+        }
+        #expect(desk.text(photo) == "original png")
         #expect(try FileManager.default.contentsOfDirectory(atPath: desk.trash.path).isEmpty)
     }
 }
