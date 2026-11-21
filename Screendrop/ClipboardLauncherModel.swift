@@ -48,6 +48,16 @@ final class ClipboardLauncherModel {
         ScreendropStorage.applicationSupportDirectory.appendingPathComponent("Launcher/favorites.json")
     }
 
+    static var unleashFavoritesFallbacks: [URL] {
+        guard let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return []
+        }
+        return [
+            support.appendingPathComponent("Unleash/favorites.json"),
+            support.appendingPathComponent("Unleash-swift/favorites.json"),
+        ]
+    }
+
     static var appCacheURL: URL? {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
             .appendingPathComponent("\(ScreendropStorage.directoryName)/launcher-apps.json")
@@ -118,7 +128,7 @@ final class ClipboardLauncherModel {
 
     private func activateApps(token: UInt64) {
         if !favoritesLoaded {
-            favorites = LauncherFavorites.load(Self.favoritesURL)
+            favorites = LauncherFavorites.loadOrImport(from: Self.favoritesURL, fallbacks: Self.unleashFavoritesFallbacks)
             favoritesLoaded = true
         }
         if !hasLoadedApps, let cacheURL = Self.appCacheURL, let cached = LauncherStore.loadApps(cacheURL), !cached.isEmpty {
@@ -252,7 +262,7 @@ final class ClipboardLauncherModel {
     @discardableResult
     func toggleFavorite(_ path: String) -> Bool {
         if !favoritesLoaded {
-            favorites = LauncherFavorites.load(Self.favoritesURL)
+            favorites = LauncherFavorites.loadOrImport(from: Self.favoritesURL, fallbacks: Self.unleashFavoritesFallbacks)
             favoritesLoaded = true
         }
         let pinned = favorites.toggle(path)

@@ -242,6 +242,39 @@ struct ClipboardLauncherSearchTests {
         #expect(LauncherStore.loadApps(cacheURL) == apps)
     }
 
+    @Test func importsUnleashFavoritesOnFirstUseLeavingOriginalInPlace() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("sukusho-launcher-import-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: root) }
+
+        // Case 1: imports current Unleash file, filters non-absolute entries, preserves order & unavailable targets, keeps original.
+        let current1 = root.appendingPathComponent("c1/Sukusho/Launcher/favorites.json")
+        let unleash1 = root.appendingPathComponent("c1/Unleash/favorites.json")
+        let legacy1 = root.appendingPathComponent("c1/Unleash-swift/favorites.json")
+        try LauncherFavorites(["/Applications/Safari.app", "relative/skip", "/Volumes/Offline/Missing.app", "/Users/me/Projects"]).save(unleash1)
+        try LauncherFavorites(["/Applications/LegacyOnly.app"]).save(legacy1)
+        let imported1 = LauncherFavorites.loadOrImport(from: current1, fallbacks: [unleash1, legacy1])
+        #expect(imported1.paths == ["/Applications/Safari.app", "/Volumes/Offline/Missing.app", "/Users/me/Projects"])
+        #expect(LauncherFavorites.load(current1).paths == imported1.paths)
+        #expect(fm.fileExists(atPath: unleash1.path))
+
+        // Case 2: falls back to Unleash-swift when current Unleash file is absent.
+        let current2 = root.appendingPathComponent("c2/Sukusho/Launcher/favorites.json")
+        let unleash2 = root.appendingPathComponent("c2/Unleash/favorites.json")
+        let legacy2 = root.appendingPathComponent("c2/Unleash-swift/favorites.json")
+        try LauncherFavorites(["/System/Applications/Calculator.app"]).save(legacy2)
+        let imported2 = LauncherFavorites.loadOrImport(from: current2, fallbacks: [unleash2, legacy2])
+        #expect(imported2.paths == ["/System/Applications/Calculator.app"])
+        #expect(fm.fileExists(atPath: legacy2.path))
+
+        // Case 3: existing Sukusho file (even empty) is never overwritten by Unleash fallbacks.
+        let current3 = root.appendingPathComponent("c3/Sukusho/Launcher/favorites.json")
+        let unleash3 = root.appendingPathComponent("c3/Unleash/favorites.json")
+        try LauncherFavorites([]).save(current3)
+        try LauncherFavorites(["/Applications/Safari.app"]).save(unleash3)
+        #expect(LauncherFavorites.loadOrImport(from: current3, fallbacks: [unleash3]).paths == [])
+    }
+
     @Test func realMacScanFindsStandardApps() {
         let real = LauncherAppScanner.scan()
         let paths = Set(real.map(\.path))

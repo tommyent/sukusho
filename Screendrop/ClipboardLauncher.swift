@@ -645,6 +645,24 @@ nonisolated struct LauncherFavorites: Equatable, Sendable {
         return LauncherFavorites(paths)
     }
 
+    /// Loads Sukusho's favorites. If Sukusho has no favorites file yet, copies absolute-path pins in order
+    /// from the first readable fallback (Unleash's current or legacy store), leaving the original in place.
+    static func loadOrImport(from url: URL, fallbacks: [URL] = []) -> LauncherFavorites {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: url.path) {
+            return load(url)
+        }
+        for source in fallbacks where fm.fileExists(atPath: source.path) {
+            var seen = Set<String>()
+            let imported = load(source).paths.filter { $0.hasPrefix("/") && seen.insert($0).inserted }
+            guard !imported.isEmpty else { continue }
+            let favorites = LauncherFavorites(imported)
+            try? favorites.save(url)
+            return favorites
+        }
+        return LauncherFavorites()
+    }
+
     func save(_ url: URL) throws {
         try LauncherStore.write(paths, to: url)
     }
