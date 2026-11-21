@@ -155,6 +155,20 @@ struct StudioEditingTests {
         #expect(normalized.segments[2].id == overlappingThird.id)
         #expect(normalized.segments[2].sourceStart == 4 && normalized.segments[2].sourceEnd == 6)
 
+        // Prior clip overlapping the middle of a later clip splits out every uncovered survivor in place.
+        let middle = RecordingClipSegment(sourceStart: 4, sourceEnd: 6)
+        let spanning = RecordingClipSegment(sourceStart: 0, sourceEnd: 10, speed: 2)
+        let splitNormalized = RecordingClipTimeline(segments: [middle, spanning]).normalized(to: 10)
+        #expect(splitNormalized.segments.count == 3)
+        #expect(splitNormalized.segments[0].id == middle.id)
+        #expect(abs(splitNormalized.segments[0].sourceStart - 4) < 0.0001 && abs(splitNormalized.segments[0].sourceEnd - 6) < 0.0001)
+        #expect(splitNormalized.segments[1].id == spanning.id)
+        #expect(abs(splitNormalized.segments[1].sourceStart - 0) < 0.0001 && abs(splitNormalized.segments[1].sourceEnd - 4) < 0.0001)
+        #expect(splitNormalized.segments[1].speed == 2)
+        #expect(splitNormalized.segments[2].id != spanning.id && splitNormalized.segments[2].id != middle.id)
+        #expect(abs(splitNormalized.segments[2].sourceStart - 6) < 0.0001 && abs(splitNormalized.segments[2].sourceEnd - 10) < 0.0001)
+        #expect(splitNormalized.segments[2].speed == 2)
+
         // Jumping from 6..10 to 0..4 is a hard cut at editor 4.0; advancing 0..4 to 4..6 is not.
         #expect(!normalized.isInRecordingOrder)
         #expect(normalized.hardCuts.count == 1)

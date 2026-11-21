@@ -164,24 +164,36 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
         }
 
         // Clips can play in any order, but no moment of the recording plays
-        // twice: a clip that overlaps one before it in the list keeps the part
-        // that doesn't (its leading part, if the overlap is in its middle),
-        // preserving its identity and list order.
+        // twice: subtract the union of earlier coverage and emit every
+        // playable surviving piece in place, keeping the clip's identity on
+        // the first survivor and minting fresh IDs for split-off pieces.
         var taken: [ClosedRange<TimeInterval>] = []
-        normalized = normalized.compactMap { segment in
-            var segment = segment
-            for range in taken.sorted(by: { $0.lowerBound < $1.lowerBound })
-            where range.upperBound > segment.sourceStart && range.lowerBound < segment.sourceEnd {
-                if range.lowerBound <= segment.sourceStart {
-                    segment.sourceStart = range.upperBound
-                } else {
-                    segment.sourceEnd = range.lowerBound
+        var deduplicated: [RecordingClipSegment] = []
+        for segment in normalized {
+            var pieces: [(start: TimeInterval, end: TimeInterval)] = []
+            var cursor = segment.sourceStart
+            for range in taken where range.upperBound > segment.sourceStart && range.lowerBound < segment.sourceEnd {
+                if range.lowerBound > cursor {
+                    pieces.append((cursor, min(range.lowerBound, segment.sourceEnd)))
                 }
+                cursor = max(cursor, range.upperBound)
             }
-            guard segment.duration >= RecordingClipSegment.minimumDuration else { return nil }
-            taken.append(segment.sourceStart...segment.sourceEnd)
-            return segment
+            if cursor < segment.sourceEnd {
+                pieces.append((cursor, segment.sourceEnd))
+            }
+            var keptID = false
+            for piece in pieces where piece.end - piece.start >= RecordingClipSegment.minimumDuration {
+                deduplicated.append(segment.covering(
+                    piece.start,
+                    piece.end,
+                    id: keptID ? UUID() : segment.id
+                ))
+                keptID = true
+                taken.append(piece.start...piece.end)
+            }
+            taken = Self.mergedRanges(taken)
         }
+        normalized = deduplicated
 
         if normalized.isEmpty, safeDuration > 0 {
             return .full(sourceDuration: safeDuration)
