@@ -5,8 +5,8 @@ import OSLog
 import UniformTypeIdentifiers
 
 /// Runtime state for Apps (and `z ` folders) inside the clipboard popup. Nothing runs at launch or
-/// while the popup is closed, except a lightweight FSEvents watch started on first use of Apps mode
-/// (and stopped when the setting is turned off).
+/// while the popup is closed: the directory watcher, background scans, zoxide reads, and icon loads
+/// all stop and invalidate on close or when the setting is turned off.
 @MainActor
 @Observable
 final class ClipboardLauncherModel {
@@ -20,6 +20,7 @@ final class ClipboardLauncherModel {
     private(set) var favorites = LauncherFavorites()
     let feedback = ActionFeedback(duration: ActionFeedback.textDuration)
 
+    @ObservationIgnored private let session = LauncherSession()
     @ObservationIgnored private var appsDirty = true
     @ObservationIgnored private var scanningApps = false
     @ObservationIgnored private var loadingZoxide = false
@@ -27,12 +28,14 @@ final class ClipboardLauncherModel {
     @ObservationIgnored private var popupVisible = false
     @ObservationIgnored private var activeMode: ClipboardPopupMode = .clipboard
     @ObservationIgnored private var watcher: AppDirectoryWatcher?
+    @ObservationIgnored private var scanTask: Task<Void, Never>?
+    @ObservationIgnored private var zoxideTask: Task<Void, Never>?
     @ObservationIgnored private let iconCache: NSCache<NSString, NSImage> = {
         let cache = NSCache<NSString, NSImage>()
         cache.countLimit = 128
         return cache
     }()
-    @ObservationIgnored private var pendingIcons: [String: Task<NSImage?, Never>] = [:]
+    @ObservationIgnored private var pendingIcons: [String: (token: UInt64, task: Task<NSImage?, Never>)] = [:]
     @ObservationIgnored private var cachedFolderIcon: NSImage?
     @ObservationIgnored private let logger = Logger(subsystem: "com.tommyent.Sukusho", category: "Launcher")
 
@@ -60,31 +63,46 @@ final class ClipboardLauncherModel {
     func modeDidActivate(_ mode: ClipboardPopupMode) {
         popupVisible = true
         activeMode = mode
-        if mode == .apps {
-            activateApps()
-            refreshZoxide()
+        switch mode {
+        case .apps:
+            let token = session.begin()
+            activateApps(token: token)
+            refreshZoxide(token: token)
+        case .clipboard:
+            endAppsSession()
         }
     }
 
     func popupClosed() {
         popupVisible = false
         activeMode = .clipboard
+        endAppsSession()
     }
 
-    /// Stops watching app folders and releases cached data when the setting is turned off.
+    /// Stops watching app folders, cancels in-flight work, and releases cached data when the setting is turned off.
     func stopAndClear() {
-        watcher?.stop()
-        watcher = nil
-        popupVisible = false
-        activeMode = .clipboard
+        popupClosed()
         catalog = .empty
         folderCatalog = .empty
         hasLoadedApps = false
         hasLoadedZoxide = false
         zoxideInstalled = true
-        appsDirty = true
+        favoritesLoaded = false
         iconCache.removeAllObjects()
-        for task in pendingIcons.values { task.cancel() }
+    }
+
+    private func endAppsSession() {
+        session.invalidate()
+        watcher?.stop()
+        watcher = nil
+        appsDirty = true
+        scanTask?.cancel()
+        scanTask = nil
+        zoxideTask?.cancel()
+        zoxideTask = nil
+        scanningApps = false
+        loadingZoxide = false
+        for entry in pendingIcons.values { entry.task.cancel() }
         pendingIcons.removeAll()
     }
 
@@ -96,7 +114,7 @@ final class ClipboardLauncherModel {
 
     // MARK: - Scanning & FSEvents
 
-    private func activateApps() {
+    private func activateApps(token: UInt64) {
         if !favoritesLoaded {
             favorites = LauncherFavorites.load(Self.favoritesURL)
             favoritesLoaded = true
@@ -104,55 +122,59 @@ final class ClipboardLauncherModel {
         if !hasLoadedApps, let cacheURL = Self.appCacheURL, let cached = LauncherStore.loadApps(cacheURL), !cached.isEmpty {
             catalog = LauncherCatalog(cached)
         }
-        startWatcherIfNeeded()
+        startWatcherIfNeeded(token: token)
         if !hasLoadedApps || appsDirty {
-            scanApps()
+            scanApps(token: token)
         }
     }
 
-    private func startWatcherIfNeeded() {
+    private func startWatcherIfNeeded(token: UInt64) {
         guard watcher == nil else { return }
         let paths = LauncherAppScanner.defaultRoots().map(\.path)
         watcher = AppDirectoryWatcher(paths: paths) { [weak self] in
-            guard let self else { return }
+            guard let self, self.session.isCurrent(token), self.popupVisible, self.activeMode == .apps else { return }
             self.appsDirty = true
-            // Only rescan immediately if the user is looking at Apps right now; while closed, do zero work.
-            if self.popupVisible, self.activeMode == .apps {
-                self.scanApps()
-            }
+            self.scanApps(token: token)
         }
     }
 
-    private func scanApps() {
-        guard !scanningApps else { return }
+    private func scanApps(token: UInt64) {
+        guard !scanningApps, session.isCurrent(token) else { return }
         scanningApps = true
         appsDirty = false
         let current = catalog.apps
         let cacheURL = Self.appCacheURL
-        DispatchQueue.global(qos: .userInitiated).async {
+        let session = self.session
+        let logger = self.logger
+        scanTask?.cancel()
+        scanTask = Task.detached(priority: .userInitiated) {
+            guard session.isCurrent(token), !Task.isCancelled else { return }
             let fresh = LauncherCatalog(LauncherAppScanner.scan())
+            guard session.isCurrent(token), !Task.isCancelled else { return }
             let changed = fresh.apps != current
-            if changed, let cacheURL {
+            if changed, let cacheURL, session.isCurrent(token), !Task.isCancelled {
                 do { try LauncherStore.write(fresh.apps, to: cacheURL) } catch {
-                    self.logger.error("Couldn't save launcher app cache: \(String(describing: error), privacy: .public)")
+                    logger.error("Couldn't save launcher app cache: \(String(describing: error), privacy: .public)")
                 }
             }
-            Task { @MainActor in
+            await MainActor.run {
                 let model = ClipboardLauncherModel.shared
+                guard model.session.isCurrent(token) else { return }
                 model.scanningApps = false
+                model.scanTask = nil
                 if changed {
                     model.catalog = fresh
                 }
                 model.hasLoadedApps = true
                 if model.appsDirty, model.popupVisible, model.activeMode == .apps {
-                    model.scanApps()
+                    model.scanApps(token: token)
                 }
             }
         }
     }
 
-    private func refreshZoxide() {
-        guard !loadingZoxide else { return }
+    private func refreshZoxide(token: UInt64) {
+        guard !loadingZoxide, session.isCurrent(token) else { return }
         guard let binary = Zoxide.binary(in: Zoxide.defaultCandidates()) else {
             zoxideInstalled = false
             if folderCatalog.count > 0 { folderCatalog = .empty }
@@ -161,11 +183,16 @@ final class ClipboardLauncherModel {
         }
         zoxideInstalled = true
         loadingZoxide = true
-        DispatchQueue.global(qos: .userInitiated).async {
+        let session = self.session
+        zoxideTask?.cancel()
+        zoxideTask = Task.detached(priority: .userInitiated) {
+            guard session.isCurrent(token), !Task.isCancelled else { return }
             let fresh = Zoxide.folders(binary: binary).map { Zoxide.catalog(Zoxide.existing($0)) }
-            Task { @MainActor in
+            await MainActor.run {
                 let model = ClipboardLauncherModel.shared
+                guard model.session.isCurrent(token) else { return }
                 model.loadingZoxide = false
+                model.zoxideTask = nil
                 model.hasLoadedZoxide = true
                 if let fresh, fresh.apps != model.folderCatalog.apps {
                     model.folderCatalog = fresh
@@ -182,22 +209,32 @@ final class ClipboardLauncherModel {
 
     func loadIcon(for path: String) async -> NSImage? {
         if let cached = iconCache.object(forKey: path as NSString) { return cached }
-        if let existing = pendingIcons[path] { return await existing.value }
-        let task = Task.detached(priority: .userInitiated) { () -> CGImage? in
+        guard let token = session.currentToken else { return nil }
+        if let existing = pendingIcons[path], existing.token == token { return await existing.task.value }
+        let session = self.session
+        let decodeTask = Task.detached(priority: .userInitiated) { () -> CGImage? in
+            guard session.isCurrent(token), !Task.isCancelled else { return nil }
             let resolved = (path as NSString).resolvingSymlinksInPath
             let icon = NSWorkspace.shared.icon(forFile: resolved)
             var rect = NSRect(x: 0, y: 0, width: 64, height: 64)
             return icon.cgImage(forProposedRect: &rect, context: nil, hints: nil)
         }
         let mainTask = Task<NSImage?, Never> {
-            guard let bitmap = await task.value else { return nil }
+            let bitmap = await withTaskCancellationHandler {
+                await decodeTask.value
+            } onCancel: {
+                decodeTask.cancel()
+            }
+            guard session.isCurrent(token), !Task.isCancelled, let bitmap else { return nil }
             let image = NSImage(cgImage: bitmap, size: NSSize(width: 28, height: 28))
             iconCache.setObject(image, forKey: path as NSString)
             return image
         }
-        pendingIcons[path] = mainTask
+        pendingIcons[path] = (token: token, task: mainTask)
         let result = await mainTask.value
-        pendingIcons[path] = nil
+        if pendingIcons[path]?.token == token {
+            pendingIcons[path] = nil
+        }
         return result
     }
 

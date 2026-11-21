@@ -130,6 +130,7 @@ final class ClipboardPopupPresenter {
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
         ClipboardLauncherModel.shared.popupClosed()
+        state.reset()
     }
 
     func toggleMode() {

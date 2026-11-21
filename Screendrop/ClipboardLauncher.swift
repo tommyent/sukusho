@@ -1,5 +1,45 @@
 import Darwin
 import Foundation
+import os
+
+/// Thread-safe session generation so background scans, zoxide reads, disk cache writes, and icon loads
+/// started in an earlier open/enabled session never publish or write after close or disable.
+nonisolated final class LauncherSession: Sendable {
+    private struct State {
+        var generation: UInt64 = 0
+        var isActive = false
+    }
+
+    private let state = OSAllocatedUnfairLock(initialState: State())
+
+    /// Starts a new active session, or returns the active session's token if already active.
+    func begin() -> UInt64 {
+        state.withLock { s in
+            if !s.isActive {
+                s.generation &+= 1
+                s.isActive = true
+            }
+            return s.generation
+        }
+    }
+
+    /// Returns the active session token if a session is currently active, or nil while closed/disabled.
+    var currentToken: UInt64? {
+        state.withLock { $0.isActive ? $0.generation : nil }
+    }
+
+    /// Ends the active session so any in-flight work from it sees `isCurrent(token) == false`.
+    func invalidate() {
+        state.withLock { s in
+            s.generation &+= 1
+            s.isActive = false
+        }
+    }
+
+    func isCurrent(_ token: UInt64) -> Bool {
+        state.withLock { $0.isActive && $0.generation == token }
+    }
+}
 
 /// Which view the clipboard popup is showing when "Apps and folders in the clipboard panel" is enabled.
 nonisolated enum ClipboardPopupMode: String, CaseIterable, Identifiable, Sendable {

@@ -407,4 +407,27 @@ struct ClipboardPopupTabToggleTests {
         #expect(ClipboardPopupMode.apps.afterTab(launcherEnabled: false) == .clipboard)
         #expect(ClipboardPopupMode.apps.toggled(launcherEnabled: false) == .clipboard)
     }
+
+    @Test func sessionInvalidatesPriorTokensAcrossCloseAndReopen() {
+        let session = LauncherSession()
+        #expect(session.currentToken == nil)
+        #expect(!session.isCurrent(0))
+
+        let first = session.begin()
+        #expect(session.currentToken == first)
+        #expect(session.isCurrent(first))
+        // Repeated begin while active keeps the same session token.
+        #expect(session.begin() == first)
+
+        // Closing or disabling invalidates the active token immediately.
+        session.invalidate()
+        #expect(session.currentToken == nil)
+        #expect(!session.isCurrent(first))
+
+        // Reopening issues a strictly newer token; old in-flight work stays rejected.
+        let second = session.begin()
+        #expect(second != first)
+        #expect(!session.isCurrent(first))
+        #expect(session.isCurrent(second))
+    }
 }
