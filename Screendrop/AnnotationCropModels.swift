@@ -377,6 +377,19 @@ extension CropDrag {
         return target == .newSelection ? distance >= 3 : distance > 0
     }
 
+    /// Resolves keyboard modifiers for this drag: plain Shift holds the aspect
+    /// ratio, Option resizes from the centre, and Command-Shift on a handle
+    /// keeps Sukusho's alternate centre-resize gesture without locking aspect.
+    func modifiers(shift: Bool, option: Bool, command: Bool) -> (holdsAspect: Bool, fromCenter: Bool) {
+        let isHandle: Bool
+        if case .handle = target { isHandle = true } else { isHandle = false }
+        let isCommandShiftCenter = isHandle && command && shift
+        return (
+            holdsAspect: shift && !isCommandShiftCenter,
+            fromCenter: option || isCommandShiftCenter
+        )
+    }
+
     /// The selection this drag makes with the pointer at `point` (pixels).
     /// `lockedAspect` is a preset's ratio; without one, `holdsAspect` (Shift)
     /// keeps the ratio the drag started with, or a square for a new selection.

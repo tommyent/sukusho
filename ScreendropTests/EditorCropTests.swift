@@ -193,6 +193,50 @@ struct EditorCropTests {
         #expect(clamped.midX == nearLeft.midX)
     }
 
+    @Test static func commandShiftOnHandleCentersWithoutLockingAspect() {
+        let start = CGRect(x: 300, y: 200, width: 200, height: 100) // 2:1, center (400, 250)
+        let handleDrag = CropDrag(
+            target: .handle(.bottomRight),
+            startRect: start,
+            startPoint: CGPoint(x: 500, y: 300),
+            startPointer: .zero,
+            pointer: .zero,
+            hasTravelled: true
+        )
+
+        // Command-Shift on a freeform handle centers without holding the 2:1 ratio.
+        let cmdShift = handleDrag.modifiers(shift: true, option: false, command: true)
+        #expect(cmdShift.fromCenter && !cmdShift.holdsAspect)
+        let centeredFreeform = handleDrag.rect(
+            at: CGPoint(x: 550, y: 380),
+            in: bounds,
+            lockedAspect: nil,
+            minimumSize: minimumSize,
+            holdsAspect: cmdShift.holdsAspect,
+            fromCenter: cmdShift.fromCenter
+        )
+        #expect(centeredFreeform == CGRect(x: 250, y: 120, width: 300, height: 260))
+        #expect(centeredFreeform.midX == start.midX && centeredFreeform.midY == start.midY)
+
+        // Plain Shift still holds aspect without centering; Option-Shift does both.
+        let plainShift = handleDrag.modifiers(shift: true, option: false, command: false)
+        #expect(plainShift.holdsAspect && !plainShift.fromCenter)
+        let optionShift = handleDrag.modifiers(shift: true, option: true, command: false)
+        #expect(optionShift.holdsAspect && optionShift.fromCenter)
+
+        // Outside new-selection drags keep Shift as aspect lock rather than Command-Shift centering.
+        let newDrag = CropDrag(
+            target: .newSelection,
+            startRect: start,
+            startPoint: CGPoint(x: 500, y: 400),
+            startPointer: .zero,
+            pointer: .zero,
+            hasTravelled: true
+        )
+        let newCmdShift = newDrag.modifiers(shift: true, option: false, command: true)
+        #expect(newCmdShift.holdsAspect && !newCmdShift.fromCenter)
+    }
+
     // MARK: - Nudge and bounds clamping
 
     @Test static func nudgeMovesByWholePixelsAndStopsAtBounds() {

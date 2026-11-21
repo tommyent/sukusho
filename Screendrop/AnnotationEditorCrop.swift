@@ -188,13 +188,18 @@ extension AnnotationEditorModel {
         guard let drag = cropDrag, drag.hasTravelled, let point = cropImagePoint(at: drag.pointer) else { return }
 
         let flags = NSEvent.modifierFlags
+        let modifiers = drag.modifiers(
+            shift: flags.contains(.shift),
+            option: flags.contains(.option),
+            command: flags.contains(.command)
+        )
         cropPixelRect = drag.rect(
             at: point,
             in: cropBounds,
             lockedAspect: cropAspect.pixelRatio(imageSize: imageSize),
             minimumSize: minimumCropSize(for: drag),
-            holdsAspect: flags.contains(.shift),
-            fromCenter: flags.contains(.option)
+            holdsAspect: modifiers.holdsAspect,
+            fromCenter: modifiers.fromCenter
         )
     }
 
