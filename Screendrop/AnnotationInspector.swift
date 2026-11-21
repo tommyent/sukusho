@@ -57,7 +57,7 @@ struct AnnotationEditorInspector: View {
                                 if !usesDefaultPlacement {
                                     InspectorResetButton(help: "Reset padding and alignment") {
                                         onEditorAction()
-                                        withAnimation(sectionAnimation) {
+                                        withAnimation(canvasResetAnimation) {
                                             let defaults = AnnotationBackgroundSettings()
                                             model.backgroundSettings.padding = defaults.padding
                                             model.backgroundSettings.alignment = defaults.alignment
@@ -276,6 +276,10 @@ struct AnnotationEditorInspector: View {
         accessibilityReduceMotion ? nil : .morph
     }
 
+    private var canvasResetAnimation: Animation? {
+        accessibilityReduceMotion ? nil : .canvasMove
+    }
+
     /// A feature switch in a section header. The section folds with it.
     private func featureBinding(
         _ keyPath: WritableKeyPath<AnnotationBackgroundSettings, Bool>
@@ -293,7 +297,7 @@ struct AnnotationEditorInspector: View {
     private func sectionResetButton(_ help: String, reset: @escaping () -> Void) -> some View {
         InspectorResetButton(help: help) {
             onEditorAction()
-            withAnimation(sectionAnimation) { reset() }
+            withAnimation(canvasResetAnimation) { reset() }
         }
         .transition(.blurPop)
     }
