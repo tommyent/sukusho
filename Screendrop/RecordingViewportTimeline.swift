@@ -213,21 +213,32 @@ nonisolated struct ViewportTimeline: Sendable {
 
     private let frames: [ViewportFrame]
     private let duration: TimeInterval
+    private let hardCuts: [TimeInterval]
 
-    static let identity = ViewportTimeline(frames: [.identity], duration: 0)
+    static let identity = ViewportTimeline(frames: [.identity], duration: 0, hardCuts: [])
 
-    private init(frames: [ViewportFrame], duration: TimeInterval) {
+    private init(frames: [ViewportFrame], duration: TimeInterval, hardCuts: [TimeInterval]) {
         self.frames = frames
         self.duration = duration
+        self.hardCuts = hardCuts
     }
 
     /// - Parameter time: Editor (edited-timeline) time, not raw source time.
     func frame(at time: TimeInterval) -> ViewportFrame {
         guard frames.count > 1, duration > 0 else { return frames.first ?? .identity }
 
-        let position = min(max(time, 0), duration) * Self.stepRate
+        let clamped = min(max(time, 0), duration)
+        let position = clamped * Self.stepRate
         let index = Int(position)
         guard index < frames.count - 1 else { return frames[frames.count - 1] }
+
+        // Never interpolate across a hard cut: pick the frame on the exact side
+        // of the cut so fractional cut times snap cleanly.
+        let aTime = Double(index) / Self.stepRate
+        let bTime = Double(index + 1) / Self.stepRate
+        if let cut = hardCuts.first(where: { $0 > aTime && $0 <= bTime }) {
+            return clamped >= cut ? frames[index + 1] : frames[index]
+        }
 
         let fraction = position - Double(index)
         let a = frames[index]
@@ -264,7 +275,8 @@ nonisolated struct ViewportTimeline: Sendable {
 
         // Cuts to footage from another moment: the camera lands on them
         // instead of easing across.
-        let hardCutFrames = Set(clipTimeline.hardCuts.map { Int(($0 * stepRate).rounded(.up)) })
+        let hardCuts = clipTimeline.hardCuts
+        let hardCutFrames = Set(hardCuts.map { Int(($0 * stepRate).rounded(.up)) })
         let pointerSamples = mergedPointerSamples(from: capture)
         let activitySamples = pointerSamples.filter {
             isRetainedSourceEvent($0.time, in: clipTimeline)
@@ -386,7 +398,7 @@ nonisolated struct ViewportTimeline: Sendable {
             previousActive = active
         }
 
-        return ViewportTimeline(frames: frames, duration: duration)
+        return ViewportTimeline(frames: frames, duration: duration, hardCuts: hardCuts)
     }
 
     // MARK: Cue selection

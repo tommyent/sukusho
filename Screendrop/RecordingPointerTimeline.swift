@@ -43,12 +43,14 @@ nonisolated struct PointerTimeline: Sendable {
 
     private let frames: [PointerFrame]
     private let duration: TimeInterval
+    private let hardCuts: [TimeInterval]
     private let artworkByID: [String: PointerArtwork]
     private let fallbackArtwork: PointerArtwork?
 
     static let empty = PointerTimeline(
         frames: [],
         duration: 0,
+        hardCuts: [],
         artworkByID: [:],
         fallbackArtwork: nil
     )
@@ -56,11 +58,13 @@ nonisolated struct PointerTimeline: Sendable {
     private init(
         frames: [PointerFrame],
         duration: TimeInterval,
+        hardCuts: [TimeInterval],
         artworkByID: [String: PointerArtwork],
         fallbackArtwork: PointerArtwork?
     ) {
         self.frames = frames
         self.duration = duration
+        self.hardCuts = hardCuts
         self.artworkByID = artworkByID
         self.fallbackArtwork = fallbackArtwork
     }
@@ -69,9 +73,18 @@ nonisolated struct PointerTimeline: Sendable {
         guard !frames.isEmpty else { return nil }
         guard frames.count > 1, duration > 0 else { return frames.first }
 
-        let position = min(max(time, 0), duration) * Self.stepRate
+        let clamped = min(max(time, 0), duration)
+        let position = clamped * Self.stepRate
         let index = Int(position)
         guard index < frames.count - 1 else { return frames[frames.count - 1] }
+
+        // Never blend across a hard cut: pick the snapped post-cut frame at or
+        // after the exact cut time, or the pre-cut frame before it.
+        let aTime = Double(index) / Self.stepRate
+        let bTime = Double(index + 1) / Self.stepRate
+        if let cut = hardCuts.first(where: { $0 > aTime && $0 <= bTime }) {
+            return clamped >= cut ? frames[index + 1] : frames[index]
+        }
 
         let fraction = position - Double(index)
         let a = frames[index]
@@ -136,7 +149,8 @@ nonisolated struct PointerTimeline: Sendable {
         let pressSamples = samples.filter { $0.kind == .press }
         let intervals = pressIntervals(
             from: samples,
-            duration: timelineDuration
+            duration: timelineDuration,
+            hardCuts: hardCuts
         )
 
         var artworkByID: [String: PointerArtwork] = [:]
@@ -190,8 +204,14 @@ nonisolated struct PointerTimeline: Sendable {
                 }
             }
 
-            let isPressed = pressIntervalIndex < intervals.count
-                && intervals[pressIntervalIndex].contains(time)
+            let isPressed: Bool
+            if pressIntervalIndex < intervals.count {
+                let interval = intervals[pressIntervalIndex]
+                let endsAtHardCut = hardCuts.contains { abs($0 - interval.end) < 0.000_001 }
+                isPressed = interval.start <= time && (endsAtHardCut ? time < interval.end : time <= interval.end)
+            } else {
+                isPressed = false
+            }
             // A drag sample is authoritative even if a press sample was lost
             // to permissions or an interrupted capture. Release immediately
             // becomes the latest sample and returns to the ordinary spring.
@@ -250,6 +270,7 @@ nonisolated struct PointerTimeline: Sendable {
         return PointerTimeline(
             frames: frames,
             duration: timelineDuration,
+            hardCuts: hardCuts,
             artworkByID: artworkByID,
             fallbackArtwork: fallbackArtwork
         )
@@ -336,13 +357,42 @@ nonisolated struct PointerTimeline: Sendable {
 
     private static func pressIntervals(
         from samples: [PointerStreamEvent],
-        duration: TimeInterval
+        duration: TimeInterval,
+        hardCuts: [TimeInterval]
     ) -> [PressInterval] {
+        func runBounds(for time: TimeInterval) -> (start: TimeInterval, end: TimeInterval) {
+            let start = hardCuts.last { $0 <= time } ?? 0
+            let end = hardCuts.first { $0 > time } ?? duration
+            return (start, end)
+        }
+
         let presses = samples.filter { $0.kind == .press || $0.kind == .release }
         var result: [PressInterval] = []
         var unmatchedPresses: [Int: [PointerStreamEvent]] = [:]
 
+        func flushUnmatched(before cut: TimeInterval) {
+            for (button, pending) in unmatchedPresses {
+                var remaining: [PointerStreamEvent] = []
+                for press in pending {
+                    let bounds = runBounds(for: press.time)
+                    if bounds.end <= cut {
+                        result.append(PressInterval(
+                            start: max(bounds.start, press.time - pressAnticipation),
+                            end: min(press.time + orphanPressHold, bounds.end)
+                        ))
+                    } else {
+                        remaining.append(press)
+                    }
+                }
+                unmatchedPresses[button] = remaining.isEmpty ? nil : remaining
+            }
+        }
+
         for sample in presses {
+            let bounds = runBounds(for: sample.time)
+            if !hardCuts.isEmpty {
+                flushUnmatched(before: bounds.start)
+            }
             let button = sample.button ?? 0
             if sample.kind == .press {
                 unmatchedPresses[button, default: []].append(sample)
@@ -350,17 +400,18 @@ nonisolated struct PointerTimeline: Sendable {
                 let press = pending.removeFirst()
                 unmatchedPresses[button] = pending
                 result.append(PressInterval(
-                    start: max(0, press.time - pressAnticipation),
-                    end: min(max(sample.time, press.time), duration)
+                    start: max(bounds.start, press.time - pressAnticipation),
+                    end: min(max(sample.time, press.time), bounds.end)
                 ))
             }
         }
 
         for pending in unmatchedPresses.values {
             for press in pending {
+                let bounds = runBounds(for: press.time)
                 result.append(PressInterval(
-                    start: max(0, press.time - pressAnticipation),
-                    end: min(press.time + orphanPressHold, duration)
+                    start: max(bounds.start, press.time - pressAnticipation),
+                    end: min(press.time + orphanPressHold, bounds.end)
                 ))
             }
         }
@@ -371,7 +422,8 @@ nonisolated struct PointerTimeline: Sendable {
         var merged: [PressInterval] = []
         for interval in sorted {
             if let lastIndex = merged.indices.last,
-               interval.start <= merged[lastIndex].end {
+               interval.start <= merged[lastIndex].end,
+               !hardCuts.contains(where: { abs($0 - merged[lastIndex].end) < 0.000_001 }) {
                 merged[lastIndex].end = max(merged[lastIndex].end, interval.end)
             } else {
                 merged.append(interval)

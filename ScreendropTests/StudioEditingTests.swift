@@ -350,6 +350,52 @@ struct StudioEditingTests {
         #expect(abs(pointerAtCut.tiltDegrees) < 0.01)
         // The press at source 9.85 (editor 4.85) must not bleed its ripple past the hard cut at 5.0.
         #expect(pointerAtCut.press == nil)
+
+        // 3. Fractional hard cut at editor 1.004 s (between 120 Hz samples 120 and 121):
+        // neither ViewportTimeline nor PointerTimeline blends across the cut, and an orphan press
+        // 50 ms before the cut (source 6.954) does not carry its 150 ms hold across the cut.
+        let fractionalTimeline = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 6.0, sourceEnd: 7.004),
+            RecordingClipSegment(sourceStart: 0.0, sourceEnd: 2.0),
+        ])
+        let fractionalCapture = PointerCaptureFile(
+            samples: [
+                PointerSample(t: 0.0, x: 0.1, y: 0.1),
+                PointerSample(t: 1.9, x: 0.1, y: 0.1),
+                PointerSample(t: 6.0, x: 0.9, y: 0.9),
+                PointerSample(t: 7.0, x: 0.9, y: 0.9),
+            ],
+            presses: [
+                PointerPressEvent(t: 6.954, x: 0.9, y: 0.9, button: 0, phase: .down),
+            ]
+        )
+        let fractionalViewport = ViewportTimeline.build(
+            cues: [
+                ZoomCue(start: 6.0, end: 7.1, zoom: 2.5, anchorMode: .pinnedAnchor, pinnedPoint: CGPoint(x: 0.8, y: 0.8)),
+                ZoomCue(start: 0.0, end: 2.0, zoom: 1.5, anchorMode: .pinnedAnchor, pinnedPoint: CGPoint(x: 0.2, y: 0.2)),
+            ],
+            capture: fractionalCapture,
+            clipTimeline: fractionalTimeline
+        )
+        // Before 1.004 s (1.002 s): pre-cut side (2.5x), not blended toward 1.5x.
+        #expect(abs(fractionalViewport.frame(at: 1.002).magnification - 2.5) < 0.05)
+        // At exact 1.004 s: post-cut side (1.5x), not blended with 2.5x.
+        #expect(abs(fractionalViewport.frame(at: 1.004).magnification - 1.5) < 0.01)
+
+        let fractionalPointer = PointerTimeline.build(
+            capture: fractionalCapture,
+            duration: 8.0,
+            recordingSizeInPoints: CGSize(width: 1000, height: 1000),
+            clipTimeline: fractionalTimeline
+        )
+        let fBefore = try #require(fractionalPointer.frame(at: 1.002))
+        #expect(abs(fBefore.location.x - 0.9) < 0.05)
+        let fAtCut = try #require(fractionalPointer.frame(at: 1.004))
+        #expect(abs(fAtCut.location.x - 0.1) < 0.01)
+        #expect(fAtCut.press == nil)
+        // Orphan press hold must end at the hard cut, so incoming clip keeps full magnification (1.0, not 0.8).
+        let fAfter = try #require(fractionalPointer.frame(at: 1.02))
+        #expect(abs(fAfter.magnification - 1.0) < 0.01)
     }
 
     // MARK: - Snap point selection & trim snapping / reorder control
