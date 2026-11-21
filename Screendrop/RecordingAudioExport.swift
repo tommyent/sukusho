@@ -77,14 +77,18 @@ nonisolated final class RecordingAudioExporter: @unchecked Sendable {
         let screenURL: URL
         let clipTimeline: RecordingClipTimeline
         /// When set, this file *is* the soundtrack: the recording's own
-        /// audio is ignored and the file is simply transcoded, clamped to
-        /// the edited timeline's length.
+        /// audio is ignored and the file is cut through `replacementSync`
+        /// (or laid flat over the edited timeline when nil).
         let replacementURL: URL?
         let format: RecordingAudioFormat
         var volume: Double = 1
         var isolatedMicrophoneURL: URL? = nil
         var microphoneTrackID: CMPersistentTrackID? = nil
         var backgroundMusic: RecordingBackgroundMusicMixer.Configuration? = nil
+        var replacementSync: RecordingAudioSync? = nil
+        /// Audio clips under the video, mixed in as the video export does.
+        var audioClips: [RecordingAudioClip] = []
+        var mediaDirectory: URL? = nil
     }
 
     enum ExportError: LocalizedError {
@@ -113,38 +117,25 @@ nonisolated final class RecordingAudioExporter: @unchecked Sendable {
             throw VideoTrimExportError.invalidRange
         }
 
-        let isolatedMicrophone = if let url = configuration.isolatedMicrophoneURL {
-            await RecordingReplacementAudio.load(url: url, displayName: "Isolated voice")
-        } else { nil as RecordingReplacementAudio? }
-        if configuration.isolatedMicrophoneURL != nil, isolatedMicrophone == nil {
-            throw RecordingVoiceIsolation.IsolationError.invalidAudio
-        }
-        if let replacementURL = configuration.replacementURL {
-            guard await RecordingReplacementAudio.load(url: replacementURL, displayName: replacementURL.lastPathComponent) != nil else {
-                throw RecordingReplacementAudio.LoadError.unreadable
-            }
-        }
-        let audioAsset: AVAsset = if let replacementURL = configuration.replacementURL {
-            AVURLAsset(url: replacementURL)
-        } else {
-            try RecordingCompositionBuilder.makeAsset(
-                from: sourceAsset,
-                timeline: timeline,
-                sourceDuration: sourceDuration,
-                microphoneTrackID: configuration.microphoneTrackID,
-                isolatedMicrophone: isolatedMicrophone?.track
-            )
-        }
-
-        let prepared = try await RecordingBackgroundMusicMixer.prepare(asset: audioAsset, music: configuration.backgroundMusic,
-            sourceURL: configuration.screenURL, microphoneTrackID: configuration.microphoneTrackID,
-            timeline: timeline, volume: configuration.volume)
-        let tracks = try await prepared.asset.loadTracks(withMediaType: .audio)
+        let prepared = try await StudioAudioComposer.prepareExport(
+            screenAsset: sourceAsset,
+            screenURL: configuration.screenURL,
+            timeline: timeline,
+            replacementURL: configuration.replacementURL,
+            replacementSync: configuration.replacementSync,
+            clips: configuration.audioClips,
+            mediaDirectory: configuration.mediaDirectory,
+            volume: configuration.volume,
+            microphoneTrackID: configuration.microphoneTrackID,
+            isolatedMicrophoneURL: configuration.isolatedMicrophoneURL,
+            backgroundMusic: configuration.backgroundMusic
+        )
+        let tracks = try await prepared.composition.loadTracks(withMediaType: .audio)
         guard !tracks.isEmpty else {
             throw ExportError.noAudioTrack
         }
 
-        let reader = try AVAssetReader(asset: prepared.asset)
+        let reader = try AVAssetReader(asset: prepared.composition)
         // Clamps a replacement that overruns the cut; a shorter one simply
         // ends early rather than being stretched.
         reader.timeRange = CMTimeRange(
@@ -199,6 +190,7 @@ nonisolated final class RecordingAudioExporter: @unchecked Sendable {
             try? FileManager.default.removeItem(at: outputURL)
             throw error
         }
+        withExtendedLifetime(prepared) {}
 
         input.markAsFinished()
         writer.endSession(atSourceTime: reader.timeRange.end)

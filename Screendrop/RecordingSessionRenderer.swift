@@ -98,7 +98,10 @@ enum RecordingSessionRenderer {
         // shortcut: a render stamped with no document keeps its size after the remembered choice changes; stamp the settings if that matters.
         let exportSettings = editDocument?.exportSettings ?? RecordingExportPreferences.lastSettings.forVideoRendering
         let audioVolume = RecordingAudioGain.normalized(editDocument?.audioVolume ?? 1)
-        let audioReplacementURL = !exportSettings.removeAudio && audioVolume > 0
+        let audioClips = editDocument?.audioClips ?? []
+        let usesReplacementClip = audioClips.contains { $0.source == .replacement }
+        let usesRecordingClip = audioClips.contains { $0.source == .recording }
+        let audioReplacementURL = !exportSettings.removeAudio && (audioVolume > 0 || usesReplacementClip)
             ? editDocument?.replacementAudioFileName.map {
                 session.directoryURL.appendingPathComponent($0)
             }
@@ -127,7 +130,7 @@ enum RecordingSessionRenderer {
             includesMicrophone: manifest?.includesMicrophone == true,
             includesSystemAudio: manifest?.includesSystemAudio == true)?.trackID
         if editDocument?.isolateVoice == true, audioReplacementURL == nil,
-           !exportSettings.removeAudio, audioVolume > 0 {
+           !exportSettings.removeAudio, audioVolume > 0 || usesRecordingClip {
             guard let microphone = RecordingVoiceIsolation.microphoneTrack(in: tracks,
                 includesMicrophone: manifest?.includesMicrophone == true,
                 includesSystemAudio: manifest?.includesSystemAudio == true) else {
@@ -244,12 +247,15 @@ enum RecordingSessionRenderer {
             clipTimeline: clipTimeline,
             exportSettings: exportSettings,
             audioReplacementURL: audioReplacementURL,
+            audioReplacementSync: document?.replacementAudioSync,
             audioVolume: audioVolume,
             isolatedMicrophoneURL: isolatedMicrophoneURL,
             microphoneTrackID: microphoneTrackID,
             backgroundMusic: !exportSettings.removeAudio && !exportSettings.effectiveExportsGIF ? document?.backgroundMusic.map {
                 .init(url: session.directoryURL.appendingPathComponent($0.fileName), settings: $0)
             } : nil,
+            audioClips: audioClips,
+            mediaDirectory: session.directoryURL.appendingPathComponent("media", isDirectory: true),
             reframe: reframe,
             fitContentAspect: fitContentAspect,
             usesUniformPadding: aspect == .original,
