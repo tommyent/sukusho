@@ -436,6 +436,57 @@ struct StudioTracksTests {
         #expect(tinyCache.currentBytes == 0)
     }
 
+    // MARK: - Animated frame delay rules (GIF vs APNG, WebP, HEIC)
+
+    @Test func gifDelayFallbackAppliesOnlyToGIFAndPreservesShortDelaysInOtherFormats() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StudioFrameDelays-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Real APNG with 10 ms and 40 ms frames must stay 50 ms total (not stretched to 140 ms).
+        let apngURL = tempDir.appendingPathComponent("fast.png")
+        let apngDest = try #require(CGImageDestinationCreateWithURL(apngURL as CFURL, UTType.png.identifier as CFString, 2, nil))
+        CGImageDestinationSetProperties(apngDest, [kCGImagePropertyPNGDictionary: [kCGImagePropertyAPNGLoopCount: 0]] as CFDictionary)
+        let red = try solidImage(width: 32, height: 32, r: 240, g: 20, b: 20)
+        let blue = try solidImage(width: 32, height: 32, r: 20, g: 40, b: 240)
+        CGImageDestinationAddImage(apngDest, red, [kCGImagePropertyPNGDictionary: [kCGImagePropertyAPNGUnclampedDelayTime: 0.01]] as CFDictionary)
+        CGImageDestinationAddImage(apngDest, blue, [kCGImagePropertyPNGDictionary: [kCGImagePropertyAPNGUnclampedDelayTime: 0.04]] as CFDictionary)
+        #expect(CGImageDestinationFinalize(apngDest))
+
+        let cache = RecordingOverlayFrameCache(byteLimit: 4 * 1024 * 1024)
+        let apng = try #require(RecordingOverlayImage(url: apngURL, cache: cache))
+        #expect(apng.frameCount == 2)
+        #expect(abs(apng.loopDuration - 0.05) < 0.005)
+        let apngFrame0 = try #require(apng.frame(at: 0.005))
+        let apngFrame1 = try #require(apng.frame(at: 0.025))
+        #expect(apngFrame0 !== apngFrame1)
+
+        // Real GIF with 0 ms (sub-11 ms) and 50 ms frames applies the GIF fallback -> 150 ms total.
+        let gifURL = tempDir.appendingPathComponent("short.gif")
+        let gifDest = try #require(CGImageDestinationCreateWithURL(gifURL as CFURL, UTType.gif.identifier as CFString, 2, nil))
+        CGImageDestinationSetProperties(gifDest, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]] as CFDictionary)
+        CGImageDestinationAddImage(gifDest, red, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFUnclampedDelayTime: 0.005]] as CFDictionary)
+        CGImageDestinationAddImage(gifDest, blue, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFUnclampedDelayTime: 0.05]] as CFDictionary)
+        #expect(CGImageDestinationFinalize(gifDest))
+
+        let gif = try #require(RecordingOverlayImage(url: gifURL, cache: cache))
+        #expect(abs(gif.loopDuration - 0.15) < 0.01)
+
+        // Direct delay parsing across GIF, APNG, WebP, and HEIC metadata dictionaries.
+        #expect(RecordingOverlayImage.delay(from: [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFUnclampedDelayTime: 0.01]]) == 0.1)
+        #expect(RecordingOverlayImage.delay(from: [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFUnclampedDelayTime: 0.02]]) == 0.02)
+        #expect(RecordingOverlayImage.delay(from: [kCGImagePropertyPNGDictionary: [kCGImagePropertyAPNGUnclampedDelayTime: 0.01]]) == 0.01)
+        #expect(RecordingOverlayImage.delay(from: [kCGImagePropertyWebPDictionary: [kCGImagePropertyWebPUnclampedDelayTime: 0.01]]) == 0.01)
+        #expect(RecordingOverlayImage.delay(from: [kCGImagePropertyWebPDictionary: [kCGImagePropertyWebPDelayTime: 0.025]]) == 0.025)
+        #expect(RecordingOverlayImage.delay(from: [kCGImagePropertyHEICSDictionary: [kCGImagePropertyHEICSUnclampedDelayTime: 0.01]]) == 0.01)
+        #expect(RecordingOverlayImage.delay(from: [kCGImagePropertyHEICSDictionary: [kCGImagePropertyHEICSDelayTime: 0.033]]) == 0.033)
+        // Missing or invalid delays fall back to 0.1s.
+        #expect(RecordingOverlayImage.delay(from: [kCGImagePropertyHEICSDictionary: [kCGImagePropertyHEICSUnclampedDelayTime: 0.0]]) == 0.1)
+        #expect(RecordingOverlayImage.delay(from: [kCGImagePropertyWebPDictionary: [kCGImagePropertyWebPUnclampedDelayTime: Double.nan]]) == 0.1)
+        #expect(RecordingOverlayImage.delay(from: [:]) == 0.1)
+    }
+
     // MARK: - Source-time placement across cuts and speed ramps
 
     @Test func textAndImageBlocksMapAcrossCutsAndSpeedRamps() {

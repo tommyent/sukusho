@@ -282,24 +282,35 @@ nonisolated final class RecordingOverlayImage: @unchecked Sendable {
         return CGImageSourceCreateThumbnailAtIndex(source, index, options as CFDictionary)
     }
 
-    /// A frame's delay. Like browsers, delays under 11 ms - which many GIFs
-    /// carry by mistake - play at a tenth of a second.
-    private static func delay(of source: CGImageSource, at index: Int) -> TimeInterval {
-        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any] else {
-            return 0.1
+    /// A frame's delay. Only GIF carries the legacy browser rule where delays
+    /// under 11 ms play at 100 ms; APNG, WebP, and HEIC honor any finite
+    /// positive delay and fall back to 100 ms only when timing is missing or invalid.
+    static func delay(from properties: [CFString: Any]) -> TimeInterval {
+        if let gif = properties[kCGImagePropertyGIFDictionary] as? [CFString: Any] {
+            let value = (gif[kCGImagePropertyGIFUnclampedDelayTime] as? Double)
+                ?? (gif[kCGImagePropertyGIFDelayTime] as? Double)
+            guard let value, value.isFinite, value >= 0.011 else { return 0.1 }
+            return value
         }
-        let dictionaries: [(CFString, CFString, CFString)] = [
-            (kCGImagePropertyGIFDictionary, kCGImagePropertyGIFUnclampedDelayTime, kCGImagePropertyGIFDelayTime),
+        let nonGIFDictionaries: [(CFString, CFString, CFString)] = [
             (kCGImagePropertyPNGDictionary, kCGImagePropertyAPNGUnclampedDelayTime, kCGImagePropertyAPNGDelayTime),
             (kCGImagePropertyWebPDictionary, kCGImagePropertyWebPUnclampedDelayTime, kCGImagePropertyWebPDelayTime),
             (kCGImagePropertyHEICSDictionary, kCGImagePropertyHEICSUnclampedDelayTime, kCGImagePropertyHEICSDelayTime)
         ]
-        for (dictionaryKey, unclampedKey, clampedKey) in dictionaries {
+        for (dictionaryKey, unclampedKey, clampedKey) in nonGIFDictionaries {
             guard let dictionary = properties[dictionaryKey] as? [CFString: Any] else { continue }
-            let value = (dictionary[unclampedKey] as? Double) ?? (dictionary[clampedKey] as? Double) ?? 0.1
-            return value < 0.011 ? 0.1 : value
+            let value = (dictionary[unclampedKey] as? Double) ?? (dictionary[clampedKey] as? Double)
+            guard let value, value.isFinite, value > 0 else { return 0.1 }
+            return value
         }
         return 0.1
+    }
+
+    private static func delay(of source: CGImageSource, at index: Int) -> TimeInterval {
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any] else {
+            return 0.1
+        }
+        return delay(from: properties)
     }
 
     /// Whether a file is an image the overlay track can show.
