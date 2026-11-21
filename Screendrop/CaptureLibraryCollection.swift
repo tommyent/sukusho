@@ -119,11 +119,13 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
             for case let header as LibrarySectionHeader in collection.visibleSupplementaryViews(ofKind: NSCollectionView.elementKindSectionHeader) {
                 header.plate.isHidden = !coordinator.headerPlates
             }
-            if let flow = collection.collectionViewLayout as? LibraryCollectionLayout {
-                // Glass's floating footer pills (32 pt tall + 8 pt bottom inset) sit over the collection.
-                flow.floatingFooterInset = coordinator.headerPlates ? 40 : 0
-                flow.invalidateLayout()
-            }
+        }
+        let footerInset: CGFloat = FloatingGlassChrome.isEnabled(in: context.environment) ? 40 : 0
+        if let flow = collection.collectionViewLayout as? LibraryCollectionLayout,
+           flow.floatingFooterInset != footerInset {
+            // The floating footer pills (32 pt tall + 8 pt bottom inset) sit over the collection.
+            flow.floatingFooterInset = footerInset
+            flow.invalidateLayout()
         }
         coordinator.updating = true
         defer { coordinator.updating = false }
@@ -523,7 +525,7 @@ final class LibraryCollectionLayout: NSCollectionViewFlowLayout {
     var displayLayout: CaptureLibraryLayout = .grid
     /// Grid cell width, from the Library's card size slider.
     var cardWidth: CGFloat = 220
-    /// Extra scroll room at the bottom when Glass's floating footer pills sit over the collection, so the last row
+    /// Extra scroll room at the bottom when the floating footer pills sit over the collection, so the last row
     /// clears them when scrolled to the end.
     var floatingFooterInset: CGFloat = 0
     /// The width the cells were last sized for.

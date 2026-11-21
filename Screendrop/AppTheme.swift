@@ -356,6 +356,10 @@ nonisolated enum ThemeColor: Sendable, Equatable {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
 
+    static func isEnabled(in environment: EnvironmentValues) -> Bool {
+        !environment.accessibilityReduceTransparency && environment.colorSchemeContrast != .increased
+    }
+
     var wrappedValue: Bool {
         !reduceTransparency && contrast != .increased
     }
