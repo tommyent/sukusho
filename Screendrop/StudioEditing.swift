@@ -163,6 +163,18 @@ nonisolated enum StudioEditing {
         }
     }
 
+    /// Accessible value for the timeline ruler, exposing both marked bounds
+    /// whenever an I/O range is active.
+    static func rulerAccessibilityValue(
+        duration: TimeInterval,
+        range: ClosedRange<TimeInterval>?
+    ) -> String {
+        if let range {
+            return "Marked range \(studioPreciseTimecode(range.lowerBound)) to \(studioPreciseTimecode(range.upperBound))"
+        }
+        return "Duration \(studioClock(duration))"
+    }
+
     /// Source timestamp to record for a marker dropped at `editorTime`.
     /// Uses the half-open footage owner at `editorTime`; at the timeline's
     /// terminal frame, steps back inside the final clip so a reordered join

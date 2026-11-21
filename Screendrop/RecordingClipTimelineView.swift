@@ -158,11 +158,12 @@ final class RecordingClipTimelineControl: NSView {
     override func isAccessibilityElement() -> Bool { false }
 
     override func accessibilityChildren() -> [Any]? {
-        timeline.segments.enumerated().compactMap { index, clip in
+        let count = timeline.segments.count
+        return timeline.segments.enumerated().compactMap { index, clip in
             guard let rect = clipRect(for: clip.id),
                   let range = timeline.editorRange(for: clip.id) else { return nil }
             var parts = [
-                "Clip \(index + 1) of \(timeline.segments.count)",
+                "Clip \(index + 1) of \(count)",
                 "\(studioClock(range.lowerBound)) to \(studioClock(range.upperBound))"
             ]
             if abs(clip.speed - 1) > 0.001 {
@@ -171,13 +172,33 @@ final class RecordingClipTimelineControl: NSView {
             if clip.id == selectedClipID {
                 parts.append("selected")
             }
-            return NSAccessibilityElement.element(
-                withRole: .button,
+            return ClipAccessibilityElement(
+                owner: self,
+                clipID: clip.id,
+                index: index,
+                segmentCount: count,
                 frame: NSAccessibility.screenRect(fromView: self, rect: rect),
-                label: parts.joined(separator: ", "),
-                parent: self
+                label: parts.joined(separator: ", ")
             )
         }
+    }
+
+    fileprivate func selectClipFromAccessibility(_ clipID: UUID) -> Bool {
+        guard timeline.segments.contains(where: { $0.id == clipID }) else { return false }
+        if selectedClipID != clipID {
+            selectedClipID = clipID
+            selectionDidChange?(clipID)
+            needsDisplay = true
+        }
+        return true
+    }
+
+    fileprivate func reorderClipFromAccessibility(_ clipID: UUID, to destination: Int) -> Bool {
+        guard reorderRequested != nil,
+              timeline.segments.contains(where: { $0.id == clipID }),
+              (0..<timeline.segments.count).contains(destination) else { return false }
+        reorderRequested?(clipID, destination)
+        return true
     }
 
     override var needsDisplay: Bool {
@@ -1094,5 +1115,54 @@ final class RecordingClipTimelineControl: NSView {
             ).fill()
         }
         NSGraphicsContext.restoreGraphicsState()
+    }
+}
+
+private final class ClipAccessibilityElement: NSAccessibilityElement {
+    private weak var owner: RecordingClipTimelineControl?
+    private let clipID: UUID
+    private let index: Int
+    private let segmentCount: Int
+
+    init(
+        owner: RecordingClipTimelineControl,
+        clipID: UUID,
+        index: Int,
+        segmentCount: Int,
+        frame: NSRect,
+        label: String
+    ) {
+        self.owner = owner
+        self.clipID = clipID
+        self.index = index
+        self.segmentCount = segmentCount
+        super.init()
+        setAccessibilityRole(.button)
+        setAccessibilityParent(owner)
+        setAccessibilityFrame(frame)
+        setAccessibilityLabel(label)
+        setAccessibilityHelp(segmentCount > 1 ? "Activate to select. Use actions to reorder." : "Activate to select.")
+    }
+
+    override func accessibilityPerformPress() -> Bool {
+        owner?.selectClipFromAccessibility(clipID) ?? false
+    }
+
+    override func accessibilityCustomActions() -> [NSAccessibilityCustomAction]? {
+        guard let owner, owner.reorderRequested != nil, segmentCount > 1 else { return nil }
+        var actions: [NSAccessibilityCustomAction] = []
+        if index > 0 {
+            actions.append(NSAccessibilityCustomAction(name: "Move Clip Earlier") { [weak self] in
+                guard let self, let owner = self.owner else { return false }
+                return owner.reorderClipFromAccessibility(self.clipID, to: self.index - 1)
+            })
+        }
+        if index + 1 < segmentCount {
+            actions.append(NSAccessibilityCustomAction(name: "Move Clip Later") { [weak self] in
+                guard let self, let owner = self.owner else { return false }
+                return owner.reorderClipFromAccessibility(self.clipID, to: self.index + 1)
+            })
+        }
+        return actions.isEmpty ? nil : actions
     }
 }

@@ -1228,6 +1228,9 @@ private struct StudioTimelineRuler: View {
                 drawLabel(endpointLabel, at: endpointX, trailing: true)
             }
         }
+        .accessibilityElement()
+        .accessibilityLabel("Timeline Ruler")
+        .accessibilityValue(StudioEditing.rulerAccessibilityValue(duration: duration, range: range))
     }
 
     /// Smallest "nice" interval whose labels stay comfortably apart at the

@@ -481,6 +481,33 @@ struct StudioEditingTests {
         let result = try #require(reordered)
         #expect(result.0 == second.id)
         #expect(result.1 == 0)
+
+        // VoiceOver: with selection clear, activating Clip 2 selects it and exposes named reorder actions.
+        var a11ySelected: UUID?
+        var a11yReordered: (UUID, Int)?
+        control.selectionDidChange = { a11ySelected = $0 }
+        control.reorderRequested = { a11yReordered = ($0, $1) }
+        control.update(
+            timeline: timeline,
+            sourceDuration: 10,
+            thumbnails: store,
+            selectedClipID: nil,
+            playheadTime: 0
+        )
+        let children = try #require(control.accessibilityChildren() as? [NSAccessibilityElement])
+        #expect(children.count == 2)
+        #expect(children[1].accessibilityPerformPress())
+        #expect(a11ySelected == second.id)
+        let actions = try #require(children[1].accessibilityCustomActions())
+        let moveEarlier = try #require(actions.first { $0.name == "Move Clip Earlier" })
+        #expect(moveEarlier.handler?() == true)
+        #expect(a11yReordered?.0 == second.id && a11yReordered?.1 == 0)
+        // Clip 1 can only move later, not earlier.
+        let clip1Actions = try #require(children[0].accessibilityCustomActions())
+        #expect(clip1Actions.map(\.name) == ["Move Clip Later"])
+        // Ruler accessibility value exposes both marked range bounds when active.
+        #expect(StudioEditing.rulerAccessibilityValue(duration: 12, range: 2.4...5.5) == "Marked range 0:02.4 to 0:05.5")
+        #expect(StudioEditing.rulerAccessibilityValue(duration: 12, range: nil) == "Duration 0:12")
     }
 
     // MARK: - Key handler standing aside in text fields & coexisting with playback keys
