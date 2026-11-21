@@ -533,6 +533,37 @@ struct WindowManagementTests {
         let corrected = WindowLayout.finalOriginCorrection(actual: encroaching, target: leftTarget)
         #expect(corrected?.x == 70.0)
         #expect(corrected?.y == 25.0)
+
+        // Case 4: Cancellation before retry write or before final position correction blocks the stale write.
+        var cancelledAfterRead = true
+        var retryWrites = 0
+        var posWrites = 0
+        WindowLayout.settle(
+            target: target,
+            shouldContinue: { !cancelledAfterRead },
+            readFrame: {
+                cancelledAfterRead = true
+                return ScreenBounds(x: 720, y: 25, width: 1000, height: 875)
+            },
+            writeFrame: { _ in retryWrites += 1; return true },
+            writePosition: { _, _ in posWrites += 1 }
+        )
+        #expect(retryWrites == 0 && posWrites == 0)
+
+        var reads = 0
+        var allowWrite = true
+        WindowLayout.settle(
+            target: target,
+            shouldContinue: { allowWrite },
+            readFrame: {
+                reads += 1
+                if reads == 2 { allowWrite = false } // cancelled right before final position correction
+                return ScreenBounds(x: 720, y: 25, width: 1000, height: 875)
+            },
+            writeFrame: { _ in retryWrites += 1; return true },
+            writePosition: { _, _ in posWrites += 1 }
+        )
+        #expect(retryWrites == 1 && posWrites == 0)
     }
 
     @Test func accessibilityFlowPromptsOnceThenOpensSettingsOnRepeatUserAction() {

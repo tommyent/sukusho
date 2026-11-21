@@ -255,7 +255,7 @@ final class WindowManager {
                     self.clearPendingOwnFullScreenObserver()
                     guard self.gate.isCurrent(token), let window, window.isVisible,
                           !window.styleMask.contains(.fullScreen) else { return }
-                    self.apply(action, toOwnWindow: window)
+                    self.apply(action, toOwnWindow: window, token: token)
                 }
             }
             let timeout = DispatchWorkItem { [weak self] in
@@ -263,15 +263,19 @@ final class WindowManager {
             }
             fullScreenExitTimeout = timeout
             DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(5), execute: timeout)
+            guard gate.isCurrent(token) else {
+                clearPendingOwnFullScreenObserver()
+                return
+            }
             window.toggleFullScreen(nil)
             return
         }
-        apply(action, toOwnWindow: window)
+        apply(action, toOwnWindow: window, token: token)
     }
 
-    private func apply(_ action: WindowAction, toOwnWindow window: NSWindow) {
-        guard let primaryHeight = NSScreen.screens.first?.frame.height else {
-            NSSound.beep()
+    private func apply(_ action: WindowAction, toOwnWindow window: NSWindow, token: UInt64) {
+        guard gate.isCurrent(token), let primaryHeight = NSScreen.screens.first?.frame.height else {
+            if gate.isCurrent(token) { NSSound.beep() }
             return
         }
         let screens = currentScreens()
@@ -285,6 +289,7 @@ final class WindowManager {
             NSSound.beep()
             return
         }
+        guard gate.isCurrent(token) else { return }
         window.setFrame(target.frame.toAppKit(primaryHeight: Double(primaryHeight)), display: true, animate: false)
         let after = window.frame
         let actual = ScreenBounds.fromAppKit(
@@ -292,6 +297,7 @@ final class WindowManager {
             width: Double(after.width), height: Double(after.height),
             primaryHeight: Double(primaryHeight)
         )
+        guard gate.isCurrent(token) else { return }
         if let pos = WindowLayout.finalOriginCorrection(actual: actual, target: target) {
             let clamped = ScreenBounds(x: pos.x, y: pos.y, width: actual.width, height: actual.height)
             window.setFrameOrigin(clamped.toAppKit(primaryHeight: Double(primaryHeight)).origin)
@@ -424,10 +430,11 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
         screens: [DisplayScreen],
         token: UInt64
     ) -> Bool {
-        guard let isFullScreen = boolAttribute(Self.fullScreenAttr, on: window) else { return false }
+        guard gate.isCurrent(token), let isFullScreen = boolAttribute(Self.fullScreenAttr, on: window) else { return false }
         if isFullScreen {
             let exitOutcome = WindowFullScreenExit.exitAndConfirm(
                 maxPolls: 40,
+                shouldContinue: { self.gate.isCurrent(token) },
                 requestExit: {
                     AXUIElementSetAttributeValue(window, Self.fullScreenAttr, kCFBooleanFalse)
                 },
@@ -451,14 +458,14 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
         screens: [DisplayScreen],
         token: UInt64
     ) -> Bool {
-        guard let current = readFrame(of: window) else { return false }
-        guard let target = WindowLayout.target(for: action, window: current, screens: screens) else {
+        guard gate.isCurrent(token), let current = readFrame(of: window) else { return false }
+        guard gate.isCurrent(token), let target = WindowLayout.target(for: action, window: current, screens: screens) else {
             return false
         }
 
         // Chromium/Electron apps fight or animate AX frame writes when AXEnhancedUserInterface
         // is enabled; toggle it off only when the write succeeds and always restore it before
-        // releasing the serial queue (even if a newer command or disable cancels a delayed retry).
+        // releasing the serial queue (even if the token became stale mid-move).
         let restoreEnhancedUI = disableEnhancedUIIfNeeded(on: axApp)
         var restored = !restoreEnhancedUI
         func restoreIfNeeded() -> Bool {
@@ -473,35 +480,41 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
         }
         defer { _ = restoreIfNeeded() }
 
-        let (sizeErr, posErr) = writeFrame(target.frame, to: window)
-        if WindowAXPolicy.shouldAbort(sizeErr) || WindowAXPolicy.shouldAbort(posErr)
+        guard gate.isCurrent(token) else { return false }
+        let (sizeErr, posErr) = writeFrame(target.frame, to: window, token: token)
+        if !gate.isCurrent(token)
+            || WindowAXPolicy.shouldAbort(sizeErr) || WindowAXPolicy.shouldAbort(posErr)
             || (sizeErr != .success && posErr != .success) {
             return false
         }
-        settle(window: window, target: target)
+        settle(window: window, target: target, token: token)
 
         // Cross-display moves can apply size late on macOS; wait inside this serialized operation
         // so a superseding command or disable wakes immediately and never races with our retry.
         if target.crossDisplay {
             guard gate.wait(token: token, duration: 0.025) else { return false }
-            let (retrySizeErr, retryPosErr) = writeFrame(target.frame, to: window)
-            if !WindowAXPolicy.shouldAbort(retrySizeErr) && !WindowAXPolicy.shouldAbort(retryPosErr) {
-                settle(window: window, target: target)
+            let (retrySizeErr, retryPosErr) = writeFrame(target.frame, to: window, token: token)
+            if gate.isCurrent(token),
+               !WindowAXPolicy.shouldAbort(retrySizeErr), !WindowAXPolicy.shouldAbort(retryPosErr) {
+                settle(window: window, target: target, token: token)
             }
         }
         return restoreIfNeeded()
     }
 
-    private func settle(window: AXUIElement, target: WindowLayout.Target) {
+    private func settle(window: AXUIElement, target: WindowLayout.Target, token: UInt64) {
         WindowLayout.settle(
             target: target,
+            shouldContinue: { self.gate.isCurrent(token) },
             readFrame: { self.readFrame(of: window) },
             writeFrame: { frame in
-                let (sizeErr, posErr) = self.writeFrame(frame, to: window)
-                return !WindowAXPolicy.shouldAbort(sizeErr) && !WindowAXPolicy.shouldAbort(posErr)
+                let (sizeErr, posErr) = self.writeFrame(frame, to: window, token: token)
+                return self.gate.isCurrent(token)
+                    && !WindowAXPolicy.shouldAbort(sizeErr)
+                    && !WindowAXPolicy.shouldAbort(posErr)
             },
             writePosition: { x, y in
-                _ = self.writePosition(x: x, y: y, to: window)
+                _ = self.writePosition(x: x, y: y, to: window, token: token)
             }
         )
     }
@@ -556,7 +569,8 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
         return ScreenBounds(x: Double(pt.x), y: Double(pt.y), width: Double(sz.width), height: Double(sz.height))
     }
 
-    private func writeFrame(_ frame: ScreenBounds, to window: AXUIElement) -> (sizeErr: AXError, posErr: AXError) {
+    private func writeFrame(_ frame: ScreenBounds, to window: AXUIElement, token: UInt64) -> (sizeErr: AXError, posErr: AXError) {
+        guard gate.isCurrent(token) else { return (.failure, .failure) }
         var sz = CGSize(width: frame.width, height: frame.height)
         let sizeErr: AXError = AXValueCreate(.cgSize, &sz).map {
             AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, $0)
@@ -564,11 +578,12 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
         if WindowAXPolicy.shouldAbort(sizeErr) {
             return (sizeErr, sizeErr)
         }
-        let posErr = writePosition(x: frame.x, y: frame.y, to: window)
+        let posErr = writePosition(x: frame.x, y: frame.y, to: window, token: token)
         return (sizeErr, posErr)
     }
 
-    private func writePosition(x: Double, y: Double, to window: AXUIElement) -> AXError {
+    private func writePosition(x: Double, y: Double, to window: AXUIElement, token: UInt64) -> AXError {
+        guard gate.isCurrent(token) else { return .failure }
         var pt = CGPoint(x: x, y: y)
         return AXValueCreate(.cgPoint, &pt).map {
             AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, $0)

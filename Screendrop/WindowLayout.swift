@@ -300,15 +300,19 @@ nonisolated enum WindowLayout {
 
     /// Retries the requested frame first when the initial read disagrees, then computes the final
     /// origin from the post-retry actual size and corrects either coordinate if off.
+    /// Rechecks `shouldContinue` before every write so cancellation never issues a stale write.
     static func settle(
         target: Target,
         tolerance: Double = 2.0,
+        shouldContinue: () -> Bool = { true },
         readFrame: () -> ScreenBounds?,
         writeFrame: (ScreenBounds) -> Bool,
         writePosition: (Double, Double) -> Void
     ) {
         guard let actual = readFrame(), !framesMatch(actual, target.frame, tolerance: tolerance) else { return }
+        guard shouldContinue() else { return }
         guard writeFrame(target.frame), let afterRetry = readFrame() else { return }
+        guard shouldContinue() else { return }
         if let corrected = finalOriginCorrection(actual: afterRetry, target: target, tolerance: tolerance) {
             writePosition(corrected.x, corrected.y)
         }
@@ -549,10 +553,12 @@ nonisolated enum WindowFullScreenExit {
 
     static func exitAndConfirm(
         maxPolls: Int = 40,
+        shouldContinue: () -> Bool = { true },
         requestExit: () -> AXError,
         readIsFullScreen: () -> Bool?,
         waitStep: () -> Bool
     ) -> Outcome {
+        guard shouldContinue() else { return .cancelled }
         guard requestExit() == .success else { return .writeFailed }
         for _ in 0..<maxPolls {
             guard waitStep() else { return .cancelled }
