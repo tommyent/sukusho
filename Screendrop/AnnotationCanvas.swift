@@ -696,7 +696,7 @@ struct AnnotationCanvas: View {
             return
         }
 
-        withAnimation(.easeOut(duration: 0.18)) {
+        withAnimation(.fade) {
             settledScene = AnnotationSceneSettleResult(
                 key: key,
                 image: NSImage(

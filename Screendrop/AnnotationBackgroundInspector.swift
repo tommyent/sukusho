@@ -646,7 +646,7 @@ private struct AlignmentPositionPicker: View {
             ForEach(AnnotationBackgroundAlignment.allCases) { option in
                 Button {
                     onEditorAction()
-                    withAnimation(accessibilityReduceMotion ? nil : .snappy(duration: 0.18)) {
+                    withAnimation(accessibilityReduceMotion ? nil : .morphQuick) {
                         alignment = option
                     }
                 } label: {

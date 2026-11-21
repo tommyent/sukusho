@@ -276,7 +276,7 @@ struct BarControlChrome<Content: View>: View {
                     )
                     .opacity(isHovering && showsPuck ? 1 : 0)
             }
-            .animation(.easeOut(duration: 0.12), value: isHovering)
+            .animation(.hover, value: isHovering)
             .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             // One of two cursor paths, for the two states the bar lives in.
             // While Screendrop is the active app the system's pointer-style

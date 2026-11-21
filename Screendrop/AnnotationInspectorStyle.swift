@@ -172,8 +172,6 @@ struct InspectorSection<Content: View, Accessory: View>: View {
     @ViewBuilder var accessory: () -> Accessory
     @ViewBuilder var content: () -> Content
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
     private var showsContent: Bool {
         (isOn?.wrappedValue ?? true) && (isExpanded?.wrappedValue ?? true)
     }
@@ -228,7 +226,7 @@ struct InspectorSection<Content: View, Accessory: View>: View {
                     isOn: Binding(
                         get: { isOn.wrappedValue },
                         set: { value in
-                            withAnimation(reduceMotion ? nil : .fold) { isOn.wrappedValue = value }
+                            withAnimation(.foldIfAllowed) { isOn.wrappedValue = value }
                         }
                     )
                 )
@@ -278,7 +276,7 @@ struct InspectorSection<Content: View, Accessory: View>: View {
 
     private func toggleExpansion() {
         guard let isExpanded else { return }
-        withAnimation(reduceMotion ? nil : .fold) {
+        withAnimation(.foldIfAllowed) {
             isExpanded.wrappedValue.toggle()
         }
     }

@@ -258,21 +258,21 @@ private struct RecordingStudioContent: View {
         .help("Crop aspect ratio")
 
         Button("Reset") {
-            withAnimation(.snappy(duration: 0.18)) {
+            withAnimation(.canvasMoveIfAllowed) {
                 model.resetVideoCrop()
             }
         }
         .help("Reset the selection to the whole video")
 
         Button("Cancel") {
-            withAnimation(.snappy(duration: 0.22)) {
+            withAnimation(.canvasMoveIfAllowed) {
                 model.cancelVideoCrop()
             }
         }
         .keyboardShortcut(.cancelAction)
 
         Button("Crop") {
-            withAnimation(.snappy(duration: 0.22)) {
+            withAnimation(.canvasMoveIfAllowed) {
                 model.applyVideoCrop()
             }
         }
@@ -283,7 +283,7 @@ private struct RecordingStudioContent: View {
         Binding(
             get: { model.videoCropAspect },
             set: { aspect in
-                withAnimation(.snappy(duration: 0.18)) {
+                withAnimation(.canvasMoveIfAllowed) {
                     model.setVideoCropAspect(aspect)
                 }
             }
@@ -463,7 +463,7 @@ struct StudioProgressRing: View {
                 .rotationEffect(.degrees(-90))
         }
         .frame(width: size, height: size)
-        .animation(.easeOut(duration: 0.15), value: progress)
+        .motion(.fade, value: progress)
     }
 }
 
@@ -668,14 +668,14 @@ private struct StudioCanvas: View {
                     .fill(Color.black)
                     .shadow(color: .black.opacity(colorScheme == .dark ? 0.45 : 0.16), radius: 14, y: 5)
             }
-            .animation(.easeOut(duration: 0.15), value: model.notice?.id)
+            .motion(.fade, value: model.notice?.id)
             .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
         }
         // Cropping swaps it for the crop actions in the toolbar.
         .overlay(alignment: .topTrailing) {
             if !model.isEditingSourceRegion {
                 AnnotationDockButton(systemImage: "crop", title: "Crop", help: "Crop the finished video canvas") {
-                    withAnimation(.snappy(duration: 0.22)) {
+                    withAnimation(.canvasMoveIfAllowed) {
                         model.beginVideoCrop()
                     }
                 }
@@ -694,13 +694,13 @@ private struct StudioCanvas: View {
         guard model.isLoaded else { return }
         model.togglePlayback()
         let flash = PlaybackFlash(systemImage: model.isPlaying ? "play.fill" : "pause.fill")
-        withAnimation(.easeOut(duration: 0.12)) {
+        withAnimation(.hover) {
             playbackFlash = flash
         }
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(520))
             guard playbackFlash == flash else { return }
-            withAnimation(.easeOut(duration: 0.25)) {
+            withAnimation(.fade) {
                 playbackFlash = nil
             }
         }
@@ -734,7 +734,7 @@ private struct StudioCanvasSkimBadge: View {
                     .transition(.opacity)
             }
         }
-        .animation(.easeOut(duration: 0.15), value: skimTime == nil)
+        .motion(.fade, value: skimTime == nil)
     }
 }
 
@@ -1710,7 +1710,7 @@ private struct StudioTranscriptEditPanel: View {
                     // Follow playback through the transcript, but never yank
                     // it around while the user is selecting a passage.
                     guard let activeIndex, model.isPlaying, selection == nil else { return }
-                    withAnimation(.easeOut(duration: 0.2)) {
+                    withAnimation(.fade) {
                         proxy.scrollTo(activeIndex, anchor: .center)
                     }
                 }
@@ -2019,7 +2019,7 @@ private struct StudioCameraBubble: View {
             }
             .onEnded { _ in
                 dragStartCenter = nil
-                withAnimation(.easeOut(duration: 0.15)) {
+                withAnimation(.fade) {
                     guides = SnapGuides()
                 }
             }
@@ -3707,7 +3707,7 @@ private struct StudioInspector: View {
                         .disabled(!model.isLoaded || model.hasRunningWork || model.hasUnreadableDraft || model.transcriptionState.isTranscribing)
                     }
                 }
-                .animation(.easeOut(duration: 0.15), value: model.showsAgentPromptSaved)
+                .motion(.fade, value: model.showsAgentPromptSaved)
                 .padding(.horizontal, InspectorMetrics.horizontalPadding)
                 .padding(.vertical, 10)
 
@@ -3753,7 +3753,9 @@ private struct StudioInspector: View {
             InspectorSegmented(
                 options: ExportAspectPreset.allCases,
                 isSelected: { $0 == model.exportAspect },
-                onTap: { model.exportAspect = $0 },
+                onTap: { aspect in
+                    withAnimation(.canvasMoveIfAllowed) { model.exportAspect = aspect }
+                },
                 label: { preset in
                     Text(preset.title)
                         .font(.inspectorSegment)
@@ -3767,7 +3769,9 @@ private struct StudioInspector: View {
                 InspectorSegmented(
                     options: ExportAspectContentMode.allCases,
                     isSelected: { $0 == model.exportAspectMode },
-                    onTap: { model.exportAspectMode = $0 },
+                    onTap: { mode in
+                        withAnimation(.canvasMoveIfAllowed) { model.exportAspectMode = mode }
+                    },
                     label: { mode in
                         Text(mode.title)
                             .font(.inspectorSegment)
@@ -4413,7 +4417,7 @@ private struct StudioInspector: View {
                 // Follow playback through the list, but never yank the list
                 // around while the user is scrubbing or editing.
                 guard let activeID, model.isPlaying else { return }
-                withAnimation(.easeOut(duration: 0.2)) {
+                withAnimation(.fade) {
                     proxy.scrollTo(activeID, anchor: .center)
                 }
             }

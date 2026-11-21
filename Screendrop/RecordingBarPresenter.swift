@@ -609,8 +609,8 @@ private struct RecordingBarView: View {
         // Keyed on the id as well as the text so sliding the pointer along
         // the bar glides the pill from control to control rather than
         // cross-fading it in place.
-        .animation(.easeOut(duration: 0.12), value: tooltip.visible?.id)
-        .animation(.easeOut(duration: 0.12), value: tooltip.visible?.hover)
+        .animation(.hover, value: tooltip.visible?.id)
+        .animation(.hover, value: tooltip.visible?.hover)
     }
 
     private var barShape: RoundedRectangle {
