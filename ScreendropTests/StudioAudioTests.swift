@@ -1633,6 +1633,146 @@ struct StudioAudioTests {
         #expect(goertzel(rendered, at: 2.5, length: 0.5, frequency: 880) < 0.05)
     }
 
+    @Test func trimHidingExplicitAudioSplitReopensSplitAndMutedSecondHalf() throws {
+        let seg = RecordingClipSegment(sourceStart: 0, sourceEnd: 10)
+        let full = RecordingClipTimeline(segments: [seg])
+
+        // 1. Link one 10 s audio clip, split audio at 5 s, and mute the second half (no fades).
+        var linked = RecordingAudioClip(fileName: "voice.wav", displayName: "Voice", start: 0, fileDuration: 10)
+        linked.isLinked = true
+        let halves = try #require(StudioAudioConform.split(linked, at: 5))
+        let firstHalf = halves.leading
+        var secondHalf = halves.trailing
+        secondHalf.isMuted = true
+
+        // 2. Trim the video end to 4 s, completely hiding the 5 s split and muted second half.
+        var trimmedSeg = seg
+        trimmedSeg.sourceEnd = 4
+        let trimmed4 = RecordingClipTimeline(segments: [trimmedSeg])
+        let afterTrim = StudioAudioConform.conform([firstHalf, secondHalf], hidden: [], from: full, to: trimmed4)
+        #expect(afterTrim.clips.count == 1)
+        #expect(abs(afterTrim.clips[0].start - 0) < 0.001 && abs(afterTrim.clips[0].end - 4) < 0.001)
+        #expect(!afterTrim.clips[0].isMuted)
+
+        // 3. Reopen the video end directly to 10 s: the explicit split at 5 s AND the
+        //    muted second half (5...10 s) must come back intact as two separate pieces.
+        let afterReopen = StudioAudioConform.conform(afterTrim.clips, hidden: afterTrim.hidden, from: trimmed4, to: full)
+        let reopened = afterReopen.clips.sorted { $0.start < $1.start }
+        try #require(reopened.count == 2)
+        #expect(afterReopen.hidden.isEmpty)
+        #expect(reopened[0].lane == 0)
+        #expect(abs(reopened[0].start - 0) < 0.001 && abs(reopened[0].end - 5) < 0.001)
+        #expect(!reopened[0].isMuted)
+        #expect(reopened[0].keepsTrailingSplit)
+        #expect(reopened[1].lane == 0)
+        #expect(abs(reopened[1].start - 5) < 0.001 && abs(reopened[1].end - 10) < 0.001)
+        #expect(reopened[1].isMuted)
+        #expect(reopened[1].keepsLeadingSplit)
+
+        // 4. Two-step reopen (4 -> 7 -> 10 s) also preserves the split and muted second half.
+        var midSeg = seg
+        midSeg.sourceEnd = 7
+        let mid7 = RecordingClipTimeline(segments: [midSeg])
+        let afterMid = StudioAudioConform.conform(afterTrim.clips, hidden: afterTrim.hidden, from: trimmed4, to: mid7)
+        let midClips = afterMid.clips.sorted { $0.start < $1.start }
+        try #require(midClips.count == 2)
+        #expect(abs(midClips[0].start - 0) < 0.001 && abs(midClips[0].end - 5) < 0.001 && !midClips[0].isMuted)
+        #expect(abs(midClips[1].start - 5) < 0.001 && abs(midClips[1].end - 7) < 0.001 && midClips[1].isMuted)
+
+        let afterFull = StudioAudioConform.conform(afterMid.clips, hidden: afterMid.hidden, from: mid7, to: full)
+        let fullClips = afterFull.clips.sorted { $0.start < $1.start }
+        try #require(fullClips.count == 2)
+        #expect(afterFull.hidden.isEmpty)
+        #expect(abs(fullClips[0].start - 0) < 0.001 && abs(fullClips[0].end - 5) < 0.001 && !fullClips[0].isMuted)
+        #expect(abs(fullClips[1].start - 5) < 0.001 && abs(fullClips[1].end - 10) < 0.001 && fullClips[1].isMuted)
+    }
+
+    @Test func rippleGapRestoresHiddenLinkedAudioFromEitherSide() throws {
+        // Put a linked clip entirely at 2.5...3.0 s under one 10 s video and ripple-delete 2...4 s.
+        let full = RecordingClipTimeline.full(sourceDuration: 10)
+        var linked = RecordingAudioClip(fileName: "sfx.wav", displayName: "SFX", start: 2.5, fileDuration: 0.5)
+        linked.isLinked = true
+        linked.volume = 0.8
+
+        let afterRipple = try #require(full.removingEditorRange(2.0...4.0))
+        try #require(afterRipple.segments.count == 2)
+        let leftSeg = afterRipple.segments[0]
+        let rightSeg = afterRipple.segments[1]
+
+        let conformedRipple = StudioAudioConform.conform([linked], hidden: [], from: full, to: afterRipple)
+        #expect(conformedRipple.clips.isEmpty)
+        try #require(conformedRipple.hidden.count == 1)
+
+        // 1. Reopen the RIGHT video piece's leading edge from source 4 s to 2 s:
+        //    the hidden clip at 2.5...3.0 s must restore on the right piece.
+        var reopenedRightSeg = rightSeg
+        reopenedRightSeg.sourceStart = 2.0
+        let reopenedFromRight = RecordingClipTimeline(segments: [leftSeg, reopenedRightSeg])
+        let restoredRight = StudioAudioConform.conform(
+            conformedRipple.clips,
+            hidden: conformedRipple.hidden,
+            from: afterRipple,
+            to: reopenedFromRight
+        )
+        try #require(restoredRight.clips.count == 1)
+        #expect(restoredRight.hidden.isEmpty)
+        #expect(abs(restoredRight.clips[0].start - 2.5) < 0.001)
+        #expect(abs(restoredRight.clips[0].end - 3.0) < 0.001)
+        #expect(abs(restoredRight.clips[0].volume - 0.8) < 0.001)
+
+        // 2. Delete the LEFT video piece so only the right survives: the hidden interval
+        //    stays alive on the surviving right side and restores when right reopens to 2 s.
+        let rightOnly = try #require(afterRipple.deleting(segmentID: leftSeg.id))
+        let afterDeleteLeft = StudioAudioConform.conform(
+            conformedRipple.clips,
+            hidden: conformedRipple.hidden,
+            from: afterRipple,
+            to: rightOnly
+        )
+        try #require(afterDeleteLeft.hidden.count == 1)
+        let reopenedRightOnly = RecordingClipTimeline(segments: [reopenedRightSeg])
+        let restoredRightOnly = StudioAudioConform.conform(
+            afterDeleteLeft.clips,
+            hidden: afterDeleteLeft.hidden,
+            from: rightOnly,
+            to: reopenedRightOnly
+        )
+        try #require(restoredRightOnly.clips.count == 1)
+        #expect(restoredRightOnly.hidden.isEmpty)
+        #expect(abs(restoredRightOnly.clips[0].start - 0.5) < 0.001)
+        #expect(abs(restoredRightOnly.clips[0].end - 1.0) < 0.001)
+
+        // 3. Partial reopen from BOTH sides: right opens 4 -> 2.7 s (revealing 2.7...3.0 s),
+        //    then left opens 2 -> 2.7 s (revealing 2.5...2.7 s) and heals into one 2.5...3.0 s clip.
+        var rightAt27 = rightSeg
+        rightAt27.sourceStart = 2.7
+        let partialRight = RecordingClipTimeline(segments: [leftSeg, rightAt27])
+        let afterPartialRight = StudioAudioConform.conform(
+            conformedRipple.clips,
+            hidden: conformedRipple.hidden,
+            from: afterRipple,
+            to: partialRight
+        )
+        try #require(afterPartialRight.clips.count == 1)
+        #expect(abs(afterPartialRight.clips[0].start - 2.0) < 0.001)
+        #expect(abs(afterPartialRight.clips[0].end - 2.3) < 0.001)
+        try #require(afterPartialRight.hidden.count == 1)
+
+        var leftAt27 = leftSeg
+        leftAt27.sourceEnd = 2.7
+        let metAt27 = RecordingClipTimeline(segments: [leftAt27, rightAt27])
+        let afterMet = StudioAudioConform.conform(
+            afterPartialRight.clips,
+            hidden: afterPartialRight.hidden,
+            from: partialRight,
+            to: metAt27
+        )
+        try #require(afterMet.clips.count == 1)
+        #expect(afterMet.hidden.isEmpty)
+        #expect(abs(afterMet.clips[0].start - 2.5) < 0.001)
+        #expect(abs(afterMet.clips[0].end - 3.0) < 0.001)
+    }
+
     // MARK: - Helpers
 
     private func makeDirectory() throws -> URL {

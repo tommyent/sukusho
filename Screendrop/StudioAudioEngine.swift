@@ -183,14 +183,27 @@ nonisolated struct RecordingAudioSync: Codable, Equatable, Sendable {
 nonisolated enum StudioAudioConform {
     private static let epsilon: TimeInterval = 0.000_5
 
-    /// A linked audio slice hidden by trimming its video segment inward,
-    /// retained so dragging the trim back out restores the clip seamlessly.
+    /// A linked audio slice hidden by trimming its video segment inward or by
+    /// a ripple delete, retained so reopening an adjacent trim edge restores
+    /// the clip seamlessly.
     struct HiddenLinkedRange: Codable, Equatable, Sendable {
         var segmentID: UUID
+        /// Opposite-side surviving segment ID for a ripple gap so the hidden
+        /// interval stays alive while either side survives and restores the
+        /// portion revealed by either side.
+        var secondarySegmentID: UUID? = nil
         var sourceStart: TimeInterval
         var sourceEnd: TimeInterval
         var filePerSource: Double
         var clip: RecordingAudioClip
+
+        /// Segment IDs eligible to reveal this hidden interval when reopened.
+        var eligibleSegmentIDs: [UUID] {
+            if let secondarySegmentID, secondarySegmentID != segmentID {
+                return [segmentID, secondarySegmentID]
+            }
+            return [segmentID]
+        }
     }
 
     /// The audio clips as they should be after the video's clips change
@@ -210,8 +223,8 @@ nonisolated enum StudioAudioConform {
     }
 
     /// Conforms `clips` and updates `hidden` linked ranges across reversible
-    /// boundary trims. Deleting a segment drops its hidden ranges; reopening a
-    /// surviving segment's trim heals any hidden ranges back onto the timeline.
+    /// boundary trims and ripple gaps. Restored audio is computed from saved
+    /// hidden intervals first, then edge extension fills only what's left.
     static func conform(
         _ clips: [RecordingAudioClip],
         hidden: [HiddenLinkedRange],
@@ -219,6 +232,7 @@ nonisolated enum StudioAudioConform {
         to new: RecordingClipTimeline
     ) -> (clips: [RecordingAudioClip], hidden: [HiddenLinkedRange]) {
         guard old != new else { return (clips, hidden) }
+        let oldSegmentsByID = Dictionary(old.segments.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let newSegmentsByID = Dictionary(new.segments.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         // Source ranges still visible in `new` (for example the trailing half of
         // a split or ripple delete) are not hidden and must not be stored on the
@@ -227,8 +241,17 @@ nonisolated enum StudioAudioConform {
             new.segments.map { $0.sourceStart...$0.sourceEnd }
         )
 
-        // Capture linked slices hidden by inward boundary trims on surviving segments.
-        var capturedHidden: [HiddenLinkedRange] = hidden.filter { newSegmentsByID[$0.segmentID] != nil }
+        // Retain hidden intervals while at least one eligible flanking segment survives.
+        var capturedHidden: [HiddenLinkedRange] = hidden.compactMap { entry in
+            let surviving = entry.eligibleSegmentIDs.filter { newSegmentsByID[$0] != nil }
+            guard let primary = surviving.first else { return nil }
+            var updated = entry
+            updated.segmentID = primary
+            updated.secondarySegmentID = surviving.dropFirst().first
+            return updated
+        }
+
+        // Capture linked slices hidden by inward trims or ripple gaps on surviving segments.
         for clip in clips where clip.isLinked {
             let clipSpeed = max(clip.speed, 0.01)
             var oldEditorStart: TimeInterval = 0
@@ -273,8 +296,31 @@ nonisolated enum StudioAudioConform {
                             template.fadeOut = 0
                             template.keepsTrailingSplit = false
                         }
+                        // When a ripple delete splits a segment or trims both sides
+                        // of a gap, attach the opposite gap-facing segment as well.
+                        let secondaryID: UUID?
+                        if newSeg.sourceEnd <= s0 + epsilon {
+                            secondaryID = new.segments
+                                .filter { other in
+                                    other.id != newSeg.id
+                                        && other.sourceStart >= s1 - epsilon
+                                        && (oldSegmentsByID[other.id].map { other.sourceStart > $0.sourceStart + epsilon } ?? true)
+                                }
+                                .min(by: { $0.sourceStart < $1.sourceStart })?.id
+                        } else if newSeg.sourceStart >= s1 - epsilon {
+                            secondaryID = new.segments
+                                .filter { other in
+                                    other.id != newSeg.id
+                                        && other.sourceEnd <= s0 + epsilon
+                                        && (oldSegmentsByID[other.id].map { other.sourceEnd < $0.sourceEnd - epsilon } ?? true)
+                                }
+                                .max(by: { $0.sourceEnd < $1.sourceEnd })?.id
+                        } else {
+                            secondaryID = nil
+                        }
                         capturedHidden.append(HiddenLinkedRange(
                             segmentID: oldSeg.id,
+                            secondarySegmentID: secondaryID,
                             sourceStart: s0,
                             sourceEnd: s1,
                             filePerSource: filePerSource,
@@ -303,9 +349,10 @@ nonisolated enum StudioAudioConform {
             }
         }
         var healedBoundaries: [(lineage: UUID, time: TimeInterval)] = []
-        result = healingExtensions(result, from: old, to: new, healedBoundaries: &healedBoundaries)
 
-        // Heal any hidden ranges revealed by reopening a surviving segment's trim.
+        // 1. Restore from saved hidden intervals first (preserving their explicit
+        //    split boundaries, mutes, levels, and fades across any eligible side
+        //    of a trim or ripple gap).
         var segmentEditorStarts: [UUID: TimeInterval] = [:]
         var cursor: TimeInterval = 0
         for seg in new.segments {
@@ -315,150 +362,175 @@ nonisolated enum StudioAudioConform {
 
         var remainingHidden: [HiddenLinkedRange] = []
         for entry in capturedHidden {
-            guard let newSeg = newSegmentsByID[entry.segmentID],
-                  let segEditorStart = segmentEditorStarts[entry.segmentID] else { continue }
-            let revealedStart = max(entry.sourceStart, newSeg.sourceStart)
-            let revealedEnd = min(entry.sourceEnd, newSeg.sourceEnd)
-            guard revealedEnd - revealedStart > epsilon else {
+            let eligible = entry.eligibleSegmentIDs.compactMap { newSegmentsByID[$0] }
+            guard !eligible.isEmpty else { continue }
+
+            let revealedSegments: [(seg: RecordingClipSegment, start: TimeInterval, end: TimeInterval)] = eligible
+                .compactMap { seg in
+                    let low = max(entry.sourceStart, seg.sourceStart)
+                    let high = min(entry.sourceEnd, seg.sourceEnd)
+                    return high - low > epsilon ? (seg, low, high) : nil
+                }
+                .sorted { $0.start < $1.start }
+
+            guard !revealedSegments.isEmpty else {
                 remainingHidden.append(entry)
                 continue
             }
 
-            let speed = max(newSeg.speed, RecordingClipSegment.minimumSpeed)
-            let editorStart = segEditorStart + (revealedStart - newSeg.sourceStart) / speed
-            let f0 = entry.clip.trimStart + (revealedStart - entry.sourceStart) * entry.filePerSource
-            let f1 = min(entry.clip.trimEnd, entry.clip.trimStart + (revealedEnd - entry.sourceStart) * entry.filePerSource)
-            let derivedSpeed = min(
-                max(entry.filePerSource * speed, RecordingAudioClip.derivedSpeedRange.lowerBound),
-                RecordingAudioClip.derivedSpeedRange.upperBound
-            )
-            let editorEnd = editorStart + (f1 - f0) / derivedSpeed
-
-            // Subtract any sub-intervals of [editorStart, editorEnd] already
-            // covered by surviving or edge-healed pieces of the same original
-            // clip lineage, so a split + re-trim never plays any interval twice.
             let lineage = entry.clip.lineageID
-            let coveringPieces = result.enumerated().filter { _, existing in
-                existing.isLinked
-                    && existing.lineageID == lineage
-                    && existing.end > editorStart + 0.002
-                    && existing.start < editorEnd - 0.002
-            }
-            for (coveredIndex, existing) in coveringPieces {
-                if existing.start <= editorStart + 0.005,
-                   abs(f0 - entry.clip.trimStart) <= 0.002,
-                   abs(existing.trimStart - entry.clip.trimStart) <= 0.002,
-                   entry.clip.fadeIn > 0, existing.fadeIn == 0 {
-                    result[coveredIndex].fadeIn = entry.clip.fadeIn
+            for (newSeg, revealedStart, revealedEnd) in revealedSegments {
+                guard let segEditorStart = segmentEditorStarts[newSeg.id] else { continue }
+                let speed = max(newSeg.speed, RecordingClipSegment.minimumSpeed)
+                let editorStart = segEditorStart + (revealedStart - newSeg.sourceStart) / speed
+                let f0 = entry.clip.trimStart + (revealedStart - entry.sourceStart) * entry.filePerSource
+                let f1 = min(entry.clip.trimEnd, entry.clip.trimStart + (revealedEnd - entry.sourceStart) * entry.filePerSource)
+                let derivedSpeed = min(
+                    max(entry.filePerSource * speed, RecordingAudioClip.derivedSpeedRange.lowerBound),
+                    RecordingAudioClip.derivedSpeedRange.upperBound
+                )
+                let editorEnd = editorStart + (f1 - f0) / derivedSpeed
+
+                // Subtract any sub-intervals already covered by surviving pieces
+                // of the same original clip lineage so no interval plays twice.
+                let coveringPieces = result.enumerated().filter { _, existing in
+                    existing.isLinked
+                        && existing.lineageID == lineage
+                        && existing.end > editorStart + 0.002
+                        && existing.start < editorEnd - 0.002
                 }
-                if existing.end >= editorEnd - 0.005,
-                   abs(f1 - entry.clip.trimEnd) <= 0.002,
-                   abs(existing.trimEnd - entry.clip.trimEnd) <= 0.002,
-                   entry.clip.fadeOut > 0, existing.fadeOut == 0 {
-                    result[coveredIndex].fadeOut = entry.clip.fadeOut
-                }
-            }
-            var uncovered: [(TimeInterval, TimeInterval)] = [(editorStart, editorEnd)]
-            for (_, existing) in coveringPieces {
-                uncovered = uncovered.flatMap { low, high -> [(TimeInterval, TimeInterval)] in
-                    if existing.end <= low + 0.002 || existing.start >= high - 0.002 {
-                        return [(low, high)]
+                for (coveredIndex, existing) in coveringPieces {
+                    if existing.start <= editorStart + 0.005,
+                       abs(f0 - entry.clip.trimStart) <= 0.002,
+                       abs(existing.trimStart - entry.clip.trimStart) <= 0.002,
+                       entry.clip.fadeIn > 0, existing.fadeIn == 0 {
+                        result[coveredIndex].fadeIn = entry.clip.fadeIn
                     }
-                    var parts: [(TimeInterval, TimeInterval)] = []
-                    if existing.start > low + 0.002 { parts.append((low, existing.start)) }
-                    if existing.end < high - 0.002 { parts.append((existing.end, high)) }
-                    return parts
+                    if existing.end >= editorEnd - 0.005,
+                       abs(f1 - entry.clip.trimEnd) <= 0.002,
+                       abs(existing.trimEnd - entry.clip.trimEnd) <= 0.002,
+                       entry.clip.fadeOut > 0, existing.fadeOut == 0 {
+                        result[coveredIndex].fadeOut = entry.clip.fadeOut
+                    }
+                }
+                var uncovered: [(TimeInterval, TimeInterval)] = [(editorStart, editorEnd)]
+                for (_, existing) in coveringPieces {
+                    uncovered = uncovered.flatMap { low, high -> [(TimeInterval, TimeInterval)] in
+                        if existing.end <= low + 0.002 || existing.start >= high - 0.002 {
+                            return [(low, high)]
+                        }
+                        var parts: [(TimeInterval, TimeInterval)] = []
+                        if existing.start > low + 0.002 { parts.append((low, existing.start)) }
+                        if existing.end < high - 0.002 { parts.append((existing.end, high)) }
+                        return parts
+                    }
+                }
+
+                for (subStart, subEnd) in uncovered {
+                    let subF0 = f0 + (subStart - editorStart) * derivedSpeed
+                    let subF1 = min(f1, f0 + (subEnd - editorStart) * derivedSpeed)
+                    guard subF1 - subF0 >= RecordingAudioClip.minimumFileSpan,
+                          subEnd - subStart >= RecordingAudioClip.minimumPlayableDuration else { continue }
+                    var restored = entry.clip
+                    restored.originID = lineage
+                    restored.start = subStart
+                    restored.trimStart = subF0
+                    restored.trimEnd = subF1
+                    restored.speed = derivedSpeed
+                    if abs(subF0 - entry.clip.trimStart) > 0.002 {
+                        restored.fadeIn = 0
+                        restored.keepsLeadingSplit = false
+                    }
+                    if abs(subF1 - entry.clip.trimEnd) > 0.002 {
+                        restored.fadeOut = 0
+                        restored.keepsTrailingSplit = false
+                    }
+
+                    // Seamlessly rejoin an adjacent restored/surviving piece of the same lineage
+                    // when neither side carries an explicit split boundary, fade, or level/mute change.
+                    if let matchIndex = result.firstIndex(where: { existing in
+                        existing.isLinked
+                            && existing.lineageID == lineage
+                            && existing.lane == restored.lane
+                            && existing.isMuted == restored.isMuted
+                            && abs(existing.volume - restored.volume) < 0.000_1
+                            && !existing.keepsTrailingSplit && !restored.keepsLeadingSplit
+                            && existing.fadeOut < 0.001 && restored.fadeIn < 0.001
+                            && abs(existing.speed - restored.speed) < 0.000_1
+                            && abs(existing.end - restored.start) < 0.002
+                            && abs(existing.trimEnd - restored.trimStart) < 0.002
+                    }) {
+                        result[matchIndex].trimEnd = restored.trimEnd
+                        result[matchIndex].fadeOut = restored.fadeOut
+                        result[matchIndex].keepsTrailingSplit = restored.keepsTrailingSplit
+                        healedBoundaries.append((lineage, restored.end))
+                    } else if let matchIndex = result.firstIndex(where: { existing in
+                        existing.isLinked
+                            && existing.lineageID == lineage
+                            && existing.lane == restored.lane
+                            && existing.isMuted == restored.isMuted
+                            && abs(existing.volume - restored.volume) < 0.000_1
+                            && !restored.keepsTrailingSplit && !existing.keepsLeadingSplit
+                            && restored.fadeOut < 0.001 && existing.fadeIn < 0.001
+                            && abs(existing.speed - restored.speed) < 0.000_1
+                            && abs(restored.end - existing.start) < 0.002
+                            && abs(restored.trimEnd - existing.trimStart) < 0.002
+                    }) {
+                        result[matchIndex].start = restored.start
+                        result[matchIndex].trimStart = restored.trimStart
+                        result[matchIndex].fadeIn = restored.fadeIn
+                        result[matchIndex].keepsLeadingSplit = restored.keepsLeadingSplit
+                        healedBoundaries.append((lineage, restored.start))
+                    } else {
+                        if result.contains(where: { $0.id == restored.id }) { restored.id = UUID() }
+                        result.append(restored)
+                        healedBoundaries.append((lineage, restored.start))
+                        healedBoundaries.append((lineage, restored.end))
+                    }
                 }
             }
 
-            for (subStart, subEnd) in uncovered {
-                let subF0 = f0 + (subStart - editorStart) * derivedSpeed
-                let subF1 = min(f1, f0 + (subEnd - editorStart) * derivedSpeed)
-                guard subF1 - subF0 >= RecordingAudioClip.minimumFileSpan,
-                      subEnd - subStart >= RecordingAudioClip.minimumPlayableDuration else { continue }
-                var restored = entry.clip
-                restored.originID = lineage
-                restored.start = subStart
-                restored.trimStart = subF0
-                restored.trimEnd = subF1
-                restored.speed = derivedSpeed
-                if abs(subF0 - entry.clip.trimStart) > 0.002 {
-                    restored.fadeIn = 0
-                    restored.keepsLeadingSplit = false
+            // Retain any sub-ranges of this hidden entry still outside every eligible segment.
+            let revealedRanges = RecordingClipTimeline.mergedRanges(
+                revealedSegments.map { $0.start...$0.end }
+            )
+            var remCursor = entry.sourceStart
+            var unrevealed: [(TimeInterval, TimeInterval)] = []
+            for revealed in revealedRanges {
+                if revealed.lowerBound > remCursor + epsilon {
+                    unrevealed.append((remCursor, min(revealed.lowerBound, entry.sourceEnd)))
                 }
-                if abs(subF1 - entry.clip.trimEnd) > 0.002 {
-                    restored.fadeOut = 0
-                    restored.keepsTrailingSplit = false
-                }
-
-                // Seamlessly rejoin an adjacent restored/surviving piece of the same lineage
-                // when neither side carries an explicit split boundary or fade at the join.
-                if let matchIndex = result.firstIndex(where: { existing in
-                    existing.isLinked
-                        && existing.lineageID == lineage
-                        && existing.lane == restored.lane
-                        && !existing.keepsTrailingSplit && !restored.keepsLeadingSplit
-                        && existing.fadeOut < 0.001 && restored.fadeIn < 0.001
-                        && abs(existing.speed - restored.speed) < 0.000_1
-                        && abs(existing.end - restored.start) < 0.002
-                        && abs(existing.trimEnd - restored.trimStart) < 0.002
-                }) {
-                    result[matchIndex].trimEnd = restored.trimEnd
-                    result[matchIndex].fadeOut = restored.fadeOut
-                    result[matchIndex].keepsTrailingSplit = restored.keepsTrailingSplit
-                    healedBoundaries.append((lineage, restored.end))
-                } else if let matchIndex = result.firstIndex(where: { existing in
-                    existing.isLinked
-                        && existing.lineageID == lineage
-                        && existing.lane == restored.lane
-                        && !restored.keepsTrailingSplit && !existing.keepsLeadingSplit
-                        && restored.fadeOut < 0.001 && existing.fadeIn < 0.001
-                        && abs(existing.speed - restored.speed) < 0.000_1
-                        && abs(restored.end - existing.start) < 0.002
-                        && abs(restored.trimEnd - existing.trimStart) < 0.002
-                }) {
-                    result[matchIndex].start = restored.start
-                    result[matchIndex].trimStart = restored.trimStart
-                    result[matchIndex].fadeIn = restored.fadeIn
-                    result[matchIndex].keepsLeadingSplit = restored.keepsLeadingSplit
-                    healedBoundaries.append((lineage, restored.start))
-                } else {
-                    if result.contains(where: { $0.id == restored.id }) { restored.id = UUID() }
-                    result.append(restored)
-                    healedBoundaries.append((lineage, restored.start))
-                    healedBoundaries.append((lineage, restored.end))
-                }
+                remCursor = max(remCursor, revealed.upperBound)
             }
-
-            // Keep any portion that is still outside the reopened trim.
-            if entry.sourceStart < newSeg.sourceStart - epsilon {
-                let s1 = min(entry.sourceEnd, newSeg.sourceStart)
-                let rf1 = entry.clip.trimStart + (s1 - entry.sourceStart) * entry.filePerSource
-                if rf1 - entry.clip.trimStart >= RecordingAudioClip.minimumFileSpan {
-                    var left = entry
-                    left.sourceEnd = s1
-                    left.clip.trimEnd = rf1
-                    left.clip.fadeOut = 0
-                    left.clip.keepsTrailingSplit = false
-                    remainingHidden.append(left)
-                }
+            if entry.sourceEnd > remCursor + epsilon {
+                unrevealed.append((remCursor, entry.sourceEnd))
             }
-            if entry.sourceEnd > newSeg.sourceEnd + epsilon {
-                let s0 = max(entry.sourceStart, newSeg.sourceEnd)
-                let rf0 = entry.clip.trimStart + (s0 - entry.sourceStart) * entry.filePerSource
-                if entry.clip.trimEnd - rf0 >= RecordingAudioClip.minimumFileSpan {
-                    var right = entry
-                    right.sourceStart = s0
-                    right.clip.trimStart = rf0
-                    right.clip.fadeIn = 0
-                    right.clip.keepsLeadingSplit = false
-                    remainingHidden.append(right)
+            for (remStart, remEnd) in unrevealed {
+                let rf0 = entry.clip.trimStart + (remStart - entry.sourceStart) * entry.filePerSource
+                let rf1 = min(entry.clip.trimEnd, entry.clip.trimStart + (remEnd - entry.sourceStart) * entry.filePerSource)
+                guard rf1 - rf0 >= RecordingAudioClip.minimumFileSpan else { continue }
+                var slice = entry
+                slice.sourceStart = remStart
+                slice.sourceEnd = remEnd
+                slice.clip.trimStart = rf0
+                slice.clip.trimEnd = rf1
+                if remStart > entry.sourceStart + epsilon {
+                    slice.clip.fadeIn = 0
+                    slice.clip.keepsLeadingSplit = false
                 }
+                if remEnd < entry.sourceEnd - epsilon {
+                    slice.clip.fadeOut = 0
+                    slice.clip.keepsTrailingSplit = false
+                }
+                remainingHidden.append(slice)
             }
         }
 
-        // Merge adjacent pieces of the same original clip lineage ONLY at
-        // boundaries actively repaired by healing (never across explicit audio splits).
+        // 2. Edge extension fills only what saved hidden intervals did not already restore.
+        result = healingExtensions(result, from: old, to: new, healedBoundaries: &healedBoundaries)
+
+        // 3. Merge adjacent pieces of the same original clip lineage ONLY at
+        //    boundaries actively repaired by healing (never across explicit audio splits).
         if !healedBoundaries.isEmpty {
             result = mergingContiguousLineage(result, healedBoundaries: healedBoundaries)
         }
