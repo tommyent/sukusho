@@ -97,7 +97,7 @@ nonisolated struct AreaPickerGuides: Equatable, Sendable {
     static func position(
         pointer: CGPoint?,
         in bounds: CGRect,
-        pixelScale: CGSize,
+        backingScale: CGFloat,
         isDragging: Bool,
         isAdjusting: Bool,
         hasSnap: Bool
@@ -106,8 +106,8 @@ nonisolated struct AreaPickerGuides: Equatable, Sendable {
               pointer.x >= bounds.minX, pointer.x <= bounds.maxX,
               pointer.y >= bounds.minY, pointer.y <= bounds.maxY else { return nil }
         return AreaPickerGuides(
-            x: align(pointer.x, in: bounds.minX...bounds.maxX, scale: pixelScale.width),
-            y: align(pointer.y, in: bounds.minY...bounds.maxY, scale: pixelScale.height)
+            x: align(pointer.x, in: bounds.minX...bounds.maxX, scale: backingScale),
+            y: align(pointer.y, in: bounds.minY...bounds.maxY, scale: backingScale)
         )
     }
 

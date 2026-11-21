@@ -139,6 +139,7 @@ final class RecordingAreaSelectionPresenter {
         let selectionView = RecordingAreaSelectionView(
             frame: CGRect(origin: .zero, size: screen.frame.size),
             pixelScale: pixelScale,
+            backingScale: screen.backingScaleFactor,
             isScreenshot: isScreenshot,
             hintInset: hintInset,
             confirmTitle: confirmTitle
@@ -311,6 +312,7 @@ private final class RecordingAreaSelectionView: NSView {
     private var startPoint: CGPoint?
     private var currentPoint: CGPoint?
     private let pixelScale: CGSize
+    private let fallbackBackingScale: CGFloat
     /// The Area screenshot's picker: Shift snaps, Option magnifies, Space moves the area.
     private let isScreenshot: Bool
     /// How far above the display's bottom edge the line about Shift and
@@ -342,8 +344,9 @@ private final class RecordingAreaSelectionView: NSView {
         true
     }
 
-    init(frame frameRect: NSRect, pixelScale: CGSize, isScreenshot: Bool, hintInset: CGFloat?, confirmTitle: String? = nil) {
+    init(frame frameRect: NSRect, pixelScale: CGSize, backingScale: CGFloat, isScreenshot: Bool, hintInset: CGFloat?, confirmTitle: String? = nil) {
         self.pixelScale = pixelScale
+        self.fallbackBackingScale = backingScale
         self.isScreenshot = isScreenshot
         self.hintInset = hintInset
         self.confirmTitle = confirmTitle
@@ -362,6 +365,10 @@ private final class RecordingAreaSelectionView: NSView {
         NSEvent.modifierFlags.subtracting(heldSinceOpen)
     }
 
+    private var guideBackingScale: CGFloat {
+        window?.backingScaleFactor ?? fallbackBackingScale
+    }
+
     private var showsLoupe: Bool {
         isScreenshot && modifiers.contains(.option) && pointer != nil && frozenImage != nil
     }
@@ -370,7 +377,7 @@ private final class RecordingAreaSelectionView: NSView {
         AreaPickerGuides.position(
             pointer: pointer,
             in: bounds,
-            pixelScale: pixelScale,
+            backingScale: guideBackingScale,
             isDragging: selectionRect != nil,
             isAdjusting: adjusting != nil,
             hasSnap: (pressedSnap ?? snapRect) != nil
