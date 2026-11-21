@@ -119,15 +119,17 @@ struct EditorInspectorTests {
         #expect(!opened.isPresented && narrow.isFolded)
     }
 
-    @Test static func imageInspectorStaysOpenAsTheWindowSettles() {
-        let opened = InspectorFoldState().resized(to: 990, foldBelow: 1000, isPresented: true, canFold: false)
-        #expect(opened.isPresented && !opened.state.isFolded)
-
-        let settled = opened.state.resized(to: 950, foldBelow: 1000, isPresented: true, canFold: false)
+    /// Once initial placement settles, tiling or any resize below the fold point folds the inspector
+    /// and widening past the return margin brings it back.
+    @Test static func imageInspectorFoldsWhenTiledAfterPlacementSettles() {
+        let settled = InspectorFoldState().resized(to: 1100, foldBelow: 1000, isPresented: true)
         #expect(settled.isPresented && !settled.state.isFolded)
 
-        let resized = settled.state.resized(to: 920, foldBelow: 1000, isPresented: true)
-        #expect(!resized.isPresented && resized.state.isFolded)
+        let tiled = settled.state.resized(to: 720, foldBelow: 1000, isPresented: settled.isPresented)
+        #expect(!tiled.isPresented && tiled.state.isFolded)
+
+        let restored = tiled.state.resized(to: 1100, foldBelow: 1000, isPresented: tiled.isPresented)
+        #expect(restored.isPresented && !restored.state.isFolded)
     }
 
     @Test static func inspectorChoicePersistsMenuTogglesButNotAutoFolds() {

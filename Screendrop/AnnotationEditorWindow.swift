@@ -37,6 +37,7 @@ struct AnnotationEditorWindow: View {
     @Environment(\.dismiss) private var dismissWindow
     @FloatingGlassChrome private var floatingChrome
     @State private var editorWindow: NSWindow?
+    @State private var handledInitialWindowPlacement = false
     @State private var glassMetrics = GlassWindowButtonMetrics.fallback
 
     /// What the tool dock needs, and so the narrowest the window goes.
@@ -107,8 +108,15 @@ struct AnnotationEditorWindow: View {
             .onWindowChange { window in
                 editorWindow = window
                 guard let window else {
+                    handledInitialWindowPlacement = false
                     closeGuard.detach()
                     return
+                }
+                if !handledInitialWindowPlacement {
+                    DispatchQueue.main.async {
+                        guard editorWindow === window, !handledInitialWindowPlacement else { return }
+                        handledInitialWindowPlacement = true
+                    }
                 }
                 model.allowsIdleSave = { [weak window] in
                     guard let window else { return false }
@@ -249,8 +257,7 @@ struct AnnotationEditorWindow: View {
             .inspectorAutoFold(
                 isPresented: $isInspectorPresented,
                 below: 1000,
-                window: editorWindow,
-                onlyDuringLiveResize: true
+                window: handledInitialWindowPlacement ? editorWindow : nil
             )
             .environment(probe)
     }
