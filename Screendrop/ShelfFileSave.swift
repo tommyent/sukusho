@@ -23,7 +23,9 @@ nonisolated enum ShelfFileSave {
         case saved(URL, keptOriginal: KeptOriginal? = nil)
         /// The source isn't the file that was optimized any more; nothing was written or moved.
         case changed
-        case failed(String)
+        /// `recoveryURL`: if Foundation relocated the original (`NSFileOriginalItemLocationKey`) before
+        /// failing, carry that URL structurally so the user can recover it in Finder.
+        case failed(String, recoveryURL: URL? = nil)
     }
 
     struct Summary: Equatable, Sendable {
@@ -31,6 +33,28 @@ nonisolated enum ShelfFileSave {
         let detail: String
         let isFailure: Bool
         let saved: [URL]
+        /// Structured locations of originals or retained backups the user may need to recover; presented in a
+        /// persistent alert with Reveal in Finder rather than a transient toast.
+        let recoveryURLs: [URL]
+    }
+
+    typealias ReplaceItem = (_ original: URL, _ replacement: URL, _ backupName: String) throws -> URL?
+
+    private static func defaultReplaceItem(_ original: URL, _ replacement: URL, _ backupName: String) throws -> URL? {
+        try FileManager.default.replaceItemAt(original, withItemAt: replacement, backupItemName: backupName,
+                                              options: [.withoutDeletingBackupItem])
+    }
+
+    /// Extracts `NSFileOriginalItemLocationKey` from an error thrown by `FileManager.replaceItemAt`, walking
+    /// underlying errors if needed.
+    static func relocatedOriginal(from error: Error) -> URL? {
+        var current: NSError? = error as NSError
+        while let nsError = current {
+            if let url = nsError.userInfo[NSFileOriginalItemLocationKey] as? URL { return url }
+            if let path = nsError.userInfo[NSFileOriginalItemLocationKey] as? String { return URL(fileURLWithPath: path) }
+            current = nsError.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return nil
     }
 
     /// Writes `result` beside `original` ("name optimized.png", or "name.webp" for another format), in
@@ -44,6 +68,7 @@ nonisolated enum ShelfFileSave {
                      in destinationFolder: URL? = nil,
                      beforeInstall: (URL) throws -> Void = { _ in },
                      beforeRetire: (URL) throws -> Void = { _ in },
+                     replaceItem: ReplaceItem = defaultReplaceItem,
                      retire: (URL) throws -> URL = moveToTrash) -> Outcome {
         guard let identity, identity == FileIdentity(original) else { return .changed }
         guard let outputIdentity else { return .failed("The optimized file couldn't be verified.") }
@@ -84,8 +109,13 @@ nonisolated enum ShelfFileSave {
                             let backup = targetFolder.appendingPathComponent(backupName)
                             // Install atomically with a retained backup so the original never leaves its folder before
                             // the replacement is in place; only then move the backup to the Trash.
-                            _ = try files.replaceItemAt(coordinatedOriginal, withItemAt: staged, backupItemName: backupName,
-                                                        options: [.withoutDeletingBackupItem])
+                            do {
+                                _ = try replaceItem(coordinatedOriginal, staged, backupName)
+                            } catch {
+                                coordinatedOutcome = .failed(error.localizedDescription,
+                                                             recoveryURL: relocatedOriginal(from: error))
+                                return
+                            }
                             do {
                                 _ = try retire(backup)
                                 coordinatedOutcome = .saved(coordinatedOriginal)
@@ -137,32 +167,39 @@ nonisolated enum ShelfFileSave {
         }
     }
 
-    /// Builds the user-facing summary for a batch of Save/Replace outcomes, preserving any kept backup
-    /// recovery paths even when another file in the batch fails.
+    /// Builds the user-facing summary for a batch of Save/Replace outcomes, preserving structured recovery
+    /// URLs from both failed Trash moves and `NSFileOriginalItemLocationKey` errors across the batch.
     static func summary(of outcomes: [Outcome], replacing: Bool, folder: URL? = nil) -> Summary {
         var saved: [URL] = []
         var changed = 0
-        var kept: [URL] = []
+        var recoveryURLs: [URL] = []
+        var seenRecovery: Set<String> = []
         var failures: [String] = []
+
+        func addRecovery(_ url: URL) {
+            let key = url.standardizedFileURL.path
+            if seenRecovery.insert(key).inserted { recoveryURLs.append(url) }
+        }
+
         for outcome in outcomes {
             switch outcome {
             case .saved(let file, let keptOriginal):
                 saved.append(file)
                 switch keptOriginal {
-                case .trashFailed(let url): kept.append(url)
+                case .trashFailed(let url): addRecovery(url)
                 case .sourceChanged: changed += 1
                 case nil: break
                 }
             case .changed: changed += 1
-            case .failed(let reason):
+            case .failed(let reason, let recoveryURL):
                 if !failures.contains(reason) { failures.append(reason) }
+                if let recoveryURL { addRecovery(recoveryURL) }
             }
         }
         var notes: [String] = []
-        if !kept.isEmpty {
-            notes.append(kept.count == 1
-                ? "Original kept at \(kept[0].path)."
-                : "Originals kept at \(kept.map(\.path).joined(separator: ", ")).")
+        if !recoveryURLs.isEmpty {
+            let heading = recoveryURLs.count == 1 ? "Original kept at:" : "Originals kept at:"
+            notes.append(([heading] + recoveryURLs.map(\.path)).joined(separator: "\n"))
         }
         if changed > 0 {
             notes.append(changed == 1
@@ -171,19 +208,19 @@ nonisolated enum ShelfFileSave {
         }
         if !failures.isEmpty {
             return Summary(title: "Couldn’t Save",
-                           detail: ([failures[0]] + notes).joined(separator: " "),
-                           isFailure: true, saved: saved)
+                           detail: ([failures[0]] + notes).joined(separator: "\n\n"),
+                           isFailure: true, saved: saved, recoveryURLs: recoveryURLs)
         }
         if saved.isEmpty {
             return Summary(title: "Nothing to Save",
                            detail: notes.first ?? "No file came out smaller.",
-                           isFailure: false, saved: [])
+                           isFailure: false, saved: [], recoveryURLs: recoveryURLs)
         }
         let destination = replacing ? "The originals are in the Trash."
             : folder.map { "In \($0.lastPathComponent)" } ?? "Beside the originals"
         return Summary(title: saved.count == 1 ? "Saved" : "\(saved.count) Files Saved",
-                       detail: notes.isEmpty ? destination : notes.joined(separator: " "),
-                       isFailure: false, saved: saved)
+                       detail: notes.isEmpty ? destination : notes.joined(separator: "\n\n"),
+                       isFailure: false, saved: saved, recoveryURLs: recoveryURLs)
     }
 
     static func moveToTrash(_ url: URL) throws -> URL {

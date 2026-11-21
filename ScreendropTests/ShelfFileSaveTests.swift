@@ -191,11 +191,53 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
         #expect(desk.text(keptBackup) == "original pixels, long")
         #expect(try FileManager.default.contentsOfDirectory(atPath: desk.trash.path).isEmpty)
 
-        // A later failure in the same batch must not overwrite the recovery path in the summary.
+        // A later failure in the same batch must preserve the structured recovery URL and path.
         let summary = ShelfFileSave.summary(of: [outcome, .failed("Disk full.")], replacing: true)
         #expect(summary.isFailure)
+        #expect(summary.recoveryURLs == [keptBackup])
         #expect(summary.detail.contains("Disk full."))
         #expect(summary.detail.contains(keptBackup.path))
+    }
+
+    /// Sol 6.2 re-check #1: if FileManager.replaceItemAt throws an error with NSFileOriginalItemLocationKey,
+    /// carry that relocated original URL structurally into both Outcome.failed and Summary.recoveryURLs.
+    @Test func aReplacementFailureCarriesNSFileOriginalItemLocationKeyForRecovery() throws {
+        let desk = try Desk()
+        defer { desk.remove() }
+        let original = try desk.file("shot.png", "original pixels, long")
+        let result = try desk.file("shot.png", "smaller", in: desk.results)
+        let relocated = desk.folder.appending(path: "relocated-original.png")
+
+        let outcome = ShelfFileSave.save(
+            result, of: original, identity: FileIdentity(original), outputIdentity: FileIdentity(result),
+            replacing: true,
+            replaceItem: { source, _, _ in
+                try FileManager.default.moveItem(at: source, to: relocated)
+                throw NSError(
+                    domain: NSCocoaErrorDomain,
+                    code: NSFileWriteUnknownError,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: "Replacement failed mid-swap.",
+                        NSFileOriginalItemLocationKey: relocated,
+                    ]
+                )
+            },
+            retire: desk.retire
+        )
+        guard case .failed(let reason, let recoveryURL?) = outcome else {
+            Issue.record("expected failed with recoveryURL: \(outcome)")
+            return
+        }
+        #expect(reason.contains("Replacement failed"))
+        #expect(recoveryURL == relocated)
+        #expect(desk.text(relocated) == "original pixels, long")
+
+        let keptOther = desk.folder.appending(path: "other.png")
+        let summary = ShelfFileSave.summary(of: [.saved(desk.folder.appending(path: "other.webp"), keptOriginal: .trashFailed(keptOther)), outcome], replacing: true)
+        #expect(summary.isFailure)
+        #expect(summary.recoveryURLs == [keptOther, relocated])
+        #expect(summary.detail.contains(keptOther.path))
+        #expect(summary.detail.contains(relocated.path))
     }
 
     /// editor-opus L4: a Replace in another format whose new file is in place, but whose original the Trash

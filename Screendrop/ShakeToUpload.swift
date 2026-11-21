@@ -397,9 +397,9 @@ final class ShakeToUpload {
                     if !done.isShowing { holding.discard() }
                     return
                 }
-                report(saved.outcomes, replacing: replacing, folder: saved.folder)
                 holding.discard()
                 if done.isShowing { dismiss() }
+                report(saved.outcomes, replacing: replacing, folder: saved.folder)
                 return
             }
             guard let done = await stage.finish(holding, { await ShelfOptimization.currentFiles(of: $0) }) else { return }
@@ -473,9 +473,27 @@ final class ShakeToUpload {
         return await openPanel.begin() == .OK ? openPanel.url : nil
     }
 
-    /// Says what a Save did. A file changed since it was optimized was left exactly as it is.
+    /// Says what a Save did. A file changed since it was optimized was left exactly as it is. When any
+    /// original or retained backup needs recovery (Trash refused it, or Foundation relocated it before a
+    /// replacement failure), show a persistent alert with Reveal in Finder instead of a transient toast.
     private func report(_ outcomes: [ShelfFileSave.Outcome], replacing: Bool, folder: URL? = nil) {
         let summary = ShelfFileSave.summary(of: outcomes, replacing: replacing, folder: folder)
+        if !summary.recoveryURLs.isEmpty {
+            NSApp.activate(ignoringOtherApps: true)
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = summary.isFailure
+                ? summary.title
+                : (summary.recoveryURLs.count == 1 ? "Original Couldn’t Be Moved to the Trash"
+                    : "Originals Couldn’t Be Moved to the Trash")
+            alert.informativeText = summary.detail
+            alert.addButton(withTitle: "Reveal in Finder")
+            alert.addButton(withTitle: "OK")
+            if alert.runModal() == .alertFirstButtonReturn {
+                NSWorkspace.shared.activateFileViewerSelecting(summary.recoveryURLs)
+            }
+            return
+        }
         let toast = CaptureTextFeedbackPresenter.shared
         if summary.isFailure {
             toast.showDone(summary.title, detail: summary.detail, symbol: "exclamationmark.triangle", displayID: Self.display)
