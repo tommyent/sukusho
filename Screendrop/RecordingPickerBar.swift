@@ -28,7 +28,6 @@ struct RecordingPickerControls: View {
     @AppStorage(ScreendropPreferences.recordingSystemAudioKey) private var systemAudio = false
     @AppStorage(ScreendropPreferences.recordingCleanDesktopKey) private var cleanDesktop = true
     @AppStorage(ScreendropPreferences.recordingBugReportKey) private var bugReport = false
-    @AppStorage(ScreendropPreferences.includeAppWindowsInCapturesKey) private var includeAppWindows = false
     @AppStorage(ScreendropPreferences.recordingAppLogsKey) private var appLogs = false
     @AppStorage(ScreendropPreferences.recordingStartDelaySecondsKey) private var startDelaySeconds = 0
     @AppStorage(ScreendropPreferences.recordingTeleprompterEnabledKey) private var teleprompterEnabled = false
@@ -121,26 +120,7 @@ struct RecordingPickerControls: View {
                 : "Leaves desktop icons, the menu bar, Dock and notification banners out of screen and area recordings. Your desktop stays unchanged.")
             .disabled(CaptureCountdownPresenter.shared.isRunning)
 
-            Button {
-                tooltipDismiss()
-                ScreendropPreferences.setIncludeAppWindowsInCapturesManually(!includeAppWindows)
-            } label: {
-                BarToggleLabel(
-                    id: .includeAppWindows,
-                    state: includeAppWindows ? .on : .off,
-                    hover: BarHoverText.includeAppWindows(isOn: includeAppWindows),
-                    offSymbol: "eye.slash",
-                    onSymbol: "eye.fill",
-                    look: .helper
-                )
-            }
-            .buttonStyle(BarButtonStyle())
-            .accessibilityLabel("Include Sukusho windows in captures")
-            .accessibilityValue(includeAppWindows ? "On" : "Off")
-            .accessibilityHint(includeAppWindows
-                ? "Sukusho windows are visible in screenshots and recordings. Click to hide them."
-                : "Sukusho windows stay hidden from screenshots and recordings. Click to include them.")
-            .disabled(CaptureCountdownPresenter.shared.isRunning)
+            BarIncludeAppWindowsButton()
 
             Button {
                 tooltipDismiss()
@@ -620,6 +600,8 @@ struct RecordingCountdownControls: View {
                                look: .input(BarMetrics.systemAudioOn))
             }
 
+            BarIncludeAppWindowsButton()
+
             Button {
                 countdown.cancel()
             } label: {
@@ -643,5 +625,34 @@ struct RecordingCountdownControls: View {
             .padding(.trailing, 4)
             .accessibilityLabel("Cancel countdown")
         }
+    }
+}
+
+/// Shared by picker and countdown controls so turning the amber visibility pill off during a
+/// countdown still leaves an on-bar control to turn Sukusho windows back on.
+private struct BarIncludeAppWindowsButton: View {
+    @AppStorage(ScreendropPreferences.includeAppWindowsInCapturesKey) private var includeAppWindows = false
+    @Environment(BarTooltipModel.self) private var tooltip: BarTooltipModel?
+
+    var body: some View {
+        Button {
+            tooltip?.dismiss()
+            ScreendropPreferences.setIncludeAppWindowsInCapturesManually(!includeAppWindows)
+        } label: {
+            BarToggleLabel(
+                id: .includeAppWindows,
+                state: includeAppWindows ? .on : .off,
+                hover: BarHoverText.includeAppWindows(isOn: includeAppWindows),
+                offSymbol: "eye.slash",
+                onSymbol: "eye.fill",
+                look: .helper
+            )
+        }
+        .buttonStyle(BarButtonStyle())
+        .accessibilityLabel("Include Sukusho windows in captures")
+        .accessibilityValue(includeAppWindows ? "On" : "Off")
+        .accessibilityHint(includeAppWindows
+            ? "Sukusho windows are visible in screenshots and recordings. Click to hide them."
+            : "Sukusho windows stay hidden from screenshots and recordings. Click to include them.")
     }
 }
