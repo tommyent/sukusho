@@ -53,6 +53,9 @@ final class RecordingBarPresenter {
     @ObservationIgnored private var moveObserver: NSObjectProtocol?
     @ObservationIgnored private var screenObserver: NSObjectProtocol?
     @ObservationIgnored private var pendingAreaOrigin: (origin: CGPoint, displayID: CGDirectDisplayID)?
+    @ObservationIgnored private var deferredClamp = DeferredBarClamp()
+    @ObservationIgnored private var mouseUpMonitors: [Any] = []
+    @ObservationIgnored private var mouseReleaseWatchTask: Task<Void, Never>?
 
     private init() {}
 
@@ -143,6 +146,7 @@ final class RecordingBarPresenter {
     }
 
     func hide() {
+        cancelPendingClamp()
         pendingAreaOrigin = nil
         pickerGeneration += 1
         if mode == .picker { CaptureCountdownPresenter.shared.cancel() }
@@ -199,12 +203,28 @@ final class RecordingBarPresenter {
         barScreen.flatMap(ActiveDisplayResolver.displayID(for:))
     }
 
+    private static var isPrimaryMouseButtonDown: Bool {
+        NSEvent.pressedMouseButtons & 1 != 0
+    }
+
     /// Keeps the visible bar (and amber pill, when shown) inside the destination screen's visible
-    /// frame after drags, size changes, or display reconfigurations.
+    /// frame after drags, size changes, or display reconfigurations. If the primary mouse button
+    /// is held (during a drag or a background click), defers one recheck until after release.
     func clampPanelToScreen() {
-        guard let panel, panel.isVisible, barFrameInPanel != .zero else { return }
-        guard NSEvent.pressedMouseButtons & 1 == 0 else { return }
-        guard let visibleFrame = barScreen?.visibleFrame else { return }
+        guard let panel, panel.isVisible, barFrameInPanel != .zero else {
+            cancelPendingClamp()
+            return
+        }
+        guard deferredClamp.request(isPrimaryMouseDown: Self.isPrimaryMouseButtonDown) else {
+            scheduleClampAfterMouseRelease()
+            return
+        }
+        cancelPendingClamp()
+        applyClamp(to: panel)
+    }
+
+    private func applyClamp(to panel: NSPanel) {
+        guard panel.isVisible, barFrameInPanel != .zero, let visibleFrame = barScreen?.visibleFrame else { return }
         let visibleContent = BarPanelGeometry.visibleContentInPanel(
             barFrame: barFrameInPanel,
             bannerFrame: visibilityBannerFrameInPanel,
@@ -218,6 +238,60 @@ final class RecordingBarPresenter {
         if clamped.origin != panel.frame.origin {
             panel.setFrameOrigin(clamped.origin)
         }
+    }
+
+    private func scheduleClampAfterMouseRelease() {
+        guard mouseUpMonitors.isEmpty, mouseReleaseWatchTask == nil else { return }
+        if let local = NSEvent.addLocalMonitorForEvents(matching: .leftMouseUp, handler: { [weak self] event in
+            Task { @MainActor [weak self] in
+                self?.finishPendingClampIfReleased()
+            }
+            return event
+        }) {
+            mouseUpMonitors.append(local)
+        }
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp, handler: { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.finishPendingClampIfReleased()
+            }
+        }) {
+            mouseUpMonitors.append(global)
+        }
+        // `NSWindow.performDrag(with:)` hands tracking to WindowServer, which can consume
+        // `.leftMouseUp` without delivering it to app monitors; poll `pressedMouseButtons`
+        // until release so the post-drag clamp still runs.
+        mouseReleaseWatchTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(30))
+                guard let self, !Task.isCancelled else { return }
+                if !Self.isPrimaryMouseButtonDown {
+                    self.finishPendingClampIfReleased()
+                    return
+                }
+            }
+        }
+    }
+
+    private func finishPendingClampIfReleased() {
+        guard deferredClamp.consumeIfReady(isPrimaryMouseDown: Self.isPrimaryMouseButtonDown) else { return }
+        stopMouseReleaseWaiters()
+        if let panel {
+            applyClamp(to: panel)
+        }
+    }
+
+    private func cancelPendingClamp() {
+        deferredClamp.cancel()
+        stopMouseReleaseWaiters()
+    }
+
+    private func stopMouseReleaseWaiters() {
+        for monitor in mouseUpMonitors {
+            NSEvent.removeMonitor(monitor)
+        }
+        mouseUpMonitors.removeAll()
+        mouseReleaseWatchTask?.cancel()
+        mouseReleaseWatchTask = nil
     }
 
     private func isPositioned(_ panel: NSPanel, onDisplayID displayID: CGDirectDisplayID?) -> Bool {

@@ -131,4 +131,47 @@ struct RecordingBarStateTests {
         #expect(below.x + composerSize.width == visible.maxX)
         #expect(below.y >= visible.minY && below.y + composerSize.height <= visible.maxY)
     }
+
+    @Test func deferredClampRunsOnceAfterButtonReleaseWithoutAnotherMove() {
+        var clamp = DeferredBarClamp()
+        let screen = CGRect(x: 0, y: 40, width: 1440, height: 835)
+
+        // Immediate clamp when no button is held.
+        let ranImmediately = clamp.request(isPrimaryMouseDown: false)
+        #expect(ranImmediately)
+        #expect(!clamp.isPending)
+
+        // Narrow countdown bar at the right edge widens into recording controls while the user
+        // holds the left button on the desktop: clamping defers until release.
+        let panelAtRightEdge = CGRect(x: 920, y: 200, width: 760, height: 182)
+        let widerRecordingBarInPanel = CGRect(x: 110, y: 64, width: 540, height: 52)
+        let ranWhileHeld = clamp.request(isPrimaryMouseDown: true)
+        #expect(!ranWhileHeld)
+        #expect(clamp.isPending)
+        let consumedWhileHeld = clamp.consumeIfReady(isPrimaryMouseDown: true)
+        #expect(!consumedWhileHeld)
+        #expect(clamp.isPending)
+
+        // Releasing a stationary button produces no further move or geometry notification; the
+        // pending clamp consumes once and brings the wider bar back inside the screen.
+        let consumedOnRelease = clamp.consumeIfReady(isPrimaryMouseDown: false)
+        #expect(consumedOnRelease)
+        #expect(!clamp.isPending)
+        let consumedAgain = clamp.consumeIfReady(isPrimaryMouseDown: false)
+        #expect(!consumedAgain)
+        let clamped = BarPanelGeometry.clampedPanelFrame(
+            panelAtRightEdge,
+            visibleContentInPanel: widerRecordingBarInPanel,
+            to: screen
+        )
+        let finalBar = BarPanelGeometry.screenRect(forPanelRect: widerRecordingBarInPanel, in: clamped)
+        #expect(finalBar.maxX == screen.maxX)
+
+        // Hiding cancels any pending clamp.
+        let deferredBeforeHide = clamp.request(isPrimaryMouseDown: true)
+        #expect(!deferredBeforeHide)
+        clamp.cancel()
+        let consumedAfterCancel = clamp.consumeIfReady(isPrimaryMouseDown: false)
+        #expect(!consumedAfterCancel)
+    }
 }

@@ -250,6 +250,35 @@ nonisolated enum BarPanelGeometry {
     }
 }
 
+/// Tracks whether a screen-clamp attempt was deferred while the primary mouse button was held so
+/// it runs once after release against the latest panel geometry, even when no further window move
+/// or layout change arrives after mouse-up.
+nonisolated struct DeferredBarClamp {
+    private(set) var isPending = false
+
+    /// Returns `true` when clamping can run immediately; otherwise records a pending clamp and
+    /// returns `false` while the primary mouse button is held.
+    mutating func request(isPrimaryMouseDown: Bool) -> Bool {
+        if isPrimaryMouseDown {
+            isPending = true
+            return false
+        }
+        isPending = false
+        return true
+    }
+
+    /// Returns `true` once after the primary button is released while a clamp is pending.
+    mutating func consumeIfReady(isPrimaryMouseDown: Bool) -> Bool {
+        guard isPending, !isPrimaryMouseDown else { return false }
+        isPending = false
+        return true
+    }
+
+    mutating func cancel() {
+        isPending = false
+    }
+}
+
 /// Ownership rules for "Include Sukusho windows in captures": Bug report enables it automatically
 /// and records that it owns the flag, so turning Bug report off disables it again. Any manual
 /// write (Settings, the amber pill, or the bar eye button) takes ownership by clearing that flag.
