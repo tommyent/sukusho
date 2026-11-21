@@ -956,6 +956,9 @@ final class RecordingStudioModel {
         style = document.style.value
         zoomEnabled = document.zoomEnabled
         zoomCues = studioNormalizedZoomCues(document.zoomCues, sourceDuration: sourceDuration)
+        if let selectedCueID, !zoomCues.contains(where: { $0.id == selectedCueID }) {
+            self.selectedCueID = nil
+        }
         // A project that never chose its own settings inherits whatever
         // was picked last, so "export as MP4" sticks across recordings.
         exportSettings = document.exportSettings ?? RecordingExportPreferences.lastSettings
@@ -1866,6 +1869,9 @@ final class RecordingStudioModel {
         let sorted = cues.sorted { $0.start < $1.start }
         guard sorted != zoomCues else { return }
         zoomCues = sorted
+        if let selectedCueID, !sorted.contains(where: { $0.id == selectedCueID }) {
+            self.selectedCueID = nil
+        }
         if zoomEditSnapshot != nil {
             // A drag reports dozens of moves a second, and planning the
             // camera integrates the whole recording. The block follows the
