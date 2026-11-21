@@ -354,6 +354,21 @@ nonisolated enum StudioPlayback {
                 let segment = timeline.segments[segmentIndex]
                 let speed = max(segment.speed, RecordingClipSegment.minimumSpeed)
 
+                func lastSampleTime(in target: RecordingClipSegment, editorStart: TimeInterval) -> TimeInterval {
+                    let targetSpeed = max(target.speed, RecordingClipSegment.minimumSpeed)
+                    let boundary = sampleNeighborhood(target.sourceEnd)
+                    let candidate: TimeInterval?
+                    if let displayed = boundary?.displayed, displayed < target.sourceEnd - epsilon {
+                        candidate = displayed
+                    } else {
+                        candidate = boundary?.previous
+                    }
+                    if let candidate, candidate >= target.sourceStart - epsilon {
+                        return editorStart + min(target.duration, max(0, candidate - target.sourceStart)) / targetSpeed
+                    }
+                    return editorStart
+                }
+
                 if forward {
                     if let nextSource = sampleNeighborhood(sourceTime)?.next,
                        nextSource < segment.sourceEnd - epsilon {
@@ -376,15 +391,8 @@ nonisolated enum StudioPlayback {
                     }
                 } else if crossedBackwardFromCut {
                     // Stepping back from a cut boundary lands on the last surviving
-                    // displayed sample inside the preceding segment.
-                    let queryTime = max(segment.sourceStart, segment.sourceEnd - epsilon)
-                    if let lastDisplayed = sampleNeighborhood(queryTime)?.displayed,
-                       lastDisplayed >= segment.sourceStart - epsilon,
-                       lastDisplayed < segment.sourceEnd - epsilon {
-                        editorTime = segmentEditorStart + min(segment.duration, max(0, lastDisplayed - segment.sourceStart)) / speed
-                    } else {
-                        editorTime = segmentEditorStart
-                    }
+                    // sample strictly before the preceding segment's source end.
+                    editorTime = lastSampleTime(in: segment, editorStart: segmentEditorStart)
                 } else {
                     if let previousSource = sampleNeighborhood(sourceTime)?.previous,
                        previousSource >= segment.sourceStart - epsilon {
@@ -392,15 +400,7 @@ nonisolated enum StudioPlayback {
                     } else if segmentIndex > 0 {
                         let previousSegment = timeline.segments[segmentIndex - 1]
                         let previousEditorStart = segmentEditorStart - previousSegment.editorDuration
-                        let previousSpeed = max(previousSegment.speed, RecordingClipSegment.minimumSpeed)
-                        let queryTime = max(previousSegment.sourceStart, previousSegment.sourceEnd - epsilon)
-                        if let lastDisplayed = sampleNeighborhood(queryTime)?.displayed,
-                           lastDisplayed >= previousSegment.sourceStart - epsilon,
-                           lastDisplayed < previousSegment.sourceEnd - epsilon {
-                            editorTime = previousEditorStart + min(previousSegment.duration, max(0, lastDisplayed - previousSegment.sourceStart)) / previousSpeed
-                        } else {
-                            editorTime = previousEditorStart
-                        }
+                        editorTime = lastSampleTime(in: previousSegment, editorStart: previousEditorStart)
                     } else {
                         editorTime = 0
                         break

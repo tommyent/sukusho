@@ -185,8 +185,10 @@ struct StudioPlaybackTests {
         )
         #expect(abs(fastStepFallback - (1.0 + 1.0 / 120)) < 1e-9)
 
-        // Stepping across a cut skips the removed gap cleanly forward and backward.
-        let cutSamples: [TimeInterval] = [0.0, 0.5, 0.9, 2.0, 2.5]
+        // Stepping across a cut (including an exact, frame-aligned sample at 1.0)
+        // skips the removed gap cleanly forward and lands on the last retained
+        // sample strictly before sourceEnd (0.9) when stepping backward.
+        let cutSamples: [TimeInterval] = [0.0, 0.5, 0.9, 1.0, 2.0, 2.5]
         let cutNeighborhood: (TimeInterval) -> StudioSampleNeighborhood? = { time in
             StudioPlayback.sampleNeighborhood(in: cutSamples, at: time)
         }
@@ -212,6 +214,32 @@ struct StudioPlaybackTests {
             sampleNeighborhood: cutNeighborhood
         )
         #expect(abs(backAcrossCut - 0.9) < 1e-9)
+
+        // Exact 60 fps frame-aligned split at 1.0 s: Previous Frame at the cut
+        // lands on 59/60 (0.983333333 s), not 0.
+        let split60Timeline = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 1.0, speed: 1),
+            RecordingClipSegment(sourceStart: 1.0, sourceEnd: 2.0, speed: 1),
+        ])
+        let backAt60Split = StudioPlayback.steppedEditorTime(
+            from: 1.0,
+            frames: -1,
+            timeline: split60Timeline,
+            frameDuration: 1.0 / 60,
+            duration: split60Timeline.duration,
+            sampleNeighborhood: cfr60Neighborhood
+        )
+        #expect(abs(backAt60Split - (59.0 / 60.0)) < 1e-9)
+        // Also stepping back from just past the cut (within the first frame of segment 2).
+        let backFromJustPastSplit = StudioPlayback.steppedEditorTime(
+            from: 1.005,
+            frames: -1,
+            timeline: split60Timeline,
+            frameDuration: 1.0 / 60,
+            duration: split60Timeline.duration,
+            sampleNeighborhood: cfr60Neighborhood
+        )
+        #expect(abs(backFromJustPastSplit - (59.0 / 60.0)) < 1e-9)
     }
 
     @Test func frameStepMathAdvancesAndClampsToDuration() {
