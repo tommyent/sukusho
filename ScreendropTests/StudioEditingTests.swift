@@ -88,6 +88,22 @@ struct StudioEditingTests {
         #expect(subMinCandidate.normalized(to: 10).segments.count == 1)
         #expect(abs(subMinCandidate.normalized(to: 10).segments[0].sourceStart - 0) < 0.0001)
         #expect(abs(subMinCandidate.normalized(to: 10).segments[0].sourceEnd - 10) < 0.0001)
+
+        // Rounding-scale minimum-duration trim: clamping Clip 2's leading edge to 10 - 0.12
+        // produces 10 - (10 - 0.12) == 0.11999999999999922; must keep Clip 2, not silently delete it.
+        let clip1 = RecordingClipSegment(sourceStart: 0, sourceEnd: 5)
+        let clip2 = RecordingClipSegment(sourceStart: 5, sourceEnd: 10)
+        let twoClips = RecordingClipTimeline(segments: [clip1, clip2])
+        var clampedMin = clip2
+        clampedMin.sourceStart = clip2.sourceEnd - RecordingClipSegment.minimumDuration
+        #expect(RecordingClipSegment.isPlayableDuration(clampedMin.duration))
+        let trimmedTwo = try #require(twoClips.replacingAndValidating(clampedMin, sourceDuration: 10))
+        #expect(trimmedTwo.segments.count == 2)
+        #expect(trimmedTwo.segments[1].id == clip2.id)
+        // A truly sub-minimum trim must reject rather than silently dropping Clip 2 and keeping only Clip 1.
+        var tooShort = clip2
+        tooShort.sourceStart = 9.95
+        #expect(twoClips.replacingAndValidating(tooShort, sourceDuration: 10) == nil)
     }
 
     @Test func rangeMarkingTracksInOutAndReopensWhenInPassesOut() throws {

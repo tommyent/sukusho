@@ -1887,8 +1887,8 @@ final class RecordingStudioModel {
     }
 
     func trimClip(_ replacement: RecordingClipSegment) {
-        let next = clipTimeline.replacing(replacement)
-        guard next != clipTimeline else { return }
+        guard let next = clipTimeline.replacingAndValidating(replacement, sourceDuration: sourceDuration),
+              next != clipTimeline else { return }
         let editorTime = next.editorRange(for: replacement.id)?.lowerBound ?? currentTime
         applyClipTimeline(
             next,

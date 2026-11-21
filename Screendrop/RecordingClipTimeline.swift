@@ -14,10 +14,15 @@ nonisolated struct RecordingClipSegment: Identifiable, Codable, Equatable, Senda
     static let minimumSpeed: Double = 1
     static let maximumSpeed: Double = 8
 
+    /// Rounding-scale tolerance so clamping an edge to `end - minimumDuration`
+    /// (e.g. `10 - (10 - 0.12) == 0.11999999999999922`) survives normalization,
+    /// while meaningfully short survivors still reject.
+    static let minimumDurationRoundingTolerance: TimeInterval = 1e-6
+
     /// Shared minimum-duration predicate used by both normalization and range
     /// deletion so any survivor accepted by an edit survives commit.
     static func isPlayableDuration(_ duration: TimeInterval) -> Bool {
-        duration.isFinite && duration >= minimumDuration
+        duration.isFinite && duration >= minimumDuration - minimumDurationRoundingTolerance
     }
 
     var id: UUID
@@ -215,6 +220,19 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
     func validatedForCommit(sourceDuration: TimeInterval) -> RecordingClipTimeline? {
         let committed = normalized(to: sourceDuration, fallbackToFull: false)
         return committed.segments.isEmpty ? nil : committed
+    }
+
+    /// Applies a clip trim and validates commit survival, ensuring a trim can
+    /// never silently drop the clip being trimmed.
+    func replacingAndValidating(
+        _ replacement: RecordingClipSegment,
+        sourceDuration: TimeInterval
+    ) -> RecordingClipTimeline? {
+        guard let committed = replacing(replacement).validatedForCommit(sourceDuration: sourceDuration),
+              committed.segments.contains(where: { $0.id == replacement.id }) else {
+            return nil
+        }
+        return committed
     }
 
     func location(at editorTime: TimeInterval) -> Location? {
