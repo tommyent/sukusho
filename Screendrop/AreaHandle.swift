@@ -82,3 +82,40 @@ nonisolated struct AreaPickerSession {
         isOpen && generation == self.generation && AreaPickerSystemScreenshot.endsPicker(running: bundleIDs)
     }
 }
+
+/// The horizontal and vertical hairline guides through the pointer before a drag starts.
+nonisolated struct AreaPickerGuides: Equatable, Sendable {
+    let x: CGFloat
+    let y: CGFloat
+
+    /// Pixel-aligned coordinates for the guide lines on one display, or nil when the pointer isn't on this display
+    /// or a drag, adjustment or Shift-snap box is active.
+    static func position(
+        pointer: CGPoint?,
+        in bounds: CGRect,
+        pixelScale: CGSize,
+        isDragging: Bool,
+        isAdjusting: Bool,
+        hasSnap: Bool
+    ) -> AreaPickerGuides? {
+        guard !isDragging, !isAdjusting, !hasSnap, let pointer,
+              pointer.x >= bounds.minX, pointer.x <= bounds.maxX,
+              pointer.y >= bounds.minY, pointer.y <= bounds.maxY else { return nil }
+        return AreaPickerGuides(
+            x: align(pointer.x, in: bounds.minX...bounds.maxX, scale: pixelScale.width),
+            y: align(pointer.y, in: bounds.minY...bounds.maxY, scale: pixelScale.height)
+        )
+    }
+
+    /// Snaps a 1-point stroke center to whole pixels: half-pixel offset on odd scales (1x), whole-pixel on even (2x).
+    private static func align(_ value: CGFloat, in range: ClosedRange<CGFloat>, scale: CGFloat) -> CGFloat {
+        let s = max(1, scale)
+        if Int(s.rounded()).isMultiple(of: 2) {
+            return min(max((value * s).rounded() / s, range.lowerBound), range.upperBound)
+        }
+        let half = 0.5 / s
+        guard range.upperBound - range.lowerBound >= 1 / s else { return (range.lowerBound + range.upperBound) / 2 }
+        let snapped = ((value * s).rounded(.down) + 0.5) / s
+        return min(max(snapped, range.lowerBound + half), range.upperBound - half)
+    }
+}

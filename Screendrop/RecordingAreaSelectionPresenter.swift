@@ -189,7 +189,12 @@ final class RecordingAreaSelectionPresenter {
                 try? await Task.sleep(for: .milliseconds(16))
             }
             guard session.generation == generation else { return }
-            for panel in panels { panel.alphaValue = 1 }
+            let mouse = NSEvent.mouseLocation
+            for view in views { view.syncPointer(screenLocation: mouse) }
+            for panel in panels {
+                panel.displayIfNeeded()
+                panel.alphaValue = 1
+            }
         }
     }
 
@@ -353,6 +358,7 @@ private final class RecordingAreaSelectionView: NSView {
         NSColor.black.withAlphaComponent(0.28).setFill()
         bounds.fill()
 
+        let activeSnap = pressedSnap ?? snapRect
         if let adjusting {
             drawHole(adjusting, color: .white)
             for handle in AreaHandle.allCases {
@@ -370,9 +376,20 @@ private final class RecordingAreaSelectionView: NSView {
             } else {
                 drawBadge(sizeLabel(for: selectionRect)) { self.badgeOrigin(for: selectionRect, size: $0) }
             }
-        } else if let snapRect = pressedSnap ?? snapRect {
-            drawHole(snapRect, color: .controlAccentColor)
-            drawBadge(sizeLabel(for: snapRect)) { self.badgeOrigin(for: snapRect, size: $0) }
+        } else if let activeSnap {
+            drawHole(activeSnap, color: .controlAccentColor)
+            drawBadge(sizeLabel(for: activeSnap)) { self.badgeOrigin(for: activeSnap, size: $0) }
+        }
+
+        if let guides = AreaPickerGuides.position(
+            pointer: pointer,
+            in: bounds,
+            pixelScale: pixelScale,
+            isDragging: selectionRect != nil,
+            isAdjusting: adjusting != nil,
+            hasSnap: activeSnap != nil
+        ) {
+            drawGuides(guides)
         }
 
         let showsLoupe = isScreenshot && modifiers.contains(.option) && pointer != nil && frozenImage != nil
@@ -389,6 +406,27 @@ private final class RecordingAreaSelectionView: NSView {
                 return self.pointer.map(reach.contains) == true ? nil : origin
             }
         }
+    }
+
+    private func drawGuides(_ guides: AreaPickerGuides) {
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        context.saveGState()
+        defer { context.restoreGState() }
+
+        func stroke(color: NSColor, width: CGFloat) {
+            context.beginPath()
+            context.move(to: CGPoint(x: guides.x, y: bounds.minY))
+            context.addLine(to: CGPoint(x: guides.x, y: bounds.maxY))
+            context.move(to: CGPoint(x: bounds.minX, y: guides.y))
+            context.addLine(to: CGPoint(x: bounds.maxX, y: guides.y))
+            context.setStrokeColor(color.cgColor)
+            context.setLineWidth(width)
+            context.strokePath()
+        }
+
+        // White over black, matching the loupe's crosshair so the lines read on light and dark content.
+        stroke(color: .black.withAlphaComponent(0.45), width: 2)
+        stroke(color: .white.withAlphaComponent(0.85), width: 1)
     }
 
     private func drawHole(_ rect: CGRect, color: NSColor) {
@@ -515,6 +553,7 @@ private final class RecordingAreaSelectionView: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         NSCursor.annotationPlus.set()
+        movePointer(to: convert(event.locationInWindow, from: nil))
     }
 
     // MARK: - Pointer
@@ -523,9 +562,11 @@ private final class RecordingAreaSelectionView: NSView {
         super.updateTrackingAreas()
         trackingAreas.forEach(removeTrackingArea)
         // The panels on other displays aren't key, and still follow the pointer.
-        var options: NSTrackingArea.Options = [.mouseEnteredAndExited, .activeAlways, .inVisibleRect]
-        if isScreenshot { options.insert(.mouseMoved) }
-        addTrackingArea(NSTrackingArea(rect: .zero, options: options, owner: self))
+        addTrackingArea(NSTrackingArea(
+            rect: .zero,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self
+        ))
     }
 
     override func mouseMoved(with event: NSEvent) {
@@ -534,7 +575,7 @@ private final class RecordingAreaSelectionView: NSView {
 
     override func mouseExited(with event: NSEvent) {
         pointer = nil
-        needsDisplay = true
+        if adjusting == nil { needsDisplay = true }
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -602,6 +643,7 @@ private final class RecordingAreaSelectionView: NSView {
                 onCancel?()
                 return
             }
+            pointer = currentPoint
             startPoint = nil
             currentPoint = nil
             needsDisplay = true
@@ -700,6 +742,17 @@ private final class RecordingAreaSelectionView: NSView {
         }
     }
 
+    func syncPointer(screenLocation: CGPoint) {
+        guard let window else { return }
+        let local = convert(window.convertPoint(fromScreen: screenLocation), from: nil)
+        if bounds.minX <= local.x, local.x <= bounds.maxX, bounds.minY <= local.y, local.y <= bounds.maxY {
+            movePointer(to: local)
+        } else if pointer != nil {
+            pointer = nil
+            if adjusting == nil { needsDisplay = true }
+        }
+    }
+
     private func movePointer(to point: CGPoint) {
         pointer = point
         // Also here: a release the key monitor never saw still ends the hold.
@@ -713,7 +766,7 @@ private final class RecordingAreaSelectionView: NSView {
             snapDepth = 0
             scrollRemainder = 0
         }
-        needsDisplay = true
+        if adjusting == nil { needsDisplay = true }
     }
 
     // MARK: - Keys
