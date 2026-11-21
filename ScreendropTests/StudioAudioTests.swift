@@ -458,10 +458,8 @@ struct StudioAudioTests {
         try FileManager.default.createDirectory(at: mediaDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let screenURL = dir.appendingPathComponent("screen.wav")
-        try makeToneWAV(at: screenURL, frequency: 440, duration: 1.5, amplitude: 0.4)
-        let musicURL = dir.appendingPathComponent("music.wav")
-        try makeToneWAV(at: musicURL, frequency: 660, duration: 1.5, amplitude: 0.3)
+        let screenURL = try makeTone(in: dir, name: "screen", frequency: 440, amplitude: 0.4, duration: 1.5)
+        let musicURL = try makeTone(in: dir, name: "music", frequency: 660, amplitude: 0.3, duration: 1.5)
 
         let missingClip = RecordingAudioClip(
             fileName: "deleted-narration.wav",
@@ -471,11 +469,12 @@ struct StudioAudioTests {
         )
         let timeline = RecordingClipTimeline.full(sourceDuration: 1.5)
         let musicSettings = RecordingBackgroundMusic(
-            fileName: "music.wav",
+            fileName: musicURL.lastPathComponent,
             displayName: "Bed",
             volume: 0.5,
-            startOffset: 0,
-            ducking: 0
+            loop: true,
+            duck: false,
+            duckAmount: .medium
         )
 
         var threwMissing = false
@@ -545,12 +544,9 @@ struct StudioAudioTests {
         try FileManager.default.createDirectory(at: mediaDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let screenURL = dir.appendingPathComponent("screen.wav")
-        try makeToneWAV(at: screenURL, frequency: 220, duration: 2.0, amplitude: 0.3)
-        let soundtrackA = dir.appendingPathComponent("audio-replacement.A.wav")
-        try makeToneWAV(at: soundtrackA, frequency: 520, duration: 2.0, amplitude: 0.4)
-        let soundtrackB = dir.appendingPathComponent("audio-replacement.B.wav")
-        try makeToneWAV(at: soundtrackB, frequency: 980, duration: 1.0, amplitude: 0.4)
+        let screenURL = try makeTone(in: dir, name: "screen", frequency: 220, amplitude: 0.3, duration: 2.0)
+        let soundtrackA = try makeTone(in: dir, name: "audio-replacement.A", frequency: 520, amplitude: 0.4, duration: 2.0)
+        let soundtrackB = try makeTone(in: dir, name: "audio-replacement.B", frequency: 980, amplitude: 0.4, duration: 1.0)
 
         // Segment 0 plays soundtrack B (0..1s); segment 1 is muted and detached to pinned soundtrack A (1..2s).
         let seg0 = RecordingClipSegment(sourceStart: 0, sourceEnd: 1.0)

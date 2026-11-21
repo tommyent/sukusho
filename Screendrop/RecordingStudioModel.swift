@@ -4586,8 +4586,8 @@ final class RecordingStudioModel {
     /// The waveform outline of whatever a clip plays.
     func waveformPeaks(for clip: RecordingAudioClip) -> [Float] {
         switch clip.source {
-        case .file: audioPeaks[clip.fileName] ?? []
-        case .recording: audioPeaks[Self.recordingPeaksKey] ?? []
+        case .file: return audioPeaks[clip.fileName] ?? []
+        case .recording: return audioPeaks[Self.recordingPeaksKey] ?? []
         case .replacement:
             if !clip.fileName.isEmpty, let pinned = audioPeaks[clip.fileName] { return pinned }
             return audioPeaks[Self.soundtrackPeaksKey] ?? []
@@ -5177,11 +5177,16 @@ final class RecordingStudioModel {
             }
         } catch { return } // An unreadable snapshot may still need an imported soundtrack.
         let referencedMusic = Set([savedDocument?.backgroundMusic?.fileName, draftDocument?.backgroundMusic?.fileName, lastSavedDocument?.backgroundMusic?.fileName, backgroundMusicSettings?.fileName].compactMap { $0 } + keptDocuments.compactMap { $0.backgroundMusic?.fileName })
-        let pinnedClipFiles = ([savedDocument, draftDocument, lastSavedDocument].compactMap { $0 } + keptDocuments)
-            .flatMap { $0.audioClips ?? [] }
-            .filter { $0.source == .replacement && !$0.fileName.isEmpty }
-            .map(\.fileName)
-            + audioClips.filter { $0.source == .replacement && !$0.fileName.isEmpty }.map(\.fileName)
+        let allDocuments = [savedDocument, draftDocument, lastSavedDocument].compactMap { $0 } + keptDocuments
+        var pinnedClipFiles: [String] = []
+        for document in allDocuments {
+            for clip in document.audioClips ?? [] where clip.source == .replacement && !clip.fileName.isEmpty {
+                pinnedClipFiles.append(clip.fileName)
+            }
+        }
+        for clip in audioClips where clip.source == .replacement && !clip.fileName.isEmpty {
+            pinnedClipFiles.append(clip.fileName)
+        }
         let referencedNames = Set([
             savedDocument?.replacementAudioFileName,
             draftDocument?.replacementAudioFileName,
