@@ -111,14 +111,6 @@ final class AnnotationWallpaperStore {
         return file
     }
 
-    /// The editor's and Studio's Add keeps its own copy too. If the copy
-    /// fails, the picked file is used where it is, as before copies.
-    func addPickedWallpaper(_ url: URL) -> URL {
-        let file = (try? Self.copy(url, into: Self.wallpapersDirectory)) ?? url
-        addRecentWallpaper(file)
-        return file
-    }
-
     /// `url` copied into `directory` (`name_2` and so on when taken), or `url`
     /// itself when it's already inside. A link is followed: the file it leads
     /// to is what's copied, and a link inside that leads out is copied too.

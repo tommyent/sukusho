@@ -534,9 +534,18 @@ struct AnnotationEditorWindow: View {
 
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            let wallpaper = AnnotationCustomWallpaper(url: wallpaperStore.addPickedWallpaper(url))
-            model.backgroundSettings.customWallpaper = wallpaper
-            model.backgroundSettings.style = .customWallpaper(wallpaper)
+            Task {
+                let file: URL
+                if let imported = try? await wallpaperStore.importWallpaper(from: url) {
+                    file = imported
+                } else {
+                    wallpaperStore.addRecentWallpaper(url)
+                    file = url
+                }
+                let wallpaper = AnnotationCustomWallpaper(url: file)
+                model.backgroundSettings.customWallpaper = wallpaper
+                model.backgroundSettings.style = .customWallpaper(wallpaper)
+            }
         }
     }
 

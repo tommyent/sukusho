@@ -3753,8 +3753,16 @@ private struct StudioInspector: View {
         panel.title = "Choose Video Background Wallpaper"
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            let file = wallpaperStore.addPickedWallpaper(url)
-            model.style.background = .customWallpaper(AnnotationCustomWallpaper(url: file))
+            Task {
+                let file: URL
+                if let imported = try? await wallpaperStore.importWallpaper(from: url) {
+                    file = imported
+                } else {
+                    wallpaperStore.addRecentWallpaper(url)
+                    file = url
+                }
+                model.style.background = .customWallpaper(AnnotationCustomWallpaper(url: file))
+            }
         }
     }
 
