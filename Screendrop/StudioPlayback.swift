@@ -68,6 +68,7 @@ nonisolated enum StudioPlaybackEndTrigger: Equatable, Sendable {
 nonisolated enum StudioPlayback {
     static let maxShuttleRate: Float = 8
     static let defaultFrameDuration: TimeInterval = 1.0 / 30
+    static let maxCameraDriftTolerance: TimeInterval = 0.25
 
     /// Next J/K/L rate. Playing in the same direction doubles up to 8×;
     /// starting from pause or reversing begins at normal speed (1× or -1×).
@@ -104,6 +105,25 @@ nonisolated enum StudioPlayback {
             return .play(rate: currentRate)
         }
         return .ignore
+    }
+
+    /// True when the independent camera player should resync to the screen
+    /// timeline: always across a clip cut, or whenever source-time drift
+    /// exceeds the bounded tolerance (capped so high shuttle rates still catch
+    /// small cuts).
+    static func shouldResyncCamera(
+        expected: TimeInterval,
+        actual: TimeInterval,
+        segmentID: UUID?,
+        lastSegmentID: UUID?,
+        shuttleRate: Float
+    ) -> Bool {
+        if segmentID != lastSegmentID {
+            return true
+        }
+        guard expected.isFinite, actual.isFinite else { return false }
+        let tolerance = min(0.12 * Double(max(1, abs(shuttleRate))), maxCameraDriftTolerance)
+        return abs(expected - actual) > tolerance
     }
 
     /// "2×", "◀ 1×".

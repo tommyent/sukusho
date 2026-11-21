@@ -273,6 +273,38 @@ struct StudioPlaybackTests {
         #expect(!reverseOnly.supports(rate: -2))
     }
 
+    @Test func cameraResyncTriggersAcrossCutsAndBoundedDriftAtHighSpeed() {
+        let segA = UUID()
+        let segB = UUID()
+
+        // Crossing a cut always resyncs, even if source drift is tiny.
+        #expect(StudioPlayback.shouldResyncCamera(
+            expected: 2.05,
+            actual: 2.0,
+            segmentID: segB,
+            lastSegmentID: segA,
+            shuttleRate: 8
+        ))
+
+        // A 0.8 s cut at 8× exceeds the bounded tolerance even if segment IDs match.
+        #expect(StudioPlayback.shouldResyncCamera(
+            expected: 5.8,
+            actual: 5.0,
+            segmentID: segA,
+            lastSegmentID: segA,
+            shuttleRate: 8
+        ))
+
+        // Small jitter inside the same segment stays within tolerance.
+        #expect(!StudioPlayback.shouldResyncCamera(
+            expected: 5.08,
+            actual: 5.0,
+            segmentID: segA,
+            lastSegmentID: segA,
+            shuttleRate: 1
+        ))
+    }
+
     @Test func studioNoticesGetFreshIdentityForRepeatedText() {
         let first = StudioNotice(text: "2×")
         let second = StudioNotice(text: "2×")
