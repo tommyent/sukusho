@@ -55,6 +55,9 @@ final class ShelfOptimization {
         /// The file's size, once it has been read; 0 until then, or when it can't be.
         var bytes: Int64 = 0
         var result: ImageOptimizationResult?
+        /// Set when converting or optimizing came out larger than the original: the larger file is discarded
+        /// and the original is kept.
+        var largerFormat: Format?
 
         /// The result, while the file still holds the contents it was made from: the shelf can sit for a
         /// while, and an older result must not stand in for a newer file. Reads the file.
@@ -63,6 +66,8 @@ final class ShelfOptimization {
             return result
         }
 
+        /// True once the optimizer has finished this row, whether it produced a result or kept the original.
+        var isSettled: Bool { result != nil || largerFormat != nil }
         /// A smaller or converted file was made for it: something to save.
         var hasNewFile: Bool { result?.outcome == .optimized || result?.outcome == .converted }
         /// Sukusho wasn't allowed to open it, so there is nothing of it to copy, share or save.
@@ -137,14 +142,21 @@ final class ShelfOptimization {
     }
 
     /// The row being worked on.
-    var currentIndex: Int? { isWorking ? rows.firstIndex { $0.result == nil } : nil }
+    var currentIndex: Int? { isWorking ? rows.firstIndex { !$0.isSettled } : nil }
     var originalBytes: Int64 { rows.reduce(0) { $0 + $1.bytes } }
-    /// What the files come to now: a new file's size where one was made, the file's own size otherwise.
+    /// What the files come to now: a smaller result's size where one was made, the file's own size otherwise.
     var resultBytes: Int64 {
         rows.reduce(0) { total, row in
             guard let result = row.result, result.outcome == .optimized || result.outcome == .converted else { return total + row.bytes }
             return total + result.resultByteCount
         }
+    }
+
+    /// True when a new file came out strictly larger than the original and must not be offered.
+    nonisolated static func isLarger(_ result: ImageOptimizationResult) -> Bool {
+        (result.outcome == .optimized || result.outcome == .converted)
+            && result.originalByteCount > 0
+            && result.resultByteCount > result.originalByteCount
     }
 
     /// Carries out a choice on the list. `work` gets the rows as they are now, and until it returns they
@@ -176,7 +188,10 @@ final class ShelfOptimization {
         guard !isFinishing else { return }
         stop()
         discard()
-        for index in rows.indices { rows[index].result = nil }
+        for index in rows.indices {
+            rows[index].result = nil
+            rows[index].largerFormat = nil
+        }
         self.format = format
         start()
     }
@@ -197,17 +212,30 @@ final class ShelfOptimization {
         let target = target(format)
         // One file at a time: each encoder already uses every core.
         task = Task { [weak self, optimizer, effort] in
-            while let file = self?.rows.first(where: { $0.result == nil })?.file {
+            while let file = self?.rows.first(where: { !$0.isSettled })?.file {
                 guard let result = try? await optimizer.optimize(file, to: target, effort: effort) else { return }
                 // Stopped, or run again in another format, while this one was finishing.
-                guard !Task.isCancelled, let self, let index = self.rows.firstIndex(where: { $0.file == file && $0.result == nil }) else {
+                guard !Task.isCancelled, let self,
+                      let index = self.rows.firstIndex(where: { $0.file == file && !$0.isSettled }) else {
                     result.discard()
                     return
                 }
-                self.rows[index].result = result
+                self.record(result, at: index)
             }
             self?.isWorking = false
             self?.task = nil
+        }
+    }
+
+    private func record(_ result: ImageOptimizationResult, at index: Int) {
+        if rows[index].bytes == 0, result.originalByteCount > 0 {
+            rows[index].bytes = result.originalByteCount
+        }
+        if Self.isLarger(result) {
+            result.discard()
+            rows[index].largerFormat = format
+        } else {
+            rows[index].result = result
         }
     }
 }

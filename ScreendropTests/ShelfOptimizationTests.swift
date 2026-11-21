@@ -26,6 +26,75 @@ import UniformTypeIdentifiers
         try #require(!model.isWorking)
     }
 
+    /// A noisy JPEG whose lossless WebP conversion comes out larger than the original.
+    private func noisyJPEG(_ url: URL) throws {
+        let width = 160, height = 160
+        var pixels = [UInt8](repeating: 255, count: width * height * 4)
+        var state: UInt64 = 0x9E37_79B9_7F4A_7C15
+        for i in stride(from: 0, to: pixels.count, by: 4) {
+            state = state &* 6364136223846793005 &+ 1442695040888963407
+            pixels[i] = UInt8((state >> 24) & 0xFF)
+            pixels[i + 1] = UInt8((state >> 32) & 0xFF)
+            pixels[i + 2] = UInt8((state >> 40) & 0xFF)
+        }
+        let image = try pixels.withUnsafeMutableBytes { raw -> CGImage in
+            let context = try #require(CGContext(
+                data: raw.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+            ))
+            return try #require(context.makeImage())
+        }
+        let destination = try #require(CGImageDestinationCreateWithURL(url as CFURL, UTType.jpeg.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.6] as CFDictionary)
+        try #require(CGImageDestinationFinalize(destination))
+    }
+
+    @Test func aLargerConversionKeepsTheOriginalAndNeverGrowsTheTotal() async throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "SukushoShelfLarger-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let jpeg = folder.appending(path: "noisy.jpeg")
+        try noisyJPEG(jpeg)
+
+        let list = model([jpeg], .webP, in: folder)
+        try await settled(list)
+        for _ in 0..<200 where list.rows[0].bytes == 0 { try await Task.sleep(for: .milliseconds(10)) }
+
+        // A larger result is never offered: original is kept, total does not grow, Save/Replace stay off,
+        // temp output is cleaned up, and Copy/Share/Upload act on the original.
+        #expect(list.rows[0].result == nil)
+        #expect(list.rows[0].largerFormat == .webP)
+        #expect(list.rows[0].isSettled)
+        #expect(!list.rows[0].hasNewFile)
+        #expect(list.resultBytes == list.originalBytes)
+        #expect(!list.canSave)
+        #expect(list.canHandOver)
+        #expect(await ShelfOptimization.currentFiles(of: list.rows) == [jpeg])
+        let leaked = (try? FileManager.default.contentsOfDirectory(atPath: folder.appending(path: "out").path)) ?? []
+        #expect(leaked.isEmpty)
+
+        // Switching formats clears largerFormat and runs fresh.
+        list.rerun(as: .same)
+        try await settled(list)
+        #expect(list.rows[0].largerFormat == nil)
+        list.discard()
+
+        // A mixed list keeps the smaller WebP for the PNG and the original for the JPEG, so total shrinks.
+        let png = folder.appending(path: "flat.png")
+        try picture(png, shade: 0.7)
+        let mixed = model([png, jpeg], .webP, in: folder)
+        try await settled(mixed)
+        for _ in 0..<200 where mixed.rows.contains(where: { $0.bytes == 0 }) { try await Task.sleep(for: .milliseconds(10)) }
+        let converted = try #require(mixed.rows[0].result)
+        #expect(converted.outcome == .converted)
+        #expect(mixed.rows[1].result == nil && mixed.rows[1].largerFormat == .webP)
+        #expect(mixed.resultBytes == converted.resultByteCount + mixed.rows[1].bytes)
+        #expect(mixed.resultBytes < mixed.originalBytes)
+        #expect(mixed.canSave && mixed.canHandOver)
+        #expect(await ShelfOptimization.currentFiles(of: mixed.rows) == [converted.url, jpeg])
+        mixed.discard()
+    }
+
     private func model(_ files: [URL], _ format: ShelfOptimization.Format, in folder: URL) -> ShelfOptimization {
         let tools = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appending(path: "Vendor/optimizers")
         return ShelfOptimization(files: files, format: format, optimizer: ImageOptimizer(toolsDirectory: tools, outputDirectory: folder.appending(path: "out")),
