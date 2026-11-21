@@ -52,6 +52,7 @@ struct AnnotationEditorWindow: View {
             .background {
                 if floatingChrome {
                     AnnotationEditorWorkspaceBackground()
+                        .backgroundExtensionEffect()
                         .ignoresSafeArea()
                 }
             }
