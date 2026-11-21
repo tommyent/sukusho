@@ -231,7 +231,36 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
         location(at: editorTime)?.sourceTime ?? 0
     }
 
+    /// Half-open source-event lookup (`[sourceStart, sourceEnd)`), so an event
+    /// at a reordered join maps to the clip where that source moment actually
+    /// begins playing rather than the trailing edge of an earlier clip. When
+    /// `includeTimelineEnd` is true, an exact hit on the final clip's end maps
+    /// to `duration` if no other clip starts at that source moment.
+    func editorTime(
+        forSourceEventTime sourceTime: TimeInterval,
+        includeTimelineEnd: Bool = false
+    ) -> TimeInterval? {
+        guard sourceTime.isFinite else { return nil }
+        var editorStart: TimeInterval = 0
+        for segment in segments {
+            if sourceTime >= segment.sourceStart,
+               sourceTime < segment.sourceEnd {
+                return editorStart + (sourceTime - segment.sourceStart) / segment.speed
+            }
+            editorStart += segment.editorDuration
+        }
+        if includeTimelineEnd,
+           let last = segments.last,
+           abs(sourceTime - last.sourceEnd) <= 0.000_001 {
+            return duration
+        }
+        return nil
+    }
+
     func editorTime(forSourceTime sourceTime: TimeInterval) -> TimeInterval? {
+        if let exact = editorTime(forSourceEventTime: sourceTime) {
+            return exact
+        }
         var editorStart: TimeInterval = 0
         for segment in segments {
             if sourceTime >= segment.sourceStart - 0.000_001,

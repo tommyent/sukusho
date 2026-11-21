@@ -669,7 +669,7 @@ private struct StudioTimelineInkMarks: View {
         GeometryReader { proxy in
             ZStack(alignment: .topLeading) {
                 ForEach(model.showsInk ? model.inkStrokes : []) { stroke in
-                    if let time = model.editorTime(forSourceTime: stroke.startTime) {
+                    if let time = model.clipTimeline.editorTime(forSourceEventTime: stroke.startTime) {
                         let x = scale.x(for: time) - scrollX
                         if x >= 0, x <= proxy.size.width {
                             Button {

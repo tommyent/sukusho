@@ -1599,7 +1599,9 @@ final class RecordingStudioModel {
             applyMarkers(markers.filter { $0.id != existing.marker.id }, actionName: "Remove Marker")
             showNotice("Marker Removed")
         } else {
-            let marker = RecordingMarker(sourceTime: clipTimeline.sourceTime(at: currentTime))
+            let marker = RecordingMarker(
+                sourceTime: StudioEditing.markerSourceTime(at: currentTime, in: clipTimeline)
+            )
             applyMarkers(markers + [marker], actionName: "Add Marker")
             showNotice("Marker")
         }
@@ -2272,7 +2274,7 @@ final class RecordingStudioModel {
     }
 
     var visibleRecordedPressTimes: [TimeInterval] {
-        recordedPressTimes.compactMap { clipTimeline.editorTime(forSourceTime: $0) }
+        recordedPressTimes.compactMap { clipTimeline.editorTime(forSourceEventTime: $0) }
     }
 
     /// All occupied zoom spans in editor time, including cues hidden inside a

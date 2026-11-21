@@ -41,8 +41,7 @@ nonisolated enum RecordingChapterPlanner {
         let candidates: [(chapter: RecordingChapter, time: TimeInterval)] = chapters
             .filter { $0.start.isFinite && $0.start >= 0 }
             .compactMap { chapter in
-                guard timeline.segments.contains(where: { chapter.start >= $0.sourceStart && chapter.start < $0.sourceEnd }),
-                      let time = timeline.editorTime(forSourceTime: chapter.start),
+                guard let time = timeline.editorTime(forSourceEventTime: chapter.start),
                       time < timeline.duration - 0.5 else { return nil }
                 return (chapter, time)
             }

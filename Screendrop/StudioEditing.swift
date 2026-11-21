@@ -142,6 +142,22 @@ nonisolated enum StudioEditing {
         }
     }
 
+    /// Source timestamp to record for a marker dropped at `editorTime`.
+    /// Uses the half-open footage owner at `editorTime`; at the timeline's
+    /// terminal frame, steps back inside the final clip so a reordered join
+    /// at that exact timestamp cannot claim the marker later.
+    static func markerSourceTime(
+        at editorTime: TimeInterval,
+        in timeline: RecordingClipTimeline
+    ) -> TimeInterval {
+        guard let location = timeline.location(at: editorTime) else { return 0 }
+        let segment = timeline.segments[location.segmentIndex]
+        if location.sourceTime >= segment.sourceEnd - 0.000_001 {
+            return max(segment.sourceStart, segment.sourceEnd - 0.001)
+        }
+        return location.sourceTime
+    }
+
     /// Markers whose source moments still survive in `timeline`, mapped to
     /// their edited times in playback order.
     static func markerEditorTimes(
@@ -151,7 +167,10 @@ nonisolated enum StudioEditing {
         markers
             .compactMap { marker -> (marker: RecordingMarker, time: TimeInterval)? in
                 guard marker.sourceTime.isFinite,
-                      let time = timeline.editorTime(forSourceTime: marker.sourceTime) else {
+                      let time = timeline.editorTime(
+                          forSourceEventTime: marker.sourceTime,
+                          includeTimelineEnd: true
+                      ) else {
                     return nil
                 }
                 return (marker, time)

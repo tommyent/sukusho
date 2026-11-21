@@ -149,6 +149,42 @@ struct StudioEditingTests {
         #expect(mappedChapters.map(\.title) == ["Late", "Early"])
         #expect(abs(mappedChapters[0].start - 1.5) < 0.0001)
         #expect(abs(mappedChapters[1].start - 5.5) < 0.0001)
+
+        // Half-open lookup at a reordered join: [0..4, 8..12, 4..8].
+        // Source 4.0 plays at editor 8.0 (start of clip 3), NOT editor 4.0 (end of clip 1).
+        let joinTimeline = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 4),
+            RecordingClipSegment(sourceStart: 8, sourceEnd: 12),
+            RecordingClipSegment(sourceStart: 4, sourceEnd: 8),
+        ])
+        let joinSource = StudioEditing.markerSourceTime(at: 8.0, in: joinTimeline)
+        #expect(abs(joinSource - 4.0) < 0.0001)
+        let joinMarker = RecordingMarker(sourceTime: joinSource)
+        let joinMapped = StudioEditing.markerEditorTimes([joinMarker], in: joinTimeline)
+        #expect(joinMapped.count == 1)
+        #expect(abs(joinMapped[0].time - 8.0) < 0.0001)
+        #expect(abs((joinTimeline.editorTime(forSourceEventTime: 4.0) ?? -1) - 8.0) < 0.0001)
+
+        // Terminal-frame policy: dropping a marker at editor end (12.0, end of 4..8)
+        // stays at the end of clip 3 (~11.999) instead of jumping to clip 2's start (source 8.0 at editor 4.0).
+        let endSource = StudioEditing.markerSourceTime(at: 12.0, in: joinTimeline)
+        #expect(endSource < 8.0 && endSource > 7.99)
+        let endMapped = StudioEditing.markerEditorTimes([RecordingMarker(sourceTime: endSource)], in: joinTimeline)
+        #expect(endMapped.count == 1)
+        #expect(endMapped[0].time > 11.99 && endMapped[0].time <= 12.0)
+
+        // Exact boundary chapter at source 4.0 maps to editor 8.0 on [0..4, 8..12, 4..8].
+        let boundaryChapter = RecordingChapter(title: "Join", start: 4.0)
+        let mappedJoinChapters = RecordingChapterPlanner.mapped([boundaryChapter], through: joinTimeline)
+        #expect(mappedJoinChapters.count == 1)
+        #expect(abs(mappedJoinChapters[0].start - 8.0) < 0.0001)
+
+        // Event at an excised boundary (source 4.0 on [0..4, 8..12]) is excluded by half-open lookup.
+        let excised = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 4),
+            RecordingClipSegment(sourceStart: 8, sourceEnd: 12),
+        ])
+        #expect(excised.editorTime(forSourceEventTime: 4.0) == nil)
     }
 
     // MARK: - Reordering, hardCuts, editorSpan, ViewportTimeline & PointerTimeline
