@@ -725,3 +725,61 @@ nonisolated enum RecordingTextOverlayRenderer {
         context.convertToDeviceSpace(size)
     }
 }
+
+/// Coalesces continuous overlay inspector or canvas edits into one undo step
+/// while keeping pending changes visible to `canUndo` and flushable before
+/// Undo, Redo, or any separate edit.
+@MainActor
+final class StudioPendingEdit<State: Equatable> {
+    private(set) var snapshot: State?
+    private(set) var actionName: String = ""
+    private var coalesceTask: Task<Void, Never>?
+
+    var isActive: Bool { snapshot != nil }
+
+    func isDirty(current: State) -> Bool {
+        guard let snapshot else { return false }
+        return snapshot != current
+    }
+
+    func begin(from state: State, actionName: String = "") {
+        if snapshot == nil {
+            snapshot = state
+            self.actionName = actionName
+        }
+    }
+
+    func scheduleCommit(
+        actionName: String,
+        delay: Duration = .milliseconds(600),
+        commit: @escaping @MainActor () -> Void
+    ) {
+        self.actionName = actionName
+        coalesceTask?.cancel()
+        coalesceTask = Task {
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            commit()
+        }
+    }
+
+    /// Cancels any timer, clears the pending edit, and returns the pre-edit
+    /// snapshot and action name when `current` actually differs from it.
+    func takeCommit(current: State, fallbackActionName: String) -> (previous: State, actionName: String)? {
+        coalesceTask?.cancel()
+        coalesceTask = nil
+        guard let previous = snapshot else { return nil }
+        let name = actionName.isEmpty ? fallbackActionName : actionName
+        snapshot = nil
+        actionName = ""
+        guard previous != current else { return nil }
+        return (previous, name)
+    }
+
+    func cancel() {
+        coalesceTask?.cancel()
+        coalesceTask = nil
+        snapshot = nil
+        actionName = ""
+    }
+}

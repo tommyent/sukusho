@@ -164,19 +164,16 @@ final class RecordingStudioModel {
     private var redactionRefreshTask: Task<Void, Never>?
     private var redactionFailureObserver: NSObjectProtocol?
     private var redactionStatusObserver: NSKeyValueObservation?
-    private var redactionEditSnapshot: [RecordingRedaction]?
-    private var redactionCoalesceTask: Task<Void, Never>?
+    private let pendingRedactionEdit = StudioPendingEdit<[RecordingRedaction]>()
     private(set) var textOverlays: [RecordingTextOverlay] = []
     var selectedTextID: UUID?
-    private var textEditSnapshot: [RecordingTextOverlay]?
-    private var textCoalesceTask: Task<Void, Never>?
+    private let pendingTextEdit = StudioPendingEdit<[RecordingTextOverlay]>()
     private(set) var imageOverlays: [RecordingImageOverlay] = []
     var selectedImageID: UUID?
     let overlayImages = RecordingOverlayImageStore()
     private(set) var overlayImageRevision = 0
     var mediaImportError: String?
-    private var imageEditSnapshot: [RecordingImageOverlay]?
-    private var imageCoalesceTask: Task<Void, Never>?
+    private let pendingImageEdit = StudioPendingEdit<[RecordingImageOverlay]>()
     private var mediaLoadTask: Task<Void, Never>?
     /// The preview's copy of the reframe camera, kept current with every
     /// edit that would change the exported crop.
@@ -762,7 +759,11 @@ final class RecordingStudioModel {
     private var isTornDown = false
     private var isLoading = false
     private var wallpaperCacheLease: BoundedCGImageCache.Lease?
-    private let editUndoManager = UndoManager()
+    private let editUndoManager: UndoManager = {
+        let manager = UndoManager()
+        manager.groupsByEvent = false
+        return manager
+    }()
     private(set) var undoRevision = 0
     private var zoomEditSnapshot: [ZoomCue]?
     private var viewportRebuildTask: Task<Void, Never>?
@@ -1215,9 +1216,9 @@ final class RecordingStudioModel {
         playerItemTask?.cancel()
         playerItemTask = nil
         redactionRefreshTask?.cancel()
-        redactionCoalesceTask?.cancel()
-        textCoalesceTask?.cancel()
-        imageCoalesceTask?.cancel()
+        pendingRedactionEdit.cancel()
+        pendingTextEdit.cancel()
+        pendingImageEdit.cancel()
         mediaLoadTask?.cancel()
         overlayImages.removeAll()
         clearRedactionObservers()
@@ -1680,9 +1681,33 @@ final class RecordingStudioModel {
 
     // MARK: - Clips
 
+    private enum PendingOverlayKind { case text, image, redaction }
+
+    private var hasPendingOverlayEdit: Bool {
+        pendingTextEdit.isDirty(current: textOverlays)
+            || pendingImageEdit.isDirty(current: imageOverlays)
+            || pendingRedactionEdit.isDirty(current: redactions)
+    }
+
+    private func commitPendingOverlayEdits(excluding excluded: PendingOverlayKind? = nil) {
+        if excluded != .text, pendingTextEdit.isActive {
+            endTextEdit()
+        }
+        if excluded != .image, pendingImageEdit.isActive {
+            endImageEdit()
+        }
+        if excluded != .redaction, pendingRedactionEdit.isActive {
+            endRedactionEdit()
+        }
+    }
+
     var canUndo: Bool {
         _ = undoRevision
-        return !isRestoringDocument && backgroundMusicTask == nil && (editUndoManager.canUndo || (musicSliderBaseline != nil && musicSliderBaseline != backgroundMusicSettings))
+        return !isRestoringDocument
+            && backgroundMusicTask == nil
+            && (editUndoManager.canUndo
+                || (musicSliderBaseline != nil && musicSliderBaseline != backgroundMusicSettings)
+                || hasPendingOverlayEdit)
     }
 
     var canRedo: Bool {
@@ -2062,6 +2087,7 @@ final class RecordingStudioModel {
         guard !isRestoringDocument, backgroundMusicTask == nil else { return }
         setMusicSliderEditing(false)
         flushPendingAudioEdits()
+        commitPendingOverlayEdits()
         guard editUndoManager.canUndo else { return }
         pause()
         editUndoManager.undo()
@@ -2070,7 +2096,9 @@ final class RecordingStudioModel {
 
     func redo() {
         guard !isRestoringDocument, backgroundMusicTask == nil else { return }
+        setMusicSliderEditing(false)
         flushPendingAudioEdits()
+        commitPendingOverlayEdits()
         guard editUndoManager.canRedo else { return }
         pause()
         editUndoManager.redo()
@@ -2470,10 +2498,18 @@ final class RecordingStudioModel {
         _ actionName: String,
         operation: @escaping @MainActor (RecordingStudioModel) -> Void
     ) {
+        let openExplicitGroup = !editUndoManager.isUndoing && !editUndoManager.isRedoing
+        if openExplicitGroup {
+            commitPendingOverlayEdits()
+            editUndoManager.beginUndoGrouping()
+        }
         editUndoManager.registerUndo(withTarget: self) { target in
             operation(target)
         }
         editUndoManager.setActionName(actionName)
+        if openExplicitGroup {
+            editUndoManager.endUndoGrouping()
+        }
         undoRevision &+= 1
     }
 
@@ -3034,6 +3070,7 @@ final class RecordingStudioModel {
     /// Writes the working copy immediately, bypassing the debounce. Used on
     /// teardown and on quit so no edit is left only in memory.
     func flushDraft() {
+        commitPendingOverlayEdits()
         projectSaveTask?.cancel()
         writeDraftNow()
     }
@@ -4002,17 +4039,17 @@ final class RecordingStudioModel {
     }
 
     func beginTextEdit() {
-        if textEditSnapshot == nil { textEditSnapshot = textOverlays }
+        commitPendingOverlayEdits(excluding: .text)
+        pendingTextEdit.begin(from: textOverlays)
     }
 
     func endTextEdit(actionName: String = "Edit Text") {
-        textCoalesceTask?.cancel()
-        textCoalesceTask = nil
-        guard let previous = textEditSnapshot else { return }
-        textEditSnapshot = nil
-        guard previous != textOverlays else { return }
-        registerUndo(actionName) { target in
-            target.applyTexts(previous, actionName: actionName)
+        guard let commit = pendingTextEdit.takeCommit(current: textOverlays, fallbackActionName: actionName) else {
+            undoRevision &+= 1
+            return
+        }
+        registerUndo(commit.actionName) { target in
+            target.applyTexts(commit.previous, actionName: commit.actionName)
         }
     }
 
@@ -4028,15 +4065,16 @@ final class RecordingStudioModel {
         updated.center = CGPoint(x: min(max(updated.center.x, 0), 1), y: min(max(updated.center.y, 0), 1))
         texts[index] = updated
         replaceTexts(texts)
+        if pendingTextEdit.isActive { undoRevision &+= 1 }
     }
 
     func editText(_ overlay: RecordingTextOverlay, actionName: String) {
+        if pendingTextEdit.isActive, !pendingTextEdit.actionName.isEmpty, pendingTextEdit.actionName != actionName {
+            endTextEdit()
+        }
         beginTextEdit()
         setText(overlay)
-        textCoalesceTask?.cancel()
-        textCoalesceTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(600))
-            guard !Task.isCancelled else { return }
+        pendingTextEdit.scheduleCommit(actionName: actionName) { [weak self] in
             self?.endTextEdit(actionName: actionName)
         }
     }
@@ -4047,6 +4085,9 @@ final class RecordingStudioModel {
     }
 
     private func applyTexts(_ texts: [RecordingTextOverlay], actionName: String) {
+        if !editUndoManager.isUndoing && !editUndoManager.isRedoing {
+            commitPendingOverlayEdits()
+        }
         guard texts != textOverlays else { return }
         let previous = textOverlays
         registerUndo(actionName) { target in
@@ -4196,17 +4237,17 @@ final class RecordingStudioModel {
     }
 
     func beginImageEdit() {
-        if imageEditSnapshot == nil { imageEditSnapshot = imageOverlays }
+        commitPendingOverlayEdits(excluding: .image)
+        pendingImageEdit.begin(from: imageOverlays)
     }
 
     func endImageEdit(actionName: String = "Edit Image") {
-        imageCoalesceTask?.cancel()
-        imageCoalesceTask = nil
-        guard let previous = imageEditSnapshot else { return }
-        imageEditSnapshot = nil
-        guard previous != imageOverlays else { return }
-        registerUndo(actionName) { target in
-            target.applyImages(previous, actionName: actionName)
+        guard let commit = pendingImageEdit.takeCommit(current: imageOverlays, fallbackActionName: actionName) else {
+            undoRevision &+= 1
+            return
+        }
+        registerUndo(commit.actionName) { target in
+            target.applyImages(commit.previous, actionName: commit.actionName)
         }
     }
 
@@ -4224,20 +4265,24 @@ final class RecordingStudioModel {
         all[index] = updated
         imageOverlays = all
         scheduleProjectSave()
+        if pendingImageEdit.isActive { undoRevision &+= 1 }
     }
 
     func editImage(_ overlay: RecordingImageOverlay, actionName: String) {
+        if pendingImageEdit.isActive, !pendingImageEdit.actionName.isEmpty, pendingImageEdit.actionName != actionName {
+            endImageEdit()
+        }
         beginImageEdit()
         setImage(overlay)
-        imageCoalesceTask?.cancel()
-        imageCoalesceTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(600))
-            guard !Task.isCancelled else { return }
+        pendingImageEdit.scheduleCommit(actionName: actionName) { [weak self] in
             self?.endImageEdit(actionName: actionName)
         }
     }
 
     private func applyImages(_ all: [RecordingImageOverlay], actionName: String) {
+        if !editUndoManager.isUndoing && !editUndoManager.isRedoing {
+            commitPendingOverlayEdits()
+        }
         guard all != imageOverlays else { return }
         let previous = imageOverlays
         registerUndo(actionName) { target in
@@ -4327,15 +4372,16 @@ final class RecordingStudioModel {
     }
 
     func beginRedactionEdit() {
-        if redactionEditSnapshot == nil { redactionEditSnapshot = redactions }
+        commitPendingOverlayEdits(excluding: .redaction)
+        pendingRedactionEdit.begin(from: redactions)
     }
 
     func endRedactionEdit(actionName: String = "Edit Redaction") {
-        redactionCoalesceTask?.cancel()
-        redactionCoalesceTask = nil
-        guard let previous = redactionEditSnapshot else { return }
-        redactionEditSnapshot = nil
-        guard previous != redactions else { return }
+        guard let commit = pendingRedactionEdit.takeCommit(current: redactions, fallbackActionName: actionName) else {
+            undoRevision &+= 1
+            return
+        }
+        let previous = commit.previous
         do { for region in redactions { try region.validate(sourceDuration: sourceDuration) } }
         catch {
             redactions = previous
@@ -4353,7 +4399,7 @@ final class RecordingStudioModel {
             scheduleRedactionRefresh()
             return
         }
-        registerUndo(actionName) { $0.applyRedactions(previous, actionName: actionName) }
+        registerUndo(commit.actionName) { $0.applyRedactions(previous, actionName: commit.actionName) }
         scheduleProjectSave()
         QuickLookPreviewPresenter.dismiss()
         if let session { ScreenshotPreviewStack.shared.dismissRecordingSession(session.directoryURL) }
@@ -4387,15 +4433,16 @@ final class RecordingStudioModel {
             scheduleRedactionRefresh()
         }
         scheduleProjectSave()
+        if pendingRedactionEdit.isActive { undoRevision &+= 1 }
     }
 
     func editRedaction(_ redaction: RecordingRedaction, actionName: String) {
+        if pendingRedactionEdit.isActive, !pendingRedactionEdit.actionName.isEmpty, pendingRedactionEdit.actionName != actionName {
+            endRedactionEdit()
+        }
         beginRedactionEdit()
         setRedaction(redaction)
-        redactionCoalesceTask?.cancel()
-        redactionCoalesceTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(600))
-            guard !Task.isCancelled else { return }
+        pendingRedactionEdit.scheduleCommit(actionName: actionName) { [weak self] in
             self?.endRedactionEdit(actionName: actionName)
         }
     }
@@ -4424,6 +4471,9 @@ final class RecordingStudioModel {
     }
 
     private func applyRedactions(_ next: [RecordingRedaction], actionName: String = "Video Redaction") {
+        if !editUndoManager.isUndoing && !editUndoManager.isRedoing {
+            commitPendingOverlayEdits()
+        }
         redactionEditError = nil
         guard next != redactions else { return }
         do { for region in next { try region.validate(sourceDuration: sourceDuration) } }

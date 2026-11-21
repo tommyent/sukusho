@@ -269,6 +269,124 @@ struct StudioTracksTests {
         #expect(lstat(mediaSymlink.path, &linkStat) == 0)
     }
 
+    // MARK: - Pending overlay edit flushing before Undo, Redo, or a new edit
+
+    @MainActor
+    @Test func pendingOverlayEditsFlushBeforeUndoRedoAndSeparateEdits() async throws {
+        // Mirror RecordingStudioModel's UndoManager + StudioPendingEdit protocol.
+        final class Harness {
+            let undoManager = UndoManager()
+            let pendingImage = StudioPendingEdit<[RecordingImageOverlay]>()
+            let pendingRedaction = StudioPendingEdit<[RecordingRedaction]>()
+            var images: [RecordingImageOverlay] = []
+            var redactions: [RecordingRedaction] = []
+            var draftWrites = 0
+
+            init() { undoManager.groupsByEvent = false }
+
+            var canUndo: Bool {
+                undoManager.canUndo
+                    || pendingImage.isDirty(current: images)
+                    || pendingRedaction.isDirty(current: redactions)
+            }
+
+            func flushPending() {
+                if let commit = pendingImage.takeCommit(current: images, fallbackActionName: "Edit Image") {
+                    registerUndo(commit.actionName) { $0.applyImages(commit.previous, actionName: commit.actionName) }
+                }
+                if let commit = pendingRedaction.takeCommit(current: redactions, fallbackActionName: "Edit Redaction") {
+                    draftWrites += 1
+                    registerUndo(commit.actionName) { $0.applyRedactions(commit.previous, actionName: commit.actionName) }
+                }
+            }
+
+            func registerUndo(_ name: String, _ op: @escaping (Harness) -> Void) {
+                if !undoManager.isUndoing && !undoManager.isRedoing { flushPending() }
+                undoManager.beginUndoGrouping()
+                undoManager.registerUndo(withTarget: self) { op($0) }
+                undoManager.setActionName(name)
+                undoManager.endUndoGrouping()
+            }
+
+            func applyImages(_ next: [RecordingImageOverlay], actionName: String) {
+                if !undoManager.isUndoing && !undoManager.isRedoing { flushPending() }
+                let prev = images
+                registerUndo(actionName) { $0.applyImages(prev, actionName: actionName) }
+                images = next
+            }
+
+            func editImage(_ updated: RecordingImageOverlay, actionName: String) {
+                pendingImage.begin(from: images, actionName: actionName)
+                images = images.map { $0.id == updated.id ? updated : $0 }
+                pendingImage.scheduleCommit(actionName: actionName, delay: .milliseconds(80)) { [weak self] in
+                    self?.flushPending()
+                }
+            }
+
+            func applyRedactions(_ next: [RecordingRedaction], actionName: String) {
+                if !undoManager.isUndoing && !undoManager.isRedoing { flushPending() }
+                let prev = redactions
+                draftWrites += 1
+                registerUndo(actionName) { $0.applyRedactions(prev, actionName: actionName) }
+                redactions = next
+            }
+
+            func editRedaction(_ updated: RecordingRedaction, actionName: String) {
+                pendingRedaction.begin(from: redactions, actionName: actionName)
+                redactions = redactions.map { $0.id == updated.id ? updated : $0 }
+                pendingRedaction.scheduleCommit(actionName: actionName, delay: .milliseconds(80)) { [weak self] in
+                    self?.flushPending()
+                }
+            }
+
+            func undo() {
+                flushPending()
+                guard undoManager.canUndo else { return }
+                undoManager.undo()
+            }
+        }
+
+        // 1. Only a pending edit exists -> canUndo is true and Undo immediately reverts it.
+        let solo = Harness()
+        let initialImg = RecordingImageOverlay(fileName: "a.png", displayName: "a", start: 0, end: 2)
+        solo.images = [initialImg]
+        #expect(!solo.canUndo)
+        var faded = initialImg; faded.opacity = 0.4
+        solo.editImage(faded, actionName: "Change Image Opacity")
+        #expect(solo.canUndo)
+        solo.undo()
+        #expect(solo.images.first?.opacity == 1.0)
+
+        // 2. Import image, change opacity, immediately Undo -> undoes opacity first, keeps image,
+        //    and waiting past the debounce window does NOT register a stale edit.
+        let flow = Harness()
+        flow.applyImages([initialImg], actionName: "Add Image")
+        flow.editImage(faded, actionName: "Change Image Opacity")
+        flow.undo()
+        #expect(flow.images.count == 1)
+        #expect(flow.images[0].opacity == 1.0)
+        try await Task.sleep(for: .milliseconds(120))
+        #expect(flow.images.count == 1)
+        #expect(flow.images[0].opacity == 1.0)
+        flow.undo()
+        #expect(flow.images.isEmpty)
+
+        // 3. Redaction strength edit followed immediately by mode change commits strength
+        //    (with draft write) BEFORE registering the mode change.
+        let redaction = RecordingRedaction(start: 0, end: 3, rect: CGRect(x: 0.1, y: 0.1, width: 0.2, height: 0.2), mode: .blur, strength: 0.8)
+        flow.redactions = [redaction]
+        var stronger = redaction; stronger.strength = 0.95
+        flow.editRedaction(stronger, actionName: "Change Redaction Strength")
+        var pixelated = stronger; pixelated.mode = .pixelate
+        flow.applyRedactions([pixelated], actionName: "Change Redaction Mode")
+        #expect(flow.draftWrites == 2)
+        flow.undo()
+        #expect(flow.redactions.first?.mode == .blur)
+        #expect(flow.redactions.first?.strength == 0.95)
+        flow.undo()
+        #expect(flow.redactions.first?.strength == 0.8)
+    }
+
     // MARK: - Source-time placement across cuts and speed ramps
 
     @Test func textAndImageBlocksMapAcrossCutsAndSpeedRamps() {
