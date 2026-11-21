@@ -129,7 +129,10 @@ enum RecordingSessionRenderer {
         let microphoneTrackID = RecordingVoiceIsolation.microphoneTrack(in: tracks,
             includesMicrophone: manifest?.includesMicrophone == true,
             includesSystemAudio: manifest?.includesSystemAudio == true)?.trackID
-        if editDocument?.isolateVoice == true, audioReplacementURL == nil,
+        let mayUseRecordingAudio = audioReplacementURL == nil
+            || usesRecordingClip
+            || editDocument?.replacementAudioSync != nil
+        if editDocument?.isolateVoice == true, mayUseRecordingAudio,
            !exportSettings.removeAudio, audioVolume > 0 || usesRecordingClip {
             guard let microphone = RecordingVoiceIsolation.microphoneTrack(in: tracks,
                 includesMicrophone: manifest?.includesMicrophone == true,

@@ -720,6 +720,88 @@ struct StudioAudioTests {
         #expect(afterDelete.hidden.isEmpty)
     }
 
+    @Test func legacyReplacementGapsStaySilentAndIsolatedMicAppliesWhereverOriginalAudioPlays() async throws {
+        let dir = try makeDirectory()
+        let mediaDir = dir.appendingPathComponent("media", isDirectory: true)
+        try FileManager.default.createDirectory(at: mediaDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // Screen has 900 Hz system + 220 Hz raw mic; isolated mic is 440 Hz; replacement is 520 Hz.
+        let screenURL = dir.appendingPathComponent("screen.mov")
+        let micTrackID = try await makeDualTrackScreenAudio(
+            at: screenURL,
+            systemFrequency: 900,
+            micFrequency: 220,
+            duration: 1.5
+        )
+        let isolatedURL = try makeTone(in: dir, name: "isolated", frequency: 440, amplitude: 0.35, duration: 1.5)
+        let shortReplacementURL = try makeTone(in: dir, name: "short-repl", frequency: 520, amplitude: 0.35, duration: 0.8)
+        let fullReplacementURL = try makeTone(in: dir, name: "full-repl", frequency: 520, amplitude: 0.35, duration: 1.5)
+        let timeline = RecordingClipTimeline.full(sourceDuration: 1.5)
+
+        // 1. Legacy v6 project (replacementSync == nil) with 0.8 s replacement over 1.5 s cut:
+        //    the uncovered 0.8...1.5 s tail stays silent (does NOT bring back original audio).
+        let legacyPrepared = try await StudioAudioComposer.prepareExport(
+            screenAsset: AVURLAsset(url: screenURL),
+            screenURL: screenURL,
+            timeline: timeline,
+            replacementURL: shortReplacementURL,
+            replacementSync: nil,
+            clips: [],
+            mediaDirectory: mediaDir,
+            volume: 1,
+            microphoneTrackID: micTrackID,
+            isolatedMicrophoneURL: isolatedURL,
+            backgroundMusic: nil
+        )
+        let legacySamples = try await renderMonoSamples(asset: legacyPrepared.composition, mix: legacyPrepared.mix, duration: 1.5)
+        #expect(goertzel(legacySamples, at: 0.2, length: 0.4, frequency: 520) > 0.2)
+        #expect(peakAmplitude(in: legacySamples, from: 0.9, to: 1.4, sampleRate: 48_000) < 0.01)
+
+        // 2. Full replacement + voice isolation + detached .recording clip:
+        //    detached .recording clip plays 440 Hz isolated mic (NOT 220 Hz raw mic),
+        //    while a fully covering replacement without recording clips contributes only 520 Hz.
+        var detachedRec = RecordingAudioClip(fileName: "", displayName: "Take audio", start: 0.2, fileDuration: 1.5)
+        detachedRec.source = .recording
+        detachedRec.trimStart = 0.2
+        detachedRec.trimEnd = 1.2
+        let withDetached = try await StudioAudioComposer.prepareExport(
+            screenAsset: AVURLAsset(url: screenURL),
+            screenURL: screenURL,
+            timeline: timeline,
+            replacementURL: fullReplacementURL,
+            replacementSync: .flat(over: timeline),
+            clips: [detachedRec],
+            mediaDirectory: mediaDir,
+            volume: 1,
+            microphoneTrackID: micTrackID,
+            isolatedMicrophoneURL: isolatedURL,
+            backgroundMusic: nil
+        )
+        let detachedSamples = try await renderMonoSamples(asset: withDetached.composition, mix: withDetached.mix, duration: 1.5)
+        #expect(goertzel(detachedSamples, at: 0.4, length: 0.5, frequency: 440) > 0.15)
+        #expect(goertzel(detachedSamples, at: 0.4, length: 0.5, frequency: 220) < 0.03)
+        #expect(goertzel(detachedSamples, at: 0.4, length: 0.5, frequency: 520) > 0.15)
+
+        let fullOnly = try await StudioAudioComposer.prepareExport(
+            screenAsset: AVURLAsset(url: screenURL),
+            screenURL: screenURL,
+            timeline: timeline,
+            replacementURL: fullReplacementURL,
+            replacementSync: .flat(over: timeline),
+            clips: [],
+            mediaDirectory: mediaDir,
+            volume: 1,
+            microphoneTrackID: micTrackID,
+            isolatedMicrophoneURL: isolatedURL,
+            backgroundMusic: nil
+        )
+        let fullSamples = try await renderMonoSamples(asset: fullOnly.composition, mix: fullOnly.mix, duration: 1.5)
+        #expect(goertzel(fullSamples, at: 0.4, length: 0.5, frequency: 520) > 0.2)
+        #expect(goertzel(fullSamples, at: 0.4, length: 0.5, frequency: 440) < 0.03)
+        #expect(goertzel(fullSamples, at: 0.4, length: 0.5, frequency: 220) < 0.03)
+    }
+
     // MARK: - Helpers
 
     private func makeDirectory() throws -> URL {

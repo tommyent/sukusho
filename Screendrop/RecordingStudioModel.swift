@@ -378,9 +378,10 @@ final class RecordingStudioModel {
     }
 
     /// Resolved audio sources with Sukusho's voice-isolated microphone swapped
-    /// in whenever voice isolation is active and no replacement soundtrack is set.
+    /// in whenever voice isolation is active, so any original recording audio
+    /// (including detached recording clips or revealed footage) uses it.
     private var activeAudioSources: StudioAudioSources {
-        if voiceIsolationEnabled, !hasReplacementAudio,
+        if voiceIsolationEnabled,
            let isolated = isolatedMicrophone,
            let micID = microphoneTrackID,
            let swapped = audioSources.replacingMicrophone(
@@ -4072,7 +4073,7 @@ final class RecordingStudioModel {
             audioReplacementURL: audioReplacementURL,
             audioReplacementSync: audioReplacementURL == nil ? nil : replacementAudioSync,
             audioVolume: Double(audioVolume),
-            isolatedMicrophoneURL: voiceIsolationEnabled && !hasReplacementAudio ? isolatedMicrophone?.url : nil,
+            isolatedMicrophoneURL: voiceIsolationEnabled ? isolatedMicrophone?.url : nil,
             microphoneTrackID: microphoneTrackID,
             backgroundMusic: backgroundMusicConfiguration(includeAudio: !settings.removeAudio && !settings.effectiveExportsGIF),
             audioClips: audioClips,
@@ -4939,7 +4940,7 @@ final class RecordingStudioModel {
             replacementURL: replacementURL,
             format: audioExportFormat,
             volume: Double(audioVolume),
-            isolatedMicrophoneURL: voiceIsolationEnabled && !hasReplacementAudio ? isolatedMicrophone?.url : nil,
+            isolatedMicrophoneURL: voiceIsolationEnabled ? isolatedMicrophone?.url : nil,
             microphoneTrackID: microphoneTrackID,
             backgroundMusic: backgroundMusicConfiguration(includeAudio: true),
             replacementSync: replacementURL == nil ? nil : replacementAudioSync,
@@ -5053,7 +5054,7 @@ final class RecordingStudioModel {
             replacementAudioReference = nil
             replacementAudioError = nil
             undoReferencedFiles.insert(audio.url.lastPathComponent)
-            replacementAudioSync = sync ?? .flat(over: clipTimeline)
+            replacementAudioSync = sync ?? .legacyFlat(over: clipTimeline)
             let track = StudioAudioSources.Track(track: audio.track, range: audio.range, asset: audio.asset)
             audioSources.replacement = [track]
             audioSources.pinnedReplacements[audio.url.lastPathComponent] = [track]

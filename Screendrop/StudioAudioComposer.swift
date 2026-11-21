@@ -301,7 +301,7 @@ nonisolated enum StudioAudioComposer {
         )
         let plan = StudioAudioPlan(
             timeline: timeline,
-            sync: sources.replacement.isEmpty ? nil : replacementSync ?? .flat(over: timeline),
+            sync: sources.replacement.isEmpty ? nil : replacementSync ?? .legacyFlat(over: timeline),
             clips: clips,
             volume: volume
         )
@@ -463,8 +463,9 @@ nonisolated enum StudioAudioComposer {
             to: segment.sourceEnd,
             fileDuration: replacementDuration
         )
+        let fillGaps = hasRecording && sync.fillsGapsWithRecording
         for piece in pieces {
-            if hasRecording, piece.sourceStart - cursor > minimumInsertDuration {
+            if fillGaps, piece.sourceStart - cursor > minimumInsertDuration {
                 appendSlice(
                     .recording,
                     sourceStart: cursor,
@@ -482,7 +483,7 @@ nonisolated enum StudioAudioComposer {
             )
             cursor = piece.sourceEnd
         }
-        if hasRecording, segment.sourceEnd - cursor > minimumInsertDuration {
+        if fillGaps, segment.sourceEnd - cursor > minimumInsertDuration {
             appendSlice(
                 .recording,
                 sourceStart: cursor,

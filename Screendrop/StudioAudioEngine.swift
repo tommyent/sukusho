@@ -78,17 +78,23 @@ nonisolated struct RecordingAudioSync: Codable, Equatable, Sendable {
     /// plays it later. For files that come back from a cleanup tool with a
     /// little latency added.
     var offset: TimeInterval = 0
+    /// Whether stretches left uncovered by the soundtrack fall back to the
+    /// recording's own audio. False for legacy v6 projects saved before sync
+    /// was tracked, whose shorter replacements ended in silence.
+    var fillsGapsWithRecording: Bool = true
     /// How far the soundtrack can be slid either way.
     static let offsetLimit: TimeInterval = 1
 
-    init(spans: [Span], offset: TimeInterval = 0) {
+    init(spans: [Span], offset: TimeInterval = 0, fillsGapsWithRecording: Bool = true) {
         self.spans = spans.sorted { $0.sourceStart < $1.sourceStart }
         self.offset = offset.isFinite ? min(max(offset, -Self.offsetLimit), Self.offsetLimit) : 0
+        self.fillsGapsWithRecording = fillsGapsWithRecording
     }
 
     private enum CodingKeys: String, CodingKey {
         case spans
         case offset
+        case fillsGapsWithRecording
     }
 
     init(from decoder: any Decoder) throws {
@@ -96,12 +102,14 @@ nonisolated struct RecordingAudioSync: Codable, Equatable, Sendable {
         spans = try container.decode([Span].self, forKey: .spans).sorted { $0.sourceStart < $1.sourceStart }
         let decodedOffset = try container.decodeIfPresent(TimeInterval.self, forKey: .offset) ?? 0
         offset = decodedOffset.isFinite ? min(max(decodedOffset, -Self.offsetLimit), Self.offsetLimit) : 0
+        fillsGapsWithRecording = try container.decodeIfPresent(Bool.self, forKey: .fillsGapsWithRecording) ?? true
     }
 
     func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(spans, forKey: .spans)
         if offset != 0 { try container.encode(offset, forKey: .offset) }
+        if !fillsGapsWithRecording { try container.encode(false, forKey: .fillsGapsWithRecording) }
     }
 
     /// The soundtrack laid flat over a cut from its first frame, which is
@@ -119,6 +127,13 @@ nonisolated struct RecordingAudioSync: Codable, Equatable, Sendable {
             editorStart += segment.editorDuration
         }
         return RecordingAudioSync(spans: spans)
+    }
+
+    /// Legacy v6 flat replacement where any stretch beyond the file stays silent.
+    static func legacyFlat(over timeline: RecordingClipTimeline) -> RecordingAudioSync {
+        var sync = flat(over: timeline)
+        sync.fillsGapsWithRecording = false
+        return sync
     }
 
     /// How long a file has to be to cover every span.
