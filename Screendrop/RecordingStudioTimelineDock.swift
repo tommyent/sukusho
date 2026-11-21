@@ -598,14 +598,14 @@ struct StudioTimelineEditor: View {
             playbackControls
         }
         .frame(height: 36)
-        .motion(.morph, value: [isAddOpen, canDeleteSelection, model.hasClipEdits, zoom > 1.0001])
+        .motion(.morph, value: [isAddOpen, zoom > 1.0001])
     }
 
     private var editControls: some View {
-        HStack(spacing: 6) {
-            GlassEffectContainer(spacing: GlassMetrics.containerSpacing) {
-                HStack(spacing: GlassMetrics.gap) {
-                    GlassIconButton(systemImage: "scissors", help: "Split at Playhead (⌘B)") {
+        GlassEffectContainer(spacing: GlassMetrics.containerSpacing) {
+            HStack(spacing: GlassMetrics.gap) {
+                StudioTransportTray {
+                    timelineButton("Split at Playhead (⌘B)", systemImage: "scissors") {
                         if let audioID = model.selectedAudioClipID {
                             model.splitAudioClip(id: audioID, at: model.currentTime)
                         } else {
@@ -614,50 +614,46 @@ struct StudioTimelineEditor: View {
                     }
                     .keyboardShortcut("b", modifiers: .command)
                     .disabled(!model.isLoaded)
-                    .glassEffectID("split", in: glass)
 
-                    addTools
-
-                    if canDeleteSelection {
-                        GlassIconButton(systemImage: "trash", help: "Delete Selection") {
-                            deleteSelection()
-                        }
-                        .glassEffectID("delete", in: glass)
+                    timelineButton("Delete Selection", systemImage: "trash") {
+                        deleteSelection()
                     }
+                    .disabled(!canDeleteSelection)
 
-                    if model.hasClipEdits {
-                        GlassIconButton(systemImage: "arrow.counterclockwise", help: "Reset All Clip Edits…") {
-                            isResetClipsConfirmationPresented = true
-                        }
-                        .glassEffectID("resetClips", in: glass)
+                    timelineButton("Reset All Clip Edits…", systemImage: "arrow.counterclockwise") {
+                        isResetClipsConfirmationPresented = true
                     }
+                    .disabled(!model.hasClipEdits)
+                }
+                .glassEffectID("clipTools", in: glass)
 
-                    GlassIconButton(systemImage: "arrow.uturn.backward", help: "Undo (⌘Z)") {
+                StudioTransportTray {
+                    timelineButton("Undo (⌘Z)", systemImage: "arrow.uturn.backward") {
                         model.undo()
                     }
                     .keyboardShortcut("z", modifiers: .command)
                     .disabled(!model.canUndo)
-                    .glassEffectID("undo", in: glass)
-                    .padding(.leading, 4)
 
-                    GlassIconButton(systemImage: "arrow.uturn.forward", help: "Redo (⇧⌘Z)") {
+                    timelineButton("Redo (⇧⌘Z)", systemImage: "arrow.uturn.forward") {
                         model.redo()
                     }
                     .keyboardShortcut("z", modifiers: [.command, .shift])
                     .disabled(!model.canRedo)
-                    .glassEffectID("redo", in: glass)
                 }
+                .glassEffectID("history", in: glass)
+
+                addTools
             }
-            .confirmationDialog(
-                "Reset all clip edits?",
-                isPresented: $isResetClipsConfirmationPresented
-            ) {
-                Button("Reset Clips", role: .destructive) {
-                    model.resetClips()
-                }
-            } message: {
-                Text("Every split, trim, deletion and speed change goes back to the original recording. You can undo this.")
+        }
+        .confirmationDialog(
+            "Reset all clip edits?",
+            isPresented: $isResetClipsConfirmationPresented
+        ) {
+            Button("Reset Clips", role: .destructive) {
+                model.resetClips()
             }
+        } message: {
+            Text("Every split, trim, deletion and speed change goes back to the original recording. You can undo this.")
         }
     }
 
@@ -866,9 +862,9 @@ struct StudioTimelineEditor: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 12, weight: .medium))
-                .frame(width: 28, height: 26)
-                .contentShape(RoundedRectangle(cornerRadius: StudioTransportMetrics.buttonRadius, style: .continuous))
+                .font(.system(size: GlassMetrics.symbolSize, weight: .semibold))
+                .frame(width: 28, height: 24)
+                .contentShape(Capsule())
         }
         .buttonStyle(TransportIconButtonStyle(isActive: isActive))
         .help(help)
@@ -876,29 +872,18 @@ struct StudioTimelineEditor: View {
     }
 }
 
-/// A quiet filled tray grouping related transport buttons, the same
-/// treatment as the annotator's tool grid.
-private enum StudioTransportMetrics {
-    static let buttonRadius: CGFloat = 6
-    static let trayInset: CGFloat = 2
-}
-
+/// Grouped timeline tool pill matching Sukusho's Liquid Glass capsule chrome
+/// (`AnnotationToolDock`, `GlassControls`).
 private struct StudioTransportTray<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
-    @Environment(\.colorScheme) private var colorScheme
-
     var body: some View {
-        // Nested radius: the tray wraps buttons inset by `inset`.
-        let shape = RoundedRectangle(
-            cornerRadius: StudioTransportMetrics.buttonRadius + StudioTransportMetrics.trayInset,
-            style: .continuous
-        )
         HStack(spacing: 0) {
             content()
         }
-        .padding(StudioTransportMetrics.trayInset)
-        .background(shape.fill(InspectorControlPalette.trackFill(for: colorScheme)))
+        .padding(.horizontal, 3)
+        .frame(height: GlassMetrics.buttonSize)
+        .glassEffect(.regular, in: .capsule)
     }
 }
 
@@ -912,18 +897,16 @@ private struct TransportIconButtonStyle: ButtonStyle {
             .foregroundStyle(
                 isActive && isEnabled
                     ? Palette.highlight
-                    : Color.primary.opacity(
-                        isEnabled ? (configuration.isPressed || isHovering ? 0.95 : 0.78) : 0.25
-                    )
+                    : (isEnabled ? Palette.label : Palette.disabledLabel)
             )
             .background {
-                RoundedRectangle(cornerRadius: StudioTransportMetrics.buttonRadius, style: .continuous)
+                Capsule()
                     .fill(
                         isActive && isEnabled
                             ? Palette.highlight.opacity(configuration.isPressed ? 0.22 : 0.14)
-                            : Color.primary.opacity(
-                                isEnabled ? (configuration.isPressed ? 0.1 : isHovering ? 0.06 : 0) : 0
-                            )
+                            : (isEnabled
+                                ? (configuration.isPressed ? Palette.pressedFill : isHovering ? Palette.hoverFill : .clear)
+                                : .clear)
                     )
             }
             .onHover { isHovering = $0 }
