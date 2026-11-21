@@ -18,13 +18,10 @@ struct CaptureLibraryView: View {
     @State private var glassMetrics = GlassWindowButtonMetrics.fallback
     @State private var columnVisibility = NavigationSplitViewVisibility.automatic
     private static let inspectorKey = "captureLibrary.inspectorVisible"
-    @State private var inspectorVisible = UserDefaults.standard.object(forKey: inspectorKey) as? Bool ?? true
+    @State private var inspectorVisible = InspectorVisibilityStore.initial(forKey: inspectorKey)
 
     private var inspectorChoice: Binding<Bool> {
-        Binding(get: { inspectorVisible }, set: { visible in
-            inspectorVisible = visible
-            UserDefaults.standard.set(visible, forKey: Self.inspectorKey)
-        })
+        InspectorVisibilityStore.binding($inspectorVisible, key: Self.inspectorKey)
     }
     @AppStorage("captureLibrary.tagsExpanded") private var tagsExpanded = true
     @AppStorage("captureLibrary.sort") private var savedSort: CaptureLibrarySort = .newest
@@ -234,7 +231,7 @@ struct CaptureLibraryView: View {
             }
             .navigationSplitViewStyle(.balanced)
             .modifier(LibraryWindowSurface())
-            .inspector(isPresented: $inspectorVisible) {
+            .inspector(isPresented: inspectorChoice) {
                 inspectorContent
             }
             // Keep AppKit's full-height sidebar and window-button placement with the native toolbar empty.
@@ -257,7 +254,7 @@ struct CaptureLibraryView: View {
                     ))
                     // Inside the detail column the inspector sits under the toolbar,
                     // so the toolbar runs unbroken across it.
-                    .inspector(isPresented: $inspectorVisible) {
+                    .inspector(isPresented: inspectorChoice) {
                         inspectorContent
                     }
                     .modifier(LibraryWindowSurface())

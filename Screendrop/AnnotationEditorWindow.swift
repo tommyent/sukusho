@@ -17,13 +17,10 @@ struct AnnotationEditorWindow: View {
     @State private var wallpaperStore = AnnotationWallpaperStore.shared
     @State private var backgroundPresetStore = AnnotationBackgroundPresetStore.shared
     private static let inspectorKey = "annotationEditor.inspectorVisible"
-    @State private var isInspectorPresented = UserDefaults.standard.object(forKey: inspectorKey) as? Bool ?? true
+    @State private var isInspectorPresented = InspectorVisibilityStore.initial(forKey: inspectorKey)
 
     private var inspectorChoice: Binding<Bool> {
-        Binding(get: { isInspectorPresented }, set: { visible in
-            isInspectorPresented = visible
-            UserDefaults.standard.set(visible, forKey: Self.inspectorKey)
-        })
+        InspectorVisibilityStore.binding($isInspectorPresented, key: Self.inspectorKey)
     }
     @State private var isFinishing = false
     @State private var isSaving = false
@@ -219,7 +216,7 @@ struct AnnotationEditorWindow: View {
                     }
                 }
             ))
-            .inspector(isPresented: $isInspectorPresented) {
+            .inspector(isPresented: inspectorChoice) {
                 AnnotationEditorInspector(
                     model: model,
                     wallpaperStore: wallpaperStore,
@@ -236,6 +233,7 @@ struct AnnotationEditorWindow: View {
                 isPresented: inspectorChoice,
                 metrics: glassMetrics,
                 isDisabled: isBusy,
+                hasKeyboardShortcut: true,
                 onToggle: clearInspectorFocus
             )
             .environment(\.backgroundDestination, .editors)
@@ -310,6 +308,7 @@ struct AnnotationEditorWindow: View {
             Label(isInspectorPresented ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.right")
                 .labelStyle(.iconOnly)
         }
+        .keyboardShortcut("i", modifiers: [.command, .option])
         .help(isInspectorPresented ? "Hide Inspector" : "Show Inspector")
     }
 

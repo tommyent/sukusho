@@ -80,6 +80,29 @@ nonisolated struct InspectorFoldState: Equatable {
     }
 }
 
+/// Reads and writes a window's remembered inspector visibility while ignoring
+/// redundant writes (such as AppKit echoing an automatic fold).
+enum InspectorVisibilityStore {
+    static func initial(forKey key: String, defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: key) as? Bool ?? true
+    }
+
+    static func binding(
+        _ isPresented: Binding<Bool>,
+        key: String,
+        defaults: UserDefaults = .standard
+    ) -> Binding<Bool> {
+        Binding(
+            get: { isPresented.wrappedValue },
+            set: { visible in
+                guard visible != isPresented.wrappedValue else { return }
+                isPresented.wrappedValue = visible
+                defaults.set(visible, forKey: key)
+            }
+        )
+    }
+}
+
 extension View {
     func inspectorAutoFold(
         isPresented: Binding<Bool>,

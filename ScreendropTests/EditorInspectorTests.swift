@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import Testing
 
 /// The editor inspector's rules that don't need a view (sd-g18y).
@@ -127,6 +128,40 @@ struct EditorInspectorTests {
 
         let resized = settled.state.resized(to: 920, foldBelow: 1000, isPresented: true)
         #expect(!resized.isPresented && resized.state.isFolded)
+    }
+
+    @Test static func inspectorChoicePersistsMenuTogglesButNotAutoFolds() {
+        let suite = "com.tommyent.Sukusho.tests.inspector.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let key = "test.inspectorVisible"
+
+        var shown = InspectorVisibilityStore.initial(forKey: key, defaults: defaults)
+        #expect(shown)
+
+        let choice = InspectorVisibilityStore.binding(
+            Binding(get: { shown }, set: { shown = $0 }),
+            key: key,
+            defaults: defaults
+        )
+
+        // View › Hide / Show Inspector and ⌘⌥I go through the choice binding and persist.
+        choice.wrappedValue = false
+        #expect(!shown && !InspectorVisibilityStore.initial(forKey: key, defaults: defaults))
+        choice.wrappedValue = true
+        #expect(shown && InspectorVisibilityStore.initial(forKey: key, defaults: defaults))
+
+        // Auto-folding updates the state directly; even an echoed false through the binding
+        // must not overwrite the saved choice.
+        let folded = InspectorFoldState(width: 1100).resized(to: 900, foldBelow: 1000, isPresented: shown)
+        shown = folded.isPresented
+        #expect(!shown && folded.state.isFolded)
+        choice.wrappedValue = false
+        #expect(InspectorVisibilityStore.initial(forKey: key, defaults: defaults))
+
+        // Showing by hand while folded updates both the view and the saved choice.
+        choice.wrappedValue = true
+        #expect(shown && InspectorVisibilityStore.initial(forKey: key, defaults: defaults))
     }
 
     /// ⌘S saves; ⌃⌘S is View › Show Sidebar and must not save too (Astra E3), and ⇧⌘S is Save As.
