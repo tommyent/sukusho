@@ -6,14 +6,15 @@ nonisolated final class AnnoRedactionPreviewCache {
     private let cache = BoundedCGImageCache(byteLimit: 32 * 1024 * 1024, countLimit: 32)
     private var lease: BoundedCGImageCache.Lease?
     private var source: CGImage?
-    private var imageFrame = CGRect.zero
 
-    func configure(source: CGImage?, imageFrame: CGRect) {
-        if self.source !== source || self.imageFrame != imageFrame {
+    /// Cache entries are keyed in source pixels, so frame-only viewport moves
+    /// and animations reuse them; only replacing or clearing the source image
+    /// invalidates the cache.
+    func configure(source: CGImage?) {
+        if self.source !== source {
             cache.removeAll()
         }
         self.source = source
-        self.imageFrame = imageFrame
         if source != nil, lease == nil { lease = cache.beginUse() }
         if source == nil { releaseResources() }
     }

@@ -58,9 +58,8 @@ struct EditorResourceTests {
         let cache = AnnoRedactionPreviewCache()
         let source = image(64)
         let processed = image()
-        let frame = CGRect(x: 5, y: 8, width: 200, height: 200)
         let bounds = CGRect(x: 10, y: 10, width: 30, height: 30)
-        cache.configure(source: source, imageFrame: frame)
+        cache.configure(source: source)
         var renders = 0
         func draw(kind: String = "blur", density: Double = 0.5, rect: CGRect? = nil) -> CGImage? {
             cache.image(kind: kind, density: density, bounds: rect ?? bounds) {
@@ -75,16 +74,72 @@ struct EditorResourceTests {
         _ = draw(kind: "pixelate")
         _ = draw(rect: bounds.offsetBy(dx: 1, dy: 0))
         #expect(renders == 4)
-        cache.configure(source: source, imageFrame: frame.offsetBy(dx: 1, dy: 0))
+        // Reconfiguring with the same source (e.g. during animated viewport moves) keeps cached tiles.
+        cache.configure(source: source)
+        #expect(draw() === processed)
+        #expect(renders == 4, "Frame-only updates with the same source must reuse cached tiles")
+        // Replacing the source image invalidates cached tiles.
+        cache.configure(source: image(64))
         _ = draw()
-        cache.configure(source: image(64), imageFrame: frame)
-        _ = draw()
-        #expect(renders == 6, "Source and sampling geometry changes must invalidate results")
+        #expect(renders == 5, "Source image changes must invalidate results")
         cache.releaseResources()
-        cache.configure(source: source, imageFrame: frame)
+        cache.configure(source: source)
         _ = draw()
-        #expect(renders == 7)
-        print("PASS: redaction reuse and invalidation for density, kind, bounds, source, resize, and close")
+        #expect(renders == 6)
+
+        // End-to-end draw check: moving/scaling the draw transform reuses the source-pixel tile.
+        let doc = AnnoDocument()
+        let redaction = AnnoShape(
+            id: AnnoShapeID("r1"),
+            x: 10, y: 12, rotation: 0,
+            kind: .redaction(RedactionProps(kind: .blur, w: 24, h: 20, density: 0.5))
+        )
+        doc.restore(AnnoDocument.Snapshot(shapes: [redaction], bindings: []))
+        let drawCache = AnnoRedactionPreviewCache()
+        drawCache.configure(source: source)
+        let canvas = CGContext(data: nil, width: 128, height: 128, bitsPerComponent: 8,
+                               bytesPerRow: 128 * 4, space: space, bitmapInfo: bitmapInfo)!
+        for scale: CGFloat in [0.5, 1.0, 1.5, 2.0] {
+            let target = AnnoShapeDrawing.Target(
+                transform: CGAffineTransform(translationX: scale * 5, y: scale * 3).scaledBy(x: scale, y: scale),
+                pageSize: CGSize(width: 64, height: 64),
+                sample: nil,
+                spotlightClip: nil,
+                isFlippedContext: true,
+                redactionPreviewCache: drawCache,
+                redactionSource: source,
+                sampleScale: 1
+            )
+            AnnoShapeDrawing.draw(doc, in: canvas, target: target)
+        }
+        var extraRenders = 0
+        let cached = drawCache.image(kind: RedactionKind.blur.rawValue, density: 0.5,
+                                     bounds: CGRect(x: 10, y: 12, width: 24, height: 20)) {
+            extraRenders += 1
+            return nil
+        }
+        #expect(cached != nil && extraRenders == 0, "Redaction preview must be keyed in source pixels across transform frames")
+
+        // Opaque fallback when sampling is unavailable (redactionSource == nil).
+        let fallbackCanvas = CGContext(data: nil, width: 64, height: 64, bitsPerComponent: 8,
+                                       bytesPerRow: 64 * 4, space: space, bitmapInfo: bitmapInfo)!
+        fallbackCanvas.clear(CGRect(x: 0, y: 0, width: 64, height: 64))
+        let fallbackTarget = AnnoShapeDrawing.Target(
+            transform: .identity,
+            pageSize: CGSize(width: 64, height: 64),
+            sample: nil,
+            spotlightClip: nil,
+            isFlippedContext: false,
+            redactionPreviewCache: drawCache,
+            redactionSource: nil
+        )
+        AnnoShapeDrawing.draw(doc, in: fallbackCanvas, target: fallbackTarget)
+        let fallbackImg = fallbackCanvas.makeImage()!
+        let probe = fallbackImg.dataProvider!.data! as Data
+        // Unflipped Quartz y in 12..<32 maps to top-down bitmap rows 32..<52.
+        let pixelOffset = (44 * 64 + 20) * 4
+        #expect(probe[pixelOffset + 3] == 255, "Failed sampling must still paint the opaque fail-closed cover")
+        print("PASS: redaction reuse across frame moves, source-pixel keying, invalidation, and opaque fallback")
     }
 
     static func buffer(width: Int = 17, height: Int = 11, alignment: Int = 64) -> CVPixelBuffer {

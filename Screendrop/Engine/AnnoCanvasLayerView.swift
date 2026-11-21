@@ -102,7 +102,7 @@ final class AnnoCanvasNSView: NSView {
             if case .magnifier = $0.kind { return true }; return false
         }) { magnifierCache.clear() }
         self.fullResolutionSource = fullResolutionSource
-        redactionCache.configure(source: sourceImage, imageFrame: imageFrame)
+        redactionCache.configure(source: sourceImage)
         self.spotlightClip = spotlightClip
         self.imageFrame = imageFrame
         self.imageSize = imageSize
@@ -159,26 +159,11 @@ final class AnnoCanvasNSView: NSView {
         let target = AnnoShapeDrawing.Target(
             transform: pageToView,
             pageSize: imageSize,
-            sample: { [sourceImage] rect in
-                // The rect arrives in view coordinates; both spaces are y-down, so this is a
-                // straight scale into the screenshot's own pixels.
-                guard let sourceImage, self.imageFrame.width > 0, self.imageFrame.height > 0 else { return nil }
-                let sx = CGFloat(sourceImage.width) / self.imageFrame.width
-                let sy = CGFloat(sourceImage.height) / self.imageFrame.height
-                let crop = CGRect(
-                    x: (rect.minX - self.imageFrame.minX) * sx,
-                    y: (rect.minY - self.imageFrame.minY) * sy,
-                    width: rect.width * sx,
-                    height: rect.height * sy
-                ).integral.intersection(
-                    CGRect(x: 0, y: 0, width: sourceImage.width, height: sourceImage.height)
-                )
-                guard crop.width >= 1, crop.height >= 1 else { return nil }
-                return sourceImage.cropping(to: crop)
-            },
+            sample: nil,
             spotlightClip: spotlightClip,
             isFlippedContext: true,
             redactionPreviewCache: redactionCache,
+            redactionSource: sourceImage,
             // The preview can be downscaled from the full-resolution image the export samples.
             sampleScale: sourceImage.map { CGFloat($0.width) / imageSize.width } ?? 1,
             fullResolutionSource: fullResolutionSource,

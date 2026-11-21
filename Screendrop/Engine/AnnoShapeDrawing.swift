@@ -34,6 +34,10 @@ enum AnnoShapeDrawing {
         /// flipped case has to invert it back.
         var isFlippedContext = false
         var redactionPreviewCache: AnnoRedactionPreviewCache? = nil
+        /// Preview screenshot pixels sampled directly for cached redaction tiles,
+        /// so viewport moves and animations reuse processed tiles without
+        /// re-running Core Image on every frame.
+        var redactionSource: CGImage? = nil
         /// Pixels `sample` returns per page pixel. Redaction strength is measured in page pixels,
         /// so a canvas sampling a downscaled preview blurs and pixelates by proportionally less
         /// and shows what the full-resolution export will produce. A pixelate block can't be
@@ -322,9 +326,10 @@ enum AnnoShapeDrawing {
         in context: CGContext,
         target: Target
     ) {
-        guard case let .redaction(props) = shape.kind, let sample = target.sample else { return }
+        guard case let .redaction(props) = shape.kind,
+              target.sample != nil || target.redactionPreviewCache != nil else { return }
 
-        // Sample the axis-aligned bounding box in context space, process it upright, then lay it
+        // Sample the axis-aligned bounding box, process it upright, then lay it
         // back down clipped to the shape's own rotated rect. A rotated blur then blurs the pixels
         // it actually covers rather than smearing along the screen axes.
         let localRect = CGRect(x: 0, y: 0, width: props.w, height: props.h)
@@ -332,20 +337,58 @@ enum AnnoShapeDrawing {
         let contextBounds = localRect.applying(full).integral
         guard contextBounds.width >= 1, contextBounds.height >= 1 else { return }
 
-        let render = {
-            guard let sampled = sample(contextBounds) else { return nil as CGImage? }
-            return autoreleasepool {
-                switch props.kind {
-                case .blur: blurred(sampled, density: props.density, scale: target.sampleScale)
-                case .pixelate: pixelated(sampled, density: props.density, scale: target.sampleScale)
-                }
-            }
-        }
         let processed: CGImage?
+        let drawRect: CGRect
         if let cache = target.redactionPreviewCache {
-            processed = cache.image(kind: props.kind.rawValue, density: props.density, bounds: contextBounds, render: render)
+            if let source = target.redactionSource,
+               target.pageSize.width > 0, target.pageSize.height > 0 {
+                let sx = CGFloat(source.width) / target.pageSize.width
+                let sy = CGFloat(source.height) / target.pageSize.height
+                let pageBounds = localRect.applying(shape.pageTransform.cgAffineTransform)
+                let sourceBounds = CGRect(
+                    x: pageBounds.minX * sx,
+                    y: pageBounds.minY * sy,
+                    width: pageBounds.width * sx,
+                    height: pageBounds.height * sy
+                ).integral.intersection(CGRect(x: 0, y: 0, width: source.width, height: source.height))
+                if sourceBounds.width >= 1, sourceBounds.height >= 1 {
+                    processed = cache.image(kind: props.kind.rawValue, density: props.density, bounds: sourceBounds) {
+                        guard let sampled = source.cropping(to: sourceBounds) else { return nil }
+                        return autoreleasepool {
+                            switch props.kind {
+                            case .blur: blurred(sampled, density: props.density, scale: target.sampleScale)
+                            case .pixelate: pixelated(sampled, density: props.density, scale: target.sampleScale)
+                            }
+                        }
+                    }
+                    drawRect = CGRect(
+                        x: sourceBounds.minX / sx,
+                        y: sourceBounds.minY / sy,
+                        width: sourceBounds.width / sx,
+                        height: sourceBounds.height / sy
+                    ).applying(target.transform)
+                } else {
+                    processed = nil
+                    drawRect = contextBounds
+                }
+            } else {
+                processed = nil
+                drawRect = contextBounds
+            }
+        } else if let sample = target.sample {
+            processed = {
+                guard let sampled = sample(contextBounds) else { return nil as CGImage? }
+                return autoreleasepool {
+                    switch props.kind {
+                    case .blur: blurred(sampled, density: props.density, scale: target.sampleScale)
+                    case .pixelate: pixelated(sampled, density: props.density, scale: target.sampleScale)
+                    }
+                }
+            }()
+            drawRect = contextBounds
         } else {
-            processed = render()
+            processed = nil
+            drawRect = contextBounds
         }
         context.saveGState()
         context.concatenate(full)
@@ -373,11 +416,11 @@ enum AnnoShapeDrawing {
         }
         context.interpolationQuality = props.kind == .pixelate ? .none : .high
         if target.isFlippedContext {
-            context.translateBy(x: 0, y: contextBounds.midY)
+            context.translateBy(x: 0, y: drawRect.midY)
             context.scaleBy(x: 1, y: -1)
-            context.translateBy(x: 0, y: -contextBounds.midY)
+            context.translateBy(x: 0, y: -drawRect.midY)
         }
-        context.draw(processed, in: contextBounds)
+        context.draw(processed, in: drawRect)
         context.restoreGState()
     }
 
