@@ -1221,33 +1221,66 @@ final class RecordingStudioModel {
             timeline: clipTimeline,
             frameDuration: frameDuration,
             duration: duration,
-            adjacentSourceSample: canUseSampleCursors ? { [weak self] sourceTime, forward in
-                self?.sampleCursorStep(from: sourceTime, forward: forward)
+            sampleNeighborhood: canUseSampleCursors ? { [weak self] sourceTime in
+                self?.sampleNeighborhood(at: sourceTime)
             } : nil
         )
         seek(to: target)
     }
 
-    private func sampleCursorStep(from sourceTime: TimeInterval, forward: Bool) -> TimeInterval? {
+    private func sampleNeighborhood(at sourceTime: TimeInterval) -> StudioSampleNeighborhood? {
         guard let screenVideoTrack else { return nil }
-        let query = CMTime(seconds: max(0, sourceTime), preferredTimescale: 60_000)
+        let query = CMTime(seconds: max(0, sourceTime), preferredTimescale: StudioPlayback.seekTimescale)
         guard let cursor = screenVideoTrack.makeSampleCursor(presentationTimeStamp: query) else {
             return nil
         }
         let epsilon: TimeInterval = 1e-5
-        let initial = cursor.presentationTimeStamp.seconds
-        if initial.isFinite {
-            if forward, initial > sourceTime + epsilon { return initial }
-            if !forward, initial < sourceTime - epsilon { return initial }
+        var current = cursor.presentationTimeStamp.seconds
+        guard current.isFinite else { return nil }
+
+        // Ensure cursor sits on the displayed sample (latest sample <= sourceTime + epsilon).
+        if current > sourceTime + epsilon {
+            var movedBack = false
+            while cursor.stepInPresentationOrder(byCount: -1) == -1 {
+                movedBack = true
+                let candidate = cursor.presentationTimeStamp.seconds
+                guard candidate.isFinite else { return nil }
+                current = candidate
+                if current <= sourceTime + epsilon { break }
+            }
+            if !movedBack || current > sourceTime + epsilon {
+                // `sourceTime` precedes the track's first sample.
+                return StudioSampleNeighborhood(displayed: nil, previous: nil, next: current)
+            }
+        } else {
+            while cursor.stepInPresentationOrder(byCount: 1) == 1 {
+                let candidate = cursor.presentationTimeStamp.seconds
+                guard candidate.isFinite else { return nil }
+                if candidate > sourceTime + epsilon {
+                    _ = cursor.stepInPresentationOrder(byCount: -1)
+                    break
+                }
+                current = candidate
+            }
         }
-        let delta: Int64 = forward ? 1 : -1
-        while cursor.stepInPresentationOrder(byCount: delta) == delta {
+
+        let displayed = current
+        var next: TimeInterval?
+        if cursor.stepInPresentationOrder(byCount: 1) == 1 {
             let candidate = cursor.presentationTimeStamp.seconds
-            guard candidate.isFinite else { return nil }
-            if forward, candidate > sourceTime + epsilon { return candidate }
-            if !forward, candidate < sourceTime - epsilon { return candidate }
+            if candidate.isFinite, candidate > displayed + epsilon {
+                next = candidate
+            }
+            _ = cursor.stepInPresentationOrder(byCount: -1)
         }
-        return nil
+        var previous: TimeInterval?
+        if cursor.stepInPresentationOrder(byCount: -1) == -1 {
+            let candidate = cursor.presentationTimeStamp.seconds
+            if candidate.isFinite, candidate < displayed - epsilon {
+                previous = candidate
+            }
+        }
+        return StudioSampleNeighborhood(displayed: displayed, previous: previous, next: next)
     }
 
     /// Shows a word over the picture for a moment.
@@ -1276,7 +1309,7 @@ final class RecordingStudioModel {
     /// real playhead position afterward.
     private func movePlayers(to time: TimeInterval) {
         let editorTime = min(max(time, 0), max(duration, 0))
-        let target = CMTime(seconds: editorTime, preferredTimescale: 600)
+        let target = CMTime(seconds: editorTime, preferredTimescale: StudioPlayback.seekTimescale)
         screenPlayer.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
         moveCameraPlayer(to: editorTime)
     }
@@ -1288,7 +1321,7 @@ final class RecordingStudioModel {
         lastCameraSegmentID = location?.segmentID
         let sourceTime = location?.sourceTime ?? 0
         if sourceTime >= cameraOffset {
-            let cameraTime = CMTime(seconds: max(0, sourceTime - cameraOffset), preferredTimescale: 600)
+            let cameraTime = CMTime(seconds: max(0, sourceTime - cameraOffset), preferredTimescale: StudioPlayback.seekTimescale)
             cameraPlayer.seek(to: cameraTime, toleranceBefore: .zero, toleranceAfter: .zero)
         } else {
             cameraPlayer.pause()

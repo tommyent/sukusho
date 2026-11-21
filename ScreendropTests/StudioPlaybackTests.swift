@@ -89,11 +89,8 @@ struct StudioPlaybackTests {
         // Variable frame rate recording with samples at 0, 16.7, 25, and 100 ms
         // and a nominal 30 fps rate: first press lands on 16.7 ms, not 33.3 ms.
         let vfrSamples: [TimeInterval] = [0.0, 0.0167, 0.025, 0.100]
-        let vfrStepper: (TimeInterval, Bool) -> TimeInterval? = { time, forward in
-            if forward {
-                return vfrSamples.first { $0 > time + 1e-5 }
-            }
-            return vfrSamples.last { $0 < time - 1e-5 }
+        let vfrNeighborhood: (TimeInterval) -> StudioSampleNeighborhood? = { time in
+            StudioPlayback.sampleNeighborhood(in: vfrSamples, at: time)
         }
         let vfrTimeline = RecordingClipTimeline.full(sourceDuration: 0.2)
         let f1 = StudioPlayback.steppedEditorTime(
@@ -102,7 +99,7 @@ struct StudioPlaybackTests {
             timeline: vfrTimeline,
             frameDuration: 1.0 / 30,
             duration: vfrTimeline.duration,
-            adjacentSourceSample: vfrStepper
+            sampleNeighborhood: vfrNeighborhood
         )
         #expect(abs(f1 - 0.0167) < 1e-9)
         let f2 = StudioPlayback.steppedEditorTime(
@@ -111,7 +108,7 @@ struct StudioPlaybackTests {
             timeline: vfrTimeline,
             frameDuration: 1.0 / 30,
             duration: vfrTimeline.duration,
-            adjacentSourceSample: vfrStepper
+            sampleNeighborhood: vfrNeighborhood
         )
         #expect(abs(f2 - 0.025) < 1e-9)
         let f3 = StudioPlayback.steppedEditorTime(
@@ -120,7 +117,7 @@ struct StudioPlaybackTests {
             timeline: vfrTimeline,
             frameDuration: 1.0 / 30,
             duration: vfrTimeline.duration,
-            adjacentSourceSample: vfrStepper
+            sampleNeighborhood: vfrNeighborhood
         )
         #expect(abs(f3 - 0.100) < 1e-9)
         let back = StudioPlayback.steppedEditorTime(
@@ -129,18 +126,38 @@ struct StudioPlaybackTests {
             timeline: vfrTimeline,
             frameDuration: 1.0 / 30,
             duration: vfrTimeline.duration,
-            adjacentSourceSample: vfrStepper
+            sampleNeighborhood: vfrNeighborhood
         )
         #expect(abs(back - 0.025) < 1e-9)
+
+        // Starting between frames at 30 ms (where the 25 ms sample is displayed):
+        // Previous Frame must step back to 16.7 ms, not stay on 25 ms; Next Frame goes to 100 ms.
+        let backFromBetween = StudioPlayback.steppedEditorTime(
+            from: 0.030,
+            frames: -1,
+            timeline: vfrTimeline,
+            frameDuration: 1.0 / 30,
+            duration: vfrTimeline.duration,
+            sampleNeighborhood: vfrNeighborhood
+        )
+        #expect(abs(backFromBetween - 0.0167) < 1e-9)
+        let forwardFromBetween = StudioPlayback.steppedEditorTime(
+            from: 0.030,
+            frames: 1,
+            timeline: vfrTimeline,
+            frameDuration: 1.0 / 30,
+            duration: vfrTimeline.duration,
+            sampleNeighborhood: vfrNeighborhood
+        )
+        #expect(abs(forwardFromBetween - 0.100) < 1e-9)
 
         // 2x clip from a 60 fps recording: one Right press steps by 1/120 editor s (1 source frame).
         let fastTimeline = RecordingClipTimeline(segments: [
             RecordingClipSegment(sourceStart: 0, sourceEnd: 4, speed: 2)
         ])
-        let cfr60Stepper: (TimeInterval, Bool) -> TimeInterval? = { time, forward in
-            let index = forward ? Int(floor(time * 60 + 1e-5)) + 1 : Int(ceil(time * 60 - 1e-5)) - 1
-            guard index >= 0, index <= 240 else { return nil }
-            return Double(index) / 60
+        let cfr60Samples = (0...240).map { Double($0) / 60 }
+        let cfr60Neighborhood: (TimeInterval) -> StudioSampleNeighborhood? = { time in
+            StudioPlayback.sampleNeighborhood(in: cfr60Samples, at: time)
         }
         let fastStepSample = StudioPlayback.steppedEditorTime(
             from: 1.0,
@@ -148,9 +165,14 @@ struct StudioPlaybackTests {
             timeline: fastTimeline,
             frameDuration: 1.0 / 60,
             duration: fastTimeline.duration,
-            adjacentSourceSample: cfr60Stepper
+            sampleNeighborhood: cfr60Neighborhood
         )
         #expect(abs(fastStepSample - (1.0 + 1.0 / 120)) < 1e-9)
+
+        // Seek timescale preserves distinct ticks for 120 fps at 8x clip speed (960 frames/s).
+        let frameAt120fps8x = 1.0 / (120.0 * 8.0)
+        let ticks = frameAt120fps8x * Double(StudioPlayback.seekTimescale)
+        #expect(abs(ticks - ticks.rounded()) < 1e-9 && ticks >= 1)
 
         // Fallback without sample timing still scales by clip speed.
         let fastStepFallback = StudioPlayback.steppedEditorTime(
@@ -159,15 +181,14 @@ struct StudioPlaybackTests {
             timeline: fastTimeline,
             frameDuration: 1.0 / 60,
             duration: fastTimeline.duration,
-            adjacentSourceSample: nil
+            sampleNeighborhood: nil
         )
         #expect(abs(fastStepFallback - (1.0 + 1.0 / 120)) < 1e-9)
 
         // Stepping across a cut skips the removed gap cleanly forward and backward.
         let cutSamples: [TimeInterval] = [0.0, 0.5, 0.9, 2.0, 2.5]
-        let cutStepper: (TimeInterval, Bool) -> TimeInterval? = { time, forward in
-            if forward { return cutSamples.first { $0 > time + 1e-5 } }
-            return cutSamples.last { $0 < time - 1e-5 }
+        let cutNeighborhood: (TimeInterval) -> StudioSampleNeighborhood? = { time in
+            StudioPlayback.sampleNeighborhood(in: cutSamples, at: time)
         }
         let cutTimeline = RecordingClipTimeline(segments: [
             RecordingClipSegment(sourceStart: 0, sourceEnd: 1.0, speed: 1),
@@ -179,7 +200,7 @@ struct StudioPlaybackTests {
             timeline: cutTimeline,
             frameDuration: 0.5,
             duration: cutTimeline.duration,
-            adjacentSourceSample: cutStepper
+            sampleNeighborhood: cutNeighborhood
         )
         #expect(abs(acrossCut - 1.0) < 1e-9)
         let backAcrossCut = StudioPlayback.steppedEditorTime(
@@ -188,7 +209,7 @@ struct StudioPlaybackTests {
             timeline: cutTimeline,
             frameDuration: 0.5,
             duration: cutTimeline.duration,
-            adjacentSourceSample: cutStepper
+            sampleNeighborhood: cutNeighborhood
         )
         #expect(abs(backAcrossCut - 0.9) < 1e-9)
     }
