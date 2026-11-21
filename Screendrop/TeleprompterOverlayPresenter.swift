@@ -134,6 +134,10 @@ final class TeleprompterOverlayPresenter {
     static let spring = Animation.spring(duration: 0.4, bounce: 0.1)
     static let scrollSpring = Animation.smooth(duration: 0.45)
 
+    private static var springIfAllowed: Animation? {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : spring
+    }
+
     private let model = TeleprompterOverlayModel()
     private var panel: NSPanel?
     /// Invalidates a pending hide completion when a new show starts, so the
@@ -167,7 +171,7 @@ final class TeleprompterOverlayPresenter {
         // notch); expanding on the next runloop tick lets SwiftUI animate
         // from that mounted state instead of popping in fully grown.
         DispatchQueue.main.async { [model] in
-            withAnimation(Self.spring) {
+            withAnimation(Self.springIfAllowed) {
                 model.isExpanded = true
             }
         }
@@ -182,7 +186,7 @@ final class TeleprompterOverlayPresenter {
 
         hideGeneration += 1
         let generation = hideGeneration
-        withAnimation(Self.spring, completionCriteria: .logicallyComplete) {
+        withAnimation(Self.springIfAllowed, completionCriteria: .logicallyComplete) {
             model.isExpanded = false
         } completion: { [weak self] in
             guard let self, self.hideGeneration == generation else { return }
@@ -360,7 +364,7 @@ private struct TeleprompterOverlayView: View {
         }
         .frame(width: model.textWidth, alignment: .topLeading)
         .offset(y: -CGFloat(topLineIndex) * lineHeight)
-        .animation(TeleprompterOverlayPresenter.scrollSpring, value: topLineIndex)
+        .motion(TeleprompterOverlayPresenter.scrollSpring, value: topLineIndex)
         .frame(width: model.textWidth, height: model.textAreaHeight, alignment: .top)
         .clipped()
         .mask(verticalFade)

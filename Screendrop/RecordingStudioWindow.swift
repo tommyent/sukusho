@@ -1691,6 +1691,7 @@ private struct StudioTranscriptEditPanel: View {
 
     @State private var selection: ClosedRange<Int>?
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
@@ -1710,7 +1711,7 @@ private struct StudioTranscriptEditPanel: View {
                     // Follow playback through the transcript, but never yank
                     // it around while the user is selecting a passage.
                     guard let activeIndex, model.isPlaying, selection == nil else { return }
-                    withAnimation(.fade) {
+                    withAnimation(reduceMotion ? nil : .fade) {
                         proxy.scrollTo(activeIndex, anchor: .center)
                     }
                 }
@@ -3463,6 +3464,7 @@ private struct StudioInspector: View {
     @State private var isAudioExportOptionsPresented = false
     @State private var isMusicPickerPresented = false
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FloatingGlassChrome private var floatingChrome
 
     var body: some View {
@@ -4401,7 +4403,7 @@ private struct StudioInspector: View {
                 // Follow playback through the list, but never yank the list
                 // around while the user is scrubbing or editing.
                 guard let activeID, model.isPlaying else { return }
-                withAnimation(.fade) {
+                withAnimation(reduceMotion ? nil : .fade) {
                     proxy.scrollTo(activeID, anchor: .center)
                 }
             }
