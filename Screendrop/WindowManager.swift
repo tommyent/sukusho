@@ -3,14 +3,12 @@ import ApplicationServices
 
 /// Moves and resizes the frontmost app's focused window via macOS Accessibility (`AXUIElement`),
 /// ported from Unleash. Prompts for Accessibility permission only on first use, never at launch.
+/// All external `AXUIElement` IPC runs on a serial background queue so a hung app can never freeze Sukusho.
 @MainActor
 final class WindowManager {
     static let shared = WindowManager()
 
-    private static let axTimeout: Float = 0.5
-    private static let enhancedUIAttr = "AXEnhancedUserInterface" as CFString
-    private static let fullScreenAttr = "AXFullScreen" as CFString
-
+    private let axWorker = WindowAXWorker()
     private var didPromptAccessibility = false
 
     private init() {}
@@ -42,24 +40,18 @@ final class WindowManager {
             return
         }
 
-        let axApp = AXUIElementCreateApplication(app.processIdentifier)
-        AXUIElementSetMessagingTimeout(axApp, Self.axTimeout)
-        guard let window = focusedWindow(of: axApp) else {
+        let screens = currentScreens()
+        guard !screens.isEmpty else {
             NSSound.beep()
             return
         }
-        AXUIElementSetMessagingTimeout(window, Self.axTimeout)
 
-        // Leave full screen first if the window is currently full screen.
-        if boolAttribute(Self.fullScreenAttr, on: window) {
-            AXUIElementSetAttributeValue(window, Self.fullScreenAttr, kCFBooleanFalse)
-            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(500)) { [weak self] in
-                self?.apply(action, to: window, in: axApp)
+        let pid = app.processIdentifier
+        axWorker.perform(action, pid: pid, screens: screens) { ok in
+            if !ok {
+                Task { @MainActor in NSSound.beep() }
             }
-            return
         }
-
-        apply(action, to: window, in: axApp)
     }
 
     // MARK: - Own windows (AppKit)
@@ -121,76 +113,6 @@ final class WindowManager {
         }
     }
 
-    // MARK: - Other apps (AXUIElement)
-
-    private func apply(_ action: WindowAction, to window: AXUIElement, in axApp: AXUIElement) {
-        guard let current = readFrame(of: window) else {
-            NSSound.beep()
-            return
-        }
-        let screens = currentScreens()
-        guard let target = WindowLayout.target(for: action, window: current, screens: screens) else {
-            NSSound.beep()
-            return
-        }
-
-        // Chromium/Electron apps fight or animate AX frame writes when AXEnhancedUserInterface
-        // is enabled; toggle it off for the move and restore it afterwards.
-        let restoreEnhancedUI = disableEnhancedUIIfNeeded(on: axApp)
-
-        // Size first, then position, then read back and retry once (with best-effort clamp
-        // when the app refuses a smaller size).
-        let (sizeOK, posOK) = writeFrame(target.frame, to: window)
-        if !sizeOK && !posOK {
-            if restoreEnhancedUI { setEnhancedUI(true, on: axApp) }
-            NSSound.beep()
-            return
-        }
-        settle(window: window, target: target)
-
-        // Cross-display moves can apply size late on macOS; re-apply after ~25 ms.
-        if target.crossDisplay {
-            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(25)) { [weak self] in
-                guard let self else { return }
-                _ = self.writeFrame(target.frame, to: window)
-                self.settle(window: window, target: target)
-                if restoreEnhancedUI { self.setEnhancedUI(true, on: axApp) }
-            }
-        } else if restoreEnhancedUI {
-            setEnhancedUI(true, on: axApp)
-        }
-    }
-
-    private func settle(window: AXUIElement, target: WindowLayout.Target) {
-        guard let actual = readFrame(of: window) else { return }
-        let tol = 2.0
-        let needsRetry = abs(actual.x - target.frame.x) > tol
-            || abs(actual.y - target.frame.y) > tol
-            || abs(actual.width - target.frame.width) > tol
-            || abs(actual.height - target.frame.height) > tol
-        guard needsRetry else { return }
-
-        // Retry size + best-effort clamped position once.
-        let clamped = WindowLayout.clampedPosition(
-            desired: target.frame, actualWidth: actual.width, actualHeight: actual.height,
-            within: target.visibleFrame
-        )
-        var retry = target.frame
-        retry.x = clamped.x
-        retry.y = clamped.y
-        _ = writeFrame(retry, to: window)
-
-        // If the app still clamped its size, pull the position back inside visibleFrame.
-        if let final = readFrame(of: window),
-           final.maxX > target.visibleFrame.maxX + tol || final.maxY > target.visibleFrame.maxY + tol {
-            let pos = WindowLayout.clampedPosition(
-                desired: target.frame, actualWidth: final.width, actualHeight: final.height,
-                within: target.visibleFrame
-            )
-            _ = writePosition(x: pos.x, y: pos.y, to: window)
-        }
-    }
-
     private func currentScreens() -> [DisplayScreen] {
         let screens = NSScreen.screens
         guard let primaryHeight = screens.first?.frame.height else { return [] }
@@ -203,11 +125,114 @@ final class WindowManager {
             )
         }
     }
+}
+
+/// Runs external `AXUIElement` calls on a dedicated serial background queue so an unresponsive
+/// foreground app never stalls Sukusho's main thread.
+private nonisolated final class WindowAXWorker: @unchecked Sendable {
+    private static let axTimeout: Float = 0.5
+    private static let enhancedUIAttr = "AXEnhancedUserInterface" as CFString
+    private static let fullScreenAttr = "AXFullScreen" as CFString
+
+    private let queue = DispatchQueue(label: "com.tommyent.Sukusho.window-ax", qos: .userInteractive)
+
+    func perform(
+        _ action: WindowAction,
+        pid: pid_t,
+        screens: [DisplayScreen],
+        completion: @escaping @Sendable (Bool) -> Void
+    ) {
+        queue.async {
+            let axApp = AXUIElementCreateApplication(pid)
+            AXUIElementSetMessagingTimeout(axApp, Self.axTimeout)
+            guard let window = self.focusedWindow(of: axApp) else {
+                completion(false)
+                return
+            }
+            AXUIElementSetMessagingTimeout(window, Self.axTimeout)
+
+            if self.boolAttribute(Self.fullScreenAttr, on: window) == true {
+                AXUIElementSetAttributeValue(window, Self.fullScreenAttr, kCFBooleanFalse)
+                self.queue.asyncAfter(deadline: .now() + .milliseconds(500)) {
+                    let ok = self.apply(action, to: window, in: axApp, screens: screens)
+                    completion(ok)
+                }
+                return
+            }
+
+            let ok = self.apply(action, to: window, in: axApp, screens: screens)
+            completion(ok)
+        }
+    }
+
+    private func apply(
+        _ action: WindowAction,
+        to window: AXUIElement,
+        in axApp: AXUIElement,
+        screens: [DisplayScreen]
+    ) -> Bool {
+        guard let current = readFrame(of: window) else { return false }
+        guard let target = WindowLayout.target(for: action, window: current, screens: screens) else {
+            return false
+        }
+
+        // Chromium/Electron apps fight or animate AX frame writes when AXEnhancedUserInterface
+        // is enabled; toggle it off for the move and restore it afterwards.
+        let restoreEnhancedUI = disableEnhancedUIIfNeeded(on: axApp)
+
+        let (sizeErr, posErr) = writeFrame(target.frame, to: window)
+        if WindowAXPolicy.shouldAbort(sizeErr) || WindowAXPolicy.shouldAbort(posErr)
+            || (sizeErr != .success && posErr != .success) {
+            if restoreEnhancedUI { setEnhancedUI(true, on: axApp) }
+            return false
+        }
+        settle(window: window, target: target)
+
+        if target.crossDisplay {
+            queue.asyncAfter(deadline: .now() + .milliseconds(25)) {
+                _ = self.writeFrame(target.frame, to: window)
+                self.settle(window: window, target: target)
+                if restoreEnhancedUI { self.setEnhancedUI(true, on: axApp) }
+            }
+        } else if restoreEnhancedUI {
+            setEnhancedUI(true, on: axApp)
+        }
+        return true
+    }
+
+    private func settle(window: AXUIElement, target: WindowLayout.Target) {
+        guard let actual = readFrame(of: window) else { return }
+        let tol = 2.0
+        let needsRetry = abs(actual.x - target.frame.x) > tol
+            || abs(actual.y - target.frame.y) > tol
+            || abs(actual.width - target.frame.width) > tol
+            || abs(actual.height - target.frame.height) > tol
+        guard needsRetry else { return }
+
+        let clamped = WindowLayout.clampedPosition(
+            desired: target.frame, actualWidth: actual.width, actualHeight: actual.height,
+            within: target.visibleFrame
+        )
+        var retry = target.frame
+        retry.x = clamped.x
+        retry.y = clamped.y
+        let (sizeErr, posErr) = writeFrame(retry, to: window)
+        if WindowAXPolicy.shouldAbort(sizeErr) || WindowAXPolicy.shouldAbort(posErr) { return }
+
+        if let final = readFrame(of: window),
+           final.maxX > target.visibleFrame.maxX + tol || final.maxY > target.visibleFrame.maxY + tol {
+            let pos = WindowLayout.clampedPosition(
+                desired: target.frame, actualWidth: final.width, actualHeight: final.height,
+                within: target.visibleFrame
+            )
+            _ = writePosition(x: pos.x, y: pos.y, to: window)
+        }
+    }
 
     // MARK: - AX helpers
 
     private func disableEnhancedUIIfNeeded(on axApp: AXUIElement) -> Bool {
-        guard boolAttribute(Self.enhancedUIAttr, on: axApp) else { return false }
+        guard boolAttribute(Self.enhancedUIAttr, on: axApp) == true else { return false }
         setEnhancedUI(false, on: axApp)
         return true
     }
@@ -216,34 +241,35 @@ final class WindowManager {
         AXUIElementSetAttributeValue(axApp, Self.enhancedUIAttr, enabled ? kCFBooleanTrue : kCFBooleanFalse)
     }
 
-    private func boolAttribute(_ attr: CFString, on element: AXUIElement) -> Bool {
+    private func boolAttribute(_ attr: CFString, on element: AXUIElement) -> Bool? {
         var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attr, &value) == .success,
-              let num = value as? NSNumber else { return false }
+        let err = AXUIElementCopyAttributeValue(element, attr, &value)
+        if WindowAXPolicy.shouldAbort(err) { return nil }
+        guard err == .success, let num = value as? NSNumber else { return false }
         return num.boolValue
     }
 
     private func focusedWindow(of app: AXUIElement) -> AXUIElement? {
         for attr in [kAXFocusedWindowAttribute as CFString, kAXMainWindowAttribute as CFString] {
             var value: CFTypeRef?
-            if AXUIElementCopyAttributeValue(app, attr, &value) == .success, let value {
-                if CFGetTypeID(value) == AXUIElementGetTypeID() {
-                    return (value as! AXUIElement)
-                }
+            let err = AXUIElementCopyAttributeValue(app, attr, &value)
+            if err == .success, let value, CFGetTypeID(value) == AXUIElementGetTypeID() {
+                return (value as! AXUIElement)
             }
+            // Return immediately on messaging timeout or dead/disabled target instead of stacking another timeout.
+            if WindowAXPolicy.shouldAbort(err) { return nil }
         }
         return nil
     }
 
     private func readFrame(of window: AXUIElement) -> ScreenBounds? {
         var posRef: CFTypeRef?
+        let posErr = AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &posRef)
+        guard posErr == .success, let posRef, CFGetTypeID(posRef) == AXValueGetTypeID() else { return nil }
+
         var sizeRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &posRef) == .success,
-              AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeRef) == .success,
-              let posRef, let sizeRef,
-              CFGetTypeID(posRef) == AXValueGetTypeID(),
-              CFGetTypeID(sizeRef) == AXValueGetTypeID()
-        else { return nil }
+        let sizeErr = AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeRef)
+        guard sizeErr == .success, let sizeRef, CFGetTypeID(sizeRef) == AXValueGetTypeID() else { return nil }
 
         let posVal = posRef as! AXValue
         let sizeVal = sizeRef as! AXValue
@@ -254,21 +280,22 @@ final class WindowManager {
         return ScreenBounds(x: Double(pt.x), y: Double(pt.y), width: Double(sz.width), height: Double(sz.height))
     }
 
-    @discardableResult
-    private func writeFrame(_ frame: ScreenBounds, to window: AXUIElement) -> (sizeOK: Bool, posOK: Bool) {
+    private func writeFrame(_ frame: ScreenBounds, to window: AXUIElement) -> (sizeErr: AXError, posErr: AXError) {
         var sz = CGSize(width: frame.width, height: frame.height)
-        let sizeOK = AXValueCreate(.cgSize, &sz).map {
-            AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, $0) == .success
-        } ?? false
-        let posOK = writePosition(x: frame.x, y: frame.y, to: window)
-        return (sizeOK, posOK)
+        let sizeErr: AXError = AXValueCreate(.cgSize, &sz).map {
+            AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, $0)
+        } ?? .failure
+        if WindowAXPolicy.shouldAbort(sizeErr) {
+            return (sizeErr, sizeErr)
+        }
+        let posErr = writePosition(x: frame.x, y: frame.y, to: window)
+        return (sizeErr, posErr)
     }
 
-    @discardableResult
-    private func writePosition(x: Double, y: Double, to window: AXUIElement) -> Bool {
+    private func writePosition(x: Double, y: Double, to window: AXUIElement) -> AXError {
         var pt = CGPoint(x: x, y: y)
         return AXValueCreate(.cgPoint, &pt).map {
-            AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, $0) == .success
-        } ?? false
+            AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, $0)
+        } ?? .failure
     }
 }

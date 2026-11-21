@@ -1,3 +1,4 @@
+import ApplicationServices
 import Carbon.HIToolbox
 import CoreGraphics
 import Foundation
@@ -311,5 +312,18 @@ final class WindowHotkeyRegistry<Handle> {
 
     func action(for id: UInt32) -> WindowAction? {
         entries.first { $0.id == id }?.action
+    }
+}
+
+/// Pure AX error classification: messaging timeouts and dead/disabled targets abort immediately
+/// instead of stacking additional timed-out IPC calls.
+nonisolated enum WindowAXPolicy {
+    static func shouldAbort(_ error: AXError) -> Bool {
+        switch error {
+        case .cannotComplete, .apiDisabled, .invalidUIElement:
+            true
+        default:
+            false
+        }
     }
 }

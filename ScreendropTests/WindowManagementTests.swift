@@ -1,3 +1,4 @@
+import ApplicationServices
 import Carbon.HIToolbox
 import CoreGraphics
 import Foundation
@@ -260,5 +261,14 @@ struct WindowManagementTests {
         sync(enabled: true, excluding: [WindowAction.maximize.hotkeyShortcut])
         #expect(registry.entries.count == 10)
         #expect(!registry.entries.contains { $0.action == .maximize })
+    }
+
+    @Test func axTimeoutAndDeadTargetAbortImmediately() {
+        #expect(WindowAXPolicy.shouldAbort(.cannotComplete))
+        #expect(WindowAXPolicy.shouldAbort(.apiDisabled))
+        #expect(WindowAXPolicy.shouldAbort(.invalidUIElement))
+        #expect(!WindowAXPolicy.shouldAbort(.noValue))
+        #expect(!WindowAXPolicy.shouldAbort(.attributeUnsupported))
+        #expect(!WindowAXPolicy.shouldAbort(.success))
     }
 }
