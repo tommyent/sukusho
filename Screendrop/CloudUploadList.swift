@@ -396,8 +396,8 @@ nonisolated struct LibraryUploadProgress: Equatable {
     let label: String
 
     init(progress: Double, title: String) {
-        let clamped = progress.isFinite ? min(max(progress, 0), Self.maxDisplayedFraction) : 0
-        self.fraction = clamped
-        self.label = clamped >= Self.maxDisplayedFraction ? "Finishing upload…" : title
+        let valid = progress.isFinite ? max(progress, 0) : 0
+        self.fraction = min(valid, Self.maxDisplayedFraction)
+        self.label = valid >= 1 ? "Finishing upload…" : title
     }
 }
