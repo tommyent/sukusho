@@ -185,8 +185,10 @@ nonisolated struct PointerTimeline: Sendable {
                   pressSamples[latestPressIndex + 1].time <= time {
                 latestPressIndex += 1
             }
-            while pressIntervalIndex < intervals.count,
-                  intervals[pressIntervalIndex].end < time {
+            while pressIntervalIndex < intervals.count {
+                let interval = intervals[pressIntervalIndex]
+                let endsAtHardCut = hardCuts.contains { abs($0 - interval.end) < 0.000_001 }
+                guard endsAtHardCut ? interval.end <= time : interval.end < time else { break }
                 pressIntervalIndex += 1
             }
 

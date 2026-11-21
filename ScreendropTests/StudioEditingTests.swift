@@ -472,6 +472,36 @@ struct StudioEditingTests {
         // Orphan press hold must end at the hard cut, so incoming clip keeps full magnification (1.0, not 0.8).
         let fAfter = try #require(fractionalPointer.frame(at: 1.02))
         #expect(abs(fAfter.magnification - 1.0) < 0.01)
+
+        // 4. Exact sampled hard cut at editor 1.0 s where an outgoing orphan press ends at 1.0 s
+        // AND an incoming press starts at 1.0 s (via anticipation): the first incoming sample at 1.0 s
+        // advances past the outgoing interval and reflects the incoming clip's pressed state (0.8).
+        let alignedTimeline = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 6.0, sourceEnd: 7.0),
+            RecordingClipSegment(sourceStart: 0.0, sourceEnd: 2.0),
+        ])
+        let alignedCapture = PointerCaptureFile(
+            travel: [
+                PointerTravelSample(time: 0.0, x: 0.1, y: 0.1),
+                PointerTravelSample(time: 1.9, x: 0.1, y: 0.1),
+                PointerTravelSample(time: 6.0, x: 0.9, y: 0.9),
+                PointerTravelSample(time: 7.0, x: 0.9, y: 0.9),
+            ],
+            presses: [
+                PointerPressEvent(time: 6.95, x: 0.9, y: 0.9, button: 0, phase: .down),
+                PointerPressEvent(time: 0.02, x: 0.1, y: 0.1, button: 0, phase: .down),
+                PointerPressEvent(time: 0.15, x: 0.1, y: 0.1, button: 0, phase: .up),
+            ]
+        )
+        let alignedPointer = PointerTimeline.build(
+            capture: alignedCapture,
+            duration: 8.0,
+            recordingSizeInPoints: CGSize(width: 1000, height: 1000),
+            clipTimeline: alignedTimeline
+        )
+        let incomingAtExactCut = try #require(alignedPointer.frame(at: 1.0))
+        #expect(abs(incomingAtExactCut.location.x - 0.1) < 0.01)
+        #expect(abs(incomingAtExactCut.magnification - 0.8) < 0.01)
     }
 
     // MARK: - Snap point selection & trim snapping / reorder control
