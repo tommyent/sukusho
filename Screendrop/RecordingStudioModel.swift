@@ -231,6 +231,9 @@ final class RecordingStudioModel {
         }
     }
     var selectedClipID: UUID?
+    /// A block is being dragged on the timeline. The preview stays on the
+    /// playhead meanwhile instead of chasing the pointer.
+    var isDraggingTimelineBlock = false
     /// Storyboard tiles for the clip lane, sampled on demand at whatever
     /// density the lane's current zoom needs.
     let timelineThumbnails = RecordingTimelineThumbnailStore()
@@ -625,6 +628,7 @@ final class RecordingStudioModel {
     private let editUndoManager = UndoManager()
     private(set) var undoRevision = 0
     private var zoomEditSnapshot: [ZoomCue]?
+    private var viewportRebuildTask: Task<Void, Never>?
     /// The document as of the last save. Everything the user does after
     /// that lives in memory and in the draft until the next save.
     private var lastSavedDocument: RecordingEditDocument?
@@ -1049,6 +1053,9 @@ final class RecordingStudioModel {
         replacementAudioReference = nil
         editUndoManager.removeAllActions()
         zoomEditSnapshot = nil
+        viewportRebuildTask?.cancel()
+        viewportRebuildTask = nil
+        isDraggingTimelineBlock = false
         lastSavedDocument = nil
         pointerCapture = PointerCaptureFile()
         pointerTimeline = .empty
@@ -1449,13 +1456,20 @@ final class RecordingStudioModel {
 
     func selectClip(id: UUID) {
         guard clipTimeline.segments.contains(where: { $0.id == id }) else { return }
+        clearTimelineSelection()
         selectedClipID = id
-        selectedCueID = nil
     }
 
     func selectZoomCue(id: UUID) {
         guard zoomCues.contains(where: { $0.id == id }) else { return }
+        clearTimelineSelection()
         selectedCueID = id
+    }
+
+    /// Lets go of whatever is selected on the timeline, like clicking empty
+    /// canvas.
+    func clearTimelineSelection() {
+        selectedCueID = nil
         selectedClipID = nil
     }
 
@@ -1850,7 +1864,14 @@ final class RecordingStudioModel {
 
     private func replaceZoomCues(_ cues: [ZoomCue]) {
         zoomCues = cues.sorted { $0.start < $1.start }
-        rebuildViewportTimeline()
+        if zoomEditSnapshot != nil {
+            // A drag reports dozens of moves a second, and planning the
+            // camera integrates the whole recording. The block follows the
+            // pointer from `zoomCues`; the plan catches up when it rests.
+            scheduleViewportRebuild()
+        } else {
+            rebuildViewportTimeline()
+        }
         scheduleProjectSave()
     }
 
@@ -1873,6 +1894,11 @@ final class RecordingStudioModel {
     func endZoomCueEdit(actionName: String = "Edit Zoom") {
         guard let previous = zoomEditSnapshot else { return }
         zoomEditSnapshot = nil
+        if viewportRebuildTask != nil {
+            viewportRebuildTask?.cancel()
+            viewportRebuildTask = nil
+            rebuildViewportTimeline()
+        }
         guard previous != zoomCues else { return }
         registerUndo(actionName) { target in
             target.applyZoomCues(previous, actionName: actionName)
@@ -1930,18 +1956,27 @@ final class RecordingStudioModel {
         return lower...min(lower + length, upper)
     }
 
-    /// Creates a zoom cue spanning a dragged range in the zoom lane. Times
-    /// are editor time and need not be ordered.
-    func addZoomCue(fromEditorTime editorStart: TimeInterval, toEditorTime editorEnd: TimeInterval) {
-        let lowSource = clipTimeline.sourceTime(at: min(editorStart, editorEnd))
-        let highSource = clipTimeline.sourceTime(at: max(editorStart, editorEnd))
-        let start = min(max(0, lowSource), max(0, sourceDuration - 0.5))
-        let end = max(start + 0.5, min(sourceDuration, highSource))
-        insertZoomCue(start: start, end: end)
+    /// Adds a zoom over a range drawn on the zoom track, in editor time.
+    /// The track has already fitted the range between the neighbouring
+    /// blocks and grown it to `ZoomCue.minimumDuration`, and shown it that
+    /// way, so this adds it as is: it neither moves nor stretches it.
+    func addZoomCue(overEditorRange range: ClosedRange<TimeInterval>) {
+        guard let span = studioDrawnSourceSpan(
+            for: range,
+            clipTimeline: clipTimeline,
+            sourceDuration: sourceDuration,
+            among: zoomCues.map { $0.start...$0.end },
+            minimum: ZoomCue.minimumDuration
+        ) else { return }
+        appendZoomCue(span)
     }
 
     private func insertZoomCue(start: TimeInterval, end: TimeInterval) {
         guard let span = freeSpan(from: start, preferredEnd: end) else { return }
+        appendZoomCue(span)
+    }
+
+    private func appendZoomCue(_ span: ClosedRange<TimeInterval>) {
         let hasPointerTrack = !pointerCapture.travel.isEmpty || !pointerCapture.presses.isEmpty
         let editorTime = clipTimeline.editorTime(forSourceTime: span.lowerBound) ?? currentTime
         let target = pointerTimeline.location(at: editorTime) ?? CGPoint(x: 0.5, y: 0.5)
@@ -1956,8 +1991,8 @@ final class RecordingStudioModel {
         var cues = zoomCues
         cues.append(cue)
         applyZoomCues(cues, actionName: "Add Zoom")
+        clearTimelineSelection()
         selectedCueID = cue.id
-        selectedClipID = nil
     }
 
     func removeZoomCue(id: UUID) {
@@ -2066,7 +2101,19 @@ final class RecordingStudioModel {
         )
     }
 
+    private func scheduleViewportRebuild() {
+        viewportRebuildTask?.cancel()
+        viewportRebuildTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(80))
+            guard let self, !Task.isCancelled else { return }
+            self.viewportRebuildTask = nil
+            self.rebuildViewportTimeline()
+        }
+    }
+
     private func rebuildViewportTimeline() {
+        viewportRebuildTask?.cancel()
+        viewportRebuildTask = nil
         guard sourceDuration > 0 else {
             viewportTimeline = .identity
             return
@@ -4017,6 +4064,22 @@ final class RecordingStudioModel {
 }
 
 /// A zoom cue's single merged footprint on the edited timeline.
+extension RecordingStudioModel: StudioBlockLaneHost {}
+
+/// Convenience over `studioMovedSourceRange(clipTimeline:editorStart:editorLength:)`
+/// for lanes holding a `RecordingStudioModel`.
+func studioMovedSourceRange(
+    model: RecordingStudioModel,
+    editorStart: TimeInterval,
+    editorLength: TimeInterval
+) -> (start: TimeInterval, end: TimeInterval) {
+    studioMovedSourceRange(
+        clipTimeline: model.clipTimeline,
+        editorStart: editorStart,
+        editorLength: editorLength
+    )
+}
+
 struct RecordingZoomTimelineBlock: Identifiable, Equatable, Sendable {
     let cue: ZoomCue
     let editorStart: TimeInterval
