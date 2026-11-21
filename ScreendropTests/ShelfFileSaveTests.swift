@@ -48,6 +48,14 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
             return destination
         }
 
+        /// Convenience wrapper for tests whose result file hasn't been tampered with.
+        func save(_ result: URL, of original: URL, identity: FileIdentity? = nil, outputIdentity: FileIdentity? = nil,
+                  replacing: Bool, in folder: URL? = nil, retire: ((URL) throws -> URL)? = nil) -> ShelfFileSave.Outcome {
+            ShelfFileSave.save(result, of: original, identity: identity ?? FileIdentity(original),
+                               outputIdentity: outputIdentity ?? FileIdentity(result),
+                               replacing: replacing, in: folder, retire: retire ?? self.retire)
+        }
+
         var names: [String] {
             ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []).filter { $0 != "trash" && $0 != "results" }.sorted()
         }
@@ -59,21 +67,21 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
         let original = try desk.file("shot.png", "original pixels, long")
         let result = try desk.file("shot.png", "smaller", in: desk.results)
 
-        let outcome = ShelfFileSave.save(result, of: original, identity: FileIdentity(original), replacing: false, retire: desk.retire)
+        let outcome = desk.save(result, of: original, replacing: false)
         #expect(outcome == .saved(desk.folder.appending(path: "shot optimized.png")))
         #expect(desk.text(original) == "original pixels, long")
         #expect(desk.names == ["shot optimized.png", "shot.png"])   // and no staging folder left
 
         // A second save doesn't write over the first.
-        let again = ShelfFileSave.save(result, of: original, identity: FileIdentity(original), replacing: false, retire: desk.retire)
+        let again = desk.save(result, of: original, replacing: false)
         #expect(again == .saved(desk.folder.appending(path: "shot optimized 2.png")))
 
         // Converting to another format uses the new extension beside the original, without overwriting.
         let photo = try desk.file("photo.jpeg", "jpeg bytes")
         let webP = try desk.file("photo.webp", "smaller webp", in: desk.results)
-        #expect(ShelfFileSave.save(webP, of: photo, identity: FileIdentity(photo), replacing: false, retire: desk.retire)
+        #expect(desk.save(webP, of: photo, replacing: false)
             == .saved(desk.folder.appending(path: "photo.webp")))
-        #expect(ShelfFileSave.save(webP, of: photo, identity: FileIdentity(photo), replacing: false, retire: desk.retire)
+        #expect(desk.save(webP, of: photo, replacing: false)
             == .saved(desk.folder.appending(path: "photo 2.webp")))
         #expect(desk.text(photo) == "jpeg bytes")
     }
@@ -86,17 +94,17 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
         let original = try desk.file("shot.png", "original pixels, long")
         let result = try desk.file("shot.png", "smaller", in: desk.results)
 
-        let first = ShelfFileSave.save(result, of: original, identity: FileIdentity(original), replacing: false, in: chosen, retire: desk.retire)
+        let first = desk.save(result, of: original, replacing: false, in: chosen)
         #expect(first == .saved(chosen.appending(path: "shot optimized.png")))
         #expect(desk.text(chosen.appending(path: "shot optimized.png")) == "smaller")
         #expect(desk.text(original) == "original pixels, long")
 
-        let second = ShelfFileSave.save(result, of: original, identity: FileIdentity(original), replacing: false, in: chosen, retire: desk.retire)
+        let second = desk.save(result, of: original, replacing: false, in: chosen)
         #expect(second == .saved(chosen.appending(path: "shot optimized 2.png")))
 
         let photo = try desk.file("photo.jpeg", "jpeg bytes")
         let webP = try desk.file("photo.webp", "webp bytes", in: desk.results)
-        let converted = ShelfFileSave.save(webP, of: photo, identity: FileIdentity(photo), replacing: false, in: chosen, retire: desk.retire)
+        let converted = desk.save(webP, of: photo, replacing: false, in: chosen)
         #expect(converted == .saved(chosen.appending(path: "photo.webp")))
         #expect(desk.text(photo) == "jpeg bytes")
     }
@@ -107,7 +115,7 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
         let original = try desk.file("shot.png", "original pixels, long")
         let result = try desk.file("shot.png", "smaller", in: desk.results)
 
-        #expect(ShelfFileSave.save(result, of: original, identity: FileIdentity(original), replacing: true, retire: desk.retire) == .saved(original))
+        #expect(desk.save(result, of: original, replacing: true) == .saved(original))
         #expect(desk.text(original) == "smaller")
         #expect(desk.text(desk.trash.appending(path: "shot.png")) == "original pixels, long")
         #expect(desk.names == ["shot.png"])
@@ -115,7 +123,7 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
         // Another format takes another name; the original is retired once that file is in place.
         let photo = try desk.file("photo.png", "png bytes")
         let webP = try desk.file("photo.webp", "webp", in: desk.results)
-        #expect(ShelfFileSave.save(webP, of: photo, identity: FileIdentity(photo), replacing: true, retire: desk.retire)
+        #expect(desk.save(webP, of: photo, replacing: true)
             == .saved(desk.folder.appending(path: "photo.webp")))
         #expect(!FileManager.default.fileExists(atPath: photo.path))
         #expect(desk.text(desk.trash.appending(path: "photo.png")) == "png bytes")
@@ -131,7 +139,7 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
 
         try Data("a newer version, edited in another app".utf8).write(to: original)
         for replacing in [true, false] {
-            #expect(ShelfFileSave.save(result, of: original, identity: identity, replacing: replacing, retire: desk.retire) == .changed)
+            #expect(desk.save(result, of: original, identity: identity, replacing: replacing) == .changed)
         }
         #expect(desk.text(original) == "a newer version, edited in another app")
         #expect(desk.names == ["shot.png"])
@@ -142,7 +150,7 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
         let before = FileIdentity(same)
         try Data("54321".utf8).write(to: same)
         try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: 5)], ofItemAtPath: same.path)
-        #expect(ShelfFileSave.save(result, of: same, identity: before, replacing: true, retire: desk.retire) == .changed)
+        #expect(desk.save(result, of: same, identity: before, replacing: true) == .changed)
         #expect(desk.text(same) == "54321")
 
         // Astra's second review: the same length with the old date put back. Only the contents tell.
@@ -150,7 +158,7 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
         let quietBefore = FileIdentity(quiet)
         try rewriteKeepingSizeAndDate(quiet, with: Data("54321".utf8))
         for replacing in [true, false] {
-            #expect(ShelfFileSave.save(result, of: quiet, identity: quietBefore, replacing: replacing, retire: desk.retire) == .changed)
+            #expect(desk.save(result, of: quiet, identity: quietBefore, replacing: replacing) == .changed)
         }
         #expect(desk.text(quiet) == "54321")
         #expect(try FileManager.default.contentsOfDirectory(atPath: desk.trash.path).isEmpty)
@@ -169,7 +177,7 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
         let retired = desk.trash.appending(path: "shot.png")
 
         // The folder stops taking files right after the original has left it.
-        let outcome = ShelfFileSave.save(result, of: original, identity: FileIdentity(original), replacing: true) { url in
+        let outcome = desk.save(result, of: original, replacing: true) { url in
             let destination = try desk.retire(url)
             try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: desk.folder.path)
             return destination
@@ -191,7 +199,7 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
         defer { desk.remove() }
         let photo = try desk.file("photo.png", "png bytes")
         let webP = try desk.file("photo.webp", "webp", in: desk.results)
-        let outcome = ShelfFileSave.save(webP, of: photo, identity: FileIdentity(photo), replacing: true) { _ in
+        let outcome = desk.save(webP, of: photo, replacing: true) { _ in
             throw CocoaError(.fileWriteNoPermission)
         }
         #expect(outcome == .saved(desk.folder.appending(path: "photo.webp"), originalKept: true))
@@ -207,7 +215,8 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
         let original = try desk.file("shot.png", "original pixels, long")
         let missing = desk.results.appending(path: "shot.png")   // a result that is no longer there
 
-        guard case .failed = ShelfFileSave.save(missing, of: original, identity: FileIdentity(original), replacing: true, retire: desk.retire) else {
+        guard case .failed = ShelfFileSave.save(missing, of: original, identity: FileIdentity(original),
+                                                outputIdentity: FileIdentity(original), replacing: true, retire: desk.retire) else {
             Issue.record("a missing result was saved")
             return
         }
@@ -217,7 +226,7 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
 
         // The Trash refusing the original stops the replace before anything moves.
         let result = try desk.file("shot.png", "smaller", in: desk.results)
-        let refused = ShelfFileSave.save(result, of: original, identity: FileIdentity(original), replacing: true) { _ in
+        let refused = desk.save(result, of: original, replacing: true) { _ in
             throw CocoaError(.fileWriteNoPermission)
         }
         guard case .failed = refused else {
@@ -226,5 +235,29 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
         }
         #expect(desk.text(original) == "original pixels, long")
         #expect(desk.names == ["shot.png"])
+    }
+
+    @Test func aResultChangedAfterEncodingIsNeverSavedOrReplaced() throws {
+        let desk = try Desk()
+        defer { desk.remove() }
+        let original = try desk.file("photo.png", "original png bytes")
+        let result = try desk.file("photo.webp", "verified webp bytes", in: desk.results)
+        let sourceID = FileIdentity(original)
+        let expectedOutput = FileIdentity(result)
+
+        // Truncate the temporary result file after the encoder recorded its fingerprint.
+        try Data("trunc".utf8).write(to: result)
+
+        for replacing in [true, false] {
+            let outcome = ShelfFileSave.save(result, of: original, identity: sourceID,
+                                             outputIdentity: expectedOutput, replacing: replacing, retire: desk.retire)
+            guard case .failed = outcome else {
+                Issue.record("saved a result whose bytes no longer matched the encoder's fingerprint: \(outcome)")
+                return
+            }
+        }
+        #expect(desk.text(original) == "original png bytes")
+        #expect(desk.names == ["photo.png"])
+        #expect(try FileManager.default.contentsOfDirectory(atPath: desk.trash.path).isEmpty)
     }
 }

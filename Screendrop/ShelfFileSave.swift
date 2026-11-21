@@ -23,13 +23,16 @@ nonisolated enum ShelfFileSave {
 
     /// Writes `result` beside `original` ("name optimized.png", or "name.webp" for another format), in
     /// `destinationFolder` when one was chosen, or with `replacing` in `original`'s place. `identity` is
-    /// the contents the result was made from (`ImageOptimizationResult.source`): the original must still
-    /// hold exactly those. `retire` takes the original out of the way and says where it went, so it can be
-    /// put back: the Trash, outside tests.
-    static func save(_ result: URL, of original: URL, identity: FileIdentity?, replacing: Bool,
+    /// the contents the result was made from (`ImageOptimizationResult.source`), and `outputIdentity` is
+    /// the encoder's verified output (`ImageOptimizationResult.output`): the original must still hold
+    /// `identity` and the staged copy must match `outputIdentity` before the source is touched. `retire`
+    /// takes the original out of the way and says where it went: the Trash, outside tests.
+    static func save(_ result: URL, of original: URL, identity: FileIdentity?,
+                     outputIdentity: FileIdentity?, replacing: Bool,
                      in destinationFolder: URL? = nil,
                      retire: (URL) throws -> URL = moveToTrash) -> Outcome {
         guard let identity, identity == FileIdentity(original) else { return .changed }
+        guard let outputIdentity else { return .failed("The optimized file couldn't be verified.") }
         let files = FileManager.default
         let folder = replacing ? original.deletingLastPathComponent() : (destinationFolder ?? original.deletingLastPathComponent())
         let base = original.deletingPathExtension().lastPathComponent
@@ -42,7 +45,7 @@ nonisolated enum ShelfFileSave {
         do {
             try files.createDirectory(at: staging, withIntermediateDirectories: false)
             try files.copyItem(at: result, to: staged)
-            guard let written = FileIdentity(staged), written == FileIdentity(result) else {
+            guard let written = FileIdentity(staged), written == outputIdentity else {
                 return .failed("The file couldn't be written completely.")
             }
             // Asked again now that the new file is ready: the last moment before anything moves.
