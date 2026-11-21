@@ -1734,12 +1734,9 @@ final class RecordingStudioModel {
         // the camera bubble at that rate or the two drift apart immediately.
         let initialRate = Float(speed(atEditorTime: currentTime)) * shuttleRate
         let cameraSeconds = max(0, sourceTime - cameraOffset)
-        guard Self.playbackCapabilities(of: cameraPlayer.currentItem).supports(rate: initialRate) else {
-            cameraSeek.invalidate()
+        if !Self.playbackCapabilities(of: cameraPlayer.currentItem).supports(rate: initialRate),
+           cameraPlayer.rate != 0 {
             cameraPlayer.pause()
-            let cameraTime = CMTime(seconds: cameraSeconds, preferredTimescale: StudioPlayback.seekTimescale)
-            cameraPlayer.seek(to: cameraTime, toleranceBefore: .zero, toleranceAfter: .zero)
-            return
         }
         if let dispatch = cameraSeek.requestSeek(to: cameraSeconds) {
             dispatchCameraSeek(generation: dispatch.generation, seconds: dispatch.target)
@@ -1796,15 +1793,10 @@ final class RecordingStudioModel {
         let targetRate = Float(speed(atEditorTime: currentTime)) * shuttleRate
         let expected = sourceTime - cameraOffset
         guard Self.playbackCapabilities(of: cameraPlayer.currentItem).supports(rate: targetRate) else {
-            cameraSeek.invalidate()
             lastCameraSegmentID = segmentID
             if cameraPlayer.rate != 0 { cameraPlayer.pause() }
-            if expected.isFinite {
-                cameraPlayer.seek(
-                    to: CMTime(seconds: max(0, expected), preferredTimescale: StudioPlayback.seekTimescale),
-                    toleranceBefore: .zero,
-                    toleranceAfter: .zero
-                )
+            if expected.isFinite, let dispatch = cameraSeek.requestSeek(to: max(0, expected)) {
+                dispatchCameraSeek(generation: dispatch.generation, seconds: dispatch.target)
             }
             return
         }

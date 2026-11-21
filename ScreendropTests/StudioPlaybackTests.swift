@@ -419,6 +419,21 @@ struct StudioPlaybackTests {
         let fourth = try #require(fourthRequest)
         #expect(coordinator.completeSeek(generation: fourth.generation, finished: false) == .ignore)
         #expect(!coordinator.isSeeking)
+
+        // Unsupported-rate fallback (e.g. -4× reverse): repeated observer ticks coalesce
+        // into one follow-up seek at the newest target without cancelling the active seek.
+        let fallbackRequest = coordinator.requestSeek(to: 10.0)
+        let fallback1 = try #require(fallbackRequest)
+        #expect(coordinator.requestSeek(to: 9.92) == nil)
+        #expect(coordinator.requestSeek(to: 9.84) == nil)
+        let coalesced = coordinator.completeSeek(generation: fallback1.generation, finished: true)
+        guard case .startCoalescedSeek(let fallback2Gen, let fallback2Target) = coalesced else {
+            Issue.record("Expected coalesced fallback seek, got \(coalesced)")
+            return
+        }
+        #expect(fallback2Target == 9.84)
+        #expect(coordinator.completeSeek(generation: fallback2Gen, finished: true) == .applyPlaybackRate)
+        #expect(!coordinator.isSeeking)
     }
 
     @Test func studioNoticesGetFreshIdentityForRepeatedText() {
