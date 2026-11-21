@@ -1162,14 +1162,13 @@ struct StudioInspector: View {
             }
 
             if model.canIsolateVoice {
+                InspectorToggleRow("Isolate voice", isOn: $model.isolateVoice)
+                    .help("Reduce background noise in the source microphone track")
+                if let progress = model.voiceIsolationProgress {
+                    ProgressView("Isolating voice…", value: progress)
+                }
                 if model.hasReplacementAudio {
-                    InspectorHint("Reset to recorded audio to use voice isolation.")
-                } else {
-                    InspectorToggleRow("Isolate voice", isOn: $model.isolateVoice)
-                        .help("Reduce background noise in the source microphone track")
-                    if let progress = model.voiceIsolationProgress {
-                        ProgressView("Isolating voice…", value: progress)
-                    }
+                    InspectorHint("Applies only where the original microphone plays (detached recording clips or footage not covered by the replacement).")
                 }
             }
             if let message = model.voiceIsolationError {
