@@ -218,7 +218,7 @@ struct AnnotationEditorWindow: View {
                     }
                 }
             ))
-            .inspector(isPresented: inspectorChoice) {
+            .inspector(isPresented: $isInspectorPresented) {
                 AnnotationEditorInspector(
                     model: model,
                     wallpaperStore: wallpaperStore,
@@ -247,7 +247,7 @@ struct AnnotationEditorWindow: View {
             )
             // Below this the inspector folds away and the window can go down to the canvas's
             // own minimum; it was stuck at 1040 pt with the inspector (Fable #7).
-            .inspectorAutoFold(isPresented: $isInspectorPresented, below: 1000) { editorWindow?.inLiveResize == true }
+            .inspectorAutoFold(isPresented: $isInspectorPresented, below: 1000, window: editorWindow)
             .environment(probe)
     }
 

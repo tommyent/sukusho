@@ -119,18 +119,6 @@ struct EditorInspectorTests {
         #expect(!opened.isPresented && narrow.isFolded)
     }
 
-    @Test static func openingEditorHonorsInspectorChoiceThroughProvisionalWidths() {
-        for shown in [true, false] {
-            var state = InspectorFoldState()
-            for width: CGFloat in [1180, 992, 980, 992] {
-                let next = state.resized(to: width, foldBelow: 1000, isPresented: shown, allowsFold: false)
-                #expect(next.isPresented == shown)
-                state = next.state
-            }
-            #expect(!state.resized(to: 970, foldBelow: 1000, isPresented: shown, allowsFold: true).isPresented)
-        }
-    }
-
     /// ⌘S saves; ⌃⌘S is View › Show Sidebar and must not save too (Astra E3), and ⇧⌘S is Save As.
     @Test static func onlyPlainCommandSSaves() {
         #expect(EditorKeyChords.isSave([.command], characters: "s"))

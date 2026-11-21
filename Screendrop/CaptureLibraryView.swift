@@ -17,7 +17,15 @@ struct CaptureLibraryView: View {
     @State private var handledInitialWindowPlacement = false
     @State private var glassMetrics = GlassWindowButtonMetrics.fallback
     @State private var columnVisibility = NavigationSplitViewVisibility.automatic
-    @AppStorage("captureLibrary.inspectorVisible") private var inspectorVisible = true
+    private static let inspectorKey = "captureLibrary.inspectorVisible"
+    @State private var inspectorVisible = UserDefaults.standard.object(forKey: inspectorKey) as? Bool ?? true
+
+    private var inspectorChoice: Binding<Bool> {
+        Binding(get: { inspectorVisible }, set: { visible in
+            inspectorVisible = visible
+            UserDefaults.standard.set(visible, forKey: Self.inspectorKey)
+        })
+    }
     @AppStorage("captureLibrary.tagsExpanded") private var tagsExpanded = true
     @AppStorage("captureLibrary.cardWidth") private var cardWidth = 220.0
     @AppStorage("captureLibrary.sort") private var savedSort: CaptureLibrarySort = .newest
@@ -95,7 +103,7 @@ struct CaptureLibraryView: View {
         // 860 pt holds the sidebar, the grid and the inspector; below 900 the inspector folds
         // away on its own, and without it the window goes down to 620 (Fable #7).
         .frame(minWidth: inspectorVisible ? 860 : 620, minHeight: 540)
-        .inspectorAutoFold(isPresented: $inspectorVisible, below: 900)
+        .inspectorAutoFold(isPresented: $inspectorVisible, below: 900, window: handledInitialWindowPlacement ? libraryWindow : nil)
         .onAppear {
             AppActivationPolicy.enter()
             model.sortOrder = savedSort
@@ -114,8 +122,9 @@ struct CaptureLibraryView: View {
             // once as the window arrives (after SwiftUI's own sizing this turn), not on a later key event, which could
             // come only after the user clicked away and back, and jump the window then.
             if let window, !handledInitialWindowPlacement {
-                handledInitialWindowPlacement = true
                 DispatchQueue.main.async {
+                    guard libraryWindow === window, !handledInitialWindowPlacement else { return }
+                    defer { handledInitialWindowPlacement = true }
                     guard let screen = (window.screen ?? NSScreen.main)?.visibleFrame else { return }
                     let size = CGSize(width: min(1180, screen.width), height: min(760, screen.height))
                     window.setFrame(CGRect(x: screen.midX - size.width / 2, y: screen.midY - size.height / 2,
@@ -235,7 +244,7 @@ struct CaptureLibraryView: View {
             .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
             .glassInspectorToggleOverlay(
                 enabled: true,
-                isPresented: $inspectorVisible,
+                isPresented: inspectorChoice,
                 metrics: glassMetrics,
                 hasKeyboardShortcut: true
             )
@@ -840,7 +849,7 @@ struct CaptureLibraryView: View {
 
     @ToolbarContentBuilder private var inspectorToggleToolbarItem: some ToolbarContent {
         ToolbarItem(placement: .primaryAction) {
-            Button { inspectorVisible.toggle() } label: {
+            Button { inspectorChoice.wrappedValue.toggle() } label: {
                 Label(inspectorVisible ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.right")
             }
             .keyboardShortcut("i", modifiers: [.command, .option])
