@@ -162,7 +162,7 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
         weak var collection: LibraryCollectionView?
         var updating = false
         var initialLoad = true
-        /// Glass's picture is under the headers (`overGlassPicture`), so each title takes a plate.
+        /// A picture or custom color is under the headers, so each title takes a plate.
         var headerPlates = false
         var order = LibraryDisplayOrder(sectionCounts: [])
         var indices: [String: Int] = [:]

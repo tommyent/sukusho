@@ -1470,7 +1470,7 @@ private struct LibraryWindowSurface: ViewModifier {
     func body(content: Content) -> some View {
         if floatingChrome {
             content
-                .environment(\.overGlassPicture, glass != nil)
+                .environment(\.overGlassPicture, glass != nil || WindowBackgroundStore.shared.choice(for: .app, theme: theme).needsTextBacking)
                 .background { AnnotationEditorWorkspaceBackground(destination: .app).backgroundExtensionEffect().ignoresSafeArea() }
         } else {
             content

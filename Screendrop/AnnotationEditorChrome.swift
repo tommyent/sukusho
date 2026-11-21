@@ -196,15 +196,12 @@ private struct WindowPicture: View {
 
 extension EnvironmentValues {
     @Entry var backgroundDestination = BackgroundDestination.app
-    /// Text over the Glass picture needs a frosted backing.
+    /// Library text over a picture or custom color needs a backing.
     @Entry var overGlassPicture = false
 }
 
 extension View {
-    /// The cards' frost (material and tint) behind text in the Library that would otherwise sit straight on Glass's
-    /// picture, such as the status bar or a clipboard row. It reads `DrawnGlass`, not the environment, so it works in
-    /// the collection's cells, which AppKit hosts apart. Other themes, and Reduce Transparency or Increase Contrast,
-    /// change nothing.
+    /// The cards' frost behind Library text over the Glass picture, or regular material over other custom backgrounds.
     func glassFrostBacking<S: Shape>(in shape: S) -> some View { modifier(GlassFrostBacking(shape: shape)) }
 }
 
@@ -212,6 +209,7 @@ private struct GlassFrostBacking<S: Shape>: ViewModifier {
     let shape: S
     @DrawnGlass private var glass
     @CurrentTheme private var theme
+    @Environment(\.overGlassPicture) private var needsBacking
 
     @ViewBuilder
     func body(content: Content) -> some View {
@@ -223,6 +221,8 @@ private struct GlassFrostBacking<S: Shape>: ViewModifier {
                 }
                 .allowsHitTesting(false)
             }
+        } else if needsBacking {
+            content.background(.regularMaterial, in: shape)
         } else {
             content
         }
