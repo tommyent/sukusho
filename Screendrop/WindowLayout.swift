@@ -635,6 +635,12 @@ nonisolated enum WindowFullScreenPoll: Equatable, Sendable {
         if WindowAXPolicy.shouldAbort(error) { return .abort }
         return .transientFailure
     }
+
+    /// Extracts a `Bool` only when `value` has `CFBooleanGetTypeID()`, rejecting numeric `0`/`1` `CFNumber`s.
+    static func cfBooleanValue(_ value: CFTypeRef?) -> Bool? {
+        guard let value, CFGetTypeID(value) == CFBooleanGetTypeID() else { return nil }
+        return CFBooleanGetValue(unsafeBitCast(value, to: CFBoolean.self))
+    }
 }
 
 /// Pure guard for disabling `AXEnhancedUserInterface` before a move: rechecks cancellation after

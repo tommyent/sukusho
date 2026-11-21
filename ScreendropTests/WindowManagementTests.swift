@@ -497,6 +497,16 @@ struct WindowManagementTests {
         #expect(WindowFullScreenPoll.from(error: .cannotComplete, boolValue: nil) == .abort)
         #expect(WindowFullScreenPoll.from(error: .invalidUIElement, boolValue: nil) == .abort)
 
+        // Strict CFBoolean type check rejects numeric 0/1 NSNumbers and strings.
+        #expect(WindowFullScreenPoll.cfBooleanValue(kCFBooleanTrue) == true)
+        #expect(WindowFullScreenPoll.cfBooleanValue(kCFBooleanFalse) == false)
+        #expect(WindowFullScreenPoll.cfBooleanValue(NSNumber(value: 0)) == nil)
+        #expect(WindowFullScreenPoll.cfBooleanValue(NSNumber(value: 1)) == nil)
+        #expect(WindowFullScreenPoll.cfBooleanValue("false" as CFString) == nil)
+        #expect(WindowFullScreenPoll.cfBooleanValue(nil) == nil)
+        #expect(WindowFullScreenPoll.from(error: .success, boolValue: WindowFullScreenPoll.cfBooleanValue(NSNumber(value: 0)))
+                == .transientFailure)
+
         // Cancelled before exit write never writes AXFullScreen = false.
         var exitWrites = 0
         let cancelledBeforeWrite = WindowFullScreenExit.exitAndConfirm(

@@ -542,11 +542,11 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
         return num.boolValue
     }
 
-    /// Strict poll for `AXFullScreen` exit: only `.success` with Boolean `false` confirms exit.
+    /// Strict poll for `AXFullScreen` exit: only `.success` with a genuine `CFBoolean` `false` confirms exit.
     private func pollFullScreen(on window: AXUIElement) -> WindowFullScreenPoll {
         var value: CFTypeRef?
         let err = AXUIElementCopyAttributeValue(window, Self.fullScreenAttr, &value)
-        let boolValue = (err == .success) ? (value as? NSNumber)?.boolValue : nil
+        let boolValue = (err == .success) ? WindowFullScreenPoll.cfBooleanValue(value) : nil
         return WindowFullScreenPoll.from(error: err, boolValue: boolValue)
     }
 
