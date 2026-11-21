@@ -23,6 +23,12 @@ struct StudioTimelineEditor: View {
     @State private var scrollPosition = ScrollPosition(edge: .leading)
     @State private var isScrubbing = false
     @State private var isResetClipsConfirmationPresented = false
+    /// While a trimmed edge catches on a snap point, that editor time: a
+    /// full-height guide runs through every track there.
+    @State private var snapGuideTime: TimeInterval?
+    /// Anchor time while ⇧-dragging on the ruler to mark an I/O range.
+    @State private var rangeAnchor: TimeInterval?
+    @GestureState private var isRulerGestureActive = false
 
     /// Step per zoom button press / keyboard shortcut.
     private static let zoomStep: Double = 1.6
@@ -71,14 +77,23 @@ struct StudioTimelineEditor: View {
                 StudioTimelineRuler(
                     duration: model.duration,
                     pointsPerSecond: scale.pointsPerSecond,
-                    scrollX: scrollX
+                    scrollX: scrollX,
+                    range: model.rangeSelection
                 )
                 .frame(height: StudioTimelineMetrics.rulerHeight)
+                .contentShape(Rectangle())
+                .gesture(rulerGesture(scale: scale, scrollX: scrollX))
+                .onChange(of: isRulerGestureActive) { _, active in
+                    if !active { finishRulerGesture() }
+                }
 
                 scrollingLanes(scale: scale)
             }
             .overlay {
                 StudioTimelineInkMarks(model: model, scale: scale, scrollX: scrollX)
+            }
+            .overlay {
+                StudioTimelineMarkers(model: model, scale: scale, scrollX: scrollX)
             }
             .overlay {
                 StudioTimelineChapters(
@@ -88,6 +103,21 @@ struct StudioTimelineEditor: View {
                     isScrubbing: isScrubbing,
                     onPlayheadMove: followPlayhead(to:)
                 )
+            }
+            .overlay(alignment: .topLeading) {
+                if let snapGuideTime {
+                    let guideX = scale.x(for: snapGuideTime) - scrollX
+                    if guideX >= -1, guideX <= proxy.size.width + 1 {
+                        let top = StudioTimelineMetrics.playheadLaneHeight + StudioTimelineMetrics.rowSpacing
+                        let guideHeight = max(0, proxy.size.height - top - StudioTimelineMetrics.scrollerGutter)
+                        Rectangle()
+                            .fill(Color(nsColor: .systemYellow))
+                            .frame(width: 1.5, height: guideHeight)
+                            .offset(x: guideX - 0.75, y: top)
+                            .allowsHitTesting(false)
+                            .transaction { $0.animation = nil }
+                    }
+                }
             }
             .onChange(of: proxy.size.width, initial: true) { _, width in
                 viewportWidth = max(width, 1)
@@ -169,6 +199,7 @@ struct StudioTimelineEditor: View {
                 model.seek(to: time)
             },
             onHover: { time in
+                guard !model.isTrimmingClip, !model.isDraggingTimelineBlock else { return }
                 model.hoverPreviewTime = time
             },
             onSplit: { model.splitClip(at: $0) },
@@ -181,8 +212,53 @@ struct StudioTimelineEditor: View {
                 model.pause()
                 model.seek(to: model.currentTime + seconds)
             },
-            onScrubbing: { isScrubbing = $0 }
+            onScrubbing: { isScrubbing = $0 },
+            onReorder: { model.moveClip(id: $0, to: $1) },
+            snapPoints: model.clipSnapPoints,
+            snaps: model.snapsEdits,
+            onSnapGuide: { if snapGuideTime != $0 { snapGuideTime = $0 } },
+            onTrimPreview: { model.previewSourceTime($0) }
         )
+    }
+
+    /// Plain drag on the ruler scrubs and clears any range; ⇧-drag marks an
+    /// I/O range band (as I and O do).
+    private func rulerGesture(scale: StudioTimelineScale, scrollX offset: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .updating($isRulerGestureActive) { _, active, _ in
+                active = true
+            }
+            .onChanged { value in
+                guard model.isLoaded, model.duration > 0 else { return }
+                let time = scale.time(forX: value.location.x + offset)
+                if rangeAnchor == nil, !isScrubbing, NSEvent.modifierFlags.contains(.shift) {
+                    model.pause()
+                    model.clearTimelineSelection()
+                    rangeAnchor = scale.time(forX: value.startLocation.x + offset)
+                }
+                if let anchor = rangeAnchor {
+                    model.rangeSelection = min(anchor, time)...max(anchor, time)
+                    return
+                }
+                if !isScrubbing {
+                    isScrubbing = true
+                    model.pause()
+                    model.clearRange()
+                }
+                model.seek(to: time)
+            }
+            .onEnded { _ in
+                finishRulerGesture()
+            }
+    }
+
+    private func finishRulerGesture() {
+        if let range = model.rangeSelection, rangeAnchor != nil,
+           range.upperBound - range.lowerBound < RecordingClipSegment.minimumDuration {
+            model.clearRange()
+        }
+        rangeAnchor = nil
+        isScrubbing = false
     }
 
     // MARK: Zoom & scroll
@@ -311,6 +387,23 @@ struct StudioTimelineEditor: View {
             }
 
             StudioTransportTray {
+                timelineButton(
+                    model.snapsEdits
+                        ? "Snapping On (N). Hold ⌘ while dragging to turn off."
+                        : "Snapping Off (N). Hold ⌘ while dragging to snap.",
+                    systemImage: "arrow.right.and.line.vertical.and.arrow.left",
+                    isActive: model.snapsEdits
+                ) {
+                    model.toggleSnapping()
+                }
+
+                timelineButton("Add or Remove Marker (M)", systemImage: "bookmark") {
+                    model.toggleMarker()
+                }
+                .disabled(!model.isLoaded || model.isRestoringDocument)
+            }
+
+            StudioTransportTray {
                 timelineButton("Undo (⌘Z)", systemImage: "arrow.uturn.backward") {
                     model.undo()
                 }
@@ -391,20 +484,23 @@ struct StudioTimelineEditor: View {
     }
 
     private var canDeleteSelection: Bool {
-        model.selectedCueID != nil || model.canDeleteSelectedClip
+        model.selectedCueID != nil || model.canDeleteSelectedClip || model.rangeSelection != nil
     }
 
     private func deleteSelection() {
         if let cueID = model.selectedCueID {
             model.removeZoomCue(id: cueID)
-        } else if model.selectedClipID != nil {
+        } else if model.canDeleteSelectedClip {
             model.deleteSelectedClip()
+        } else if model.rangeSelection != nil {
+            model.deleteRange()
         }
     }
 
     private func timelineButton(
         _ help: String,
         systemImage: String,
+        isActive: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -413,7 +509,7 @@ struct StudioTimelineEditor: View {
                 .frame(width: 28, height: 26)
                 .contentShape(RoundedRectangle(cornerRadius: StudioTransportMetrics.buttonRadius, style: .continuous))
         }
-        .buttonStyle(TransportIconButtonStyle())
+        .buttonStyle(TransportIconButtonStyle(isActive: isActive))
         .help(help)
         .accessibilityLabel(help)
     }
@@ -446,21 +542,28 @@ private struct StudioTransportTray<Content: View>: View {
 }
 
 private struct TransportIconButtonStyle: ButtonStyle {
+    var isActive = false
     @Environment(\.isEnabled) private var isEnabled
     @State private var isHovering = false
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .foregroundStyle(
-                .primary.opacity(
-                    isEnabled ? (configuration.isPressed || isHovering ? 0.95 : 0.78) : 0.25
-                )
+                isActive && isEnabled
+                    ? Palette.highlight
+                    : Color.primary.opacity(
+                        isEnabled ? (configuration.isPressed || isHovering ? 0.95 : 0.78) : 0.25
+                    )
             )
             .background {
                 RoundedRectangle(cornerRadius: StudioTransportMetrics.buttonRadius, style: .continuous)
-                    .fill(Color.primary.opacity(
-                        isEnabled ? (configuration.isPressed ? 0.1 : isHovering ? 0.06 : 0) : 0
-                    ))
+                    .fill(
+                        isActive && isEnabled
+                            ? Palette.highlight.opacity(configuration.isPressed ? 0.22 : 0.14)
+                            : Color.primary.opacity(
+                                isEnabled ? (configuration.isPressed ? 0.1 : isHovering ? 0.06 : 0) : 0
+                            )
+                    )
             }
             .onHover { isHovering = $0 }
     }
@@ -495,7 +598,9 @@ private struct StudioPlayheadLayer: View {
     let onMove: (TimeInterval) -> Void
 
     var body: some View {
-        let hoverTime = (model.isPlaying || model.isDraggingTimelineBlock) ? nil : model.hoverPreviewTime
+        let hoverTime = (model.isPlaying || model.isDraggingTimelineBlock || model.isTrimmingClip)
+            ? nil
+            : model.hoverPreviewTime
         StudioTimelinePlayhead(
             time: model.currentTime,
             chapters: chapters,
@@ -591,6 +696,85 @@ private struct StudioTimelineInkMarks: View {
         }
         .clipped()
         .disabled(!model.isLoaded || model.hasRunningWork)
+    }
+}
+
+/// Cyan marker flags hanging from the top of the ruler. Cyan reads clearly
+/// apart from Sukusho's orange chapter lines, red bottom ink ticks, and the
+/// yellow I/O range band.
+private struct StudioTimelineMarkers: View {
+    let model: RecordingStudioModel
+    let scale: StudioTimelineScale
+    let scrollX: CGFloat
+
+    private static let hitWidth: CGFloat = 12
+    private static let flagColor = Color(nsColor: .systemCyan)
+
+    var body: some View {
+        let entries = model.markerEditorTimes
+        GeometryReader { proxy in
+            ZStack(alignment: .topLeading) {
+                ForEach(entries, id: \.marker.id) { entry in
+                    let x = scale.x(for: entry.time) - scrollX
+                    if x >= -6, x <= proxy.size.width + 6 {
+                        Button {
+                            model.pause()
+                            model.seek(to: entry.time)
+                        } label: {
+                            StudioMarkerFlagShape()
+                                .fill(Self.flagColor)
+                                .overlay {
+                                    StudioMarkerFlagShape()
+                                        .stroke(Color.black.opacity(0.22), lineWidth: 0.5)
+                                }
+                                .frame(width: 8, height: 10)
+                                .frame(width: Self.hitWidth, height: StudioTimelineMetrics.rulerHeight, alignment: .top)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            Button("Remove Marker", systemImage: "trash", role: .destructive) {
+                                model.removeMarker(id: entry.marker.id)
+                            }
+                        }
+                        .help(markerHelp(for: entry))
+                        .accessibilityLabel(entry.marker.note.map { "Marker, \($0)" } ?? "Marker")
+                        .accessibilityValue(studioPreciseTimecode(entry.time))
+                        .accessibilityHint("Activate to jump to this marker.")
+                        .accessibilityAction(named: "Remove Marker") {
+                            model.removeMarker(id: entry.marker.id)
+                        }
+                        .offset(
+                            x: x - Self.hitWidth / 2,
+                            y: StudioTimelineMetrics.playheadLaneHeight + StudioTimelineMetrics.rowSpacing
+                        )
+                    }
+                }
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
+        }
+        .clipped()
+        .disabled(!model.isLoaded || model.hasRunningWork)
+    }
+
+    private func markerHelp(for entry: (marker: RecordingMarker, time: TimeInterval)) -> String {
+        if let note = entry.marker.note, !note.isEmpty {
+            return "\(note) · \(studioPreciseTimecode(entry.time))"
+        }
+        return "Marker · \(studioPreciseTimecode(entry.time))"
+    }
+}
+
+private struct StudioMarkerFlagShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.height * 0.6))
+        path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.height * 0.6))
+        path.closeSubpath()
+        return path
     }
 }
 
@@ -934,10 +1118,25 @@ private struct StudioTimelineRuler: View {
     let duration: Double
     let pointsPerSecond: CGFloat
     let scrollX: CGFloat
+    /// The stretch marked with I and O (or ⇧-drag), drawn as a band.
+    var range: ClosedRange<TimeInterval>?
 
     var body: some View {
         Canvas { context, size in
             guard duration > 0.2, pointsPerSecond > 0, size.width > 60 else { return }
+
+            if let range {
+                let low = CGFloat(range.lowerBound) * pointsPerSecond - scrollX
+                let high = CGFloat(range.upperBound) * pointsPerSecond - scrollX
+                let band = CGRect(x: low, y: 0, width: max(1, high - low), height: size.height)
+                context.fill(Path(band), with: .color(Color(nsColor: .systemYellow).opacity(0.28)))
+                for edge in [low, high] {
+                    context.fill(
+                        Path(CGRect(x: edge - 1, y: 0, width: 2, height: size.height)),
+                        with: .color(Color(nsColor: .systemYellow))
+                    )
+                }
+            }
 
             let step = Self.labelStep(forPointsPerSecond: pointsPerSecond)
             let startTime = max(0, Double(scrollX / pointsPerSecond))
