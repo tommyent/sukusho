@@ -196,7 +196,11 @@ struct ClipboardLauncherSearchTests {
         try bundle("Apps/.Hidden.app", version: "1")
         try bundle("Home/Chrome Apps.localized/Delta.app", version: "  ")
         try bundle("Extra/Epsilon.app", version: "5.1")
+        try bundle("Outside/Sneaky.app", version: "9.0")
+        try bundle("OutsideDir/Nested.app", version: "9.1")
         try fm.createSymbolicLink(atPath: root.path + "/Apps/Alias.app", withDestinationPath: root.path + "/Apps/Alpha.app")
+        try fm.createSymbolicLink(atPath: root.path + "/Apps/Escaping.app", withDestinationPath: root.path + "/Outside/Sneaky.app")
+        try fm.createSymbolicLink(atPath: root.path + "/Apps/LinkedOutside", withDestinationPath: root.path + "/OutsideDir")
         fm.createFile(atPath: root.path + "/Apps/readme.app", contents: Data())
 
         let found = LauncherAppScanner.scan(
@@ -206,6 +210,7 @@ struct ClipboardLauncherSearchTests {
         let byName = Dictionary(found.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
         let alpha = byName["Alpha"] ?? byName["Alias"]
         #expect(Set(byName.keys).subtracting(["Alpha", "Alias"]) == ["Beta", "Delta", "Epsilon"])
+        #expect(byName["Sneaky"] == nil && byName["Escaping"] == nil && byName["Nested"] == nil)
         #expect(found.count == 4)
         #expect(alpha?.version == "1.0")
         #expect(byName["Beta"]?.version == nil)
@@ -243,6 +248,7 @@ struct ClipboardLauncherSearchTests {
         #expect(paths.contains(LauncherAppScanner.finder))
         #expect(paths.contains("/System/Applications/Calculator.app"))
         #expect(paths.contains("/System/Applications/Utilities/Terminal.app"))
+        #expect(paths.contains("/Applications/Safari.app"))
         #expect(!real.contains { $0.name.hasSuffix(".app") })
         #expect(paths.count == real.count)
     }
@@ -286,31 +292,12 @@ struct ClipboardLauncherZoxideTests {
         #expect(Zoxide.binary(in: [dir.appendingPathComponent("missing").path]) == nil)
     }
 
-    @Test func existingSkipsPrivacyGuardedFoldersAndAppBundles() {
-        let home = "/Users/me"
-        var looked: [String] = []
-        let kept = Zoxide.existing([
-            Zoxide.Folder(path: "/Users/me/Projects", score: 9),
-            Zoxide.Folder(path: "/Users/me/Gone", score: 8),
-            Zoxide.Folder(path: "/Users/me/Documents/Notes", score: 7),
-            Zoxide.Folder(path: "/Users/me/Library/Mobile Documents/com~apple~CloudDocs/X", score: 6),
-            Zoxide.Folder(path: "/Volumes/Backup/work", score: 5),
-            Zoxide.Folder(path: "/Users/me/Downloadsish", score: 4),
-        ], home: home, isFolder: { looked.append($0); return $0 != "/Users/me/Gone" })
-
-        #expect(kept.map(\.path) == [
-            "/Users/me/Projects",
-            "/Users/me/Documents/Notes",
-            "/Users/me/Library/Mobile Documents/com~apple~CloudDocs/X",
-            "/Volumes/Backup/work",
-            "/Users/me/Downloadsish",
-        ])
-        #expect(looked == ["/Users/me/Projects", "/Users/me/Gone", "/Users/me/Downloadsish"])
+    @Test func entriesSkipAppBundlesWithoutProbingFilesystem() {
         #expect(Zoxide.entries([
             Zoxide.Folder(path: "/Applications/X.app", score: 3),
             Zoxide.Folder(path: "/Applications/X.app/Contents", score: 5),
-            Zoxide.Folder(path: "/x/y", score: 2),
-        ]).map(\.path) == ["/x/y"])
+            Zoxide.Folder(path: "/nonexistent/never-probed", score: 2),
+        ]).map(\.path) == ["/nonexistent/never-probed"])
     }
 
     @Test func zoxideKeywordAndMatchingAndScoreRanking() {

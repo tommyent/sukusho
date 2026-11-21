@@ -463,24 +463,46 @@ nonisolated enum LauncherAppScanner {
     }
 
     /// Every `.app` under the roots, plus `extras`, each once (a symlinked app counts once).
+    /// Stays strictly inside the configured roots: directory symlinks are never descended into, and
+    /// `.app` symlinks are resolved lexically hop-by-hop and skipped if any hop leaves the allowed roots.
     static func scan(_ roots: [Root] = defaultRoots(), extras: [String] = [finder]) -> [LauncherAppEntry] {
         var seen = Set<String>()
         var out: [LauncherAppEntry] = []
+
+        var allowedRoots: [String] = []
+        for root in roots {
+            let std = URL(fileURLWithPath: root.path).standardizedFileURL.path
+            allowedRoots.append(std)
+            let resolved = realPath(root.path)
+            if resolved != std { allowedRoots.append(resolved) }
+            if std == "/Applications" || std == "/System/Applications" {
+                allowedRoots.append("/System")
+            }
+        }
+
         func add(_ path: String) {
             guard seen.insert(realPath(path)).inserted, let entry = entry(at: path) else { return }
             out.append(entry)
         }
+
         func walk(_ dir: String, _ depth: Int) {
-            guard let names = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return }
+            guard fileType(at: dir) == S_IFDIR,
+                  let names = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return }
             for name in names.sorted() where !name.hasPrefix(".") {
                 let path = dir + "/" + name
+                guard let kind = fileType(at: path) else { continue }
                 if name.hasSuffix(".app") {
-                    add(path)
-                } else if depth > 0, isDirectory(path) {
+                    if kind == S_IFDIR {
+                        add(path)
+                    } else if kind == S_IFLNK, symlinkStaysInside(path, allowedRoots: allowedRoots) {
+                        add(path)
+                    }
+                } else if depth > 0, kind == S_IFDIR {
                     walk(path, depth - 1)
                 }
             }
         }
+
         for root in roots { walk(root.path, root.depth) }
         for path in extras { add(path) }
         return out
@@ -495,6 +517,37 @@ nonisolated enum LauncherAppScanner {
         let version = (info?["CFBundleShortVersionString"] as? String)?
             .trimmingCharacters(in: .whitespaces)
         return LauncherAppEntry(path: path, name: name, version: version?.isEmpty == false ? version : nil)
+    }
+
+    static func fileType(at path: String) -> mode_t? {
+        var st = stat()
+        guard lstat(path, &st) == 0 else { return nil }
+        return st.st_mode & S_IFMT
+    }
+
+    /// Follows symlink targets lexically via `readlink` without touching paths outside `allowedRoots`.
+    static func symlinkStaysInside(_ path: String, allowedRoots: [String], maxHops: Int = 8) -> Bool {
+        var current = path
+        for _ in 0..<maxHops {
+            guard let target = try? FileManager.default.destinationOfSymbolicLink(atPath: current) else {
+                return false
+            }
+            let parent = URL(fileURLWithPath: (current as NSString).deletingLastPathComponent, isDirectory: true)
+            let resolved = URL(fileURLWithPath: target, relativeTo: parent).standardizedFileURL.path
+            guard isPath(resolved, inside: allowedRoots) else { return false }
+            guard let kind = fileType(at: resolved) else { return false }
+            if kind == S_IFDIR { return true }
+            if kind != S_IFLNK { return false }
+            current = resolved
+        }
+        return false
+    }
+
+    private static func isPath(_ path: String, inside roots: [String]) -> Bool {
+        roots.contains { root in
+            let clean = root.hasSuffix("/") ? String(root.dropLast()) : root
+            return path == clean || path.hasPrefix(clean + "/")
+        }
     }
 
     static func isDirectory(_ path: String) -> Bool {
@@ -593,9 +646,8 @@ nonisolated enum Zoxide {
     }
 
     /// Runs zoxide (most-used first, as it prints them); nil if it can't run or fails.
-    /// `--all` because without it zoxide checks every folder and deletes from its database the
-    /// ones it can't see that weren't visited for 3 months (zoxide 0.10's `stream.rs`), which a
-    /// listing on panel show must not do. `existing` drops missing ones instead.
+    /// `--all` so zoxide never prunes its database or probes protected folders on listing; Finder
+    /// resolves the chosen folder when the user explicitly opens it.
     static func folders(binary: String) -> [Folder]? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
@@ -608,27 +660,6 @@ nonisolated enum Zoxide {
         process.waitUntilExit()
         guard process.terminationStatus == 0 else { return nil }
         return parse(String(decoding: data, as: UTF8.self))
-    }
-
-    /// Without the folders that are gone. Folders macOS guards with a privacy prompt (Desktop,
-    /// Documents, Downloads, iCloud Drive, cloud storage, other volumes) aren't checked: the check
-    /// could ask the owner, and the prompt would take the keyboard from the panel.
-    static func existing(_ folders: [Folder], home: String = NSHomeDirectory(),
-                         isFolder: (String) -> Bool = isFolder) -> [Folder] {
-        let guarded = ["Desktop", "Documents", "Downloads", "Library/Mobile Documents", "Library/CloudStorage"]
-            .map { home + "/" + $0 }
-        return folders.filter { folder in
-            let path = folder.path
-            if path.hasPrefix("/Volumes/") || guarded.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) {
-                return true
-            }
-            return isFolder(path)
-        }
-    }
-
-    static func isFolder(_ path: String) -> Bool {
-        var dir: ObjCBool = false
-        return FileManager.default.fileExists(atPath: path, isDirectory: &dir) && dir.boolValue
     }
 
     /// As list rows: named after the folder, kept in zoxide's order. Folders inside app bundles are

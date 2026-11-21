@@ -187,7 +187,7 @@ final class ClipboardLauncherModel {
         zoxideTask?.cancel()
         zoxideTask = Task.detached(priority: .userInitiated) {
             guard session.isCurrent(token), !Task.isCancelled else { return }
-            let fresh = Zoxide.folders(binary: binary).map { Zoxide.catalog(Zoxide.existing($0)) }
+            let fresh = Zoxide.folders(binary: binary).map(Zoxide.catalog)
             await MainActor.run {
                 let model = ClipboardLauncherModel.shared
                 guard model.session.isCurrent(token) else { return }
