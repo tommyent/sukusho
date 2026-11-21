@@ -528,7 +528,11 @@ nonisolated enum LauncherAppScanner {
     /// Every `.app` under the roots, plus `extras`, each once (a symlinked app counts once).
     /// Stays strictly inside the configured roots: directory symlinks are never descended into, and
     /// `.app` symlinks are resolved lexically hop-by-hop and skipped if any hop leaves the allowed roots.
-    static func scan(_ roots: [Root] = defaultRoots(), extras: [String] = [finder]) -> [LauncherAppEntry] {
+    static func scan(
+        _ roots: [Root] = defaultRoots(),
+        extras: [String] = [finder],
+        isCancelled: () -> Bool = { false }
+    ) -> [LauncherAppEntry] {
         var seen = Set<String>()
         var out: [LauncherAppEntry] = []
 
@@ -544,14 +548,16 @@ nonisolated enum LauncherAppScanner {
         }
 
         func add(_ path: String) {
-            guard seen.insert(realPath(path)).inserted, let entry = entry(at: path) else { return }
+            guard !isCancelled(), seen.insert(realPath(path)).inserted, let entry = entry(at: path) else { return }
             out.append(entry)
         }
 
         func walk(_ dir: String, _ depth: Int) {
-            guard fileType(at: dir) == S_IFDIR,
+            guard !isCancelled(),
+                  fileType(at: dir) == S_IFDIR,
                   let names = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return }
             for name in names.sorted() where !name.hasPrefix(".") {
+                if isCancelled() { return }
                 let path = dir + "/" + name
                 guard let kind = fileType(at: path) else { continue }
                 if name.hasSuffix(".app") {
@@ -566,8 +572,14 @@ nonisolated enum LauncherAppScanner {
             }
         }
 
-        for root in roots { walk(root.path, root.depth) }
-        for path in extras { add(path) }
+        for root in roots {
+            if isCancelled() { return out }
+            walk(root.path, root.depth)
+        }
+        for path in extras {
+            if isCancelled() { return out }
+            add(path)
+        }
         return out
     }
 
@@ -680,12 +692,20 @@ nonisolated enum LauncherStore {
         return try? JSONDecoder().decode([LauncherAppEntry].self, from: data)
     }
 
-    static func write<T: Encodable>(_ value: T, to url: URL) throws {
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
-                                                withIntermediateDirectories: true)
+    static func encode<T: Encodable>(_ value: T) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .withoutEscapingSlashes]
-        try encoder.encode(value).write(to: url, options: .atomic)
+        return try encoder.encode(value)
+    }
+
+    static func writeData(_ data: Data, to url: URL) throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(),
+                                                withIntermediateDirectories: true)
+        try data.write(to: url, options: .atomic)
+    }
+
+    static func write<T: Encodable>(_ value: T, to url: URL) throws {
+        try writeData(try encode(value), to: url)
     }
 }
 

@@ -240,6 +240,18 @@ struct ClipboardLauncherSearchTests {
         let apps = [app("Alpha", nil, "1"), app("Beta")]
         try LauncherStore.write(apps, to: cacheURL)
         #expect(LauncherStore.loadApps(cacheURL) == apps)
+
+        // Scanner stops early when cancelled mid-walk.
+        var checks = 0
+        let partial = LauncherAppScanner.scan(
+            [.init(root.path + "/Apps", depth: 1), .init(root.path + "/Home", depth: 1)],
+            extras: [root.path + "/Extra/Epsilon.app"],
+            isCancelled: {
+                checks += 1
+                return checks > 3
+            }
+        )
+        #expect(partial.count < found.count)
     }
 
     @Test func importsUnleashFavoritesOnFirstUseLeavingOriginalInPlace() throws {

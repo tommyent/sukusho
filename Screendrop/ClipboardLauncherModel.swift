@@ -160,22 +160,35 @@ final class ClipboardLauncherModel {
         let logger = self.logger
         scanTask?.cancel()
         scanTask = Task.detached(priority: .userInitiated) {
-            guard session.isCurrent(token), !Task.isCancelled else { return }
-            let fresh = LauncherCatalog(LauncherAppScanner.scan())
-            guard session.isCurrent(token), !Task.isCancelled else { return }
+            let cancelled = { !session.isCurrent(token) || Task.isCancelled }
+            guard !cancelled() else { return }
+            let scanned = LauncherAppScanner.scan(isCancelled: cancelled)
+            guard !cancelled() else { return }
+            let fresh = LauncherCatalog(scanned)
+            guard !cancelled() else { return }
             let changed = fresh.apps != current
-            if changed, let cacheURL, session.isCurrent(token), !Task.isCancelled {
-                do { try LauncherStore.write(fresh.apps, to: cacheURL) } catch {
-                    logger.error("Couldn't save launcher app cache: \(String(describing: error), privacy: .public)")
+            let encodedCache: Data?
+            if changed, cacheURL != nil {
+                do { encodedCache = try LauncherStore.encode(fresh.apps) } catch {
+                    logger.error("Couldn't encode launcher app cache: \(String(describing: error), privacy: .public)")
+                    encodedCache = nil
                 }
+            } else {
+                encodedCache = nil
             }
             await MainActor.run {
                 let model = ClipboardLauncherModel.shared
+                // Serialized with close/disable/reopen on MainActor: stale sessions never publish or write cache.
                 guard model.session.isCurrent(token) else { return }
                 model.scanningApps = false
                 model.scanTask = nil
                 if changed {
                     model.catalog = fresh
+                    if let encodedCache, let cacheURL {
+                        do { try LauncherStore.writeData(encodedCache, to: cacheURL) } catch {
+                            model.logger.error("Couldn't save launcher app cache: \(String(describing: error), privacy: .public)")
+                        }
+                    }
                 }
                 model.hasLoadedApps = true
                 if model.appsDirty, model.popupVisible, model.activeMode == .apps {
