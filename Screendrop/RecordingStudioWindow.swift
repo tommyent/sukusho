@@ -2131,10 +2131,6 @@ private struct StudioTimelineEditor: View {
     @State private var scrollX: CGFloat = 0
     @State private var scrollPosition = ScrollPosition(edge: .leading)
     @State private var isResetClipsConfirmationPresented = false
-    /// The pointer's place over the lanes. An observable object rather than
-    /// plain state, so a moving pointer redraws the playhead layer and not
-    /// the timeline dock.
-    @State private var skim = StudioSkimState()
 
     /// Step per zoom button press / keyboard shortcut.
     private static let zoomStep: Double = 1.6
@@ -2195,7 +2191,6 @@ private struct StudioTimelineEditor: View {
             .overlay {
                 StudioTimelineChapters(
                     model: model,
-                    skim: skim,
                     scale: scale,
                     scrollX: scrollX,
                     onPlayheadMove: followPlayhead(to:)
@@ -2277,7 +2272,6 @@ private struct StudioTimelineEditor: View {
                 model.seek(to: time)
             },
             onHover: { time in
-                skim.time = time
                 model.hoverPreviewTime = time
             },
             onSplit: { model.splitClip(at: $0) },
@@ -2652,19 +2646,11 @@ private struct StudioTimelineScale: Equatable {
     }
 }
 
-/// The pointer's place over the lanes, as an editor time.
-@MainActor
-@Observable
-final class StudioSkimState {
-    var time: TimeInterval?
-}
-
 /// The playhead and the skim line, with the only reads of the playhead's
-/// time and the pointer's place in the dock. Both change many times a
-/// second; kept here, they redraw this layer instead of every lane.
+/// time and hover preview in the dock. Both change many times a second;
+/// kept here, they redraw this layer instead of every lane.
 private struct StudioPlayheadLayer: View {
     let model: RecordingStudioModel
-    let skim: StudioSkimState
     let chapters: [RecordingChapter]
     let scale: StudioTimelineScale
     let scrollX: CGFloat
@@ -2674,7 +2660,7 @@ private struct StudioPlayheadLayer: View {
     var body: some View {
         ZStack {
             StudioTimelineHoverMarker(
-                time: skim.time ?? model.hoverPreviewTime,
+                time: model.isPlaying ? nil : model.hoverPreviewTime,
                 scale: scale,
                 scrollX: scrollX
             )
@@ -2696,7 +2682,6 @@ private struct StudioPlayheadLayer: View {
 /// Map chapter names only when chapter/transcript edits change, not on playback ticks.
 private struct StudioTimelineChapters: View {
     let model: RecordingStudioModel
-    let skim: StudioSkimState
     let scale: StudioTimelineScale
     let scrollX: CGFloat
     let onPlayheadMove: (TimeInterval) -> Void
@@ -2718,7 +2703,6 @@ private struct StudioTimelineChapters: View {
         .overlay {
             StudioPlayheadLayer(
                 model: model,
-                skim: skim,
                 chapters: chapters,
                 scale: scale,
                 scrollX: scrollX,
