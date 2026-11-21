@@ -800,8 +800,9 @@ nonisolated enum Zoxide {
         case cancelled
     }
 
-    /// Runs zoxide (most-used first, as it prints them) with a wall-clock timeout, output byte cap,
-    /// and cancellation hook so a hanging binary never wedges folder refreshes.
+    /// Runs zoxide (most-used first, as it prints them) with a monotonic deadline, output byte cap,
+    /// and cancellation hook on both the non-blocking pipe read and child exit so neither a hung child
+    /// nor a background descendant holding stdout open can wedge folder refreshes.
     /// `--all` so zoxide never prunes its database or probes protected folders on listing; Finder
     /// resolves the chosen folder when the user explicitly opens it.
     static func fetch(
@@ -820,57 +821,103 @@ nonisolated enum Zoxide {
         do { try process.run() } catch { return .failed }
 
         try? out.fileHandleForWriting.close()
-        let pid = process.processIdentifier
-        let stopReason = OSAllocatedUnfairLock<FetchResult?>(initialState: nil)
-        let deadline = Date().addingTimeInterval(timeout)
-        let sentTerm = OSAllocatedUnfairLock(initialState: false)
-
-        let watchdog = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
-        watchdog.schedule(deadline: .now() + .milliseconds(40), repeating: .milliseconds(40))
-        watchdog.setEventHandler {
-            guard process.isRunning else {
-                watchdog.cancel()
-                return
-            }
-            let reason: FetchResult? = isCancelled() ? .cancelled : (Date() >= deadline ? .failed : nil)
-            guard let reason else { return }
-            stopReason.withLock { if $0 == nil { $0 = reason } }
-            let alreadySentTerm = sentTerm.withLock { flag -> Bool in
-                if flag { return true }
-                flag = true
-                return false
-            }
-            if !alreadySentTerm {
-                process.terminate()
-            } else {
-                kill(pid, SIGKILL)
-                watchdog.cancel()
-            }
-        }
-        watchdog.resume()
-
         let reader = out.fileHandleForReading
+        defer { try? reader.close() }
+
+        let fd = reader.fileDescriptor
+        let currentFlags = fcntl(fd, F_GETFL, 0)
+        if currentFlags >= 0 {
+            _ = fcntl(fd, F_SETFL, currentFlags | O_NONBLOCK)
+        }
+
+        let deadlineNs = monotonicNowNs() &+ UInt64(max(0, timeout) * 1_000_000_000)
         var data = Data()
-        var overflow = false
-        while true {
-            let chunk = reader.availableData
-            if chunk.isEmpty { break }
-            data.append(chunk)
-            if data.count > maxBytes {
-                overflow = true
-                stopReason.withLock { if $0 == nil { $0 = .failed } }
-                kill(pid, SIGKILL)
-                break
+        var buffer = [UInt8](repeating: 0, count: 16_384)
+        var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+
+        readLoop: while true {
+            if isCancelled() {
+                stopProcess(process)
+                return .cancelled
+            }
+            let now = monotonicNowNs()
+            if now >= deadlineNs {
+                stopProcess(process)
+                return .failed
+            }
+            let remainingMs = Int32(min(40, max(1, (deadlineNs - now + 999_999) / 1_000_000)))
+            pfd.revents = 0
+            let ready = poll(&pfd, 1, remainingMs)
+            if ready == 0 { continue }
+            if ready < 0 {
+                if errno == EINTR { continue }
+                stopProcess(process)
+                return .failed
+            }
+            if (pfd.revents & Int16(POLLERR | POLLNVAL)) != 0 {
+                stopProcess(process)
+                return .failed
+            }
+            while true {
+                let n = buffer.withUnsafeMutableBytes { ptr in
+                    read(fd, ptr.baseAddress, ptr.count)
+                }
+                if n > 0 {
+                    data.append(buffer, count: n)
+                    if data.count > maxBytes {
+                        stopProcess(process)
+                        return .failed
+                    }
+                } else if n == 0 {
+                    break readLoop
+                } else if errno == EAGAIN || errno == EWOULDBLOCK {
+                    break
+                } else if errno == EINTR {
+                    continue
+                } else {
+                    stopProcess(process)
+                    return .failed
+                }
             }
         }
-        try? reader.close()
-        process.waitUntilExit()
-        watchdog.cancel()
 
-        if let reason = stopReason.withLock({ $0 }) { return reason }
+        // Wait boundedly for the direct child to finish after stdout EOF.
+        while process.isRunning {
+            if isCancelled() {
+                stopProcess(process)
+                return .cancelled
+            }
+            if monotonicNowNs() >= deadlineNs {
+                stopProcess(process)
+                return .failed
+            }
+            usleep(10_000)
+        }
+        process.waitUntilExit()
         if isCancelled() { return .cancelled }
-        guard !overflow, process.terminationStatus == 0 else { return .failed }
+        guard process.terminationStatus == 0 else { return .failed }
         return .success(parse(String(decoding: data, as: UTF8.self)))
+    }
+
+    private static func monotonicNowNs() -> UInt64 {
+        clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+    }
+
+    private static func stopProcess(_ process: Process) {
+        guard process.isRunning else {
+            process.waitUntilExit()
+            return
+        }
+        let pid = process.processIdentifier
+        process.terminate()
+        let killAt = monotonicNowNs() &+ 60_000_000
+        while process.isRunning, monotonicNowNs() < killAt {
+            usleep(10_000)
+        }
+        if process.isRunning {
+            kill(pid, SIGKILL)
+        }
+        process.waitUntilExit()
     }
 
     static func folders(binary: String, timeout: TimeInterval = 3.0) -> [Folder]? {

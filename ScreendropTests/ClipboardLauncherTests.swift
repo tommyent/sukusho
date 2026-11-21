@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 
@@ -355,6 +356,41 @@ struct ClipboardLauncherZoxideTests {
         // Output exceeding maxBytes is rejected instead of growing unbounded.
         let noisy = stub("noisy", "#!/bin/sh\nhead -c 2048 /dev/zero | tr '\\0' 'a'\n")
         #expect(Zoxide.fetch(binary: noisy, timeout: 2.0, maxBytes: 512) == .failed)
+
+        // Direct child exits immediately while a background descendant keeps stdout open:
+        // pipe read still hits its own monotonic deadline and cancellation instead of wedging.
+        let pidFile1 = dir.appendingPathComponent("descendant1.pid").path
+        let pidFile2 = dir.appendingPathComponent("descendant2.pid").path
+        defer {
+            for pf in [pidFile1, pidFile2] {
+                if let raw = try? String(contentsOfFile: pf, encoding: .utf8),
+                   let pid = pid_t(raw.trimmingCharacters(in: .whitespacesAndNewlines)) {
+                    kill(pid, SIGKILL)
+                }
+            }
+        }
+        let descendantTimeout = stub("descendant-timeout", """
+            #!/bin/sh
+            sleep 30 &
+            echo $! > "\(pidFile1)"
+            exit 0
+            """)
+        let descTimeoutStart = Date()
+        #expect(Zoxide.fetch(binary: descendantTimeout, timeout: 0.2) == .failed)
+        #expect(Date().timeIntervalSince(descTimeoutStart) < 2.0)
+
+        let descendantCancel = stub("descendant-cancel", """
+            #!/bin/sh
+            sleep 30 &
+            echo $! > "\(pidFile2)"
+            exit 0
+            """)
+        let descCancelStart = Date()
+        let descSession = LauncherSession()
+        let descTok = descSession.begin()
+        DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(80)) { descSession.invalidate() }
+        #expect(Zoxide.fetch(binary: descendantCancel, timeout: 5.0, isCancelled: { !descSession.isCurrent(descTok) }) == .cancelled)
+        #expect(Date().timeIntervalSince(descCancelStart) < 2.0)
     }
 
     @Test func entriesSkipAppBundlesWithoutProbingFilesystem() {
