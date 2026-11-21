@@ -104,6 +104,19 @@ struct StudioEditingTests {
         var tooShort = clip2
         tooShort.sourceStart = 9.95
         #expect(twoClips.replacingAndValidating(tooShort, sourceDuration: 10) == nil)
+
+        // Editor-duration parity with playback and export: on 2..8 s at 8x (editor 0.75 s),
+        // deleting editor 0.05..0.75 s leaves 0.40 s of source but only 0.05 s of editor time,
+        // which playback/export cannot render; ripple delete and commit validation both reject it.
+        let fastShort = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 2, sourceEnd: 8, speed: 8)
+        ])
+        #expect(fastShort.removeEditorRange(0.05...0.75) == .leavesShortClip)
+        let unplayableSurvivor = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 2, sourceEnd: 2.4, speed: 8)
+        ])
+        #expect(!unplayableSurvivor.hasPlayableEditorDuration)
+        #expect(unplayableSurvivor.validatedForCommit(sourceDuration: 10) == nil)
     }
 
     @Test func rangeMarkingTracksInOutAndReopensWhenInPassesOut() throws {

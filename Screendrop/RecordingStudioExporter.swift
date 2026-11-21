@@ -194,7 +194,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
         let sourceDuration = try await sourceAsset.load(.duration).seconds
         for region in configuration.redactions { try region.validate(sourceDuration: sourceDuration) }
         let clipTimeline = configuration.clipTimeline.normalized(to: sourceDuration)
-        guard clipTimeline.duration >= RecordingClipSegment.minimumDuration else {
+        guard clipTimeline.hasPlayableEditorDuration else {
             throw VideoTrimExportError.invalidRange
         }
         let isolatedMicrophone = if let url = configuration.isolatedMicrophoneURL {

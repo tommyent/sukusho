@@ -157,6 +157,16 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
         segments.reduce(0) { $0 + $1.editorDuration }
     }
 
+    /// Shared minimum rendered editor duration enforced across ripple delete,
+    /// interactive commits, playback, and export so no committed cut can be
+    /// rejected when played or exported.
+    static let minimumPlayableEditorDuration: TimeInterval = RecordingClipSegment.minimumDuration
+
+    var hasPlayableEditorDuration: Bool {
+        duration.isFinite
+            && duration >= Self.minimumPlayableEditorDuration - RecordingClipSegment.minimumDurationRoundingTolerance
+    }
+
     func normalized(
         to sourceDuration: TimeInterval,
         fallbackToFull: Bool = true
@@ -216,10 +226,12 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
     }
 
     /// Normalizes a proposed interactive edit without falling back to the full
-    /// recording; returns nil when no playable clips would survive commit.
+    /// recording; returns nil when no playable clips would survive commit or
+    /// the resulting cut is shorter than playback/export's minimum editor length.
     func validatedForCommit(sourceDuration: TimeInterval) -> RecordingClipTimeline? {
         let committed = normalized(to: sourceDuration, fallbackToFull: false)
-        return committed.segments.isEmpty ? nil : committed
+        guard !committed.segments.isEmpty, committed.hasPlayableEditorDuration else { return nil }
+        return committed
     }
 
     /// Applies a clip trim and validates commit survival, ensuring a trim can
@@ -558,7 +570,9 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
             }
         }
         guard !next.isEmpty else { return .removesEntireVideo }
-        return .removed(RecordingClipTimeline(segments: next))
+        let candidate = RecordingClipTimeline(segments: next)
+        guard candidate.hasPlayableEditorDuration else { return .leavesShortClip }
+        return .removed(candidate)
     }
 
     /// The cut with a stretch of the edited video taken out, everything

@@ -1161,7 +1161,7 @@ final class RecordingStudioModel {
         if hoverPreviewTime != nil {
             hoverPreviewTime = nil
         }
-        guard duration >= RecordingClipSegment.minimumDuration else {
+        guard clipTimeline.hasPlayableEditorDuration else {
             shuttleRate = 1
             return
         }
