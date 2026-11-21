@@ -633,11 +633,19 @@ nonisolated enum StudioAudioConform {
         for index in order {
             let clip = clips[index]
             guard clip.end - clip.start > epsilon else { continue }
-            var lane = min(max(0, clip.lane), maximumLanes - 1)
-            while lane < maximumLanes - 1, (occupied[lane] ?? []).contains(where: {
-                $0.lowerBound < clip.end - 0.001 && $0.upperBound > clip.start + 0.001
-            }) {
-                lane += 1
+            let preferred = min(max(0, clip.lane), maximumLanes - 1)
+            func isFree(_ candidate: Int) -> Bool {
+                !(occupied[candidate] ?? []).contains(where: {
+                    $0.lowerBound < clip.end - 0.001 && $0.upperBound > clip.start + 0.001
+                })
+            }
+            let lane: Int
+            if let downward = (preferred..<maximumLanes).first(where: isFree) {
+                lane = downward
+            } else if let upward = stride(from: preferred - 1, through: 0, by: -1).first(where: isFree) {
+                lane = upward
+            } else {
+                lane = preferred
             }
             occupied[lane, default: []].append(clip.start...clip.end)
             result[index].lane = lane

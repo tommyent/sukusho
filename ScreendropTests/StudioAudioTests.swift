@@ -877,6 +877,51 @@ struct StudioAudioTests {
         #expect(goertzel(fullSamples, at: 0.3, length: 0.5, frequency: 1200) > 0.15)
     }
 
+    @Test func eighthLaneUsesFreeLaneBeforeStackingAndSub10msOverlapUsesFreshCompositionTrack() async throws {
+        // Fill lanes 0..7 except leave lane 2 free at 3...5 s (anchored elsewhere so compaction keeps 8 lanes).
+        var clips: [RecordingAudioClip] = []
+        for lane in 0..<8 {
+            var anchor = RecordingAudioClip(fileName: "a.wav", displayName: "Anchor\(lane)", start: 0, fileDuration: 1)
+            anchor.lane = lane
+            clips.append(anchor)
+            if lane != 2 {
+                var mid = RecordingAudioClip(fileName: "a.wav", displayName: "Mid\(lane)", start: 3, fileDuration: 2)
+                mid.lane = lane
+                clips.append(mid)
+            }
+        }
+        var dropped = RecordingAudioClip(fileName: "b.wav", displayName: "Dropped", start: 3, fileDuration: 2)
+        dropped.lane = 7
+        clips.append(dropped)
+
+        let resolved = StudioAudioConform.resolvingLanes(clips, last: dropped.id)
+        let placed = try #require(resolved.first { $0.id == dropped.id })
+        // Searches upward and finds free lane 2 instead of stacking on lane 7!
+        #expect(placed.lane == 2)
+
+        // Sub-10 ms overlap (5 ms) allocates a separate composition track instead of pushing clip 2 later.
+        let dir = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let toneURL = try makeTone(in: dir, name: "tone", frequency: 440, amplitude: 0.4, duration: 2.0)
+        var c1 = RecordingAudioClip(fileName: toneURL.lastPathComponent, displayName: "C1", start: 0, fileDuration: 2.0)
+        c1.trimEnd = 1.005
+        var c2 = RecordingAudioClip(fileName: toneURL.lastPathComponent, displayName: "C2", start: 1.0, fileDuration: 2.0)
+        c2.trimEnd = 1.0
+        let timeline = RecordingClipTimeline.full(sourceDuration: 2.5)
+        let sources = try await StudioAudioSources.load(
+            screenAsset: AVURLAsset(url: toneURL),
+            replacementURL: nil,
+            clips: [c1, c2],
+            mediaDirectory: dir
+        )
+        let plan = StudioAudioPlan(timeline: timeline, sync: nil, clips: [c1, c2], volume: 1)
+        let (_, layout) = StudioAudioComposer.makeComposition(plan: plan, sources: sources)
+        let p1 = try #require(layout.placements.first { $0.owner == .clip(c1.id) })
+        let p2 = try #require(layout.placements.first { $0.owner == .clip(c2.id) })
+        #expect(p1.trackID != p2.trackID)
+        #expect(abs(p2.start - 1.0) < 0.002)
+    }
+
     // MARK: - Helpers
 
     private func makeDirectory() throws -> URL {

@@ -683,7 +683,7 @@ nonisolated enum StudioAudioComposer {
                     let key = copy == 0 ? "\(group)#\(index)" : "\(group)#\(index)~\(copy)"
                     if let existing = tracks[key] {
                         let end = existing.timeRange.end
-                        if !end.isValid || (end - wantedStart).seconds < 0.01 { track = existing }
+                        if !end.isValid || end <= wantedStart { track = existing }
                     } else if let added = composition.addMutableTrack(
                         withMediaType: .audio,
                         preferredTrackID: kCMPersistentTrackID_Invalid
