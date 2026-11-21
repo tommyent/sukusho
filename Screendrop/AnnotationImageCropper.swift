@@ -18,35 +18,45 @@ enum AnnotationImageCropper {
     struct Result {
         let url: URL
         let pixelSize: CGSize
-        /// The normalized rect (relative to the original image) that was
-        /// actually used after rounding to integral pixels.
+        /// The exact integral pixel rectangle cropped from the upright source.
+        let pixelRect: CGRect
+        /// The normalized rect (relative to the original image) derived from
+        /// `pixelRect`, so callers can map overlays or animations precisely.
         let normalizedRect: CGRect
     }
 
-    /// Crop the image at `url` to `normalizedRect` (0...1, top-left origin).
-    static func crop(url: URL, normalizedRect: CGRect) -> Result? {
-        guard let image = ScreenshotImageLoader.uprightImage(at: url) else {
-            return nil
-        }
+    /// Crop `image` directly to `pixelRect` (image pixels, top-left origin),
+    /// clamping to the image bounds without a normalized round-trip.
+    nonisolated static func crop(_ image: CGImage, pixelRect requested: CGRect) -> (image: CGImage, pixelRect: CGRect)? {
+        let bounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+        guard bounds.width > 0, bounds.height > 0 else { return nil }
 
-        let width = CGFloat(image.width)
-        let height = CGFloat(image.height)
-        guard width > 0, height > 0 else { return nil }
-
-        let rect = normalizedRect.standardized
-        var pixelRect = CGRect(
-            x: rect.minX * width,
-            y: rect.minY * height,
-            width: rect.width * width,
-            height: rect.height * height
-        ).integral
-        pixelRect = pixelRect.intersection(CGRect(x: 0, y: 0, width: width, height: height))
+        let clipped = requested.standardized.intersection(bounds)
+        guard !clipped.isNull, !clipped.isEmpty else { return nil }
+        let minX = clipped.minX.rounded()
+        let minY = clipped.minY.rounded()
+        let maxX = clipped.maxX.rounded()
+        let maxY = clipped.maxY.rounded()
+        let pixelRect = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+            .intersection(bounds)
 
         guard pixelRect.width >= 1,
               pixelRect.height >= 1,
               let cropped = image.cropping(to: pixelRect) else {
             return nil
         }
+        return (cropped, pixelRect)
+    }
+
+    /// Crop the image at `url` to `pixelRect` (image pixels, top-left origin).
+    static func crop(url: URL, pixelRect requested: CGRect) -> Result? {
+        guard let image = ScreenshotImageLoader.uprightImage(at: url),
+              let (cropped, pixelRect) = crop(image, pixelRect: requested) else {
+            return nil
+        }
+
+        let width = CGFloat(image.width)
+        let height = CGFloat(image.height)
 
         let destinationURL = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("\(SukushoFileNames.prefix)_Crop_\(UUID().uuidString.prefix(8)).png")
@@ -76,6 +86,7 @@ enum AnnotationImageCropper {
         return Result(
             url: destinationURL,
             pixelSize: CGSize(width: pixelRect.width, height: pixelRect.height),
+            pixelRect: pixelRect,
             normalizedRect: usedRect
         )
     }

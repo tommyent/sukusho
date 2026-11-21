@@ -1256,14 +1256,8 @@ extension AnnotationEditorModel {
     func applyCrop() {
         guard isCropping else { return }
 
-        let crop = imageSize.width > 0 && imageSize.height > 0
-            ? CGRect(
-                x: cropPixelRect.minX / imageSize.width,
-                y: cropPixelRect.minY / imageSize.height,
-                width: cropPixelRect.width / imageSize.width,
-                height: cropPixelRect.height / imageSize.height
-            ).intersection(CropGeometry.unit)
-            : .zero
+        let bounds = cropBounds
+        let requested = cropPixelRect.standardized.intersection(bounds)
         // Leaving starts from what is on screen: the whole image, or after a
         // crop, the box it was cut from.
         let shownImageFrame = displayedImageFrame
@@ -1277,10 +1271,10 @@ extension AnnotationEditorModel {
             revealCanvasLeavingCrop(imageAt: revealFrom)
         }
 
-        guard !crop.isEmpty, crop != CropGeometry.unit else { return }
+        guard !requested.isNull, !requested.isEmpty, requested != bounds else { return }
 
         guard let baseURL = baseImageURL,
-              let result = AnnotationImageCropper.crop(url: baseURL, normalizedRect: crop) else {
+              let result = AnnotationImageCropper.crop(url: baseURL, pixelRect: requested) else {
             errorMessage = "Unable to crop the image."
             return
         }
@@ -1291,14 +1285,14 @@ extension AnnotationEditorModel {
             return
         }
 
-        let oldImageSize = imageSize
         let usedCrop = result.normalizedRect
+        let usedPixels = result.pixelRect
         let newImageSize = result.pixelSize
 
-        let offsetX = Double(usedCrop.minX * oldImageSize.width)
-        let offsetY = Double(usedCrop.minY * oldImageSize.height)
-        let scaleX = usedCrop.width > 0 ? Double(newImageSize.width) / Double(usedCrop.width * oldImageSize.width) : 1
-        let scaleY = usedCrop.height > 0 ? Double(newImageSize.height) / Double(usedCrop.height * oldImageSize.height) : 1
+        let offsetX = Double(usedPixels.minX)
+        let offsetY = Double(usedPixels.minY)
+        let scaleX = usedPixels.width > 0 ? Double(newImageSize.width) / Double(usedPixels.width) : 1
+        let scaleY = usedPixels.height > 0 ? Double(newImageSize.height) / Double(usedPixels.height) : 1
         let uniform = (scaleX + scaleY) / 2
 
         let moved = engine.shapes.map { shape -> AnnoShape in

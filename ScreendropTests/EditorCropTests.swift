@@ -1,5 +1,8 @@
 import CoreGraphics
+import Foundation
+import ImageIO
 import Testing
+import UniformTypeIdentifiers
 
 @MainActor
 @Suite
@@ -226,5 +229,68 @@ struct EditorCropTests {
         )
         #expect(bounds.contains(reshaped))
         #expect(abs(reshaped.width / reshaped.height - 16.0 / 9.0) < 0.02)
+    }
+
+    // MARK: - Pixel-exact apply path
+
+    @Test static func applyCrop4KPreservesExactPixelRectWithoutExtraColumn() throws {
+        // On a 3840x2160 image, normalizing (123, 234, 1280, 720) and scaling back
+        // produced x = 122.99999999999999, which outward .integral expanded to 1281x720.
+        let width = 3840
+        let height = 2160
+        let target = CGRect(x: 123, y: 234, width: 1280, height: 720)
+
+        let context = try #require(CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        // Paint the outside red and the exact target box green (Quartz is y-up).
+        context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        context.setFillColor(CGColor(red: 0, green: 1, blue: 0, alpha: 1))
+        context.fill(CGRect(x: target.minX, y: CGFloat(height) - target.maxY, width: target.width, height: target.height))
+        let source = try #require(context.makeImage())
+
+        let direct = try #require(AnnotationImageCropper.crop(source, pixelRect: target))
+        #expect(direct.pixelRect == target)
+        #expect(direct.image.width == 1280 && direct.image.height == 720)
+
+        // Also exercise the file-backed apply path.
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let sourceURL = tempDir.appendingPathComponent("4k.png")
+        let dest = try #require(CGImageDestinationCreateWithURL(sourceURL as CFURL, UTType.png.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(dest, source, nil)
+        #expect(CGImageDestinationFinalize(dest))
+
+        let result = try #require(AnnotationImageCropper.crop(url: sourceURL, pixelRect: target))
+        defer { try? FileManager.default.removeItem(at: result.url) }
+        #expect(result.pixelSize == CGSize(width: 1280, height: 720))
+        #expect(result.pixelRect == target)
+        let cropped = try #require(ScreenshotImageLoader.uprightImage(at: result.url))
+        #expect(cropped.width == 1280 && cropped.height == 720)
+        // Verify no excluded red column leaked onto the left edge of the cropped bitmap.
+        let srgb = try #require(CGColorSpace(name: CGColorSpace.sRGB))
+        var edgePixel = [UInt8](repeating: 0, count: 4)
+        edgePixel.withUnsafeMutableBytes { buffer in
+            if let sample = CGContext(
+                data: buffer.baseAddress,
+                width: 1,
+                height: 1,
+                bitsPerComponent: 8,
+                bytesPerRow: 4,
+                space: srgb,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) {
+                sample.draw(cropped, in: CGRect(x: 0, y: 0, width: 1280, height: 720))
+            }
+        }
+        #expect(edgePixel[0] < 10 && edgePixel[1] > 245)
     }
 }
