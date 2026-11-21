@@ -142,6 +142,7 @@ struct AnnotationEditorWorkspaceBackground: View {
             Rectangle().fill(ground)
             switch style {
             case .dots: WorkspaceDots()
+            case .grid: WorkspaceGrid()
             case .plain:
                 if choice.style == .plain, let rgb = choice.solidRGB, !reduceTransparency && contrast != .increased {
                     Rectangle().fill(ThemeColor.rgb(rgb).color)
@@ -687,6 +688,63 @@ private struct WorkspaceDots: View {
             }
 
             context.fill(path, with: .color(Color.secondary.opacity(0.14)))
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// 18 pt hairline grid with a major line every 5 cells (90 pt), offset by
+/// 9 pt like `WorkspaceDots`.
+private struct WorkspaceGrid: View {
+    @Environment(\.displayScale) private var displayScale
+    private let spacing: CGFloat = 18
+    private let majorEvery = 5
+
+    var body: some View {
+        let scale = max(displayScale, 1)
+        let pixel = 1 / scale
+        let halfPixel = pixel / 2
+        Canvas { context, size in
+            var minor = Path()
+            var major = Path()
+            let offset = spacing / 2
+
+            var column = 0
+            var x = offset
+            while x <= size.width {
+                let snapped = (x * scale).rounded() / scale + halfPixel
+                let start = CGPoint(x: snapped, y: 0)
+                let end = CGPoint(x: snapped, y: size.height)
+                if column.isMultiple(of: majorEvery) {
+                    major.move(to: start)
+                    major.addLine(to: end)
+                } else {
+                    minor.move(to: start)
+                    minor.addLine(to: end)
+                }
+                column += 1
+                x += spacing
+            }
+
+            var row = 0
+            var y = offset
+            while y <= size.height {
+                let snapped = (y * scale).rounded() / scale + halfPixel
+                let start = CGPoint(x: 0, y: snapped)
+                let end = CGPoint(x: size.width, y: snapped)
+                if row.isMultiple(of: majorEvery) {
+                    major.move(to: start)
+                    major.addLine(to: end)
+                } else {
+                    minor.move(to: start)
+                    minor.addLine(to: end)
+                }
+                row += 1
+                y += spacing
+            }
+
+            context.stroke(minor, with: .color(Color.secondary.opacity(0.06)), lineWidth: pixel)
+            context.stroke(major, with: .color(Color.secondary.opacity(0.13)), lineWidth: pixel)
         }
         .allowsHitTesting(false)
     }

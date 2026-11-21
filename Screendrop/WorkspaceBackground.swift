@@ -13,12 +13,13 @@ import ImageIO
 /// These settings apply to the app's windows on screen.
 nonisolated enum WorkspaceBackground {
     enum Style: String, Codable, CaseIterable, Identifiable, Sendable {
-        case dots, plain, wallpaper
+        case dots, grid, plain, wallpaper
 
         var id: Self { self }
         var title: String {
             switch self {
             case .dots: "Dots"
+            case .grid: "Grid"
             case .plain: "Solid Color"
             case .wallpaper: "Picture"
             }
@@ -41,7 +42,7 @@ nonisolated enum WorkspaceBackground {
     private static let sizeStep: CGFloat = 256
 
     /// Reduce Transparency and Increase Contrast get the flat grey instead
-    /// of a photo; Dots and Plain draw as chosen.
+    /// of a photo; Dots, Grid and Plain draw as chosen.
     static func shown(_ style: Style, reduceTransparency: Bool, increaseContrast: Bool) -> Style {
         style == .wallpaper && (reduceTransparency || increaseContrast) ? .plain : style
     }

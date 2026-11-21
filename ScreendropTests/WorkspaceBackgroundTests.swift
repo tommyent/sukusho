@@ -13,7 +13,26 @@ struct WorkspaceBackgroundTests {
         #expect(WorkspaceBackground.shown(.wallpaper, reduceTransparency: true, increaseContrast: false) == .plain)
         #expect(WorkspaceBackground.shown(.wallpaper, reduceTransparency: false, increaseContrast: true) == .plain)
         #expect(WorkspaceBackground.shown(.dots, reduceTransparency: true, increaseContrast: true) == .dots)
-        #expect(WorkspaceBackground.Style.allCases.map(\.title) == ["Dots", "Solid Color", "Picture"])
+        #expect(WorkspaceBackground.shown(.grid, reduceTransparency: true, increaseContrast: true) == .grid)
+        #expect(!BackgroundChoice(style: .grid).needsTextBacking)
+        #expect(WorkspaceBackground.Style.allCases.map(\.title) == ["Dots", "Grid", "Solid Color", "Picture"])
+    }
+
+    @Test func gridStylePersistsAndUnknownStyleFallsBackToDots() throws {
+        let suite = UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        defaults.set("grid", forKey: WorkspaceBackground.styleKey)
+        var prefs = BackgroundPreferences(migrating: defaults)
+        #expect(prefs.editors.day.style == .grid)
+        #expect(try JSONDecoder().decode(BackgroundPreferences.self, from: JSONEncoder().encode(prefs)) == prefs)
+
+        // Simulates an older build or corrupted value: unknown style falls back to Dots without crashing.
+        defaults.set("future-style", forKey: WorkspaceBackground.styleKey)
+        prefs = BackgroundPreferences(migrating: defaults)
+        #expect(prefs.editors.day.style == .dots)
+        #expect(WorkspaceBackground.Style(rawValue: "future-style") == nil)
     }
 
     @Test func scheduleAndDestinationsAreIndependentOfTheme() throws {
