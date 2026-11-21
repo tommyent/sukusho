@@ -496,6 +496,75 @@ nonisolated enum WindowCapturedExecution {
     }
 }
 
+/// Coordinates a background worker waiting for `@MainActor` to close the originating popup.
+/// Prevents a superseded command token or a timed-out wait from closing the popup late.
+nonisolated final class WindowCloseHandshake: Sendable {
+    private enum State {
+        case pending
+        case running
+        case completed(Bool)
+        case expired
+    }
+
+    private let token: UInt64
+    private let gate: WindowOperationGate
+    private let state = OSAllocatedUnfairLock(initialState: State.pending)
+    private let sem = DispatchSemaphore(value: 0)
+
+    init(token: UInt64, gate: WindowOperationGate) {
+        self.token = token
+        self.gate = gate
+    }
+
+    /// Runs on `@MainActor`. Invokes `closePopup` only if the wait has not expired and `token` is still current.
+    @discardableResult
+    func deliverOnMain(closePopup: () -> Bool) -> Bool {
+        let claimed: Bool = state.withLock { s in
+            guard case .pending = s, gate.isCurrent(token) else { return false }
+            s = .running
+            return true
+        }
+        guard claimed else {
+            sem.signal()
+            return false
+        }
+        let closed = closePopup()
+        state.withLock { $0 = .completed(closed) }
+        sem.signal()
+        return closed
+    }
+
+    /// Waits on the background worker up to `timeout` for `deliverOnMain` to complete.
+    /// If the wait times out before main claims the callback, marks it expired so it will never close the popup later.
+    func wait(timeout: TimeInterval) -> Bool {
+        _ = sem.wait(timeout: .now() + timeout)
+        enum Decision { case result(Bool), waitForFinish }
+        let decision: Decision = state.withLock { s in
+            switch s {
+            case .completed(let closed):
+                return .result(closed && gate.isCurrent(token))
+            case .pending:
+                s = .expired
+                return .result(false)
+            case .running:
+                return .waitForFinish
+            case .expired:
+                return .result(false)
+            }
+        }
+        switch decision {
+        case .result(let value):
+            return value
+        case .waitForFinish:
+            _ = sem.wait(timeout: .now() + .seconds(1))
+            return state.withLock { s in
+                if case .completed(let closed) = s { return closed && gate.isCurrent(token) }
+                return false
+            }
+        }
+    }
+}
+
 /// Thread-safe generation and cancellation gate for serialized window operations.
 /// Starting a newer command (`begin()`) or disabling Window Management (`cancelAll()`)
 /// immediately supersedes and wakes any sleeping retry or full-screen wait.

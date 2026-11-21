@@ -206,6 +206,7 @@ final class WindowManager {
                 return
             }
             let token = gate.begin()
+            let gate = self.gate
             axWorker.performCaptured(
                 action,
                 axApp: axApp,
@@ -214,15 +215,14 @@ final class WindowManager {
                 token: token,
                 confirmCloseOnMain: {
                     // Called from the serial AX background queue; main actor never waits on the AX queue.
-                    let sem = DispatchSemaphore(value: 0)
-                    let closedBox = OSAllocatedUnfairLock(initialState: false)
+                    // The handshake checks `token` on main before closing and expires if the wait times out.
+                    let handshake = WindowCloseHandshake(token: token, gate: gate)
                     DispatchQueue.main.async {
-                        let closed = MainActor.assumeIsolated { confirmClose() }
-                        closedBox.withLock { $0 = closed }
-                        sem.signal()
+                        MainActor.assumeIsolated {
+                            _ = handshake.deliverOnMain(closePopup: confirmClose)
+                        }
                     }
-                    _ = sem.wait(timeout: .now() + .seconds(2))
-                    return closedBox.withLock { $0 }
+                    return handshake.wait(timeout: 2.0)
                 },
                 completion: { outcome in
                     Task { @MainActor in

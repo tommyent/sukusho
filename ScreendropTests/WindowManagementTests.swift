@@ -391,6 +391,35 @@ struct WindowManagementTests {
         #expect(!placedAfterCancel)
     }
 
+    @Test func closeHandshakeBlocksSupersededTokenAndExpiredCallbacksFromClosingPopup() {
+        let gate = WindowOperationGate()
+
+        // Case 1: Active token closes popup and returns true to the waiting worker.
+        let tok1 = gate.begin()
+        let hs1 = WindowCloseHandshake(token: tok1, gate: gate)
+        var closed1 = 0
+        #expect(hs1.deliverOnMain { closed1 += 1; return true })
+        #expect(hs1.wait(timeout: 0.1))
+        #expect(closed1 == 1)
+
+        // Case 2: Second Run supersedes the first before main runs -> first callback must NOT close the popup.
+        let tok2 = gate.begin()
+        let hs2 = WindowCloseHandshake(token: tok2, gate: gate)
+        _ = gate.begin() // second Run supersedes tok2
+        var closed2 = 0
+        #expect(!hs2.deliverOnMain { closed2 += 1; return true })
+        #expect(closed2 == 0)
+        #expect(!hs2.wait(timeout: 0.05))
+
+        // Case 3: Worker wait times out before main runs -> callback expires and never closes the popup late.
+        let tok3 = gate.begin()
+        let hs3 = WindowCloseHandshake(token: tok3, gate: gate)
+        #expect(!hs3.wait(timeout: 0.01))
+        var closed3 = 0
+        #expect(!hs3.deliverOnMain { closed3 += 1; return true })
+        #expect(closed3 == 0)
+    }
+
     @Test func operationGateSupersedesAndCancelsWaitingRetriesImmediately() {
         let gate = WindowOperationGate()
         let first = gate.begin()
