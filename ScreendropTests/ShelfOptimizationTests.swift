@@ -201,10 +201,10 @@ import UniformTypeIdentifiers
 
         // From the test Mac: with a row that couldn't be read, Copy and Save must have something to work with.
         // Here one file did come out, so both are on, and only that file is handed over.
-        // Gallery needs two readable images, so one readable + one refused is not eligible.
+        // Gallery needs two readable settled images, so one readable + one refused is not eligible.
         #expect(list.canSave && list.canHandOver)
-        #expect(list.handoverCandidates == [try #require(list.rows[0].result?.url)])
-        #expect(!ShakeShelfFiles.canShareGallery(list.handoverCandidates, workerSupportsGalleries: true))
+        #expect(list.galleryCandidates == [try #require(list.rows[0].result?.url)])
+        #expect(!ShakeShelfFiles.canShareGallery(list.galleryCandidates, workerSupportsGalleries: true))
         let handed = await ShelfOptimization.currentFiles(of: list.rows)
         #expect(handed == [try #require(list.rows[0].result?.url)])
         // A list of nothing but the unreadable file: nothing to save, nothing to hand over, no gallery.
@@ -212,8 +212,19 @@ import UniformTypeIdentifiers
         try await settled(unreadableOnly)
         #expect(unreadableOnly.rows[0].isUnreadable)
         #expect(!unreadableOnly.canSave && !unreadableOnly.canHandOver)
-        #expect(unreadableOnly.handoverCandidates.isEmpty)
-        #expect(!ShakeShelfFiles.canShareGallery(unreadableOnly.handoverCandidates, workerSupportsGalleries: true))
+        #expect(unreadableOnly.galleryCandidates.isEmpty)
+        #expect(!ShakeShelfFiles.canShareGallery(unreadableOnly.galleryCandidates, workerSupportsGalleries: true))
+
+        // Sol 6.2 re-check #3: stopping before the second (unreadable) row is read must not let that
+        // unverified row count toward Gallery eligibility or Gallery hand-over.
+        let stopped = model([readable, refused], .webP, in: folder)
+        stopped.stop()
+        #expect(!stopped.isWorking)
+        #expect(stopped.rows.contains { !$0.isSettled })
+        #expect(stopped.galleryCandidates.count < 2)
+        #expect(!ShakeShelfFiles.canShareGallery(stopped.galleryCandidates, workerSupportsGalleries: true))
+        #expect(await ShelfOptimization.galleryFiles(of: stopped.rows).count < 2)
+        stopped.discard()
         let nothing = await ShelfOptimization.currentFiles(of: unreadableOnly.rows)
         #expect(nothing.isEmpty)
 

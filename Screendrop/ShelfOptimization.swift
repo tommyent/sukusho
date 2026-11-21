@@ -196,11 +196,10 @@ final class ShelfOptimization {
     var canReplace: Bool { !Self.rowsToSave(from: rows, replacing: true).isEmpty }
     /// Copy, Share and Upload have something to take: at least one file Sukusho could read.
     var canHandOver: Bool { rows.contains { !$0.isUnreadable } }
-    /// The URLs currently eligible for Copy, Share, Upload and Gallery: each readable row's result, or
-    /// its original URL when no new file is held. Used to check gallery eligibility once settled;
-    /// actual hand-over re-verifies file identities off the main actor (`currentFiles(of:)`).
-    var handoverCandidates: [URL] {
-        rows.filter { !$0.isUnreadable }.map { $0.result?.url ?? $0.file }
+    /// Settled, readable URLs eligible for Gallery. Unread rows left after Stop are excluded so an
+    /// unverified (possibly unreadable) file cannot enable a gallery that will fail to read.
+    var galleryCandidates: [URL] {
+        rows.filter { $0.isSettled && !$0.isUnreadable }.map { $0.result?.url ?? $0.file }
     }
 
     /// What goes on from the shelf: each file's result, or the file itself where there is none or where the
@@ -208,6 +207,13 @@ final class ShelfOptimization {
     /// sent either. Finding the rest out reads every file, so it is done off the main actor.
     nonisolated static func currentFiles(of rows: [Row]) async -> [URL] {
         await Task.detached { rows.filter { !$0.isUnreadable }.map { $0.currentResult?.url ?? $0.file } }.value
+    }
+
+    /// Settled, readable URLs for a Gallery hand-over, verifying each result against its source off the main actor.
+    nonisolated static func galleryFiles(of rows: [Row]) async -> [URL] {
+        await Task.detached {
+            rows.filter { $0.isSettled && !$0.isUnreadable }.map { $0.currentResult?.url ?? $0.file }
+        }.value
     }
 
     /// The same files again, from the originals, in another format. Not while a choice is being carried

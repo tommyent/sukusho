@@ -402,7 +402,10 @@ final class ShakeToUpload {
                 report(saved.outcomes, replacing: replacing, folder: saved.folder)
                 return
             }
-            guard let done = await stage.finish(holding, { await ShelfOptimization.currentFiles(of: $0) }) else { return }
+            let isGallery: Bool = if case .gallery = finish { true } else { false }
+            guard let done = await stage.finish(holding, {
+                isGallery ? await ShelfOptimization.galleryFiles(of: $0) : await ShelfOptimization.currentFiles(of: $0)
+            }) else { return }
             let files = done.value
             // Nothing Sukusho could read is left to hand over (the buttons are off for that; this is the guard).
             guard !files.isEmpty else {

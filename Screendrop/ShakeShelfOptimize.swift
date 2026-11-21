@@ -61,7 +61,7 @@ struct ShakeShelfHolding: View {
 
     private var offersGallery: Bool {
         offersCloud && !model.isWorking
-            && ShakeShelfFiles.canShareGallery(model.handoverCandidates, workerSupportsGalleries: workerSupportsGalleries)
+            && ShakeShelfFiles.canShareGallery(model.galleryCandidates, workerSupportsGalleries: workerSupportsGalleries)
     }
 
     var body: some View {
