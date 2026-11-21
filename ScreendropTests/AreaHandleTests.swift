@@ -144,6 +144,43 @@ struct AreaPickerGuidesTests {
         #expect(AreaPickerGuides.dirtyRects(from: nil, to: a, in: bounds).count == 2)
         #expect(AreaPickerGuides.dirtyRects(from: a, to: nil, in: bounds).count == 2)
     }
+
+    @Test func sharedDisplaySeamBelongsToOneDisplay() {
+        let left = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let right = CGRect(x: 1440, y: 0, width: 1440, height: 900)
+        let sideBySide = [left, right]
+
+        // Exact vertical seam x = 1440 belongs only to the right display, matching NSMouseInRect.
+        let seam = CGPoint(x: 1440, y: 450)
+        let owner = AreaPickerGuides.owningDisplayIndex(for: seam, in: sideBySide)
+        #expect(owner == 1)
+
+        // Only the owning display gets guides when seeded from the seam.
+        let scale = CGSize(width: 2, height: 2)
+        let seeded = sideBySide.enumerated().map { index, frame -> AreaPickerGuides? in
+            let local = index == owner ? CGPoint(x: seam.x - frame.minX, y: seam.y - frame.minY) : nil
+            return AreaPickerGuides.position(
+                pointer: local,
+                in: CGRect(origin: .zero, size: frame.size),
+                pixelScale: scale,
+                isDragging: false,
+                isAdjusting: false,
+                hasSnap: false
+            )
+        }
+        #expect(seeded[0] == nil)
+        #expect(seeded[1] == AreaPickerGuides(x: 0, y: 450))
+
+        // Just left of the seam belongs to the left display; outer right edge falls back to the right display.
+        #expect(AreaPickerGuides.owningDisplayIndex(for: CGPoint(x: 1439.5, y: 450), in: sideBySide) == 0)
+        #expect(AreaPickerGuides.owningDisplayIndex(for: CGPoint(x: 2880, y: 450), in: sideBySide) == 1)
+        #expect(AreaPickerGuides.owningDisplayIndex(for: CGPoint(x: 3000, y: 450), in: sideBySide) == nil)
+
+        // Exact horizontal seam y = 900 belongs only to the top display.
+        let bottom = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let top = CGRect(x: 0, y: 900, width: 1440, height: 900)
+        #expect(AreaPickerGuides.owningDisplayIndex(for: CGPoint(x: 720, y: 900), in: [bottom, top]) == 1)
+    }
 }
 
 private extension CGRect {

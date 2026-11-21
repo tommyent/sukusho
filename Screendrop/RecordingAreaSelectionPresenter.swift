@@ -190,7 +190,15 @@ final class RecordingAreaSelectionPresenter {
             }
             guard session.generation == generation else { return }
             let mouse = NSEvent.mouseLocation
-            for view in views { view.syncPointer(screenLocation: mouse) }
+            let ownerIndex = AreaPickerGuides.owningDisplayIndex(for: mouse, in: panels.map(\.frame))
+            for (index, panel) in panels.enumerated() {
+                guard let view = panel.contentView as? RecordingAreaSelectionView else { continue }
+                if index == ownerIndex {
+                    view.syncPointer(screenLocation: mouse)
+                } else {
+                    view.clearPointer()
+                }
+            }
             for panel in panels {
                 panel.displayIfNeeded()
                 panel.alphaValue = 1
@@ -778,11 +786,7 @@ private final class RecordingAreaSelectionView: NSView {
     func syncPointer(screenLocation: CGPoint) {
         guard let window else { return }
         let local = convert(window.convertPoint(fromScreen: screenLocation), from: nil)
-        if bounds.minX <= local.x, local.x <= bounds.maxX, bounds.minY <= local.y, local.y <= bounds.maxY {
-            movePointer(to: local)
-        } else {
-            clearPointer()
-        }
+        movePointer(to: local)
     }
 
     func clearPointer() {

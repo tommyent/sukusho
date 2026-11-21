@@ -111,6 +111,18 @@ nonisolated struct AreaPickerGuides: Equatable, Sendable {
         )
     }
 
+    /// Which display owns `point` in global AppKit coordinates, using `ActiveDisplayResolver`'s half-open
+    /// `NSMouseInRect` rule (`min <= coord < max`), so a shared seam belongs to at most one display.
+    /// Falls back to an inclusive outer-edge check only when no display contains `point` half-open.
+    static func owningDisplayIndex(for point: CGPoint, in displayFrames: [CGRect]) -> Int? {
+        if let index = displayFrames.firstIndex(where: { $0.contains(point) }) {
+            return index
+        }
+        return displayFrames.firstIndex(where: {
+            point.x >= $0.minX && point.x <= $0.maxX && point.y >= $0.minY && point.y <= $0.maxY
+        })
+    }
+
     /// Separate vertical and horizontal dirty strips to invalidate when idle guides move from `previous` to `current`.
     /// Empty when the aligned coordinates did not change; never merges perpendicular strips into one bounding box.
     static func dirtyRects(from previous: AreaPickerGuides?, to current: AreaPickerGuides?, in bounds: CGRect) -> [CGRect] {
