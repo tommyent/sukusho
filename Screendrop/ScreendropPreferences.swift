@@ -63,6 +63,7 @@ enum ScreendropPreferences {
     static let libraryInsightsIncludeExistingKey = "libraryInsightsIncludeExisting"
     private static let libraryInsightsSinceKey = "libraryInsightsSince"
     static let clipboardHistoryEnabledKey = "clipboardHistoryEnabled"
+    static let clipboardLauncherEnabledKey = "clipboardLauncherEnabled"
     static let clipboardRetentionDaysKey = "clipboardRetentionDays"
     static let clipboardMaxStorageMBKey = "clipboardMaxStorageMB"
     static let clipboardIgnoredAppsKey = "clipboardIgnoredApps"
@@ -76,6 +77,11 @@ enum ScreendropPreferences {
     /// Clipboard history is off until the user turns it on.
     static var clipboardHistoryEnabled: Bool {
         UserDefaults.standard.bool(forKey: clipboardHistoryEnabledKey)
+    }
+
+    /// Adds Apps and z (zoxide folders) tabs to the clipboard popup, switched with Tab. Off by default.
+    static var clipboardLauncherEnabled: Bool {
+        UserDefaults.standard.bool(forKey: clipboardLauncherEnabledKey)
     }
 
     /// Nil keeps everything. Option A (owner, 2026-11-16): copies age out only through this setting, off by

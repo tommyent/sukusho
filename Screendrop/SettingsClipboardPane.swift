@@ -10,6 +10,7 @@ import UniformTypeIdentifiers
 /// as a section at the foot of Settings › Library, the owner looked for it and didn't find it (2026-11-16).
 struct ClipboardSettingsPane: View {
     @AppStorage(ScreendropPreferences.clipboardHistoryEnabledKey) private var clipboardEnabled = false
+    @AppStorage(ScreendropPreferences.clipboardLauncherEnabledKey) private var clipboardLauncherEnabled = false
     // Option A: copies age out only when the user picks a period; 0 (Forever) keeps everything.
     @AppStorage(ScreendropPreferences.clipboardRetentionDaysKey) private var clipboardRetentionDays = 0
     @State private var confirmingDeleteHistory = false
@@ -40,6 +41,17 @@ struct ClipboardSettingsPane: View {
                     SettingsControlLabel("Shortcut", detail: "\(clipboardShortcut) opens the clipboard popup. Change it in Shortcuts.")
                     Spacer()
                     Button("Change…") { SettingsWindowController.show(tab: .shortcuts) }.controlSize(.small)
+                }
+                SettingsControlLabel(
+                    "Apps and folders in the clipboard panel",
+                    detail: "Press Tab in the clipboard popup to switch between Clipboard and Apps, or type z to jump to a folder."
+                ).control { label in
+                    Toggle(isOn: $clipboardLauncherEnabled) { label }
+                }
+                .toggleStyle(.switch)
+                .onChange(of: clipboardLauncherEnabled) { _, on in
+                    HotkeyManager.shared.reloadHotkeys()
+                    if !on { ClipboardLauncherModel.shared.stopAndClear() }
                 }
                 HStack {
                     SettingsControlLabel("Delete history", detail: "Removes every copy from this Mac but the saved ones. Saved copies and snippets stay.")
