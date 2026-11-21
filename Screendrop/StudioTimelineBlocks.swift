@@ -448,6 +448,23 @@ func studioDrawnSourceSpan(
     return lower...upper
 }
 
+/// How the timeline `+` button presents Text, Pixelate, and Media so the
+/// expanded controls never sit under the centered timecode and playback buttons.
+nonisolated enum StudioAddToolsLayout: Equatable, Sendable {
+    case popover
+    case inlineIcons
+    case inlineLabels
+
+    /// Picks the widest layout that keeps the expanded edit cluster clear of
+    /// the centered playback cluster (`clip pill + history pill + add tools`
+    /// on the left vs half the centered timecode + transport on each side).
+    static func forDockWidth(_ dockWidth: CGFloat) -> Self {
+        if dockWidth >= 1140 { return .inlineLabels }
+        if dockWidth >= 890 { return .inlineIcons }
+        return .popover
+    }
+}
+
 /// How a track turns block edits into model changes.
 struct StudioBlockLaneActions<Item: Identifiable> where Item.ID == UUID {
     let select: (Item) -> Void

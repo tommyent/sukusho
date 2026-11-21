@@ -906,6 +906,15 @@ struct StudioTracksTests {
         #expect(studioAccessiblePercent(decoded.center.y) == "0%")
     }
 
+    @Test func narrowTimelineDockUsesPopoverForExpandedAddTools() {
+        #expect(StudioAddToolsLayout.forDockWidth(640) == .popover)
+        #expect(StudioAddToolsLayout.forDockWidth(720) == .popover)
+        #expect(StudioAddToolsLayout.forDockWidth(889) == .popover)
+        #expect(StudioAddToolsLayout.forDockWidth(890) == .inlineIcons)
+        #expect(StudioAddToolsLayout.forDockWidth(1139) == .inlineIcons)
+        #expect(StudioAddToolsLayout.forDockWidth(1140) == .inlineLabels)
+    }
+
     // MARK: - Source-time placement across cuts and speed ramps
 
     @Test func textAndImageBlocksMapAcrossCutsAndSpeedRamps() {

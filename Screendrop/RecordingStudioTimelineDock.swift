@@ -48,14 +48,15 @@ struct StudioTimelineEditor: View {
     @State private var verticalScrollPosition = ScrollPosition(edge: .top)
     @Namespace private var glass
 
-    /// Below this track width the opened + shows bare glyphs so edit tools
-    /// never run under the transport.
-    private static let addLabelsMinimumWidth: CGFloat = 780
     /// Step per zoom button press / keyboard shortcut.
     private static let zoomStep: Double = 1.6
     /// How close to the viewport edge the playhead may drift before the
     /// lanes scroll to keep it in sight.
     private static let followMargin: CGFloat = 48
+
+    private var addToolsLayout: StudioAddToolsLayout {
+        StudioAddToolsLayout.forDockWidth(viewportWidth + StudioTimelineMetrics.gutterWidth)
+    }
 
     private var scale: StudioTimelineScale {
         StudioTimelineScale(
@@ -658,9 +659,11 @@ struct StudioTimelineEditor: View {
     }
 
     /// One + button that opens into Text, Pixelate/Blur, and Media, then folds
-    /// back once one is picked.
+    /// back once one is picked. Uses a popover when the toolbar is too narrow
+    /// for inline expansion to clear the centered timecode.
     @ViewBuilder
     private var addTools: some View {
+        let usesPopover = addToolsLayout == .popover
         GlassIconButton(
             systemImage: isAddOpen ? "xmark" : "plus",
             help: isAddOpen ? "Close" : "Add Text, Pixelate or Media"
@@ -670,30 +673,50 @@ struct StudioTimelineEditor: View {
         .disabled(!model.isLoaded)
         .motion(.morphQuick, value: isAddOpen)
         .glassEffectID("add", in: glass)
-
-        if isAddOpen {
-            addTool("Text", systemImage: "textformat", help: "Add Text at Playhead") {
-                model.addText(atEditorTime: model.currentTime)
+        .popover(
+            isPresented: Binding(
+                get: { usesPopover && isAddOpen },
+                set: { if !$0 { isAddOpen = false } }
+            ),
+            arrowEdge: .top
+        ) {
+            GlassEffectContainer(spacing: GlassMetrics.containerSpacing) {
+                HStack(spacing: GlassMetrics.gap) {
+                    addToolButtons(labeled: true)
+                }
             }
-            .glassEffectID("text", in: glass)
-
-            addTool("Pixelate", systemImage: "squareshape.split.3x3", help: "Pixelate or Blur Part of the Picture") {
-                model.addRedaction(atEditorTime: model.currentTime, mode: .pixelate)
-            }
-            .glassEffectID("pixelate", in: glass)
-
-            addTool(
-                "Media",
-                systemImage: "photo.badge.plus",
-                help: model.mediaDirectoryURL == nil
-                    ? "Save this recording as a project to add images and GIFs"
-                    : "Add Images or Animated GIFs at Playhead"
-            ) {
-                pickMedia()
-            }
-            .disabled(!model.canImportMedia)
-            .glassEffectID("media", in: glass)
+            .padding(10)
         }
+
+        if isAddOpen, !usesPopover {
+            addToolButtons(labeled: addToolsLayout == .inlineLabels)
+        }
+    }
+
+    @ViewBuilder
+    private func addToolButtons(labeled: Bool) -> some View {
+        addTool("Text", systemImage: "textformat", help: "Add Text at Playhead", labeled: labeled) {
+            model.addText(atEditorTime: model.currentTime)
+        }
+        .glassEffectID("text", in: glass)
+
+        addTool("Pixelate", systemImage: "squareshape.split.3x3", help: "Pixelate or Blur Part of the Picture", labeled: labeled) {
+            model.addRedaction(atEditorTime: model.currentTime, mode: .pixelate)
+        }
+        .glassEffectID("pixelate", in: glass)
+
+        addTool(
+            "Media",
+            systemImage: "photo.badge.plus",
+            help: model.mediaDirectoryURL == nil
+                ? "Save this recording as a project to add images and GIFs"
+                : "Add Images or Animated GIFs at Playhead",
+            labeled: labeled
+        ) {
+            pickMedia()
+        }
+        .disabled(!model.canImportMedia)
+        .glassEffectID("media", in: glass)
     }
 
     @ViewBuilder
@@ -701,6 +724,7 @@ struct StudioTimelineEditor: View {
         _ title: String,
         systemImage: String,
         help: String,
+        labeled: Bool,
         action: @escaping () -> Void
     ) -> some View {
         let run = {
@@ -710,7 +734,7 @@ struct StudioTimelineEditor: View {
                 action()
             }
         }
-        if viewportWidth >= Self.addLabelsMinimumWidth {
+        if labeled {
             GlassCapsuleButton(title: title, systemImage: systemImage, action: run)
                 .help(help)
         } else {
