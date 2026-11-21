@@ -105,6 +105,20 @@ nonisolated final class RecordingAudioExporter: @unchecked Sendable {
         }
     }
 
+    /// Whether audio-only export should include added audio (lanes / music):
+    /// defaults on whenever there is no recorded or replacement speech track,
+    /// so exporting a silent recording with added clips doesn't fail with
+    /// "no audio to export".
+    static func effectiveIncludeExtras(
+        hasPrimaryAudio: Bool,
+        hasBackgroundMusic: Bool,
+        hasAudioClips: Bool,
+        userSelection: Bool
+    ) -> Bool {
+        if !hasPrimaryAudio && (hasAudioClips || hasBackgroundMusic) { return true }
+        return userSelection
+    }
+
     func export(
         _ configuration: Configuration,
         progress: @escaping @Sendable (Double) -> Void

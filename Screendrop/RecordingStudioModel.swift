@@ -4844,10 +4844,29 @@ final class RecordingStudioModel {
 
     // MARK: - Audio only
 
+    /// True when the recording itself or a replacement soundtrack provides audio.
+    var hasPrimaryAudio: Bool {
+        hasRecordedAudio || hasReplacementAudio
+    }
+
     /// True once there is a soundtrack to export or swap - the recording's
     /// own audio, one imported over it, background music, or audio clips.
     var hasAudio: Bool {
-        hasRecordedAudio || hasReplacementAudio || hasBackgroundMusic || !audioClips.isEmpty
+        hasPrimaryAudio || hasBackgroundMusic || !audioClips.isEmpty
+    }
+
+    /// True when clips or background music are the only audio in the project.
+    var audioExportDefaultsToExtras: Bool {
+        !hasPrimaryAudio && (!audioClips.isEmpty || hasBackgroundMusic)
+    }
+
+    var effectiveAudioExportIncludesClips: Bool {
+        RecordingAudioExporter.effectiveIncludeExtras(
+            hasPrimaryAudio: hasPrimaryAudio,
+            hasBackgroundMusic: hasBackgroundMusic,
+            hasAudioClips: !audioClips.isEmpty,
+            userSelection: audioExportIncludesClips
+        )
     }
 
     /// How far the imported soundtrack falls short of (or overruns) the
@@ -4882,6 +4901,7 @@ final class RecordingStudioModel {
             audioExportState = .failed(error.localizedDescription)
             return
         }
+        let includeClips = effectiveAudioExportIncludesClips
         let configuration = RecordingAudioExporter.Configuration(
             screenURL: screenURL,
             clipTimeline: clipTimeline,
@@ -4892,8 +4912,8 @@ final class RecordingStudioModel {
             microphoneTrackID: microphoneTrackID,
             backgroundMusic: backgroundMusicConfiguration(includeAudio: true),
             replacementSync: replacementURL == nil ? nil : replacementAudioSync,
-            audioClips: audioExportIncludesClips ? audioClips : [],
-            mediaDirectory: audioExportIncludesClips ? mediaDirectoryURL : nil
+            audioClips: includeClips ? audioClips : [],
+            mediaDirectory: includeClips ? mediaDirectoryURL : nil
         )
         let suggestedFileName = audioExportSuggestedFileName
         let dockProgressID = DockExportProgressCoordinator.shared.start()

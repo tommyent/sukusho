@@ -1229,50 +1229,55 @@ struct StudioInspector: View {
     /// time, the same way video export asks for its options.
     @ViewBuilder
     private var audioExportButton: some View {
-        switch model.audioExportState {
-        case .idle:
-            InspectorActionButton("Export…", systemImage: "arrow.down.circle") {
-                isAudioExportOptionsPresented = true
-            }
-            .help("Export just the soundtrack of the current cut")
-            .disabled(model.isIsolatingVoice || model.hasUnreadableDraft)
-            .popover(isPresented: $isAudioExportOptionsPresented, arrowEdge: .bottom) {
-                StudioAudioExportOptions(
-                    format: $model.audioExportFormat,
-                    includesAddedAudio: model.audioClips.isEmpty ? nil : $model.audioExportIncludesClips
-                ) {
-                    isAudioExportOptionsPresented = false
-                    model.exportAudio()
+        Group {
+            switch model.audioExportState {
+            case .idle:
+                InspectorActionButton("Export…", systemImage: "arrow.down.circle") {
+                    if model.audioExportDefaultsToExtras { model.audioExportIncludesClips = true }
+                    isAudioExportOptionsPresented = true
+                }
+                .help("Export just the soundtrack of the current cut")
+                .disabled(model.isIsolatingVoice || model.hasUnreadableDraft)
+            case .exporting(let progress):
+                audioExportChrome(help: "Cancel") {
+                    model.cancelAudioExport()
+                } label: {
+                    StudioProgressRing(progress: progress, size: 12)
+                    Text("\(Int((progress * 100).rounded()))%")
+                        .font(.inspectorValue.monospacedDigit())
+                        .contentTransition(.numericText())
+                }
+            case .finished(let url):
+                audioExportChrome(help: "Reveal \(url.lastPathComponent) in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                } label: {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.green)
+                    Text("Reveal")
+                        .font(.inspectorValue)
+                }
+            case .failed(let message):
+                audioExportChrome(help: message) {
+                    if model.audioExportDefaultsToExtras { model.audioExportIncludesClips = true }
+                    isAudioExportOptionsPresented = true
+                } label: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.orange)
+                    Text("Retry")
+                        .font(.inspectorValue)
                 }
             }
-        case .exporting(let progress):
-            audioExportChrome(help: "Cancel") {
-                model.cancelAudioExport()
-            } label: {
-                StudioProgressRing(progress: progress, size: 12)
-                Text("\(Int((progress * 100).rounded()))%")
-                    .font(.inspectorValue.monospacedDigit())
-                    .contentTransition(.numericText())
-            }
-        case .finished(let url):
-            audioExportChrome(help: "Reveal \(url.lastPathComponent) in Finder") {
-                NSWorkspace.shared.activateFileViewerSelecting([url])
-            } label: {
-                Image(systemName: "checkmark.circle.fill")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.green)
-                Text("Reveal")
-                    .font(.inspectorValue)
-            }
-        case .failed(let message):
-            audioExportChrome(help: message) {
+        }
+        .popover(isPresented: $isAudioExportOptionsPresented, arrowEdge: .bottom) {
+            StudioAudioExportOptions(
+                format: $model.audioExportFormat,
+                includesAddedAudio: model.audioClips.isEmpty ? nil : $model.audioExportIncludesClips,
+                requiresAddedAudio: model.audioExportDefaultsToExtras
+            ) {
+                isAudioExportOptionsPresented = false
                 model.exportAudio()
-            } label: {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.orange)
-                Text("Retry")
-                    .font(.inspectorValue)
             }
         }
     }
@@ -1366,6 +1371,7 @@ struct StudioInspector: View {
 private struct StudioAudioExportOptions: View {
     @Binding var format: RecordingAudioFormat
     var includesAddedAudio: Binding<Bool>? = nil
+    var requiresAddedAudio = false
     let onExport: () -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -1392,7 +1398,12 @@ private struct StudioAudioExportOptions: View {
 
             if let includesAddedAudio {
                 InspectorToggleRow("Include audio clips", isOn: includesAddedAudio)
-                    .help("Mix audio lane clips into the exported file")
+                    .disabled(requiresAddedAudio)
+                    .help(
+                        requiresAddedAudio
+                            ? "Audio clips are the only audio in this project"
+                            : "Mix audio lane clips into the exported file"
+                    )
             }
 
             HStack(spacing: 8) {

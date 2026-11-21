@@ -517,6 +517,27 @@ struct StudioAudioTests {
         #expect(!prepared.composition.tracks(withMediaType: .audio).isEmpty)
     }
 
+    @Test func audioOnlyExportDefaultsToIncludingClipsWhenClipsAreOnlyAudio() {
+        #expect(RecordingAudioExporter.effectiveIncludeExtras(
+            hasPrimaryAudio: false,
+            hasBackgroundMusic: false,
+            hasAudioClips: true,
+            userSelection: false
+        ) == true)
+        #expect(RecordingAudioExporter.effectiveIncludeExtras(
+            hasPrimaryAudio: true,
+            hasBackgroundMusic: false,
+            hasAudioClips: true,
+            userSelection: false
+        ) == false)
+        #expect(RecordingAudioExporter.effectiveIncludeExtras(
+            hasPrimaryAudio: true,
+            hasBackgroundMusic: false,
+            hasAudioClips: true,
+            userSelection: true
+        ) == true)
+    }
+
     // MARK: - Helpers
 
     private func makeDirectory() throws -> URL {
