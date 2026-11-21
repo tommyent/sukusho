@@ -50,10 +50,120 @@ struct StudioPlaybackTests {
         #expect(abs(StudioPlayback.frameDuration(nominalFrameRate: 24) - (1.0 / 24)) < 1e-12)
         #expect(abs(StudioPlayback.frameDuration(nominalFrameRate: 120) - (1.0 / 120)) < 1e-12)
         #expect(abs(StudioPlayback.frameDuration(nominalFrameRate: 29.97) - (1.0 / Double(Float(29.97)))) < 1e-12)
+        // Finite positive rates below 1 fps are honored (e.g. timelapses/slides).
+        #expect(abs(StudioPlayback.frameDuration(nominalFrameRate: 0.5) - 2.0) < 1e-12)
 
-        for invalidRate: Float in [0, -30, 0.5, .nan, .infinity, -.infinity] {
+        for invalidRate: Float in [0, -30, .nan, .infinity, -.infinity] {
             #expect(StudioPlayback.frameDuration(nominalFrameRate: invalidRate) == StudioPlayback.defaultFrameDuration)
         }
+    }
+
+    @Test func frameStepTargetsHonorVariableFrameRateClipSpeedAndCuts() {
+        // Variable frame rate recording with samples at 0, 16.7, 25, and 100 ms
+        // and a nominal 30 fps rate: first press lands on 16.7 ms, not 33.3 ms.
+        let vfrSamples: [TimeInterval] = [0.0, 0.0167, 0.025, 0.100]
+        let vfrStepper: (TimeInterval, Bool) -> TimeInterval? = { time, forward in
+            if forward {
+                return vfrSamples.first { $0 > time + 1e-5 }
+            }
+            return vfrSamples.last { $0 < time - 1e-5 }
+        }
+        let vfrTimeline = RecordingClipTimeline.full(sourceDuration: 0.2)
+        let f1 = StudioPlayback.steppedEditorTime(
+            from: 0,
+            frames: 1,
+            timeline: vfrTimeline,
+            frameDuration: 1.0 / 30,
+            duration: vfrTimeline.duration,
+            adjacentSourceSample: vfrStepper
+        )
+        #expect(abs(f1 - 0.0167) < 1e-9)
+        let f2 = StudioPlayback.steppedEditorTime(
+            from: f1,
+            frames: 1,
+            timeline: vfrTimeline,
+            frameDuration: 1.0 / 30,
+            duration: vfrTimeline.duration,
+            adjacentSourceSample: vfrStepper
+        )
+        #expect(abs(f2 - 0.025) < 1e-9)
+        let f3 = StudioPlayback.steppedEditorTime(
+            from: f2,
+            frames: 1,
+            timeline: vfrTimeline,
+            frameDuration: 1.0 / 30,
+            duration: vfrTimeline.duration,
+            adjacentSourceSample: vfrStepper
+        )
+        #expect(abs(f3 - 0.100) < 1e-9)
+        let back = StudioPlayback.steppedEditorTime(
+            from: f3,
+            frames: -1,
+            timeline: vfrTimeline,
+            frameDuration: 1.0 / 30,
+            duration: vfrTimeline.duration,
+            adjacentSourceSample: vfrStepper
+        )
+        #expect(abs(back - 0.025) < 1e-9)
+
+        // 2x clip from a 60 fps recording: one Right press steps by 1/120 editor s (1 source frame).
+        let fastTimeline = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 4, speed: 2)
+        ])
+        let cfr60Stepper: (TimeInterval, Bool) -> TimeInterval? = { time, forward in
+            let index = forward ? Int(floor(time * 60 + 1e-5)) + 1 : Int(ceil(time * 60 - 1e-5)) - 1
+            guard index >= 0, index <= 240 else { return nil }
+            return Double(index) / 60
+        }
+        let fastStepSample = StudioPlayback.steppedEditorTime(
+            from: 1.0,
+            frames: 1,
+            timeline: fastTimeline,
+            frameDuration: 1.0 / 60,
+            duration: fastTimeline.duration,
+            adjacentSourceSample: cfr60Stepper
+        )
+        #expect(abs(fastStepSample - (1.0 + 1.0 / 120)) < 1e-9)
+
+        // Fallback without sample timing still scales by clip speed.
+        let fastStepFallback = StudioPlayback.steppedEditorTime(
+            from: 1.0,
+            frames: 1,
+            timeline: fastTimeline,
+            frameDuration: 1.0 / 60,
+            duration: fastTimeline.duration,
+            adjacentSourceSample: nil
+        )
+        #expect(abs(fastStepFallback - (1.0 + 1.0 / 120)) < 1e-9)
+
+        // Stepping across a cut skips the removed gap cleanly forward and backward.
+        let cutSamples: [TimeInterval] = [0.0, 0.5, 0.9, 2.0, 2.5]
+        let cutStepper: (TimeInterval, Bool) -> TimeInterval? = { time, forward in
+            if forward { return cutSamples.first { $0 > time + 1e-5 } }
+            return cutSamples.last { $0 < time - 1e-5 }
+        }
+        let cutTimeline = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 1.0, speed: 1),
+            RecordingClipSegment(sourceStart: 2.0, sourceEnd: 3.0, speed: 1),
+        ])
+        let acrossCut = StudioPlayback.steppedEditorTime(
+            from: 0.9,
+            frames: 1,
+            timeline: cutTimeline,
+            frameDuration: 0.5,
+            duration: cutTimeline.duration,
+            adjacentSourceSample: cutStepper
+        )
+        #expect(abs(acrossCut - 1.0) < 1e-9)
+        let backAcrossCut = StudioPlayback.steppedEditorTime(
+            from: 1.0,
+            frames: -1,
+            timeline: cutTimeline,
+            frameDuration: 0.5,
+            duration: cutTimeline.duration,
+            adjacentSourceSample: cutStepper
+        )
+        #expect(abs(backAcrossCut - 0.9) < 1e-9)
     }
 
     @Test func frameStepMathAdvancesAndClampsToDuration() {

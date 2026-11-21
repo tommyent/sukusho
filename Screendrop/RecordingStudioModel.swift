@@ -230,8 +230,9 @@ final class RecordingStudioModel {
     private(set) var isPlaying = false
     /// Playback speed and direction for J/K/L shuttling; 1 plays normally.
     private(set) var shuttleRate: Float = 1
-    /// One frame of the recording, for frame stepping.
+    /// One frame of the recording, for approximate frame-step fallback.
     private(set) var frameDuration: TimeInterval = StudioPlayback.defaultFrameDuration
+    private var canUseSampleCursors = false
     /// A short word shown over the picture when a key does something that is
     /// otherwise hard to see ("2×", "◀ 1×").
     private(set) var notice: StudioNotice?
@@ -726,9 +727,14 @@ final class RecordingStudioModel {
             duration = sourceDuration
             if let videoTrack = tracks.first(where: { $0.mediaType == .video }) {
                 screenVideoTrack = videoTrack
-                let (naturalSize, frameRate) = try await videoTrack.load(.naturalSize, .nominalFrameRate)
+                let (naturalSize, frameRate, providesSampleCursors) = try await videoTrack.load(
+                    .naturalSize,
+                    .nominalFrameRate,
+                    .canProvideSampleCursors
+                )
                 guard !isTornDown, !Task.isCancelled else { return }
                 frameDuration = StudioPlayback.frameDuration(nominalFrameRate: frameRate)
+                canUseSampleCursors = providesSampleCursors
                 if naturalSize.width > 0, naturalSize.height > 0 {
                     videoSize = naturalSize
                 }
@@ -1009,6 +1015,7 @@ final class RecordingStudioModel {
         screenAsset?.cancelLoading()
         screenAsset = nil
         screenVideoTrack = nil
+        canUseSampleCursors = false
         isolatedMicrophone = nil
         backgroundMusic = nil
         backgroundMusicSettings = nil
@@ -1144,16 +1151,68 @@ final class RecordingStudioModel {
         StudioPlayback.shuttleTitle(rate)
     }
 
-    /// Moves the paused playhead by whole frames of the recording.
+    /// Moves the paused playhead by whole video frames on the edited timeline.
+    /// Uses native `AVPlayerItem.step(byCount:)` when supported and synchronous,
+    /// otherwise steps to the adjacent video sample via `AVSampleCursor` (or
+    /// the clip-speed-scaled `frameDuration` fallback when sample timing is
+    /// unavailable).
     func stepFrames(_ count: Int) {
-        guard isLoaded, !isRestoringDocument, !isEditingSourceRegion else { return }
+        guard count != 0, isLoaded, !isRestoringDocument, !isEditingSourceRegion else { return }
         pause()
-        seek(to: StudioPlayback.steppedTime(
+        if hoverPreviewTime != nil {
+            hoverPreviewTime = nil
+        }
+        if let item = screenPlayer.currentItem,
+           item.status == .readyToPlay,
+           (count > 0 ? item.canStepForward : item.canStepBackward) {
+            let before = item.currentTime().seconds
+            item.step(byCount: count)
+            let after = item.currentTime().seconds
+            let moved = before.isFinite && after.isFinite
+                && ((count > 0 && after > before + 1e-5) || (count < 0 && after < before - 1e-5))
+            let atBoundary = after.isFinite
+                && ((count > 0 && currentTime >= duration - 1e-4) || (count < 0 && currentTime <= 1e-4))
+            if moved || atBoundary {
+                let clamped = min(max(after, 0), max(duration, 0))
+                currentTime = clamped
+                updateActiveTranscriptWord()
+                moveCameraPlayer(to: clamped)
+                return
+            }
+        }
+        let target = StudioPlayback.steppedEditorTime(
             from: currentTime,
             frames: count,
+            timeline: clipTimeline,
             frameDuration: frameDuration,
-            duration: duration
-        ))
+            duration: duration,
+            adjacentSourceSample: canUseSampleCursors ? { [weak self] sourceTime, forward in
+                self?.sampleCursorStep(from: sourceTime, forward: forward)
+            } : nil
+        )
+        seek(to: target)
+    }
+
+    private func sampleCursorStep(from sourceTime: TimeInterval, forward: Bool) -> TimeInterval? {
+        guard let screenVideoTrack else { return nil }
+        let query = CMTime(seconds: max(0, sourceTime), preferredTimescale: 60_000)
+        guard let cursor = screenVideoTrack.makeSampleCursor(presentationTimeStamp: query) else {
+            return nil
+        }
+        let epsilon: TimeInterval = 1e-5
+        let initial = cursor.presentationTimeStamp.seconds
+        if initial.isFinite {
+            if forward, initial > sourceTime + epsilon { return initial }
+            if !forward, initial < sourceTime - epsilon { return initial }
+        }
+        let delta: Int64 = forward ? 1 : -1
+        while cursor.stepInPresentationOrder(byCount: delta) == delta {
+            let candidate = cursor.presentationTimeStamp.seconds
+            guard candidate.isFinite else { return nil }
+            if forward, candidate > sourceTime + epsilon { return candidate }
+            if !forward, candidate < sourceTime - epsilon { return candidate }
+        }
+        return nil
     }
 
     /// Shows a word over the picture for a moment.
@@ -1182,17 +1241,20 @@ final class RecordingStudioModel {
     /// real playhead position afterward.
     private func movePlayers(to time: TimeInterval) {
         let editorTime = min(max(time, 0), max(duration, 0))
-        let sourceTime = clipTimeline.sourceTime(at: editorTime)
         let target = CMTime(seconds: editorTime, preferredTimescale: 600)
         screenPlayer.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
-        if hasCameraVideo {
-            if sourceTime >= cameraOffset {
-                let cameraTime = CMTime(seconds: max(0, sourceTime - cameraOffset), preferredTimescale: 600)
-                cameraPlayer.seek(to: cameraTime, toleranceBefore: .zero, toleranceAfter: .zero)
-            } else {
-                cameraPlayer.pause()
-                cameraPlayer.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
-            }
+        moveCameraPlayer(to: editorTime)
+    }
+
+    private func moveCameraPlayer(to editorTime: TimeInterval) {
+        guard hasCameraVideo else { return }
+        let sourceTime = clipTimeline.sourceTime(at: editorTime)
+        if sourceTime >= cameraOffset {
+            let cameraTime = CMTime(seconds: max(0, sourceTime - cameraOffset), preferredTimescale: 600)
+            cameraPlayer.seek(to: cameraTime, toleranceBefore: .zero, toleranceAfter: .zero)
+        } else {
+            cameraPlayer.pause()
+            cameraPlayer.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
         }
     }
 
