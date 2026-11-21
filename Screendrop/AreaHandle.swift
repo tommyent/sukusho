@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 
 /// The eight handles of an area being adjusted: four corners and four edges.
 nonisolated enum AreaHandle: CaseIterable, Sendable {
@@ -111,11 +112,11 @@ nonisolated struct AreaPickerGuides: Equatable, Sendable {
         )
     }
 
-    /// Which display owns `point` in global AppKit coordinates, using `ActiveDisplayResolver`'s half-open
-    /// `NSMouseInRect` rule (`min <= coord < max`), so a shared seam belongs to at most one display.
-    /// Falls back to an inclusive outer-edge check only when no display contains `point` half-open.
+    /// Which display owns `point` in global AppKit coordinates, using `ActiveDisplayResolver`'s nonflipped
+    /// `NSMouseInRect` rule (`minX <= x < maxX`, `minY < y <= maxY`), so a shared seam belongs to at most one display.
+    /// Falls back to an inclusive outer-edge check only when no display matches `NSMouseInRect`.
     static func owningDisplayIndex(for point: CGPoint, in displayFrames: [CGRect]) -> Int? {
-        if let index = displayFrames.firstIndex(where: { $0.contains(point) }) {
+        if let index = displayFrames.firstIndex(where: { NSMouseInRect(point, $0, false) }) {
             return index
         }
         return displayFrames.firstIndex(where: {

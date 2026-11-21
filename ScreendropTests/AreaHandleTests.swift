@@ -185,10 +185,13 @@ struct AreaPickerGuidesTests {
         #expect(AreaPickerGuides.owningDisplayIndex(for: CGPoint(x: 2880, y: 450), in: sideBySide) == 1)
         #expect(AreaPickerGuides.owningDisplayIndex(for: CGPoint(x: 3000, y: 450), in: sideBySide) == nil)
 
-        // Exact horizontal seam y = 900 belongs only to the top display.
+        // Exact horizontal seam y = 900 belongs only to the lower display, matching nonflipped NSMouseInRect.
         let bottom = CGRect(x: 0, y: 0, width: 1440, height: 900)
         let top = CGRect(x: 0, y: 900, width: 1440, height: 900)
-        #expect(AreaPickerGuides.owningDisplayIndex(for: CGPoint(x: 720, y: 900), in: [bottom, top]) == 1)
+        #expect(AreaPickerGuides.owningDisplayIndex(for: CGPoint(x: 720, y: 900), in: [bottom, top]) == 0)
+        #expect(AreaPickerGuides.owningDisplayIndex(for: CGPoint(x: 720, y: 900), in: [top, bottom]) == 1)
+        #expect(AreaPickerGuides.owningDisplayIndex(for: CGPoint(x: 720, y: 900.5), in: [bottom, top]) == 1)
+        #expect(AreaPickerGuides.owningDisplayIndex(for: CGPoint(x: 720, y: 0), in: [bottom, top]) == 0)
     }
 }
 
