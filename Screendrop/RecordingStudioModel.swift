@@ -1668,7 +1668,7 @@ final class RecordingStudioModel {
     }
 
     var hasDeletableTimelineSelection: Bool {
-        selectedCueID != nil || canDeleteSelectedClip
+        selectedAudioClipID != nil || selectedCueID != nil || canDeleteSelectedClip
     }
 
     var canMoveSelectedClipEarlier: Bool {
@@ -1703,21 +1703,23 @@ final class RecordingStudioModel {
     }
 
     /// Static editor times a trimmed video edge can catch on: markers, recorded
-    /// clicks (and audio clip edges once wired). The clip strip adds its own
-    /// `playheadTime` during a drag so reading this never pulls the timeline
-    /// dock into the 20 ms playback tick.
+    /// clicks, and audio clip edges. The clip strip adds its own `playheadTime`
+    /// during a drag so reading this never pulls the timeline dock into the
+    /// 20 ms playback tick.
     var clipSnapPoints: [TimeInterval] {
         StudioEditing.clipSnapPoints(
             markers: markerEditorTimes.map(\.time),
-            recordedClicks: visibleRecordedPressTimes
+            recordedClicks: visibleRecordedPressTimes,
+            audioClipEdges: audioClips.flatMap { [$0.start, $0.end] }
         )
     }
 
-    /// Every moment worth stopping at with ↑/↓: video cuts and markers.
+    /// Every moment worth stopping at with ↑/↓: video cuts, markers, and audio edges.
     var editPoints: [TimeInterval] {
         StudioEditing.editPoints(
             timeline: clipTimeline,
             markerTimes: markerEditorTimes.map(\.time),
+            audioClipEdges: audioClips.flatMap { [$0.start, $0.end] },
             duration: duration
         )
     }

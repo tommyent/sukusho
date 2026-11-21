@@ -196,7 +196,9 @@ struct StudioKeyCommands: NSViewRepresentable {
                     model.splitClip(at: hover)
                 }
             case .deleteSelection:
-                if let selectedCueID = model.selectedCueID {
+                if let audioID = model.selectedAudioClipID {
+                    model.removeAudioClip(id: audioID)
+                } else if let selectedCueID = model.selectedCueID {
                     model.removeZoomCue(id: selectedCueID)
                 } else if model.canDeleteSelectedClip {
                     model.deleteSelectedClip()

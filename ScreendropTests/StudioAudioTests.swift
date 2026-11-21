@@ -1478,6 +1478,161 @@ struct StudioAudioTests {
         #expect(abs(finalAfter.fadeIn - 0.45) < 0.001)
     }
 
+    @Test func rippleDeleteConformsLinkedAndUnlinkedAudioClips() throws {
+        // 1. Single 10 s clip with linked audio (0...10 s) and unlinked audio anchored at 6 s.
+        let full = RecordingClipTimeline.full(sourceDuration: 10)
+        var linked = RecordingAudioClip(fileName: "voice.wav", displayName: "Voice", start: 0, fileDuration: 10)
+        linked.isLinked = true
+        linked.fadeIn = 0.25
+        linked.fadeOut = 0.35
+        linked.lane = 0
+
+        var music = RecordingAudioClip(fileName: "music.wav", displayName: "Music", start: 6.0, fileDuration: 2.0)
+        music.isLinked = false
+        music.lane = 1
+
+        // Plain video split via RecordingClipTimeline.split(at:) keeps the leading segment ID
+        // and must NOT store phantom hidden ranges for the still-visible trailing half.
+        let splitAt5 = try #require(full.split(at: 5)).timeline
+        let conformedSplit = StudioAudioConform.conform([linked], hidden: [], from: full, to: splitAt5)
+        #expect(conformedSplit.clips.count == 1)
+        #expect(conformedSplit.hidden.isEmpty)
+
+        // Ripple-delete editor range 2...4 s: removes source 2...4 s, closing up 4...10 s to editor 2...8 s.
+        let afterRipple = try #require(full.removingEditorRange(2.0...4.0))
+        let conformed = StudioAudioConform.conform([linked, music], hidden: [], from: full, to: afterRipple)
+        let linkedPieces = conformed.clips.filter(\.isLinked).sorted { $0.start < $1.start }
+        #expect(linkedPieces.count == 2)
+        #expect(abs(linkedPieces[0].start - 0) < 0.001 && abs(linkedPieces[0].end - 2) < 0.001)
+        #expect(abs(linkedPieces[0].trimStart - 0) < 0.001 && abs(linkedPieces[0].trimEnd - 2) < 0.001)
+        #expect(abs(linkedPieces[0].fadeIn - 0.25) < 0.001 && linkedPieces[0].fadeOut == 0)
+        #expect(abs(linkedPieces[1].start - 2) < 0.001 && abs(linkedPieces[1].end - 8) < 0.001)
+        #expect(abs(linkedPieces[1].trimStart - 4) < 0.001 && abs(linkedPieces[1].trimEnd - 10) < 0.001)
+        #expect(linkedPieces[1].fadeIn == 0 && abs(linkedPieces[1].fadeOut - 0.35) < 0.001)
+        // Hidden ranges record ONLY the removed 2...4 s gap (never the surviving 4...10 s).
+        #expect(conformed.hidden.count == 1)
+        #expect(abs(conformed.hidden[0].sourceStart - 2) < 0.001 && abs(conformed.hidden[0].sourceEnd - 4) < 0.001)
+
+        // Unlinked clip stays whole (2 s) and shifts with its anchored footage moment (6 s -> 4 s).
+        let unlinked = try #require(conformed.clips.first { !$0.isLinked })
+        #expect(abs(unlinked.start - 4.0) < 0.001)
+        #expect(abs(unlinked.duration - 2.0) < 0.001)
+
+        // 2. Ripple-delete across a speed boundary (0...4 @ 1x + 4...10 @ 2x -> editor 0...7 s).
+        let segA = RecordingClipSegment(sourceStart: 0, sourceEnd: 4, speed: 1)
+        let segB = RecordingClipSegment(sourceStart: 4, sourceEnd: 10, speed: 2)
+        let mixed = RecordingClipTimeline(segments: [segA, segB])
+        var fastLinkedA = RecordingAudioClip(fileName: "narration.wav", displayName: "Narration", start: 0, fileDuration: 10)
+        fastLinkedA.isLinked = true
+        fastLinkedA.trimStart = 0
+        fastLinkedA.trimEnd = 4
+        var fastLinkedB = RecordingAudioClip(fileName: "narration.wav", displayName: "Narration", start: 4, fileDuration: 10)
+        fastLinkedB.isLinked = true
+        fastLinkedB.trimStart = 4
+        fastLinkedB.trimEnd = 10
+        fastLinkedB.speed = 2
+
+        let mixedAfterRipple = try #require(mixed.removingEditorRange(2.5...5.5))
+        let mixedConformed = StudioAudioConform.conform([fastLinkedA, fastLinkedB], hidden: [], from: mixed, to: mixedAfterRipple)
+        let mixedPieces = mixedConformed.clips.sorted { $0.start < $1.start }
+        #expect(mixedPieces.count == 2)
+        #expect(abs(mixedPieces[0].start - 0) < 0.001 && abs(mixedPieces[0].end - 2.5) < 0.001)
+        #expect(abs(mixedPieces[0].trimStart - 0) < 0.001 && abs(mixedPieces[0].trimEnd - 2.5) < 0.001)
+        #expect(abs(mixedPieces[0].speed - 1) < 0.001)
+        // Editor 5.5...7.0 in 2x segB corresponds to source 7...10 s, now at editor 2.5...4.0 s @ 2x.
+        #expect(abs(mixedPieces[1].start - 2.5) < 0.001 && abs(mixedPieces[1].end - 4.0) < 0.001)
+        #expect(abs(mixedPieces[1].trimStart - 7.0) < 0.001 && abs(mixedPieces[1].trimEnd - 10.0) < 0.001)
+        #expect(abs(mixedPieces[1].speed - 2) < 0.001)
+    }
+
+    @Test func clipReorderConformsLinkedAndUnlinkedAudioAndPlaysInNewOrder() async throws {
+        let dir = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // Build a 4 s two-tone WAV: 440 Hz in 0...2 s, 880 Hz in 2...4 s.
+        let sampleRate = 48_000.0
+        let audioURL = dir.appendingPathComponent("two-tone.wav")
+        let format = try #require(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))
+        let totalFrames = Int((4.0 * sampleRate).rounded())
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(totalFrames)))
+        buffer.frameLength = AVAudioFrameCount(totalFrames)
+        let samplesPtr = buffer.floatChannelData![0]
+        for frame in 0..<totalFrames {
+            let t = Double(frame) / sampleRate
+            let freq = t < 2.0 ? 440.0 : 880.0
+            samplesPtr[frame] = 0.5 * Float(sin(2 * .pi * freq * t))
+        }
+        let wav = try AVAudioFile(forWriting: audioURL, settings: format.settings)
+        try wav.write(from: buffer)
+        wav.close()
+
+        let full = RecordingClipTimeline.full(sourceDuration: 4)
+        let split = try #require(full.split(at: 2.0)).timeline
+        let segB = split.segments[1]
+
+        var linked = RecordingAudioClip(fileName: "two-tone.wav", displayName: "Two Tone", start: 0, fileDuration: 4)
+        linked.isLinked = true
+        linked.fadeIn = 0.15
+        linked.fadeOut = 0.25
+        linked.lane = 0
+
+        var unlinked = RecordingAudioClip(fileName: "two-tone.wav", displayName: "Stinger", start: 2.5, fileDuration: 0.8)
+        unlinked.isLinked = false
+        unlinked.lane = 1
+
+        // Reorder segB (2...4 s) ahead of segA (0...2 s) via RecordingClipTimeline.moving(segmentID:to:).
+        let reordered = try #require(split.moving(segmentID: segB.id, to: 0))
+        let conformed = StudioAudioConform.conform([linked, unlinked], hidden: [], from: split, to: reordered)
+        #expect(conformed.hidden.isEmpty)
+
+        let linkedPieces = conformed.clips.filter(\.isLinked).sorted { $0.start < $1.start }
+        #expect(linkedPieces.count == 2)
+        // First on the reordered timeline (editor 0...2 s) is segB's 2...4 s slice (880 Hz).
+        #expect(linkedPieces[0].lane == 0)
+        #expect(abs(linkedPieces[0].start - 0) < 0.001 && abs(linkedPieces[0].end - 2) < 0.001)
+        #expect(abs(linkedPieces[0].trimStart - 2) < 0.001 && abs(linkedPieces[0].trimEnd - 4) < 0.001)
+        #expect(linkedPieces[0].fadeIn == 0 && abs(linkedPieces[0].fadeOut - 0.25) < 0.001)
+        // Second (editor 2...4 s) is segA's 0...2 s slice (440 Hz).
+        #expect(linkedPieces[1].lane == 0)
+        #expect(abs(linkedPieces[1].start - 2) < 0.001 && abs(linkedPieces[1].end - 4) < 0.001)
+        #expect(abs(linkedPieces[1].trimStart - 0) < 0.001 && abs(linkedPieces[1].trimEnd - 2) < 0.001)
+        #expect(abs(linkedPieces[1].fadeIn - 0.15) < 0.001 && linkedPieces[1].fadeOut == 0)
+
+        // Unlinked clip anchored at source 2.5 s (0.5 s into segB) moves to editor 0.5 s.
+        let movedUnlinked = try #require(conformed.clips.first { !$0.isLinked })
+        #expect(abs(movedUnlinked.start - 0.5) < 0.001)
+        #expect(abs(movedUnlinked.duration - 0.8) < 0.001)
+
+        // Audio clip edges surface in both clipSnapPoints and editPoints.
+        let edges = linkedPieces.flatMap { [$0.start, $0.end] }
+        let snapPoints = StudioEditing.clipSnapPoints(markers: [], recordedClicks: [], audioClipEdges: edges)
+        #expect(snapPoints.contains { abs($0 - 2.0) < 0.001 })
+        let editPoints = StudioEditing.editPoints(timeline: reordered, markerTimes: [], audioClipEdges: [movedUnlinked.start, movedUnlinked.end], duration: reordered.duration)
+        #expect(editPoints.contains { abs($0 - 0.5) < 0.001 })
+        #expect(editPoints.contains { abs($0 - 1.3) < 0.001 })
+
+        // Verify actual rendered mix plays 880 Hz first (0.5...1.5 s) and 440 Hz second (2.5...3.5 s).
+        let silentScreen = try makeTone(in: dir, name: "screen-silent", frequency: 100, amplitude: 0, duration: 4.0)
+        let built = try await StudioAudioComposer.prepareExport(
+            screenAsset: AVURLAsset(url: silentScreen),
+            screenURL: silentScreen,
+            timeline: reordered,
+            replacementURL: nil,
+            replacementSync: nil,
+            clips: linkedPieces,
+            mediaDirectory: dir,
+            volume: 0,
+            microphoneTrackID: nil,
+            isolatedMicrophoneURL: nil,
+            backgroundMusic: nil
+        )
+        let rendered = try await renderMonoSamples(asset: built.composition, mix: built.mix, duration: 4.0)
+        #expect(goertzel(rendered, at: 0.5, length: 0.5, frequency: 880) > 0.25)
+        #expect(goertzel(rendered, at: 0.5, length: 0.5, frequency: 440) < 0.05)
+        #expect(goertzel(rendered, at: 2.5, length: 0.5, frequency: 440) > 0.25)
+        #expect(goertzel(rendered, at: 2.5, length: 0.5, frequency: 880) < 0.05)
+    }
+
     // MARK: - Helpers
 
     private func makeDirectory() throws -> URL {

@@ -220,6 +220,12 @@ nonisolated enum StudioAudioConform {
     ) -> (clips: [RecordingAudioClip], hidden: [HiddenLinkedRange]) {
         guard old != new else { return (clips, hidden) }
         let newSegmentsByID = Dictionary(new.segments.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        // Source ranges still visible in `new` (for example the trailing half of
+        // a split or ripple delete) are not hidden and must not be stored on the
+        // leading survivor segment.
+        let coveredInNew = RecordingClipTimeline.mergedRanges(
+            new.segments.map { $0.sourceStart...$0.sourceEnd }
+        )
 
         // Capture linked slices hidden by inward boundary trims on surviving segments.
         var capturedHidden: [HiddenLinkedRange] = hidden.filter { newSegmentsByID[$0.segmentID] != nil }
@@ -238,30 +244,43 @@ nonisolated enum StudioAudioConform {
                 let fileLow = clip.trimStart + (low - clip.start) * clipSpeed
                 let filePerSource = clipSpeed / oldSeg.speed
 
-                func storeHidden(from s0: TimeInterval, to s1: TimeInterval) {
-                    guard s1 - s0 > epsilon else { return }
-                    let f0 = fileLow + (s0 - sourceLow) * filePerSource
-                    let f1 = min(clip.trimEnd, fileLow + (s1 - sourceLow) * filePerSource)
-                    guard f1 - f0 >= RecordingAudioClip.minimumFileSpan else { return }
-                    var template = clip
-                    template.originID = clip.lineageID
-                    template.trimStart = f0
-                    template.trimEnd = f1
-                    if abs(f0 - clip.trimStart) > 0.002 {
-                        template.fadeIn = 0
-                        template.keepsLeadingSplit = false
+                func storeHidden(from rawStart: TimeInterval, to rawEnd: TimeInterval) {
+                    guard rawEnd - rawStart > epsilon else { return }
+                    var cursor = rawStart
+                    var missing: [(TimeInterval, TimeInterval)] = []
+                    for covered in coveredInNew where covered.upperBound > rawStart && covered.lowerBound < rawEnd {
+                        if covered.lowerBound > cursor + epsilon {
+                            missing.append((cursor, min(covered.lowerBound, rawEnd)))
+                        }
+                        cursor = max(cursor, covered.upperBound)
                     }
-                    if abs(f1 - clip.trimEnd) > 0.002 {
-                        template.fadeOut = 0
-                        template.keepsTrailingSplit = false
+                    if rawEnd > cursor + epsilon {
+                        missing.append((cursor, rawEnd))
                     }
-                    capturedHidden.append(HiddenLinkedRange(
-                        segmentID: oldSeg.id,
-                        sourceStart: s0,
-                        sourceEnd: s1,
-                        filePerSource: filePerSource,
-                        clip: template
-                    ))
+                    for (s0, s1) in missing {
+                        let f0 = fileLow + (s0 - sourceLow) * filePerSource
+                        let f1 = min(clip.trimEnd, fileLow + (s1 - sourceLow) * filePerSource)
+                        guard f1 - f0 >= RecordingAudioClip.minimumFileSpan else { continue }
+                        var template = clip
+                        template.originID = clip.lineageID
+                        template.trimStart = f0
+                        template.trimEnd = f1
+                        if abs(f0 - clip.trimStart) > 0.002 {
+                            template.fadeIn = 0
+                            template.keepsLeadingSplit = false
+                        }
+                        if abs(f1 - clip.trimEnd) > 0.002 {
+                            template.fadeOut = 0
+                            template.keepsTrailingSplit = false
+                        }
+                        capturedHidden.append(HiddenLinkedRange(
+                            segmentID: oldSeg.id,
+                            sourceStart: s0,
+                            sourceEnd: s1,
+                            filePerSource: filePerSource,
+                            clip: template
+                        ))
+                    }
                 }
 
                 if newSeg.sourceStart > sourceLow + epsilon {
