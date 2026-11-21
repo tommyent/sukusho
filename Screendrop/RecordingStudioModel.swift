@@ -4041,12 +4041,6 @@ final class RecordingStudioModel {
         }
     }
 
-    func updateText(_ overlay: RecordingTextOverlay, actionName: String) {
-        beginTextEdit()
-        setText(overlay)
-        endTextEdit(actionName: actionName)
-    }
-
     private func replaceTexts(_ texts: [RecordingTextOverlay]) {
         textOverlays = texts
         scheduleProjectSave()

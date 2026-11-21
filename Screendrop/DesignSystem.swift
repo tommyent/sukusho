@@ -49,8 +49,6 @@ enum Palette {
     static let highlight = Color.accentColor
     /// Text on the timeline, apart from the cues that move the camera.
     static let textCue = Color(nsColor: .systemPurple)
-    /// Camera layout cues on the timeline.
-    static let layoutCue = Color(nsColor: .systemYellow)
     /// Recording, and actions that remove something.
     static let record = Color(nsColor: .systemRed)
     static let success = Color(nsColor: .systemGreen)

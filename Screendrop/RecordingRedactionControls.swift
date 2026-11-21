@@ -45,47 +45,10 @@ struct RecordingRedactionControls: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("\(region.mode.title), source seconds \(region.start) to \(region.end)")
             }
-            if let region = model.selectedRedaction {
-                Picker("Effect", selection: Binding(get: { region.mode }, set: {
-                    var next = region; next.mode = $0; model.updateRedaction(next)
-                })) {
-                    ForEach(RecordingRedaction.Mode.allCases, id: \.self) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                timeField("Start", keyPath: \.start)
-                timeField("End", keyPath: \.end)
-                InspectorSlider("Strength", value: Binding(
-                    get: { CGFloat(region.strength) },
-                    set: { var next = region; next.strength = Double($0); model.updateRedaction(next) }
-                ), range: 0.35...1, format: .percent())
-                InspectorActionButton("Remove", systemImage: "trash", role: .destructive) { model.removeRedaction(region.id) }
-            }
             if let error = model.redactionEditError { InspectorHint(error, tint: .orange) }
             InspectorHint("Times use the original recording. The original stays in the package; previews and exports are redacted. Camera, audio and captions are unchanged.")
         }
         .disabled(!model.isLoaded || model.hasRunningWork)
-    }
-
-    private func timeField(_ label: String, keyPath: WritableKeyPath<RecordingRedaction, Double>) -> some View {
-        HStack {
-            Text(label)
-            TextField(label, value: Binding(
-                get: { model.selectedRedaction?[keyPath: keyPath] ?? 0 },
-                set: { value in
-                    guard var region = model.selectedRedaction else { return }
-                    region[keyPath: keyPath] = value
-                    model.updateRedaction(region)
-                }
-            ), format: .number.precision(.fractionLength(2)))
-            .textFieldStyle(.roundedBorder)
-            .accessibilityLabel("\(label) in source seconds")
-            Button("Use Playhead") {
-                guard var region = model.selectedRedaction else { return }
-                region[keyPath: keyPath] = model.sourceTime(atEditorTime: model.currentTime)
-                model.updateRedaction(region)
-            }
-            .help("Set redaction \(label.lowercased()) to the playhead")
-        }
     }
 
     private func geometryField(_ label: String, keyPath: WritableKeyPath<CGRect, CGFloat>) -> some View {
