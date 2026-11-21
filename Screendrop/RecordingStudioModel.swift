@@ -228,6 +228,14 @@ final class RecordingStudioModel {
     let timelineThumbnails = RecordingTimelineThumbnailStore()
 
     private(set) var isPlaying = false
+    /// Playback speed and direction for J/K/L shuttling; 1 plays normally.
+    private(set) var shuttleRate: Float = 1
+    /// One frame of the recording, for frame stepping.
+    private(set) var frameDuration: TimeInterval = StudioPlayback.defaultFrameDuration
+    /// A short word shown over the picture when a key does something that is
+    /// otherwise hard to see ("2×", "◀ 1×").
+    private(set) var notice: StudioNotice?
+    private var noticeTask: Task<Void, Never>?
     var currentTime: TimeInterval = 0
     /// Live scrub-preview time while the pointer hovers the trim strip
     /// without committing to a new playhead position, matching Final
@@ -718,8 +726,9 @@ final class RecordingStudioModel {
             duration = sourceDuration
             if let videoTrack = tracks.first(where: { $0.mediaType == .video }) {
                 screenVideoTrack = videoTrack
-                let naturalSize = try await videoTrack.load(.naturalSize)
+                let (naturalSize, frameRate) = try await videoTrack.load(.naturalSize, .nominalFrameRate)
                 guard !isTornDown, !Task.isCancelled else { return }
+                frameDuration = StudioPlayback.frameDuration(nominalFrameRate: frameRate)
                 if naturalSize.width > 0, naturalSize.height > 0 {
                     videoSize = naturalSize
                 }
@@ -975,6 +984,9 @@ final class RecordingStudioModel {
         transcriptionTask?.cancel()
         projectSaveTask?.cancel()
         autosaveTask?.cancel()
+        noticeTask?.cancel()
+        noticeTask = nil
+        notice = nil
         if let session, !StudioProjectRegistry.shared.hasLoadedEditor(for: sessionURL) { removeUnusedReplacementAudio(in: session) }
         exportTask = nil
         audioExportTask = nil
@@ -1058,24 +1070,101 @@ final class RecordingStudioModel {
     }
 
     func play() {
-        guard !isRestoringDocument, !isPlaying, !isEditingSourceRegion, !isPreparingRedactionPreview, redactionPreviewError == nil else { return }
+        guard !isPlaying else { return }
+        shuttleRate = 1
+        startPlayback()
+    }
+
+    private func startPlayback() {
+        guard !isRestoringDocument, !isEditingSourceRegion, !isPreparingRedactionPreview, redactionPreviewError == nil else {
+            shuttleRate = 1
+            return
+        }
         if hoverPreviewTime != nil {
             hoverPreviewTime = nil
         }
-        guard duration >= RecordingClipSegment.minimumDuration else { return }
-        if currentTime < 0 || currentTime >= duration - 0.05 {
+        guard duration >= RecordingClipSegment.minimumDuration else {
+            shuttleRate = 1
+            return
+        }
+        if shuttleRate > 0, currentTime < 0 || currentTime >= duration - 0.05 {
             seek(to: 0)
+        } else if shuttleRate < 0, currentTime <= 0.05 {
+            seek(to: duration)
         }
         isPlaying = true
-        screenPlayer.play()
+        screenPlayer.rate = shuttleRate
         syncCameraPlayback()
     }
 
     func pause() {
         guard isPlaying else { return }
         isPlaying = false
+        shuttleRate = 1
         screenPlayer.pause()
         cameraPlayer.pause()
+    }
+
+    /// J/K/L. Forward plays, and each further press doubles the speed up
+    /// to 8×; backward does the same in reverse. Turning around starts
+    /// again from normal speed.
+    func shuttle(forward: Bool) {
+        guard isLoaded, !isRestoringDocument, !isEditingSourceRegion, !isPreparingRedactionPreview, redactionPreviewError == nil else { return }
+        if !forward, screenPlayer.currentItem?.canPlayReverse != true {
+            // Nothing to play backward: step back a second instead.
+            pause()
+            seek(to: currentTime - 1)
+            return
+        }
+        let nextRate = StudioPlayback.nextShuttleRate(
+            currentRate: shuttleRate,
+            isPlaying: isPlaying,
+            forward: forward
+        )
+        if isPlaying, shuttleRate * nextRate > 0 {
+            shuttleRate = nextRate
+            screenPlayer.rate = shuttleRate
+            syncCameraPlayback()
+        } else {
+            if isPlaying {
+                screenPlayer.pause()
+                cameraPlayer.pause()
+                isPlaying = false
+            }
+            shuttleRate = nextRate
+            startPlayback()
+        }
+        if isPlaying {
+            showNotice(Self.shuttleTitle(shuttleRate))
+        }
+    }
+
+    /// "2×", "◀ 1×".
+    static func shuttleTitle(_ rate: Float) -> String {
+        StudioPlayback.shuttleTitle(rate)
+    }
+
+    /// Moves the paused playhead by whole frames of the recording.
+    func stepFrames(_ count: Int) {
+        guard isLoaded, !isRestoringDocument, !isEditingSourceRegion else { return }
+        pause()
+        seek(to: StudioPlayback.steppedTime(
+            from: currentTime,
+            frames: count,
+            frameDuration: frameDuration,
+            duration: duration
+        ))
+    }
+
+    /// Shows a word over the picture for a moment.
+    func showNotice(_ text: String) {
+        notice = StudioNotice(text: text)
+        noticeTask?.cancel()
+        noticeTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(900))
+            guard !Task.isCancelled else { return }
+            self?.notice = nil
+        }
     }
 
     func seek(to time: TimeInterval) {
@@ -1125,7 +1214,12 @@ final class RecordingStudioModel {
                 guard let self else { return }
                 if self.isPlaying {
                     let seconds = time.seconds
-                    if seconds >= self.duration - 0.001 {
+                    if self.shuttleRate < 0, seconds <= 0.001 {
+                        self.pause()
+                        self.seek(to: 0)
+                        return
+                    }
+                    if self.shuttleRate > 0, seconds >= self.duration - 0.001 {
                         self.pause()
                         self.currentTime = self.duration
                         self.screenPlayer.seek(
@@ -1157,6 +1251,7 @@ final class RecordingStudioModel {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.isPlaying = false
+                self.shuttleRate = 1
                 self.cameraPlayer.pause()
                 self.currentTime = self.duration
             }
@@ -1488,7 +1583,7 @@ final class RecordingStudioModel {
         // The camera master is a separate, unedited recording - it has no
         // composition to bake speed into, so a sped-up clip must also play
         // the camera bubble at that rate or the two drift apart immediately.
-        let rate = Float(speed(atEditorTime: currentTime))
+        let rate = Float(speed(atEditorTime: currentTime)) * shuttleRate
         let cameraTime = CMTime(seconds: max(0, sourceTime - cameraOffset), preferredTimescale: 600)
         cameraPlayer.seek(to: cameraTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
             Task { @MainActor in
@@ -1509,14 +1604,14 @@ final class RecordingStudioModel {
             syncCameraPlayback()
             return
         }
-        let targetRate = Float(speed(atEditorTime: currentTime))
+        let targetRate = Float(speed(atEditorTime: currentTime)) * shuttleRate
         if abs(cameraPlayer.rate - targetRate) > 0.01 {
             cameraPlayer.rate = targetRate
         }
         let expected = sourceTime - cameraOffset
         let actual = cameraPlayer.currentTime().seconds
         guard expected.isFinite, actual.isFinite else { return }
-        if abs(expected - actual) > 0.12 {
+        if abs(expected - actual) > 0.12 * Double(max(1, abs(shuttleRate))) {
             cameraPlayer.seek(
                 to: CMTime(seconds: max(0, expected), preferredTimescale: 600),
                 toleranceBefore: .zero,

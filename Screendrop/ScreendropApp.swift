@@ -89,6 +89,7 @@ struct ScreendropApp: App {
                 RecordingStudioAgentPromptCommand()
                 RecordingStudioRevertCommand()
             }
+            StudioCommands()
         }
         .windowResizability(.contentSize)
         .defaultWindowPlacement { _, context in

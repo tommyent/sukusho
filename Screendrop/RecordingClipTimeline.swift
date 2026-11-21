@@ -365,3 +365,15 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
             && abs(only.speed - 1) < 0.000_001
     }
 }
+
+nonisolated extension RecordingClipSegment {
+    /// "1.5×", "2×": trailing zeros dropped.
+    static func speedTitle(_ speed: Double) -> String {
+        let safe = speed.isFinite ? speed : 1
+        let rounded = (safe * 100).rounded() / 100
+        let text = rounded == rounded.rounded()
+            ? String(Int(rounded))
+            : String(format: "%g", rounded)
+        return "\(text)×"
+    }
+}

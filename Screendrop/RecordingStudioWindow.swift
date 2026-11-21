@@ -201,6 +201,9 @@ private struct RecordingStudioContent: View {
             model.autosave()
         }
         .focusedSceneValue(\.recordingStudio, model)
+        .background {
+            StudioKeyCommands(model: model)
+        }
         .onDeleteCommand {
             if let selectedCueID = model.selectedCueID {
                 model.removeZoomCue(id: selectedCueID)
@@ -636,6 +639,16 @@ private struct StudioCanvas: View {
                         .transition(.opacity)
                 }
 
+                if let notice = model.notice {
+                    // What a key just did, when the change is hard to see.
+                    StudioCanvasBadge(text: notice.text)
+                        .padding(.top, 12)
+                        .frame(width: canvasSize.width, alignment: .top)
+                        .id(notice.id)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+
                 if let playbackFlash {
                     StudioPlaybackFlashView(systemImage: playbackFlash.systemImage)
                         .frame(width: canvasSize.width, height: canvasSize.height)
@@ -661,6 +674,7 @@ private struct StudioCanvas: View {
                     .shadow(color: .black.opacity(colorScheme == .dark ? 0.45 : 0.16), radius: 14, y: 5)
             }
             .animation(.easeOut(duration: 0.15), value: skimTime == nil)
+            .animation(.easeOut(duration: 0.15), value: model.notice?.id)
             .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
         }
         // Cropping swaps it for the crop actions in the toolbar.
@@ -2409,15 +2423,17 @@ private struct StudioTimelineEditor: View {
 
     private var playbackControls: some View {
         HStack(spacing: 12) {
-            (Text(studioPreciseTimecode(model.displayTime))
-                .foregroundStyle(.primary.opacity(0.9))
-             + Text(" / \(studioPreciseTimecode(model.duration))")
-                .foregroundStyle(.secondary))
-                .font(.system(size: 12, weight: .medium).monospacedDigit())
-                .fixedSize()
+            HStack(spacing: 0) {
+                StudioTimecodeField(model: model)
+                    .frame(width: 58, alignment: .trailing)
+                Text(" / \(studioPreciseTimecode(model.duration))")
+                    .font(.system(size: 12, weight: .medium).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+            }
 
             HStack(spacing: 4) {
-                timelineButton("Back to Start", systemImage: "backward.end.fill") {
+                timelineButton("Back to Start (Home)", systemImage: "backward.end.fill") {
                     model.pause()
                     model.seek(to: 0)
                 }
@@ -2438,10 +2454,20 @@ private struct StudioTimelineEditor: View {
                 .accessibilityLabel(model.isPlaying ? "Pause" : "Play")
                 .disabled(!model.isLoaded || model.isRestoringDocument)
 
-                timelineButton("Skip to End", systemImage: "forward.end.fill") {
+                timelineButton("Skip to End (End)", systemImage: "forward.end.fill") {
                     model.pause()
                     model.seek(to: model.duration)
                 }
+            }
+
+            if model.isPlaying, model.shuttleRate != 1 {
+                Text(RecordingStudioModel.shuttleTitle(model.shuttleRate))
+                    .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.primary.opacity(0.08)))
+                    .fixedSize()
             }
         }
     }
@@ -3026,7 +3052,7 @@ private func studioTimecode(_ seconds: Double) -> String {
         : String(format: "%02d:%02d", minutes, remainingSeconds)
 }
 
-private func studioPreciseTimecode(_ seconds: Double) -> String {
+func studioPreciseTimecode(_ seconds: Double) -> String {
     let safe = max(0, seconds.isFinite ? seconds : 0)
     let totalMinutes = Int(safe) / 60
     let remaining = safe.truncatingRemainder(dividingBy: 60)
