@@ -962,39 +962,36 @@ struct StudioAudioTests {
         #expect(StudioAudioComposer.envelopeSpans(for: sameLayout, plan: samePlan)[sameTrackID] == nil)
     }
 
-    @Test func audioLaneSoloStateRoundTripsThroughToggleSwitchAndMuteClick() {
+    @Test func audioLaneSoloAppliesAtMixTimeWithoutMutatingClipStoredMutes() {
         var c0 = RecordingAudioClip(fileName: "a.wav", displayName: "A", start: 0, fileDuration: 2)
         c0.lane = 0
         var c1 = RecordingAudioClip(fileName: "b.wav", displayName: "B", start: 0, fileDuration: 2)
         c1.lane = 1
         var c2 = RecordingAudioClip(fileName: "c.wav", displayName: "C", start: 0, fileDuration: 2)
         c2.lane = 2
-        c2.isMuted = true // lane 2 started muted before solo
-        let initial = [c0, c1, c2]
+        c2.isMuted = true // lane 2 has a stored mute
 
-        // Solo lane 0: lane 1 becomes muted, lane 2 stays muted, solo remembers original mutes.
-        let step1 = StudioAudioLaneSolo.toggle(lane: 0, clips: initial, current: nil)
-        #expect(step1.solo?.lane == 0)
-        #expect(step1.clips[0].isMuted == false)
-        #expect(step1.clips[1].isMuted == true)
-        #expect(step1.clips[2].isMuted == true)
+        // Solo lane 0: effective gain silences lane 1 and 2 while stored isMuted stays untouched.
+        let step1 = StudioAudioLaneSolo.toggle(lane: 0, current: nil)
+        #expect(step1.soloLane == 0)
+        #expect(StudioAudioLaneSolo.effectiveGain(for: c0, soloLane: step1.soloLane) == 1)
+        #expect(StudioAudioLaneSolo.effectiveGain(for: c1, soloLane: step1.soloLane) == 0)
+        #expect(StudioAudioLaneSolo.effectiveGain(for: c2, soloLane: step1.soloLane) == 0)
+        #expect(c0.isMuted == false && c1.isMuted == false && c2.isMuted == true)
 
-        // Switching solo to lane 1 keeps original pre-solo mutes (c2 muted, c0/c1 unmuted).
-        let step2 = StudioAudioLaneSolo.toggle(lane: 1, clips: step1.clips, current: step1.solo)
-        #expect(step2.solo?.lane == 1)
-        #expect(step2.clips[0].isMuted == true)
-        #expect(step2.clips[1].isMuted == false)
-        #expect(step2.clips[2].isMuted == true)
+        // Switching solo to lane 1 switches audible lane cleanly; lane 2 stays stored-muted.
+        let step2 = StudioAudioLaneSolo.toggle(lane: 1, current: step1.soloLane)
+        #expect(step2.soloLane == 1)
+        #expect(StudioAudioLaneSolo.effectiveGain(for: c0, soloLane: step2.soloLane) == 0)
+        #expect(StudioAudioLaneSolo.effectiveGain(for: c1, soloLane: step2.soloLane) == 1)
+        #expect(StudioAudioLaneSolo.effectiveGain(for: c2, soloLane: step2.soloLane) == 0)
 
-        // Unsoloing lane 1 restores exact pre-solo mutes.
-        let step3 = StudioAudioLaneSolo.toggle(lane: 1, clips: step2.clips, current: step2.solo)
-        #expect(step3.solo == nil)
-        #expect(step3.clips.map(\.isMuted) == [false, false, true])
-
-        // Normal mute click while lane 0 is soloed restores other lanes' saved mutes before muting lane 0.
-        let muteWhileSoloed = StudioAudioLaneSolo.setLaneMuted(true, lane: 0, clips: step1.clips, current: step1.solo)
-        #expect(muteWhileSoloed.solo == nil)
-        #expect(muteWhileSoloed.clips.map(\.isMuted) == [true, false, true])
+        // Unsoloing lane 1 immediately restores normal playback according to stored isMuted.
+        let step3 = StudioAudioLaneSolo.toggle(lane: 1, current: step2.soloLane)
+        #expect(step3.soloLane == nil)
+        #expect(StudioAudioLaneSolo.effectiveGain(for: c0, soloLane: step3.soloLane) == 1)
+        #expect(StudioAudioLaneSolo.effectiveGain(for: c1, soloLane: step3.soloLane) == 1)
+        #expect(StudioAudioLaneSolo.effectiveGain(for: c2, soloLane: step3.soloLane) == 0)
     }
 
     @Test func envelopeTapScalesPacked24BitAndPadded24In32PCMWithCorrectStride() {
@@ -1288,31 +1285,65 @@ struct StudioAudioTests {
         #expect(afterReopen.hidden.isEmpty)
     }
 
-    @Test func deletingSoloedLaneRestoresPreSoloMutesAndDocumentSavesUnderlyingMutes() {
-        var c0 = RecordingAudioClip(fileName: "a.wav", displayName: "A", start: 0, fileDuration: 2)
-        c0.lane = 0
-        var c1 = RecordingAudioClip(fileName: "b.wav", displayName: "B", start: 0, fileDuration: 2)
-        c1.lane = 1
-        var c2 = RecordingAudioClip(fileName: "c.wav", displayName: "C", start: 0, fileDuration: 2)
-        c2.lane = 2
-        c2.isMuted = true
+    @Test func duplicateMadeDuringSoloIsAudibleAfterUnsoloAndAfterSaveReopen() async throws {
+        let dir = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let toneURL = try makeTone(in: dir, name: "tone", frequency: 440, amplitude: 0.4, duration: 2.0)
 
-        // Solo lane 1: lane 0 becomes temporarily muted, lane 2 stays muted.
-        let soloed = StudioAudioLaneSolo.toggle(lane: 1, clips: [c0, c1, c2], current: nil)
-        #expect(soloed.solo?.lane == 1)
-        #expect(soloed.clips[0].isMuted == true)
+        var lane0Clip = RecordingAudioClip(fileName: toneURL.lastPathComponent, displayName: "Lane0", start: 0, fileDuration: 2.0)
+        lane0Clip.lane = 0
+        var lane1Clip = RecordingAudioClip(fileName: toneURL.lastPathComponent, displayName: "Lane1", start: 0, fileDuration: 1.0)
+        lane1Clip.lane = 1
 
-        // Saving while soloed writes underlying mutes (lane 0 unmuted, lane 2 muted), NOT temporary solo mutes.
-        let saved = StudioAudioLaneSolo.persistedClips(soloed.clips, solo: soloed.solo)
-        #expect(saved.map(\.isMuted) == [false, false, true])
+        // 1. Solo lane 0: lane 1 clip is silenced in the mix, but its stored isMuted stays false.
+        let solo = StudioAudioLaneSolo.toggle(lane: 0, current: nil).soloLane
+        #expect(solo == 0)
+        #expect(lane1Clip.isMuted == false)
 
-        // Deleting lane 1's only clip ends solo and restores lane 0 to unmuted while preserving lane 2's mute.
-        let afterDelete = soloed.clips.filter { $0.id != c1.id }
-        let reconciled = StudioAudioLaneSolo.reconcile(afterDelete, solo: soloed.solo)
-        #expect(reconciled.solo == nil)
-        #expect(reconciled.clips.count == 2)
-        #expect(reconciled.clips[0].id == c0.id && reconciled.clips[0].isMuted == false)
-        #expect(reconciled.clips[1].id == c2.id && reconciled.clips[1].isMuted == true)
+        // 2. Duplicate the lane 1 clip during solo (same logic as RecordingStudioModel.duplicateAudioClip).
+        var duplicate = lane1Clip
+        duplicate.id = UUID()
+        duplicate.originID = nil
+        duplicate.start = lane1Clip.end
+        #expect(duplicate.isMuted == false)
+
+        let clips = [lane0Clip, lane1Clip, duplicate]
+        let timeline = RecordingClipTimeline.full(sourceDuration: 2.5)
+        let sources = try await StudioAudioSources.load(
+            screenAsset: AVURLAsset(url: toneURL),
+            replacementURL: nil,
+            clips: clips,
+            mediaDirectory: dir
+        )
+
+        // While soloed on lane 0, the mix gives lane 0 gain 1 and both lane 1 clips (including duplicate) gain 0.
+        let soloPlan = StudioAudioPlan(timeline: timeline, sync: nil, clips: clips, volume: 1, soloLane: solo)
+        let (_, layout) = StudioAudioComposer.makeComposition(plan: soloPlan, sources: sources)
+        let soloSpans = StudioAudioComposer.envelopeSpans(for: layout, plan: soloPlan)
+        let dupTrack = try #require(layout.placements.first { $0.owner == .clip(duplicate.id) }?.trackID)
+        let dupGainWhileSoloed = soloSpans[dupTrack]?.filter { $0.start >= 1.0 && $0.end <= 2.0 }.map { max($0.startGain, $0.endGain) }.max() ?? 1
+        #expect(dupGainWhileSoloed == 0)
+
+        // 3a. Unsolo path: duplicate plays at full level (1.0) immediately!
+        let unsoloed = StudioAudioLaneSolo.toggle(lane: 0, current: solo).soloLane
+        #expect(unsoloed == nil)
+        let unsoloPlan = StudioAudioPlan(timeline: timeline, sync: nil, clips: clips, volume: 1, soloLane: unsoloed)
+        let unsoloSpans = StudioAudioComposer.envelopeSpans(for: layout, plan: unsoloPlan)
+        let dupGainAfterUnsolo = unsoloSpans[dupTrack]?.filter { $0.start >= 1.0 && $0.end <= 2.0 }.map { max($0.startGain, $0.endGain) }.max() ?? 1
+        #expect(abs(dupGainAfterUnsolo - 1.0) < 0.001)
+
+        // 3b. Save & reopen while soloed: document encodes clips without solo; reopened duplicate is NOT muted!
+        let reloaded = try JSONDecoder().decode([RecordingAudioClip].self, from: JSONEncoder().encode(clips))
+        let reloadedDup = try #require(reloaded.first { $0.id == duplicate.id })
+        #expect(reloadedDup.isMuted == false)
+        let reopenedPlan = StudioAudioPlan(timeline: timeline, sync: nil, clips: reloaded, volume: 1, soloLane: nil)
+        let reopenedSpans = StudioAudioComposer.envelopeSpans(for: layout, plan: reopenedPlan)
+        let dupGainAfterReopen = reopenedSpans[dupTrack]?.filter { $0.start >= 1.0 && $0.end <= 2.0 }.map { max($0.startGain, $0.endGain) }.max() ?? 1
+        #expect(abs(dupGainAfterReopen - 1.0) < 0.001)
+
+        // 4. Deleting lane 0's only clip reconciles solo to nil so lane 1 & duplicate are immediately audible.
+        let afterDelete = clips.filter { $0.id != lane0Clip.id }
+        #expect(StudioAudioLaneSolo.reconcile(clips: afterDelete, soloLane: solo) == nil)
     }
 
     @Test func splitPlusLeadingTrimReopenDoesNotDoubleRestore5To6Seconds() {

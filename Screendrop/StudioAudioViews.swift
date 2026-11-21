@@ -230,7 +230,7 @@ struct StudioAudioLane: View {
                     .allowsHitTesting(false)
             }
         }
-        .opacity(clip.isMuted ? 0.45 : 1)
+        .opacity(model.isAudioClipEffectivelyMuted(clip) ? 0.45 : 1)
         .studioBlockClip()
     }
 
@@ -376,7 +376,7 @@ struct StudioAudioLaneGlyph: View {
 
     var body: some View {
         let isMuted = model.isAudioLaneMuted(lane)
-        let isSoloed = model.audioSoloState?.lane == lane
+        let isSoloed = model.soloAudioLane == lane
         let hasClips = model.audioClips.contains { $0.lane == lane }
         Button {
             if NSEvent.modifierFlags.contains(.option) {

@@ -775,76 +775,32 @@ nonisolated enum StudioAudioConform {
     }
 }
 
-/// Tracks which audio lane is soloed alongside the pre-solo mute state of
-/// every clip, so Undo/Redo and normal mute clicks never drift from the UI.
-nonisolated struct StudioAudioLaneSolo: Equatable, Sendable {
-    var lane: Int
-    var previousMutes: [UUID: Bool]
-
+/// Pure lane-solo monitoring rules, kept separate from each clip's stored
+/// `isMuted` flag so duplicating, editing, or saving during solo never
+/// promotes a temporary solo silence into a persisted clip mute.
+nonisolated enum StudioAudioLaneSolo {
     static func toggle(
         lane targetLane: Int,
-        clips: [RecordingAudioClip],
-        current: StudioAudioLaneSolo?
-    ) -> (clips: [RecordingAudioClip], solo: StudioAudioLaneSolo?, actionName: String) {
-        if let current, current.lane == targetLane {
-            let restored = clips.map { clip -> RecordingAudioClip in
-                var clip = clip
-                if let muted = current.previousMutes[clip.id] { clip.isMuted = muted }
-                return clip
-            }
-            return (restored, nil, "Unsolo Lane")
-        }
-        let baseMutes = current?.previousMutes ?? Dictionary(uniqueKeysWithValues: clips.map { ($0.id, $0.isMuted) })
-        let soloed = clips.map { clip -> RecordingAudioClip in
-            var clip = clip
-            clip.isMuted = clip.lane != targetLane
-            return clip
-        }
-        return (soloed, StudioAudioLaneSolo(lane: targetLane, previousMutes: baseMutes), "Solo Lane")
+        current: Int?
+    ) -> (soloLane: Int?, actionName: String) {
+        if current == targetLane { return (nil, "Unsolo Lane") }
+        return (targetLane, "Solo Lane")
     }
 
-    static func setLaneMuted(
-        _ muted: Bool,
-        lane targetLane: Int,
-        clips: [RecordingAudioClip],
-        current: StudioAudioLaneSolo?
-    ) -> (clips: [RecordingAudioClip], solo: StudioAudioLaneSolo?, actionName: String) {
-        var next = persistedClips(clips, solo: current)
-        next = next.map { clip in
-            var clip = clip
-            if clip.lane == targetLane { clip.isMuted = muted }
-            return clip
-        }
-        return (next, nil, muted ? "Mute Lane" : "Unmute Lane")
+    static func effectiveGain(for clip: RecordingAudioClip, soloLane: Int?) -> Double {
+        if let soloLane, clip.lane != soloLane { return 0 }
+        return clip.audibleVolume
     }
 
-    /// Returns clips with their underlying saved mute flags rather than
-    /// temporary solo mutes, so saving/reloading while soloed never persists
-    /// temporary solo state.
-    static func persistedClips(
-        _ clips: [RecordingAudioClip],
-        solo: StudioAudioLaneSolo?
-    ) -> [RecordingAudioClip] {
-        guard let solo else { return clips }
-        return clips.map { clip in
-            var copy = clip
-            if let savedMuted = solo.previousMutes[clip.id] {
-                copy.isMuted = savedMuted
-            }
-            return copy
-        }
+    static func isEffectivelyMuted(_ clip: RecordingAudioClip, soloLane: Int?) -> Bool {
+        clip.isMuted || (soloLane.map { $0 != clip.lane } ?? false)
     }
 
-    /// When an edit removes or moves every clip off the soloed lane, ends solo
-    /// and restores the pre-solo mute state on all surviving clips.
-    static func reconcile(
-        _ clips: [RecordingAudioClip],
-        solo: StudioAudioLaneSolo?
-    ) -> (clips: [RecordingAudioClip], solo: StudioAudioLaneSolo?) {
-        guard let solo else { return (clips, nil) }
-        if clips.contains(where: { $0.lane == solo.lane }) {
-            return (clips, solo)
-        }
-        return (persistedClips(clips, solo: solo), nil)
+    /// Ends solo automatically if an edit removes or moves every clip off the
+    /// soloed lane. Underlying clip mutes were never altered, so surviving
+    /// lanes immediately resume playing at their stored mute states.
+    static func reconcile(clips: [RecordingAudioClip], soloLane: Int?) -> Int? {
+        guard let soloLane else { return nil }
+        return clips.contains(where: { $0.lane == soloLane }) ? soloLane : nil
     }
 }

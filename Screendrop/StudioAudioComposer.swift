@@ -203,12 +203,16 @@ nonisolated struct StudioAudioPlan: Equatable, Sendable {
     var clips: [RecordingAudioClip] = []
     /// Applied to the video clips' own sound; audio clips carry their own.
     var volume: Double = 1
+    /// Optional live-monitoring solo lane; applied at mix time without mutating
+    /// any clip's stored `isMuted` flag. Always nil for exports.
+    var soloLane: Int? = nil
 
     /// The plan with everything that only changes loudness set aside. Two
     /// plans that agree here need the same composition.
     var placement: StudioAudioPlan {
         var plan = self
         plan.volume = 1
+        plan.soloLane = nil
         plan.timeline.segments = plan.timeline.segments.map {
             var segment = $0
             segment.volume = 1
@@ -796,7 +800,7 @@ nonisolated enum StudioAudioComposer {
                 gain.level = (segments[id]?.audibleVolume ?? 1) * projectVolume
             case .clip(let id):
                 guard let clip = clips[id] else { continue }
-                gain.level = clip.audibleVolume
+                gain.level = StudioAudioLaneSolo.effectiveGain(for: clip, soloLane: plan.soloLane)
                 // Fades are squeezed into half the clip each, so they
                 // never cross, and belong to the clip's own ends.
                 let fadeIn = min(clip.fadeIn, clip.duration / 2)
