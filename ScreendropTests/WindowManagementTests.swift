@@ -328,6 +328,12 @@ struct WindowManagementTests {
         // Unavailable target reports why.
         #expect(WindowTargetState<String, String>.unavailable.resolve(ownIsVisible: { _ in true })
                 == .gone(WindowTargetState<String, String>.unavailableMessage))
+
+        // Accessibility missing at open: asks for permission if still untrusted, or asks to reopen Apps once granted (no fresh lookup).
+        #expect(WindowTargetState<String, String>.externalNeedsAccessibility(isTrustedNow: false).resolve(ownIsVisible: { _ in true })
+                == .needsAccessibility)
+        #expect(WindowTargetState<String, String>.externalNeedsAccessibility(isTrustedNow: true).resolve(ownIsVisible: { _ in true })
+                == .reopenAfterGrant(WindowTargetState<String, String>.reopenAfterGrantMessage))
     }
 
     @Test func operationGateSupersedesAndCancelsWaitingRetriesImmediately() {

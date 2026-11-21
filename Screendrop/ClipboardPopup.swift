@@ -81,6 +81,8 @@ final class ClipboardPopupPresenter {
     private(set) var target: NSRunningApplication?
     /// Exact window captured before the popup became key, so Apps window commands never move a different window.
     private var capturedWindowTarget: CapturedWindowTarget?
+    private var pendingOpenTask: Task<Void, Never>?
+    private var openGeneration: UInt64 = 0
     private var panel: ClipboardPopupPanel?
     private var keyMonitor: Any?
     private var confirmingDeletion = false
@@ -89,21 +91,38 @@ final class ClipboardPopupPresenter {
 
     var isVisible: Bool { panel?.isVisible == true }
     func toggle() {
-        isVisible ? close() : show()
+        (isVisible || pendingOpenTask != nil) ? close() : show()
     }
 
     func show() {
         let panel = panel ?? makePanel()
         self.panel = panel
-        present(panel)
+        if isVisible {
+            present(panel, capturedWindow: capturedWindowTarget)
+            return
+        }
+        let front = NSWorkspace.shared.frontmostApplication
+        target = front
+        pendingOpenTask?.cancel()
+        openGeneration &+= 1
+        let gen = openGeneration
+        // When Window Management is off, open synchronously with zero AX work.
+        guard ScreendropPreferences.windowManagementEnabled else {
+            pendingOpenTask = nil
+            present(panel, capturedWindow: nil)
+            return
+        }
+        // Finish the bounded off-main external window capture BEFORE making the popup key.
+        pendingOpenTask = Task { [weak self] in
+            let captured = await WindowManager.shared.captureTargetBeforePopup(for: front)
+            guard let self, !Task.isCancelled, self.openGeneration == gen else { return }
+            self.pendingOpenTask = nil
+            self.present(panel, capturedWindow: captured)
+        }
     }
 
-    private func present(_ panel: ClipboardPopupPanel) {
-        if !isVisible {
-            target = NSWorkspace.shared.frontmostApplication
-            capturedWindowTarget = ScreendropPreferences.windowManagementEnabled
-                ? WindowManager.shared.captureTargetBeforePopup() : nil
-        }
+    private func present(_ panel: ClipboardPopupPanel, capturedWindow: CapturedWindowTarget?) {
+        capturedWindowTarget = capturedWindow
         let initialMode = ClipboardPopupMode.initial(
             clipboardHistoryEnabled: ScreendropPreferences.clipboardHistoryEnabled,
             launcherEnabled: ScreendropPreferences.clipboardLauncherEnabled
@@ -143,10 +162,12 @@ final class ClipboardPopupPresenter {
     }
 
     func close() {
+        openGeneration &+= 1
+        pendingOpenTask?.cancel()
+        pendingOpenTask = nil
         panel?.orderOut(nil)
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
-        WindowManager.shared.releaseCapturedTarget(capturedWindowTarget)
         capturedWindowTarget = nil
         ClipboardLauncherModel.shared.popupClosed()
         state.reset()

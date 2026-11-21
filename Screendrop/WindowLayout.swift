@@ -419,18 +419,20 @@ nonisolated enum WindowAXPolicy {
 nonisolated enum WindowTargetState<OwnWindow: Equatable, ExternalWindow: Equatable>: Equatable {
     case own(OwnWindow?)
     case external(isTerminated: Bool, window: ExternalWindow?)
-    case externalNeedsAccessibility
+    case externalNeedsAccessibility(isTrustedNow: Bool)
     case unavailable
 
     enum Resolution: Equatable {
         case moveOwn(OwnWindow)
         case moveExternal(ExternalWindow)
         case needsAccessibility
+        case reopenAfterGrant(String)
         case gone(String)
     }
 
     static var goneMessage: String { "The window you opened Apps from is no longer open." }
     static var unavailableMessage: String { "No movable window was active when Apps opened." }
+    static var reopenAfterGrantMessage: String { "Accessibility is now allowed. Reopen Apps to move this window." }
 
     func resolve(ownIsVisible: (OwnWindow) -> Bool) -> Resolution {
         switch self {
@@ -444,8 +446,8 @@ nonisolated enum WindowTargetState<OwnWindow: Equatable, ExternalWindow: Equatab
                 return .gone(Self.goneMessage)
             }
             return .moveExternal(window)
-        case .externalNeedsAccessibility:
-            return .needsAccessibility
+        case .externalNeedsAccessibility(let isTrustedNow):
+            return isTrustedNow ? .reopenAfterGrant(Self.reopenAfterGrantMessage) : .needsAccessibility
         case .unavailable:
             return .gone(Self.unavailableMessage)
         }

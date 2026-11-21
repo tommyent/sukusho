@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import os
 import OSLog
 
 /// Shared macOS Accessibility check and explicit-action recovery flow (reused by window management
@@ -43,18 +44,19 @@ final class WeakWindowBox {
     init(_ window: NSWindow) { self.window = window }
 }
 
+/// Sendable wrapper for an immutable `AXUIElement` handle captured off-main before opening Apps.
+nonisolated final class AXElementBox: @unchecked Sendable {
+    let element: AXUIElement
+    init(_ element: AXUIElement) { self.element = element }
+}
+
 /// Snapshot of the exact window that was frontmost before the Apps popup opened.
 @MainActor
 enum CapturedWindowTarget {
     case own(WeakWindowBox)
-    case external(app: NSRunningApplication, captureID: UInt64)
+    case external(app: NSRunningApplication, axApp: AXElementBox, window: AXElementBox)
     case externalNeedsAccessibility(NSRunningApplication)
     case unavailable
-
-    var captureID: UInt64? {
-        if case .external(_, let id) = self { return id }
-        return nil
-    }
 }
 
 /// Moves and resizes the frontmost app's focused window via macOS Accessibility (`AXUIElement`),
@@ -66,7 +68,6 @@ final class WindowManager {
 
     private let gate = WindowOperationGate()
     private lazy var axWorker = WindowAXWorker(gate: gate)
-    private var nextCaptureID: UInt64 = 0
     private var fullScreenExitObserver: NSObjectProtocol?
     private var fullScreenExitTimeout: DispatchWorkItem?
 
@@ -90,12 +91,11 @@ final class WindowManager {
 
     // MARK: - Capturing a target before opening the popup
 
-    /// Captures the actual window that is active right before the clipboard popup becomes key.
-    /// External AX lookup runs asynchronously on the serial AX queue so opening the popup never blocks.
-    func captureTargetBeforePopup() -> CapturedWindowTarget {
-        guard let front = NSWorkspace.shared.frontmostApplication else {
-            return .unavailable
-        }
+    /// Captures the exact window that is active BEFORE the clipboard popup becomes key.
+    /// External AX lookup runs off-main with a bounded timeout so it finishes before `makeKeyAndOrderFront`
+    /// without stalling the main thread behind a hung app or behind an in-flight move.
+    func captureTargetBeforePopup(for front: NSRunningApplication?) async -> CapturedWindowTarget {
+        guard let front else { return .unavailable }
         if front == NSRunningApplication.current {
             guard let window = ownActiveWindow() else { return .unavailable }
             return .own(WeakWindowBox(window))
@@ -103,16 +103,11 @@ final class WindowManager {
         guard AXIsProcessTrusted() else {
             return .externalNeedsAccessibility(front)
         }
-        nextCaptureID &+= 1
-        let captureID = nextCaptureID
-        axWorker.captureFocusedWindow(pid: front.processIdentifier, captureID: captureID)
-        return .external(app: front, captureID: captureID)
-    }
-
-    func releaseCapturedTarget(_ target: CapturedWindowTarget?) {
-        if let captureID = target?.captureID {
-            axWorker.clearCapturedWindow(captureID: captureID)
+        let pid = front.processIdentifier
+        guard let captured = await WindowAXWorker.captureFocusedWindowBounded(pid: pid, timeout: 0.25) else {
+            return .unavailable
         }
+        return .external(app: front, axApp: captured.app, window: captured.window)
     }
 
     // MARK: - Performing actions
@@ -172,7 +167,7 @@ final class WindowManager {
             case .gone(let message):
                 NSSound.beep()
                 onFailure(message)
-            case .moveExternal, .needsAccessibility:
+            case .moveExternal, .needsAccessibility, .reopenAfterGrant:
                 break
             }
 
@@ -186,29 +181,22 @@ final class WindowManager {
                 onFailure(WindowTargetState<Int, Int>.goneMessage)
                 return
             }
-            guard AccessibilityPermission.ensureGrantedOnUserAction() else {
+            // No fresh-lookup fallback: if Accessibility was missing when Apps opened, no window
+            // handle was captured for this session. After granting permission, ask the user to reopen Apps.
+            let granted = AccessibilityPermission.ensureGrantedOnUserAction()
+            switch WindowTargetState<Int, Int>.externalNeedsAccessibility(isTrustedNow: granted).resolve(ownIsVisible: { _ in false }) {
+            case .needsAccessibility:
                 NSSound.beep()
                 onFailure(AccessibilityPermission.windowGuidance)
-                return
-            }
-            // Permission was granted while the popup was open; capture wasn't possible earlier.
-            let screens = currentScreens()
-            guard !screens.isEmpty else {
+            case .reopenAfterGrant(let message):
                 NSSound.beep()
-                onFailure("Couldn’t read display layout.")
-                return
-            }
-            let token = gate.begin()
-            onWillMove()
-            axWorker.performFrontmost(action, pid: app.processIdentifier, screens: screens, token: token) { ok in
-                if !ok {
-                    Task { @MainActor in NSSound.beep() }
-                }
+                onFailure(message)
+            case .moveOwn, .moveExternal, .gone:
+                break
             }
 
-        case .external(let app, let captureID):
+        case .external(let app, let axApp, let window):
             guard !app.isTerminated else {
-                axWorker.clearCapturedWindow(captureID: captureID)
                 NSSound.beep()
                 onFailure(WindowTargetState<Int, Int>.goneMessage)
                 return
@@ -227,7 +215,8 @@ final class WindowManager {
             let token = gate.begin()
             axWorker.performCaptured(
                 action,
-                captureID: captureID,
+                axApp: axApp,
+                window: window,
                 screens: screens,
                 token: token,
                 onValidated: {
@@ -339,12 +328,6 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
         case failed
     }
 
-    private struct CapturedAX {
-        let captureID: UInt64
-        let app: AXUIElement
-        let window: AXUIElement
-    }
-
     private static let axTimeout: Float = 0.5
     private static let enhancedUIAttr = "AXEnhancedUserInterface" as CFString
     private static let fullScreenAttr = "AXFullScreen" as CFString
@@ -352,29 +335,42 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
     private let gate: WindowOperationGate
     private let queue = DispatchQueue(label: "com.tommyent.Sukusho.window-ax", qos: .userInteractive)
     private let logger = Logger(subsystem: "com.tommyent.Sukusho", category: "WindowManager")
-    private var captured: CapturedAX?
 
     init(gate: WindowOperationGate) {
         self.gate = gate
     }
 
-    func captureFocusedWindow(pid: pid_t, captureID: UInt64) {
-        queue.async {
-            let axApp = AXUIElementCreateApplication(pid)
-            AXUIElementSetMessagingTimeout(axApp, Self.axTimeout)
-            guard let window = self.focusedWindow(of: axApp) else {
-                if self.captured?.captureID != captureID { self.captured = nil }
-                return
+    /// Runs a bounded off-main focused-window lookup on a dedicated lookup queue so opening the Apps
+    /// popup finishes capturing the target window before becoming key and never queues behind a slow move.
+    static func captureFocusedWindowBounded(
+        pid: pid_t,
+        timeout: TimeInterval
+    ) async -> (app: AXElementBox, window: AXElementBox)? {
+        await withCheckedContinuation { continuation in
+            let settled = OSAllocatedUnfairLock(initialState: false)
+            func finish(_ result: (app: AXElementBox, window: AXElementBox)?) {
+                let shouldResume = settled.withLock { done -> Bool in
+                    guard !done else { return false }
+                    done = true
+                    return true
+                }
+                if shouldResume { continuation.resume(returning: result) }
             }
-            AXUIElementSetMessagingTimeout(window, Self.axTimeout)
-            self.captured = CapturedAX(captureID: captureID, app: axApp, window: window)
-        }
-    }
 
-    func clearCapturedWindow(captureID: UInt64) {
-        queue.async {
-            if self.captured?.captureID == captureID {
-                self.captured = nil
+            DispatchQueue.global(qos: .userInteractive).async {
+                let axApp = AXUIElementCreateApplication(pid)
+                AXUIElementSetMessagingTimeout(axApp, Float(timeout))
+                guard let window = Self.lookupFocusedWindow(of: axApp) else {
+                    finish(nil)
+                    return
+                }
+                AXUIElementSetMessagingTimeout(axApp, Self.axTimeout)
+                AXUIElementSetMessagingTimeout(window, Self.axTimeout)
+                finish((AXElementBox(axApp), AXElementBox(window)))
+            }
+
+            DispatchQueue.global(qos: .userInteractive).asyncAfter(deadline: .now() + timeout) {
+                finish(nil)
             }
         }
     }
@@ -390,7 +386,7 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
             guard self.gate.isCurrent(token) else { return }
             let axApp = AXUIElementCreateApplication(pid)
             AXUIElementSetMessagingTimeout(axApp, Self.axTimeout)
-            guard let window = self.focusedWindow(of: axApp) else {
+            guard let window = Self.lookupFocusedWindow(of: axApp) else {
                 completion(false)
                 return
             }
@@ -404,7 +400,8 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
 
     func performCaptured(
         _ action: WindowAction,
-        captureID: UInt64,
+        axApp: AXElementBox,
+        window: AXElementBox,
         screens: [DisplayScreen],
         token: UInt64,
         onValidated: @escaping @Sendable () -> Void,
@@ -415,18 +412,12 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
                 completion(.cancelled)
                 return
             }
-            guard let entry = self.captured, entry.captureID == captureID else {
+            guard self.readFrame(of: window.element) != nil else {
                 completion(.gone)
                 return
             }
-            guard self.readFrame(of: entry.window) != nil else {
-                self.captured = nil
-                completion(.gone)
-                return
-            }
-            self.captured = nil
             onValidated()
-            let ok = self.performSerialized(action, window: entry.window, in: entry.app, screens: screens, token: token)
+            let ok = self.performSerialized(action, window: window.element, in: axApp.element, screens: screens, token: token)
             if !self.gate.isCurrent(token) {
                 completion(.cancelled)
             } else {
@@ -547,7 +538,7 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
         return num.boolValue
     }
 
-    private func focusedWindow(of app: AXUIElement) -> AXUIElement? {
+    private static func lookupFocusedWindow(of app: AXUIElement) -> AXUIElement? {
         for attr in [kAXFocusedWindowAttribute as CFString, kAXMainWindowAttribute as CFString] {
             var value: CFTypeRef?
             let err = AXUIElementCopyAttributeValue(app, attr, &value)
