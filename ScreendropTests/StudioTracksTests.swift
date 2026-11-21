@@ -667,6 +667,70 @@ struct StudioTracksTests {
         #expect(tinyCache.currentBytes == 0)
     }
 
+    @Test func lateFrameDecodeFailureRaisesNamedExportErrorAndPreviewPrefetchesOffDrawPath() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StudioLateDecode-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let gifURL = tempDir.appendingPathComponent("anim.gif")
+        try writeAnimatedGIF(to: gifURL, frameCount: 4, width: 64, height: 64, delay: 0.1)
+
+        // 1. Frame 0 decodes cleanly, frame 1 fails: export draw must throw the named asset error.
+        let failingCache = RecordingOverlayFrameCache(byteLimit: 4 * 1024 * 1024)
+        let failingImage = try #require(RecordingOverlayImage(url: gifURL, cache: failingCache) { source, index in
+            index == 0 ? RecordingOverlayImage.decodeFrame(from: source, at: 0) : nil
+        })
+        let overlay = RecordingImageOverlay(fileName: "anim.gif", displayName: "Corrupt Badge", start: 0, end: 5)
+        let size = CGSize(width: 128, height: 128)
+        let ctx = try #require(CGContext(
+            data: nil, width: 128, height: 128, bitsPerComponent: 8, bytesPerRow: 128 * 4,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        try RecordingImageOverlayRenderer.drawForExport(overlay, image: failingImage, atSourceTime: 0.02, canvasSize: size, in: ctx)
+        do {
+            try RecordingImageOverlayRenderer.drawForExport(overlay, image: failingImage, atSourceTime: 0.15, canvasSize: size, in: ctx)
+            Issue.record("Expected late frame decode failure to throw missingOrInvalid")
+        } catch let error as RecordingOverlayMedia.ResolutionError {
+            #expect(error == .missingOrInvalid("Corrupt Badge"))
+        }
+
+        // 2. Preview draw on a cache miss returns the last completed frame immediately WITHOUT
+        //    decoding synchronously on the calling thread, and prefetches off the draw path.
+        let probeCache = RecordingOverlayFrameCache(byteLimit: 1024 * 1024)
+        let _ = try #require(RecordingOverlayImage(url: gifURL, cache: probeCache))
+        let oneFrameBytes = probeCache.currentBytes
+
+        final class DecodeLog: @unchecked Sendable {
+            private let lock = NSLock()
+            private var indices: [Int] = []
+            func record(_ index: Int) { lock.withLock { indices.append(index) } }
+            func contains(_ index: Int) -> Bool { lock.withLock { indices.contains(index) } }
+        }
+        let decodeLog = DecodeLog()
+        let singleSlotCache = RecordingOverlayFrameCache(byteLimit: oneFrameBytes)
+        let previewImage = try #require(RecordingOverlayImage(url: gifURL, cache: singleSlotCache) { source, index in
+            decodeLog.record(index)
+            if index > 0 { Thread.sleep(forTimeInterval: 0.02) }
+            return RecordingOverlayImage.decodeFrame(from: source, at: index)
+        })
+        let frame0 = previewImage.previewFrame(at: 0.02)
+        // Request frame 2 (uncached): must return frame0 immediately without blocking for decode.
+        let decodedSignal = AsyncStream<Void>.makeStream()
+        let immediate = previewImage.previewFrame(at: 0.25) {
+            decodedSignal.continuation.yield()
+        }
+        #expect(immediate === frame0)
+
+        // Wait for background prefetch to complete and verify frame 2 is now cached and distinct.
+        for await _ in decodedSignal.stream {
+            break
+        }
+        let afterPrefetch = previewImage.previewFrame(at: 0.25)
+        #expect(afterPrefetch !== frame0)
+        #expect(decodeLog.contains(2))
+    }
+
     // MARK: - Animated frame delay rules (GIF vs APNG, WebP, HEIC)
 
     @Test func gifDelayFallbackAppliesOnlyToGIFAndPreservesShortDelaysInOtherFormats() throws {
@@ -863,10 +927,14 @@ struct StudioTracksTests {
 
         let size = CGSize(width: 320, height: 180)
 
+        // Warm both frames into cache so preview and export compare the exact same frames.
+        _ = decodedGIF.frame(at: 0.05)
+        _ = decodedGIF.frame(at: 0.15)
+
         for sampleTime in [0.05, 0.15, 1.0] {
             // Preview path: top-down canvas coordinates (matching SwiftUI Canvas).
             let previewBytes = try renderPixels(size: size, flipForExport: false) { ctx in
-                RecordingImageOverlayRenderer.draw(imageOverlay, image: decodedGIF, atSourceTime: sampleTime, canvasSize: size, in: ctx)
+                RecordingImageOverlayRenderer.drawForPreview(imageOverlay, image: decodedGIF, atSourceTime: sampleTime, canvasSize: size, in: ctx)
                 RecordingTextOverlayRenderer.draw(textOverlay, atSourceTime: sampleTime, canvasSize: size, in: ctx)
             }
             // Exporter path: bottom-up CGContext flipped top-down identically to
@@ -875,7 +943,7 @@ struct StudioTracksTests {
                 ctx.saveGState()
                 ctx.translateBy(x: 0, y: size.height)
                 ctx.scaleBy(x: 1, y: -1)
-                RecordingImageOverlayRenderer.draw(imageOverlay, image: decodedGIF, atSourceTime: sampleTime, canvasSize: size, in: ctx)
+                try RecordingImageOverlayRenderer.drawForExport(imageOverlay, image: decodedGIF, atSourceTime: sampleTime, canvasSize: size, in: ctx)
                 ctx.restoreGState()
 
                 ctx.saveGState()
@@ -892,10 +960,10 @@ struct StudioTracksTests {
 
         // Verify the animated GIF actually advances from frame 0 (red) to frame 1 (blue).
         let frame0 = try renderPixels(size: size, flipForExport: false) { ctx in
-            RecordingImageOverlayRenderer.draw(imageOverlay, image: decodedGIF, atSourceTime: 0.25, canvasSize: size, in: ctx)
+            try RecordingImageOverlayRenderer.drawForExport(imageOverlay, image: decodedGIF, atSourceTime: 0.25, canvasSize: size, in: ctx)
         }
         let frame1 = try renderPixels(size: size, flipForExport: false) { ctx in
-            RecordingImageOverlayRenderer.draw(imageOverlay, image: decodedGIF, atSourceTime: 0.35, canvasSize: size, in: ctx)
+            try RecordingImageOverlayRenderer.drawForExport(imageOverlay, image: decodedGIF, atSourceTime: 0.35, canvasSize: size, in: ctx)
         }
         #expect(frame0 != frame1)
     }
@@ -905,7 +973,7 @@ struct StudioTracksTests {
     private func renderPixels(
         size: CGSize,
         flipForExport: Bool,
-        draw: (CGContext) -> Void
+        draw: (CGContext) throws -> Void
     ) throws -> Data {
         let width = Int(size.width)
         let height = Int(size.height)
@@ -924,7 +992,7 @@ struct StudioTracksTests {
             context.translateBy(x: 0, y: size.height)
             context.scaleBy(x: 1, y: -1)
         }
-        draw(context)
+        try draw(context)
         let ptr = try #require(context.data)
         return Data(bytes: ptr, count: bytesPerRow * height)
     }

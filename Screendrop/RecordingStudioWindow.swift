@@ -870,7 +870,10 @@ private struct StudioCanvasComposition: View {
                             images: images,
                             texts: texts,
                             sourceTime: model.sourceTime(atEditorTime: model.displayTime),
-                            canvasSize: canvasSize
+                            canvasSize: canvasSize,
+                            onImageFrameDecoded: { [weak model] in
+                                model?.notifyOverlayFrameDecoded()
+                            }
                         )
                     }
                 }

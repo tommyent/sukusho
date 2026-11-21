@@ -4237,6 +4237,10 @@ final class RecordingStudioModel {
         mediaDirectoryURL.flatMap { RecordingOverlayMedia.resolveRegularFile(named: overlay.fileName, in: $0) }
     }
 
+    func notifyOverlayFrameDecoded() {
+        overlayImageRevision &+= 1
+    }
+
     func selectImage(id: UUID) {
         guard imageOverlays.contains(where: { $0.id == id }) else { return }
         clearTimelineSelection()

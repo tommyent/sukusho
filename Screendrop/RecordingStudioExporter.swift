@@ -989,7 +989,17 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
                   let image = overlayImages.image(at: resolved) else {
                 throw RecordingStudioExporter.ExportError.missingOverlayAsset(label)
             }
-            RecordingImageOverlayRenderer.draw(overlay, image: image, atSourceTime: sourceTime, canvasSize: canvasSize, in: context)
+            do {
+                try RecordingImageOverlayRenderer.drawForExport(
+                    overlay,
+                    image: image,
+                    atSourceTime: sourceTime,
+                    canvasSize: canvasSize,
+                    in: context
+                )
+            } catch RecordingOverlayMedia.ResolutionError.missingOrInvalid(let name) {
+                throw RecordingStudioExporter.ExportError.missingOverlayAsset(name)
+            }
         }
     }
 

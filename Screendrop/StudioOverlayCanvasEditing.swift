@@ -20,13 +20,22 @@ struct StudioCanvasOverlayLayer: View {
     let texts: [RecordingTextOverlay]
     let sourceTime: TimeInterval
     let canvasSize: CGSize
+    var onImageFrameDecoded: (@MainActor @Sendable () -> Void)? = nil
 
     var body: some View {
+        let onDecoded = onImageFrameDecoded
         Canvas { context, size in
             context.withCGContext { cgContext in
                 for (overlay, image) in images {
-                    RecordingImageOverlayRenderer.draw(
-                        overlay, image: image, atSourceTime: sourceTime, canvasSize: size, in: cgContext
+                    RecordingImageOverlayRenderer.drawForPreview(
+                        overlay,
+                        image: image,
+                        atSourceTime: sourceTime,
+                        canvasSize: size,
+                        in: cgContext,
+                        onFrameDecoded: onDecoded.map { callback in
+                            { Task { @MainActor in callback() } }
+                        }
                     )
                 }
                 for overlay in texts {
