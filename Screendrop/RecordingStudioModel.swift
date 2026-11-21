@@ -4113,22 +4113,13 @@ final class RecordingStudioModel {
     }
 
     func copyMediaIntoProject(_ url: URL, directory: URL) -> String? {
-        let fileName = UUID().uuidString + (url.pathExtension.isEmpty ? "" : ".\(url.pathExtension.lowercased())")
-        do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let accessing = url.startAccessingSecurityScopedResource()
-            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-            try FileManager.default.copyItem(at: url, to: directory.appendingPathComponent(fileName))
-            return fileName
-        } catch {
-            return nil
-        }
+        RecordingOverlayMedia.copyRegularFile(from: url, into: directory)
     }
 
     /// Adds one image at an editor time. Returns where the next one goes.
     private func importImage(_ url: URL, into directory: URL, atEditorTime time: TimeInterval) async -> TimeInterval? {
-        guard let fileName = copyMediaIntoProject(url, directory: directory) else { return nil }
-        let storedURL = directory.appendingPathComponent(fileName)
+        guard let fileName = copyMediaIntoProject(url, directory: directory),
+              let storedURL = RecordingOverlayMedia.resolveRegularFile(named: fileName, in: directory) else { return nil }
         let store = overlayImages
         let decoded = await Task.detached(priority: .userInitiated) { store.image(at: storedURL) }.value
         guard let decoded, !isTornDown,
@@ -4163,7 +4154,8 @@ final class RecordingStudioModel {
         mediaLoadTask = Task { [weak self] in
             await Task.detached(priority: .userInitiated) {
                 for name in imageFiles {
-                    _ = store.image(at: directory.appendingPathComponent(name))
+                    guard let resolved = RecordingOverlayMedia.resolveRegularFile(named: name, in: directory) else { continue }
+                    _ = store.image(at: resolved)
                 }
             }.value
             guard let self, !Task.isCancelled else { return }
@@ -4189,7 +4181,7 @@ final class RecordingStudioModel {
     }
 
     func overlayImageURL(for overlay: RecordingImageOverlay) -> URL? {
-        mediaDirectoryURL?.appendingPathComponent(overlay.fileName)
+        mediaDirectoryURL.flatMap { RecordingOverlayMedia.resolveRegularFile(named: overlay.fileName, in: $0) }
     }
 
     func selectImage(id: UUID) {
@@ -5831,12 +5823,7 @@ final class RecordingStudioModel {
                 .compactMap { $0 }.flatMap { $0.map(\.fileName) }
             + keptDocuments.compactMap(\.imageOverlays).flatMap { $0.map(\.fileName) }
         )
-        for name in (try? FileManager.default.contentsOfDirectory(atPath: mediaDirectory.path)) ?? [] {
-            let fileURL = mediaDirectory.appendingPathComponent(name)
-            if RecordingOverlayImage.canImport(fileURL), !referencedImages.contains(name) {
-                try? FileManager.default.removeItem(at: fileURL)
-            }
-        }
+        RecordingOverlayMedia.cleanupUnreferencedImages(in: mediaDirectory, referenced: referencedImages)
     }
 
     // MARK: - Share to cloud

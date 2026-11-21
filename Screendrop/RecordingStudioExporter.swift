@@ -160,6 +160,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
         case noVideoTrack
         case readerFailed(Error?)
         case writerFailed(Error?)
+        case missingOverlayAsset(String)
         case cancelled
 
         var errorDescription: String? {
@@ -170,6 +171,8 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
                 error?.localizedDescription ?? "Reading the recording for export failed."
             case .writerFailed(let error):
                 error?.localizedDescription ?? "Writing the exported video failed."
+            case .missingOverlayAsset(let name):
+                "The overlay image \"\(name)\" is missing or unreadable."
             case .cancelled:
                 "Export canceled."
             }
@@ -221,6 +224,17 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
         let clipTimeline = configuration.clipTimeline.normalized(to: sourceDuration)
         guard clipTimeline.hasPlayableEditorDuration else {
             throw VideoTrimExportError.invalidRange
+        }
+        let overlayImages = RecordingOverlayImageStore()
+        do {
+            try RecordingOverlayMedia.validateOverlays(
+                configuration.imageOverlays,
+                in: configuration.mediaDirectory,
+                clipTimeline: clipTimeline,
+                store: overlayImages
+            )
+        } catch RecordingOverlayMedia.ResolutionError.missingOrInvalid(let name) {
+            throw ExportError.missingOverlayAsset(name)
         }
         guard let sourceVideo = try await sourceAsset.loadTracks(withMediaType: .video).first else {
             throw ExportError.noVideoTrack
@@ -392,6 +406,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             textOverlays: configuration.textOverlays,
             imageOverlays: configuration.imageOverlays,
             mediaDirectory: configuration.mediaDirectory,
+            overlayImages: overlayImages,
             ink: configuration.ink,
             clipTimeline: clipTimeline
         )
@@ -688,7 +703,7 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
     private let textOverlays: [RecordingTextOverlay]
     private let imageOverlays: [RecordingImageOverlay]
     private let mediaDirectory: URL?
-    private let overlayImages = RecordingOverlayImageStore()
+    private let overlayImages: RecordingOverlayImageStore
     private let ink: RecordingInkTimeline?
     private let clipTimeline: RecordingClipTimeline
     private let redactionContext = CIContext(options: [.cacheIntermediates: false])
@@ -730,6 +745,7 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
         textOverlays: [RecordingTextOverlay] = [],
         imageOverlays: [RecordingImageOverlay] = [],
         mediaDirectory: URL? = nil,
+        overlayImages: RecordingOverlayImageStore = RecordingOverlayImageStore(),
         ink: RecordingInkTimeline? = nil,
         clipTimeline: RecordingClipTimeline
     ) {
@@ -756,8 +772,9 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
         self.timing = timing
         self.redactions = redactions
         self.textOverlays = textOverlays
-        self.imageOverlays = mediaDirectory == nil ? [] : imageOverlays
+        self.imageOverlays = imageOverlays
         self.mediaDirectory = mediaDirectory
+        self.overlayImages = overlayImages
         self.ink = ink
         self.clipTimeline = clipTimeline
         self.pointerScale = style.cursorScale
@@ -950,7 +967,7 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
 
         // Images, then text, sit on the canvas above the camera and under
         // the subtitles.
-        drawImageOverlays(at: sourceTime, in: context)
+        try drawImageOverlays(at: sourceTime, in: context)
         drawTextOverlays(at: sourceTime, in: context)
 
         // The subtitle bar lives in canvas space - over the background too,
@@ -958,18 +975,22 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
         drawSubtitleBar(at: sourceTime, in: context)
     }
 
-    private func drawImageOverlays(at sourceTime: TimeInterval, in context: CGContext) {
-        guard let mediaDirectory else { return }
+    private func drawImageOverlays(at sourceTime: TimeInterval, in context: CGContext) throws {
         let active = imageOverlays.filter { $0.isActive(atSourceTime: sourceTime) }
         guard !active.isEmpty else { return }
         context.saveGState()
+        defer { context.restoreGState() }
         context.translateBy(x: 0, y: canvasSize.height)
         context.scaleBy(x: 1, y: -1)
         for overlay in active {
-            guard let image = overlayImages.image(at: mediaDirectory.appendingPathComponent(overlay.fileName)) else { continue }
+            let label = overlay.displayName.isEmpty ? overlay.fileName : overlay.displayName
+            guard let mediaDirectory,
+                  let resolved = RecordingOverlayMedia.resolveRegularFile(named: overlay.fileName, in: mediaDirectory),
+                  let image = overlayImages.image(at: resolved) else {
+                throw RecordingStudioExporter.ExportError.missingOverlayAsset(label)
+            }
             RecordingImageOverlayRenderer.draw(overlay, image: image, atSourceTime: sourceTime, canvasSize: canvasSize, in: context)
         }
-        context.restoreGState()
     }
 
     private func drawTextOverlays(at sourceTime: TimeInterval, in context: CGContext) {

@@ -2,6 +2,7 @@ import AVFoundation
 import CoreGraphics
 import CoreImage
 import CoreVideo
+import Darwin
 import Foundation
 import ImageIO
 import Testing
@@ -198,6 +199,76 @@ struct StudioTracksTests {
         #expect(delivered == expected)
     }
 
+    // MARK: - Media resolver, symlink rejection, validation, and regular-file cleanup
+
+    @Test func mediaResolverEnforcesSimpleRegularFilesRejectsSymlinksAndCleansSafely() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StudioMediaResolver-\(UUID().uuidString)", isDirectory: true)
+        let mediaDir = tempDir.appendingPathComponent("media", isDirectory: true)
+        try FileManager.default.createDirectory(at: mediaDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Create a real PNG outside media/ and a symlink to it.
+        let externalPNG = tempDir.appendingPathComponent("outside.png")
+        try writeSolidPNG(to: externalPNG, width: 32, height: 32, r: 20, g: 120, b: 220)
+        let externalSymlink = tempDir.appendingPathComponent("link-outside.png")
+        try FileManager.default.createSymbolicLink(at: externalSymlink, withDestinationURL: externalPNG)
+
+        // Importer rejects symlink sources and copies regular files.
+        #expect(RecordingOverlayMedia.copyRegularFile(from: externalSymlink, into: mediaDir) == nil)
+        let copiedName = try #require(RecordingOverlayMedia.copyRegularFile(from: externalPNG, into: mediaDir))
+        #expect(RecordingOverlayMedia.resolveRegularFile(named: copiedName, in: mediaDir) != nil)
+
+        // Resolver rejects path traversal, nested paths, empty names, symlinks, and directories.
+        let mediaSymlink = mediaDir.appendingPathComponent("sym.png")
+        try FileManager.default.createSymbolicLink(at: mediaSymlink, withDestinationURL: externalPNG)
+        let nestedDir = mediaDir.appendingPathComponent("folder.png", isDirectory: true)
+        try FileManager.default.createDirectory(at: nestedDir, withIntermediateDirectories: true)
+        let nestedChild = nestedDir.appendingPathComponent("child.txt")
+        try Data("keep".utf8).write(to: nestedChild)
+
+        for bad in ["", ".", "..", "../outside.png", "folder.png/child.txt", "/etc/hosts", "sym.png", "folder.png"] {
+            #expect(RecordingOverlayMedia.resolveRegularFile(named: bad, in: mediaDir) == nil, "Expected \(bad) to be rejected")
+        }
+
+        // Export validation succeeds for the regular file and fails naming the missing/symlinked asset.
+        let timeline = RecordingClipTimeline.full(sourceDuration: 5)
+        let store = RecordingOverlayImageStore()
+        let validOverlay = RecordingImageOverlay(fileName: copiedName, displayName: "Logo", start: 0, end: 2)
+        try RecordingOverlayMedia.validateOverlays([validOverlay], in: mediaDir, clipTimeline: timeline, store: store)
+
+        let symlinkOverlay = RecordingImageOverlay(fileName: "sym.png", displayName: "Linked Badge", start: 0, end: 2)
+        do {
+            try RecordingOverlayMedia.validateOverlays([symlinkOverlay], in: mediaDir, clipTimeline: timeline, store: store)
+            Issue.record("Expected symlinked overlay to fail validation")
+        } catch let error as RecordingOverlayMedia.ResolutionError {
+            #expect(error == .missingOrInvalid("Linked Badge"))
+            #expect(error.errorDescription?.contains("Linked Badge") == true)
+        }
+
+        let missingOverlay = RecordingImageOverlay(fileName: "gone.png", displayName: "Hero Art", start: 0, end: 2)
+        do {
+            try RecordingOverlayMedia.validateOverlays([missingOverlay], in: mediaDir, clipTimeline: timeline, store: store)
+            Issue.record("Expected missing overlay to fail validation")
+        } catch let error as RecordingOverlayMedia.ResolutionError {
+            #expect(error == .missingOrInvalid("Hero Art"))
+        }
+
+        // Cleanup removes only unreferenced regular image files; keeps referenced files,
+        // non-image files, symlinks, and directories named like images.
+        let orphanName = try #require(RecordingOverlayMedia.copyRegularFile(from: externalPNG, into: mediaDir))
+        let audioFile = mediaDir.appendingPathComponent("voice.m4a")
+        try Data("audio".utf8).write(to: audioFile)
+
+        RecordingOverlayMedia.cleanupUnreferencedImages(in: mediaDir, referenced: [copiedName])
+        #expect(FileManager.default.fileExists(atPath: mediaDir.appendingPathComponent(copiedName).path))
+        #expect(!FileManager.default.fileExists(atPath: mediaDir.appendingPathComponent(orphanName).path))
+        #expect(FileManager.default.fileExists(atPath: audioFile.path))
+        #expect(FileManager.default.fileExists(atPath: nestedChild.path))
+        var linkStat = stat()
+        #expect(lstat(mediaSymlink.path, &linkStat) == 0)
+    }
+
     // MARK: - Source-time placement across cuts and speed ramps
 
     @Test func textAndImageBlocksMapAcrossCutsAndSpeedRamps() {
@@ -355,6 +426,13 @@ struct StudioTracksTests {
             let img = try solidImage(width: 64, height: 64, r: color.0, g: color.1, b: color.2)
             CGImageDestinationAddImage(dest, img, frameProps as CFDictionary)
         }
+        #expect(CGImageDestinationFinalize(dest))
+    }
+
+    private func writeSolidPNG(to url: URL, width: Int, height: Int, r: UInt8, g: UInt8, b: UInt8) throws {
+        let img = try solidImage(width: width, height: height, r: r, g: g, b: b)
+        let dest = try #require(CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(dest, img, nil)
         #expect(CGImageDestinationFinalize(dest))
     }
 

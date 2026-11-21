@@ -14,6 +14,7 @@
 //
 
 import CoreGraphics
+import Darwin
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
@@ -185,6 +186,100 @@ nonisolated final class RecordingOverlayImage: @unchecked Sendable {
     static func canImport(_ url: URL) -> Bool {
         guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
         return type.conforms(to: .image)
+    }
+}
+
+/// Single path resolver, importer, and cleanup guard for files inside a
+/// project's `media` directory. Enforces simple filenames and regular files
+/// without following symbolic links, so neither preview nor export can escape
+/// the package or silently drop missing assets.
+nonisolated enum RecordingOverlayMedia {
+    enum ResolutionError: LocalizedError, Equatable {
+        case missingOrInvalid(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .missingOrInvalid(let name):
+                "The overlay image \"\(name)\" is missing or unreadable."
+            }
+        }
+    }
+
+    static func isSimpleFileName(_ name: String) -> Bool {
+        !name.isEmpty
+            && name != "."
+            && name != ".."
+            && !name.contains("/")
+            && !name.contains("\\")
+            && !name.contains("\0")
+            && (name as NSString).lastPathComponent == name
+    }
+
+    static func isRegularFileNoFollow(at url: URL) -> Bool {
+        var info = stat()
+        guard lstat(url.path, &info) == 0 else { return false }
+        return (info.st_mode & S_IFMT) == S_IFREG
+    }
+
+    static func resolveRegularFile(named fileName: String, in mediaDirectory: URL) -> URL? {
+        guard isSimpleFileName(fileName) else { return nil }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: mediaDirectory.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            return nil
+        }
+        let realDirectory = mediaDirectory.resolvingSymlinksInPath().standardizedFileURL
+        let candidate = realDirectory.appendingPathComponent(fileName, isDirectory: false)
+        guard isRegularFileNoFollow(at: candidate) else { return nil }
+        let resolved = candidate.resolvingSymlinksInPath().standardizedFileURL
+        guard resolved.deletingLastPathComponent().path == realDirectory.path else { return nil }
+        return resolved
+    }
+
+    static func copyRegularFile(from sourceURL: URL, into mediaDirectory: URL) -> String? {
+        let ext = sourceURL.pathExtension.lowercased()
+        let fileName = UUID().uuidString + (ext.isEmpty ? "" : ".\(ext)")
+        do {
+            let accessing = sourceURL.startAccessingSecurityScopedResource()
+            defer { if accessing { sourceURL.stopAccessingSecurityScopedResource() } }
+            guard isRegularFileNoFollow(at: sourceURL) else { return nil }
+            try FileManager.default.createDirectory(at: mediaDirectory, withIntermediateDirectories: true)
+            let destination = mediaDirectory.appendingPathComponent(fileName, isDirectory: false)
+            try FileManager.default.copyItem(at: sourceURL, to: destination)
+            guard resolveRegularFile(named: fileName, in: mediaDirectory) != nil else {
+                try? FileManager.default.removeItem(at: destination)
+                return nil
+            }
+            return fileName
+        } catch {
+            return nil
+        }
+    }
+
+    static func validateOverlays(
+        _ overlays: [RecordingImageOverlay],
+        in mediaDirectory: URL?,
+        clipTimeline: RecordingClipTimeline,
+        store: RecordingOverlayImageStore
+    ) throws {
+        for overlay in overlays {
+            guard !clipTimeline.slices(overlapping: overlay.start, sourceEnd: overlay.end).isEmpty else { continue }
+            let label = overlay.displayName.isEmpty ? overlay.fileName : overlay.displayName
+            guard let mediaDirectory,
+                  let resolved = resolveRegularFile(named: overlay.fileName, in: mediaDirectory),
+                  store.image(at: resolved) != nil else {
+                throw ResolutionError.missingOrInvalid(label)
+            }
+        }
+    }
+
+    static func cleanupUnreferencedImages(in mediaDirectory: URL, referenced: Set<String>) {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: mediaDirectory.path)) ?? []
+        for name in names where isSimpleFileName(name) && !referenced.contains(name) {
+            guard let fileURL = resolveRegularFile(named: name, in: mediaDirectory),
+                  RecordingOverlayImage.canImport(fileURL) else { continue }
+            try? FileManager.default.removeItem(at: fileURL)
+        }
     }
 }
 
