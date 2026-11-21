@@ -8,6 +8,7 @@
 //  recording and nothing else.
 //
 
+import CoreGraphics
 import Foundation
 
 /// A toggle on the bar. Off is a dark-grey icon (slashed for the three inputs), on is a filled
@@ -128,5 +129,95 @@ nonisolated enum BarHoverText {
     static func appLogs(isOn: Bool) -> BarHover {
         isOn ? BarHover("App logs are on", "This take's bug report adds the app's log")
             : BarHover("App logs are off", "Click to add the recorded app's log to the bug report")
+    }
+}
+
+/// Screen-space geometry for the fixed-size floating recording bar panel, whose transparent slack
+/// is much larger than the visible bar and optional amber pill.
+nonisolated enum BarPanelGeometry {
+    /// Converts a top-left-origin rect inside the panel (SwiftUI coordinates) to screen coordinates
+    /// (AppKit bottom-up).
+    static func screenRect(forPanelRect localRect: CGRect, in panelFrame: CGRect) -> CGRect {
+        CGRect(
+            x: panelFrame.minX + localRect.minX,
+            y: panelFrame.maxY - localRect.maxY,
+            width: localRect.width,
+            height: localRect.height
+        )
+    }
+
+    /// Returns the union of the visible bar and optional visibility pill in panel coordinates.
+    static func visibleContentInPanel(barFrame: CGRect, bannerFrame: CGRect, showsBanner: Bool) -> CGRect {
+        guard showsBanner, !bannerFrame.isEmpty else { return barFrame }
+        return barFrame.isEmpty ? bannerFrame : barFrame.union(bannerFrame)
+    }
+
+    /// Picks the screen that owns `visibleBar` (AppKit coordinates): first the screen containing
+    /// its midpoint, else the screen with the largest intersection area, else the nearest screen.
+    static func screenIndex(forVisibleBar visibleBar: CGRect, screenFrames: [CGRect]) -> Int? {
+        guard !screenFrames.isEmpty else { return nil }
+        let midpoint = CGPoint(x: visibleBar.midX, y: visibleBar.midY)
+        if let containing = screenFrames.firstIndex(where: { $0.contains(midpoint) }) {
+            return containing
+        }
+        var bestOverlap: (index: Int, area: CGFloat)?
+        for (index, frame) in screenFrames.enumerated() {
+            let overlap = frame.intersection(visibleBar)
+            guard !overlap.isNull, !overlap.isEmpty else { continue }
+            let area = overlap.width * overlap.height
+            if area > (bestOverlap?.area ?? 0) {
+                bestOverlap = (index, area)
+            }
+        }
+        if let bestOverlap { return bestOverlap.index }
+
+        var nearest: (index: Int, distanceSquared: CGFloat)?
+        for (index, frame) in screenFrames.enumerated() {
+            let clampedX = min(max(midpoint.x, frame.minX), frame.maxX)
+            let clampedY = min(max(midpoint.y, frame.minY), frame.maxY)
+            let dx = midpoint.x - clampedX
+            let dy = midpoint.y - clampedY
+            let distanceSquared = dx * dx + dy * dy
+            if distanceSquared < (nearest?.distanceSquared ?? .infinity) {
+                nearest = (index, distanceSquared)
+            }
+        }
+        return nearest?.index
+    }
+
+    /// Shifts `panelFrame` by the smallest offset so `visibleContentInPanel` stays completely
+    /// inside `visibleScreenFrame`.
+    static func clampedPanelFrame(
+        _ panelFrame: CGRect,
+        visibleContentInPanel: CGRect,
+        to visibleScreenFrame: CGRect
+    ) -> CGRect {
+        guard !visibleContentInPanel.isEmpty, !visibleScreenFrame.isEmpty else { return panelFrame }
+        let content = screenRect(forPanelRect: visibleContentInPanel, in: panelFrame)
+
+        let dx: CGFloat
+        if content.width >= visibleScreenFrame.width || content.minX < visibleScreenFrame.minX {
+            dx = visibleScreenFrame.minX - content.minX
+        } else if content.maxX > visibleScreenFrame.maxX {
+            dx = visibleScreenFrame.maxX - content.maxX
+        } else {
+            dx = 0
+        }
+
+        let dy: CGFloat
+        if content.height >= visibleScreenFrame.height || content.maxY > visibleScreenFrame.maxY {
+            dy = visibleScreenFrame.maxY - content.maxY
+        } else if content.minY < visibleScreenFrame.minY {
+            dy = visibleScreenFrame.minY - content.minY
+        } else {
+            dy = 0
+        }
+
+        return CGRect(
+            x: panelFrame.minX + dx,
+            y: panelFrame.minY + dy,
+            width: panelFrame.width,
+            height: panelFrame.height
+        )
     }
 }

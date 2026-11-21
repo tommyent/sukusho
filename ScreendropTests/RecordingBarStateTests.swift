@@ -1,3 +1,4 @@
+import CoreGraphics
 import Testing
 
 /// The recording bar's direction B rules: dark grey off, coloured on, light grey only for a
@@ -44,5 +45,33 @@ struct RecordingBarStateTests {
             == BarHover("Sukusho windows will be captured", "Click to hide Sukusho windows from captures"))
         #expect(BarHoverText.includeAppWindows(isOn: false)
             == BarHover("Sukusho windows are hidden", "Click to include Sukusho windows in captures"))
+    }
+
+    @Test func clampingKeepsVisibleBarAndPillInsideScreenVisibleFrame() {
+        let screen = CGRect(x: 0, y: 40, width: 1440, height: 835)
+        let barInPanel = CGRect(x: 130, y: 64, width: 500, height: 52)
+        let bannerInPanel = CGRect(x: 250, y: 124, width: 260, height: 30)
+
+        // Dragged past the left edge so Stop and transport buttons would sit off screen.
+        let panelLeft = CGRect(x: -350, y: 200, width: 760, height: 182)
+        let clampedLeft = BarPanelGeometry.clampedPanelFrame(panelLeft, visibleContentInPanel: barInPanel, to: screen)
+        let barAfterLeft = BarPanelGeometry.screenRect(forPanelRect: barInPanel, in: clampedLeft)
+        #expect(barAfterLeft.minX == screen.minX)
+        #expect(barAfterLeft.maxX <= screen.maxX)
+
+        // Dragged down so the amber pill goes under the Dock (y < 40).
+        let contentWithPill = BarPanelGeometry.visibleContentInPanel(
+            barFrame: barInPanel, bannerFrame: bannerInPanel, showsBanner: true
+        )
+        let panelLow = CGRect(x: 340, y: 0, width: 760, height: 182)
+        let clampedLow = BarPanelGeometry.clampedPanelFrame(panelLow, visibleContentInPanel: contentWithPill, to: screen)
+        let pillAfterLow = BarPanelGeometry.screenRect(forPanelRect: bannerInPanel, in: clampedLow)
+        #expect(pillAfterLow.minY == screen.minY)
+
+        // Dragged up so the visible bar goes behind the menu bar (maxY > 875).
+        let panelHigh = CGRect(x: 340, y: 800, width: 760, height: 182)
+        let clampedHigh = BarPanelGeometry.clampedPanelFrame(panelHigh, visibleContentInPanel: barInPanel, to: screen)
+        let barAfterHigh = BarPanelGeometry.screenRect(forPanelRect: barInPanel, in: clampedHigh)
+        #expect(barAfterHigh.maxY == screen.maxY)
     }
 }

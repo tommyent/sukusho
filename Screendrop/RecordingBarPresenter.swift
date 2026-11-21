@@ -29,17 +29,29 @@ final class RecordingBarPresenter {
     /// The panel is deliberately much larger than the bar, so this is what
     /// tells the hosting view which part of itself is real and satellite
     /// windows where to anchor.
-    var barFrameInPanel: CGRect = .zero
-    var visibilityBannerFrameInPanel: CGRect = .zero
+    var barFrameInPanel: CGRect = .zero {
+        didSet {
+            if barFrameInPanel != oldValue { clampPanelToScreen() }
+        }
+    }
+    var visibilityBannerFrameInPanel: CGRect = .zero {
+        didSet {
+            if visibilityBannerFrameInPanel != oldValue { clampPanelToScreen() }
+        }
+    }
+
+    private var showsVisibilityBanner: Bool {
+        mode == .picker && ScreendropPreferences.includeAppWindowsInCaptures
+    }
 
     func containsPanelPoint(_ point: CGPoint) -> Bool {
         if barFrameInPanel.contains(point) { return true }
-        return mode == .picker
-            && ScreendropPreferences.includeAppWindowsInCaptures
-            && visibilityBannerFrameInPanel.contains(point)
+        return showsVisibilityBanner && visibilityBannerFrameInPanel.contains(point)
     }
 
     @ObservationIgnored private var panel: NSPanel?
+    @ObservationIgnored private var moveObserver: NSObjectProtocol?
+    @ObservationIgnored private var screenObserver: NSObjectProtocol?
 
     private init() {}
 
@@ -133,13 +145,36 @@ final class RecordingBarPresenter {
     /// to that would leave satellites floating clear of the bar.
     var barFrame: CGRect? {
         guard let panel, panel.isVisible, barFrameInPanel != .zero else { return nil }
-        // SwiftUI reports a top-left origin; screen coordinates are bottom-up.
-        return CGRect(
-            x: panel.frame.minX + barFrameInPanel.minX,
-            y: panel.frame.maxY - barFrameInPanel.maxY,
-            width: barFrameInPanel.width,
-            height: barFrameInPanel.height
+        return BarPanelGeometry.screenRect(forPanelRect: barFrameInPanel, in: panel.frame)
+    }
+
+    /// Keeps the visible bar (and amber pill, when shown) inside the destination screen's visible
+    /// frame after drags, size changes, or display reconfigurations.
+    func clampPanelToScreen() {
+        guard let panel, panel.isVisible, barFrameInPanel != .zero else { return }
+        guard NSEvent.pressedMouseButtons & 1 == 0 else { return }
+        let visibleBar = BarPanelGeometry.screenRect(forPanelRect: barFrameInPanel, in: panel.frame)
+        let screens = NSScreen.screens
+        let targetScreen: NSScreen?
+        if let index = BarPanelGeometry.screenIndex(forVisibleBar: visibleBar, screenFrames: screens.map(\.frame)) {
+            targetScreen = screens[index]
+        } else {
+            targetScreen = panel.screen ?? NSScreen.main
+        }
+        guard let visibleFrame = targetScreen?.visibleFrame else { return }
+        let visibleContent = BarPanelGeometry.visibleContentInPanel(
+            barFrame: barFrameInPanel,
+            bannerFrame: visibilityBannerFrameInPanel,
+            showsBanner: showsVisibilityBanner
         )
+        let clamped = BarPanelGeometry.clampedPanelFrame(
+            panel.frame,
+            visibleContentInPanel: visibleContent,
+            to: visibleFrame
+        )
+        if clamped.origin != panel.frame.origin {
+            panel.setFrameOrigin(clamped.origin)
+        }
     }
 
     private func isPositioned(_ panel: NSPanel, onDisplayID displayID: CGDirectDisplayID?) -> Bool {
@@ -234,6 +269,24 @@ final class RecordingBarPresenter {
         panel.contentView?.superview?.layer?.isOpaque = false
 
         self.panel = panel
+        moveObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didMoveNotification,
+            object: panel,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.clampPanelToScreen()
+            }
+        }
+        screenObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.clampPanelToScreen()
+            }
+        }
         return panel
     }
 }
@@ -246,6 +299,11 @@ final class RecordingBarPanel: NSPanel {
 
     override var canBecomeMain: Bool {
         false
+    }
+
+    override func performDrag(with event: NSEvent) {
+        super.performDrag(with: event)
+        RecordingBarPresenter.shared.clampPanelToScreen()
     }
 
     override func cancelOperation(_ sender: Any?) {
@@ -304,6 +362,7 @@ private struct RecordingBarView: View {
                 }
                 PreviewWindowCaptureExclusion.shared.refreshRegisteredWindows()
                 Task { await RecordingSourceCatalog.shared.refresh() }
+                presenter.clampPanelToScreen()
             }
     }
 
