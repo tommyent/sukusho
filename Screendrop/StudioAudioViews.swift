@@ -543,21 +543,19 @@ struct StudioAudioClipInspectorControls: View {
                     .help("Silence this clip")
                 }
 
-                InspectorFieldPair {
-                    InspectorSlider(
-                        "Fade In",
-                        value: value(\.fadeIn, action: "Change Audio Fade"),
-                        range: CGFloat(RecordingAudioClip.fadeRange.lowerBound)...CGFloat(RecordingAudioClip.fadeRange.upperBound),
-                        format: .audioSeconds
-                    )
-                } trailing: {
-                    InspectorSlider(
-                        "Fade Out",
-                        value: value(\.fadeOut, action: "Change Audio Fade"),
-                        range: CGFloat(RecordingAudioClip.fadeRange.lowerBound)...CGFloat(RecordingAudioClip.fadeRange.upperBound),
-                        format: .audioSeconds
-                    )
-                }
+                InspectorSlider(
+                    "Fade In",
+                    value: value(\.fadeIn, action: "Change Audio Fade"),
+                    range: CGFloat(RecordingAudioClip.fadeRange.lowerBound)...CGFloat(RecordingAudioClip.fadeRange.upperBound),
+                    format: .audioSeconds
+                )
+
+                InspectorSlider(
+                    "Fade Out",
+                    value: value(\.fadeOut, action: "Change Audio Fade"),
+                    range: CGFloat(RecordingAudioClip.fadeRange.lowerBound)...CGFloat(RecordingAudioClip.fadeRange.upperBound),
+                    format: .audioSeconds
+                )
             }
 
             VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
