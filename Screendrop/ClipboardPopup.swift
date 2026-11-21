@@ -95,10 +95,8 @@ final class ClipboardPopupPresenter {
     }
 
     func show() {
-        let panel = panel ?? makePanel()
-        self.panel = panel
         if isVisible {
-            present(panel, capturedWindow: capturedWindowTarget)
+            present(capturedWindow: capturedWindowTarget)
             return
         }
         let front = NSWorkspace.shared.frontmostApplication
@@ -109,7 +107,7 @@ final class ClipboardPopupPresenter {
         // When Window Management is off, open synchronously with zero AX work.
         guard ScreendropPreferences.windowManagementEnabled else {
             pendingOpenTask = nil
-            present(panel, capturedWindow: nil)
+            present(capturedWindow: nil)
             return
         }
         // Finish the bounded off-main external window capture BEFORE making the popup key.
@@ -125,11 +123,13 @@ final class ClipboardPopupPresenter {
                 currentFrontPID: currentFront?.processIdentifier
             )
             if !sameApp { self.target = currentFront }
-            self.present(panel, capturedWindow: sameApp ? captured : .unavailable)
+            self.present(capturedWindow: sameApp ? captured : .unavailable)
         }
     }
 
-    private func present(_ panel: ClipboardPopupPanel, capturedWindow: CapturedWindowTarget?) {
+    private func present(capturedWindow: CapturedWindowTarget?) {
+        let panel = panel ?? makePanel()
+        self.panel = panel
         capturedWindowTarget = capturedWindow
         let initialMode = ClipboardPopupMode.initial(
             clipboardHistoryEnabled: ScreendropPreferences.clipboardHistoryEnabled,
@@ -149,9 +149,8 @@ final class ClipboardPopupPresenter {
         }
         panel.makeKeyAndOrderFront(nil)
         installKeyMonitor()
-        // SwiftUI asks for the search field's focus before the reused panel is key, and on the first opening after
-        // launch the request can be lost: typing then went nowhere (Astra B3, 2026-11-16). Once the panel is key,
-        // and after SwiftUI's first layout, the field takes the keyboard.
+        // SwiftUI may request search focus before AppKit makes the panel key.
+        // Try again after the first layout if the field is still being created.
         focusSearchField()
         DispatchQueue.main.async { [weak self] in self?.focusSearchField() }
     }
@@ -173,10 +172,19 @@ final class ClipboardPopupPresenter {
         openGeneration &+= 1
         pendingOpenTask?.cancel()
         pendingOpenTask = nil
-        panel?.orderOut(nil)
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
+        target = nil
         capturedWindowTarget = nil
+        let closingPanel = panel
+        panel = nil
+        confirmingDeletion = false
+        closingPanel?.onResign = nil
+        if let closingPanel, let sheet = closingPanel.attachedSheet {
+            closingPanel.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+        }
+        closingPanel?.contentView = nil
+        closingPanel?.close()
         ClipboardLauncherModel.shared.popupClosed()
         state.reset()
     }
@@ -240,15 +248,18 @@ final class ClipboardPopupPresenter {
     private func confirmDelete(_ entry: ClipboardEntry) {
         guard let panel, !confirmingDeletion else { return }
         confirmingDeletion = true
-        CaptureLibraryModel.shared.deleteSelection([.clip(entry)], in: panel) { [weak self] in
-            self?.confirmingDeletion = false
-            self?.focusSearchField()
+        CaptureLibraryModel.shared.deleteSelection([.clip(entry)], in: panel) { [weak self, weak panel] in
+            guard let self, let panel, self.panel === panel else { return }
+            self.confirmingDeletion = false
+            self.focusSearchField()
         }
     }
 
     private func makePanel() -> ClipboardPopupPanel {
         let panel = ClipboardPopupPanel(size: Self.size)
-        panel.contentView = NSHostingView(rootView: ClipboardPopupView(state: state, presenter: self))
+        let hostingView = NSHostingView(rootView: ClipboardPopupView(state: state, presenter: self))
+        hostingView.sizingOptions = []
+        panel.contentView = hostingView
         panel.onResign = { [weak self] in
             guard let self, !confirmingDeletion else { return }
             close()

@@ -90,6 +90,7 @@ final class ClipboardLauncherModel {
         popupVisible = false
         activeMode = .clipboard
         endAppsSession()
+        iconCache.removeAllObjects()
     }
 
     /// Stops watching app folders, cancels in-flight work, and releases cached data when the setting is turned off.
@@ -100,7 +101,6 @@ final class ClipboardLauncherModel {
         hasLoadedApps = false
         zoxideStatus = .idle
         favoritesLoaded = false
-        iconCache.removeAllObjects()
     }
 
     private func endAppsSession() {
