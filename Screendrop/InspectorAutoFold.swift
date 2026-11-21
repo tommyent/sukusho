@@ -13,16 +13,17 @@ struct InspectorAutoFold: ViewModifier {
     @Binding var isPresented: Bool
     let foldBelow: CGFloat
     let window: NSWindow?
+    let onlyDuringLiveResize: Bool
 
     @State private var state = InspectorFoldState()
 
     func body(content: Content) -> some View {
         content
             .onChange(of: window, initial: true) { _, window in
-                if let window { resize(to: window.frame.width) }
+                if let window { resize(in: window) }
             }
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResizeNotification)) { notification in
-                if let window, notification.object as? NSWindow === window { resize(to: window.frame.width) }
+                if let window, notification.object as? NSWindow === window { resize(in: window) }
             }
             .onChange(of: isPresented) { _, presented in
                 // Shown by hand while folded: it stays until the next fold.
@@ -30,9 +31,15 @@ struct InspectorAutoFold: ViewModifier {
             }
     }
 
-    private func resize(to width: CGFloat) {
+    private func resize(in window: NSWindow) {
+        let width = window.frame.width
         guard width > 0 else { return }
-        let next = state.resized(to: width, foldBelow: foldBelow, isPresented: isPresented)
+        let next = state.resized(
+            to: width,
+            foldBelow: foldBelow,
+            isPresented: isPresented,
+            canFold: !onlyDuringLiveResize || window.inLiveResize
+        )
         guard next.state != state else { return }
         state = next.state
         if next.isPresented != isPresented {
@@ -50,13 +57,18 @@ nonisolated struct InspectorFoldState: Equatable {
     /// that hovers at the edge doesn't flicker it.
     static let returnMargin: CGFloat = 40
 
-    func resized(to width: CGFloat, foldBelow: CGFloat, isPresented: Bool) -> (state: Self, isPresented: Bool) {
+    func resized(
+        to width: CGFloat,
+        foldBelow: CGFloat,
+        isPresented: Bool,
+        canFold: Bool = true
+    ) -> (state: Self, isPresented: Bool) {
         var next = self
         next.width = width
         // Any shrink below the point folds it, so an inspector shown by hand (or pulled out by
         // its divider) at a narrow width stays until the window is made narrower again.
         let isShrinking = width < (self.width ?? .infinity)
-        if isPresented, isShrinking, width < foldBelow {
+        if canFold, isPresented, isShrinking, width < foldBelow {
             next.isFolded = true
             return (next, false)
         }
@@ -69,7 +81,17 @@ nonisolated struct InspectorFoldState: Equatable {
 }
 
 extension View {
-    func inspectorAutoFold(isPresented: Binding<Bool>, below width: CGFloat, window: NSWindow?) -> some View {
-        modifier(InspectorAutoFold(isPresented: isPresented, foldBelow: width, window: window))
+    func inspectorAutoFold(
+        isPresented: Binding<Bool>,
+        below width: CGFloat,
+        window: NSWindow?,
+        onlyDuringLiveResize: Bool = false
+    ) -> some View {
+        modifier(InspectorAutoFold(
+            isPresented: isPresented,
+            foldBelow: width,
+            window: window,
+            onlyDuringLiveResize: onlyDuringLiveResize
+        ))
     }
 }

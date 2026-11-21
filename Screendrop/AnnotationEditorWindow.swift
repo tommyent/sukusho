@@ -232,7 +232,7 @@ struct AnnotationEditorWindow: View {
                 .glassInspectorToolbar(enabled: floatingChrome)
             }
             .glassInspectorToggleOverlay(
-                enabled: floatingChrome && !model.isCropping,
+                enabled: floatingChrome && isInspectorPresented && !model.isCropping,
                 isPresented: inspectorChoice,
                 metrics: glassMetrics,
                 isDisabled: isBusy,
@@ -248,7 +248,12 @@ struct AnnotationEditorWindow: View {
             )
             // Below this the inspector folds away and the window can go down to the canvas's
             // own minimum; it was stuck at 1040 pt with the inspector (Fable #7).
-            .inspectorAutoFold(isPresented: $isInspectorPresented, below: 1000, window: editorWindow)
+            .inspectorAutoFold(
+                isPresented: $isInspectorPresented,
+                below: 1000,
+                window: editorWindow,
+                onlyDuringLiveResize: true
+            )
             .environment(probe)
     }
 
@@ -292,10 +297,8 @@ struct AnnotationEditorWindow: View {
             .disabled(isUploading)
         }
 
-        if !floatingChrome {
+        if !floatingChrome || !isInspectorPresented {
             inspectorToggleButton
-        } else if !isInspectorPresented {
-            Color.clear.frame(width: glassMetrics.diameter).accessibilityHidden(true)
         }
     }
 
@@ -393,11 +396,8 @@ struct AnnotationEditorWindow: View {
                     .controlSize(.large)
             }
         }
-        // The tool dock is about 686 pt wide, so the window never goes below 712 pt. With the
-        // inspector shown the canvas may take less while a drag passes the fold point: a minimum
-        // that changed mid-drag didn't reach AppKit, and the window stuck at the old one.
-        .frame(minWidth: Self.minimumWidth - (isInspectorPresented ? InspectorMetrics.columnMinWidth : 0),
-               minHeight: 580)
+        // Keep the canvas minimum steady while the split view adds or removes the inspector.
+        .frame(minWidth: Self.minimumWidth, minHeight: 580)
         .clipped()
         .overlay(alignment: .top) {
             if model.previewImage != nil, model.imageSize != .zero {

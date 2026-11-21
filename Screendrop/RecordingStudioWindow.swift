@@ -52,6 +52,8 @@ struct RecordingStudioWindow: View {
 }
 
 private struct RecordingStudioContent: View {
+    private static let minimumWidth: CGFloat = 980
+
     @Bindable var model: RecordingStudioModel
     @State private var isInspectorPresented = true
     @State private var closeGuard = EditorCloseGuard()
@@ -113,7 +115,7 @@ private struct RecordingStudioContent: View {
                     .ignoresSafeArea()
             }
         }
-        .frame(minWidth: 980 - (isInspectorPresented ? InspectorMetrics.columnMinWidth : 0), minHeight: 720)
+        .frame(minWidth: Self.minimumWidth - InspectorMetrics.columnMinWidth, minHeight: 720)
         // One language at a time; the system asks first if it needs to download one.
         .translationTask(model.translationConfiguration) { session in
             await model.translate(using: session)
@@ -152,10 +154,8 @@ private struct RecordingStudioContent: View {
 
                     exportStatus
 
-                    if !floatingChrome {
+                    if !floatingChrome || !isInspectorPresented {
                         inspectorToggleButton
-                    } else if !isInspectorPresented {
-                        Color.clear.frame(width: glassMetrics.diameter).accessibilityHidden(true)
                     }
                 }
             }
@@ -166,8 +166,9 @@ private struct RecordingStudioContent: View {
             StudioInspector(model: model)
                 .glassInspectorToolbar(enabled: floatingChrome)
         }
+        .frame(minWidth: Self.minimumWidth)
         .glassInspectorToggleOverlay(
-            enabled: floatingChrome && !model.isSelectingRedaction && !model.isCroppingVideo,
+            enabled: floatingChrome && isInspectorPresented && !model.isSelectingRedaction && !model.isCroppingVideo,
             isPresented: $isInspectorPresented,
             metrics: glassMetrics
         )
@@ -220,7 +221,8 @@ private struct RecordingStudioContent: View {
         Button {
             isInspectorPresented.toggle()
         } label: {
-            Image(systemName: "sidebar.right")
+            Label(isInspectorPresented ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.right")
+                .labelStyle(.iconOnly)
         }
         .help(isInspectorPresented ? "Hide Inspector" : "Show Inspector")
     }
@@ -3582,11 +3584,9 @@ private struct StudioInspector: View {
             }
             .scrollContentBackground(.hidden)
             .scrollEdgeEffectStyle(.soft, for: .all)
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+            .clipped()
+
             VStack(spacing: 0) {
-                // The footer starts at a hairline, as the Revert To bar does, so the rows
-                // scrolling under it end at an edge instead of being cut (Fable pass 3, #4).
                 Rectangle()
                     .fill(Palette.hairline)
                     .frame(height: 0.5)
@@ -3646,7 +3646,6 @@ private struct StudioInspector: View {
                     .disabled(!model.canRevert)
                 }
             }
-            .background(sidebarBackground)
         }
         .background(sidebarBackground)
         .inspectorColumnWidth(

@@ -118,6 +118,17 @@ struct EditorInspectorTests {
         #expect(!opened.isPresented && narrow.isFolded)
     }
 
+    @Test static func imageInspectorStaysOpenAsTheWindowSettles() {
+        let opened = InspectorFoldState().resized(to: 990, foldBelow: 1000, isPresented: true, canFold: false)
+        #expect(opened.isPresented && !opened.state.isFolded)
+
+        let settled = opened.state.resized(to: 950, foldBelow: 1000, isPresented: true, canFold: false)
+        #expect(settled.isPresented && !settled.state.isFolded)
+
+        let resized = settled.state.resized(to: 920, foldBelow: 1000, isPresented: true)
+        #expect(!resized.isPresented && resized.state.isFolded)
+    }
+
     /// ⌘S saves; ⌃⌘S is View › Show Sidebar and must not save too (Astra E3), and ⇧⌘S is Save As.
     @Test static func onlyPlainCommandSSaves() {
         #expect(EditorKeyChords.isSave([.command], characters: "s"))
