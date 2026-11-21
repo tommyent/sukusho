@@ -1065,6 +1065,86 @@ func studioPlaceMovedZoomCue(
     return next
 }
 
+/// Applies an explicit single-edge trim in source time while keeping the
+/// opposite edge fixed. Enforces `ZoomCue.minimumDuration` against the moving
+/// edge only: if an already-short cue (e.g. moved from 2× to 1×) has no room on
+/// the moving side to reach `minimumDuration`, or is asked to shrink further,
+/// the cue stays at `base` untouched instead of shifting the opposite edge.
+func studioPlaceTrimmedZoomCue(
+    id: UUID,
+    edge: StudioBlockEdge,
+    proposedSourceTime: TimeInterval,
+    base: ZoomCue? = nil,
+    in cues: [ZoomCue],
+    sourceDuration: TimeInterval
+) -> [ZoomCue]? {
+    var next = cues
+    guard let index = next.firstIndex(where: { $0.id == id }) else { return nil }
+    let anchor = studioSanitizedZoomCue(base ?? next[index], sourceDuration: sourceDuration)
+    let bounds = studioZoomNeighborBounds(forCueAt: index, in: next, sourceDuration: sourceDuration)
+    let safeDuration = max(0, sourceDuration.isFinite ? sourceDuration : 0)
+    let proposed = min(max(0, proposedSourceTime.isFinite ? proposedSourceTime : 0), safeDuration)
+    var trimmed = anchor
+
+    switch edge {
+    case .leading:
+        let fixedEnd = anchor.end
+        if abs(proposed - anchor.start) < 0.000_001
+            || (anchor.duration < ZoomCue.minimumDuration && proposed > anchor.start) {
+            trimmed = anchor
+        } else {
+            let minStart = bounds.lower
+            let maxStart = fixedEnd - ZoomCue.minimumDuration
+            if minStart <= maxStart {
+                trimmed.start = min(max(proposed, minStart), maxStart)
+                trimmed.end = fixedEnd
+            } else {
+                trimmed = anchor
+            }
+        }
+    case .trailing:
+        let fixedStart = anchor.start
+        if abs(proposed - anchor.end) < 0.000_001
+            || (anchor.duration < ZoomCue.minimumDuration && proposed < anchor.end) {
+            trimmed = anchor
+        } else {
+            let minEnd = fixedStart + ZoomCue.minimumDuration
+            let maxEnd = bounds.upper
+            if minEnd <= maxEnd {
+                trimmed.start = fixedStart
+                trimmed.end = max(min(proposed, maxEnd), minEnd)
+            } else {
+                trimmed = anchor
+            }
+        }
+    }
+
+    next[index] = trimmed
+    return next
+}
+
+/// Resolves the target source time for a leading or trailing trim edit on a
+/// zoom block; a zero editor delta preserves the drag's original source edge.
+func studioTrimmedZoomSourceTime(
+    for edit: StudioBlockEdit<ZoomCue>,
+    clipTimeline: RecordingClipTimeline
+) -> (edge: StudioBlockEdge, sourceTime: TimeInterval)? {
+    switch edit.kind {
+    case .trimLeading:
+        let source = abs(edit.delta) < 0.000_001
+            ? edit.base.item.start
+            : studioSourceStart(atEditorTime: edit.base.editorStart + edit.delta, in: clipTimeline)
+        return (.leading, source)
+    case .trimTrailing:
+        let source = abs(edit.delta) < 0.000_001
+            ? edit.base.item.end
+            : studioSourceEnd(atEditorTime: edit.base.editorEnd + edit.delta, in: clipTimeline)
+        return (.trailing, source)
+    case .move:
+        return nil
+    }
+}
+
 /// Applies a cue edit. Attribute-only edits (such as magnification or focus
 /// mode) preserve the cue's existing span intact; explicit resizes enforce
 /// `ZoomCue.minimumDuration` clamped against neighbouring cues.

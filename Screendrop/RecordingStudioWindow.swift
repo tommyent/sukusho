@@ -3293,14 +3293,15 @@ private struct StudioZoomLane: View {
             cue.start = range.start
             cue.end = range.end
             model.moveZoomCue(cue)
-        case .trimLeading:
-            let source = studioSourceStart(atEditorTime: base.editorStart + edit.delta, in: model.clipTimeline)
-            cue.start = min(max(0, source), base.item.end - ZoomCue.minimumDuration)
-            model.updateZoomCue(cue)
-        case .trimTrailing:
-            let source = studioSourceEnd(atEditorTime: base.editorEnd + edit.delta, in: model.clipTimeline)
-            cue.end = max(base.item.start + ZoomCue.minimumDuration, min(model.sourceDuration, source))
-            model.updateZoomCue(cue)
+        case .trimLeading, .trimTrailing:
+            if let trim = studioTrimmedZoomSourceTime(for: edit, clipTimeline: model.clipTimeline) {
+                model.trimZoomCue(
+                    id: base.item.id,
+                    edge: trim.edge,
+                    toSourceTime: trim.sourceTime,
+                    base: base.item
+                )
+            }
         }
     }
 

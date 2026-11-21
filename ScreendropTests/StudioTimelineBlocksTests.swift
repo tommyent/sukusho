@@ -260,6 +260,99 @@ struct StudioTimelineBlocksTests {
         #expect(abs(updatedResize[0].end - updatedResize[0].start - ZoomCue.minimumDuration) < 0.0001)
     }
 
+    @Test @MainActor func blockedTrimOnShortZoomNeverMovesOppositeEdgeForPointerOrAccessibility() throws {
+        let clipTimeline = RecordingClipTimeline.full(sourceDuration: 10)
+        let sourceDuration: TimeInterval = 10
+        let a11yStep = StudioBlockAccessibility(label: "", value: "").step
+
+        // Helper exercising the shared StudioBlockLane -> StudioZoomLane trim path
+        // used by both pointer drags and named accessibility actions.
+        func applyTrim(
+            block: StudioLaneBlock<ZoomCue>,
+            kind: StudioBlockEditKind,
+            rawEditorDelta: TimeInterval,
+            cues: [ZoomCue]
+        ) throws -> [ZoomCue] {
+            let spans = studioOccupiedLaneSpans(cues: cues, clipTimeline: clipTimeline)
+            let clamped = StudioLaneOverlap.forbidden(spans: spans).clampedDelta(
+                rawEditorDelta,
+                blockID: block.id,
+                editorStart: block.editorStart,
+                editorEnd: block.editorEnd,
+                kind: kind,
+                duration: clipTimeline.duration
+            )
+            let edit = StudioBlockEdit(base: block, kind: kind, delta: clamped)
+            let resolved = try #require(studioTrimmedZoomSourceTime(for: edit, clipTimeline: clipTimeline))
+            return try #require(studioPlaceTrimmedZoomCue(
+                id: block.item.id,
+                edge: resolved.edge,
+                proposedSourceTime: resolved.sourceTime,
+                base: block.item,
+                in: cues,
+                sourceDuration: sourceDuration
+            ))
+        }
+
+        // 1. Leading edge blocked by preceding neighbour flush at 4.0 s on a 0.25 s cue (4.0..4.25 s).
+        let leadingNeighbour = ZoomCue(start: 2.0, end: 4.0)
+        let shortCue = ZoomCue(start: 4.0, end: 4.25)
+        let leadingCues = [leadingNeighbour, shortCue]
+        let shortBlock = StudioLaneBlock(item: shortCue, editorStart: 4.0, editorEnd: 4.25)
+
+        // Pointer drag left (-0.8 s) and accessibility "Trim Start Earlier" (-step): both leave 4.0..4.25 untouched.
+        for delta in [-0.8, -a11yStep] {
+            let after = try applyTrim(block: shortBlock, kind: .trimLeading, rawEditorDelta: delta, cues: leadingCues)
+            #expect(after == leadingCues)
+            #expect(after[1].start == 4.0 && after[1].end == 4.25)
+        }
+        // Even with partial room (0.15 s before neighbour at 3.85 s, total 0.40 s < 0.5 s minimum),
+        // the fixed trailing edge at 4.25 s must never move.
+        let tightLeadingCues = [ZoomCue(start: 2.0, end: 3.85), shortCue]
+        let afterTightLeading = try applyTrim(block: shortBlock, kind: .trimLeading, rawEditorDelta: -a11yStep, cues: tightLeadingCues)
+        #expect(afterTightLeading == tightLeadingCues)
+
+        // 2. Trailing edge blocked by following neighbour flush at 4.25 s on the same 0.25 s cue.
+        let trailingNeighbour = ZoomCue(start: 4.25, end: 6.0)
+        let trailingCues = [shortCue, trailingNeighbour]
+        for delta in [0.8, a11yStep] {
+            let after = try applyTrim(block: shortBlock, kind: .trimTrailing, rawEditorDelta: delta, cues: trailingCues)
+            #expect(after == trailingCues)
+            #expect(after[0].start == 4.0 && after[0].end == 4.25)
+        }
+        let tightTrailingCues = [shortCue, ZoomCue(start: 4.4, end: 6.0)]
+        let afterTightTrailing = try applyTrim(block: shortBlock, kind: .trimTrailing, rawEditorDelta: a11yStep, cues: tightTrailingCues)
+        #expect(afterTightTrailing == tightTrailingCues)
+
+        // 3. Trying to shrink an already-short cue from either side (open room on both sides)
+        // must leave it untouched rather than jumping backward/forward.
+        let soloCues = [shortCue]
+        let afterShrinkStart = try applyTrim(block: shortBlock, kind: .trimLeading, rawEditorDelta: a11yStep, cues: soloCues)
+        #expect(afterShrinkStart == soloCues)
+        let afterShrinkEnd = try applyTrim(block: shortBlock, kind: .trimTrailing, rawEditorDelta: -a11yStep, cues: soloCues)
+        #expect(afterShrinkEnd == soloCues)
+
+        // 4. Growing into open room moves ONLY the requested edge and enforces minimumDuration.
+        let grownLeading = try applyTrim(block: shortBlock, kind: .trimLeading, rawEditorDelta: -a11yStep, cues: soloCues)
+        #expect(abs(grownLeading[0].start - 3.5) < 0.0001)
+        #expect(abs(grownLeading[0].end - 4.25) < 0.0001)
+
+        let grownTrailing = try applyTrim(block: shortBlock, kind: .trimTrailing, rawEditorDelta: a11yStep, cues: soloCues)
+        #expect(abs(grownTrailing[0].start - 4.0) < 0.0001)
+        #expect(abs(grownTrailing[0].end - 4.75) < 0.0001)
+
+        // 5. Normal cue trimmed past minimumDuration clamps ONLY the moving edge.
+        let normalCue = ZoomCue(start: 2.0, end: 5.0)
+        let normalBlock = StudioLaneBlock(item: normalCue, editorStart: 2.0, editorEnd: 5.0)
+        let normalLeading = try applyTrim(block: normalBlock, kind: .trimLeading, rawEditorDelta: 2.8, cues: [normalCue])
+        #expect(abs(normalLeading[0].start - 4.5) < 0.0001)
+        #expect(abs(normalLeading[0].end - 5.0) < 0.0001)
+
+        let normalTrailing = try applyTrim(block: normalBlock, kind: .trimTrailing, rawEditorDelta: -2.8, cues: [normalCue])
+        #expect(abs(normalTrailing[0].start - 2.0) < 0.0001)
+        #expect(abs(normalTrailing[0].end - 2.5) < 0.0001)
+    }
+
     // MARK: - Drawn drafts land exactly where shown
 
     @Test @MainActor func draftRangeAndSourceSpanLandExactlyWhereDrawnAcrossSpeedChanges() throws {

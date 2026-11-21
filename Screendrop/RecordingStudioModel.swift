@@ -2002,6 +2002,25 @@ final class RecordingStudioModel {
         replaceZoomCues(cues)
     }
 
+    /// Trims one edge of a cue in source time while keeping the opposite edge
+    /// fixed so a blocked trim never shifts the untouched edge.
+    func trimZoomCue(
+        id: UUID,
+        edge: StudioBlockEdge,
+        toSourceTime sourceTime: TimeInterval,
+        base: ZoomCue? = nil
+    ) {
+        guard let cues = studioPlaceTrimmedZoomCue(
+            id: id,
+            edge: edge,
+            proposedSourceTime: sourceTime,
+            base: base,
+            in: zoomCues,
+            sourceDuration: sourceDuration
+        ) else { return }
+        replaceZoomCues(cues)
+    }
+
     /// Slides a cue without changing its editor length. Preserves the positive
     /// source span calculated from the editor interval so short cues moved from
     /// a sped-up clip onto a normal-speed clip keep their visible length.
