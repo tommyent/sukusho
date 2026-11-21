@@ -200,13 +200,8 @@ private struct AnnotationEditorContent: View {
             .onChange(of: model.editState) { _, _ in
                 if copiedLink != nil { withAnimation(.snappy(duration: 0.2)) { copiedLink = nil } }
             }
-            .focusedSceneValue(\.annotationEditor, model)
-            .focusedSceneValue(\.annotationEditorSelectTool) { tool in
-                clearInspectorFocus()
-                probe.isPicking = false
-                probe.isMeasuringTool = false
-                model.selectTool(tool)
-            }
+            .focusedSceneValue(\.annotationEditor, WeakReference(model))
+            .focusedSceneValue(\.annotationEditorToolSelection, toolSelection)
             .onChange(of: model.saveAsRequest) { _, _ in saveAs() }
             .onChange(of: model.saveRequest) { _, _ in saveEdits() }
             // The pixels under the pointer come from the base image, so they
@@ -770,6 +765,10 @@ private struct AnnotationEditorContent: View {
         }
     }
 
+    private var toolSelection: AnnotationEditorToolSelection {
+        AnnotationEditorToolSelection(editor: model, probe: probe, focus: $focusedField)
+    }
+
     private func clearInspectorFocus() {
         focusedField = nil
     }
@@ -799,28 +798,52 @@ private struct AnnotationLoadFailureView: View {
     }
 }
 
+/// AppKit can cache command actions after their source window closes.
+struct WeakReference<Object: AnyObject> {
+    private(set) weak var value: Object?
+
+    init(_ value: Object) {
+        self.value = value
+    }
+}
+
+struct AnnotationEditorToolSelection {
+    weak var editor: AnnotationEditorModel?
+    weak var probe: PixelProbe?
+    let focus: FocusState<AnnotationEditorFocusedField?>.Binding
+
+    func select(_ tool: AnnotationTool) {
+        guard let editor, let probe else { return }
+        focus.wrappedValue = nil
+        probe.isPicking = false
+        probe.isMeasuringTool = false
+        editor.selectTool(tool)
+    }
+}
+
 extension FocusedValues {
-    /// The key editor window's model, for menu commands.
-    @Entry var annotationEditor: AnnotationEditorModel?
-    /// Picks a tool as the dock does, turning Pick Color and Measure off.
-    @Entry var annotationEditorSelectTool: ((AnnotationTool) -> Void)?
+    @Entry var annotationEditor: WeakReference<AnnotationEditorModel>?
+    @Entry var annotationEditorToolSelection: AnnotationEditorToolSelection?
 }
 
 /// Tools: the editor's tools in the dock's order with their letter keys, and Crop, for the key
 /// editor window. Only there while an editor is focused: a disabled item would still take its
 /// key. The letters pass through to whatever field has the keyboard, as they do without the menu.
 struct AnnotationEditorToolCommands: View {
-    @FocusedValue(\.annotationEditor) private var editor
-    @FocusedValue(\.annotationEditorSelectTool) private var selectTool
+    @FocusedValue(\.annotationEditor) private var editorReference
+    @FocusedValue(\.annotationEditorToolSelection) private var toolSelection
 
     var body: some View {
-        if let editor, let selectTool {
+        if let editorReference, let editor = editorReference.value, let toolSelection {
             ForEach(Array(AnnotationToolDock.groups.enumerated()), id: \.offset) { index, group in
                 if index > 0 { Divider() }
                 ForEach(group) { tool in
                     let item = Toggle(tool.title, isOn: Binding(
-                        get: { editor.selectedTool == tool && !editor.isCropping },
-                        set: { _ in selectTool(tool) }
+                        get: {
+                            guard let editor = editorReference.value else { return false }
+                            return editor.selectedTool == tool && !editor.isCropping
+                        },
+                        set: { _ in toolSelection.select(tool) }
                     ))
                     if let key = tool.shortcutKey {
                         item.keyboardShortcut(KeyEquivalent(key), modifiers: [])
@@ -831,7 +854,7 @@ struct AnnotationEditorToolCommands: View {
             }
             Divider()
             Button(editor.isCropping ? "Cancel Crop" : "Crop") {
-                withAnimation(.canvasMoveIfAllowed) { editor.toggleCropping() }
+                withAnimation(.canvasMoveIfAllowed) { editorReference.value?.toggleCropping() }
             }
             .keyboardShortcut("c", modifiers: [])
             .disabled(editor.imageSize == .zero)
@@ -845,17 +868,17 @@ struct AnnotationEditorToolCommands: View {
 /// View › zoom for the key editor window: the same keys as the editor's own, which take them
 /// first, so a press zooms once. Only there while an editor is focused, for Studio's ⌘= and ⌘0.
 struct AnnotationEditorZoomCommands: View {
-    @FocusedValue(\.annotationEditor) private var editor
+    @FocusedValue(\.annotationEditor) private var editorReference
 
     var body: some View {
-        if let editor {
-            Button("Zoom In") { editor.zoomIn() }
+        if let editorReference, editorReference.value != nil {
+            Button("Zoom In") { editorReference.value?.zoomIn() }
                 .keyboardShortcut("+", modifiers: .command)
-            Button("Zoom Out") { editor.zoomOut() }
+            Button("Zoom Out") { editorReference.value?.zoomOut() }
                 .keyboardShortcut("-", modifiers: .command)
-            Button("Actual Size") { editor.setZoomPercent(100) }
+            Button("Actual Size") { editorReference.value?.setZoomPercent(100) }
                 .keyboardShortcut("0", modifiers: .command)
-            Button("Zoom to Fit") { editor.fitCanvas() }
+            Button("Zoom to Fit") { editorReference.value?.fitCanvas() }
                 .keyboardShortcut("1", modifiers: .command)
         }
     }
@@ -867,11 +890,11 @@ struct AnnotationEditorZoomCommands: View {
 /// an editor is focused: a disabled item still consumes its ⌘S, which would
 /// take the keystroke from Studio's own Save.
 struct AnnotationEditorSaveCommand: View {
-    @FocusedValue(\.annotationEditor) private var editor
+    @FocusedValue(\.annotationEditor) private var editorReference
 
     var body: some View {
-        if let editor {
-            Button("Save") { editor.requestSave() }
+        if let editorReference, let editor = editorReference.value {
+            Button("Save") { editorReference.value?.requestSave() }
                 .keyboardShortcut("s", modifiers: .command)
                 .disabled(!editor.hasUnsavedChanges)
         }
@@ -882,11 +905,11 @@ struct AnnotationEditorSaveCommand: View {
 /// is focused, like Save: Studio has no Save As, and a disabled one sat
 /// above Studio's Save.
 struct AnnotationEditorSaveAsCommand: View {
-    @FocusedValue(\.annotationEditor) private var editor
+    @FocusedValue(\.annotationEditor) private var editorReference
 
     var body: some View {
-        if let editor {
-            Button("Save As…") { editor.requestSaveAs() }
+        if let editorReference, editorReference.value != nil {
+            Button("Save As…") { editorReference.value?.requestSaveAs() }
                 .keyboardShortcut("s", modifiers: [.command, .shift])
         }
     }
@@ -896,13 +919,15 @@ struct AnnotationEditorSaveAsCommand: View {
 /// and these are the keyboard's way. ⌘+ and ⌘− are the editor's zoom, so they take ⌥ too. In the
 /// menu so Help's search finds them.
 struct AnnotationEditorTextSizeCommands: View {
-    @FocusedValue(\.annotationEditor) private var editor
+    @FocusedValue(\.annotationEditor) private var editorReference
 
     var body: some View {
-        Button("Bigger Text") { editor?.stepTextSize(by: 1) }
+        let editorReference = editorReference
+        let editor = editorReference?.value
+        Button("Bigger Text") { editorReference?.value?.stepTextSize(by: 1) }
             .keyboardShortcut("+", modifiers: [.command, .option])
             .disabled(!(editor?.canStepTextSize ?? false))
-        Button("Smaller Text") { editor?.stepTextSize(by: -1) }
+        Button("Smaller Text") { editorReference?.value?.stepTextSize(by: -1) }
             .keyboardShortcut("-", modifiers: [.command, .option])
             .disabled(!(editor?.canStepTextSize ?? false))
     }
@@ -911,12 +936,12 @@ struct AnnotationEditorTextSizeCommands: View {
 /// File › Revert To for the key editor window, as document apps have it.
 /// Each is one step Undo takes back; the next save writes it.
 struct AnnotationEditorRevertCommand: View {
-    @FocusedValue(\.annotationEditor) private var editor
+    @FocusedValue(\.annotationEditor) private var editorReference
 
     var body: some View {
-        if let editor {
+        if let editorReference, editorReference.value != nil {
             Menu("Revert To") {
-                AnnotationEditorRevertItems(editor: editor)
+                AnnotationEditorRevertItems(editorReference: editorReference)
             }
         }
     }

@@ -75,18 +75,28 @@ struct InspectorRevertBar<Items: View>: View {
 /// File › Revert To's items for the image editor, for the menu and the
 /// inspector's button alike.
 struct AnnotationEditorRevertItems: View {
-    let editor: AnnotationEditorModel
+    let editorReference: WeakReference<AnnotationEditorModel>
 
     var body: some View {
-        Button("Original") { editor.revertToOriginal() }
-            .disabled(!editor.canRevertToOriginal)
-        Button("Last Opened") { editor.revertToLastOpened() }
-            .disabled(!editor.canRevertToLastOpened)
-        if !editor.previousSessionSnapshots.isEmpty { Divider() }
-        ForEach(editor.previousSessionSnapshots) { snapshot in
-            Button(snapshot.title) { editor.revertToSession(snapshot) }
-                .disabled(editor.isCropping || editor.isBlockingCommit)
+        let editorReference = editorReference
+        if let editor = editorReference.value {
+            Button("Original") { editorReference.value?.revertToOriginal() }
+                .disabled(!editor.canRevertToOriginal)
+            Button("Last Opened") { editorReference.value?.revertToLastOpened() }
+                .disabled(!editor.canRevertToLastOpened)
+            let canRevert = !editor.isCropping && !editor.isBlockingCommit
+            if !editor.previousSessionSnapshots.isEmpty { Divider() }
+            ForEach(editor.previousSessionSnapshots) { snapshot in
+                Button(snapshot.title) { editorReference.value?.revertToSession(snapshot) }
+                    .disabled(!canRevert)
+            }
         }
+    }
+}
+
+extension AnnotationEditorRevertItems {
+    init(editor: AnnotationEditorModel) {
+        self.init(editorReference: WeakReference(editor))
     }
 }
 

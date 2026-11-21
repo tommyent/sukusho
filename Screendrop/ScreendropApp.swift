@@ -500,10 +500,10 @@ enum LibraryCardWidth {
 /// Only there while the Library is focused, so the editor and Studio keep ⌘+ and ⌘−.
 struct LibraryCardSizeCommands: View {
     @FocusedValue(\.captureLibraryCardWidth) private var cardWidth
-    @FocusedValue(\.annotationEditor) private var editor
+    @FocusedValue(\.annotationEditor) private var editorReference
 
     var body: some View {
-        if editor == nil, let cardWidth {
+        if editorReference?.value == nil, let cardWidth {
             Button("Bigger Cards") { cardWidth.wrappedValue = LibraryCardWidth.stepped(cardWidth.wrappedValue, by: 1) }
                 .keyboardShortcut("+", modifiers: .command)
                 .disabled(cardWidth.wrappedValue >= LibraryCardWidth.range.upperBound)
