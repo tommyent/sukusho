@@ -257,6 +257,48 @@ struct ClipboardLauncherSearchTests {
         #expect(partial.count < found.count)
     }
 
+    @Test func scannerRejectsSymlinkedConfiguredRootsAndSystemVolumesDataAliases() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("sukusho-launcher-privacy-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: root) }
+
+        func bundle(_ rel: String) throws {
+            let path = root.appendingPathComponent(rel).path
+            try fm.createDirectory(atPath: path + "/Contents", withIntermediateDirectories: true)
+            (["CFBundleName": (path as NSString).lastPathComponent] as NSDictionary)
+                .write(toFile: path + "/Contents/Info.plist", atomically: true)
+        }
+
+        try bundle("Apps/Safe.app")
+        try bundle("Outside/Private.app")
+        // Symlinked configured root pointing outside: must be rejected before resolving or trusting.
+        try fm.createSymbolicLink(atPath: root.path + "/SymlinkedRoot", withDestinationPath: root.path + "/Outside")
+        // Aliases inside Apps attempting to reach Outside through the symlinked root or directly.
+        try fm.createSymbolicLink(atPath: root.path + "/Apps/ViaSymlinkedRoot.app", withDestinationPath: root.path + "/SymlinkedRoot/Private.app")
+        try fm.createSymbolicLink(atPath: root.path + "/Apps/ToOutsideTarget.app", withDestinationPath: root.path + "/Outside/Private.app")
+
+        let scanned = LauncherAppScanner.scan(
+            [.init(root.path + "/SymlinkedRoot", depth: 1), .init(root.path + "/Apps", depth: 1)],
+            extras: []
+        )
+        #expect(scanned.map(\.name) == ["Safe"])
+
+        // An alias targeting `/System/Volumes/Data/...` (which maps to `/Users/...`) must be rejected
+        // even when system app alias roots are allowed.
+        let systemAllowed = ["/Applications", "/System/Applications"] + LauncherAppScanner.systemAppAliasRoots
+        let dataVolumeTarget = "/System/Volumes/Data" + LauncherAppScanner.realPath(root.path + "/Outside/Private.app")
+        let dataVolumeAlias = root.path + "/Apps/ViaSystemVolumesData.app"
+        try fm.createSymbolicLink(atPath: dataVolumeAlias, withDestinationPath: dataVolumeTarget)
+        #expect(!LauncherAppScanner.symlinkStaysInside(dataVolumeAlias, allowedRoots: systemAllowed))
+
+        let docsAlias = root.path + "/Apps/ViaSystemVolumesDataDocs.app"
+        try fm.createSymbolicLink(atPath: docsAlias, withDestinationPath: "/System/Volumes/Data/Users/someone/Documents/Local.app")
+        #expect(!LauncherAppScanner.symlinkStaysInside(docsAlias, allowedRoots: systemAllowed))
+
+        // Apple's real Safari Cryptex symlink still passes the restricted allowlist.
+        #expect(LauncherAppScanner.symlinkStaysInside("/Applications/Safari.app", allowedRoots: systemAllowed))
+    }
+
     @Test func importsUnleashFavoritesOnFirstUseLeavingOriginalInPlace() throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("sukusho-launcher-import-\(UUID().uuidString)")

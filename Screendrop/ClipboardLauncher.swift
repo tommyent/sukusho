@@ -525,9 +525,23 @@ nonisolated enum LauncherAppScanner {
          Root(home + "/Applications", depth: 1)]
     }
 
+    /// Narrow system app locations reachable from Apple's own `/Applications` symlinks
+    /// (e.g. Feedback Assistant in CoreServices and Safari in its Cryptex). Never trusts `/System`
+    /// broadly or `/System/Volumes/Data`.
+    static let systemAppAliasRoots = [
+        "/System/Applications",
+        "/System/Library/CoreServices/Applications",
+        safariCryptexAliasPath,
+        safariCryptexResolvedPath,
+    ]
+
+    private static let safariCryptexAliasPath = "/System/Cryptexes/App/System/Applications/Safari.app"
+    private static let safariCryptexResolvedPath = "/System/Volumes/Preboot/Cryptexes/App/System/Applications/Safari.app"
+
     /// Every `.app` under the roots, plus `extras`, each once (a symlinked app counts once).
-    /// Stays strictly inside the configured roots: directory symlinks are never descended into, and
-    /// `.app` symlinks are resolved lexically hop-by-hop and skipped if any hop leaves the allowed roots.
+    /// Stays strictly inside non-symlink configured roots: symlinked roots are rejected before
+    /// resolving or trusting them, directory symlinks are never descended into, and `.app` symlinks
+    /// are validated component-by-component without trusting `/System` broadly.
     static func scan(
         _ roots: [Root] = defaultRoots(),
         extras: [String] = [finder],
@@ -536,14 +550,18 @@ nonisolated enum LauncherAppScanner {
         var seen = Set<String>()
         var out: [LauncherAppEntry] = []
 
+        var validRoots: [Root] = []
         var allowedRoots: [String] = []
         for root in roots {
+            // Reject symlinked configured roots before resolving or trusting them.
+            guard fileType(at: root.path) == S_IFDIR else { continue }
+            validRoots.append(root)
             let std = URL(fileURLWithPath: root.path).standardizedFileURL.path
             allowedRoots.append(std)
             let resolved = realPath(root.path)
             if resolved != std { allowedRoots.append(resolved) }
             if std == "/Applications" || std == "/System/Applications" {
-                allowedRoots.append("/System")
+                allowedRoots.append(contentsOf: systemAppAliasRoots)
             }
         }
 
@@ -572,7 +590,7 @@ nonisolated enum LauncherAppScanner {
             }
         }
 
-        for root in roots {
+        for root in validRoots {
             if isCancelled() { return out }
             walk(root.path, root.depth)
         }
@@ -601,10 +619,9 @@ nonisolated enum LauncherAppScanner {
     }
 
     /// Follows symlink targets lexically via `readlink` and validates every intermediate path component
-    /// beneath a trusted root using `lstat`, so an alias targeting `<root>/<symlink-to-outside>/App.app`
-    /// is rejected without touching the symlink's destination. Under Apple's read-only `/System` root,
-    /// intermediate symlinks (such as `/System/Cryptexes/App`) are allowed only if their target stays
-    /// inside `/System`.
+    /// beneath a trusted root using `lstat`, so no intermediate symlink is followed anywhere under a
+    /// trusted root. For Apple's Safari Cryptex link (`/System/Cryptexes/App`), only that exact link
+    /// resolving to `/System/Volumes/Preboot/Cryptexes/App` is mapped before verifying components.
     static func symlinkStaysInside(_ path: String, allowedRoots: [String], maxHops: Int = 8) -> Bool {
         var current = path
         var hopsLeft = maxHops
@@ -615,7 +632,7 @@ nonisolated enum LauncherAppScanner {
             }
             let parent = URL(fileURLWithPath: (current as NSString).deletingLastPathComponent, isDirectory: true)
             let resolved = URL(fileURLWithPath: target, relativeTo: parent).standardizedFileURL.path
-            guard let verified = verifyComponents(of: resolved, allowedRoots: allowedRoots, hopsLeft: &hopsLeft) else {
+            guard let verified = verifyComponents(of: resolved, allowedRoots: allowedRoots) else {
                 return false
             }
             switch verified {
@@ -633,16 +650,35 @@ nonisolated enum LauncherAppScanner {
         case leafSymlink(String)
     }
 
-    private static func verifyComponents(
-        of path: String,
-        allowedRoots: [String],
-        hopsLeft: inout Int
-    ) -> VerifiedTarget? {
-        guard let root = matchingRoot(for: path, in: allowedRoots) else { return nil }
-        guard path != root else { return fileType(at: root) == S_IFDIR ? .directory : nil }
-        let relative = String(path.dropFirst(root.count + 1))
+    private static func verifyComponents(of path: String, allowedRoots: [String]) -> VerifiedTarget? {
+        guard let matchedRoot = matchingRoot(for: path, in: allowedRoots) else { return nil }
+        var effectiveRoot = matchedRoot
+        var effectivePath = path
+        // Map Apple's specific Safari Cryptex path strictly to `/System/Volumes/Preboot/Cryptexes/App/System/Applications/Safari.app`.
+        if matchedRoot == safariCryptexAliasPath {
+            guard path == safariCryptexAliasPath,
+                  fileType(at: "/System/Cryptexes") == S_IFDIR,
+                  fileType(at: "/System/Cryptexes/App") == S_IFLNK,
+                  let linkTarget = try? FileManager.default.destinationOfSymbolicLink(atPath: "/System/Cryptexes/App") else {
+                return nil
+            }
+            let expanded = URL(
+                fileURLWithPath: linkTarget,
+                relativeTo: URL(fileURLWithPath: "/System/Cryptexes", isDirectory: true)
+            ).standardizedFileURL.path
+            guard expanded == "/System/Volumes/Preboot/Cryptexes/App" else { return nil }
+            effectiveRoot = safariCryptexResolvedPath
+            effectivePath = safariCryptexResolvedPath
+        }
+        if effectiveRoot == safariCryptexResolvedPath {
+            return effectivePath == safariCryptexResolvedPath && fileType(at: safariCryptexResolvedPath) == S_IFDIR
+                ? .directory : nil
+        }
+        guard fileType(at: effectiveRoot) == S_IFDIR else { return nil }
+        guard effectivePath != effectiveRoot else { return .directory }
+        let relative = String(effectivePath.dropFirst(effectiveRoot.count + 1))
         let components = relative.split(separator: "/").map(String.init)
-        var cursor = root
+        var cursor = effectiveRoot
         for (index, comp) in components.enumerated() {
             let isLeaf = index == components.count - 1
             cursor += "/" + comp
@@ -652,16 +688,7 @@ nonisolated enum LauncherAppScanner {
                 if kind == S_IFLNK { return .leafSymlink(cursor) }
                 return nil
             }
-            if kind == S_IFDIR { continue }
-            guard kind == S_IFLNK, root == "/System", hopsLeft > 0,
-                  let linkTarget = try? FileManager.default.destinationOfSymbolicLink(atPath: cursor) else {
-                return nil
-            }
-            hopsLeft -= 1
-            let linkParent = URL(fileURLWithPath: (cursor as NSString).deletingLastPathComponent, isDirectory: true)
-            let expanded = URL(fileURLWithPath: linkTarget, relativeTo: linkParent).standardizedFileURL.path
-            let remainder = components[(index + 1)...].joined(separator: "/")
-            return verifyComponents(of: expanded + "/" + remainder, allowedRoots: ["/System"], hopsLeft: &hopsLeft)
+            guard kind == S_IFDIR else { return nil }
         }
         return nil
     }
