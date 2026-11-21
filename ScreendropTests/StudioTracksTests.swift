@@ -1,5 +1,7 @@
+import AVFoundation
 import CoreGraphics
 import CoreImage
+import CoreVideo
 import Foundation
 import ImageIO
 import Testing
@@ -27,9 +29,6 @@ struct StudioTracksTests {
         #expect(decoded.rect == CGRect(x: 0.1, y: 0.2, width: 0.3, height: 0.4))
         #expect(decoded.mode == .blur)
         #expect(decoded.strength == 0.75)
-        #expect(decoded.cornerRadius == 0)
-        #expect(decoded.fadeIn == 0)
-        #expect(decoded.fadeOut == 0)
         try decoded.validate(sourceDuration: 10)
 
         let reencoded = try JSONEncoder().encode(decoded)
@@ -37,19 +36,16 @@ struct StudioTracksTests {
         #expect(restored == decoded)
         #expect(!RecordingRedaction.needsSharedReplacement([decoded], shared: [restored]))
 
-        // New fields round-trip cleanly and flag shared links as needing replacement.
-        var rounded = decoded
-        rounded.mode = .pixelate
-        rounded.cornerRadius = 18
-        rounded.fadeIn = 0.25
-        rounded.fadeOut = 0.5
-        try rounded.validate(sourceDuration: 10)
-        let roundTripped = try JSONDecoder().decode(RecordingRedaction.self, from: JSONEncoder().encode(rounded))
-        #expect(roundTripped == rounded)
-        #expect(RecordingRedaction.needsSharedReplacement([rounded], shared: [decoded]))
+        // Changing redaction mode flags shared links as needing replacement.
+        var edited = decoded
+        edited.mode = .pixelate
+        try edited.validate(sourceDuration: 10)
+        let roundTripped = try JSONDecoder().decode(RecordingRedaction.self, from: JSONEncoder().encode(edited))
+        #expect(roundTripped == edited)
+        #expect(RecordingRedaction.needsSharedReplacement([edited], shared: [decoded]))
     }
 
-    @Test func redactionDecodesUpstreamStyleAndAmountFallbackKeys() throws {
+    @Test func redactionDecodesUpstreamStyleAndAmountAndIgnoresFadeCornerKeys() throws {
         let upstreamJSON = """
         {
             "start": 0.5,
@@ -57,63 +53,90 @@ struct StudioTracksTests {
             "rect": [[0.2, 0.2], [0.4, 0.3]],
             "style": "pixelate",
             "amount": 0.6,
-            "cornerRadius": 12,
-            "fadeIn": 0.3,
-            "fadeOut": 0.4
+            "cornerRadius": 80,
+            "fadeIn": 1.5,
+            "fadeOut": 1.5
         }
         """
         let decoded = try JSONDecoder().decode(RecordingRedaction.self, from: Data(upstreamJSON.utf8))
         #expect(decoded.mode == .pixelate)
         #expect(decoded.strength == 0.6)
-        #expect(decoded.cornerRadius == 12)
-        #expect(decoded.fadeIn == 0.3)
-        #expect(decoded.fadeOut == 0.4)
         try decoded.validate(sourceDuration: 5)
     }
 
-    @Test func redactionValidationRejectsInvalidCornerRadiusAndFades() {
-        let base = RecordingRedaction(start: 1, end: 4, rect: CGRect(x: 0.1, y: 0.1, width: 0.2, height: 0.2))
-        var badCorner = base; badCorner.cornerRadius = -1
-        var hugeCorner = base; hugeCorner.cornerRadius = 120
-        var badFadeIn = base; badFadeIn.fadeIn = -0.1
-        var badFadeOut = base; badFadeOut.fadeOut = .nan
-        for invalid in [badCorner, hugeCorner, badFadeIn, badFadeOut] {
-            #expect(throws: RecordingRedactionError.self) { try invalid.validate(sourceDuration: 5) }
-        }
-    }
+    @Test(arguments: RecordingRedaction.Mode.allCases)
+    func exportedRedactionMasksFullRectangleAndCornersOnFirstAndLastIntersectingFrames(_ mode: RecordingRedaction.Mode) async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StudioRedactionExport-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
 
-    @Test func redactionFadeAndRoundedCornersFilterExpectedPixels() throws {
-        let width = 128, height = 128
-        let pixels = (0..<(width * height)).flatMap { index -> [UInt8] in
-            let v: UInt8 = ((index % width) / 2 + (index / width) / 2) % 2 == 0 ? 255 : 0
-            return [v, v, v, 255]
+        let width = 128, height = 128, fps = 30
+        let frameInterval = 1.0 / Double(fps)
+        let sourceURL = tempDir.appendingPathComponent("source.mov")
+        let exportedURL = tempDir.appendingPathComponent("exported.mov")
+
+        // Write a 2-second 30fps movie with a stark black/white 2x2 checkerboard inside [32..96, 32..96]
+        // and flat mid-gray outside. Every corner of [32..96, 32..96] has high-contrast alternating tiles.
+        try await writeCheckerboardMovie(to: sourceURL, width: width, height: height, fps: fps, frameCount: fps * 2)
+
+        // Redaction spans 0.51...1.49 so frame 15 (0.500..0.533) straddles start
+        // and frame 44 (1.467..1.500) straddles end. Even if loaded from a draft
+        // carrying fade/corner keys, every intersecting frame and corner must be masked.
+        let json = """
+        {
+            "start": 0.51,
+            "end": 1.49,
+            "rect": [[0.25, 0.25], [0.5, 0.5]],
+            "mode": "\(mode.rawValue)",
+            "strength": 0.9,
+            "cornerRadius": 100,
+            "fadeIn": 1.0,
+            "fadeOut": 1.0
         }
-        let bitmap = try #require(CGContext(
-            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
-            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ))
-        bitmap.data?.copyMemory(from: pixels, byteCount: pixels.count)
-        let source = CIImage(cgImage: try #require(bitmap.makeImage()))
-        let region = RecordingRedaction(
-            start: 1, end: 5,
-            rect: CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5),
-            mode: .pixelate, strength: 0.8, cornerRadius: 100, fadeIn: 1.0, fadeOut: 1.0
+        """
+        let region = try JSONDecoder().decode(RecordingRedaction.self, from: Data(json.utf8))
+        let timeline = RecordingClipTimeline.full(sourceDuration: 2.0)
+
+        // Export through the exact buffer filter + outward covers() check used by RecordingStudioExporter.
+        try await exportRedactedMovie(
+            from: sourceURL,
+            to: exportedURL,
+            redactions: [region],
+            timeline: timeline,
+            width: width,
+            height: height,
+            fps: fps
         )
-        #expect(abs(region.opacity(atSourceTime: 1.5) - 0.5) < 0.0001)
-        #expect(abs(region.opacity(atSourceTime: 3.0) - 1.0) < 0.0001)
-        #expect(abs(region.opacity(atSourceTime: 4.5) - 0.5) < 0.0001)
 
-        // At full opacity with large corner radius, the center is redacted while the
-        // outer corner of the bounding box remains untouched.
-        let filtered = try RecordingRedactionFilter.apply([region], to: source, atSourceTime: 3.0)
-        let context = CIContext(options: [.useSoftwareRenderer: true])
-        let outCG = try #require(context.createCGImage(filtered, from: source.extent, format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB()))
-        let outData = try #require(outCG.dataProvider?.data) as Data
-        let inData = Data(pixels)
+        let exportedAsset = AVURLAsset(url: exportedURL)
+        let generator = AVAssetImageGenerator(asset: exportedAsset)
+        generator.appliesPreferredTrackTransform = true
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
 
-        // Top-left corner of the [32..96, 32..96] box sits outside the rounded corner arc.
-        let cornerIndex = 32 * outCG.bytesPerRow + 32 * 4
-        #expect(abs(Int(outData[cornerIndex]) - Int(inData[cornerIndex])) <= 2)
+        // Frame 15 (0.500s) is the first intersecting frame; frame 44 (1.467s) is the last.
+        // Frame 10 (0.333s) is outside and must remain unredacted (high corner contrast).
+        let unredactedFrame = try await generator.image(at: CMTime(value: 10, timescale: CMTimeScale(fps))).image
+        let firstIntersecting = try await generator.image(at: CMTime(value: 15, timescale: CMTimeScale(fps))).image
+        let lastIntersecting = try await generator.image(at: CMTime(value: 44, timescale: CMTimeScale(fps))).image
+
+        #expect(region.covers(editorTime: 15 * frameInterval, frameDuration: frameInterval, timeline: timeline))
+        #expect(region.covers(editorTime: 44 * frameInterval, frameDuration: frameInterval, timeline: timeline))
+        #expect(!region.covers(editorTime: 10 * frameInterval, frameDuration: frameInterval, timeline: timeline))
+
+        // Check all 4 corners of the redacted box [32..96, 32..96]:
+        // unredacted corner 8x8 patch has max-min luminance > 180; masked patch collapses contrast.
+        let corners = [(32, 32), (88, 32), (32, 88), (88, 88)]
+        for (cx, cy) in corners {
+            let baselineContrast = try patchLuminanceRange(in: unredactedFrame, x: cx, y: cy, size: 8)
+            #expect(baselineContrast > 150, "Baseline checkerboard corner (\(cx),\(cy)) must have high contrast")
+
+            let firstContrast = try patchLuminanceRange(in: firstIntersecting, x: cx, y: cy, size: 8)
+            let lastContrast = try patchLuminanceRange(in: lastIntersecting, x: cx, y: cy, size: 8)
+            #expect(firstContrast < 40, "First intersecting frame leaked corner (\(cx),\(cy)) with contrast \(firstContrast)")
+            #expect(lastContrast < 40, "Last intersecting frame leaked corner (\(cx),\(cy)) with contrast \(lastContrast)")
+        }
     }
 
     // MARK: - Source-time placement across cuts and speed ramps
@@ -288,5 +311,131 @@ struct StudioTracksTests {
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ))
         return try #require(ctx.makeImage())
+    }
+
+    private func writeCheckerboardMovie(
+        to url: URL,
+        width: Int,
+        height: Int,
+        fps: Int,
+        frameCount: Int
+    ) async throws {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: width,
+            AVVideoHeightKey: height,
+            AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: 4_000_000]
+        ])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: width,
+            kCVPixelBufferHeightKey as String: height
+        ])
+        writer.add(input)
+        #expect(writer.startWriting())
+        writer.startSession(atSourceTime: .zero)
+
+        let pool = try #require(adaptor.pixelBufferPool)
+        for index in 0..<frameCount {
+            while !input.isReadyForMoreMediaData {
+                try await Task.sleep(for: .milliseconds(2))
+            }
+            var rawBuffer: CVPixelBuffer?
+            #expect(CVPixelBufferPoolCreatePixelBuffer(nil, pool, &rawBuffer) == kCVReturnSuccess)
+            let buffer = try #require(rawBuffer)
+            CVPixelBufferLockBaseAddress(buffer, [])
+            if let base = CVPixelBufferGetBaseAddress(buffer) {
+                let bpr = CVPixelBufferGetBytesPerRow(buffer)
+                let ptr = base.assumingMemoryBound(to: UInt8.self)
+                for y in 0..<height {
+                    for x in 0..<width {
+                        let inside = x >= width / 4 && x < width * 3 / 4 && y >= height / 4 && y < height * 3 / 4
+                        let v: UInt8 = inside ? ((((x / 2) + (y / 2)) % 2 == 0) ? 255 : 0) : 128
+                        let offset = y * bpr + x * 4
+                        ptr[offset] = v; ptr[offset + 1] = v; ptr[offset + 2] = v; ptr[offset + 3] = 255
+                    }
+                }
+            }
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+            #expect(adaptor.append(buffer, withPresentationTime: CMTime(value: CMTimeValue(index), timescale: CMTimeScale(fps))))
+        }
+        input.markAsFinished()
+        await writer.finishWriting()
+        #expect(writer.status == .completed)
+    }
+
+    private func exportRedactedMovie(
+        from sourceURL: URL,
+        to destinationURL: URL,
+        redactions: [RecordingRedaction],
+        timeline: RecordingClipTimeline,
+        width: Int,
+        height: Int,
+        fps: Int
+    ) async throws {
+        let asset = AVURLAsset(url: sourceURL)
+        let track = try #require(try await asset.loadTracks(withMediaType: .video).first)
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+        ])
+        reader.add(output)
+        #expect(reader.startReading())
+
+        let writer = try AVAssetWriter(outputURL: destinationURL, fileType: .mov)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: width,
+            AVVideoHeightKey: height,
+            AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: 4_000_000]
+        ])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: width,
+            kCVPixelBufferHeightKey as String: height
+        ])
+        writer.add(input)
+        #expect(writer.startWriting())
+        writer.startSession(atSourceTime: .zero)
+
+        let ciContext = CIContext(options: [.useSoftwareRenderer: true])
+        let frameInterval = 1.0 / Double(fps)
+        while let sample = output.copyNextSampleBuffer() {
+            guard let sourceBuffer = CMSampleBufferGetImageBuffer(sample) else { continue }
+            let pts = CMSampleBufferGetPresentationTimeStamp(sample)
+            let active = redactions.filter {
+                $0.covers(editorTime: pts.seconds, frameDuration: frameInterval, timeline: timeline)
+            }
+            let filtered = try RecordingRedactionFilter.buffer(from: sourceBuffer, redactions: active, context: ciContext)
+            while !input.isReadyForMoreMediaData {
+                try await Task.sleep(for: .milliseconds(2))
+            }
+            #expect(adaptor.append(filtered, withPresentationTime: pts))
+        }
+        input.markAsFinished()
+        await writer.finishWriting()
+        #expect(writer.status == .completed)
+    }
+
+    private func patchLuminanceRange(in image: CGImage, x: Int, y: Int, size: Int) throws -> Int {
+        let width = image.width, height = image.height
+        let bpr = width * 4
+        var bytes = [UInt8](repeating: 0, count: bpr * height)
+        let ctx = try #require(CGContext(
+            data: &bytes, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: bpr, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        var minV = 255, maxV = 0
+        for py in y..<min(y + size, height) {
+            for px in x..<min(x + size, width) {
+                let v = Int(bytes[py * bpr + px * 4])
+                if v < minV { minV = v }
+                if v > maxV { maxV = v }
+            }
+        }
+        return maxV - minV
     }
 }

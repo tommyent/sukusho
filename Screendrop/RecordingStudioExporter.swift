@@ -809,7 +809,6 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
         let screenFrame = try RecordingRedactionFilter.buffer(
             from: screenFrame,
             redactions: active,
-            sourceTime: sourceTime,
             context: redactionContext
         )
         // shortcut: active masks bypass settled reuse; cache filtered sources if export cost warrants it.

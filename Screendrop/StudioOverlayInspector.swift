@@ -431,46 +431,15 @@ struct StudioRedactionInspectorControls: View {
                 }
             )
 
-            VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
-                InspectorFieldPair {
-                    InspectorSlider(
-                        "Strength",
-                        value: Binding(
-                            get: { CGFloat(redaction.strength) },
-                            set: { value in edit("Change Redaction Strength") { $0.strength = Double(value) } }
-                        ),
-                        range: 0.35...1,
-                        format: .percent()
-                    )
-                } trailing: {
-                    InspectorSlider(
-                        "Corners",
-                        value: Binding(
-                            get: { CGFloat(redaction.cornerRadius) },
-                            set: { value in edit("Change Redaction Corners") { $0.cornerRadius = Double(value) } }
-                        ),
-                        range: CGFloat(RecordingRedaction.cornerRadiusRange.lowerBound)...CGFloat(RecordingRedaction.cornerRadiusRange.upperBound),
-                        format: .pixels
-                    )
-                    .help("Corner radius, measured on a 1080p picture")
-                }
-
-                InspectorFieldPair {
-                    InspectorSlider(
-                        "Fade In",
-                        value: fadeBinding(\.fadeIn),
-                        range: CGFloat(RecordingRedaction.fadeRange.lowerBound)...CGFloat(RecordingRedaction.fadeRange.upperBound),
-                        format: .seconds
-                    )
-                } trailing: {
-                    InspectorSlider(
-                        "Fade Out",
-                        value: fadeBinding(\.fadeOut),
-                        range: CGFloat(RecordingRedaction.fadeRange.lowerBound)...CGFloat(RecordingRedaction.fadeRange.upperBound),
-                        format: .seconds
-                    )
-                }
-            }
+            InspectorSlider(
+                "Strength",
+                value: Binding(
+                    get: { CGFloat(redaction.strength) },
+                    set: { value in edit("Change Redaction Strength") { $0.strength = Double(value) } }
+                ),
+                range: 0.35...1,
+                format: .percent()
+            )
 
             VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
                 InspectorGroupLabel("Timing (source seconds)")
@@ -491,13 +460,6 @@ struct StudioRedactionInspectorControls: View {
         var edited = redaction
         change(&edited)
         model.editRedaction(edited, actionName: action)
-    }
-
-    private func fadeBinding(_ keyPath: WritableKeyPath<RecordingRedaction, TimeInterval>) -> Binding<CGFloat> {
-        Binding(
-            get: { CGFloat(redaction[keyPath: keyPath]) },
-            set: { value in edit("Change Redaction Fade") { $0[keyPath: keyPath] = Double(value) } }
-        )
     }
 
     private func timeField(_ label: String, keyPath: WritableKeyPath<RecordingRedaction, Double>) -> some View {

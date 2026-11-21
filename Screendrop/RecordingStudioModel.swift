@@ -4381,12 +4381,6 @@ final class RecordingStudioModel {
         updated.end = range.upperBound
         updated.rect = RecordingRedaction.clamped(redaction.rect)
         updated.strength = min(max(updated.strength, 0), 1)
-        updated.cornerRadius = min(max(updated.cornerRadius, RecordingRedaction.cornerRadiusRange.lowerBound),
-                                   RecordingRedaction.cornerRadiusRange.upperBound)
-        updated.fadeIn = min(max(updated.fadeIn, RecordingRedaction.fadeRange.lowerBound),
-                             RecordingRedaction.fadeRange.upperBound)
-        updated.fadeOut = min(max(updated.fadeOut, RecordingRedaction.fadeRange.lowerBound),
-                              RecordingRedaction.fadeRange.upperBound)
         do { try updated.validate(sourceDuration: sourceDuration) }
         catch { redactionEditError = error.localizedDescription; return }
         var all = redactions

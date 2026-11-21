@@ -20,8 +20,6 @@ nonisolated struct RecordingRedaction: Codable, Equatable, Hashable, Identifiabl
     /// Smallest region side, as a fraction of the picture.
     static let minimumSide: CGFloat = 0.02
     static let defaultRect = CGRect(x: 0.35, y: 0.4, width: 0.3, height: 0.2)
-    static let cornerRadiusRange: ClosedRange<Double> = 0...100
-    static let fadeRange: ClosedRange<TimeInterval> = 0...2
 
     var id = UUID()
     var start: TimeInterval
@@ -29,10 +27,6 @@ nonisolated struct RecordingRedaction: Codable, Equatable, Hashable, Identifiabl
     var rect: CGRect
     var mode: Mode = .blur
     var strength: Double = 0.8
-    /// Corner radius in pixels of a 1080p picture; 0 keeps hard corners.
-    var cornerRadius: Double = 0
-    var fadeIn: TimeInterval = 0
-    var fadeOut: TimeInterval = 0
 
     var duration: TimeInterval { end - start }
 
@@ -42,10 +36,7 @@ nonisolated struct RecordingRedaction: Codable, Equatable, Hashable, Identifiabl
         end: TimeInterval,
         rect: CGRect = RecordingRedaction.defaultRect,
         mode: Mode = .blur,
-        strength: Double = 0.8,
-        cornerRadius: Double = 0,
-        fadeIn: TimeInterval = 0,
-        fadeOut: TimeInterval = 0
+        strength: Double = 0.8
     ) {
         self.id = id
         self.start = start
@@ -53,13 +44,10 @@ nonisolated struct RecordingRedaction: Codable, Equatable, Hashable, Identifiabl
         self.rect = rect
         self.mode = mode
         self.strength = strength
-        self.cornerRadius = cornerRadius
-        self.fadeIn = fadeIn
-        self.fadeOut = fadeOut
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, start, end, rect, mode, strength, cornerRadius, fadeIn, fadeOut
+        case id, start, end, rect, mode, strength
     }
 
     /// Upstream compatibility keys when reading documents with `style`/`amount`.
@@ -80,9 +68,6 @@ nonisolated struct RecordingRedaction: Codable, Equatable, Hashable, Identifiabl
         strength = try container.decodeIfPresent(Double.self, forKey: .strength)
             ?? compat.decodeIfPresent(Double.self, forKey: .amount)
             ?? 0.8
-        cornerRadius = try container.decodeIfPresent(Double.self, forKey: .cornerRadius) ?? 0
-        fadeIn = try container.decodeIfPresent(TimeInterval.self, forKey: .fadeIn) ?? 0
-        fadeOut = try container.decodeIfPresent(TimeInterval.self, forKey: .fadeOut) ?? 0
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -93,9 +78,6 @@ nonisolated struct RecordingRedaction: Codable, Equatable, Hashable, Identifiabl
         try container.encode(rect, forKey: .rect)
         try container.encode(mode, forKey: .mode)
         try container.encode(strength, forKey: .strength)
-        if cornerRadius != 0 { try container.encode(cornerRadius, forKey: .cornerRadius) }
-        if fadeIn != 0 { try container.encode(fadeIn, forKey: .fadeIn) }
-        if fadeOut != 0 { try container.encode(fadeOut, forKey: .fadeOut) }
     }
 
     /// Legacy links have no snapshot and must be treated as unredacted.
@@ -109,10 +91,7 @@ nonisolated struct RecordingRedaction: Codable, Equatable, Hashable, Identifiabl
               [rect.origin.x, rect.origin.y, rect.width, rect.height].allSatisfy(\.isFinite),
               rect.minX >= 0, rect.minY >= 0, rect.width > 0, rect.height > 0,
               rect.maxX <= 1, rect.maxY <= 1,
-              strength.isFinite, (0...1).contains(strength),
-              cornerRadius.isFinite, Self.cornerRadiusRange.contains(cornerRadius),
-              fadeIn.isFinite, fadeIn >= 0,
-              fadeOut.isFinite, fadeOut >= 0 else {
+              strength.isFinite, (0...1).contains(strength) else {
             throw RecordingRedactionError.invalidRegion
         }
     }
@@ -136,18 +115,6 @@ nonisolated struct RecordingRedaction: Codable, Equatable, Hashable, Identifiabl
             .integral.intersection(extent)
     }
 
-    /// How strongly the region shows at a source time: 1 across the region,
-    /// ramping through `fadeIn` and `fadeOut` when configured.
-    func opacity(atSourceTime time: TimeInterval) -> Double {
-        guard fadeIn > 0 || fadeOut > 0 else { return 1 }
-        guard time >= start, time < end else { return 0 }
-        let local = time - start
-        var value = 1.0
-        if fadeIn > 0, local < fadeIn { value = min(value, local / fadeIn) }
-        if fadeOut > 0, local > duration - fadeOut { value = min(value, (duration - local) / fadeOut) }
-        return min(max(value, 0), 1)
-    }
-
     /// Intersect the output frame with mapped mask ranges, rounding coverage outward.
     func covers(editorTime: TimeInterval, frameDuration: TimeInterval, timeline: RecordingClipTimeline) -> Bool {
         timeline.slices(overlapping: start, sourceEnd: end).contains {
@@ -168,20 +135,13 @@ nonisolated enum RecordingRedactionError: LocalizedError {
 }
 
 nonisolated enum RecordingRedactionFilter {
-    static func apply(
-        _ redactions: [RecordingRedaction],
-        to source: CIImage,
-        atSourceTime sourceTime: TimeInterval? = nil
-    ) throws -> CIImage {
+    static func apply(_ redactions: [RecordingRedaction], to source: CIImage) throws -> CIImage {
         var result = source
         let extent = source.extent
-        let unit = min(extent.width, extent.height) / 1080
         for region in redactions {
             try region.validate()
             let rect = region.pixelRect(in: extent)
             guard !rect.isEmpty else { throw RecordingRedactionError.filterFailed }
-            let opacity = sourceTime.map { region.opacity(atSourceTime: $0) } ?? 1
-            guard opacity > 0.001 else { continue }
             let filtered: CIImage?
             switch region.mode {
             case .blur:
@@ -199,35 +159,16 @@ nonisolated enum RecordingRedactionFilter {
                 filtered = filter.outputImage
             }
             guard let filtered else { throw RecordingRedactionError.filterFailed }
-            if region.cornerRadius <= 0, opacity >= 0.999 {
-                result = filtered.cropped(to: rect).composited(over: result).cropped(to: extent)
-            } else {
-                let mask = CIFilter.roundedRectangleGenerator()
-                mask.extent = rect
-                mask.radius = Float(min(CGFloat(region.cornerRadius) * unit, rect.width / 2, rect.height / 2))
-                let level = CGFloat(opacity)
-                mask.color = CIColor(red: level, green: level, blue: level, alpha: 1)
-                guard let maskImage = mask.outputImage else { throw RecordingRedactionError.filterFailed }
-                let blend = CIFilter.blendWithMask()
-                blend.inputImage = filtered.cropped(to: rect)
-                blend.backgroundImage = result
-                blend.maskImage = maskImage
-                guard let blended = blend.outputImage else { throw RecordingRedactionError.filterFailed }
-                result = blended.cropped(to: extent)
-            }
+            // Privacy redactions always mask the entire selected rectangle at full strength.
+            result = filtered.cropped(to: rect).composited(over: result).cropped(to: extent)
         }
         return result
     }
 
     /// Materialize once before either screen renderer; the master is never mutated.
-    static func buffer(
-        from source: CVPixelBuffer,
-        redactions: [RecordingRedaction],
-        sourceTime: TimeInterval? = nil,
-        context: CIContext
-    ) throws -> CVPixelBuffer {
+    static func buffer(from source: CVPixelBuffer, redactions: [RecordingRedaction], context: CIContext) throws -> CVPixelBuffer {
         guard !redactions.isEmpty else { return source }
-        let image = try apply(redactions, to: CIImage(cvPixelBuffer: source), atSourceTime: sourceTime)
+        let image = try apply(redactions, to: CIImage(cvPixelBuffer: source))
         guard let cgImage = context.createCGImage(image, from: image.extent, format: .BGRA8,
                                                 colorSpace: CGColorSpace(name: CGColorSpace.sRGB)!, deferred: false) else {
             throw RecordingRedactionError.filterFailed
@@ -256,13 +197,11 @@ nonisolated enum RecordingRedactionFilter {
         let interval = 1.0 / 60
         let context = CIContext(options: [.cacheIntermediates: false])
         let composition = try await AVVideoComposition(applyingFiltersTo: asset) { parameters in
-            let editorTime = parameters.compositionTime.seconds
             let active = redactions.filter {
-                $0.covers(editorTime: editorTime, frameDuration: interval, timeline: map)
+                $0.covers(editorTime: parameters.compositionTime.seconds, frameDuration: interval, timeline: map)
             }
-            let sourceTime = map.sourceTime(at: editorTime)
             return AVCIImageFilteringResult(
-                resultImage: try apply(active, to: parameters.sourceImage, atSourceTime: sourceTime),
+                resultImage: try apply(active, to: parameters.sourceImage),
                 ciContext: context
             )
         }
@@ -300,16 +239,14 @@ nonisolated final class RecordingRedactionPreviewSource: @unchecked Sendable {
         let context = CIContext(options: [.cacheIntermediates: false])
         let composition = try await AVVideoComposition(applyingFiltersTo: asset) { [self] parameters in
             let (regions, map) = lock.withLock { (redactions, clipTimeline) }
-            let editorTime = parameters.compositionTime.seconds
             let active = regions.filter {
-                $0.covers(editorTime: editorTime, frameDuration: interval, timeline: map)
+                $0.covers(editorTime: parameters.compositionTime.seconds, frameDuration: interval, timeline: map)
             }
             guard !active.isEmpty else {
                 return AVCIImageFilteringResult(resultImage: parameters.sourceImage, ciContext: context)
             }
-            let sourceTime = map.sourceTime(at: editorTime)
             return AVCIImageFilteringResult(
-                resultImage: try RecordingRedactionFilter.apply(active, to: parameters.sourceImage, atSourceTime: sourceTime),
+                resultImage: try RecordingRedactionFilter.apply(active, to: parameters.sourceImage),
                 ciContext: context
             )
         }
