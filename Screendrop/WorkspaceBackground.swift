@@ -122,14 +122,27 @@ struct DestinationBackgrounds: Codable, Equatable {
 struct BackgroundPreferences: Codable, Equatable {
     var app: DestinationBackgrounds
     var editors: DestinationBackgrounds
+    private var appFollowsTheme: Bool?
     var dayStart = 7 * 60
     var nightStart = 19 * 60
 
     subscript(destination: BackgroundDestination) -> DestinationBackgrounds {
         get { destination == .app ? app : editors }
         set {
-            if destination == .app { app = newValue } else { editors = newValue }
+            if destination == .app {
+                app = newValue
+                appFollowsTheme = nil
+            } else {
+                editors = newValue
+            }
         }
+    }
+
+    func backgrounds(for destination: BackgroundDestination, theme: AppTheme) -> DestinationBackgrounds {
+        if destination == .app, appFollowsTheme == true, let backdrop = theme.ground.backdrop {
+            return DestinationBackgrounds(day: Self.glassChoice(backdrop))
+        }
+        return self[destination]
     }
 
     func isNight(at minute: Int) -> Bool {
@@ -137,23 +150,33 @@ struct BackgroundPreferences: Codable, Equatable {
         return minute >= nightStart && minute < dayStart
     }
 
-    init(migrating defaults: UserDefaults, theme: AppTheme) {
-        let editor = BackgroundChoice(
+    init(migrating defaults: UserDefaults) {
+        var editor = BackgroundChoice(
             style: defaults.string(forKey: WorkspaceBackground.styleKey).flatMap(WorkspaceBackground.Style.init) ?? .dots,
             picture: defaults.string(forKey: WorkspaceBackground.wallpaperPathKey) ?? "",
             dim: defaults.object(forKey: WorkspaceBackground.dimKey) as? Double ?? WorkspaceBackground.defaultDim,
             blur: defaults.bool(forKey: WorkspaceBackground.blurKey)
         )
+        if editor.style == .wallpaper && editor.picture.isEmpty { editor.style = .dots }
         editors = DestinationBackgrounds(day: editor)
-        if let glass = theme.ground.backdrop {
-            app = DestinationBackgrounds(day: BackgroundChoice(
-                style: defaults.bool(forKey: GlassPicture.solidBackgroundKey) ? .plain : .wallpaper,
-                picture: defaults.string(forKey: GlassPicture.pathKey) ?? "",
-                dim: glass.dim, blur: glass.blur > 0, usesGlassDimDefault: true
-            ))
+        let light = AppTheme.named(defaults.string(forKey: AppTheme.lightKey), dark: false)
+        let dark = AppTheme.named(defaults.string(forKey: AppTheme.darkKey), dark: true)
+        let savedBackdrop = light.ground.backdrop ?? dark.ground.backdrop
+        let hasGlassSettings = defaults.object(forKey: GlassPicture.pathKey) != nil
+            || defaults.object(forKey: GlassPicture.solidBackgroundKey) != nil
+        if let backdrop = savedBackdrop ?? (hasGlassSettings ? AppTheme.glassLight.ground.backdrop : nil) {
+            var choice = Self.glassChoice(backdrop)
+            if defaults.bool(forKey: GlassPicture.solidBackgroundKey) { choice.style = .plain }
+            choice.picture = defaults.string(forKey: GlassPicture.pathKey) ?? ""
+            app = DestinationBackgrounds(day: choice)
         } else {
             app = editors
+            appFollowsTheme = true
         }
+    }
+
+    private static func glassChoice(_ backdrop: AppTheme.Backdrop) -> BackgroundChoice {
+        BackgroundChoice(style: .wallpaper, dim: backdrop.dim, blur: backdrop.blur > 0, usesGlassDimDefault: true)
     }
 }
 
@@ -177,13 +200,7 @@ struct BackgroundPreferences: Codable, Equatable {
         if let data = defaults.data(forKey: Self.key), let saved = try? JSONDecoder().decode(BackgroundPreferences.self, from: data) {
             preferences = saved
         } else {
-            let dark: Bool
-            switch defaults.string(forKey: "appAppearance") {
-            case "dark": dark = true
-            case "light": dark = false
-            default: dark = NSApplication.shared.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            }
-            preferences = BackgroundPreferences(migrating: defaults, theme: .current(dark: dark))
+            preferences = BackgroundPreferences(migrating: defaults)
             if let data = try? JSONEncoder().encode(preferences) { defaults.set(data, forKey: Self.key) }
         }
         for name in [NSApplication.didBecomeActiveNotification, .NSSystemTimeZoneDidChange, .NSSystemClockDidChange] {
@@ -194,8 +211,8 @@ struct BackgroundPreferences: Codable, Equatable {
         refreshClock()
     }
 
-    func choice(for destination: BackgroundDestination) -> BackgroundChoice {
-        let choices = preferences[destination]
+    func choice(for destination: BackgroundDestination, theme: AppTheme) -> BackgroundChoice {
+        let choices = preferences.backgrounds(for: destination, theme: theme)
         return choices.usesNight && isNight ? choices.night : choices.day
     }
 

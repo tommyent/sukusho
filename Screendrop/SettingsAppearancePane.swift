@@ -65,7 +65,10 @@ struct AppearanceSettingsPane: View {
                 .pickerStyle(.segmented)
                 Text(destination == .app ? "Library, Settings, and other app windows." : "Image editor and Studio.")
                     .font(.caption).foregroundStyle(.secondary)
-                let choices = $backgrounds.preferences[destination]
+                let choices = Binding(
+                    get: { backgrounds.preferences.backgrounds(for: destination, theme: theme) },
+                    set: { backgrounds.preferences[destination] = $0 }
+                )
                 Toggle("Use a different background at night", isOn: choices.usesNight)
                 .accessibilityLabel("Use a different background at night")
                 if choices.wrappedValue.usesNight {

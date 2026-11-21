@@ -135,7 +135,7 @@ struct AnnotationEditorWorkspaceBackground: View {
     @Environment(\.colorSchemeContrast) private var contrast
 
     var body: some View {
-        let choice = WindowBackgroundStore.shared.choice(for: destination)
+        let choice = WindowBackgroundStore.shared.choice(for: destination, theme: theme)
         let style = WorkspaceBackground.shown(choice.style, reduceTransparency: reduceTransparency, increaseContrast: contrast == .increased)
         let ground = theme.ground.workspace.color
         ZStack {
@@ -621,10 +621,11 @@ private struct WorkspaceTextPlate: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.overGlassPicture) private var overGlassPicture
+    @CurrentTheme private var theme
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if reduceTransparency || contrast == .increased || (!overGlassPicture && !WindowBackgroundStore.shared.choice(for: destination).needsTextBacking) {
+        if reduceTransparency || contrast == .increased || (!overGlassPicture && !WindowBackgroundStore.shared.choice(for: destination, theme: theme).needsTextBacking) {
             content
         } else if capsule {
             content.background(WorkspaceChrome.background, in: Capsule())

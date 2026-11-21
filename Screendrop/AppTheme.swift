@@ -337,7 +337,7 @@ nonisolated enum ThemeColor: Sendable, Equatable {
 /// on, for Classic/Chip, and under Reduce Transparency or Increase Contrast.
 @propertyWrapper struct DrawnGlass: DynamicProperty {
     @CurrentTheme private var theme
-    private var solidBackground: Bool { WindowBackgroundStore.shared.choice(for: .app).style != .wallpaper }
+    private var solidBackground: Bool { WindowBackgroundStore.shared.choice(for: .app, theme: theme).style != .wallpaper }
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
 

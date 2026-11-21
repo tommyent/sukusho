@@ -326,7 +326,7 @@ private struct SettingsDetailView: View {
                     Rectangle().fill(frost.tint.color)
                 }
                 .ignoresSafeArea()
-            } else if floatingChrome && WindowBackgroundStore.shared.choice(for: .app).needsTextBacking {
+            } else if floatingChrome && WindowBackgroundStore.shared.choice(for: .app, theme: theme).needsTextBacking {
                 Rectangle().fill(.regularMaterial).ignoresSafeArea()
             }
         }

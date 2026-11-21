@@ -23,7 +23,7 @@ struct WorkspaceBackgroundTests {
         defaults.set("wallpaper", forKey: WorkspaceBackground.styleKey)
         defaults.set("/editor.jpg", forKey: WorkspaceBackground.wallpaperPathKey)
         defaults.set("/library.jpg", forKey: GlassPicture.pathKey)
-        var prefs = BackgroundPreferences(migrating: defaults, theme: .glassDark)
+        var prefs = BackgroundPreferences(migrating: defaults)
         #expect(prefs.app.day.picture == "/library.jpg")
         #expect(prefs.editors.day.picture == "/editor.jpg")
         prefs[.app].night.style = .plain
@@ -36,6 +36,43 @@ struct WorkspaceBackgroundTests {
         #expect(!prefs.isNight(at: 0))
         #expect(prefs.isNight(at: prefs.nightStart))
         #expect(try JSONDecoder().decode(BackgroundPreferences.self, from: JSONEncoder().encode(prefs)) == prefs)
+    }
+
+    @Test func migrationReadsBothThemeSlotsAndPreservesExplicitGlassSettings() throws {
+        let suite = UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(AppTheme.classicLight.id, forKey: AppTheme.lightKey)
+        defaults.set(AppTheme.glassDark.id, forKey: AppTheme.darkKey)
+        defaults.set("wallpaper", forKey: WorkspaceBackground.styleKey)
+        defaults.set("", forKey: WorkspaceBackground.wallpaperPathKey)
+        let mixed = BackgroundPreferences(migrating: defaults)
+        #expect(mixed.app.day.style == .wallpaper && mixed.app.day.blur)
+        #expect(mixed.editors.day.style == .dots)
+
+        defaults.set(AppTheme.classicDark.id, forKey: AppTheme.darkKey)
+        defaults.set(true, forKey: GlassPicture.solidBackgroundKey)
+        #expect(BackgroundPreferences(migrating: defaults).app.day.style == .plain)
+        defaults.set(false, forKey: GlassPicture.solidBackgroundKey)
+        #expect(BackgroundPreferences(migrating: defaults).app.day.style == .wallpaper)
+        defaults.removeObject(forKey: GlassPicture.solidBackgroundKey)
+        defaults.set("", forKey: GlassPicture.pathKey)
+        #expect(BackgroundPreferences(migrating: defaults).app.day.style == .wallpaper)
+    }
+
+    @Test func aDefaultAppBackgroundTracksTheThemeUntilTheUserChoosesOne() throws {
+        let suite = UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var prefs = BackgroundPreferences(migrating: defaults)
+        prefs = try JSONDecoder().decode(BackgroundPreferences.self, from: JSONEncoder().encode(prefs))
+        #expect(prefs.backgrounds(for: .app, theme: .classicLight).day.style == .dots)
+        #expect(prefs.backgrounds(for: .app, theme: .glassLight).day.style == .wallpaper)
+        #expect(prefs.backgrounds(for: .editors, theme: .glassLight).day.style == .dots)
+        prefs[.editors].day.style = .plain
+        #expect(prefs.backgrounds(for: .app, theme: .glassDark).day.style == .wallpaper)
+        prefs[.app].day.style = .dots
+        #expect(prefs.backgrounds(for: .app, theme: .glassDark).day.style == .dots)
     }
 
     @Test func dimIsHalfAsMuchAgainInDarkModeAndStaysInRange() {
@@ -168,13 +205,13 @@ struct WorkspaceBackgroundTests {
         let defaults = UserDefaults.standard
         let previous = defaults.volatileDomain(forName: UserDefaults.argumentDomain)
         var on = previous
-        var preferences = BackgroundPreferences(migrating: defaults, theme: .classicDark)
+        var preferences = BackgroundPreferences(migrating: defaults)
         preferences.editors.day = BackgroundChoice(style: .wallpaper, picture: path, dim: 0.8, blur: true)
         preferences.app = preferences.editors
         on[WindowBackgroundStore.key] = try JSONEncoder().encode(preferences)
         defaults.setVolatileDomain(on, forName: UserDefaults.argumentDomain)
         defer { defaults.setVolatileDomain(previous, forName: UserDefaults.argumentDomain) }
-        #expect(WindowBackgroundStore.shared.choice(for: .editors) == preferences.editors.day)
+        #expect(WindowBackgroundStore.shared.choice(for: .editors, theme: .classicDark) == preferences.editors.day)
         return try await body()
     }
 
