@@ -731,6 +731,69 @@ struct StudioTracksTests {
         #expect(decodeLog.contains(2))
     }
 
+    @Test func pausedSeekIntoInFlightLookaheadRegistersRedrawCallback() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StudioInFlightLookahead-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let gifURL = tempDir.appendingPathComponent("two.gif")
+        try writeAnimatedGIF(to: gifURL, frameCount: 2, width: 64, height: 64, delay: 0.1)
+
+        let enteredSignal = AsyncStream<Void>.makeStream()
+        nonisolated final class HeldDecoder: @unchecked Sendable {
+            let enteredContinuation: AsyncStream<Void>.Continuation
+            let releaseFrame1 = DispatchSemaphore(value: 0)
+            private let lock = NSLock()
+            private var frame1Calls = 0
+            var frame1DecodeCount: Int { lock.withLock { frame1Calls } }
+
+            init(enteredContinuation: AsyncStream<Void>.Continuation) {
+                self.enteredContinuation = enteredContinuation
+            }
+
+            func decode(_ source: CGImageSource, _ index: Int) -> CGImage? {
+                if index == 1 {
+                    lock.withLock { frame1Calls += 1 }
+                    enteredContinuation.yield()
+                    releaseFrame1.wait()
+                }
+                return RecordingOverlayImage.decodeFrame(from: source, at: index)
+            }
+        }
+
+        let held = HeldDecoder(enteredContinuation: enteredSignal.continuation)
+        let cache = RecordingOverlayFrameCache(byteLimit: 4 * 1024 * 1024)
+        let image = try #require(RecordingOverlayImage(url: gifURL, cache: cache) { source, index in
+            held.decode(source, index)
+        })
+
+        // 1. Draw frame 0 while paused: triggers look-ahead for frame 1 with no callback.
+        let frame0 = image.previewFrame(at: 0.02)
+        // Wait until the look-ahead decode of frame 1 is actively held in flight.
+        for await _ in enteredSignal.stream {
+            break
+        }
+
+        // 2. Seek to frame 1 while that look-ahead decode is still in flight:
+        //    must return frame0 fallback AND attach the visible redraw callback to the in-flight decode.
+        let redrawSignal = AsyncStream<Void>.makeStream()
+        let fallback = image.previewFrame(at: 0.15) {
+            redrawSignal.continuation.yield()
+        }
+        #expect(fallback === frame0)
+
+        // 3. Release the held decoder: the registered callback must fire and frame 1 must be cached
+        //    without starting a duplicate decode.
+        held.releaseFrame1.signal()
+        for await _ in redrawSignal.stream {
+            break
+        }
+        let settled = image.previewFrame(at: 0.15)
+        #expect(settled !== frame0)
+        #expect(held.frame1DecodeCount == 1)
+    }
+
     // MARK: - Animated frame delay rules (GIF vs APNG, WebP, HEIC)
 
     @Test func gifDelayFallbackAppliesOnlyToGIFAndPreservesShortDelaysInOtherFormats() throws {

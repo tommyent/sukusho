@@ -245,7 +245,7 @@ nonisolated final class RecordingOverlayImage: @unchecked Sendable {
     private let sourceLock = NSLock()
     private let stateLock = NSLock()
     private var lastCompletedFrame: CGImage
-    private var pendingDecodeIndices: Set<Int> = []
+    private var pendingDecodeCallbacks: [Int: [@Sendable () -> Void]] = [:]
     private let frameCache: RecordingOverlayFrameCache
     private let frameDecoder: FrameDecoder
 
@@ -330,24 +330,32 @@ nonisolated final class RecordingOverlayImage: @unchecked Sendable {
     private func prefetchIfNeeded(index: Int, onDecoded: (@Sendable () -> Void)?) {
         guard frameCache.image(for: url, frameIndex: index) == nil else { return }
         let shouldStart = stateLock.withLock { () -> Bool in
-            if pendingDecodeIndices.contains(index) { return false }
-            pendingDecodeIndices.insert(index)
+            if pendingDecodeCallbacks[index] != nil {
+                if let onDecoded {
+                    pendingDecodeCallbacks[index]?.append(onDecoded)
+                }
+                return false
+            }
+            pendingDecodeCallbacks[index] = onDecoded.map { [$0] } ?? []
             return true
         }
         guard shouldStart else { return }
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             let decoded = self.sourceLock.withLock { self.frameDecoder(self.source, index) }
+            let callbacks: [@Sendable () -> Void]
             if let decoded {
                 _ = self.frameCache.insert(decoded, for: self.url, frameIndex: index)
-                self.stateLock.withLock {
+                callbacks = self.stateLock.withLock {
                     self.lastCompletedFrame = decoded
-                    _ = self.pendingDecodeIndices.remove(index)
+                    return self.pendingDecodeCallbacks.removeValue(forKey: index) ?? []
                 }
-                onDecoded?()
+                for callback in callbacks {
+                    callback()
+                }
             } else {
-                self.stateLock.withLock {
-                    _ = self.pendingDecodeIndices.remove(index)
+                _ = self.stateLock.withLock {
+                    self.pendingDecodeCallbacks.removeValue(forKey: index)
                 }
             }
         }
