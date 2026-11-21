@@ -53,6 +53,12 @@ nonisolated enum ClipboardPopupMode: String, CaseIterable, Identifiable, Sendabl
         return self == .clipboard ? .apps : .clipboard
     }
 
+    /// Initial mode when opening the popup: opens straight into Apps when clipboard history is off
+    /// and the launcher option is on; otherwise opens in Clipboard.
+    static func initial(clipboardHistoryEnabled: Bool, launcherEnabled: Bool) -> Self {
+        (!clipboardHistoryEnabled && launcherEnabled) ? .apps : .clipboard
+    }
+
     /// Plain Tab toggles Clipboard ↔ Apps when enabled; Shift-Tab leaves the mode unchanged.
     func afterTab(shifted: Bool = false, launcherEnabled: Bool) -> Self {
         guard launcherEnabled else { return .clipboard }

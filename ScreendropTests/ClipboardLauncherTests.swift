@@ -446,6 +446,13 @@ struct ClipboardPopupTabToggleTests {
         #expect(ClipboardPopupMode.apps.toggled(launcherEnabled: false) == .clipboard)
     }
 
+    @Test func initialModeOpensAppsWhenClipboardHistoryIsOffAndLauncherIsOn() {
+        #expect(ClipboardPopupMode.initial(clipboardHistoryEnabled: false, launcherEnabled: false) == .clipboard)
+        #expect(ClipboardPopupMode.initial(clipboardHistoryEnabled: true, launcherEnabled: false) == .clipboard)
+        #expect(ClipboardPopupMode.initial(clipboardHistoryEnabled: true, launcherEnabled: true) == .clipboard)
+        #expect(ClipboardPopupMode.initial(clipboardHistoryEnabled: false, launcherEnabled: true) == .apps)
+    }
+
     @Test func sessionInvalidatesPriorTokensAcrossCloseAndReopen() {
         let session = LauncherSession()
         #expect(session.currentToken == nil)

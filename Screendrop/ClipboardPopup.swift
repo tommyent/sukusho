@@ -35,9 +35,9 @@ final class ClipboardPopupState {
         return rows.first { $0.id == launcherSelection } ?? rows.first
     }
 
-    func reset() {
+    func reset(mode: ClipboardPopupMode = .clipboard) {
         query = ""
-        mode = .clipboard
+        self.mode = mode
         filter = .all
         selection = nil
         launcherSelection = nil
@@ -94,8 +94,15 @@ final class ClipboardPopupPresenter {
 
     private func present(_ panel: ClipboardPopupPanel) {
         target = NSWorkspace.shared.frontmostApplication
-        state.reset()
+        let initialMode = ClipboardPopupMode.initial(
+            clipboardHistoryEnabled: ScreendropPreferences.clipboardHistoryEnabled,
+            launcherEnabled: ScreendropPreferences.clipboardLauncherEnabled
+        )
+        state.reset(mode: initialMode)
         ClipboardHistoryModel.shared.popupWillOpen()
+        if initialMode == .apps {
+            ClipboardLauncherModel.shared.modeDidActivate(.apps)
+        }
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
         if let visible = screen?.visibleFrame {
