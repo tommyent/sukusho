@@ -38,13 +38,21 @@ nonisolated enum RecordingChapterPlanner {
     }
 
     static func mapped(_ chapters: [RecordingChapter], through timeline: RecordingClipTimeline, cues: [RecordingSubtitleCue] = [], words: [RecordingTranscriptWord] = []) -> [RecordingChapter] {
+        let candidates: [(chapter: RecordingChapter, time: TimeInterval)] = chapters
+            .filter { $0.start.isFinite && $0.start >= 0 }
+            .compactMap { chapter in
+                guard timeline.segments.contains(where: { chapter.start >= $0.sourceStart && chapter.start < $0.sourceEnd }),
+                      let time = timeline.editorTime(forSourceTime: chapter.start),
+                      time < timeline.duration - 0.5 else { return nil }
+                return (chapter, time)
+            }
+            .sorted { lhs, rhs in
+                if abs(lhs.time - rhs.time) > 0.000_001 { return lhs.time < rhs.time }
+                return lhs.chapter.start < rhs.chapter.start
+            }
         var result: [RecordingChapter] = []
-        for chapter in chapters.filter({ $0.start.isFinite }).sorted(by: { $0.start < $1.start }) {
-            guard chapter.start >= 0,
-                  timeline.segments.contains(where: { chapter.start >= $0.sourceStart && chapter.start < $0.sourceEnd }),
-                  let time = timeline.editorTime(forSourceTime: chapter.start),
-                  time < timeline.duration - 0.5,
-                  result.last.map({ time - $0.start > 0.001 }) ?? true else { continue }
+        for (chapter, time) in candidates {
+            guard result.last.map({ time - $0.start > 0.001 }) ?? true else { continue }
             var mapped = chapter
             mapped.start = time
             mapped.title = String(chapter.title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))

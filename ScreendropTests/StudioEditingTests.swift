@@ -121,6 +121,16 @@ struct StudioEditingTests {
         let encoded = try JSONEncoder().encode(markers)
         let decoded = try JSONDecoder().decode([RecordingMarker].self, from: encoded)
         #expect(decoded == markers)
+
+        // Chapters also stay visible and ordered in playback time after clip reordering.
+        let chapters = [
+            RecordingChapter(title: "Early", start: 1.5),
+            RecordingChapter(title: "Late", start: 7.5),
+        ]
+        let mappedChapters = RecordingChapterPlanner.mapped(chapters, through: reordered)
+        #expect(mappedChapters.map(\.title) == ["Late", "Early"])
+        #expect(abs(mappedChapters[0].start - 1.5) < 0.0001)
+        #expect(abs(mappedChapters[1].start - 5.5) < 0.0001)
     }
 
     // MARK: - Reordering, hardCuts, editorSpan, ViewportTimeline & PointerTimeline
