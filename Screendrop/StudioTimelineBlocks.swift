@@ -1059,8 +1059,13 @@ func studioPlaceMovedZoomCue(
     let room = max(0, bounds.upper - bounds.lower)
     let length = min(moved.duration, room)
     guard length > 0.000_001 else { return nil }
-    moved.start = min(max(moved.start, bounds.lower), max(bounds.lower, bounds.upper - length))
-    moved.end = min(moved.start + length, bounds.upper)
+    // Preserve both sanitized endpoints verbatim when the cue already fits
+    // within its neighbour bounds; recomputing `start + (end - start)` can
+    // shift the last ULP of fractional frame times and trigger a false edit.
+    if moved.start < bounds.lower || moved.end > bounds.upper {
+        moved.start = min(max(moved.start, bounds.lower), max(bounds.lower, bounds.upper - length))
+        moved.end = min(moved.start + length, bounds.upper)
+    }
     next[index] = moved
     return next
 }

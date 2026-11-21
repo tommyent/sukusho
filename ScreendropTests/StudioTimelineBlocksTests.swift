@@ -395,6 +395,34 @@ struct StudioTimelineBlocksTests {
         let placedBack = try #require(studioPlaceMovedZoomCue(returnedToStart, in: placedAway, sourceDuration: sourceDuration))
         #expect(placedBack == originalCues)
         #expect(placedBack[0].start == 3 && placedBack[0].end == 7)
+
+        // Fractional source times (frames 12..43 at 30 fps, clip trimmed to start at 1 s):
+        // zero-delta move must preserve both endpoints bit-for-bit without ULP drift
+        // (`start + (end - start)` differs from `end` by 1 ULP for 12/30 and 43/30).
+        let fractionalTimeline = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 1, sourceEnd: 10, speed: 1),
+        ])
+        let fractionalCue = ZoomCue(start: 12.0 / 30.0, end: 43.0 / 30.0)
+        #expect(fractionalCue.start + fractionalCue.duration != fractionalCue.end)
+        let fractionalCues = [fractionalCue]
+        let fractionalSlices = fractionalTimeline.slices(overlapping: fractionalCue.start, sourceEnd: fractionalCue.end)
+        let fractionalBlock = StudioLaneBlock(
+            item: fractionalCue,
+            editorStart: try #require(fractionalSlices.first).editorStart,
+            editorEnd: try #require(fractionalSlices.last).editorEnd
+        )
+        let resolvedFractionalZero = studioMovedZoomCue(
+            for: StudioBlockEdit(base: fractionalBlock, kind: .move, delta: 0, verticalTranslation: -5),
+            clipTimeline: fractionalTimeline
+        )
+        let placedFractionalZero = try #require(studioPlaceMovedZoomCue(
+            resolvedFractionalZero,
+            in: fractionalCues,
+            sourceDuration: 10
+        ))
+        #expect(placedFractionalZero == fractionalCues)
+        #expect(placedFractionalZero[0].start == fractionalCue.start)
+        #expect(placedFractionalZero[0].end == fractionalCue.end)
     }
 
     // MARK: - Drawn drafts land exactly where shown
