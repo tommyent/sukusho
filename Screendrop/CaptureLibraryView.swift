@@ -13,7 +13,7 @@ struct CaptureLibraryView: View {
     @State private var history = ScreenshotHistoryStore.shared
     @State private var projects = RecordingProjectStore.shared
     @State private var libraryWindow: NSWindow?
-    @FocusState private var searchFocused: Bool
+    @State private var searchFocusRequest = 0
     @State private var handledInitialWindowPlacement = false
     @State private var glassMetrics = GlassWindowButtonMetrics.fallback
     @State private var columnVisibility = NavigationSplitViewVisibility.automatic
@@ -819,7 +819,7 @@ struct CaptureLibraryView: View {
     private func searchField(onGlass: Bool) -> some View {
         HStack(spacing: 4) {
             if onGlass {
-                Button { searchFocused = true } label: {
+                Button { searchFocusRequest += 1 } label: {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
                 }
@@ -830,9 +830,9 @@ struct CaptureLibraryView: View {
             LibrarySearchField(
                 text: $model.searchText,
                 prompt: saved.isShown ? "Search saved" : clipboard.isShown ? (clipboard.showsSnippets ? "Search snippets" : "Search clipboard") : comments.isShown ? "Search comments" : likes.isShown ? "Search likes" : cloud.isShown ? (cloud.showsReceived ? "Search received files" : cloud.showsFiles ? "Search files" : "Search uploads") : "Search captures",
-                bezel: !onGlass
+                bezel: !onGlass,
+                focusRequest: searchFocusRequest
             )
-            .focused($searchFocused)
         }
         .padding(.horizontal, onGlass ? 8 : 0)
         .frame(minWidth: 120, idealWidth: 320, maxWidth: 320)
@@ -910,6 +910,7 @@ private struct LibrarySearchField: NSViewRepresentable {
     @Binding var text: String
     let prompt: String
     let bezel: Bool
+    let focusRequest: Int
 
     func makeNSView(context: Context) -> NSSearchField {
         let field = NSSearchField()
@@ -941,19 +942,30 @@ private struct LibrarySearchField: NSViewRepresentable {
         if field.stringValue != text { field.stringValue = text }
         field.placeholderString = prompt
         field.setAccessibilityLabel(prompt)
+        if context.coordinator.focusRequest != focusRequest {
+            context.coordinator.focusRequest = focusRequest
+            DispatchQueue.main.async { [weak field] in
+                guard let field else { return }
+                field.window?.makeFirstResponder(field)
+            }
+        }
     }
 
     static func dismantleNSView(_ field: NSSearchField, coordinator: Coordinator) {
         if let monitor = coordinator.monitor { NSEvent.removeMonitor(monitor) }
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
+    func makeCoordinator() -> Coordinator { Coordinator(text: $text, focusRequest: focusRequest) }
 
     final class Coordinator: NSObject {
         var text: Binding<String>
+        var focusRequest: Int
         var monitor: Any?
 
-        init(text: Binding<String>) { self.text = text }
+        init(text: Binding<String>, focusRequest: Int) {
+            self.text = text
+            self.focusRequest = focusRequest
+        }
 
         @objc func search(_ field: NSSearchField) { text.wrappedValue = field.stringValue }
     }
