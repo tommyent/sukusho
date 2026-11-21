@@ -306,6 +306,15 @@ nonisolated struct RecordingTextOverlay: Identifiable, Codable, Equatable, Hasha
     func isActive(atSourceTime time: TimeInterval) -> Bool {
         time >= start && time < end
     }
+
+    func nudged(dx: CGFloat, dy: CGFloat) -> Self {
+        var copy = self
+        copy.center = CGPoint(
+            x: min(max(center.x + dx, 0), 1),
+            y: min(max(center.y + dy, 0), 1)
+        )
+        return copy
+    }
 }
 
 /// Where a text, image, or effect sits on the edited timeline: its source

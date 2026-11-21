@@ -93,10 +93,31 @@ struct StudioImageEditingLayer: View {
                     .gesture(moveGesture(for: overlay))
                     .help("Drag to move. Drag the corner handle to resize.")
                     .accessibilityLabel(overlay.isAnimated ? "GIF, \(overlay.displayName)" : "Image, \(overlay.displayName)")
+                    .accessibilityValue("Position \(percentText(overlay.center.x)) across, \(percentText(overlay.center.y)) down, width \(percentText(overlay.width))")
                     .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+                    .accessibilityAction { model.selectImage(id: overlay.id) }
+                    .accessibilityAction(named: "Move Left") { accessibleEdit(overlay, action: "Move Image") { $0.nudged(dx: -Self.nudgeStep, dy: 0) } }
+                    .accessibilityAction(named: "Move Right") { accessibleEdit(overlay, action: "Move Image") { $0.nudged(dx: Self.nudgeStep, dy: 0) } }
+                    .accessibilityAction(named: "Move Up") { accessibleEdit(overlay, action: "Move Image") { $0.nudged(dx: 0, dy: -Self.nudgeStep) } }
+                    .accessibilityAction(named: "Move Down") { accessibleEdit(overlay, action: "Move Image") { $0.nudged(dx: 0, dy: Self.nudgeStep) } }
+                    .accessibilityAction(named: "Make Larger") { accessibleEdit(overlay, action: "Resize Image") { $0.scaled(by: Double(Self.nudgeStep)) } }
+                    .accessibilityAction(named: "Make Smaller") { accessibleEdit(overlay, action: "Resize Image") { $0.scaled(by: -Double(Self.nudgeStep)) } }
             }
         }
         .frame(width: canvasSize.width, height: canvasSize.height, alignment: .topLeading)
+    }
+
+    private static let nudgeStep: CGFloat = 0.05
+
+    private func accessibleEdit(
+        _ overlay: RecordingImageOverlay,
+        action: String,
+        transform: (RecordingImageOverlay) -> RecordingImageOverlay
+    ) {
+        model.selectImage(id: overlay.id)
+        model.beginImageEdit()
+        model.setImage(transform(overlay))
+        model.endImageEdit(actionName: action)
     }
 
     private func begin(_ overlay: RecordingImageOverlay) {
@@ -190,10 +211,25 @@ struct StudioTextEditingLayer: View {
                     .gesture(moveGesture(for: overlay))
                     .help("Drag to move. Edit the text in the inspector.")
                     .accessibilityLabel("Text, \(overlay.text.isEmpty ? "Empty" : overlay.text)")
+                    .accessibilityValue("Position \(percentText(overlay.center.x)) across, \(percentText(overlay.center.y)) down")
                     .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+                    .accessibilityAction { model.selectText(id: overlay.id) }
+                    .accessibilityAction(named: "Move Left") { nudge(overlay, dx: -Self.nudgeStep, dy: 0) }
+                    .accessibilityAction(named: "Move Right") { nudge(overlay, dx: Self.nudgeStep, dy: 0) }
+                    .accessibilityAction(named: "Move Up") { nudge(overlay, dx: 0, dy: -Self.nudgeStep) }
+                    .accessibilityAction(named: "Move Down") { nudge(overlay, dx: 0, dy: Self.nudgeStep) }
             }
         }
         .frame(width: canvasSize.width, height: canvasSize.height, alignment: .topLeading)
+    }
+
+    private static let nudgeStep: CGFloat = 0.05
+
+    private func nudge(_ overlay: RecordingTextOverlay, dx: CGFloat, dy: CGFloat) {
+        model.selectText(id: overlay.id)
+        model.beginTextEdit()
+        model.setText(overlay.nudged(dx: dx, dy: dy))
+        model.endTextEdit(actionName: "Move Text")
     }
 
     private func moveGesture(for overlay: RecordingTextOverlay) -> some Gesture {
@@ -238,31 +274,7 @@ struct StudioRedactionEditingLayer: View {
             ForEach(redactions) { redaction in
                 let rect = canvasRect(for: redaction.rect)
                 let isSelected = model.selectedRedactionID == redaction.id
-                Rectangle()
-                    .fill(Color.white.opacity(0.001))
-                    .overlay {
-                        if isSelected || hoveredID == redaction.id {
-                            Rectangle()
-                                .strokeBorder(
-                                    isSelected ? Color.white.opacity(0.95) : Color.white.opacity(0.6),
-                                    style: StrokeStyle(lineWidth: isSelected ? 1.5 : 1, dash: isSelected ? [] : [4, 3])
-                                )
-                                .shadow(color: .black.opacity(0.3), radius: 1)
-                        }
-                    }
-                    .frame(width: max(rect.width, 4), height: max(rect.height, 4))
-                    .position(x: rect.midX, y: rect.midY)
-                    .onHover { isHovering in
-                        if isHovering {
-                            hoveredID = redaction.id
-                        } else if hoveredID == redaction.id {
-                            hoveredID = nil
-                        }
-                    }
-                    .onTapGesture { model.selectRedaction(id: redaction.id) }
-                    .gesture(dragGesture(for: redaction, handle: nil))
-                    .accessibilityLabel("\(redaction.mode.title) region")
-                    .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+                redactionBox(for: redaction, rect: rect, isSelected: isSelected)
 
                 if isSelected {
                     ForEach(CropHandle.allCases, id: \.self) { handle in
@@ -272,11 +284,68 @@ struct StudioRedactionEditingLayer: View {
                                 y: rect.minY + rect.height * handle.unitPoint.y
                             )
                             .gesture(dragGesture(for: redaction, handle: handle))
+                            .accessibilityHidden(true)
                     }
                 }
             }
         }
         .frame(width: canvasSize.width, height: canvasSize.height, alignment: .topLeading)
+    }
+
+    private func redactionBox(for redaction: RecordingRedaction, rect: CGRect, isSelected: Bool) -> some View {
+        let valueText = "Position \(percentText(redaction.rect.minX)) across, \(percentText(redaction.rect.minY)) down, size \(percentText(redaction.rect.width)) by \(percentText(redaction.rect.height))"
+        let base = Rectangle()
+            .fill(Color.white.opacity(0.001))
+            .overlay {
+                if isSelected || hoveredID == redaction.id {
+                    Rectangle()
+                        .strokeBorder(
+                            isSelected ? Color.white.opacity(0.95) : Color.white.opacity(0.6),
+                            style: StrokeStyle(lineWidth: isSelected ? 1.5 : 1, dash: isSelected ? [] : [4, 3])
+                        )
+                        .shadow(color: .black.opacity(0.3), radius: 1)
+                }
+            }
+            .frame(width: max(rect.width, 4), height: max(rect.height, 4))
+            .position(x: rect.midX, y: rect.midY)
+            .onHover { isHovering in
+                if isHovering {
+                    hoveredID = redaction.id
+                } else if hoveredID == redaction.id {
+                    hoveredID = nil
+                }
+            }
+            .onTapGesture { model.selectRedaction(id: redaction.id) }
+            .gesture(dragGesture(for: redaction, handle: nil))
+
+        let movable = base
+            .accessibilityLabel("\(redaction.mode.title) region")
+            .accessibilityValue(valueText)
+            .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+            .accessibilityAction { model.selectRedaction(id: redaction.id) }
+            .accessibilityAction(named: "Move Left") { accessibleEdit(redaction, action: "Move Redaction") { $0.nudged(dx: -Self.nudgeStep, dy: 0) } }
+            .accessibilityAction(named: "Move Right") { accessibleEdit(redaction, action: "Move Redaction") { $0.nudged(dx: Self.nudgeStep, dy: 0) } }
+            .accessibilityAction(named: "Move Up") { accessibleEdit(redaction, action: "Move Redaction") { $0.nudged(dx: 0, dy: -Self.nudgeStep) } }
+            .accessibilityAction(named: "Move Down") { accessibleEdit(redaction, action: "Move Redaction") { $0.nudged(dx: 0, dy: Self.nudgeStep) } }
+
+        return movable
+            .accessibilityAction(named: "Widen") { accessibleEdit(redaction, action: "Resize Redaction") { $0.resized(dWidth: Self.nudgeStep, dHeight: 0) } }
+            .accessibilityAction(named: "Narrow") { accessibleEdit(redaction, action: "Resize Redaction") { $0.resized(dWidth: -Self.nudgeStep, dHeight: 0) } }
+            .accessibilityAction(named: "Make Taller") { accessibleEdit(redaction, action: "Resize Redaction") { $0.resized(dWidth: 0, dHeight: Self.nudgeStep) } }
+            .accessibilityAction(named: "Make Shorter") { accessibleEdit(redaction, action: "Resize Redaction") { $0.resized(dWidth: 0, dHeight: -Self.nudgeStep) } }
+    }
+
+    private static let nudgeStep: CGFloat = 0.05
+
+    private func accessibleEdit(
+        _ redaction: RecordingRedaction,
+        action: String,
+        transform: (RecordingRedaction) -> RecordingRedaction
+    ) {
+        model.selectRedaction(id: redaction.id)
+        model.beginRedactionEdit()
+        model.setRedaction(transform(redaction))
+        model.endRedactionEdit(actionName: action)
     }
 
     private func canvasRect(for rect: CGRect) -> CGRect {
@@ -321,6 +390,10 @@ struct StudioRedactionEditingLayer: View {
                 model.endRedactionEdit(actionName: handle == nil ? "Move Redaction" : "Resize Redaction")
             }
     }
+}
+
+private func percentText(_ fraction: Double) -> String {
+    "\(Int((fraction * 100).rounded()))%"
 }
 
 /// A region's resize handle: a square at the corners, a bar on the edges,

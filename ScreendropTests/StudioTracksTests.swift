@@ -487,6 +487,39 @@ struct StudioTracksTests {
         #expect(RecordingOverlayImage.delay(from: [:]) == 0.1)
     }
 
+    // MARK: - Accessible canvas position and bounds actions
+
+    @Test func accessibleOverlayGeometryStepsClampCleanlyAndStayValid() throws {
+        var text = RecordingTextOverlay(start: 0, end: 2)
+        text.center = CGPoint(x: 0.98, y: 0.02)
+        let movedText = text.nudged(dx: 0.05, dy: -0.05)
+        #expect(movedText.center == CGPoint(x: 1, y: 0))
+
+        var image = RecordingImageOverlay(fileName: "a.png", displayName: "a", start: 0, end: 2)
+        image.center = CGPoint(x: 0.5, y: 0.5)
+        image.width = 0.04
+        #expect(image.nudged(dx: -0.05, dy: 0.05).center == CGPoint(x: 0.45, y: 0.55))
+        #expect(image.scaled(by: -0.05).width == RecordingImageOverlay.widthRange.lowerBound)
+        #expect(image.scaled(by: 2.0).width == RecordingImageOverlay.widthRange.upperBound)
+
+        let redaction = RecordingRedaction(start: 0, end: 2, rect: CGRect(x: 0.8, y: 0.8, width: 0.15, height: 0.15))
+        let movedRedaction = redaction.nudged(dx: 0.2, dy: 0.2)
+        #expect(abs(movedRedaction.rect.maxX - 1.0) < 0.0001)
+        #expect(abs(movedRedaction.rect.maxY - 1.0) < 0.0001)
+        try movedRedaction.validate(sourceDuration: 5)
+
+        let widened = movedRedaction.resized(dWidth: 0.1, dHeight: 0.05)
+        #expect(abs(widened.rect.width - 0.25) < 0.0001)
+        #expect(abs(widened.rect.height - 0.20) < 0.0001)
+        #expect(widened.rect.maxX <= 1.0 + 0.0001 && widened.rect.maxY <= 1.0 + 0.0001)
+        try widened.validate(sourceDuration: 5)
+
+        let narrowed = redaction.resized(dWidth: -0.5, dHeight: -0.5)
+        #expect(abs(narrowed.rect.width - RecordingRedaction.minimumSide) < 0.0001)
+        #expect(abs(narrowed.rect.height - RecordingRedaction.minimumSide) < 0.0001)
+        try narrowed.validate(sourceDuration: 5)
+    }
+
     // MARK: - Source-time placement across cuts and speed ramps
 
     @Test func textAndImageBlocksMapAcrossCutsAndSpeedRamps() {

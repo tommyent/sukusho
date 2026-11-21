@@ -108,6 +108,26 @@ nonisolated struct RecordingRedaction: Codable, Equatable, Hashable, Identifiabl
         )
     }
 
+    func nudged(dx: CGFloat, dy: CGFloat) -> Self {
+        var copy = self
+        copy.rect = Self.clamped(rect.offsetBy(dx: dx, dy: dy))
+        return copy
+    }
+
+    func resized(dWidth: CGFloat, dHeight: CGFloat) -> Self {
+        var copy = self
+        let nextWidth = min(max(rect.width + dWidth, Self.minimumSide), 1)
+        let nextHeight = min(max(rect.height + dHeight, Self.minimumSide), 1)
+        let centered = CGRect(
+            x: rect.midX - nextWidth / 2,
+            y: rect.midY - nextHeight / 2,
+            width: nextWidth,
+            height: nextHeight
+        )
+        copy.rect = Self.clamped(centered)
+        return copy
+    }
+
     func pixelRect(in extent: CGRect) -> CGRect {
         CGRect(x: extent.minX + rect.minX * extent.width,
                y: extent.minY + (1 - rect.maxY) * extent.height,

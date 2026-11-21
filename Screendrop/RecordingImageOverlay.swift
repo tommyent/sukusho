@@ -104,6 +104,21 @@ nonisolated struct RecordingImageOverlay: Identifiable, Codable, Equatable, Hash
             height: drawHeight
         )
     }
+
+    func nudged(dx: CGFloat, dy: CGFloat) -> Self {
+        var copy = self
+        copy.center = CGPoint(
+            x: min(max(center.x + dx, 0), 1),
+            y: min(max(center.y + dy, 0), 1)
+        )
+        return copy
+    }
+
+    func scaled(by delta: Double) -> Self {
+        var copy = self
+        copy.width = min(max(width + delta, Self.widthRange.lowerBound), Self.widthRange.upperBound)
+        return copy
+    }
 }
 
 // MARK: - Decoded images
