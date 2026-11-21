@@ -180,6 +180,55 @@ struct StudioTimelineBlocksTests {
         #expect(abs(clampedTrimLeading - (-10)) < 0.0001)
     }
 
+    @Test @MainActor func movingShortZoomFrom2xTo1xPreservesVisibleLengthThroughModelPlacement() throws {
+        // Clip 1: 0..10 s at 1x (editor 0..10 s).
+        // Clip 2: 10..20 s at 2x (editor 10..15 s).
+        let clipTimeline = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 10, speed: 1),
+            RecordingClipSegment(sourceStart: 10, sourceEnd: 20, speed: 2),
+        ])
+        let sourceDuration: TimeInterval = 20
+
+        // A zoom trimmed to 0.5 s of source on 2x occupies 0.25 s in the editor.
+        var shortCue = ZoomCue(start: 12.0, end: 12.5, zoom: 1.5)
+        let initialSlices = clipTimeline.slices(overlapping: shortCue.start, sourceEnd: shortCue.end)
+        let initialFirst = try #require(initialSlices.first)
+        let initialLast = try #require(initialSlices.last)
+        let editorLength = initialLast.editorEnd - initialFirst.editorStart
+        #expect(abs(editorLength - 0.25) < 0.0001)
+
+        // Move it onto 1x at editor 4.0 s, flush against a neighbour starting at source 4.25 s (if placed before it).
+        let movedRange = studioMovedSourceRange(
+            clipTimeline: clipTimeline,
+            editorStart: 4.0,
+            editorLength: editorLength
+        )
+        #expect(abs(movedRange.start - 4.0) < 0.0001)
+        #expect(abs(movedRange.end - 4.25) < 0.0001)
+
+        shortCue.start = movedRange.start
+        shortCue.end = movedRange.end
+        let cuesWithRightNeighbour = [shortCue, ZoomCue(start: 4.25, end: 6.0)]
+        let placed = try #require(studioPlaceMovedZoomCue(shortCue, in: cuesWithRightNeighbour, sourceDuration: sourceDuration))
+        // Must preserve 4.0..4.25 instead of inflating to 0.5 s or pushing start back to 3.75 s.
+        #expect(abs(placed[0].start - 4.0) < 0.0001)
+        #expect(abs(placed[0].end - 4.25) < 0.0001)
+
+        // Editing magnification on that 0.25 s cue keeps its 4.0..4.25 span intact.
+        var magnified = placed[0]
+        magnified.zoom = 2.5
+        let updatedAttrs = try #require(studioPlaceUpdatedZoomCue(magnified, in: placed, sourceDuration: sourceDuration))
+        #expect(abs(updatedAttrs[0].start - 4.0) < 0.0001)
+        #expect(abs(updatedAttrs[0].end - 4.25) < 0.0001)
+        #expect(updatedAttrs[0].zoom == 2.5)
+
+        // Explicitly resizing enforces ZoomCue.minimumDuration (0.5 s).
+        var resized = updatedAttrs[0]
+        resized.start = 3.9
+        let updatedResize = try #require(studioPlaceUpdatedZoomCue(resized, in: [updatedAttrs[0]], sourceDuration: sourceDuration))
+        #expect(abs(updatedResize[0].end - updatedResize[0].start - ZoomCue.minimumDuration) < 0.0001)
+    }
+
     // MARK: - Drawn drafts land exactly where shown
 
     @Test @MainActor func draftRangeAndSourceSpanLandExactlyWhereDrawnAcrossSpeedChanges() throws {

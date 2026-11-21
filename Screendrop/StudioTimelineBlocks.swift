@@ -844,6 +844,89 @@ func studioMovedSourceRange(
     return (sourceStart, sourceEnd)
 }
 
+/// Sanitizes a zoom cue's scalar fields without altering neighbor placement.
+func studioSanitizedZoomCue(_ cue: ZoomCue, sourceDuration: TimeInterval) -> ZoomCue {
+    let safeDuration = max(0, sourceDuration.isFinite ? sourceDuration : 0)
+    var cue = cue
+    cue.start = min(max(0, cue.start.isFinite ? cue.start : 0), safeDuration)
+    cue.end = min(max(cue.start, cue.end.isFinite ? cue.end : cue.start), safeDuration)
+    cue.zoom = min(max(cue.zoom.isFinite ? cue.zoom : 1.5, 1), 4)
+    cue.boundsBias = min(max(cue.boundsBias.isFinite ? cue.boundsBias : 0.25, 0), 1)
+    cue.pinnedPoint = CGPoint(
+        x: min(max(cue.pinnedPoint.x.isFinite ? cue.pinnedPoint.x : 0.5, 0), 1),
+        y: min(max(cue.pinnedPoint.y.isFinite ? cue.pinnedPoint.y : 0.5, 0), 1)
+    )
+    return cue
+}
+
+/// Room a cue has to grow or slide into before it would run into a neighbour
+/// in source time.
+func studioZoomNeighborBounds(
+    forCueAt index: Int,
+    in cues: [ZoomCue],
+    sourceDuration: TimeInterval
+) -> (lower: TimeInterval, upper: TimeInterval) {
+    (
+        lower: index > 0 ? max(0, cues[index - 1].end) : 0,
+        upper: index + 1 < cues.count
+            ? min(cues[index + 1].start, sourceDuration)
+            : sourceDuration
+    )
+}
+
+/// Applies a move in source time while preserving the positive source span
+/// calculated from the editor interval (so a short cue moved from 2× to 1×
+/// keeps its visible editor length instead of inflating to `minimumDuration`).
+func studioPlaceMovedZoomCue(
+    _ cue: ZoomCue,
+    in cues: [ZoomCue],
+    sourceDuration: TimeInterval
+) -> [ZoomCue]? {
+    var next = cues
+    guard let index = next.firstIndex(where: { $0.id == cue.id }) else { return nil }
+    let bounds = studioZoomNeighborBounds(forCueAt: index, in: next, sourceDuration: sourceDuration)
+    var moved = studioSanitizedZoomCue(cue, sourceDuration: sourceDuration)
+    let room = max(0, bounds.upper - bounds.lower)
+    let length = min(moved.duration, room)
+    guard length > 0.000_001 else { return nil }
+    moved.start = min(max(moved.start, bounds.lower), max(bounds.lower, bounds.upper - length))
+    moved.end = min(moved.start + length, bounds.upper)
+    next[index] = moved
+    return next
+}
+
+/// Applies a cue edit. Attribute-only edits (such as magnification or focus
+/// mode) preserve the cue's existing span intact; explicit resizes enforce
+/// `ZoomCue.minimumDuration` clamped against neighbouring cues.
+func studioPlaceUpdatedZoomCue(
+    _ cue: ZoomCue,
+    in cues: [ZoomCue],
+    sourceDuration: TimeInterval
+) -> [ZoomCue]? {
+    var next = cues
+    guard let index = next.firstIndex(where: { $0.id == cue.id }) else { return nil }
+    let previous = next[index]
+    var updated = studioSanitizedZoomCue(cue, sourceDuration: sourceDuration)
+    let spanChanged = abs(updated.start - previous.start) > 0.000_001
+        || abs(updated.end - previous.end) > 0.000_001
+    if spanChanged {
+        let bounds = studioZoomNeighborBounds(forCueAt: index, in: next, sourceDuration: sourceDuration)
+        updated.start = min(
+            max(updated.start, bounds.lower),
+            max(bounds.lower, bounds.upper - ZoomCue.minimumDuration)
+        )
+        updated.end = min(
+            max(updated.end, updated.start + ZoomCue.minimumDuration),
+            bounds.upper
+        )
+    } else {
+        updated.start = previous.start
+        updated.end = previous.end
+    }
+    next[index] = updated
+    return next
+}
+
 // MARK: - Drawing
 
 /// How a block is painted: the bright tint with white marks on it, as in
