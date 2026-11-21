@@ -377,10 +377,7 @@ private final class RecordingAreaSelectionView: NSView {
         AreaPickerGuides.position(
             pointer: pointer,
             in: bounds,
-            backingScale: guideBackingScale,
-            isDragging: selectionRect != nil,
-            isAdjusting: adjusting != nil,
-            hasSnap: (pressedSnap ?? snapRect) != nil
+            backingScale: guideBackingScale
         )
     }
 
@@ -632,10 +629,12 @@ private final class RecordingAreaSelectionView: NSView {
             // A handle resizes, inside moves, and anywhere else draws a new area.
             if let handle = AreaHandle.allCases.first(where: { $0.rect(in: adjusting).insetBy(dx: -6, dy: -6).contains(point) }) {
                 grab = (handle, adjusting, point)
+                movePointer(to: point)
                 return
             }
             if adjusting.contains(point) {
                 grab = (nil, adjusting, point)
+                movePointer(to: point)
                 return
             }
             self.adjusting = nil
@@ -657,6 +656,7 @@ private final class RecordingAreaSelectionView: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        pointer = point
         if let grab {
             adjusting = AreaHandle.adjust(grab.area, handle: grab.handle, by: CGSize(width: point.x - grab.start.x,
                                                                                     height: point.y - grab.start.y),
@@ -665,7 +665,6 @@ private final class RecordingAreaSelectionView: NSView {
             needsDisplay = true
             return
         }
-        pointer = point
         // Space held: the whole area follows the pointer, as with the system crosshair.
         if isScreenshot, isSpaceDown, let start = startPoint, let last = currentPoint {
             startPoint = CGPoint(x: start.x + point.x - last.x, y: start.y + point.y - last.y)
@@ -675,15 +674,17 @@ private final class RecordingAreaSelectionView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
         if grab != nil {
             grab = nil
+            movePointer(to: point)
             return
         }
         if let pressedSnap {
             onSelect?(pressedSnap)
             return
         }
-        currentPoint = convert(event.locationInWindow, from: nil)
+        currentPoint = point
         let minimum: CGFloat = isScreenshot ? 4 : 16
         guard let rect = selectionRect, rect.width >= minimum, rect.height >= minimum else {
             // A stray click leaves the screenshot picker open; Escape closes it.
@@ -702,6 +703,7 @@ private final class RecordingAreaSelectionView: NSView {
             onSelect?(isScreenshot ? rect.intersection(bounds) : rect)
             return
         }
+        pointer = currentPoint
         startPoint = nil
         currentPoint = nil
         adjusting = rect.intersection(bounds)
@@ -836,7 +838,7 @@ private final class RecordingAreaSelectionView: NSView {
         )
     }
 
-    /// Invalidates only the narrow old/new guide strips for idle pointer movement; falls back to full-view
+    /// Invalidates only the narrow old/new guide strips for pointer movement; falls back to full-view
     /// invalidation whenever a snap box, loupe, or hint badge changes.
     private func invalidatePointerChange(
         previousGuides: AreaPickerGuides?,
@@ -844,9 +846,8 @@ private final class RecordingAreaSelectionView: NSView {
         previousLoupe: Bool,
         previousHint: Bool
     ) {
-        guard adjusting == nil else { return }
         let currentSnap = pressedSnap ?? snapRect
-        if previousSnap != nil || currentSnap != nil || previousLoupe || showsLoupe || previousHint != showsHintBadge {
+        if previousSnap != currentSnap || previousLoupe || showsLoupe || previousHint != showsHintBadge {
             needsDisplay = true
             return
         }

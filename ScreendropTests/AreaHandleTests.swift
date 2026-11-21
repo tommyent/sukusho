@@ -75,35 +75,26 @@ struct AreaPickerSystemScreenshotTests {
 struct AreaPickerGuidesTests {
     private let bounds = CGRect(x: 0, y: 0, width: 1000, height: 800)
 
-    @Test func followsPointerWhenIdleAndAlignsToPixels() {
+    @Test func followsPointerAndAlignsToPixels() {
         // 2x Retina centers integer points on whole points and advances in 0.5 pt (1 backing pixel) steps.
         let retinaWhole = AreaPickerGuides.position(
             pointer: CGPoint(x: 120, y: 340),
             in: bounds,
-            backingScale: 2,
-            isDragging: false,
-            isAdjusting: false,
-            hasSnap: false
+            backingScale: 2
         )
         #expect(retinaWhole == AreaPickerGuides(x: 120, y: 340))
 
         let retinaHalf = AreaPickerGuides.position(
             pointer: CGPoint(x: 120.3, y: 340.7),
             in: bounds,
-            backingScale: 2,
-            isDragging: false,
-            isAdjusting: false,
-            hasSnap: false
+            backingScale: 2
         )
         #expect(retinaHalf == AreaPickerGuides(x: 120.5, y: 340.5))
 
         let nonRetina = AreaPickerGuides.position(
             pointer: CGPoint(x: 120.2, y: 340.8),
             in: bounds,
-            backingScale: 1,
-            isDragging: false,
-            isAdjusting: false,
-            hasSnap: false
+            backingScale: 1
         )
         #expect(nonRetina == AreaPickerGuides(x: 120.5, y: 340.5))
 
@@ -111,22 +102,21 @@ struct AreaPickerGuidesTests {
         let edge = AreaPickerGuides.position(
             pointer: CGPoint(x: 1000, y: 0),
             in: bounds,
-            backingScale: 1,
-            isDragging: false,
-            isAdjusting: false,
-            hasSnap: false
+            backingScale: 1
         )
         #expect(edge == AreaPickerGuides(x: 999.5, y: 0.5))
     }
 
-    @Test func hidesWhenPointerIsElsewhereOrSelectionStarted() {
-        let point = CGPoint(x: 200, y: 200)
-        #expect(AreaPickerGuides.position(pointer: nil, in: bounds, backingScale: 2, isDragging: false, isAdjusting: false, hasSnap: false) == nil)
-        #expect(AreaPickerGuides.position(pointer: CGPoint(x: -1, y: 200), in: bounds, backingScale: 2, isDragging: false, isAdjusting: false, hasSnap: false) == nil)
-        #expect(AreaPickerGuides.position(pointer: CGPoint(x: 1001, y: 200), in: bounds, backingScale: 2, isDragging: false, isAdjusting: false, hasSnap: false) == nil)
-        #expect(AreaPickerGuides.position(pointer: point, in: bounds, backingScale: 2, isDragging: true, isAdjusting: false, hasSnap: false) == nil)
-        #expect(AreaPickerGuides.position(pointer: point, in: bounds, backingScale: 2, isDragging: false, isAdjusting: true, hasSnap: false) == nil)
-        #expect(AreaPickerGuides.position(pointer: point, in: bounds, backingScale: 2, isDragging: false, isAdjusting: false, hasSnap: true) == nil)
+    @Test func hidesOnlyWhenPointerIsOffDisplay() {
+        // Guides stay visible for any in-bounds pointer (idle, mid-drag corner, adjusting handle, or Shift-snap),
+        // and hide only when the pointer is nil or outside this display's bounds.
+        #expect(AreaPickerGuides.position(pointer: CGPoint(x: 200, y: 200), in: bounds, backingScale: 2) == AreaPickerGuides(x: 200, y: 200))
+        #expect(AreaPickerGuides.position(pointer: CGPoint(x: 0, y: 800), in: bounds, backingScale: 2) == AreaPickerGuides(x: 0, y: 800))
+        #expect(AreaPickerGuides.position(pointer: nil, in: bounds, backingScale: 2) == nil)
+        #expect(AreaPickerGuides.position(pointer: CGPoint(x: -1, y: 200), in: bounds, backingScale: 2) == nil)
+        #expect(AreaPickerGuides.position(pointer: CGPoint(x: 1001, y: 200), in: bounds, backingScale: 2) == nil)
+        #expect(AreaPickerGuides.position(pointer: CGPoint(x: 200, y: -1), in: bounds, backingScale: 2) == nil)
+        #expect(AreaPickerGuides.position(pointer: CGPoint(x: 200, y: 801), in: bounds, backingScale: 2) == nil)
     }
 
     @Test func invalidatesSeparateNarrowStripsAndSkipsEqualPositions() {
@@ -171,10 +161,7 @@ struct AreaPickerGuidesTests {
             return AreaPickerGuides.position(
                 pointer: local,
                 in: CGRect(origin: .zero, size: frame.size),
-                backingScale: 2,
-                isDragging: false,
-                isAdjusting: false,
-                hasSnap: false
+                backingScale: 2
             )
         }
         #expect(seeded[0] == nil)

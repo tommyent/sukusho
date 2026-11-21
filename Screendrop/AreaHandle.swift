@@ -84,7 +84,7 @@ nonisolated struct AreaPickerSession {
     }
 }
 
-/// The horizontal and vertical hairline guides through the pointer before a drag starts.
+/// The horizontal and vertical hairline guides through the pointer.
 nonisolated struct AreaPickerGuides: Equatable, Sendable {
     static let outlineWidth: CGFloat = 2
     static let hairlineWidth: CGFloat = 1
@@ -93,17 +93,13 @@ nonisolated struct AreaPickerGuides: Equatable, Sendable {
     let x: CGFloat
     let y: CGFloat
 
-    /// Pixel-aligned coordinates for the guide lines on one display, or nil when the pointer isn't on this display
-    /// or a drag, adjustment or Shift-snap box is active.
+    /// Pixel-aligned coordinates for the guide lines on one display, or nil when the pointer isn't on this display.
     static func position(
         pointer: CGPoint?,
         in bounds: CGRect,
-        backingScale: CGFloat,
-        isDragging: Bool,
-        isAdjusting: Bool,
-        hasSnap: Bool
+        backingScale: CGFloat
     ) -> AreaPickerGuides? {
-        guard !isDragging, !isAdjusting, !hasSnap, let pointer,
+        guard let pointer,
               pointer.x >= bounds.minX, pointer.x <= bounds.maxX,
               pointer.y >= bounds.minY, pointer.y <= bounds.maxY else { return nil }
         return AreaPickerGuides(
@@ -124,7 +120,7 @@ nonisolated struct AreaPickerGuides: Equatable, Sendable {
         })
     }
 
-    /// Separate vertical and horizontal dirty strips to invalidate when idle guides move from `previous` to `current`.
+    /// Separate vertical and horizontal dirty strips to invalidate when guides move from `previous` to `current`.
     /// Empty when the aligned coordinates did not change; never merges perpendicular strips into one bounding box.
     static func dirtyRects(from previous: AreaPickerGuides?, to current: AreaPickerGuides?, in bounds: CGRect) -> [CGRect] {
         guard previous != current else { return [] }
