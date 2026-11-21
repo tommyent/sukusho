@@ -40,7 +40,12 @@ struct StudioTimecodeField: View {
                     }
                     .onAppear { isFocused = true }
             } else {
-                let readout = studioPreciseTimecode(model.displayTime)
+                // `displayTime` reads `AVPlayer.currentTime()` while playing,
+                // which Swift Observation does not track; read the observable
+                // `currentTime` during playback and keep `displayTime` for
+                // paused skimming.
+                let shownTime = model.isPlaying ? model.currentTime : model.displayTime
+                let readout = studioPreciseTimecode(shownTime)
                 Button {
                     guard model.isLoaded, !model.isRestoringDocument, !model.isEditingSourceRegion else { return }
                     model.pause()
