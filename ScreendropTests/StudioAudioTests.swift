@@ -1380,6 +1380,62 @@ struct StudioAudioTests {
         #expect(afterReopen.hidden.isEmpty)
     }
 
+    @Test func explicitAudioSplitAndFadesSurviveLaterVideoSplitAndTrimReopen() throws {
+        let full = RecordingClipTimeline.full(sourceDuration: 10)
+        var linked = RecordingAudioClip(fileName: "voice.wav", displayName: "Voice", start: 0, fileDuration: 10)
+        linked.isLinked = true
+
+        // 1. Split video at 5 s, then trim second video clip's leading edge to source 6 s.
+        let segA = RecordingClipSegment(sourceStart: 0, sourceEnd: 5)
+        let segB = RecordingClipSegment(sourceStart: 5, sourceEnd: 10)
+        let split5 = RecordingClipTimeline(segments: [segA, segB])
+        let afterSplit5 = StudioAudioConform.conform([linked], hidden: [], from: full, to: split5)
+
+        var trimmedB = segB
+        trimmedB.sourceStart = 6
+        let trimmed6 = RecordingClipTimeline(segments: [segA, trimmedB])
+        let afterTrim6 = StudioAudioConform.conform(afterSplit5.clips, hidden: afterSplit5.hidden, from: split5, to: trimmed6)
+        #expect(afterTrim6.clips.count == 2)
+        let trailingPiece = try #require(afterTrim6.clips.first { abs($0.start - 5) < 0.001 })
+
+        // 2. Deliberately Split Audio on the trailing piece (editor 5...9 s) at editor 7 s,
+        //    and add Fade Out on the leading half and Fade In on the trailing half.
+        let halves = try #require(StudioAudioConform.split(trailingPiece, at: 7))
+        var leadHalf = halves.leading
+        leadHalf.fadeOut = 0.35
+        var trailHalf = halves.trailing
+        trailHalf.fadeIn = 0.45
+        #expect(leadHalf.lineageID != trailHalf.lineageID)
+
+        let clipsWithUserSplit = afterTrim6.clips.filter { $0.id != trailingPiece.id } + [leadHalf, trailHalf]
+
+        // 3. Split the first video clip at 2 s (triggers conform without healing).
+        let segA1 = RecordingClipSegment(sourceStart: 0, sourceEnd: 2)
+        let segA2 = RecordingClipSegment(sourceStart: 2, sourceEnd: 5)
+        let split2 = RecordingClipTimeline(segments: [segA1, segA2, trimmedB])
+        let afterSplit2 = StudioAudioConform.conform(clipsWithUserSplit, hidden: afterTrim6.hidden, from: trimmed6, to: split2)
+
+        // The deliberate split at 7 s AND both fades must survive completely intact!
+        let keptLead = try #require(afterSplit2.clips.first { $0.id == leadHalf.id })
+        let keptTrail = try #require(afterSplit2.clips.first { $0.id == trailHalf.id })
+        #expect(abs(keptLead.start - 5) < 0.001 && abs(keptLead.end - 7) < 0.001)
+        #expect(abs(keptLead.fadeOut - 0.35) < 0.001)
+        #expect(abs(keptTrail.start - 7) < 0.001 && abs(keptTrail.end - 9) < 0.001)
+        #expect(abs(keptTrail.fadeIn - 0.45) < 0.001)
+
+        // 4. Even reopening segB's leading trim from 6 s back to 5 s heals 5...6 s once
+        //    without erasing the deliberate audio split or fades at the split boundary (now 8 s)!
+        let reopened = RecordingClipTimeline(segments: [segA1, segA2, segB])
+        let afterReopen = StudioAudioConform.conform(afterSplit2.clips, hidden: afterSplit2.hidden, from: split2, to: reopened)
+        let covering5to6 = afterReopen.clips.filter { $0.start < 6 - 0.001 && $0.end > 5 + 0.001 }
+        #expect(covering5to6.count == 1)
+        let healedTrail = try #require(afterReopen.clips.first { $0.id == trailHalf.id })
+        #expect(abs(healedTrail.start - 8) < 0.001 && abs(healedTrail.end - 10) < 0.001)
+        #expect(abs(healedTrail.fadeIn - 0.45) < 0.001)
+        let beforeSplit = try #require(afterReopen.clips.first { abs($0.end - 8) < 0.001 })
+        #expect(abs(beforeSplit.fadeOut - 0.35) < 0.001)
+    }
+
     // MARK: - Helpers
 
     private func makeDirectory() throws -> URL {

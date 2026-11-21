@@ -277,7 +277,8 @@ nonisolated enum StudioAudioConform {
                 result.append(moved)
             }
         }
-        result = healingExtensions(result, from: old, to: new)
+        var healedBoundaries: [(lineage: UUID, time: TimeInterval)] = []
+        result = healingExtensions(result, from: old, to: new, healedBoundaries: &healedBoundaries)
 
         // Heal any hidden ranges revealed by reopening a surviving segment's trim.
         var segmentEditorStarts: [UUID: TimeInterval] = [:]
@@ -359,21 +360,25 @@ nonisolated enum StudioAudioConform {
                 if abs(subF0 - entry.clip.trimStart) > 0.002 { restored.fadeIn = 0 }
                 if abs(subF1 - entry.clip.trimEnd) > 0.002 { restored.fadeOut = 0 }
 
-                // Seamlessly rejoin an adjacent restored/surviving piece of the same lineage.
+                // Seamlessly rejoin an adjacent restored/surviving piece of the same lineage
+                // when neither side carries an explicit fade at the join.
                 if let matchIndex = result.firstIndex(where: { existing in
                     existing.isLinked
                         && existing.lineageID == lineage
                         && existing.lane == restored.lane
+                        && existing.fadeOut < 0.001 && restored.fadeIn < 0.001
                         && abs(existing.speed - restored.speed) < 0.000_1
                         && abs(existing.end - restored.start) < 0.002
                         && abs(existing.trimEnd - restored.trimStart) < 0.002
                 }) {
                     result[matchIndex].trimEnd = restored.trimEnd
                     result[matchIndex].fadeOut = restored.fadeOut
+                    healedBoundaries.append((lineage, restored.end))
                 } else if let matchIndex = result.firstIndex(where: { existing in
                     existing.isLinked
                         && existing.lineageID == lineage
                         && existing.lane == restored.lane
+                        && restored.fadeOut < 0.001 && existing.fadeIn < 0.001
                         && abs(existing.speed - restored.speed) < 0.000_1
                         && abs(restored.end - existing.start) < 0.002
                         && abs(restored.trimEnd - existing.trimStart) < 0.002
@@ -381,9 +386,12 @@ nonisolated enum StudioAudioConform {
                     result[matchIndex].start = restored.start
                     result[matchIndex].trimStart = restored.trimStart
                     result[matchIndex].fadeIn = restored.fadeIn
+                    healedBoundaries.append((lineage, restored.start))
                 } else {
                     if result.contains(where: { $0.id == restored.id }) { restored.id = UUID() }
                     result.append(restored)
+                    healedBoundaries.append((lineage, restored.start))
+                    healedBoundaries.append((lineage, restored.end))
                 }
             }
 
@@ -412,13 +420,18 @@ nonisolated enum StudioAudioConform {
             }
         }
 
-        // Merge adjacent healed pieces of the same original clip lineage when
-        // edge healing or hidden-range restoration closes the gap between them.
-        result = mergingContiguousLineage(result)
+        // Merge adjacent pieces of the same original clip lineage ONLY at
+        // boundaries actively repaired by healing (never across explicit audio splits).
+        if !healedBoundaries.isEmpty {
+            result = mergingContiguousLineage(result, healedBoundaries: healedBoundaries)
+        }
         return (resolvingLanes(result), remainingHidden)
     }
 
-    private static func mergingContiguousLineage(_ clips: [RecordingAudioClip]) -> [RecordingAudioClip] {
+    private static func mergingContiguousLineage(
+        _ clips: [RecordingAudioClip],
+        healedBoundaries: [(lineage: UUID, time: TimeInterval)]
+    ) -> [RecordingAudioClip] {
         let sorted = clips.sorted { ($0.lane, $0.start) < ($1.lane, $1.start) }
         var merged: [RecordingAudioClip] = []
         for clip in sorted {
@@ -428,10 +441,14 @@ nonisolated enum StudioAudioConform {
                        && existing.lineageID == clip.lineageID
                        && existing.lane == clip.lane
                        && existing.isMuted == clip.isMuted
+                       && existing.fadeOut < 0.001 && clip.fadeIn < 0.001
                        && abs(existing.volume - clip.volume) < 0.000_1
                        && abs(existing.speed - clip.speed) < 0.000_1
                        && abs(existing.end - clip.start) < 0.002
                        && abs(existing.trimEnd - clip.trimStart) < 0.002
+                       && healedBoundaries.contains {
+                           $0.lineage == clip.lineageID && abs($0.time - clip.start) < 0.005
+                       }
                }) {
                 merged[index].trimEnd = clip.trimEnd
                 merged[index].fadeOut = clip.fadeOut
@@ -450,7 +467,8 @@ nonisolated enum StudioAudioConform {
     private static func healingExtensions(
         _ clips: [RecordingAudioClip],
         from old: RecordingClipTimeline,
-        to new: RecordingClipTimeline
+        to new: RecordingClipTimeline,
+        healedBoundaries: inout [(lineage: UUID, time: TimeInterval)]
     ) -> [RecordingAudioClip] {
         let oldSegments = Dictionary(old.segments.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var result = clips
@@ -478,6 +496,7 @@ nonisolated enum StudioAudioConform {
                     let grow = min(wanted, room - clip.end, (clip.fileDuration - clip.trimEnd) / max(clip.speed, 0.01))
                     if grow > 0.001 {
                         clip.trimEnd += grow * clip.speed
+                        healedBoundaries.append((clip.lineageID, clip.end))
                     }
                 }
                 if grewAtStart > 0.001, abs(clip.start - oldStartHere) < 0.002, clip.trimStart > 0.001 {
@@ -487,6 +506,7 @@ nonisolated enum StudioAudioConform {
                     if grow > 0.001 {
                         clip.start -= grow
                         clip.trimStart -= grow * clip.speed
+                        healedBoundaries.append((clip.lineageID, clip.start))
                     }
                 }
                 result[index] = clip
@@ -738,6 +758,9 @@ nonisolated enum StudioAudioConform {
         leading.fadeOut = 0
         var trailing = clip
         trailing.id = UUID()
+        // Explicit user split creates an independent clip boundary so later
+        // video conforms or heals never merge the split back together.
+        trailing.originID = nil
         trailing.start = time
         trailing.trimStart = fileTime
         trailing.fadeIn = 0
