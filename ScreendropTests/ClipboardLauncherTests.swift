@@ -288,6 +288,25 @@ struct ClipboardLauncherSearchTests {
         try LauncherFavorites([]).save(current3)
         try LauncherFavorites(["/Applications/Safari.app"]).save(unleash3)
         #expect(LauncherFavorites.loadOrImport(from: current3, fallbacks: [unleash3]).paths == [])
+
+        // Case 4: a valid empty current Unleash file (`[]`) is authoritative and does not fall through to legacy.
+        let current4 = root.appendingPathComponent("c4/Sukusho/Launcher/favorites.json")
+        let unleash4 = root.appendingPathComponent("c4/Unleash/favorites.json")
+        let legacy4 = root.appendingPathComponent("c4/Unleash-swift/favorites.json")
+        try LauncherFavorites([]).save(unleash4)
+        try LauncherFavorites(["/Applications/OldPin.app"]).save(legacy4)
+        #expect(LauncherFavorites.loadOrImport(from: current4, fallbacks: [unleash4, legacy4]).paths == [])
+        #expect(fm.fileExists(atPath: current4.path))
+        #expect(LauncherFavorites.load(current4).paths == [])
+
+        // Case 5: an unreadable/corrupt current Unleash file still falls through to legacy.
+        let current5 = root.appendingPathComponent("c5/Sukusho/Launcher/favorites.json")
+        let unleash5 = root.appendingPathComponent("c5/Unleash/favorites.json")
+        let legacy5 = root.appendingPathComponent("c5/Unleash-swift/favorites.json")
+        try fm.createDirectory(at: unleash5.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("not json".utf8).write(to: unleash5)
+        try LauncherFavorites(["/Applications/LegacyRecovered.app"]).save(legacy5)
+        #expect(LauncherFavorites.loadOrImport(from: current5, fallbacks: [unleash5, legacy5]).paths == ["/Applications/LegacyRecovered.app"])
     }
 
     @Test func realMacScanFindsStandardApps() {

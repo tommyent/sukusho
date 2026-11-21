@@ -704,24 +704,29 @@ nonisolated struct LauncherFavorites: Equatable, Sendable {
         return true
     }
 
+    /// Returns the decoded path array, or nil if the file is missing or unreadable.
+    private static func decodePaths(at url: URL) -> [String]? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode([String].self, from: data)
+    }
+
     /// A missing or unreadable file is an empty list, so a bad file never stops the app.
     static func load(_ url: URL) -> LauncherFavorites {
-        guard let data = try? Data(contentsOf: url),
-              let paths = try? JSONDecoder().decode([String].self, from: data) else { return LauncherFavorites() }
-        return LauncherFavorites(paths)
+        LauncherFavorites(decodePaths(at: url) ?? [])
     }
 
     /// Loads Sukusho's favorites. If Sukusho has no favorites file yet, copies absolute-path pins in order
-    /// from the first readable fallback (Unleash's current or legacy store), leaving the original in place.
+    /// from the first readable fallback (Unleash's current or legacy store), leaving originals in place.
+    /// A successfully decoded empty current file (`[]`) is authoritative and does not fall through to legacy.
     static func loadOrImport(from url: URL, fallbacks: [URL] = []) -> LauncherFavorites {
         let fm = FileManager.default
         if fm.fileExists(atPath: url.path) {
             return load(url)
         }
-        for source in fallbacks where fm.fileExists(atPath: source.path) {
+        for source in fallbacks {
+            guard let decoded = decodePaths(at: source) else { continue }
             var seen = Set<String>()
-            let imported = load(source).paths.filter { $0.hasPrefix("/") && seen.insert($0).inserted }
-            guard !imported.isEmpty else { continue }
+            let imported = decoded.filter { $0.hasPrefix("/") && seen.insert($0).inserted }
             let favorites = LauncherFavorites(imported)
             try? favorites.save(url)
             return favorites
