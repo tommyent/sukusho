@@ -485,7 +485,7 @@ struct StudioEditingTests {
 
     // MARK: - Key handler standing aside in text fields & coexisting with playback keys
 
-    @Test func editingKeyHandlerStandsAsideInTextFieldsCropAndSheetsAndPreservesExistingKeys() {
+    @Test @MainActor func editingKeyHandlerStandsAsideInTextFieldsCropAndSheetsAndPreservesExistingKeys() throws {
         // Active Studio window allows key handling.
         #expect(StudioEditing.shouldHandleKeyEvent(
             isLoaded: true,
@@ -529,11 +529,17 @@ struct StudioEditingTests {
         #expect(StudioEditing.keyAction(keyCode: 7, characters: "x", modifiers: .option, isARepeat: false, hasRangeSelection: false) == nil)
         #expect(StudioEditing.keyAction(keyCode: 7, characters: "x", modifiers: [], isARepeat: false, hasRangeSelection: true) == nil)
 
-        // ⌫ deletes marked range only when a range is marked and no block/clip selection takes priority.
+        // ⌫ deletes a selected block/clip when present, or the marked range otherwise.
         #expect(StudioEditing.keyAction(keyCode: 51, characters: "\u{7f}", modifiers: [], isARepeat: false, hasRangeSelection: true, hasDeletableSelection: false) == .deleteRange)
         #expect(StudioEditing.keyAction(keyCode: 51, characters: "\u{7f}", modifiers: [], isARepeat: false, hasRangeSelection: false, hasDeletableSelection: false) == nil)
-        #expect(StudioEditing.keyAction(keyCode: 51, characters: "\u{7f}", modifiers: [], isARepeat: false, hasRangeSelection: true, hasDeletableSelection: true) == nil)
+        #expect(StudioEditing.keyAction(keyCode: 51, characters: "\u{7f}", modifiers: [], isARepeat: false, hasRangeSelection: true, hasDeletableSelection: true) == .deleteSelection)
         #expect(StudioEditing.keyAction(keyCode: 51, characters: "\u{7f}", modifiers: [], isARepeat: false, hasFocusedControl: true, hasRangeSelection: true, hasDeletableSelection: false) == nil)
+
+        // S splits at playhead; C splits at hover only when hovering; both yield to modifiers/repeats.
+        #expect(StudioEditing.keyAction(keyCode: 1, characters: "s", modifiers: [], isARepeat: false) == .splitAtPlayhead)
+        #expect(StudioEditing.keyAction(keyCode: 1, characters: "s", modifiers: [], isARepeat: true) == .consume)
+        #expect(StudioEditing.keyAction(keyCode: 8, characters: "c", modifiers: [], isARepeat: false, hasHoverTime: true) == .splitAtHover)
+        #expect(StudioEditing.keyAction(keyCode: 8, characters: "c", modifiers: [], isARepeat: false, hasHoverTime: false) == nil)
 
         // ↑ / ↓ jump edit points, and yield to focused controls.
         #expect(StudioEditing.keyAction(keyCode: 126, characters: nil, modifiers: [], isARepeat: false) == .seekToEditPoint(forward: false))
@@ -541,13 +547,61 @@ struct StudioEditingTests {
         #expect(StudioEditing.keyAction(keyCode: 126, characters: nil, modifiers: [], isARepeat: false, hasFocusedControl: true) == nil)
         #expect(StudioEditing.keyAction(keyCode: 125, characters: nil, modifiers: [], isARepeat: false, hasFocusedControl: true) == nil)
 
-        // Existing J/K/L, S, C, ←/→, Home/End, Space, ⌘-shortcuts pass through untouched.
-        for (code, ch) in [(38 as UInt16, "j"), (40, "k"), (37, "l"), (1, "s"), (8, "c"), (49, " ")] {
+        // Existing J/K/L, ←/→, Home/End, Space, ⌘-shortcuts pass through untouched.
+        for (code, ch) in [(38 as UInt16, "j"), (40, "k"), (37, "l"), (49, " ")] {
             #expect(StudioEditing.keyAction(keyCode: code, characters: ch, modifiers: [], isARepeat: false) == nil)
         }
         #expect(StudioEditing.keyAction(keyCode: 123, characters: nil, modifiers: [], isARepeat: false) == nil)
         #expect(StudioEditing.keyAction(keyCode: 124, characters: nil, modifiers: [], isARepeat: false) == nil)
         #expect(StudioEditing.keyAction(keyCode: 34, characters: "i", modifiers: .command, isARepeat: false) == nil)
+
+        // Hovering the clip strip never steals first responder from a text field, and the strip
+        // honors allowsKeyboardShortcuts when crop/modal picking is active.
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 600, height: 200),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let textField = NSTextField(frame: NSRect(x: 0, y: 0, width: 120, height: 24))
+        let strip = RecordingClipTimelineControl(frame: NSRect(x: 0, y: 40, width: 500, height: 52))
+        window.contentView?.addSubview(textField)
+        window.contentView?.addSubview(strip)
+        window.makeFirstResponder(textField)
+        let fieldEditor = window.firstResponder
+        #expect(fieldEditor is NSText)
+
+        let enterEvent = try #require(NSEvent.enterExitEvent(
+            with: .mouseEntered,
+            location: NSPoint(x: 100, y: 66),
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            trackingNumber: 0,
+            userData: nil
+        ))
+        strip.mouseEntered(with: enterEvent)
+        #expect(window.firstResponder === fieldEditor)
+
+        var splitCalled = false
+        strip.splitRequested = { _ in splitCalled = true }
+        strip.allowsKeyboardShortcuts = { false }
+        let sEvent = try #require(NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            characters: "s",
+            charactersIgnoringModifiers: "s",
+            isARepeat: false,
+            keyCode: 1
+        ))
+        strip.keyDown(with: sEvent)
+        #expect(!splitCalled)
     }
 
     // MARK: - Webcam feed across backward cuts

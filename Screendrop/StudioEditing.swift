@@ -37,6 +37,9 @@ nonisolated struct StudioKeyModifiers: OptionSet, Equatable, Sendable {
 
 /// Window-level editing shortcuts handled alongside `StudioPlaybackKeyAction`.
 nonisolated enum StudioEditingKeyAction: Equatable, Sendable {
+    case splitAtPlayhead
+    case splitAtHover
+    case deleteSelection
     case markRange(StudioRangeEdge)
     case clearRange
     case deleteRange
@@ -79,13 +82,14 @@ nonisolated enum StudioEditing {
     }
 
     /// Maps a Studio window keyDown event to its editing action without taking
-    /// over J/K/L, S, C, Space, ←/→, Home/End, or non-range deletes.
+    /// over J/K/L, Space, ←/→, Home/End, or focused controls.
     static func keyAction(
         keyCode: UInt16,
         characters: String?,
         modifiers: StudioKeyModifiers,
         isARepeat: Bool,
         hasFocusedControl: Bool = false,
+        hasHoverTime: Bool = false,
         hasRangeSelection: Bool = false,
         hasDeletableSelection: Bool = false
     ) -> StudioEditingKeyAction? {
@@ -97,10 +101,14 @@ nonisolated enum StudioEditing {
             guard !hasFocusedControl, modifiers.isEmpty else { return nil }
             return .seekToEditPoint(forward: true)
         case 51, 117: // ⌫, ⌦
-            guard !hasFocusedControl, modifiers.isEmpty, hasRangeSelection, !hasDeletableSelection else {
-                return nil
+            guard !hasFocusedControl, modifiers.isEmpty else { return nil }
+            if hasDeletableSelection {
+                return isARepeat ? .consume : .deleteSelection
             }
-            return isARepeat ? .consume : .deleteRange
+            if hasRangeSelection {
+                return isARepeat ? .consume : .deleteRange
+            }
+            return nil
         default:
             break
         }
@@ -112,6 +120,11 @@ nonisolated enum StudioEditing {
 
         guard modifiers.isEmpty else { return nil }
         switch key {
+        case "s":
+            return isARepeat ? .consume : .splitAtPlayhead
+        case "c":
+            guard hasHoverTime else { return nil }
+            return isARepeat ? .consume : .splitAtHover
         case "i":
             return isARepeat ? .consume : .markRange(.start)
         case "o":

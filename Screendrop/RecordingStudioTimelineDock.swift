@@ -217,7 +217,10 @@ struct StudioTimelineEditor: View {
             snapPoints: model.clipSnapPoints,
             snaps: model.snapsEdits,
             onSnapGuide: { if snapGuideTime != $0 { snapGuideTime = $0 } },
-            onTrimPreview: { model.previewSourceTime($0) }
+            onTrimPreview: { model.previewSourceTime($0) },
+            allowsKeyboardShortcuts: {
+                model.isLoaded && !model.isRestoringDocument && !model.isEditingSourceRegion
+            }
         )
     }
 

@@ -183,11 +183,24 @@ struct StudioKeyCommands: NSViewRepresentable {
                 modifiers: editingModifiers,
                 isARepeat: event.isARepeat,
                 hasFocusedControl: hasFocusedControl,
+                hasHoverTime: model.hoverPreviewTime != nil && !model.isTrimmingClip,
                 hasRangeSelection: model.rangeSelection != nil,
                 hasDeletableSelection: model.hasDeletableTimelineSelection
             ) else { return false }
 
             switch editAction {
+            case .splitAtPlayhead:
+                model.splitClip(at: model.currentTime)
+            case .splitAtHover:
+                if let hover = model.hoverPreviewTime {
+                    model.splitClip(at: hover)
+                }
+            case .deleteSelection:
+                if let selectedCueID = model.selectedCueID {
+                    model.removeZoomCue(id: selectedCueID)
+                } else if model.canDeleteSelectedClip {
+                    model.deleteSelectedClip()
+                }
             case .markRange(let edge):
                 model.markRange(edge)
             case .clearRange:

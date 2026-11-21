@@ -43,6 +43,9 @@ struct RecordingClipTimelineView: NSViewRepresentable {
     /// Source moment at the edge being trimmed so the canvas can preview it;
     /// nil when the trim ends.
     var onTrimPreview: ((TimeInterval?) -> Void)? = nil
+    /// Shared focus/modal guard so the AppKit strip yields during crop or
+    /// document restore even when it holds first responder.
+    var allowsKeyboardShortcuts: () -> Bool = { true }
 
     func makeNSView(context: Context) -> RecordingClipTimelineControl {
         RecordingClipTimelineControl()
@@ -63,6 +66,7 @@ struct RecordingClipTimelineView: NSViewRepresentable {
         nsView.snaps = snaps
         nsView.snapGuideDidChange = onSnapGuide
         nsView.trimPreviewDidChange = onTrimPreview
+        nsView.allowsKeyboardShortcuts = allowsKeyboardShortcuts
         nsView.update(
             timeline: timeline,
             sourceDuration: sourceDuration,
@@ -88,6 +92,7 @@ final class RecordingClipTimelineControl: NSView {
     var snaps = true
     var snapGuideDidChange: ((TimeInterval?) -> Void)?
     var trimPreviewDidChange: ((TimeInterval?) -> Void)?
+    var allowsKeyboardShortcuts: () -> Bool = { true }
 
     private enum Edge: Equatable {
         case leading
@@ -285,7 +290,9 @@ final class RecordingClipTimelineControl: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
-        window?.makeFirstResponder(self)
+        // Keep hover passive: never steal first responder from a text field
+        // such as the timecode or a caption editor. Window-level shortcuts
+        // (S, C, M, I, O, N, Delete) are owned by StudioKeyCommands.
         updateHover(with: event, forceCallback: true)
     }
 
@@ -421,6 +428,10 @@ final class RecordingClipTimelineControl: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
+        guard allowsKeyboardShortcuts() else {
+            super.keyDown(with: event)
+            return
+        }
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         let characters = event.charactersIgnoringModifiers?.lowercased()
 
