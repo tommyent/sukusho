@@ -24,13 +24,13 @@ final class RecordingTimelineThumbnailStore {
         var index: Int
     }
 
-    nonisolated private struct Request: Sendable {
+    nonisolated struct Request: Sendable {
         var key: Key
         var sourceTime: TimeInterval
         var tolerance: TimeInterval
     }
 
-    nonisolated private struct Sample: @unchecked Sendable {
+    nonisolated struct Sample: @unchecked Sendable {
         var key: Key
         var image: NSImage
     }
@@ -59,6 +59,9 @@ final class RecordingTimelineThumbnailStore {
     /// the same displayed frame anyway.
     private static let finestSpacing: TimeInterval = 0.1
     private static let batchSize = 8
+    /// Bounded retries for missed tiles before giving up (with progressively
+    /// wider tolerances so sparse GOPs can settle on a redacted nearby frame).
+    private static let maxRetries = 2
     /// Requests still waiting when this many pile up are already scrolled
     /// past, so the oldest are dropped rather than rendered.
     private static let queueLimit = 240
@@ -69,6 +72,8 @@ final class RecordingTimelineThumbnailStore {
     /// Invoked on the main actor when new tiles land, so the AppKit lane can
     /// redraw itself without pushing a SwiftUI update per batch.
     var onChange: (() -> Void)?
+    /// Renderer hook (defaults to AVAssetImageGenerator; overridable in tests).
+    var renderBatch: @Sendable (URL, [Request], [RecordingRedaction]) async -> [Sample] = RecordingTimelineThumbnailStore.render
 
     private var url: URL?
     private var redactions: [RecordingRedaction] = []
@@ -76,6 +81,7 @@ final class RecordingTimelineThumbnailStore {
     private var images: [Key: NSImage] = [:]
     private var insertionOrder: [Key] = []
     private var pending: Set<Key> = []
+    private var retryCounts: [Key: Int] = [:]
     private var queue: [Key] = []
     private var task: Task<Void, Never>?
     private var settledLevel: Int?
@@ -90,13 +96,14 @@ final class RecordingTimelineThumbnailStore {
         images.removeAll()
         insertionOrder.removeAll()
         pending.removeAll()
+        retryCounts.removeAll()
         queue.removeAll()
         settledLevel = nil
         frozenLevel = nil
         onChange?()
         guard self.duration > 0 else { return }
         for index in 0..<Self.baseTileCount {
-            enqueue(Key(level: 0, index: index))
+            enqueue(Key(level: 0, index: index), shouldPump: false)
         }
         pump()
     }
@@ -114,6 +121,7 @@ final class RecordingTimelineThumbnailStore {
         images.removeAll()
         insertionOrder.removeAll()
         pending.removeAll()
+        retryCounts.removeAll()
         queue.removeAll()
         url = nil
         duration = 0
@@ -222,21 +230,34 @@ final class RecordingTimelineThumbnailStore {
     private func request(for key: Key) -> Request {
         let spacing = spacing(forLevel: key.level)
         let center = (Double(key.index) + 0.5) * spacing
+        let attempt = retryCounts[key] ?? 0
+        // Initial sampling stays inside the tile so neighboring tiles pick
+        // distinct frames; retries widen the tolerance so sparse GOPs still
+        // yield a redaction-filtered frame instead of staying grey forever.
+        let tolerance: TimeInterval = switch attempt {
+        case 0: min(0.25, spacing / 3)
+        case 1: max(spacing, 1.0)
+        default: .infinity
+        }
         return Request(
             key: key,
             sourceTime: min(max(center, 0), max(0, duration - 0.05)),
-            // Sampling has to stay inside the tile or two neighbors can settle
-            // on the same frame and the strip looks duplicated again.
-            tolerance: min(0.25, spacing / 3)
+            tolerance: tolerance
         )
     }
 
     // MARK: - Sampling
 
-    private func enqueue(_ key: Key) {
-        guard images[key] == nil, !pending.contains(key) else { return }
+    private func enqueue(_ key: Key, atFront: Bool = false, shouldPump: Bool = true) {
+        guard images[key] == nil,
+              !pending.contains(key),
+              (retryCounts[key] ?? 0) <= Self.maxRetries else { return }
         pending.insert(key)
-        queue.append(key)
+        if atFront {
+            queue.insert(key, at: 0)
+        } else {
+            queue.append(key)
+        }
         if queue.count > Self.queueLimit {
             let excess = queue.count - Self.queueLimit
             for stale in queue.prefix(excess) {
@@ -244,7 +265,9 @@ final class RecordingTimelineThumbnailStore {
             }
             queue.removeFirst(excess)
         }
-        pump()
+        if shouldPump {
+            pump()
+        }
     }
 
     private func pump() {
@@ -256,10 +279,11 @@ final class RecordingTimelineThumbnailStore {
         queue.removeLast(batch.count)
         let requests = batch.map { request(for: $0) }
         let regions = redactions
+        let renderer = renderBatch
 
         task = Task { [weak self] in
             let renderTask = Task.detached(priority: .userInitiated) {
-                await Self.render(url: url, requests: requests, redactions: regions)
+                await renderer(url, requests, regions)
             }
             let samples = await withTaskCancellationHandler {
                 await renderTask.value
@@ -268,16 +292,28 @@ final class RecordingTimelineThumbnailStore {
             }
             guard let self, !Task.isCancelled else { return }
             self.task = nil
-            self.absorb(samples)
+            self.absorb(samples, completedKeys: batch)
             self.pump()
         }
     }
 
-    private func absorb(_ samples: [Sample]) {
+    private func absorb(_ samples: [Sample], completedKeys: [Key]) {
+        // Always retire every completed batch key so misses never stay wedged
+        // in `pending` forever.
+        for key in completedKeys {
+            pending.remove(key)
+        }
         for sample in samples {
-            pending.remove(sample.key)
+            retryCounts.removeValue(forKey: sample.key)
             guard images.updateValue(sample.image, forKey: sample.key) == nil else { continue }
             insertionOrder.append(sample.key)
+        }
+        for key in completedKeys where images[key] == nil {
+            let nextAttempt = (retryCounts[key] ?? 0) + 1
+            retryCounts[key] = nextAttempt
+            if nextAttempt <= Self.maxRetries {
+                enqueue(key, atFront: true, shouldPump: false)
+            }
         }
         evictIfNeeded()
         if !samples.isEmpty {
@@ -318,7 +354,9 @@ final class RecordingTimelineThumbnailStore {
             // of seeking backwards for every tile.
             for request in requests.sorted(by: { $0.sourceTime < $1.sourceTime }) {
                 if Task.isCancelled { return [] }
-                let tolerance = CMTime(seconds: max(0, request.tolerance), preferredTimescale: 600)
+                let tolerance = request.tolerance.isFinite
+                    ? CMTime(seconds: max(0, request.tolerance), preferredTimescale: 600)
+                    : .positiveInfinity
                 generator.requestedTimeToleranceBefore = tolerance
                 generator.requestedTimeToleranceAfter = tolerance
                 let time = CMTime(seconds: request.sourceTime, preferredTimescale: 600)

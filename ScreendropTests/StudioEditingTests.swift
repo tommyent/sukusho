@@ -893,4 +893,89 @@ struct StudioEditingTests {
         await writer.finishWriting()
         if let error = writer.error { throw error }
     }
+
+    // MARK: - Thumbnail store retry after missed tiles
+
+    @Test @MainActor func thumbnailStoreRetiresMissedKeysAndRetriesWithBoundedAttempts() async throws {
+        let store = RecordingTimelineThumbnailStore()
+        let attemptsByKey = LockedAttemptBox()
+        let redaction = RecordingRedaction(start: 0, end: 5, rect: CGRect(x: 0.1, y: 0.1, width: 0.2, height: 0.2))
+
+        store.renderBatch = { _, requests, redactions in
+            var results: [RecordingTimelineThumbnailStore.Sample] = []
+            for req in requests {
+                let count = attemptsByKey.record(key: req.key, tolerance: req.tolerance, redactionCount: redactions.count)
+                // Tile 0 misses on attempt 1, succeeds on attempt 2 (with widened tolerance).
+                if req.key == .init(level: 0, index: 0) {
+                    if count >= 2 {
+                        results.append(.init(key: req.key, image: NSImage(size: NSSize(width: 8, height: 8))))
+                    }
+                    continue
+                }
+                // Tile 1 always misses (verifies retry cap prevents infinite loop).
+                if req.key == .init(level: 0, index: 1) {
+                    continue
+                }
+                results.append(.init(key: req.key, image: NSImage(size: NSSize(width: 8, height: 8))))
+            }
+            return results
+        }
+
+        store.prepare(url: URL(fileURLWithPath: "/tmp/synthetic.mov"), duration: 12, redactions: [redaction])
+        for _ in 0..<80 {
+            if attemptsByKey.count(for: .init(level: 0, index: 0)) >= 2
+                && attemptsByKey.count(for: .init(level: 0, index: 1)) >= 3 {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try await Task.sleep(for: .milliseconds(40))
+
+        let grid = store.grid(forTargetSpan: 12.0 / 32.0)
+        // Tile 0 recovered on retry with widened tolerance and redactions preserved.
+        #expect(store.image(in: grid, tileIndex: 0) != nil)
+        let tile0Tolerances = attemptsByKey.tolerances(for: .init(level: 0, index: 0))
+        #expect(tile0Tolerances.count == 2)
+        #expect(tile0Tolerances[1] > tile0Tolerances[0])
+        #expect(attemptsByKey.sawRedactions)
+
+        // Tile 1 attempted initial + 2 retries (3 total) and stopped cleanly.
+        #expect(attemptsByKey.count(for: .init(level: 0, index: 1)) == 3)
+        store.releaseResources()
+    }
+}
+
+nonisolated private final class LockedAttemptBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var counts: [RecordingTimelineThumbnailStore.Key: Int] = [:]
+    private var recordedTolerances: [RecordingTimelineThumbnailStore.Key: [TimeInterval]] = [:]
+    private var redactionFlag = false
+
+    func record(key: RecordingTimelineThumbnailStore.Key, tolerance: TimeInterval, redactionCount: Int) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        let next = (counts[key] ?? 0) + 1
+        counts[key] = next
+        recordedTolerances[key, default: []].append(tolerance)
+        if redactionCount > 0 { redactionFlag = true }
+        return next
+    }
+
+    func count(for key: RecordingTimelineThumbnailStore.Key) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return counts[key] ?? 0
+    }
+
+    func tolerances(for key: RecordingTimelineThumbnailStore.Key) -> [TimeInterval] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedTolerances[key] ?? []
+    }
+
+    var sawRedactions: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return redactionFlag
+    }
 }
