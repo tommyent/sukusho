@@ -191,8 +191,9 @@ nonisolated enum RecordingAudioPeaks {
     /// for multi-hour recordings).
     static let maximumPeaks = 12_000
 
-    /// Compacts `peaks` in place by pairwise maxima whenever it exceeds
-    /// `maxCount`, halving `peaksPerSecond` on each pass.
+    /// Compacts `peaks` in place by pairwise maxima whenever it reaches or
+    /// exceeds `maxCount`, halving `peaksPerSecond` on each pass. Using an even
+    /// threshold avoids leaving an odd half-bucket during streaming.
     static func compactInPlace(
         _ peaks: inout [Float],
         peaksPerSecond: inout Double,
@@ -200,18 +201,22 @@ nonisolated enum RecordingAudioPeaks {
     ) {
         let cap = max(2, maxCount)
         while peaks.count > cap {
-            let pairs = peaks.count / 2
-            for i in 0..<pairs {
-                peaks[i] = max(peaks[i * 2], peaks[i * 2 + 1])
-            }
-            if peaks.count.isMultiple(of: 2) {
-                peaks.removeLast(peaks.count - pairs)
-            } else {
-                peaks[pairs] = peaks[peaks.count - 1]
-                peaks.removeLast(peaks.count - (pairs + 1))
-            }
-            peaksPerSecond /= 2
+            compactOnce(&peaks, peaksPerSecond: &peaksPerSecond)
         }
+    }
+
+    private static func compactOnce(_ peaks: inout [Float], peaksPerSecond: inout Double) {
+        let pairs = peaks.count / 2
+        for i in 0..<pairs {
+            peaks[i] = max(peaks[i * 2], peaks[i * 2 + 1])
+        }
+        if peaks.count.isMultiple(of: 2) {
+            peaks.removeLast(peaks.count - pairs)
+        } else {
+            peaks[pairs] = peaks[peaks.count - 1]
+            peaks.removeLast(peaks.count - (pairs + 1))
+        }
+        peaksPerSecond /= 2
     }
 
     /// Computes the aligned start and end X coordinates of waveform bars that
@@ -280,8 +285,8 @@ nonisolated enum RecordingAudioPeaks {
                         peaks.append(Float(current) / Float(Int16.max))
                         current = 0
                         count = 0
-                        if peaks.count > maximumPeaks {
-                            compactInPlace(&peaks, peaksPerSecond: &effectivePeaksPerSecond, maxCount: maximumPeaks)
+                        if peaks.count == maximumPeaks {
+                            compactOnce(&peaks, peaksPerSecond: &effectivePeaksPerSecond)
                             samplesPerPeak *= 2
                         }
                     }
