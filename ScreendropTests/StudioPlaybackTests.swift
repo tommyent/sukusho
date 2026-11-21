@@ -361,6 +361,13 @@ struct StudioPlaybackTests {
         #expect(StudioPlayback.keyAction(keyCode: 38, characters: "j", hasShift: false, hasOtherModifiers: false, isKHeld: true, isARepeat: false) == .stepFrames(-1))
         #expect(StudioPlayback.keyAction(keyCode: 37, characters: "l", hasShift: false, hasOtherModifiers: false, isKHeld: true, isARepeat: true) == .stepFrames(1))
 
+        // Only a fresh K press arms the chord; a K repeat (e.g. after leaving a text field) does not.
+        #expect(StudioPlayback.keyAction(keyCode: 40, characters: "k", hasShift: false, hasOtherModifiers: false, isKHeld: false, isARepeat: true) == .consume)
+        // Reconciling clears a latched K when the physical key is no longer down (e.g. released in menu tracking).
+        #expect(StudioPlayback.reconcileHeldKey(40, isPhysicallyDown: { _ in true }) == 40)
+        #expect(StudioPlayback.reconcileHeldKey(40, isPhysicallyDown: { _ in false }) == nil)
+        #expect(StudioPlayback.reconcileHeldKey(nil, isPhysicallyDown: { _ in true }) == nil)
+
         // Arrows and Home/End.
         #expect(StudioPlayback.keyAction(keyCode: 123, characters: nil, hasShift: false, hasOtherModifiers: false, isKHeld: false, isARepeat: false) == .stepFrames(-1))
         #expect(StudioPlayback.keyAction(keyCode: 124, characters: nil, hasShift: false, hasOtherModifiers: false, isKHeld: false, isARepeat: false) == .stepFrames(1))

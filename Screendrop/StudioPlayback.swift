@@ -308,6 +308,16 @@ nonisolated enum StudioPlayback {
         return total
     }
 
+    /// Reconciles a tracked held key code against physical key state (for
+    /// example after menu tracking swallows a key-up event).
+    static func reconcileHeldKey(
+        _ heldKeyCode: UInt16?,
+        isPhysicallyDown: (UInt16) -> Bool
+    ) -> UInt16? {
+        guard let heldKeyCode, isPhysicallyDown(heldKeyCode) else { return nil }
+        return heldKeyCode
+    }
+
     /// Maps a Studio window keyDown event to its playback action, leaving all
     /// other shortcuts (Space, ⌘B, ⌘0, ⌘Z, ⇧⌘Z, ⌫, etc.) untouched and
     /// yielding navigation/arrow keys when a focusable control (such as an
@@ -348,7 +358,7 @@ nonisolated enum StudioPlayback {
             if isKHeld { return .stepFrames(1) }
             return isARepeat ? .consume : .shuttle(forward: true)
         case "k":
-            return .pauseAndHoldK
+            return isARepeat ? .consume : .pauseAndHoldK
         default:
             return nil
         }

@@ -13,6 +13,7 @@
 //
 
 import AppKit
+import CoreGraphics
 import SwiftUI
 
 struct StudioKeyCommands: NSViewRepresentable {
@@ -51,8 +52,9 @@ struct StudioKeyCommands: NSViewRepresentable {
         weak var model: RecordingStudioModel?
         private var monitor: Any?
         private var resignKeyObserver: NSObjectProtocol?
-        /// K is down: J and L step a frame instead of playing.
-        private var isKHeld = false
+        private var menuTrackingObserver: NSObjectProtocol?
+        /// Physical key code of K while held: J and L step a frame instead of playing.
+        private var heldKKeyCode: UInt16?
 
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
@@ -66,14 +68,24 @@ struct StudioKeyCommands: NSViewRepresentable {
                 queue: .main
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
-                    self?.isKHeld = false
+                    self?.heldKKeyCode = nil
+                }
+            }
+            menuTrackingObserver = NotificationCenter.default.addObserver(
+                forName: NSMenu.didBeginTrackingNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.heldKKeyCode = nil
                 }
             }
             monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
                 guard let self else { return event }
                 if event.type == .keyUp {
-                    if event.charactersIgnoringModifiers?.lowercased() == "k" {
-                        self.isKHeld = false
+                    if event.keyCode == self.heldKKeyCode
+                        || event.charactersIgnoringModifiers?.lowercased() == "k" {
+                        self.heldKKeyCode = nil
                     }
                     return event
                 }
@@ -86,7 +98,9 @@ struct StudioKeyCommands: NSViewRepresentable {
             monitor = nil
             if let resignKeyObserver { NotificationCenter.default.removeObserver(resignKeyObserver) }
             resignKeyObserver = nil
-            isKHeld = false
+            if let menuTrackingObserver { NotificationCenter.default.removeObserver(menuTrackingObserver) }
+            menuTrackingObserver = nil
+            heldKKeyCode = nil
         }
 
         /// True when the key was one of the editor's playback keys and has been dealt with.
@@ -94,6 +108,12 @@ struct StudioKeyCommands: NSViewRepresentable {
             guard let model, model.isLoaded, !model.isRestoringDocument, !model.isEditingSourceRegion,
                   let window, event.window === window, window.attachedSheet == nil,
                   !(window.firstResponder is NSText) else { return false }
+
+            // Reconcile against live key state in case menu tracking or another
+            // modal loop swallowed K's key-up while the window stayed key.
+            heldKKeyCode = StudioPlayback.reconcileHeldKey(heldKKeyCode) { code in
+                CGEventSource.keyState(.combinedSessionState, key: CGKeyCode(code))
+            }
 
             let modifiers = event.modifierFlags
                 .intersection(.deviceIndependentFlagsMask)
@@ -108,7 +128,7 @@ struct StudioKeyCommands: NSViewRepresentable {
                 characters: event.charactersIgnoringModifiers,
                 hasShift: hasShift,
                 hasOtherModifiers: hasOtherModifiers,
-                isKHeld: isKHeld,
+                isKHeld: heldKKeyCode != nil,
                 isARepeat: event.isARepeat,
                 hasFocusedControl: hasFocusedControl
             ) else { return false }
@@ -117,7 +137,7 @@ struct StudioKeyCommands: NSViewRepresentable {
             case .shuttle(let forward):
                 model.shuttle(forward: forward)
             case .pauseAndHoldK:
-                isKHeld = true
+                heldKKeyCode = event.keyCode
                 model.pause()
             case .stepFrames(let count):
                 model.stepFrames(count)
