@@ -645,21 +645,88 @@ nonisolated enum Zoxide {
         }
     }
 
-    /// Runs zoxide (most-used first, as it prints them); nil if it can't run or fails.
+    enum FetchResult: Equatable, Sendable {
+        case success([Folder])
+        case failed
+        case cancelled
+    }
+
+    /// Runs zoxide (most-used first, as it prints them) with a wall-clock timeout, output byte cap,
+    /// and cancellation hook so a hanging binary never wedges folder refreshes.
     /// `--all` so zoxide never prunes its database or probes protected folders on listing; Finder
     /// resolves the chosen folder when the user explicitly opens it.
-    static func folders(binary: String) -> [Folder]? {
+    static func fetch(
+        binary: String,
+        timeout: TimeInterval = 3.0,
+        maxBytes: Int = 4 * 1024 * 1024,
+        isCancelled: @escaping @Sendable () -> Bool = { false }
+    ) -> FetchResult {
+        if isCancelled() { return .cancelled }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
         process.arguments = ["query", "--list", "--score", "--all"]
         let out = Pipe()
         process.standardOutput = out
         process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return nil }
-        let data = out.fileHandleForReading.readDataToEndOfFile()
+        do { try process.run() } catch { return .failed }
+
+        try? out.fileHandleForWriting.close()
+        let pid = process.processIdentifier
+        let stopReason = OSAllocatedUnfairLock<FetchResult?>(initialState: nil)
+        let deadline = Date().addingTimeInterval(timeout)
+        let sentTerm = OSAllocatedUnfairLock(initialState: false)
+
+        let watchdog = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        watchdog.schedule(deadline: .now() + .milliseconds(40), repeating: .milliseconds(40))
+        watchdog.setEventHandler {
+            guard process.isRunning else {
+                watchdog.cancel()
+                return
+            }
+            let reason: FetchResult? = isCancelled() ? .cancelled : (Date() >= deadline ? .failed : nil)
+            guard let reason else { return }
+            stopReason.withLock { if $0 == nil { $0 = reason } }
+            let alreadySentTerm = sentTerm.withLock { flag -> Bool in
+                if flag { return true }
+                flag = true
+                return false
+            }
+            if !alreadySentTerm {
+                process.terminate()
+            } else {
+                kill(pid, SIGKILL)
+                watchdog.cancel()
+            }
+        }
+        watchdog.resume()
+
+        let reader = out.fileHandleForReading
+        var data = Data()
+        var overflow = false
+        while true {
+            let chunk = reader.availableData
+            if chunk.isEmpty { break }
+            data.append(chunk)
+            if data.count > maxBytes {
+                overflow = true
+                stopReason.withLock { if $0 == nil { $0 = .failed } }
+                kill(pid, SIGKILL)
+                break
+            }
+        }
+        try? reader.close()
         process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return nil }
-        return parse(String(decoding: data, as: UTF8.self))
+        watchdog.cancel()
+
+        if let reason = stopReason.withLock({ $0 }) { return reason }
+        if isCancelled() { return .cancelled }
+        guard !overflow, process.terminationStatus == 0 else { return .failed }
+        return .success(parse(String(decoding: data, as: UTF8.self)))
+    }
+
+    static func folders(binary: String, timeout: TimeInterval = 3.0) -> [Folder]? {
+        if case .success(let folders) = fetch(binary: binary, timeout: timeout) { return folders }
+        return nil
     }
 
     /// As list rows: named after the folder, kept in zoxide's order. Folders inside app bundles are

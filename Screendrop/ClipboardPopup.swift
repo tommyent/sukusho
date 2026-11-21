@@ -608,9 +608,12 @@ struct ClipboardPopupView: View {
 
     private func launcherEmptyMessage(isZQuery: Bool) -> String {
         if isZQuery {
-            if !launcher.hasLoadedZoxide { return "Loading folders…" }
-            if !launcher.zoxideInstalled { return "zoxide isn’t installed. Install zoxide to jump to folders with z." }
-            return "No matching folders."
+            switch launcher.zoxideStatus {
+            case .idle, .loading: return "Loading folders…"
+            case .notInstalled: return "zoxide isn’t installed. Install zoxide to jump to folders with z."
+            case .failed: return "Couldn’t read folders from zoxide."
+            case .ready: return "No matching folders."
+            }
         }
         if !launcher.hasLoadedApps { return "Loading apps…" }
         return state.query.allSatisfy({ $0 == " " }) ? "No applications found." : "No matches."

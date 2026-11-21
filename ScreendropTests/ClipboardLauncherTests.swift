@@ -287,9 +287,27 @@ struct ClipboardLauncherZoxideTests {
             Zoxide.Folder(path: "/tmp/b", score: 1.5),
         ])
         #expect(Zoxide.folders(binary: stub("failing", "#!/bin/sh\nexit 1\n")) == nil)
+        #expect(Zoxide.fetch(binary: stub("failing2", "#!/bin/sh\nexit 2\n")) == .failed)
         #expect(Zoxide.folders(binary: dir.appendingPathComponent("missing").path) == nil)
         #expect(Zoxide.binary(in: [dir.appendingPathComponent("missing").path, good]) == good)
         #expect(Zoxide.binary(in: [dir.appendingPathComponent("missing").path]) == nil)
+
+        // Hanging binary is terminated on timeout and on cancellation.
+        let hanging = stub("hanging", "#!/bin/sh\nexec sleep 30\n")
+        let timeoutStart = Date()
+        #expect(Zoxide.fetch(binary: hanging, timeout: 0.2) == .failed)
+        #expect(Date().timeIntervalSince(timeoutStart) < 2.0)
+
+        let cancelStart = Date()
+        let session = LauncherSession()
+        let tok = session.begin()
+        DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(80)) { session.invalidate() }
+        #expect(Zoxide.fetch(binary: hanging, timeout: 5.0, isCancelled: { !session.isCurrent(tok) }) == .cancelled)
+        #expect(Date().timeIntervalSince(cancelStart) < 2.0)
+
+        // Output exceeding maxBytes is rejected instead of growing unbounded.
+        let noisy = stub("noisy", "#!/bin/sh\nhead -c 2048 /dev/zero | tr '\\0' 'a'\n")
+        #expect(Zoxide.fetch(binary: noisy, timeout: 2.0, maxBytes: 512) == .failed)
     }
 
     @Test func entriesSkipAppBundlesWithoutProbingFilesystem() {

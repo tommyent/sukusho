@@ -12,11 +12,14 @@ import UniformTypeIdentifiers
 final class ClipboardLauncherModel {
     static let shared = ClipboardLauncherModel()
 
+    enum ZoxideStatus: Equatable {
+        case idle, loading, ready, notInstalled, failed
+    }
+
     private(set) var catalog = LauncherCatalog.empty
     private(set) var folderCatalog = LauncherCatalog.empty
     private(set) var hasLoadedApps = false
-    private(set) var hasLoadedZoxide = false
-    private(set) var zoxideInstalled = true
+    private(set) var zoxideStatus: ZoxideStatus = .idle
     private(set) var favorites = LauncherFavorites()
     let feedback = ActionFeedback(duration: ActionFeedback.textDuration)
 
@@ -85,8 +88,7 @@ final class ClipboardLauncherModel {
         catalog = .empty
         folderCatalog = .empty
         hasLoadedApps = false
-        hasLoadedZoxide = false
-        zoxideInstalled = true
+        zoxideStatus = .idle
         favoritesLoaded = false
         iconCache.removeAllObjects()
     }
@@ -176,26 +178,33 @@ final class ClipboardLauncherModel {
     private func refreshZoxide(token: UInt64) {
         guard !loadingZoxide, session.isCurrent(token) else { return }
         guard let binary = Zoxide.binary(in: Zoxide.defaultCandidates()) else {
-            zoxideInstalled = false
+            zoxideStatus = .notInstalled
             if folderCatalog.count > 0 { folderCatalog = .empty }
-            hasLoadedZoxide = true
             return
         }
-        zoxideInstalled = true
+        if zoxideStatus != .ready { zoxideStatus = .loading }
         loadingZoxide = true
         let session = self.session
         zoxideTask?.cancel()
         zoxideTask = Task.detached(priority: .userInitiated) {
-            guard session.isCurrent(token), !Task.isCancelled else { return }
-            let fresh = Zoxide.folders(binary: binary).map(Zoxide.catalog)
+            let result = Zoxide.fetch(binary: binary, isCancelled: { !session.isCurrent(token) || Task.isCancelled })
             await MainActor.run {
                 let model = ClipboardLauncherModel.shared
                 guard model.session.isCurrent(token) else { return }
                 model.loadingZoxide = false
                 model.zoxideTask = nil
-                model.hasLoadedZoxide = true
-                if let fresh, fresh.apps != model.folderCatalog.apps {
-                    model.folderCatalog = fresh
+                switch result {
+                case .success(let folders):
+                    model.zoxideStatus = .ready
+                    let fresh = Zoxide.catalog(folders)
+                    if fresh.apps != model.folderCatalog.apps {
+                        model.folderCatalog = fresh
+                    }
+                case .failed:
+                    model.zoxideStatus = .failed
+                    if model.folderCatalog.count > 0 { model.folderCatalog = .empty }
+                case .cancelled:
+                    break
                 }
             }
         }
