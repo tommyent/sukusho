@@ -481,25 +481,29 @@ struct CaptureLibraryView: View {
     }
 
     private var inspectorContent: some View {
-        Group {
-            if (saved.isShown || clipboard.isShown), clipboard.librarySelectionIDs.count + model.selection.count > 1 {
-                Text("\(clipboard.librarySelectionIDs.count + model.selection.count) items selected")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if saved.isShown, clipboard.librarySelection != nil {
-                ClipboardLibraryInspector(model: clipboard)
-            } else if saved.isShown {
-                CaptureLibraryInspector(model: model, emptyMessage: "Select a capture or clip\nto take a closer look.")
-            } else if clipboard.isShown {
-                ClipboardLibraryInspector(model: clipboard)
-            } else if comments.isShown {
-                CommentInspector(comments: comments)
-            } else if likes.isShown {
-                LikeInspector(likes: likes)
-            } else if cloud.isShown {
-                CloudUploadInspector(cloud: cloud)
-            } else {
-                CaptureLibraryInspector(model: model)
+        // Keep the split view in charge of pane sizing across selection changes.
+        GeometryReader { pane in
+            Group {
+                if (saved.isShown || clipboard.isShown), clipboard.librarySelectionIDs.count + model.selection.count > 1 {
+                    Text("\(clipboard.librarySelectionIDs.count + model.selection.count) items selected")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if saved.isShown, clipboard.librarySelection != nil {
+                    ClipboardLibraryInspector(model: clipboard)
+                } else if saved.isShown {
+                    CaptureLibraryInspector(model: model, emptyMessage: "Select a capture or clip\nto take a closer look.")
+                } else if clipboard.isShown {
+                    ClipboardLibraryInspector(model: clipboard)
+                } else if comments.isShown {
+                    CommentInspector(comments: comments)
+                } else if likes.isShown {
+                    LikeInspector(likes: likes)
+                } else if cloud.isShown {
+                    CloudUploadInspector(cloud: cloud)
+                } else {
+                    CaptureLibraryInspector(model: model)
+                }
             }
+            .frame(width: pane.size.width, height: pane.size.height)
         }
         // The inspector column paints its own grey, under the
         // toolbar too, so its content carries the sidebar's.
