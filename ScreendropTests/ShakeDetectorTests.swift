@@ -119,4 +119,15 @@ struct ShakeDetectorTests {
         #expect(board.writeObjects([NSURL(string: "https://example.com/page")!, "some text" as NSString]))
         #expect(ShakeShelfFiles.fileURLs(on: board).isEmpty)
     }
+
+    @Test func optionSaveDistinguishesIntentionalOptionClickFromVoiceOver() {
+        #expect(ShakeShelfFiles.wantsFolderPicker(eventType: .leftMouseUp, modifiers: .option))
+        #expect(ShakeShelfFiles.wantsFolderPicker(eventType: .leftMouseDown, modifiers: .option))
+        // Plain click, keyboard activation, VoiceOver (Control-Option-Space), and AXPress (nil event) stay ordinary Save.
+        #expect(!ShakeShelfFiles.wantsFolderPicker(eventType: .leftMouseUp, modifiers: []))
+        #expect(!ShakeShelfFiles.wantsFolderPicker(eventType: .leftMouseUp, modifiers: [.control, .option]))
+        #expect(!ShakeShelfFiles.wantsFolderPicker(eventType: .keyDown, modifiers: [.control, .option]))
+        #expect(!ShakeShelfFiles.wantsFolderPicker(eventType: .keyDown, modifiers: .option))
+        #expect(!ShakeShelfFiles.wantsFolderPicker(eventType: nil, modifiers: .option))
+    }
 }

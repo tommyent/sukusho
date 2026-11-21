@@ -93,4 +93,11 @@ nonisolated enum ShakeShelfFiles {
             return type.conforms(to: .image) && readable.contains(type.identifier)
         }
     }
+
+    /// True only for a deliberate Option-click on Save. VoiceOver activates controls with Control-Option-Space
+    /// (or via Accessibility without a mouse event), which must stay ordinary Save.
+    static func wantsFolderPicker(eventType: NSEvent.EventType?, modifiers: NSEvent.ModifierFlags) -> Bool {
+        guard eventType == .leftMouseUp || eventType == .leftMouseDown else { return false }
+        return modifiers.intersection([.option, .control, .command, .shift]) == .option
+    }
 }

@@ -138,16 +138,22 @@ struct ShakeShelfHolding: View {
             // A choice is on only when it has something to work with: Save and Replace need a smaller file,
             // and Copy, Share and Upload need a file Sukusho could read.
             Button {
-                finish(.save(replacing: false, askWhere: NSEvent.modifierFlags.contains(.option)))
+                let event = NSApp.currentEvent
+                let askWhere = ShakeShelfFiles.wantsFolderPicker(eventType: event?.type, modifiers: event?.modifierFlags ?? [])
+                finish(.save(replacing: false, askWhere: askWhere))
             } label: {
                 Image(systemName: "square.and.arrow.down")
                     .font(.system(size: 14, weight: .semibold))
                     .frame(maxWidth: .infinity, minHeight: 22)
             }
             .buttonStyle(.borderedProminent)
+            .accessibilityLabel("Save")
+            .accessibilityAction(named: "Save to Folder…") {
+                guard !model.isWorking, !model.isFinishing, model.canSave else { return }
+                finish(.save(replacing: false, askWhere: true))
+            }
             .disabled(!model.canSave)
             .help("Save beside originals (⌥ to choose folder)")
-            .accessibilityLabel("Save")
 
             actionButton("doc.on.doc", label: "Copy", help: "Copy", disabled: !model.canHandOver) {
                 finish(.copy)
