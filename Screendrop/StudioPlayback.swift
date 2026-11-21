@@ -25,6 +25,17 @@ nonisolated enum StudioPlaybackKeyAction: Equatable, Sendable {
     case consume
 }
 
+nonisolated struct StudioPlaybackBoundaryState: Equatable, Sendable {
+    var isPlaying: Bool
+    var shuttleRate: Float
+    var currentTime: TimeInterval
+}
+
+nonisolated enum StudioPlaybackEndTrigger: Equatable, Sendable {
+    case periodic(seconds: TimeInterval)
+    case itemDidPlayToEnd(reverseEnd: TimeInterval, forwardEnd: TimeInterval)
+}
+
 nonisolated enum StudioPlayback {
     static let maxShuttleRate: Float = 8
     static let defaultFrameDuration: TimeInterval = 1.0 / 30
@@ -44,6 +55,38 @@ nonisolated enum StudioPlayback {
     static func shuttleTitle(_ rate: Float) -> String {
         let speed = RecordingClipSegment.speedTitle(Double(abs(rate)))
         return rate < 0 ? "◀ \(speed)" : speed
+    }
+
+    /// Idempotent boundary transition shared by the periodic time observer and
+    /// `AVPlayerItem.didPlayToEndTimeNotification`. Returns the endpoint to
+    /// seek to when this event stops playback, or `nil` if playback already
+    /// stopped or has not reached a boundary.
+    static func resolvePlaybackEnd(
+        state: inout StudioPlaybackBoundaryState,
+        trigger: StudioPlaybackEndTrigger,
+        duration: TimeInterval
+    ) -> TimeInterval? {
+        guard state.isPlaying else { return nil }
+        let limit = max(duration.isFinite ? duration : 0, 0)
+        let endpoint: TimeInterval
+        switch trigger {
+        case .periodic(let seconds):
+            guard seconds.isFinite else { return nil }
+            if state.shuttleRate < 0, seconds <= 0.001 {
+                endpoint = 0
+            } else if state.shuttleRate > 0, seconds >= limit - 0.001 {
+                endpoint = limit
+            } else {
+                return nil
+            }
+        case .itemDidPlayToEnd(let reverseEnd, let forwardEnd):
+            let raw = state.shuttleRate < 0 ? reverseEnd : forwardEnd
+            endpoint = min(max(raw.isFinite ? raw : (state.shuttleRate < 0 ? 0 : limit), 0), limit)
+        }
+        state.isPlaying = false
+        state.shuttleRate = 1
+        state.currentTime = endpoint
+        return endpoint
     }
 
     /// Duration of one frame from a video track's nominal frame rate, falling

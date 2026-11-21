@@ -125,6 +125,43 @@ struct StudioPlaybackTests {
         #expect(first.id != second.id)
     }
 
+    // MARK: - Playback end boundary
+
+    @Test func reverseEndHandlerStopsAtZeroInEitherEventOrder() {
+        // Order A: periodic zero callback arrives before didPlayToEndTimeNotification.
+        var orderA = StudioPlaybackBoundaryState(isPlaying: true, shuttleRate: -2, currentTime: 4.5)
+        #expect(StudioPlayback.resolvePlaybackEnd(state: &orderA, trigger: .periodic(seconds: 0), duration: 10) == 0)
+        #expect(orderA == StudioPlaybackBoundaryState(isPlaying: false, shuttleRate: 1, currentTime: 0))
+        // Late end notification must not overwrite currentTime with duration.
+        #expect(StudioPlayback.resolvePlaybackEnd(
+            state: &orderA,
+            trigger: .itemDidPlayToEnd(reverseEnd: 0, forwardEnd: 10),
+            duration: 10
+        ) == nil)
+        #expect(orderA == StudioPlaybackBoundaryState(isPlaying: false, shuttleRate: 1, currentTime: 0))
+
+        // Order B: didPlayToEndTimeNotification arrives before periodic zero callback.
+        var orderB = StudioPlaybackBoundaryState(isPlaying: true, shuttleRate: -4, currentTime: 4.5)
+        #expect(StudioPlayback.resolvePlaybackEnd(
+            state: &orderB,
+            trigger: .itemDidPlayToEnd(reverseEnd: 0, forwardEnd: 10),
+            duration: 10
+        ) == 0)
+        #expect(orderB == StudioPlaybackBoundaryState(isPlaying: false, shuttleRate: 1, currentTime: 0))
+        #expect(StudioPlayback.resolvePlaybackEnd(state: &orderB, trigger: .periodic(seconds: 0), duration: 10) == nil)
+        #expect(orderB == StudioPlaybackBoundaryState(isPlaying: false, shuttleRate: 1, currentTime: 0))
+
+        // Forward boundary stops at duration in either order too.
+        var forward = StudioPlaybackBoundaryState(isPlaying: true, shuttleRate: 2, currentTime: 9.9)
+        #expect(StudioPlayback.resolvePlaybackEnd(
+            state: &forward,
+            trigger: .itemDidPlayToEnd(reverseEnd: 0, forwardEnd: 10),
+            duration: 10
+        ) == 10)
+        #expect(forward == StudioPlaybackBoundaryState(isPlaying: false, shuttleRate: 1, currentTime: 10))
+        #expect(StudioPlayback.resolvePlaybackEnd(state: &forward, trigger: .periodic(seconds: 10), duration: 10) == nil)
+    }
+
     // MARK: - Window key routing
 
     @Test func playbackKeyRoutingHandlesJKLArrowsAndHomeEndOnly() {

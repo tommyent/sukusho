@@ -1205,6 +1205,22 @@ final class RecordingStudioModel {
         return hoverPreviewTime ?? currentTime
     }
 
+    private func handlePlaybackBoundary(_ trigger: StudioPlaybackEndTrigger) -> Bool {
+        var state = StudioPlaybackBoundaryState(
+            isPlaying: isPlaying,
+            shuttleRate: shuttleRate,
+            currentTime: currentTime
+        )
+        guard let endpoint = StudioPlayback.resolvePlaybackEnd(
+            state: &state,
+            trigger: trigger,
+            duration: duration
+        ) else { return false }
+        pause()
+        seek(to: endpoint)
+        return true
+    }
+
     private func installObservers() {
         timeObserver = screenPlayer.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 0.02, preferredTimescale: 600),
@@ -1214,19 +1230,7 @@ final class RecordingStudioModel {
                 guard let self else { return }
                 if self.isPlaying {
                     let seconds = time.seconds
-                    if self.shuttleRate < 0, seconds <= 0.001 {
-                        self.pause()
-                        self.seek(to: 0)
-                        return
-                    }
-                    if self.shuttleRate > 0, seconds >= self.duration - 0.001 {
-                        self.pause()
-                        self.currentTime = self.duration
-                        self.screenPlayer.seek(
-                            to: CMTime(seconds: self.duration, preferredTimescale: 600),
-                            toleranceBefore: .zero,
-                            toleranceAfter: .zero
-                        )
+                    if self.handlePlaybackBoundary(.periodic(seconds: seconds)) {
                         return
                     }
                     self.currentTime = seconds
@@ -1247,13 +1251,15 @@ final class RecordingStudioModel {
             forName: AVPlayerItem.didPlayToEndTimeNotification,
             object: screenPlayer.currentItem,
             queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] notification in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.isPlaying = false
-                self.shuttleRate = 1
-                self.cameraPlayer.pause()
-                self.currentTime = self.duration
+                let item = (notification.object as? AVPlayerItem) ?? self.screenPlayer.currentItem
+                let reverseEnd = item.flatMap { $0.reversePlaybackEndTime.isNumeric ? $0.reversePlaybackEndTime.seconds : nil } ?? 0
+                let forwardEnd = item.flatMap { $0.forwardPlaybackEndTime.isNumeric ? $0.forwardPlaybackEndTime.seconds : nil } ?? self.duration
+                _ = self.handlePlaybackBoundary(
+                    .itemDidPlayToEnd(reverseEnd: reverseEnd, forwardEnd: forwardEnd)
+                )
             }
         }
     }
