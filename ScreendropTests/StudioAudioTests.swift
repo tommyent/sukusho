@@ -1249,6 +1249,45 @@ struct StudioAudioTests {
         #expect(abs(leadMaxGain - 4.0) < 0.01)
     }
 
+    @Test func twoHiddenLinkedInstancesOfSameFileHealIndependentlyAndSurviveCodableReload() throws {
+        let seg = RecordingClipSegment(sourceStart: 0, sourceEnd: 10)
+        let full = RecordingClipTimeline(segments: [seg])
+
+        var clipA = RecordingAudioClip(fileName: "shared.wav", displayName: "Shared A", start: 8, fileDuration: 1)
+        clipA.isLinked = true
+        clipA.lane = 0
+        clipA.volume = 0.5
+
+        var clipB = RecordingAudioClip(fileName: "shared.wav", displayName: "Shared B", start: 8, fileDuration: 1)
+        clipB.isLinked = true
+        clipB.lane = 1
+        clipB.volume = 1.5
+
+        // Trim video to 7 s: both linked clips at 8...9 s are hidden.
+        var trimmedSeg = seg
+        trimmedSeg.sourceEnd = 7
+        let trimmed = RecordingClipTimeline(segments: [trimmedSeg])
+        let afterTrim = StudioAudioConform.conform([clipA, clipB], hidden: [], from: full, to: trimmed)
+        #expect(afterTrim.clips.isEmpty)
+        #expect(afterTrim.hidden.count == 2)
+
+        // Simulate save + reload of hiddenLinkedAudio through JSON.
+        let reloadedHidden = try JSONDecoder().decode(
+            [StudioAudioConform.HiddenLinkedRange].self,
+            from: JSONEncoder().encode(afterTrim.hidden)
+        )
+
+        // Reopen trim to 10 s: BOTH instances restore with their distinct IDs, lanes, and volumes!
+        let afterReopen = StudioAudioConform.conform([], hidden: reloadedHidden, from: trimmed, to: full)
+        #expect(afterReopen.clips.count == 2)
+        let restoredA = try #require(afterReopen.clips.first { $0.id == clipA.id })
+        let restoredB = try #require(afterReopen.clips.first { $0.id == clipB.id })
+        #expect(abs(restoredA.volume - 0.5) < 0.001)
+        #expect(abs(restoredB.volume - 1.5) < 0.001)
+        #expect(restoredA.lane != restoredB.lane)
+        #expect(afterReopen.hidden.isEmpty)
+    }
+
     // MARK: - Helpers
 
     private func makeDirectory() throws -> URL {

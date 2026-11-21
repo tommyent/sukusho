@@ -66,6 +66,9 @@ struct RecordingEditDocument: Codable, Equatable {
     var replacementAudioSync: RecordingAudioSync?
     /// Sound placed on audio lanes under the video, on the edited clock.
     var audioClips: [RecordingAudioClip]?
+    /// Linked audio ranges hidden by inward trims so reopening a trim heals
+    /// them even after saving and reopening the project.
+    var hiddenLinkedAudio: [StudioAudioConform.HiddenLinkedRange]?
     /// Raw RecordingAudioFormat value for the audio-only export.
     var audioExportFormat: String?
     var audioVolume: Double?
@@ -106,6 +109,7 @@ struct RecordingEditDocument: Codable, Equatable {
         case replacementAudioDisplayName
         case replacementAudioSync
         case audioClips
+        case hiddenLinkedAudio
         case audioExportFormat
         case audioVolume
         case isolateVoice
@@ -136,6 +140,7 @@ struct RecordingEditDocument: Codable, Equatable {
         replacementAudioDisplayName: String? = nil,
         replacementAudioSync: RecordingAudioSync? = nil,
         audioClips: [RecordingAudioClip]? = nil,
+        hiddenLinkedAudio: [StudioAudioConform.HiddenLinkedRange]? = nil,
         audioExportFormat: RecordingAudioFormat? = nil,
         audioVolume: Double? = nil,
         isolateVoice: Bool = false,
@@ -171,6 +176,7 @@ struct RecordingEditDocument: Codable, Equatable {
         self.replacementAudioDisplayName = replacementAudioDisplayName
         self.replacementAudioSync = replacementAudioFileName == nil ? nil : replacementAudioSync
         self.audioClips = audioClips?.isEmpty == true ? nil : audioClips
+        self.hiddenLinkedAudio = hiddenLinkedAudio?.isEmpty == true ? nil : hiddenLinkedAudio
         self.audioExportFormat = audioExportFormat.map(\.rawValue)
         self.audioVolume = audioVolume
         self.isolateVoice = isolateVoice
@@ -283,6 +289,10 @@ struct RecordingEditDocument: Codable, Equatable {
         audioClips = try container.decodeIfPresent(
             [RecordingAudioClip].self,
             forKey: .audioClips
+        )
+        hiddenLinkedAudio = try container.decodeIfPresent(
+            [StudioAudioConform.HiddenLinkedRange].self,
+            forKey: .hiddenLinkedAudio
         )
         audioExportFormat = try container.decodeIfPresent(String.self, forKey: .audioExportFormat)
         audioVolume = try container.decodeIfPresent(Double.self, forKey: .audioVolume)

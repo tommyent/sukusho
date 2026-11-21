@@ -185,7 +185,7 @@ nonisolated enum StudioAudioConform {
 
     /// A linked audio slice hidden by trimming its video segment inward,
     /// retained so dragging the trim back out restores the clip seamlessly.
-    struct HiddenLinkedRange: Equatable, Sendable {
+    struct HiddenLinkedRange: Codable, Equatable, Sendable {
         var segmentID: UUID
         var sourceStart: TimeInterval
         var sourceEnd: TimeInterval
@@ -307,12 +307,11 @@ nonisolated enum StudioAudioConform {
             )
             let editorEnd = editorStart + (f1 - f0) / derivedSpeed
 
-            // Avoid duplicating a range already restored by edge healing, while
-            // restoring outer fades that edge healing alone cannot recover.
+            // Avoid duplicating a range already restored by edge healing, matching
+            // by original clip identity so distinct clips sharing a file both heal.
             if let coveredIndex = result.firstIndex(where: { existing in
                 existing.isLinked
-                    && existing.source == entry.clip.source
-                    && existing.fileName == entry.clip.fileName
+                    && existing.id == entry.clip.id
                     && existing.start <= editorStart + 0.005
                     && existing.end >= editorEnd - 0.005
             }) {
@@ -329,7 +328,6 @@ nonisolated enum StudioAudioConform {
             } else if f1 - f0 >= RecordingAudioClip.minimumFileSpan,
                       editorEnd - editorStart >= RecordingAudioClip.minimumPlayableDuration {
                 var restored = entry.clip
-                if result.contains(where: { $0.id == restored.id }) { restored.id = UUID() }
                 restored.start = editorStart
                 restored.trimStart = f0
                 restored.trimEnd = f1
@@ -340,8 +338,7 @@ nonisolated enum StudioAudioConform {
                 // Seamlessly rejoin an adjacent restored/surviving piece of the same clip.
                 if let matchIndex = result.firstIndex(where: { existing in
                     existing.isLinked
-                        && existing.source == restored.source
-                        && existing.fileName == restored.fileName
+                        && existing.id == entry.clip.id
                         && existing.lane == restored.lane
                         && abs(existing.speed - restored.speed) < 0.000_1
                         && (abs(existing.end - restored.start) < 0.002 && abs(existing.trimEnd - restored.trimStart) < 0.002)
@@ -350,8 +347,7 @@ nonisolated enum StudioAudioConform {
                     result[matchIndex].fadeOut = restored.fadeOut
                 } else if let matchIndex = result.firstIndex(where: { existing in
                     existing.isLinked
-                        && existing.source == restored.source
-                        && existing.fileName == restored.fileName
+                        && existing.id == entry.clip.id
                         && existing.lane == restored.lane
                         && abs(existing.speed - restored.speed) < 0.000_1
                         && (abs(restored.end - existing.start) < 0.002 && abs(restored.trimEnd - existing.trimStart) < 0.002)
@@ -360,6 +356,7 @@ nonisolated enum StudioAudioConform {
                     result[matchIndex].trimStart = restored.trimStart
                     result[matchIndex].fadeIn = restored.fadeIn
                 } else {
+                    if result.contains(where: { $0.id == restored.id }) { restored.id = UUID() }
                     result.append(restored)
                 }
             }

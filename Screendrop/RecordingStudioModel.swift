@@ -1108,7 +1108,11 @@ final class RecordingStudioModel {
             loadingAudioPeaks.remove(Self.soundtrackPeaksKey)
         }
         audioClips = (document.audioClips ?? []).map { $0.sanitized() }
-        hiddenLinkedAudio.removeAll()
+        hiddenLinkedAudio = (document.hiddenLinkedAudio ?? []).map { entry in
+            var copy = entry
+            copy.clip = entry.clip.sanitized()
+            return copy
+        }
         audioSoloState = nil
         if let selectedAudioClipID, !audioClips.contains(where: { $0.id == selectedAudioClipID }) {
             self.selectedAudioClipID = nil
@@ -2914,6 +2918,7 @@ final class RecordingStudioModel {
             replacementAudioDisplayName: replacementAudio?.displayName ?? replacementAudioReference?.displayName,
             replacementAudioSync: replacementAudio == nil && replacementAudioReference == nil ? nil : replacementAudioSync,
             audioClips: audioClips.isEmpty ? nil : audioClips,
+            hiddenLinkedAudio: hiddenLinkedAudio.isEmpty ? nil : hiddenLinkedAudio,
             audioExportFormat: audioExportFormat,
             audioVolume: Double(audioVolume),
             isolateVoice: voiceIsolationEnabled && isolatedMicrophone != nil,
@@ -4516,11 +4521,13 @@ final class RecordingStudioModel {
     }
 
     /// Resolves audio clip tracks from disk before building playback, and
-    /// kicks off background peak extraction for waveforms.
+    /// kicks off background peak extraction for waveforms. Also preloads media
+    /// referenced by hidden linked ranges so re-trimming heals immediately.
     private func resolveAudioClipSources() async {
         missingAudioClipFiles.removeAll()
-        guard !audioClips.isEmpty else { return }
-        let fileClips = audioClips.filter { $0.source == .file }
+        let allKnownClips = audioClips + hiddenLinkedAudio.map(\.clip)
+        guard !allKnownClips.isEmpty else { return }
+        let fileClips = allKnownClips.filter { $0.source == .file }
         if !fileClips.isEmpty {
             if let directory = mediaDirectoryURL {
                 for name in Set(fileClips.map(\.fileName)) {
@@ -4550,7 +4557,7 @@ final class RecordingStudioModel {
                 missingAudioClipFiles.formUnion(fileClips.map(\.fileName))
             }
         }
-        let pinnedClips = audioClips.filter { $0.source == .replacement && !$0.fileName.isEmpty }
+        let pinnedClips = allKnownClips.filter { $0.source == .replacement && !$0.fileName.isEmpty }
         if !pinnedClips.isEmpty {
             if let directory = session?.directoryURL {
                 for name in Set(pinnedClips.map(\.fileName)) {
@@ -5247,9 +5254,15 @@ final class RecordingStudioModel {
             for clip in document.audioClips ?? [] where clip.source == .replacement && !clip.fileName.isEmpty {
                 pinnedClipFiles.append(clip.fileName)
             }
+            for hidden in document.hiddenLinkedAudio ?? [] where hidden.clip.source == .replacement && !hidden.clip.fileName.isEmpty {
+                pinnedClipFiles.append(hidden.clip.fileName)
+            }
         }
         for clip in audioClips where clip.source == .replacement && !clip.fileName.isEmpty {
             pinnedClipFiles.append(clip.fileName)
+        }
+        for hidden in hiddenLinkedAudio where hidden.clip.source == .replacement && !hidden.clip.fileName.isEmpty {
+            pinnedClipFiles.append(hidden.clip.fileName)
         }
         let referencedNames = Set([
             savedDocument?.replacementAudioFileName,
