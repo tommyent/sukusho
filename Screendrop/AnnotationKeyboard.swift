@@ -26,6 +26,7 @@ struct AnnotationKeyCommandHandler: NSViewRepresentable {
     let onToggleCrop: () -> Void
     let onApplyCrop: () -> Void
     let onCancelCrop: () -> Void
+    let onNudgeCrop: (CGSize) -> Void
     let isCropping: () -> Bool
     /// Tab: copies the colour under the pointer; false when it isn't over the image.
     let onCopyColor: () -> Bool
@@ -71,6 +72,7 @@ struct AnnotationKeyCommandHandler: NSViewRepresentable {
         view.onToggleCrop = onToggleCrop
         view.onApplyCrop = onApplyCrop
         view.onCancelCrop = onCancelCrop
+        view.onNudgeCrop = onNudgeCrop
         view.isCropping = isCropping
         view.onCopyColor = onCopyColor
         view.onPaste = onPaste
@@ -98,6 +100,7 @@ final class AnnotationKeyCommandHandlerView: NSView {
     var onToggleCrop: (() -> Void)?
     var onApplyCrop: (() -> Void)?
     var onCancelCrop: (() -> Void)?
+    var onNudgeCrop: ((CGSize) -> Void)?
     var isCropping: (() -> Bool)?
     var onCopyColor: (() -> Bool)?
     var onPaste: (() -> Bool)?
@@ -187,9 +190,9 @@ final class AnnotationKeyCommandHandlerView: NSView {
                 return event
             }
 
-            // Crop mode is modal: Return applies, Escape cancels, and all other
-            // editing shortcuts are swallowed so they can't act on the hidden
-            // annotation layer.
+            // Crop mode is modal: Return applies, Escape cancels, arrows nudge
+            // the selection, and all other editing shortcuts are swallowed so
+            // they can't act on the hidden annotation layer.
             if self.isCropping?() == true {
                 if Self.isReturn(event) {
                     self.onApplyCrop?()
@@ -197,6 +200,10 @@ final class AnnotationKeyCommandHandlerView: NSView {
                 }
                 if Self.isEscape(event) {
                     self.onCancelCrop?()
+                    return nil
+                }
+                if let delta = Self.arrowNudge(event) {
+                    self.onNudgeCrop?(delta)
                     return nil
                 }
                 if Self.isUndo(event) || Self.isRedo(event) {
@@ -322,6 +329,11 @@ final class AnnotationKeyCommandHandlerView: NSView {
 
     private static func isMeasureKey(_ event: NSEvent) -> Bool {
         [18, 19, 123, 124, 125, 126].contains(event.keyCode)
+    }
+
+    /// An arrow key as a pixel offset: one pixel, ten with Shift.
+    static func arrowNudge(_ event: NSEvent) -> CGSize? {
+        nudgeStep(event).map { CGSize(width: $0.dx, height: $0.dy) }
     }
 
     /// An arrow's nudge in points: 1, or 10 with Shift; nil for other keys

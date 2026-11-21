@@ -15,6 +15,42 @@ extension AnnotationEditorModel {
     var canZoomOut: Bool { canvasViewport.canZoomOut }
 
     func resetZoom() { canvasViewport = AnnotationCanvasViewport() }
+
+    /// Where the image sits in the viewport right now, in viewport points.
+    var displayedImageFrame: CGRect? {
+        guard canvasViewport.layout != nil else { return nil }
+        let displayLayout = AnnotationBackgroundLayout.make(
+            contentSize: canvasContentSize,
+            settings: backgroundSettings
+        ).scaled(to: canvasViewport.frame)
+        return canvasExpansion.imageFrame(in: displayLayout.imageFrame, imageSize: imageSize)
+    }
+
+    /// Leaving crop mode: shows the current image at `imageRect` under the
+    /// layout without the crop handle margin, then asks the canvas to animate
+    /// to the fit. A crop thereby grows out of the box it was cut from.
+    func revealCanvasLeavingCrop(imageAt imageRect: CGRect?) {
+        let background = AnnotationBackgroundLayout.make(contentSize: canvasContentSize, settings: backgroundSettings)
+        let screenshotRect = canvasExpansion.imageFrame(in: background.imageRect, imageSize: imageSize)
+        guard let imageRect, var layout = canvasViewport.layout,
+              screenshotRect.width > 0 else {
+            resetZoom()
+            return
+        }
+        layout.canvasSize = background.canvasSize
+        layout.fitInsets = CGSize(width: layout.fitInsets.width - Self.cropHandleMargin,
+                                  height: layout.fitInsets.height - Self.cropHandleMargin)
+        layout.overscroll = 0
+        let scale = imageRect.width / screenshotRect.width
+        canvasViewport.show(CGRect(
+            x: imageRect.minX - screenshotRect.minX * scale,
+            y: imageRect.minY - screenshotRect.minY * scale,
+            width: background.canvasSize.width * scale,
+            height: background.canvasSize.height * scale
+        ), in: layout)
+        canvasRevealID &+= 1
+    }
+
     func fitCanvas() { canvasViewport.fit() }
     func zoomIn() { canvasViewport.zoom(by: 1.25) }
     func zoomOut() { canvasViewport.zoom(by: 0.8) }

@@ -19,6 +19,10 @@ nonisolated struct AnnotationCanvasViewport {
         /// Height kept clear along the top for the floating tool dock. A
         /// fitted canvas is centred in the space below it.
         var topReserve: CGFloat = 0
+        /// How far a canvas larger than the viewport may scroll past its own
+        /// edges (crop mode), so a crop edge at the image's edge can come clear
+        /// of the viewport edge and, at the top, of the floating chrome.
+        var overscroll: CGFloat = 0
 
         /// The viewport height a fitted canvas is centred in.
         var fitHeight: CGFloat { max(1, viewportSize.height - topReserve) }
@@ -99,6 +103,19 @@ nonisolated struct AnnotationCanvasViewport {
                          y: layout.topReserve + (layout.fitHeight - layout.canvasSize.height * scale) / 2)
     }
 
+    /// Shows the canvas at `frame` under `newLayout` without fitting, so a
+    /// change of canvas (a crop) can start exactly where its content already
+    /// sits on screen and animate to the fit from there.
+    mutating func show(_ frame: CGRect, in newLayout: Layout) {
+        guard newLayout.isValid, frame.width.isFinite, frame.width > 0,
+              frame.minX.isFinite, frame.minY.isFinite else { return }
+        layout = newLayout
+        pinch = nil
+        isFitting = false
+        scale = frame.width / newLayout.canvasSize.width
+        origin = frame.origin
+    }
+
     mutating func zoom(to requestedScale: CGFloat, anchor requestedAnchor: CGPoint? = nil) {
         guard let layout, requestedScale.isFinite, requestedScale > 0 else { return }
         pinch = nil
@@ -177,18 +194,22 @@ nonisolated struct AnnotationCanvasViewport {
                        y: min(max(point.y, visible.minY), visible.maxY))
     }
 
-    /// An overflowing axis stops flush at either canvas edge. A fitting axis
-    /// stays centered and cannot be scrolled into empty workspace.
+    /// An overflowing axis stops at either canvas edge, or `overscroll` past
+    /// it (the top also clears the floating chrome). A fitting axis stays
+    /// centered and cannot be scrolled into empty workspace.
     private mutating func constrainToCanvasEdges() {
         guard let layout else { return }
         let size = frame.size
-        origin.x = size.width <= layout.viewportSize.width
+        let over = layout.overscroll
+        origin.x = size.width <= layout.viewportSize.width - 2 * over
             ? (layout.viewportSize.width - size.width) / 2
-            : min(max(origin.x, layout.viewportSize.width - size.width), 0)
-        origin.y = size.height <= layout.fitHeight
+            : min(max(origin.x, layout.viewportSize.width - size.width - over), over)
+        let topLimit = layout.topReserve + over
+        let bottomLimit = layout.viewportSize.height - over
+        origin.y = size.height <= layout.fitHeight - 2 * over
             ? layout.topReserve + (layout.fitHeight - size.height) / 2
-            // Scrolled to its top, the image starts below the dock; lower
-            // down, it passes under it.
-            : min(max(origin.y, layout.viewportSize.height - size.height), layout.topReserve)
+            // Scrolled to its top, the image starts below the dock (plus any
+            // overscroll); lower down, it passes under it.
+            : min(max(origin.y, bottomLimit - size.height), topLimit)
     }
 }

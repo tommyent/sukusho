@@ -227,7 +227,7 @@ struct IdleSaveChecks {
         let second = try openImage(source)
         try check(second.previousSessionSnapshots == [originalEntry], "Reopening didn't expose the earlier image session")
         second.isCropping = true
-        second.cropRect = CGRect(x: 0, y: 0, width: 0.5, height: 1)
+        second.cropPixelRect = CGRect(x: 0, y: 0, width: second.imageSize.width / 2, height: second.imageSize.height)
         second.applyCrop()
         try check(second.sessionSnapshots.count == 2 && second.previousSessionSnapshots == [originalEntry], "Image menu didn't keep only previous sessions after the crop")
         _ = try await second.commitEdits()
@@ -670,7 +670,7 @@ struct IdleSaveChecks {
         try await until { gate.continuation != nil }
         try check(model.isCommitting && !model.isBlockingCommit, "Idle render blocked input")
         model.isCropping = true
-        model.cropRect = CGRect(x: 0, y: 0, width: 0.5, height: 1)
+        model.cropPixelRect = CGRect(x: 0, y: 0, width: model.imageSize.width / 2, height: model.imageSize.height)
         model.applyCrop()
         let crop = model.baseImageURL
         gate.resume()
@@ -692,7 +692,7 @@ struct IdleSaveChecks {
         let base = ScreenshotHistoryStore.baseImageURL(for: source)
         let original = ScreenshotHistoryStore.originalImageURL(for: source)
         model.isCropping = true
-        model.cropRect = CGRect(x: 0, y: 0, width: 0.5, height: 1)
+        model.cropPixelRect = CGRect(x: 0, y: 0, width: model.imageSize.width / 2, height: model.imageSize.height)
         model.applyCrop()
         _ = try await model.commitEdits()
         model.releaseEditorResources()
@@ -728,7 +728,7 @@ struct IdleSaveChecks {
         let sidecar = ScreenshotHistoryStore.editDocumentURL(for: source)
         let original = ScreenshotHistoryStore.originalImageURL(for: source)
         model.isCropping = true
-        model.cropRect = CGRect(x: 0, y: 0, width: 0.5, height: 1)
+        model.cropPixelRect = CGRect(x: 0, y: 0, width: model.imageSize.width / 2, height: model.imageSize.height)
         model.applyCrop()
         _ = try await model.commitEdits()
         try check(model.canRevertToOriginal, "Original was off after a saved crop")
@@ -752,7 +752,7 @@ struct IdleSaveChecks {
         let source2 = opened.sourceURL!, captured2 = try Data(contentsOf: source2)
         _ = try await opened.commitEdits()
         opened.isCropping = true
-        opened.cropRect = CGRect(x: 0, y: 0, width: 0.5, height: 1)
+        opened.cropPixelRect = CGRect(x: 0, y: 0, width: opened.imageSize.width / 2, height: opened.imageSize.height)
         opened.applyCrop()
         try check(opened.canRevertToLastOpened, "Last Opened was off after edits")
         opened.revertToLastOpened()
@@ -770,7 +770,7 @@ struct IdleSaveChecks {
         gate3.hold = false
         let source3 = library.sourceURL!, captured3 = try Data(contentsOf: source3)
         library.isCropping = true
-        library.cropRect = CGRect(x: 0, y: 0, width: 0.5, height: 1)
+        library.cropPixelRect = CGRect(x: 0, y: 0, width: library.imageSize.width / 2, height: library.imageSize.height)
         library.applyCrop()
         _ = try await library.commitEdits()
         library.releaseEditorResources()
@@ -802,7 +802,7 @@ struct IdleSaveChecks {
     @MainActor static func undoDuringRender() async throws {
         let gate = Gate(), model = try fixture(gate)
         model.isCropping = true
-        model.cropRect = CGRect(x: 0, y: 0, width: 0.5, height: 1)
+        model.cropPixelRect = CGRect(x: 0, y: 0, width: model.imageSize.width / 2, height: model.imageSize.height)
         model.applyCrop()
         let saving = Task { try await model.commitEdits(idle: true) }
         try await until { gate.continuation != nil }

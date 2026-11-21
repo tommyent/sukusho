@@ -198,9 +198,10 @@ struct AnnotationEditorWindow: View {
                 },
                 onFitCanvas: model.fitCanvas,
                 onActualSize: { model.setZoomPercent(100) },
-                onToggleCrop: { withAnimation(.snappy(duration: 0.2)) { model.toggleCropping() } },
-                onApplyCrop: { withAnimation(.snappy(duration: 0.2)) { model.applyCrop() } },
-                onCancelCrop: { withAnimation(.snappy(duration: 0.2)) { model.cancelCrop() } },
+                onToggleCrop: { withAnimation(.canvasMoveIfAllowed) { model.toggleCropping() } },
+                onApplyCrop: applyCropAction,
+                onCancelCrop: { withAnimation(.canvasMoveIfAllowed) { model.cancelCrop() } },
+                onNudgeCrop: model.nudgeCrop(by:),
                 isCropping: { model.isCropping },
                 onCopyColor: probe.copyHovered,
                 onPaste: {
@@ -338,7 +339,7 @@ struct AnnotationEditorWindow: View {
 
         Button {
             clearInspectorFocus()
-            withAnimation(.snappy(duration: 0.18)) { model.resetCrop() }
+            withAnimation(.canvasMoveIfAllowed) { model.resetCrop() }
         } label: {
             Text("Reset").padding(.horizontal, 6)
         }
@@ -360,24 +361,26 @@ struct AnnotationEditorWindow: View {
             get: { model.cropAspect },
             set: { newValue in
                 clearInspectorFocus()
-                withAnimation(.snappy(duration: 0.18)) { model.setCropAspect(newValue) }
+                withAnimation(.canvasMoveIfAllowed) { model.setCropAspect(newValue) }
             }
         )
     }
 
     private func enterCrop() {
         clearInspectorFocus()
-        withAnimation(.snappy(duration: 0.22)) { model.beginCropping() }
+        withAnimation(.canvasMoveIfAllowed) { model.beginCropping() }
     }
 
     private func exitCrop() {
         clearInspectorFocus()
-        withAnimation(.snappy(duration: 0.22)) { model.cancelCrop() }
+        withAnimation(.canvasMoveIfAllowed) { model.cancelCrop() }
     }
 
     private func applyCropAction() {
         clearInspectorFocus()
-        withAnimation(.snappy(duration: 0.22)) { model.applyCrop() }
+        // Not animated: the crop first lands where its box was, and the canvas
+        // animates the fit from there (`canvasRevealID`).
+        model.applyCrop()
     }
 
     private var mainContent: some View {
@@ -797,7 +800,7 @@ struct AnnotationEditorToolCommands: View {
             }
             Divider()
             Button(editor.isCropping ? "Cancel Crop" : "Crop") {
-                withAnimation(.snappy(duration: 0.2)) { editor.toggleCropping() }
+                withAnimation(.canvasMoveIfAllowed) { editor.toggleCropping() }
             }
             .keyboardShortcut("c", modifiers: [])
             .disabled(editor.imageSize == .zero)

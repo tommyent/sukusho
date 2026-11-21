@@ -9,7 +9,10 @@ import SwiftUI
 private enum AnnotationCanvasCursor: Equatable {
     case arrow
     case placement
+    case openHand
+    case closedHand
     case crosshair
+    case resize(CropHandle)
 
     var nsCursor: NSCursor {
         switch self {
@@ -17,8 +20,29 @@ private enum AnnotationCanvasCursor: Equatable {
             .arrow
         case .placement:
             .annotationPlus
+        case .openHand:
+            .openHand
+        case .closedHand:
+            .closedHand
         case .crosshair:
             .crosshair
+        case .resize(let handle):
+            .frameResize(position: handle.frameResizePosition, directions: .all)
+        }
+    }
+}
+
+extension CropHandle {
+    var frameResizePosition: NSCursor.FrameResizePosition {
+        switch self {
+        case .topLeft: .topLeft
+        case .top: .top
+        case .topRight: .topRight
+        case .left: .left
+        case .right: .right
+        case .bottomLeft: .bottomLeft
+        case .bottom: .bottom
+        case .bottomRight: .bottomRight
         }
     }
 }
@@ -31,6 +55,8 @@ struct AnnotationCanvas: View {
     @Environment(\.displayScale) private var displayScale
     @Environment(PixelProbe.self) private var probe: PixelProbe?
     @State private var hasActiveInteraction = false
+    /// The active drag began in crop mode, so it ends there too.
+    @State private var isCropGesture = false
     /// A click that picked a colour, cropped or landed while measuring, kept
     /// from the drawing tools until the mouse comes up.
     @State private var swallowsPress = false
@@ -162,6 +188,24 @@ struct AnnotationCanvas: View {
             .onChange(of: viewport.layout, initial: true) { _, layout in
                 if let layout { model.canvasViewport.configure(layout) }
             }
+            // The model has placed the image where it already shows; this
+            // update rendered that, so the fit animates from it.
+            .onChange(of: model.canvasRevealID) { _, _ in
+                withAnimation(.canvasMoveIfAllowed) { model.fitCanvas() }
+            }
+            // Auto-scroll for a crop drag held near the viewport's edge.
+            .task(id: model.isCropDragging) {
+                guard model.isCropDragging else { return }
+                let clock = ContinuousClock()
+                var last = clock.now
+                while !Task.isCancelled, model.isCropDragging {
+                    try? await Task.sleep(for: .milliseconds(16))
+                    let now = clock.now
+                    let elapsed = (now - last) / .seconds(1)
+                    last = now
+                    model.autoscrollCropDrag(elapsed: min(elapsed, 0.05))
+                }
+            }
             .onContinuousHover { phase in
                 switch phase {
                 case .active(let location):
@@ -198,7 +242,12 @@ struct AnnotationCanvas: View {
             .onChange(of: model.selectionCount) { _, _ in
                 refreshCursor(imageFrame: imageFrame, boundaryFrame: boundaryFrame)
             }
+            .onChange(of: model.isCropping) { _, _ in
+                refreshCursor(imageFrame: imageFrame, boundaryFrame: boundaryFrame)
+            }
             .onDisappear {
+                model.endCropDrag()
+                isCropGesture = false
                 model.endCanvasPinch()
                 setCursor(.arrow)
                 progressivelyBlurredImage = nil
@@ -226,7 +275,8 @@ struct AnnotationCanvas: View {
             viewportSize: size,
             displayScale: displayScale,
             fitInsets: CGSize(width: 34 + cropMargin, height: 28 + cropMargin),
-            topReserve: AnnotationToolDock.canvasReserve
+            topReserve: AnnotationToolDock.canvasReserve,
+            overscroll: cropMargin
         ))
         return viewport
     }
@@ -455,34 +505,47 @@ struct AnnotationCanvas: View {
             // then the spotlight, then the vector shapes and the selection chrome. Replaces the
             // per-item SwiftUI views, which each owned their own geometry and could not agree
             // with the exporter.
-            AnnoCanvasLayer(
+            AnimatedAnnoCanvasLayer(
                 editor: model.engine,
                 sourceImage: model.previewCGImage,
                 fullResolutionSource: probe?.image(for: model.previewCGImage),
                 imageFrame: imageFrame,
                 imageSize: model.imageSize,
-                spotlightClip: nil,
                 revision: model.revision
             )
             // Hit testing is declined everywhere except the text caret, so the drag gesture that
             // drives the engine still receives everything else.
             .frame(width: viewportSize.width, height: viewportSize.height)
 
-            if model.isCropping {
-                AnnotationCropOverlay(model: model, imageFrame: imageFrame)
-            } else if let probe, let axis = probe.measuring {
-                // Inside the camera's projection, so the ruler tilts with
-                // the image it measures.
-                PixelMeasureOverlay(probe: probe, axis: axis, imageFrame: imageFrame, pointer: hoveredLocation)
-            } else if let probe, probe.isMeasuringTool {
-                // The dock's ruler: a crosshair, both ways at once, under one label.
-                PixelMeasureOverlay(probe: probe, axis: .horizontal, imageFrame: imageFrame, pointer: hoveredLocation,
-                                    crossAxis: .vertical)
-            } else if let probe, probe.isPicking || probe.copiedHex != nil,
-                      let color = probe.hovered, let pointer = hoveredLocation {
-                PixelColorBadge(color: color, copied: probe.copiedHex != nil)
-                    .fixedSize()
-                    .position(x: pointer.x + 64, y: pointer.y - 22)
+            // Always mounted, so the box rides the image's move into and out
+            // of crop mode instead of appearing at its destination.
+            AnnotationCropOverlay(
+                model: model,
+                imageFrame: imageFrame,
+                visibleRect: CGRect(
+                    x: 0,
+                    y: AnnotationToolDock.canvasReserve,
+                    width: viewportSize.width,
+                    height: max(0, viewportSize.height - AnnotationToolDock.canvasReserve)
+                )
+            )
+            .animation(.canvasMoveIfAllowed) { $0.opacity(model.isCropping ? 1 : 0) }
+
+            if !model.isCropping {
+                if let probe, let axis = probe.measuring {
+                    // Inside the camera's projection, so the ruler tilts with
+                    // the image it measures.
+                    PixelMeasureOverlay(probe: probe, axis: axis, imageFrame: imageFrame, pointer: hoveredLocation)
+                } else if let probe, probe.isMeasuringTool {
+                    // The dock's ruler: a crosshair, both ways at once, under one label.
+                    PixelMeasureOverlay(probe: probe, axis: .horizontal, imageFrame: imageFrame, pointer: hoveredLocation,
+                                        crossAxis: .vertical)
+                } else if let probe, probe.isPicking || probe.copiedHex != nil,
+                          let color = probe.hovered, let pointer = hoveredLocation {
+                    PixelColorBadge(color: color, copied: probe.copiedHex != nil)
+                        .fixedSize()
+                        .position(x: pointer.x + 64, y: pointer.y - 22)
+                }
             }
         }
         .frame(width: viewportSize.width, height: viewportSize.height, alignment: .topLeading)
@@ -697,6 +760,19 @@ struct AnnotationCanvas: View {
     ) -> some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .local)
             .onChanged { value in
+                // Crop mode has no camera effect, so viewport points are used as is.
+                if isCropGesture || (!hasActiveInteraction && !swallowsPress && model.isCropping) {
+                    if !hasActiveInteraction {
+                        hasActiveInteraction = true
+                        isCropGesture = true
+                        onEditorInteraction()
+                        takeKeyboardFocusFromInspector()
+                        model.beginCropDrag(at: value.startLocation)
+                    }
+                    model.updateCropDrag(to: value.location)
+                    updateCursor(at: value.location, imageFrame: imageFrame, boundaryFrame: boundaryFrame)
+                    return
+                }
                 guard hasActiveInteraction || visibleCanvasFrame?.contains(value.startLocation) != false else {
                     return
                 }
@@ -725,6 +801,13 @@ struct AnnotationCanvas: View {
                     return
                 }
                 guard hasActiveInteraction else { return }
+                if isCropGesture {
+                    model.endCropDrag()
+                    isCropGesture = false
+                    hasActiveInteraction = false
+                    updateCursor(at: value.location, imageFrame: imageFrame, boundaryFrame: boundaryFrame)
+                    return
+                }
                 let location = projection.unproject(value.location)
                 model.endInteraction(at: location, imageFrame: imageFrame, boundaryFrame: boundaryFrame)
                 hasActiveInteraction = false
@@ -757,20 +840,23 @@ struct AnnotationCanvas: View {
     /// across and down, which the ruler measures too.
     private func cropToRegion(at location: CGPoint, imageFrame: CGRect) -> Bool {
         guard !model.isCropping, model.selectedTool == .select, NSEvent.modifierFlags.contains(.command),
-              let buffer = probe?.buffer, let pixel = buffer.pixel(at: location, imageFrame: imageFrame),
+              let buffer = probe?.buffer, buffer.width > 0, buffer.height > 0,
+              let pixel = buffer.pixel(at: location, imageFrame: imageFrame),
               let span = buffer.span(x: pixel.x, y: pixel.y) else { return false }
-        let width = CGFloat(buffer.width), height = CGFloat(buffer.height)
+        let scaleX = model.imageSize.width / CGFloat(buffer.width)
+        let scaleY = model.imageSize.height / CGFloat(buffer.height)
+        let region = CGRect(
+            x: CGFloat(span.horizontal.lowerBound) * scaleX,
+            y: CGFloat(span.vertical.lowerBound) * scaleY,
+            width: CGFloat(span.horizontal.count) * scaleX,
+            height: CGFloat(span.vertical.count) * scaleY
+        )
         onEditorInteraction()
         // Return and Escape must reach the crop, not a number field.
         takeKeyboardFocusFromInspector()
-        withAnimation(.snappy(duration: 0.22)) {
+        withAnimation(.canvasMoveIfAllowed) {
             model.beginCropping()
-            model.cropRect = CGRect(
-                x: CGFloat(span.horizontal.lowerBound) / width,
-                y: CGFloat(span.vertical.lowerBound) / height,
-                width: CGFloat(span.horizontal.count) / width,
-                height: CGFloat(span.vertical.count) / height
-            )
+            model.cropPixelRect = CropGeometry.snapped(region, in: model.cropBounds)
         }
         return true
     }
@@ -802,8 +888,8 @@ struct AnnotationCanvas: View {
     }
 
     private func updateCursor(at location: CGPoint, imageFrame: CGRect, boundaryFrame: CGRect) {
-        guard !model.isCropping else {
-            setCursor(.arrow)
+        if model.isCropping {
+            setCursor(cropCursor(at: location))
             return
         }
         guard boundaryFrame.contains(location) else {
@@ -827,9 +913,48 @@ struct AnnotationCanvas: View {
         }
     }
 
+    /// The drag's own cursor while dragging, so a fast pointer can't flicker
+    /// it through other zones; otherwise whatever a press would grab.
+    private func cropCursor(at location: CGPoint) -> AnnotationCanvasCursor {
+        switch model.cropDrag?.target ?? model.cropTarget(at: location) {
+        case .handle(let handle): .resize(handle)
+        case .move: model.isCropDragging ? .closedHand : .openHand
+        case .newSelection: .crosshair
+        }
+    }
+
     private func setCursor(_ cursor: AnnotationCanvasCursor) {
         guard currentCursor != cursor else { return }
         currentCursor = cursor
         cursor.nsCursor.set()
+    }
+}
+
+/// The annotation layer is AppKit, so SwiftUI cannot interpolate it. As an
+/// animatable view it receives every in-between frame of a canvas animation
+/// and draws the annotations with the image instead of at its destination.
+private struct AnimatedAnnoCanvasLayer: View, Animatable {
+    let editor: AnnoEditor
+    let sourceImage: CGImage?
+    let fullResolutionSource: CGImage?
+    var imageFrame: CGRect
+    let imageSize: CGSize
+    let revision: Int
+
+    var animatableData: CGRect.AnimatableData {
+        get { imageFrame.animatableData }
+        set { imageFrame.animatableData = newValue }
+    }
+
+    var body: some View {
+        AnnoCanvasLayer(
+            editor: editor,
+            sourceImage: sourceImage,
+            fullResolutionSource: fullResolutionSource,
+            imageFrame: imageFrame,
+            imageSize: imageSize,
+            spotlightClip: nil,
+            revision: revision
+        )
     }
 }

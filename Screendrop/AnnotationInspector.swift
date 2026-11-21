@@ -440,7 +440,7 @@ private struct AnnotationCropControls: View {
                         get: { model.cropAspect },
                         set: { aspect in
                             onEditorAction()
-                            withAnimation(.snappy(duration: 0.18)) { model.setCropAspect(aspect) }
+                            withAnimation(.canvasMoveIfAllowed) { model.setCropAspect(aspect) }
                         }
                     )) {
                         ForEach(CropAspectRatio.allCases) { Text($0.title).tag($0) }
@@ -469,7 +469,7 @@ private struct AnnotationCropControls: View {
 
                 InspectorActionButton("Reset", systemImage: "arrow.counterclockwise") {
                     onEditorAction()
-                    withAnimation(.snappy(duration: 0.18)) { model.resetCrop() }
+                    withAnimation(.canvasMoveIfAllowed) { model.resetCrop() }
                 }
                 .help("Reset the selection to the whole image")
             }
@@ -477,13 +477,15 @@ private struct AnnotationCropControls: View {
             HStack(spacing: 6) {
                 InspectorActionButton("Cancel", systemImage: "xmark") {
                     onEditorAction()
-                    withAnimation(.snappy(duration: 0.22)) { model.cancelCrop() }
+                    withAnimation(.canvasMoveIfAllowed) { model.cancelCrop() }
                 }
                 .help("Leave Crop without cropping (Escape)")
 
                 Button {
                     onEditorAction()
-                    withAnimation(.snappy(duration: 0.22)) { model.applyCrop() }
+                    // Not animated: the crop first lands where its box was,
+                    // and the canvas animates the fit from there.
+                    model.applyCrop()
                 } label: {
                     Label("Crop", systemImage: "crop")
                         .font(.inspectorValue.weight(.semibold))
