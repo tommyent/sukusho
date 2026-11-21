@@ -922,6 +922,46 @@ struct StudioAudioTests {
         #expect(abs(p2.start - 1.0) < 0.002)
     }
 
+    @Test func spliceBetweenDifferentFilesAtMatchingTimesStillReceivesCutRamps() async throws {
+        let dir = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fileA = try makeTone(in: dir, name: "fileA", frequency: 440, amplitude: 0.4, duration: 4.0)
+        let fileB = try makeTone(in: dir, name: "fileB", frequency: 880, amplitude: 0.4, duration: 4.0)
+
+        var clipA = RecordingAudioClip(fileName: fileA.lastPathComponent, displayName: "A", start: 0, fileDuration: 4.0)
+        clipA.trimStart = 0
+        clipA.trimEnd = 2.0
+        var clipB = RecordingAudioClip(fileName: fileB.lastPathComponent, displayName: "B", start: 2.0, fileDuration: 4.0)
+        clipB.trimStart = 2.0
+        clipB.trimEnd = 4.0
+
+        let timeline = RecordingClipTimeline.full(sourceDuration: 4.0)
+        let sources = try await StudioAudioSources.load(
+            screenAsset: AVURLAsset(url: fileA),
+            replacementURL: nil,
+            clips: [clipA, clipB],
+            mediaDirectory: dir
+        )
+        let plan = StudioAudioPlan(timeline: timeline, sync: nil, clips: [clipA, clipB], volume: 1)
+        let (_, layout) = StudioAudioComposer.makeComposition(plan: plan, sources: sources)
+        let clipTrackID = try #require(layout.placements.first { $0.owner == .clip(clipA.id) }?.trackID)
+        let spans = try #require(StudioAudioComposer.envelopeSpans(for: layout, plan: plan)[clipTrackID])
+        // Both edgeOut on A (ending at 2.0) and edgeIn on B (starting at 2.0) must exist!
+        let rampOut = spans.first { abs($0.end - 2.0) < 0.001 && $0.endGain == 0 && $0.startGain == 1 }
+        let rampIn = spans.first { abs($0.start - 2.0) < 0.001 && $0.startGain == 0 && $0.endGain == 1 }
+        #expect(rampOut != nil)
+        #expect(rampIn != nil)
+
+        // Contrast: two contiguous pieces of the SAME file have no cut ramps at 2.0.
+        var clipA2 = RecordingAudioClip(fileName: fileA.lastPathComponent, displayName: "A2", start: 2.0, fileDuration: 4.0)
+        clipA2.trimStart = 2.0
+        clipA2.trimEnd = 4.0
+        let samePlan = StudioAudioPlan(timeline: timeline, sync: nil, clips: [clipA, clipA2], volume: 1)
+        let (_, sameLayout) = StudioAudioComposer.makeComposition(plan: samePlan, sources: sources)
+        let sameTrackID = try #require(sameLayout.placements.first { $0.owner == .clip(clipA.id) }?.trackID)
+        #expect(StudioAudioComposer.envelopeSpans(for: sameLayout, plan: samePlan)[sameTrackID] == nil)
+    }
+
     // MARK: - Helpers
 
     private func makeDirectory() throws -> URL {

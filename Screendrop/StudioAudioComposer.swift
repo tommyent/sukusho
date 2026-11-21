@@ -236,6 +236,9 @@ nonisolated struct StudioAudioLayout: Sendable {
         /// continue each other can be told from a real cut.
         var mediaStart: TimeInterval = 0
         var mediaEnd: TimeInterval = 0
+        /// Source asset and track identity so splices between two different
+        /// files at matching times still receive cut ramps.
+        var sourceIdentity: String = ""
     }
 
     var placements: [Placement] = []
@@ -719,7 +722,8 @@ nonisolated enum StudioAudioComposer {
                     end: (at + placedDuration).seconds,
                     owner: owner,
                     mediaStart: available.start.seconds,
-                    mediaEnd: available.end.seconds
+                    mediaEnd: available.end.seconds,
+                    sourceIdentity: "\(ObjectIdentifier(source.asset)):\(source.track.trackID)"
                 ))
             }
         }
@@ -735,15 +739,18 @@ nonisolated enum StudioAudioComposer {
         var fadeOut: TimeInterval = 0
         var mediaStart: TimeInterval = 0
         var mediaEnd: TimeInterval = 0
+        var sourceIdentity: String = ""
         /// The ramps a cut adds at either end; see `cutRamp`.
         var edgeIn: TimeInterval = 0
         var edgeOut: TimeInterval = 0
 
-        /// Whether this picks up exactly where `previous` left off, in the
-        /// timeline and in the file, at the same level, with no fade between.
+        /// Whether this picks up exactly where `previous` left off, from the
+        /// same source asset/track, in the timeline and in the file, at the
+        /// same level, with no fade between.
         func continues(from previous: Gain?) -> Bool {
             guard let previous else { return false }
-            return abs(previous.end - start) < 0.002
+            return previous.sourceIdentity == sourceIdentity
+                && abs(previous.end - start) < 0.002
                 && abs(previous.mediaEnd - mediaStart) < 0.002
                 && abs(previous.level - level) < 0.000_1
                 && previous.fadeOut < 0.01 && fadeIn < 0.01
@@ -770,6 +777,7 @@ nonisolated enum StudioAudioComposer {
             var gain = Gain(start: placement.start, end: placement.end, level: 1)
             gain.mediaStart = placement.mediaStart
             gain.mediaEnd = placement.mediaEnd
+            gain.sourceIdentity = placement.sourceIdentity
             switch placement.owner {
             case .segment(let id):
                 gain.level = (segments[id]?.audibleVolume ?? 1) * projectVolume
