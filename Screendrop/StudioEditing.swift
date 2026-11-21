@@ -92,6 +92,19 @@ nonisolated struct StudioPlayerItemGate: Equatable, Sendable {
         token == generation && isShowingSourcePreview
     }
 
+    /// Handles a runtime player-item failure. When the temporary source-preview
+    /// item fails, preserves `isCutReady` (keeping the saved redacted cut intact
+    /// for release) and returns `true`. When the real cut item fails, invalidates
+    /// the gate and returns `false`.
+    mutating func handleRuntimeItemFailure() -> Bool {
+        if isShowingSourcePreview {
+            generation &+= 1
+            return true
+        }
+        invalidate()
+        return false
+    }
+
     /// Ends direct source preview, returning true when the saved cut item
     /// should be restored onto the player.
     mutating func endSourcePreview() -> Bool {

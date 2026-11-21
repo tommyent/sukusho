@@ -149,7 +149,14 @@ final class RecordingStudioModel {
     var selectedRedactionID: UUID?
     private(set) var isSelectingRedaction = false
     private(set) var isPreparingRedactionPreview = false
-    private(set) var redactionPreviewError: String?
+    private(set) var cutRedactionPreviewError: String?
+    /// Transient error from a temporary redacted source-asset trim preview.
+    /// Kept separate from `cutRedactionPreviewError` so releasing the trim
+    /// restores the valid redacted cut cleanly without leaving the canvas blocked.
+    private(set) var trimSourcePreviewError: String?
+    var redactionPreviewError: String? {
+        trimSourcePreviewError ?? cutRedactionPreviewError
+    }
     private(set) var redactionEditError: String?
     var isEditingSourceRegion: Bool { isCroppingVideo || isSelectingRedaction }
     private var playerItemTask: Task<Void, Never>?
@@ -1036,6 +1043,8 @@ final class RecordingStudioModel {
         playerItemGate.invalidate()
         readyCutPlayerItem = nil
         activeTrimSourcePreviewTime = nil
+        trimSourcePreviewError = nil
+        cutRedactionPreviewError = nil
         playerItemTask?.cancel()
         playerItemTask = nil
         clearRedactionObservers()
@@ -1711,6 +1720,7 @@ final class RecordingStudioModel {
             return
         }
         // Never expose an unmasked source frame while redactions build.
+        trimSourcePreviewError = nil
         isPreparingRedactionPreview = true
         replaceScreenPlayerItem(nil, observeRedactionFailure: false)
         let regions = redactions
@@ -1734,7 +1744,7 @@ final class RecordingStudioModel {
                       self.playerItemGate.finishSourcePreview(generation: generation) else { return }
                 self.playerItemTask = nil
                 self.isPreparingRedactionPreview = false
-                self.redactionPreviewError = error.localizedDescription
+                self.trimSourcePreviewError = error.localizedDescription
             }
         }
     }
@@ -1742,6 +1752,7 @@ final class RecordingStudioModel {
     @discardableResult
     private func endTrimSourcePreview(restoreItem: Bool) -> Bool {
         activeTrimSourcePreviewTime = nil
+        trimSourcePreviewError = nil
         let shouldRestore = playerItemGate.endSourcePreview()
         guard shouldRestore else { return false }
         playerItemTask?.cancel()
@@ -2023,8 +2034,9 @@ final class RecordingStudioModel {
         playerItemTask?.cancel()
         playerItemTask = nil
         activeTrimSourcePreviewTime = nil
+        trimSourcePreviewError = nil
         readyCutPlayerItem = nil
-        redactionPreviewError = nil
+        cutRedactionPreviewError = nil
         let generation = playerItemGate.beginCutBuild(isAsync: !redactions.isEmpty)
         let item = AVPlayerItem(asset: playbackAsset)
         if redactions.isEmpty {
@@ -2055,7 +2067,7 @@ final class RecordingStudioModel {
                     guard let self, !Task.isCancelled,
                           self.playerItemGate.generation == generation else { return }
                     self.playerItemTask = nil
-                    self.redactionPreviewError = error.localizedDescription
+                    self.cutRedactionPreviewError = error.localizedDescription
                     self.isPreparingRedactionPreview = false
                 }
             }
@@ -2083,11 +2095,18 @@ final class RecordingStudioModel {
     private func coverFailedRedactionPreview() {
         pause()
         isPreparingRedactionPreview = false
-        redactionPreviewError = RecordingRedactionError.filterFailed.localizedDescription
-        playerItemGate.invalidate()
-        readyCutPlayerItem = nil
-        activeTrimSourcePreviewTime = nil
-        replaceScreenPlayerItem(nil, observeRedactionFailure: false)
+        if playerItemGate.handleRuntimeItemFailure() {
+            // A temporary source-preview item failed: keep the canvas covered
+            // while the drag is active, but preserve `readyCutPlayerItem` and
+            // `cutRedactionPreviewError` so releasing restores the valid cut.
+            trimSourcePreviewError = RecordingRedactionError.filterFailed.localizedDescription
+            replaceScreenPlayerItem(nil, observeRedactionFailure: false)
+        } else {
+            cutRedactionPreviewError = RecordingRedactionError.filterFailed.localizedDescription
+            readyCutPlayerItem = nil
+            activeTrimSourcePreviewTime = nil
+            replaceScreenPlayerItem(nil, observeRedactionFailure: false)
+        }
     }
 
     /// A small frame from early in the recording, for the Styles tiles.
@@ -3553,7 +3572,7 @@ final class RecordingStudioModel {
         if let session { ScreenshotPreviewStack.shared.dismissRecordingSession(session.directoryURL) }
         RecordingProjectStore.shared.reload()
         do { try rebuildScreenPlayerItem(preserving: currentTime) }
-        catch { redactionPreviewError = error.localizedDescription }
+        catch { cutRedactionPreviewError = error.localizedDescription }
         loadTimelineThumbnails()
         loadStylePoster()
     }

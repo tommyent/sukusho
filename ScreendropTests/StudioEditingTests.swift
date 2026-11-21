@@ -1060,6 +1060,23 @@ struct StudioEditingTests {
         let restored = gate.endSourcePreview()
         #expect(restored)
         #expect(!gate.isShowingSourcePreview && gate.isCutReady)
+
+        // Runtime failure on a temporary redacted source-preview item preserves isCutReady
+        // so releasing the trim restores the valid redacted cut; a real cut failure invalidates it.
+        let rawSourceGen3 = gate.beginSourcePreview(isAsync: true)
+        let sourceGen3 = try #require(rawSourceGen3)
+        let finish3 = gate.finishSourcePreview(generation: sourceGen3)
+        #expect(finish3)
+        let wasSourceFailure = gate.handleRuntimeItemFailure()
+        #expect(wasSourceFailure)
+        #expect(gate.isCutReady && gate.isShowingSourcePreview)
+        let restoredAfterSourceFailure = gate.endSourcePreview()
+        #expect(restoredAfterSourceFailure)
+        #expect(!gate.isShowingSourcePreview && gate.isCutReady)
+
+        let wasCutFailureHandledAsSource = gate.handleRuntimeItemFailure()
+        #expect(!wasCutFailureHandledAsSource)
+        #expect(!gate.isCutReady)
     }
 
     private func writeSolidColorMovie(
