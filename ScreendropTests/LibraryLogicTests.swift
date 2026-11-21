@@ -309,4 +309,22 @@ struct LibraryLogicTests {
         let nan = LibraryUploadProgress(progress: .nan, title: "Uploading…")
         #expect(nan.fraction == 0 && nan.label == "Uploading…")
     }
+
+    @Test func statFileMetadataMatchesFoundationResourceValuesBitForBit() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("shot.png")
+        let payload = Data("synthetic capture bytes".utf8)
+        try payload.write(to: file)
+
+        let meta = try #require(ScreendropStorage.fileMetadata(at: file))
+        let values = try file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        let expectedDate = try #require(values.contentModificationDate)
+        #expect(meta.size == Int64(payload.count))
+        #expect(meta.size == Int64(try #require(values.fileSize)))
+        #expect(meta.modified == expectedDate)
+        #expect(meta.modified.timeIntervalSince1970 == expectedDate.timeIntervalSince1970)
+        #expect(ScreendropStorage.fileMetadata(at: folder.appendingPathComponent("missing.png")) == nil)
+    }
 }

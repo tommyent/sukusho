@@ -395,9 +395,7 @@ nonisolated enum CaptureLibraryScanner {
             let createdAt = manifest?.createdAt ?? row?.createdAt
                 ?? (try? session.directoryURL.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
             let fileURL = session.deliverableURL
-            func modificationDate(_ url: URL) -> Date? {
-                try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
-            }
+            let modificationDate: (URL) -> Date? = { ScreendropStorage.fileMetadata(at: $0)?.modified }
             // What the recording shows: a rename, a tag or opening Studio (all
             // in project.json) changes neither its thumbnail nor its text.
             let edited = [session.editDocumentURL, session.draftDocumentURL].compactMap(modificationDate).max()
@@ -421,9 +419,7 @@ nonisolated enum CaptureLibraryScanner {
         for row in history where row.sessionPath == nil {
             guard !Task.isCancelled else { return ([], false) }
             let url = historyDirectory.appendingPathComponent(row.fileName)
-            guard FileManager.default.fileExists(atPath: url.path) else { continue }
-            let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
-                ?? row.modifiedAt
+            guard let modified = ScreendropStorage.fileMetadata(at: url)?.modified else { continue }
             entries.append(CaptureLibraryItem(
                 id: row.id.uuidString, historyIDs: [row.id], name: row.name, customName: row.customName, fileURL: url, session: nil,
                 createdAt: row.createdAt, modifiedAt: max(modified, row.modifiedAt), pixelWidth: row.width,

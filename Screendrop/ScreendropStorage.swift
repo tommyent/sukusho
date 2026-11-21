@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// Keep development files and credentials separate from the personal app.
@@ -70,6 +71,22 @@ nonisolated enum ScreendropStorage {
         } catch let error as NSError where error.domain == NSCocoaErrorDomain && error.code == NSFileReadNoSuchFileError {
             return []
         }
+    }
+
+    /// File size and modification date via `stat(2)`, or nil when missing.
+    /// `URL.resourceValues` permanently attaches a `_FileCache` to every URL
+    /// the Library keeps; `stat` leaves nothing behind. The date is constructed
+    /// as Foundation constructs `contentModificationDate`, so thumbnail and
+    /// index keys match bit-for-bit.
+    static func fileMetadata(at url: URL) -> (size: Int64, modified: Date)? {
+        var info = stat()
+        guard stat(url.path, &info) == 0 else { return nil }
+        let modified = Date(
+            timeIntervalSinceReferenceDate: Double(info.st_mtimespec.tv_sec)
+                - Date.timeIntervalBetween1970AndReferenceDate
+                + 1.0e-9 * Double(info.st_mtimespec.tv_nsec)
+        )
+        return (info.st_size, modified)
     }
 
     private static var supportBaseDirectory: URL {

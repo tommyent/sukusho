@@ -13,6 +13,8 @@ actor CaptureLibraryThumbnails {
     private var requestsSinceTrim = 0
     private var running = 0
     private var waiters: [(UUID, CheckedContinuation<Bool, Never>)] = []
+    /// Bumped on `removeAll()` so decodes already in flight don't repopulate the cache after close.
+    private var cacheGeneration = 0
 
     init(disk: CaptureThumbnailDiskCache = .shared) {
         self.disk = disk
@@ -37,10 +39,8 @@ actor CaptureLibraryThumbnails {
     /// avoiding a full-resolution PNG decode when the Library or preview reads it.
     func seed(_ image: CGImage, for url: URL, maxPixelSize: Int = 640) {
         let size = Self.bucket(for: CGFloat(maxPixelSize))
-        var resourceURL = url
-        resourceURL.removeAllCachedResourceValues()
-        guard let values = try? resourceURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) else { return }
-        let version = "v4:\(url.path):\(values.fileSize ?? 0):\(values.contentModificationDate?.timeIntervalSince1970 ?? 0):::\(size)"
+        guard let meta = ScreendropStorage.fileMetadata(at: url) else { return }
+        let version = "v4:\(url.path):\(meta.size):\(meta.modified.timeIntervalSince1970):::\(size)"
         let filename = disk.url(for: version, source: url).lastPathComponent
         cache.setObject(image, forKey: filename as NSString, cost: image.bytesPerRow * image.height)
         let disk = disk
@@ -48,6 +48,13 @@ actor CaptureLibraryThumbnails {
             autoreleasepool { disk.store(image, for: version, source: url) }
         }
     }
+
+    /// Drops every decoded thumbnail, for when nothing on screen shows them.
+    func removeAll() {
+        cacheGeneration &+= 1
+        cache.removeAllObjects()
+    }
+
     private func image(at url: URL, owner: URL, isVideo: Bool, version: String, maxPixelSize: Int, top: Bool) async -> CGImage? {
         guard !Task.isCancelled else { return nil }
         let preview: RecordingPreviewSource?
@@ -55,11 +62,8 @@ actor CaptureLibraryThumbnails {
         catch { return nil }
         let url = preview?.url ?? url
         let size = Self.bucket(for: CGFloat(maxPixelSize))
-        var resourceURL = url
-        // A reused URL can still hold the old stat values after an editor save.
-        resourceURL.removeAllCachedResourceValues()
-        guard let values = try? resourceURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) else { return nil }
-        let version = "v4:\(url.path):\(values.fileSize ?? 0):\(values.contentModificationDate?.timeIntervalSince1970 ?? 0):\(isVideo ? version : ""):\(preview?.revision ?? ""):\(size)\(top ? ":top" : "")"
+        guard let meta = ScreendropStorage.fileMetadata(at: url) else { return nil }
+        let version = "v4:\(url.path):\(meta.size):\(meta.modified.timeIntervalSince1970):\(isVideo ? version : ""):\(preview?.revision ?? ""):\(size)\(top ? ":top" : "")"
         let filename = disk.url(for: version, source: owner).lastPathComponent
         let key = filename as NSString
         if let image = cache.object(forKey: key) { return image }
@@ -78,6 +82,7 @@ actor CaptureLibraryThumbnails {
             return Task.isCancelled || !FileManager.default.fileExists(atPath: url.path) ? nil : result
         }
         let disk = disk
+        let generation = cacheGeneration
         let shouldTrim = requestsSinceTrim % 32 == 0
         requestsSinceTrim += 1
         let decode = Task.detached(priority: .utility) { () -> CGImage? in
@@ -93,7 +98,9 @@ actor CaptureLibraryThumbnails {
         let result = await decode.value
         inFlight[filename] = nil
         guard let result, FileManager.default.fileExists(atPath: url.path) else { return nil }
-        cache.setObject(result, forKey: key, cost: result.bytesPerRow * result.height)
+        if generation == cacheGeneration {
+            cache.setObject(result, forKey: key, cost: result.bytesPerRow * result.height)
+        }
         return Task.isCancelled ? nil : result
     }
 

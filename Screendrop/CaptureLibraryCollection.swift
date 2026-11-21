@@ -159,6 +159,15 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
         if collection.selectionIndexPaths != paths { collection.selectionIndexPaths = paths }
     }
 
+    static func dismantleNSView(_ scrollView: NSScrollView, coordinator: Coordinator) {
+        if let collection = coordinator.collection {
+            collection.dataSource = nil
+            collection.delegate = nil
+        }
+        coordinator.collection = nil
+        scrollView.documentView = nil
+    }
+
     final class Coordinator: NSObject, NSCollectionViewDataSource, NSCollectionViewDelegate {
         var parent: CaptureLibraryCollection
         weak var collection: LibraryCollectionView?
@@ -353,6 +362,8 @@ final class LibraryCollectionView: NSCollectionView, NSUserInterfaceValidations 
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         if let pressMonitor { NSEvent.removeMonitor(pressMonitor) }
         pressMonitor = nil
+        pendingRename?.cancel()
+        pendingRename = nil
         setPressed(nil)
         super.viewWillMove(toWindow: newWindow)
         guard let newWindow else { return }

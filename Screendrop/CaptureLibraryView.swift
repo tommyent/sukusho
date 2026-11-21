@@ -2,7 +2,38 @@ import AppKit
 import QuartzCore
 import SwiftUI
 
+/// The Library's scene keeps its window, and the view tree inside it, after
+/// the window closes. Swapping the content out on close frees the grid's
+/// cells, Core Animation layers and decoded thumbnails until it opens again.
+struct CaptureLibraryWindow: View {
+    @State private var isOpen = true
+    @State private var handledInitialWindowPlacement = false
+    @State private var hostWindow = WeakWindow()
+
+    var body: some View {
+        Group {
+            if isOpen {
+                CaptureLibraryView(handledInitialWindowPlacement: $handledInitialWindowPlacement)
+            } else {
+                Color.clear
+            }
+        }
+        .onAppear { isOpen = true }
+        .onWindowChange { hostWindow.window = $0 }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+            guard let key = notification.object as? NSWindow, key === hostWindow.window, !isOpen else { return }
+            isOpen = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { notification in
+            guard let closing = notification.object as? NSWindow, closing === hostWindow.window else { return }
+            isOpen = false
+            Task { await CaptureLibraryThumbnails.shared.removeAll() }
+        }
+    }
+}
+
 struct CaptureLibraryView: View {
+    @Binding var handledInitialWindowPlacement: Bool
     @State private var model = CaptureLibraryModel.shared
     @State private var cloud = CloudLibraryModel.shared
     @State private var comments = CommentsLibraryModel.shared
@@ -14,7 +45,6 @@ struct CaptureLibraryView: View {
     @State private var projects = RecordingProjectStore.shared
     @State private var libraryWindow: NSWindow?
     @State private var searchFocusRequest = 0
-    @State private var handledInitialWindowPlacement = false
     @State private var glassMetrics = GlassWindowButtonMetrics.fallback
     @State private var columnVisibility = NavigationSplitViewVisibility.automatic
     private static let inspectorKey = "captureLibrary.inspectorVisible"
@@ -116,14 +146,17 @@ struct CaptureLibraryView: View {
             // Every theme: SwiftUI can open at the Library's previous minimum size despite the scene's default. Sized
             // once as the window arrives (after SwiftUI's own sizing this turn), not on a later key event, which could
             // come only after the user clicked away and back, and jump the window then.
-            if let window, !handledInitialWindowPlacement {
+            if let window {
                 DispatchQueue.main.async {
-                    guard libraryWindow === window, !handledInitialWindowPlacement else { return }
-                    defer { handledInitialWindowPlacement = true }
-                    guard let screen = (window.screen ?? NSScreen.main)?.visibleFrame else { return }
-                    let size = CGSize(width: min(1180, screen.width), height: min(760, screen.height))
-                    window.setFrame(CGRect(x: screen.midX - size.width / 2, y: screen.midY - size.height / 2,
-                                           width: size.width, height: size.height), display: true)
+                    guard libraryWindow === window else { return }
+                    if !handledInitialWindowPlacement {
+                        handledInitialWindowPlacement = true
+                        if let screen = (window.screen ?? NSScreen.main)?.visibleFrame {
+                            let size = CGSize(width: min(1180, screen.width), height: min(760, screen.height))
+                            window.setFrame(CGRect(x: screen.midX - size.width / 2, y: screen.midY - size.height / 2,
+                                                   width: size.width, height: size.height), display: true)
+                        }
+                    }
                     // SwiftUI can promote the toolbar search field while installing the window.
                     if let grid = window.initialFirstResponder as? LibraryCollectionView {
                         window.makeFirstResponder(grid)
