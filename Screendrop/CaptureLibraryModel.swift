@@ -419,7 +419,7 @@ nonisolated enum CaptureLibraryScanner {
         for row in history where row.sessionPath == nil {
             guard !Task.isCancelled else { return ([], false) }
             let url = historyDirectory.appendingPathComponent(row.fileName)
-            guard let modified = ScreendropStorage.fileMetadata(at: url)?.modified else { continue }
+            guard let modified = ScreendropStorage.fileMetadata(at: url, requireTarget: true)?.modified else { continue }
             entries.append(CaptureLibraryItem(
                 id: row.id.uuidString, historyIDs: [row.id], name: row.name, customName: row.customName, fileURL: url, session: nil,
                 createdAt: row.createdAt, modifiedAt: max(modified, row.modifiedAt), pixelWidth: row.width,

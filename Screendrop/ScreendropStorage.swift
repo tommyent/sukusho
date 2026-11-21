@@ -73,14 +73,19 @@ nonisolated enum ScreendropStorage {
         }
     }
 
-    /// File size and modification date via `stat(2)`, or nil when missing.
-    /// `URL.resourceValues` permanently attaches a `_FileCache` to every URL
-    /// the Library keeps; `stat` leaves nothing behind. The date is constructed
-    /// as Foundation constructs `contentModificationDate`, so thumbnail and
-    /// index keys match bit-for-bit.
-    static func fileMetadata(at url: URL) -> (size: Int64, modified: Date)? {
+    /// File size and modification date via `lstat(2)`, or nil when missing.
+    /// `URL.resourceValues` reads a symlink's own attributes and permanently
+    /// attaches a `_FileCache` to every URL the Library keeps; `lstat` matches
+    /// Foundation's values bit-for-bit and leaves nothing behind. When
+    /// `requireTarget` is true, broken symlinks return nil (matching
+    /// `FileManager.fileExists(atPath:)`).
+    static func fileMetadata(at url: URL, requireTarget: Bool = false) -> (size: Int64, modified: Date)? {
         var info = stat()
-        guard stat(url.path, &info) == 0 else { return nil }
+        guard lstat(url.path, &info) == 0 else { return nil }
+        if requireTarget, (info.st_mode & S_IFMT) == S_IFLNK {
+            var target = stat()
+            guard stat(url.path, &target) == 0 else { return nil }
+        }
         let modified = Date(
             timeIntervalSinceReferenceDate: Double(info.st_mtimespec.tv_sec)
                 - Date.timeIntervalBetween1970AndReferenceDate

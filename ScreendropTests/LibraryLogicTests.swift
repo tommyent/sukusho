@@ -317,6 +317,8 @@ struct LibraryLogicTests {
         let file = folder.appendingPathComponent("shot.png")
         let payload = Data("synthetic capture bytes".utf8)
         try payload.write(to: file)
+        // Give the target a distinct older modification date than a symlink pointing at it.
+        try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 1_700_000_000)], ofItemAtPath: file.path)
 
         let meta = try #require(ScreendropStorage.fileMetadata(at: file))
         let values = try file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
@@ -326,5 +328,21 @@ struct LibraryLogicTests {
         #expect(meta.modified == expectedDate)
         #expect(meta.modified.timeIntervalSince1970 == expectedDate.timeIntervalSince1970)
         #expect(ScreendropStorage.fileMetadata(at: folder.appendingPathComponent("missing.png")) == nil)
+
+        // A valid symlink must match Foundation's link timestamp (not the target's) and pass requireTarget.
+        let link = folder.appendingPathComponent("linked-shot.png")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: file)
+        let linkMeta = try #require(ScreendropStorage.fileMetadata(at: link, requireTarget: true))
+        let linkValues = try link.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        let expectedLinkDate = try #require(linkValues.contentModificationDate)
+        #expect(linkMeta.modified != expectedDate)
+        #expect(linkMeta.modified == expectedLinkDate)
+        #expect(linkMeta.modified.timeIntervalSince1970 == expectedLinkDate.timeIntervalSince1970)
+        #expect(linkMeta.size == Int64(try #require(linkValues.fileSize)))
+
+        // A broken symlink is ignored when target existence is required.
+        let broken = folder.appendingPathComponent("broken.png")
+        try FileManager.default.createSymbolicLink(at: broken, withDestinationURL: folder.appendingPathComponent("gone.png"))
+        #expect(ScreendropStorage.fileMetadata(at: broken, requireTarget: true) == nil)
     }
 }
