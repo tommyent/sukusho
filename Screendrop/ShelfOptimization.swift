@@ -122,7 +122,9 @@ final class ShelfOptimization {
                 files.map { (try? FileManager.default.attributesOfItem(atPath: $0.path)[.size] as? NSNumber)?.int64Value ?? 0 }
             }
             guard let self else { return }
-            for (index, size) in sizes.enumerated() where index < self.rows.count && self.rows[index].file == files[index] {
+            for (index, size) in sizes.enumerated()
+            where index < self.rows.count && self.rows[index].file == files[index]
+                && (!self.rows[index].isSettled || self.rows[index].bytes == 0) {
                 self.rows[index].bytes = size
             }
         }
@@ -228,7 +230,7 @@ final class ShelfOptimization {
     }
 
     private func record(_ result: ImageOptimizationResult, at index: Int) {
-        if rows[index].bytes == 0, result.originalByteCount > 0 {
+        if result.originalByteCount > 0 {
             rows[index].bytes = result.originalByteCount
         }
         if Self.isLarger(result) {

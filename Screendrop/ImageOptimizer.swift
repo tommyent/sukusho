@@ -86,14 +86,16 @@ nonisolated struct ImageOptimizationResult: Sendable {
     }
 }
 
-/// A file's contents, as their SHA-256. Size and date don't tell one file from another: a rewrite can keep
-/// both. Reads the whole file each time it is made.
+/// A file's contents, as their SHA-256 and byte count from the same read. Size and date don't tell one file
+/// from another: a rewrite can keep both. Reads the whole file each time it is made.
 nonisolated struct FileIdentity: Equatable, Sendable {
     let digest: String
+    let byteCount: Int64
 
     init?(_ url: URL) {
         guard let data = try? Data(contentsOf: url, options: .mappedIfSafe) else { return nil }
         digest = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        byteCount = Int64(data.count)
     }
 }
 
@@ -188,9 +190,10 @@ nonisolated struct ImageOptimizer: Sendable {
             return ImageOptimizationResult(url: source, outcome: .failed(Self.unreadableReason), originalByteCount: 0,
                                            resultByteCount: 0, ownedFolder: sourceFolder, source: nil)
         }
-        let originalBytes = Self.byteCount(source) ?? 0
-        // What the encoder is about to read.
+        // What the encoder is about to read: size and digest come from the same read so the growth check
+        // and header can never compare against a different version of the file.
         let identity = FileIdentity(source)
+        let originalBytes = identity?.byteCount ?? Self.byteCount(source) ?? 0
         @Sendable func original(_ outcome: ImageOptimizationResult.Outcome) -> ImageOptimizationResult {
             ImageOptimizationResult(url: source, outcome: outcome, originalByteCount: originalBytes,
                                     resultByteCount: originalBytes, ownedFolder: sourceFolder, source: identity)

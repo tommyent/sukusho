@@ -95,6 +95,43 @@ import UniformTypeIdentifiers
         mixed.discard()
     }
 
+    /// Sol 6.2 #8: originalByteCount is derived from the fingerprinted bytes, and settling a row updates
+    /// row.bytes to match the version the optimizer actually read rather than an earlier size scan.
+    @Test func settledRowUsesFingerprintedOriginalByteCount() async throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "SukushoShelfBytes-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appending(path: "pic.png")
+        try picture(file, shade: 0.5)
+        let firstID = try #require(FileIdentity(file))
+        let firstSize = try #require((FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber)?.int64Value)
+        #expect(firstID.byteCount == firstSize)
+
+        let list = model([file], .webP, in: folder)
+        try await settled(list)
+        let converted = try #require(list.rows[0].result)
+        #expect(converted.originalByteCount == firstID.byteCount)
+        #expect(list.rows[0].bytes == converted.originalByteCount)
+
+        // Replace the file on disk with a different-sized image and rerun: header originalBytes must reflect
+        // the new fingerprinted bytes, not the old row.bytes.
+        let bigger = folder.appending(path: "noisy.jpeg")
+        try noisyJPEG(bigger)
+        let newData = try Data(contentsOf: bigger)
+        try newData.write(to: file)
+        let secondID = try #require(FileIdentity(file))
+        #expect(secondID.byteCount == Int64(newData.count))
+        #expect(secondID.byteCount != firstID.byteCount)
+
+        list.rerun(as: .webP)
+        try await settled(list)
+        #expect(list.rows[0].largerFormat == .webP)
+        #expect(list.rows[0].bytes == secondID.byteCount)
+        #expect(list.originalBytes == secondID.byteCount)
+        #expect(list.resultBytes == secondID.byteCount)
+        list.discard()
+    }
+
     private func model(_ files: [URL], _ format: ShelfOptimization.Format, in folder: URL) -> ShelfOptimization {
         let tools = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appending(path: "Vendor/optimizers")
         return ShelfOptimization(files: files, format: format, optimizer: ImageOptimizer(toolsDirectory: tools, outputDirectory: folder.appending(path: "out")),
