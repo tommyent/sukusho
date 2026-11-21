@@ -1408,7 +1408,7 @@ private struct StudioZoomLane: View {
                     id: base.item.id,
                     edge: trim.edge,
                     toSourceTime: trim.sourceTime,
-                    base: studioEditableBaseCue(for: base, in: model.clipTimeline)
+                    base: base.item
                 )
             }
         }
@@ -1481,7 +1481,14 @@ private struct StudioZoomLane: View {
     private func visibleBlocks(of blocks: [RecordingZoomTimelineBlock]) -> [StudioLaneBlock<ZoomCue>] {
         blocks
             .filter { $0.editorEnd >= visibleRange.lowerBound && $0.editorStart <= visibleRange.upperBound }
-            .map { StudioLaneBlock(item: $0.cue, editorStart: $0.editorStart, editorEnd: $0.editorEnd) }
+            .map {
+                StudioLaneBlock(
+                    item: $0.cue,
+                    editorStart: $0.editorStart,
+                    editorEnd: $0.editorEnd,
+                    allowsTrim: model.clipTimeline.editorRuns(overlapping: $0.cue.start, sourceEnd: $0.cue.end).count <= 1
+                )
+            }
     }
 }
 

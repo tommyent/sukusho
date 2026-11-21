@@ -168,6 +168,10 @@ struct StudioLaneBlock<Item: Identifiable>: Identifiable where Item.ID == UUID {
     let item: Item
     let editorStart: TimeInterval
     let editorEnd: TimeInterval
+    /// False when a single source cue plays on more than one editor run (e.g.
+    /// across a reordered backward join) so trimming one displayed piece cannot
+    /// silently remove the effect from untouched clips.
+    var allowsTrim: Bool = true
 
     var id: UUID { item.id }
     var editorLength: TimeInterval { max(0, editorEnd - editorStart) }
@@ -561,6 +565,7 @@ struct StudioBlockHitTester {
     struct Entry {
         let id: UUID
         let frame: StudioBlockFrame
+        var allowsTrim: Bool = true
     }
 
     /// Bottom to top, as drawn.
@@ -573,11 +578,13 @@ struct StudioBlockHitTester {
         // handles trim, the block moves.
         if let selected = entries.last(where: { $0.id == selectedID }) {
             let frame = selected.frame
-            if frame.selectedLeadingHandleRange.contains(x) {
-                return .edge(selected.id, .leading)
-            }
-            if x > frame.selectedTrailingHandleRange.lowerBound, x <= frame.selectedTrailingHandleRange.upperBound {
-                return .edge(selected.id, .trailing)
+            if selected.allowsTrim {
+                if frame.selectedLeadingHandleRange.contains(x) {
+                    return .edge(selected.id, .leading)
+                }
+                if x > frame.selectedTrailingHandleRange.lowerBound, x <= frame.selectedTrailingHandleRange.upperBound {
+                    return .edge(selected.id, .trailing)
+                }
             }
             if x >= frame.minX, x <= frame.maxX {
                 return .body(selected.id)
@@ -587,7 +594,8 @@ struct StudioBlockHitTester {
         // Otherwise the topmost block whose middle is under the pointer.
         for entry in entries.reversed() where entry.id != selectedID {
             let frame = entry.frame
-            if x >= frame.minX + frame.edgeInset, x <= frame.maxX - frame.edgeInset {
+            let inset = entry.allowsTrim ? frame.edgeInset : 0
+            if x >= frame.minX + inset, x <= frame.maxX - inset {
                 return .body(entry.id)
             }
         }
@@ -595,7 +603,7 @@ struct StudioBlockHitTester {
         // Then the nearest end within reach. Where two blocks meet, the end
         // of the block the pointer is inside wins over a neighbour's reach.
         var nearest: (target: StudioBlockTarget, isInside: Bool, distance: CGFloat)?
-        for entry in entries where entry.id != selectedID {
+        for entry in entries where entry.id != selectedID && entry.allowsTrim {
             let frame = entry.frame
             let isInside = x >= frame.minX && x <= frame.maxX
             let candidates: [(StudioBlockEdge, CGFloat, ClosedRange<CGFloat>)] = [
@@ -698,12 +706,29 @@ where Item.ID == UUID {
             }
 
             if let selected, let frame = frames[selected.id] {
-                StudioSelectionFrame(width: frame.selectionWidth, blockHeight: blockHeight)
+                if selected.allowsTrim {
+                    StudioSelectionFrame(width: frame.selectionWidth, blockHeight: blockHeight)
+                        .offset(
+                            x: frame.selectionMinX,
+                            y: StudioBlockMetrics.inset - StudioBlockMetrics.rimWidth
+                        )
+                        .allowsHitTesting(false)
+                } else {
+                    RoundedRectangle(
+                        cornerRadius: StudioBlockMetrics.selectedCornerRadius + StudioBlockMetrics.rimWidth,
+                        style: .continuous
+                    )
+                    .strokeBorder(Color(nsColor: .systemYellow), lineWidth: StudioBlockMetrics.rimWidth)
+                    .frame(
+                        width: frame.width + StudioBlockMetrics.rimWidth * 2,
+                        height: blockHeight + StudioBlockMetrics.rimWidth * 2
+                    )
                     .offset(
-                        x: frame.selectionMinX,
+                        x: frame.minX - StudioBlockMetrics.rimWidth,
                         y: StudioBlockMetrics.inset - StudioBlockMetrics.rimWidth
                     )
                     .allowsHitTesting(false)
+                }
             }
         }
         .frame(height: height, alignment: .topLeading)
@@ -755,7 +780,11 @@ where Item.ID == UUID {
             .accessibilityLabel(a11y.label)
             .accessibilityValue(a11y.value)
             .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-            .accessibilityHint("Activate to select. Use actions to move or resize.")
+            .accessibilityHint(
+                block.allowsTrim
+                    ? "Activate to select. Use actions to move or resize."
+                    : "Activate to select. Use actions to move."
+            )
             .accessibilityAction {
                 model.pause()
                 actions.select(block.item)
@@ -766,22 +795,16 @@ where Item.ID == UUID {
             .accessibilityAction(named: "Move Later") {
                 performAccessibleEdit(block, kind: .move, delta: a11y.step)
             }
-            .accessibilityAction(named: "Trim Start Earlier") {
-                performAccessibleEdit(block, kind: .trimLeading, delta: -a11y.step)
-            }
-            .accessibilityAction(named: "Trim Start Later") {
-                performAccessibleEdit(block, kind: .trimLeading, delta: a11y.step)
-            }
-            .accessibilityAction(named: "Trim End Earlier") {
-                performAccessibleEdit(block, kind: .trimTrailing, delta: -a11y.step)
-            }
-            .accessibilityAction(named: "Trim End Later") {
-                performAccessibleEdit(block, kind: .trimTrailing, delta: a11y.step)
-            }
+            .modifier(StudioBlockTrimAccessibilityModifier(
+                enabled: block.allowsTrim,
+                onTrim: { kind, delta in performAccessibleEdit(block, kind: kind, delta: delta) },
+                step: a11y.step
+            ))
             .offset(x: frame.minX, y: StudioBlockMetrics.inset)
     }
 
     private func performAccessibleEdit(_ block: StudioLaneBlock<Item>, kind: StudioBlockEditKind, delta: TimeInterval) {
+        guard kind == .move || block.allowsTrim else { return }
         model.pause()
         actions.select(block.item)
         let clamped = overlap.clampedDelta(
@@ -802,7 +825,7 @@ where Item.ID == UUID {
     private func hitTester(_ frames: [UUID: StudioBlockFrame]) -> StudioBlockHitTester {
         StudioBlockHitTester(
             entries: blocks.compactMap { block in
-                frames[block.id].map { .init(id: block.id, frame: $0) }
+                frames[block.id].map { .init(id: block.id, frame: $0, allowsTrim: block.allowsTrim) }
             },
             selectedID: selectedID
         )
@@ -1183,36 +1206,37 @@ func studioMovedZoomCue(
     return cue
 }
 
-/// Base cue to anchor against during a trim edit. Normal cues keep their full
-/// source range (preserving overhangs into forward cuts), while a cue split
-/// across a backward join clamps to the displayed monotonic piece so trimming
-/// one edge cannot jump to the other piece or trim the wrong clip.
-func studioEditableBaseCue(
-    for base: StudioLaneBlock<ZoomCue>,
-    in clipTimeline: RecordingClipTimeline
-) -> ZoomCue {
-    guard clipTimeline.editorRuns(overlapping: base.item.start, sourceEnd: base.item.end).count > 1 else {
-        return base.item
+private struct StudioBlockTrimAccessibilityModifier: ViewModifier {
+    let enabled: Bool
+    let onTrim: (StudioBlockEditKind, TimeInterval) -> Void
+    let step: TimeInterval
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content
+                .accessibilityAction(named: "Trim Start Earlier") { onTrim(.trimLeading, -step) }
+                .accessibilityAction(named: "Trim Start Later") { onTrim(.trimLeading, step) }
+                .accessibilityAction(named: "Trim End Earlier") { onTrim(.trimTrailing, -step) }
+                .accessibilityAction(named: "Trim End Later") { onTrim(.trimTrailing, step) }
+        } else {
+            content
+        }
     }
-    let run = studioMonotonicRun(around: (base.editorStart + base.editorEnd) / 2, in: clipTimeline)
-    let start = min(max(base.editorStart, run.lowerBound), run.upperBound)
-    let end = min(max(base.editorEnd, start), run.upperBound)
-    var clamped = base.item
-    let sourceStart = studioSourceStart(atEditorTime: start, in: clipTimeline)
-    let sourceEnd = max(sourceStart, studioSourceEnd(atEditorTime: end, in: clipTimeline))
-    clamped.start = sourceStart
-    clamped.end = sourceEnd
-    return clamped
 }
 
 /// Resolves the target source time for a leading or trailing trim edit on a
 /// zoom block; a zero editor delta preserves the drag's original source edge.
-/// Constrained to the displayed monotonic run so trimming across a backward
-/// join never lands on earlier-source footage from an adjacent clip.
+/// Returns nil for cues playing across multiple editor runs (e.g. split across
+/// a backward join) so trimming one displayed piece cannot remove the effect
+/// from untouched clips.
 func studioTrimmedZoomSourceTime(
     for edit: StudioBlockEdit<ZoomCue>,
     clipTimeline: RecordingClipTimeline
 ) -> (edge: StudioBlockEdge, sourceTime: TimeInterval)? {
+    guard edit.base.allowsTrim,
+          clipTimeline.editorRuns(overlapping: edit.base.item.start, sourceEnd: edit.base.item.end).count <= 1 else {
+        return nil
+    }
     let run = studioMonotonicRun(around: (edit.base.editorStart + edit.base.editorEnd) / 2, in: clipTimeline)
     switch edit.kind {
     case .trimLeading:

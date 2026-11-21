@@ -334,36 +334,47 @@ struct StudioEditingTests {
 
         // Cue covering source 0..4 over touching reversed clips [2..4, 0..2]:
         // editorSpan breaks at the backward join so the block displays one monotonic piece (0..2 = source 2..4),
-        // and trimming its leading/trailing edge clamps to that piece instead of trimming clip 2 (0..2).
+        // and trimming is disabled for multi-run cues in both hit-testing and trim resolution so the other
+        // surviving clip (0..2) never loses its zoom.
         let touchingReversed = RecordingClipTimeline(segments: [
             RecordingClipSegment(sourceStart: 2, sourceEnd: 4),
             RecordingClipSegment(sourceStart: 0, sourceEnd: 2),
         ])
         let spanningCue = ZoomCue(start: 0, end: 4)
+        let spanningRuns = touchingReversed.editorRuns(overlapping: spanningCue.start, sourceEnd: spanningCue.end)
+        #expect(spanningRuns.count == 2)
         let displayedSpan = try #require(touchingReversed.editorSpan(overlapping: spanningCue.start, sourceEnd: spanningCue.end))
         #expect(abs(displayedSpan.lowerBound - 0.0) < 0.0001 && abs(displayedSpan.upperBound - 2.0) < 0.0001)
         let displayedBlock = StudioLaneBlock(
             item: spanningCue,
             editorStart: displayedSpan.lowerBound,
-            editorEnd: displayedSpan.upperBound
+            editorEnd: displayedSpan.upperBound,
+            allowsTrim: spanningRuns.count <= 1
         )
-        let editableBase = studioEditableBaseCue(for: displayedBlock, in: touchingReversed)
-        #expect(abs(editableBase.start - 2.0) < 0.0001 && abs(editableBase.end - 4.0) < 0.0001)
-        // Dragging leading edge past the backward join (to editor 2.1) clamps at source 4.0, never 0.1.
-        let clampedLeading = try #require(studioTrimmedZoomSourceTime(
-            for: StudioBlockEdit(base: displayedBlock, kind: .trimLeading, delta: 2.1),
+        #expect(!displayedBlock.allowsTrim)
+        #expect(studioTrimmedZoomSourceTime(
+            for: StudioBlockEdit(base: displayedBlock, kind: .trimTrailing, delta: -0.5),
             clipTimeline: touchingReversed
-        ))
-        #expect(abs(clampedLeading.sourceTime - 4.0) < 0.0001)
-        let placedAfterTrim = try #require(studioPlaceTrimmedZoomCue(
-            id: spanningCue.id,
-            edge: .trailing,
-            proposedSourceTime: 3.5,
-            base: editableBase,
-            in: [spanningCue],
-            sourceDuration: 4
-        ))
-        #expect(abs(placedAfterTrim[0].start - 2.0) < 0.0001 && abs(placedAfterTrim[0].end - 3.5) < 0.0001)
+        ) == nil)
+        #expect(studioTrimmedZoomSourceTime(
+            for: StudioBlockEdit(base: displayedBlock, kind: .trimLeading, delta: 0.5),
+            clipTimeline: touchingReversed
+        ) == nil)
+        // Pointer hit-tester returns .body (never .edge) for non-trimmable multi-run blocks whether selected or not.
+        let scale = StudioTimelineScale(viewportWidth: 400, duration: 4, zoom: 1)
+        let frame = StudioBlockFrame(editorStart: 0, editorEnd: 2, scale: scale)
+        let unselectedTester = StudioBlockHitTester(
+            entries: [.init(id: spanningCue.id, frame: frame, allowsTrim: false)],
+            selectedID: nil
+        )
+        #expect(unselectedTester.target(atX: frame.minX + 2) == .body(spanningCue.id))
+        #expect(unselectedTester.target(atX: frame.maxX - 2) == .body(spanningCue.id))
+        let selectedTester = StudioBlockHitTester(
+            entries: [.init(id: spanningCue.id, frame: frame, allowsTrim: false)],
+            selectedID: spanningCue.id
+        )
+        #expect(selectedTester.target(atX: frame.minX + 2) == .body(spanningCue.id))
+        #expect(selectedTester.target(atX: frame.maxX - 2) == .body(spanningCue.id))
 
         // moving(segmentID:to:) reorders and returns nil for no-op or unknown ID.
         let moved = try #require(normalized.moving(segmentID: overlappingThird.id, to: 0))
