@@ -56,8 +56,13 @@ struct ShakeShelfHolding: View {
 
     let model: ShelfOptimization
     let offersCloud: Bool
-    let offersGallery: Bool
+    let workerSupportsGalleries: Bool
     let finish: (ShakeToUpload.Finish) -> Void
+
+    private var offersGallery: Bool {
+        offersCloud && !model.isWorking
+            && ShakeShelfFiles.canShareGallery(model.handoverCandidates, workerSupportsGalleries: workerSupportsGalleries)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.ml) {

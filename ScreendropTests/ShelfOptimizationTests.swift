@@ -201,14 +201,19 @@ import UniformTypeIdentifiers
 
         // From the test Mac: with a row that couldn't be read, Copy and Save must have something to work with.
         // Here one file did come out, so both are on, and only that file is handed over.
+        // Gallery needs two readable images, so one readable + one refused is not eligible.
         #expect(list.canSave && list.canHandOver)
+        #expect(list.handoverCandidates == [try #require(list.rows[0].result?.url)])
+        #expect(!ShakeShelfFiles.canShareGallery(list.handoverCandidates, workerSupportsGalleries: true))
         let handed = await ShelfOptimization.currentFiles(of: list.rows)
         #expect(handed == [try #require(list.rows[0].result?.url)])
-        // A list of nothing but the unreadable file: nothing to save, nothing to hand over.
+        // A list of nothing but the unreadable file: nothing to save, nothing to hand over, no gallery.
         let unreadableOnly = model([refused], .same, in: folder)
         try await settled(unreadableOnly)
         #expect(unreadableOnly.rows[0].isUnreadable)
         #expect(!unreadableOnly.canSave && !unreadableOnly.canHandOver)
+        #expect(unreadableOnly.handoverCandidates.isEmpty)
+        #expect(!ShakeShelfFiles.canShareGallery(unreadableOnly.handoverCandidates, workerSupportsGalleries: true))
         let nothing = await ShelfOptimization.currentFiles(of: unreadableOnly.rows)
         #expect(nothing.isEmpty)
 

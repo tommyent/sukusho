@@ -196,6 +196,12 @@ final class ShelfOptimization {
     var canReplace: Bool { !Self.rowsToSave(from: rows, replacing: true).isEmpty }
     /// Copy, Share and Upload have something to take: at least one file Sukusho could read.
     var canHandOver: Bool { rows.contains { !$0.isUnreadable } }
+    /// The URLs currently eligible for Copy, Share, Upload and Gallery: each readable row's result, or
+    /// its original URL when no new file is held. Used to check gallery eligibility once settled;
+    /// actual hand-over re-verifies file identities off the main actor (`currentFiles(of:)`).
+    var handoverCandidates: [URL] {
+        rows.filter { !$0.isUnreadable }.map { $0.result?.url ?? $0.file }
+    }
 
     /// What goes on from the shelf: each file's result, or the file itself where there is none or where the
     /// file has changed since. A file Sukusho wasn't allowed to read is left out: it couldn't be copied or

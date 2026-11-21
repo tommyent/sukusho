@@ -335,9 +335,8 @@ final class ShakeToUpload {
         let model = ShelfOptimization(files: files, format: format, optimizer: .shared, effort: OptimizePreferences.effort) { $0.target }
         stage.show(model)
         let offersCloud = offersCloud
-        let offersGallery = offersCloud
-            && ShakeShelfFiles.canShareGallery(files, workerSupportsGalleries: CloudLibraryModel.shared.supportsGalleries)
-        let view = ShakeShelfHolding(model: model, offersCloud: offersCloud, offersGallery: offersGallery) { [weak self] in
+        let workerSupportsGalleries = CloudLibraryModel.shared.supportsGalleries
+        let view = ShakeShelfHolding(model: model, offersCloud: offersCloud, workerSupportsGalleries: workerSupportsGalleries) { [weak self] in
             self?.finishHolding($0)
         }
         let size = NSHostingController(rootView: view).sizeThatFits(in: CGSize(width: 2000, height: 2000))
@@ -417,6 +416,14 @@ final class ShakeToUpload {
                 // Both go on in the shelf's panel, or put it away. With its list gone from the shelf there is
                 // nowhere to go on: the results go and the shelf stays as it is.
                 guard done.isShowing else { return holding.discard() }
+                if case .gallery = finish,
+                   !ShakeShelfFiles.canShareGallery(files, workerSupportsGalleries: CloudLibraryModel.shared.supportsGalleries) {
+                    holding.discard()
+                    toast.showDone("Galleries Need 2 or More Images", detail: "Too few readable images remained for a gallery.",
+                                   symbol: "square.grid.2x2", displayID: Self.display)
+                    dismiss()
+                    return
+                }
                 // The results stay until the next launch: the upload reads them after the shelf is gone.
                 stage.putAway()
                 if case .upload = finish {
