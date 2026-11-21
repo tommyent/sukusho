@@ -27,7 +27,6 @@ struct CaptureLibraryView: View {
         })
     }
     @AppStorage("captureLibrary.tagsExpanded") private var tagsExpanded = true
-    @AppStorage("captureLibrary.cardWidth") private var cardWidth = 220.0
     @AppStorage("captureLibrary.sort") private var savedSort: CaptureLibrarySort = .newest
 
     @AppStorage("clipboard.libraryShowsList") private var showsList = false
@@ -98,7 +97,6 @@ struct CaptureLibraryView: View {
             inspectorVisible: inspectorVisible,
             metrics: $glassMetrics
         )
-        .focusedSceneValue(\.captureLibraryCardWidth, $cardWidth)
         .background { refreshShortcut }
         // 860 pt holds the sidebar, the grid and the inspector; below 900 the inspector folds
         // away on its own, and without it the window goes down to 620 (Fable #7).
@@ -458,19 +456,26 @@ struct CaptureLibraryView: View {
     }
 
     private var detailColumn: some View {
+        LibraryCardSizing { cardWidth in
+            detailColumn(cardWidth: cardWidth)
+        }
+    }
+
+    private func detailColumn(cardWidth: Binding<Double>) -> some View {
         VStack(spacing: 0) {
             // Empty pages are only as tall as their message; fill the column anyway.
-            browser.frame(maxWidth: .infinity, maxHeight: .infinity)
+            browser(cardWidth: cardWidth.wrappedValue)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .modifier(LibraryBrowserSurface(
                     showsDots: comments.isShown ? comments.visibleComments.isEmpty
                         : likes.isShown ? likes.visibleLikes.isEmpty : true
                 ))
                 .overlay(alignment: .bottom) {
-                    if floatingChrome { glassFooter }
+                    if floatingChrome { glassFooter(cardWidth: cardWidth) }
                 }
             if !floatingChrome {
                 Divider()
-                statusBar
+                statusBar(cardWidth: cardWidth)
             }
         }
     }
@@ -502,7 +507,7 @@ struct CaptureLibraryView: View {
         .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
     }
 
-    @ViewBuilder private var browser: some View {
+    @ViewBuilder private func browser(cardWidth: Double) -> some View {
         if saved.isShown {
             LibrarySavedPage(cardWidth: cardWidth, layout: layout)
         } else if clipboard.isShown {
@@ -717,7 +722,7 @@ struct CaptureLibraryView: View {
         }
     }
 
-    @ViewBuilder private var statusTrailing: some View {
+    @ViewBuilder private func statusTrailing(cardWidth: Binding<Double>) -> some View {
         if isStatusRefreshing {
             ProgressView().controlSize(.mini)
                 .help(comments.isShown ? "Refreshing comments" : likes.isShown ? "Refreshing likes"
@@ -731,7 +736,7 @@ struct CaptureLibraryView: View {
             .pickerStyle(.segmented).labelsHidden().labelStyle(.iconOnly).controlSize(.small).fixedSize()
             if !showsList {
                 // Capped where the 640 px thumbnails stay sharp on Retina.
-                Slider(value: $cardWidth, in: LibraryCardWidth.range) {
+                Slider(value: cardWidth, in: LibraryCardWidth.range) {
                     EmptyView()
                 } minimumValueLabel: {
                     Image(systemName: "photo").imageScale(.small)
@@ -746,11 +751,11 @@ struct CaptureLibraryView: View {
         }
     }
 
-    private var statusBar: some View {
+    private func statusBar(cardWidth: Binding<Double>) -> some View {
         HStack(spacing: 8) {
             statusLeading
             Spacer()
-            statusTrailing
+            statusTrailing(cardWidth: cardWidth)
         }
         .font(.caption)
         .monospacedDigit()
@@ -766,7 +771,7 @@ struct CaptureLibraryView: View {
 
     /// Glass: two floating Liquid Glass pills over the bottom of the browser (count on the left, view controls on the
     /// right) with no strip behind them, so cards scroll underneath and show between them.
-    private var glassFooter: some View {
+    private func glassFooter(cardWidth: Binding<Double>) -> some View {
         HStack(spacing: 12) {
             if hasLeadingStatus {
                 HStack(spacing: 6) {
@@ -780,7 +785,7 @@ struct CaptureLibraryView: View {
             Spacer(minLength: 0)
             if isStatusRefreshing || showsViewControls {
                 HStack(spacing: 8) {
-                    statusTrailing
+                    statusTrailing(cardWidth: cardWidth)
                 }
                 .padding(.leading, showsViewControls && !isStatusRefreshing ? 6 : 10)
                 .padding(.trailing, showsViewControls && showsList ? 6 : 12)
@@ -861,6 +866,17 @@ struct CaptureLibraryView: View {
     @ToolbarContentBuilder private var toolbar: some ToolbarContent {
         searchToolbarItem
         inspectorToggleToolbarItem
+    }
+}
+
+// Live slider updates belong to the browser; invalidating the split view also relays out its panes.
+private struct LibraryCardSizing<Content: View>: View {
+    @AppStorage("captureLibrary.cardWidth") private var cardWidth = 220.0
+    @ViewBuilder let content: (Binding<Double>) -> Content
+
+    var body: some View {
+        content($cardWidth)
+            .focusedSceneValue(\.captureLibraryCardWidth, $cardWidth)
     }
 }
 
