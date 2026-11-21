@@ -162,7 +162,7 @@ private struct FreeToUseMusicRow: View {
                         .font(.caption).foregroundStyle(.secondary).lineLimit(2)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                Text(clock(track.duration)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                Text(studioClock(track.duration)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 if isDownloading {
                     ProgressView().controlSize(.small).accessibilityLabel("Downloading \(track.title)")
                 } else {
@@ -177,8 +177,8 @@ private struct FreeToUseMusicRow: View {
                     } onEditingChanged: { editing in
                         preview.isScrubbing = editing
                     }
-                    .accessibilityValue("\(clock(preview.position)) of \(clock(track.duration))")
-                    Text("\(clock(preview.position)) / \(clock(track.duration))")
+                    .accessibilityValue("\(studioTimecode(preview.position)) of \(studioClock(track.duration))")
+                    Text("\(studioTimecode(preview.position)) / \(studioClock(track.duration))")
                         .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 }
                 if let error = preview.error {
@@ -193,10 +193,5 @@ private struct FreeToUseMusicRow: View {
             }
         }
         .padding(12)
-    }
-
-    private func clock(_ seconds: TimeInterval) -> String {
-        let total = Int(max(0, seconds).rounded(.down))
-        return String(format: "%d:%02d", total / 60, total % 60)
     }
 }
