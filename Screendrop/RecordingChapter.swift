@@ -139,22 +139,31 @@ nonisolated enum RecordingChapterPlanner {
         let speech = words.isEmpty
             ? cues.map { ($0.start, $0.end) }
             : words.map { ($0.start, $0.end) }
-        let surviving = speech.compactMap { interval -> (TimeInterval, TimeInterval)? in
-            guard interval.0.isFinite, interval.1.isFinite, interval.1 > interval.0,
-                  let first = timeline.slices(overlapping: interval.0, sourceEnd: interval.1).first else { return nil }
-            return (first.sourceStart, interval.1)
-        }.sorted { $0.0 < $1.0 }
+        // Measure silence and 20 s spacing on the edited timeline in playback
+        // order, while retaining each surviving run's source anchor for storage.
+        let surviving = speech.flatMap { interval -> [(editorStart: TimeInterval, editorEnd: TimeInterval, sourceStart: TimeInterval)] in
+            guard interval.0.isFinite, interval.1.isFinite, interval.1 > interval.0 else { return [] }
+            return timeline.editorRuns(overlapping: interval.0, sourceEnd: interval.1).compactMap { run in
+                guard let firstSlice = run.slices.first, run.editorEnd > run.editorStart else { return nil }
+                return (run.editorStart, run.editorEnd, firstSlice.sourceStart)
+            }
+        }
+        .sorted { lhs, rhs in
+            if abs(lhs.editorStart - rhs.editorStart) > 0.000_001 { return lhs.editorStart < rhs.editorStart }
+            return lhs.editorEnd < rhs.editorEnd
+        }
         let readableCues = survivingCues(cues, words: words, through: timeline)
+        let existingMapped = mapped(existing, through: timeline)
         var result = existing
         var lastSuggestion: TimeInterval?
         for (index, interval) in surviving.enumerated() {
-            guard let time = timeline.editorTime(forSourceEventTime: interval.0) else { continue }
-            guard index == 0 || interval.0 - surviving[index - 1].1 >= 2 else { continue }
+            let time = interval.editorStart
+            guard index == 0 || interval.editorStart - surviving[index - 1].editorEnd >= 2 else { continue }
             guard lastSuggestion.map({ time - $0 >= 20 }) ?? true else { continue }
-            guard !mapped(existing, through: timeline).contains(where: { abs($0.start - time) < 20 }) else { continue }
+            guard !existingMapped.contains(where: { abs($0.start - time) < 20 }) else { continue }
             let text = chapterText(readableCues, through: timeline, start: time, end: time + 20)
             let name = title(from: text)
-            result.append(RecordingChapter(title: name.isEmpty ? "Chapter \(result.count + 1)" : name, start: interval.0, autoTitle: true))
+            result.append(RecordingChapter(title: name.isEmpty ? "Chapter \(result.count + 1)" : name, start: interval.sourceStart, autoTitle: true))
             lastSuggestion = time
         }
         return result.sorted { $0.start < $1.start }

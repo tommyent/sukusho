@@ -228,6 +228,28 @@ struct StudioEditingTests {
         #expect(RecordingChapterPlanner.openingSentenceTitle(
             cues: twoClipCues, words: [], through: reorderedSpeech
         ) == "Now plays first")
+
+        // Suggest Chapters on [24..48, 0..24] with narration bursts at source 4..6 (editor 28..30)
+        // and source 28..30 (editor 4..6) walks editor playback order so BOTH bursts are suggested.
+        let longReordered = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 24, sourceEnd: 48),
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 24),
+        ])
+        let burstCues = [
+            RecordingSubtitleCue(start: 4.0, end: 6.0, text: "Second half topic."),
+            RecordingSubtitleCue(start: 28.0, end: 30.0, text: "Opening topic."),
+        ]
+        let suggested = RecordingChapterPlanner.suggest(
+            cues: burstCues, words: [], timeline: longReordered, keeping: []
+        )
+        let mappedSuggested = RecordingChapterPlanner.mapped(
+            suggested, through: longReordered, cues: burstCues
+        )
+        #expect(mappedSuggested.count == 2)
+        #expect(mappedSuggested[0].title == "Opening topic")
+        #expect(abs(mappedSuggested[0].start - 4.0) < 0.0001)
+        #expect(mappedSuggested[1].title == "Second half topic")
+        #expect(abs(mappedSuggested[1].start - 28.0) < 0.0001)
     }
 
     // MARK: - Reordering, hardCuts, editorSpan, ViewportTimeline & PointerTimeline
