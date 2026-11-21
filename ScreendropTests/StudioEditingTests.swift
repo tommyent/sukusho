@@ -485,6 +485,9 @@ struct StudioEditingTests {
         )
         // 5.02 is closer to 5.03 (0.01) than to 5.0 (0.02) or 5.08 (0.06).
         #expect(abs(StudioEditing.snapped(5.02, to: points, tolerance: 0.1) - 5.03) < 0.0001)
+        // Exact hit still returns the matched snap target so the guide appears even when delta == 0.
+        #expect(StudioEditing.snapTarget(for: 5.0, in: points, tolerance: 0.1) == 5.0)
+        #expect(StudioEditing.snapTarget(for: 6.5, in: points, tolerance: 0.1) == nil)
         // Outside tolerance -> unchanged.
         #expect(StudioEditing.snapped(6.5, to: points, tolerance: 0.1) == 6.5)
         // Zero/invalid tolerance -> unchanged.
@@ -571,7 +574,11 @@ struct StudioEditingTests {
         control.mouseDragged(with: try mouse(.leftMouseDragged, x: 203, flags: .command))
         #expect(guides.last == Optional<TimeInterval>.none)
 
-        // Releasing ⌘ catches the snap point again; mouseUp commits at 4.0 and clears preview + guide.
+        // Releasing ⌘ catches the snap point again; an exact hit at 5.0 s (playhead/target) also shows the guide.
+        control.snapPoints = [5.0]
+        control.mouseDragged(with: try mouse(.leftMouseDragged, x: 248))
+        #expect(guides.last == 5.0)
+        control.snapPoints = []
         control.mouseDragged(with: try mouse(.leftMouseDragged, x: 203))
         #expect(guides.last == 4.0)
         control.mouseUp(with: try mouse(.leftMouseUp, x: 203))

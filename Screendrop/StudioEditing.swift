@@ -315,15 +315,16 @@ nonisolated enum StudioEditing {
         return points
     }
 
-    /// Returns the nearest point in `points` within `tolerance` of `time`, or
-    /// `time` unchanged when nothing is close enough.
-    static func snapped(
-        _ time: TimeInterval,
-        to points: [TimeInterval],
+    /// Returns the nearest snap target in `points` within `tolerance` of
+    /// `time` (including an exact match where `point == time`), or `nil` when
+    /// nothing is close enough.
+    static func snapTarget(
+        for time: TimeInterval,
+        in points: [TimeInterval],
         tolerance: TimeInterval
-    ) -> TimeInterval {
-        guard time.isFinite, tolerance.isFinite, tolerance > 0 else { return time }
-        var best = time
+    ) -> TimeInterval? {
+        guard time.isFinite, tolerance.isFinite, tolerance > 0 else { return nil }
+        var best: TimeInterval?
         var bestDistance = tolerance
         for point in points where point.isFinite {
             let distance = abs(point - time)
@@ -333,6 +334,16 @@ nonisolated enum StudioEditing {
             }
         }
         return best
+    }
+
+    /// Returns the nearest point in `points` within `tolerance` of `time`, or
+    /// `time` unchanged when nothing is close enough.
+    static func snapped(
+        _ time: TimeInterval,
+        to points: [TimeInterval],
+        tolerance: TimeInterval
+    ) -> TimeInterval {
+        snapTarget(for: time, in: points, tolerance: tolerance) ?? time
     }
 
     /// Source-time room a clip has to expand its leading or trailing edge

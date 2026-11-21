@@ -640,8 +640,7 @@ final class RecordingClipTimelineControl: NSView {
             let tolerance = Double(StudioEditing.snapTolerancePoints / max(timelineRect.width, 1))
                 * startTimeline.duration
             let targets = snapPoints + [playheadTime]
-            let snapped = StudioEditing.snapped(edgeTime, to: targets, tolerance: tolerance)
-            if snapped != edgeTime {
+            if let snapped = StudioEditing.snapTarget(for: edgeTime, in: targets, tolerance: tolerance) {
                 editorDelta += snapped - edgeTime
                 guide = snapped
             }
