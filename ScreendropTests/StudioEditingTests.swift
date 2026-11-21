@@ -72,6 +72,22 @@ struct StudioEditingTests {
         #expect(abs(fastCut.segments[0].sourceEnd - 4.0) < 0.0001)
         #expect(abs(fastCut.segments[1].sourceStart - 4.4) < 0.0001)
         #expect(abs(fastCut.segments[1].sourceEnd - 16.0) < 0.0001)
+
+        // Exact boundary just below minimumDuration (0.11975 s) on a trimmed 2..8 s clip of a 10 s source:
+        // removeEditorRange rejects it with .leavesShortClip using the same predicate as normalization,
+        // and validatedForCommit never silently restores the full 0..10 s source.
+        let trimmed = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 2, sourceEnd: 8)
+        ])
+        #expect(trimmed.removeEditorRange(0.11975...6.0) == .leavesShortClip)
+        let subMinCandidate = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 2, sourceEnd: 2.11975)
+        ])
+        #expect(subMinCandidate.validatedForCommit(sourceDuration: 10) == nil)
+        // Document recovery (default fallbackToFull: true) still restores 0..10 s for corrupted persisted clips.
+        #expect(subMinCandidate.normalized(to: 10).segments.count == 1)
+        #expect(abs(subMinCandidate.normalized(to: 10).segments[0].sourceStart - 0) < 0.0001)
+        #expect(abs(subMinCandidate.normalized(to: 10).segments[0].sourceEnd - 10) < 0.0001)
     }
 
     @Test func rangeMarkingTracksInOutAndReopensWhenInPassesOut() throws {

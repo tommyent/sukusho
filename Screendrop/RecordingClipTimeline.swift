@@ -14,6 +14,12 @@ nonisolated struct RecordingClipSegment: Identifiable, Codable, Equatable, Senda
     static let minimumSpeed: Double = 1
     static let maximumSpeed: Double = 8
 
+    /// Shared minimum-duration predicate used by both normalization and range
+    /// deletion so any survivor accepted by an edit survives commit.
+    static func isPlayableDuration(_ duration: TimeInterval) -> Bool {
+        duration.isFinite && duration >= minimumDuration
+    }
+
     var id: UUID
     var sourceStart: TimeInterval
     var sourceEnd: TimeInterval
@@ -146,13 +152,16 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
         segments.reduce(0) { $0 + $1.editorDuration }
     }
 
-    func normalized(to sourceDuration: TimeInterval) -> RecordingClipTimeline {
+    func normalized(
+        to sourceDuration: TimeInterval,
+        fallbackToFull: Bool = true
+    ) -> RecordingClipTimeline {
         let safeDuration = max(0, sourceDuration.isFinite ? sourceDuration : 0)
         var seenIDs = Set<UUID>()
         var normalized = segments.compactMap { segment -> RecordingClipSegment? in
             let start = min(max(segment.sourceStart, 0), safeDuration)
             let end = min(max(segment.sourceEnd, start), safeDuration)
-            guard end - start >= RecordingClipSegment.minimumDuration else { return nil }
+            guard RecordingClipSegment.isPlayableDuration(end - start) else { return nil }
             let id = seenIDs.insert(segment.id).inserted ? segment.id : UUID()
             let speed = min(
                 max(segment.speed.isFinite ? segment.speed : 1, RecordingClipSegment.minimumSpeed),
@@ -182,7 +191,7 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
                 pieces.append((cursor, segment.sourceEnd))
             }
             var keptID = false
-            for piece in pieces where piece.end - piece.start >= RecordingClipSegment.minimumDuration {
+            for piece in pieces where RecordingClipSegment.isPlayableDuration(piece.end - piece.start) {
                 deduplicated.append(segment.covering(
                     piece.start,
                     piece.end,
@@ -195,10 +204,17 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
         }
         normalized = deduplicated
 
-        if normalized.isEmpty, safeDuration > 0 {
+        if normalized.isEmpty, fallbackToFull, safeDuration > 0 {
             return .full(sourceDuration: safeDuration)
         }
         return RecordingClipTimeline(segments: normalized)
+    }
+
+    /// Normalizes a proposed interactive edit without falling back to the full
+    /// recording; returns nil when no playable clips would survive commit.
+    func validatedForCommit(sourceDuration: TimeInterval) -> RecordingClipTimeline? {
+        let committed = normalized(to: sourceDuration, fallbackToFull: false)
+        return committed.segments.isEmpty ? nil : committed
     }
 
     func location(at editorTime: TimeInterval) -> Location? {
@@ -500,7 +516,7 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
             var keptID = false
             if cutLow - editorStart > tolerance {
                 let leadingEnd = source(cutLow)
-                guard leadingEnd - segment.sourceStart >= RecordingClipSegment.minimumDuration - tolerance else {
+                guard RecordingClipSegment.isPlayableDuration(leadingEnd - segment.sourceStart) else {
                     return .leavesShortClip
                 }
                 next.append(segment.covering(segment.sourceStart, leadingEnd))
@@ -508,7 +524,7 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
             }
             if editorEnd - cutHigh > tolerance {
                 let trailingStart = source(cutHigh)
-                guard segment.sourceEnd - trailingStart >= RecordingClipSegment.minimumDuration - tolerance else {
+                guard RecordingClipSegment.isPlayableDuration(segment.sourceEnd - trailingStart) else {
                     return .leavesShortClip
                 }
                 next.append(segment.covering(

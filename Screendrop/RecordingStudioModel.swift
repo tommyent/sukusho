@@ -1587,10 +1587,14 @@ final class RecordingStudioModel {
             showNotice("Can't remove the whole video")
         case .leavesShortClip:
             showNotice("Remaining clip would be too short")
-        case .removed(let next):
+        case .removed(let candidate):
+            guard let committed = candidate.validatedForCommit(sourceDuration: sourceDuration) else {
+                showNotice("Remaining clip would be too short")
+                return
+            }
             rangeSelection = nil
             applyClipTimeline(
-                next,
+                committed,
                 selectedID: nil,
                 selectsClip: false,
                 playheadTime: range.lowerBound,
@@ -1894,8 +1898,8 @@ final class RecordingStudioModel {
         actionName: String,
         hoverTime: TimeInterval? = nil
     ) {
-        let next = requestedTimeline.normalized(to: sourceDuration)
-        guard !next.segments.isEmpty, next != clipTimeline else { return }
+        guard let next = requestedTimeline.validatedForCommit(sourceDuration: sourceDuration),
+              next != clipTimeline else { return }
 
         let previousTimeline = clipTimeline
         let previousSelection = selectedClipID
