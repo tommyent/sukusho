@@ -55,6 +55,12 @@ final class CaptureTextFeedbackPresenter {
         present(symbol: symbol, title: title, detail: detail, displayID: displayID)
     }
 
+    /// Non-activating failure toast for automatic actions (auto-save, auto-copy,
+    /// export update); presenting replaces any prior toast so repeated failures coalesce.
+    func showFailed(_ title: String, detail: String, displayID: CGDirectDisplayID?) {
+        present(symbol: "exclamationmark.triangle", title: title, detail: detail, displayID: displayID)
+    }
+
     /// A spinner until the next toast replaces it, or `dismissWorking`, for work with no window of its own.
     func showWorking(_ title: String, detail: String, displayID: CGDirectDisplayID?) {
         present(symbol: "", title: title, detail: detail, displayID: displayID, isReading: true)

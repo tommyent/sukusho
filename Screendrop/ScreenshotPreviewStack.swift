@@ -83,6 +83,7 @@ final class ScreenshotPreviewStack {
     /// the one a card's Copy took when it was clicked, if it was one (`OptimizedImageCopy.takeTurn`).
     @ObservationIgnored private let copyImage: (URL, OptimizedImageCopy.Turn?) async throws -> Bool
     @ObservationIgnored private let presentFailure: @MainActor (String, Error) -> Void
+    @ObservationIgnored private let presentAutomaticFailure: @MainActor (String, Error) -> Void
 
     init(
         copyImage: @escaping (URL, OptimizedImageCopy.Turn?) async throws -> Bool = {
@@ -90,10 +91,19 @@ final class ScreenshotPreviewStack {
         },
         presentFailure: @escaping @MainActor (String, Error) -> Void = {
             FailureAlert.present(message: $0, error: $1)
+        },
+        presentAutomaticFailure: @escaping @MainActor (String, Error) -> Void = { title, error in
+            guard !(error is CancellationError) else { return }
+            CaptureTextFeedbackPresenter.shared.showFailed(
+                title,
+                detail: error.localizedDescription,
+                displayID: ActiveDisplayResolver.activeDisplayID(preferPointer: true)
+            )
         }
     ) {
         self.copyImage = copyImage
         self.presentFailure = presentFailure
+        self.presentAutomaticFailure = presentAutomaticFailure
     }
 
     /// Tuck the overlay into the peek tab (no-op when there's nothing to show).
@@ -538,7 +548,7 @@ final class ScreenshotPreviewStack {
             let turn = OptimizedImageCopy.shared.takeTurn()
             Task {
                 defer { OptimizedImageCopy.shared.finish(turn) }
-                guard await copyURLToClipboard(item.url, original: original, turn: turn) else { return }
+                guard await copyURLToClipboard(item.url, original: original, turn: turn, interactive: true) else { return }
                 dismiss(id: id)
                 showDone(original ? "Copied Original" : "Copied", detail: "The screenshot is on the clipboard.")
             }
@@ -811,14 +821,14 @@ final class ScreenshotPreviewStack {
             do {
                 try ScreenshotFileActions.replaceExistingExport(from: item.url, at: existingURL)
             } catch {
-                presentFailure("The saved screenshot could not be updated", error)
+                presentAutomaticFailure("Couldn’t update saved screenshot", error)
             }
         } else if ScreendropPreferences.autoSave {
             items[index].autoSavedURL = saveToDefaultLocation(from: item.url)
         }
 
         if updatesClipboard && ScreendropPreferences.autoCopy {
-            _ = await copyURLToClipboard(item.url)
+            _ = await copyURLToClipboard(item.url, interactive: false)
         }
     }
 
@@ -938,7 +948,7 @@ final class ScreenshotPreviewStack {
     /// moment.
     private func copyAfterCapture(_ url: URL, itemID: UUID) async {
         guard OptimizePreferences.whenCopying else {
-            _ = await copyURLToClipboard(url)
+            _ = await copyURLToClipboard(url, interactive: false)
             return
         }
         do {
@@ -946,7 +956,7 @@ final class ScreenshotPreviewStack {
                 self?.showOptimizedNote(saving, on: itemID)
             }
         } catch {
-            presentFailure("The screenshot could not be copied", error)
+            presentAutomaticFailure("Couldn’t copy screenshot", error)
         }
     }
 
@@ -992,12 +1002,21 @@ final class ScreenshotPreviewStack {
         optimizedNotes.removeAll()
     }
 
-    private func copyURLToClipboard(_ url: URL, original: Bool = false, turn: OptimizedImageCopy.Turn? = nil) async -> Bool {
+    private func copyURLToClipboard(
+        _ url: URL,
+        original: Bool = false,
+        turn: OptimizedImageCopy.Turn? = nil,
+        interactive: Bool
+    ) async -> Bool {
         do {
             if original { return try await ScreenshotFileActions.copyImageToClipboard(from: url, original: true, turn: turn) }
             return try await copyImage(url, turn)
         } catch {
-            presentFailure("The screenshot could not be copied", error)
+            if interactive {
+                presentFailure("The screenshot could not be copied", error)
+            } else {
+                presentAutomaticFailure("Couldn’t copy screenshot", error)
+            }
             return false
         }
     }
@@ -1006,7 +1025,7 @@ final class ScreenshotPreviewStack {
         do {
             return try ScreenshotFileActions.saveToDefaultLocation(from: url)
         } catch {
-            presentFailure("The screenshot could not be saved", error)
+            presentAutomaticFailure("Couldn’t auto-save screenshot", error)
             return nil
         }
     }
@@ -1016,7 +1035,7 @@ final class ScreenshotPreviewStack {
         do {
             destinationURL = try ScreenshotFileActions.prepareDefaultSaveURL(for: url, reserving: true)
         } catch {
-            presentFailure("The screenshot could not be saved", error)
+            presentAutomaticFailure("Couldn’t auto-save screenshot", error)
             return nil
         }
         defer { ScreenshotFileActions.releaseReservedSaveURL(destinationURL) }
@@ -1036,7 +1055,7 @@ final class ScreenshotPreviewStack {
             }.value
             return destinationURL
         } catch {
-            presentFailure("The screenshot could not be saved", error)
+            presentAutomaticFailure("Couldn’t auto-save screenshot", error)
             return nil
         }
     }
