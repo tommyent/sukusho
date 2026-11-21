@@ -403,24 +403,46 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
         return result
     }
 
+    /// One contiguous editor-time run where part of a source interval plays
+    /// without interruption across clips.
+    struct EditorRun: Equatable, Sendable {
+        let editorStart: TimeInterval
+        let editorEnd: TimeInterval
+        let slices: [Slice]
+
+        var editorDuration: TimeInterval { editorEnd - editorStart }
+    }
+
+    /// Every touching editor-time run where `sourceStart..<sourceEnd` survives,
+    /// in playback (editor) order.
+    func editorRuns(overlapping sourceStart: TimeInterval, sourceEnd: TimeInterval) -> [EditorRun] {
+        var runs: [EditorRun] = []
+        for slice in slices(overlapping: sourceStart, sourceEnd: sourceEnd) {
+            if let last = runs.last, abs(last.editorEnd - slice.editorStart) < 0.000_5 {
+                runs[runs.count - 1] = EditorRun(
+                    editorStart: last.editorStart,
+                    editorEnd: slice.editorEnd,
+                    slices: last.slices + [slice]
+                )
+            } else {
+                runs.append(EditorRun(
+                    editorStart: slice.editorStart,
+                    editorEnd: slice.editorEnd,
+                    slices: [slice]
+                ))
+            }
+        }
+        return runs
+    }
+
     /// Where a stretch of the recording shows as one block on the edited
     /// timeline. In recording order its pieces always touch (a cut removes
     /// the time between them), so this is first to last. Once clips are
     /// reordered they may not, and the longest run that touches stands for it.
     func editorSpan(overlapping sourceStart: TimeInterval, sourceEnd: TimeInterval) -> Range<TimeInterval>? {
-        var best: Range<TimeInterval>?
-        var run: Range<TimeInterval>?
-        for slice in slices(overlapping: sourceStart, sourceEnd: sourceEnd) {
-            if let current = run, abs(current.upperBound - slice.editorStart) < 0.000_5 {
-                run = current.lowerBound..<slice.editorEnd
-            } else {
-                run = slice.editorStart..<slice.editorEnd
-            }
-            if let run, run.upperBound - run.lowerBound > (best.map { $0.upperBound - $0.lowerBound } ?? -1) {
-                best = run
-            }
-        }
-        return best
+        editorRuns(overlapping: sourceStart, sourceEnd: sourceEnd)
+            .max(by: { $0.editorDuration < $1.editorDuration })
+            .map { $0.editorStart..<$0.editorEnd }
     }
 
     func isUnedited(sourceDuration: TimeInterval) -> Bool {

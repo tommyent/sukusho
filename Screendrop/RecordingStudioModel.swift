@@ -226,6 +226,7 @@ final class RecordingStudioModel {
     private(set) var clipTimeline = RecordingClipTimeline(segments: []) {
         didSet {
             if clipTimeline != oldValue {
+                rebuildCaptionTimelines()
                 refreshPlayheadMarks()
             }
         }
@@ -997,9 +998,8 @@ final class RecordingStudioModel {
         keystrokePlacement = document.keystrokePlacement ?? .bottomCenter
         showsSubtitles = document.showsSubtitles ?? true
         subtitleCues = document.subtitleCues ?? []
-        subtitleTimeline = SubtitleTimeline(cues: subtitleCues)
         transcriptWords = document.subtitleWords ?? []
-        karaokeTimeline = KaraokeTimeline(cues: subtitleCues, words: transcriptWords)
+        rebuildCaptionTimelines()
         subtitleStyle = document.subtitleStyle
         exportAspect = document.exportAspectPreset
         exportAspectMode = document.exportAspectContentMode
@@ -2808,11 +2808,23 @@ final class RecordingStudioModel {
         }
     }
 
+    private func rebuildCaptionTimelines() {
+        guard !subtitleCues.isEmpty else {
+            subtitleTimeline = .empty
+            karaokeTimeline = .empty
+            return
+        }
+        let captions = clipTimeline.segments.isEmpty
+            ? RecordingTranscript(words: transcriptWords, cues: subtitleCues)
+            : RecordingTranscript(words: transcriptWords, cues: subtitleCues).renderCaptions(in: clipTimeline)
+        subtitleTimeline = SubtitleTimeline(cues: captions.cues)
+        karaokeTimeline = KaraokeTimeline(cues: captions.cues, words: captions.words)
+    }
+
     private func applyTranscription(_ transcript: RecordingTranscript) {
         subtitleCues = transcript.cues
-        subtitleTimeline = SubtitleTimeline(cues: transcript.cues)
         transcriptWords = transcript.words
-        karaokeTimeline = KaraokeTimeline(cues: transcript.cues, words: transcript.words)
+        rebuildCaptionTimelines()
         showsSubtitles = true
         transcriptionState = .idle
         updateActiveTranscriptWord()
@@ -2835,8 +2847,7 @@ final class RecordingStudioModel {
             return
         }
         subtitleCues[index].text = text
-        subtitleTimeline = SubtitleTimeline(cues: subtitleCues)
-        karaokeTimeline = KaraokeTimeline(cues: subtitleCues, words: transcriptWords)
+        rebuildCaptionTimelines()
         scheduleProjectSave()
     }
 
@@ -3250,8 +3261,7 @@ final class RecordingStudioModel {
             target.applySubtitleCues(previous, actionName: actionName)
         }
         subtitleCues = cues
-        subtitleTimeline = SubtitleTimeline(cues: cues)
-        karaokeTimeline = KaraokeTimeline(cues: cues, words: transcriptWords)
+        rebuildCaptionTimelines()
         scheduleProjectSave()
     }
 

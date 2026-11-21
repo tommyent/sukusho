@@ -56,6 +56,87 @@ nonisolated struct RecordingTranscript: Sendable {
         }
         return result
     }
+
+    /// Maps cues and timed words onto editor-time touching runs in playback
+    /// order for shared transcripts. A cue split across reordered clips emits
+    /// separate runs rather than spanning unrelated footage in between, and
+    /// rebuilds text from the timed words retained in each run.
+    func sharedEntries(
+        in timeline: RecordingClipTimeline
+    ) -> (cues: [(start: Double, end: Double, text: String)], words: [(text: String, start: Double, end: Double)]) {
+        func sliceCoverage(of start: TimeInterval, to end: TimeInterval, in slices: [RecordingClipTimeline.Slice]) -> TimeInterval {
+            slices.reduce(0) { total, slice in
+                let lo = max(start, slice.sourceStart)
+                let hi = min(end, slice.sourceEnd)
+                return total + max(0, hi - lo)
+            }
+        }
+
+        var mappedCues: [(start: Double, end: Double, text: String)] = []
+        for cue in cues where cue.start.isFinite && cue.end.isFinite && cue.end > cue.start {
+            let trimmed = cue.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let runs = timeline.editorRuns(overlapping: cue.start, sourceEnd: cue.end)
+            guard !runs.isEmpty else { continue }
+
+            let timed = words
+                .filter { $0.start >= cue.start && $0.start < cue.end && $0.end.isFinite && $0.end > $0.start }
+                .sorted { $0.start < $1.start }
+            let corrected = trimmed.split(whereSeparator: \.isWhitespace).map(String.init)
+            let cueLength = cue.end - cue.start
+
+            for run in runs where run.editorEnd > run.editorStart {
+                let runCovered = sliceCoverage(of: cue.start, to: cue.end, in: run.slices)
+                if abs(runCovered - cueLength) < 0.001 {
+                    mappedCues.append((run.editorStart, run.editorEnd, trimmed))
+                    continue
+                }
+                if !timed.isEmpty {
+                    let keepWord: (RecordingTranscriptWord) -> Bool = { word in
+                        let covered = sliceCoverage(of: word.start, to: word.end, in: run.slices)
+                        return abs(covered - (word.end - word.start)) < 0.001
+                    }
+                    let rebuilt: String
+                    if timed.count == corrected.count, timed.allSatisfy({ $0.end <= cue.end + 0.001 }) {
+                        rebuilt = zip(timed, corrected)
+                            .filter { keepWord($0.0) }
+                            .map(\.1)
+                            .joined(separator: " ")
+                    } else {
+                        rebuilt = timed
+                            .filter(keepWord)
+                            .map(\.displayText)
+                            .filter { !$0.isEmpty }
+                            .joined(separator: " ")
+                    }
+                    if !rebuilt.isEmpty {
+                        mappedCues.append((run.editorStart, run.editorEnd, rebuilt))
+                    }
+                } else {
+                    mappedCues.append((run.editorStart, run.editorEnd, trimmed))
+                }
+            }
+        }
+
+        mappedCues.sort { lhs, rhs in
+            if abs(lhs.start - rhs.start) > 0.000_001 { return lhs.start < rhs.start }
+            return lhs.end < rhs.end
+        }
+
+        var mappedWords: [(text: String, start: Double, end: Double)] = []
+        for word in words where word.start.isFinite && word.end.isFinite && word.end > word.start {
+            for run in timeline.editorRuns(overlapping: word.start, sourceEnd: word.end)
+            where run.editorEnd > run.editorStart {
+                mappedWords.append((word.text, run.editorStart, run.editorEnd))
+            }
+        }
+        mappedWords.sort { lhs, rhs in
+            if abs(lhs.start - rhs.start) > 0.000_001 { return lhs.start < rhs.start }
+            return lhs.end < rhs.end
+        }
+
+        return (mappedCues, mappedWords)
+    }
 }
 
 /// One subtitle on the source (unedited) timeline, in seconds.

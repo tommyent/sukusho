@@ -105,8 +105,10 @@ nonisolated enum CloudSidecarUploader {
             .map(RecordingCaptionTranslation.tag)
         return CloudShareText.payload(summary: metadata?.summary, tracks: metadata?.captionTracks ?? [],
                                       transcriptLang: transcriptLang) { start, end in
-            guard finalCut else { return (start, end) }
-            return timeline.flatMap { mapRange(start, end, through: $0) }
+            guard finalCut else { return [(start, end)] }
+            guard let timeline else { return [] }
+            return timeline.editorRuns(overlapping: start, sourceEnd: end)
+                .map { ($0.editorStart, $0.editorEnd) }
         }
     }
 
@@ -326,37 +328,17 @@ nonisolated enum CloudSidecarUploader {
 
         guard let clips = document.clips, !clips.isEmpty else { return nil }
         let timeline = RecordingClipTimeline(segments: clips)
+        let mapped = RecordingTranscript(words: words ?? [], cues: cues).sharedEntries(in: timeline)
+        guard !mapped.cues.isEmpty else { return nil }
 
-        let mappedCues = cues.compactMap { cue -> CloudTranscriptPayload.Cue? in
-            guard let range = mapRange(cue.start, cue.end, through: timeline) else {
-                return nil
-            }
-            return .init(start: range.0, end: range.1, text: cue.text)
+        let mappedCues = mapped.cues.map {
+            CloudTranscriptPayload.Cue(start: $0.start, end: $0.end, text: $0.text)
         }
-        guard !mappedCues.isEmpty else { return nil }
-
-        let mappedWords = words?.compactMap { word -> CloudTranscriptPayload.Word? in
-            guard let range = mapRange(word.start, word.end, through: timeline) else {
-                return nil
-            }
-            return .init(text: word.text, start: range.0, end: range.1)
+        let mappedWords = words == nil ? nil : mapped.words.map {
+            CloudTranscriptPayload.Word(text: $0.text, start: $0.start, end: $0.end)
         }
 
         return CloudTranscriptPayload(cues: mappedCues, words: mappedWords)
-    }
-
-    /// Source range → surviving editor range; nil when fully cut out.
-    private static func mapRange(
-        _ start: TimeInterval,
-        _ end: TimeInterval,
-        through timeline: RecordingClipTimeline
-    ) -> (Double, Double)? {
-        let slices = timeline.slices(overlapping: start, sourceEnd: end)
-        guard let first = slices.first, let last = slices.last,
-              last.editorEnd > first.editorStart else {
-            return nil
-        }
-        return (first.editorStart, last.editorEnd)
     }
 
     // MARK: - Multipart POST

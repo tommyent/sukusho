@@ -567,6 +567,57 @@ struct StudioEditingTests {
         #expect(greenRGB.g > 180 && greenRGB.r < 80 && greenRGB.b < 80)
     }
 
+    // MARK: - Shared captions & transcript runs across reordered clips
+
+    @Test func sharedCaptionsAndTranscriptEmitSeparateRunsInEditorOrder() {
+        // Clips [0..4, 8..12, 4..8]: cue over source 3..5 survives at editor 3..4 and 8..9,
+        // NOT as one 3..9 span covering unrelated footage 8..12.
+        let reordered = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 4),
+            RecordingClipSegment(sourceStart: 8, sourceEnd: 12),
+            RecordingClipSegment(sourceStart: 4, sourceEnd: 8),
+        ])
+        let words: [RecordingTranscriptWord] = [
+            .init(text: "before ", start: 3.0, end: 3.9),
+            .init(text: "after", start: 4.1, end: 5.0),
+            .init(text: "middle", start: 9.0, end: 10.0),
+        ]
+        let cues: [RecordingSubtitleCue] = [
+            .init(start: 3.0, end: 5.0, text: "before after"),
+            .init(start: 9.0, end: 10.0, text: "middle"),
+        ]
+
+        let shared = RecordingTranscript(words: words, cues: cues).sharedEntries(in: reordered)
+        #expect(shared.cues.count == 3)
+        #expect(shared.cues[0].text == "before")
+        #expect(abs(shared.cues[0].start - 3.0) < 0.0001 && abs(shared.cues[0].end - 4.0) < 0.0001)
+        #expect(shared.cues[1].text == "middle")
+        #expect(abs(shared.cues[1].start - 5.0) < 0.0001 && abs(shared.cues[1].end - 6.0) < 0.0001)
+        #expect(shared.cues[2].text == "after")
+        #expect(abs(shared.cues[2].start - 8.0) < 0.0001 && abs(shared.cues[2].end - 9.0) < 0.0001)
+
+        // Words are also emitted in editor playback order.
+        #expect(shared.words.map(\.text) == ["before ", "middle", "after"])
+        #expect(abs(shared.words[0].start - 3.0) < 0.0001)
+        #expect(abs(shared.words[1].start - 5.0) < 0.0001)
+        #expect(abs(shared.words[2].start - 8.1) < 0.0001)
+
+        // Translated caption tracks map to separate touching runs in editor order too.
+        let track = RecordingCaptionTrack(lang: "es", label: "Español", cues: [
+            .init(start: 3.0, end: 5.0, text: "antes después"),
+            .init(start: 9.0, end: 10.0, text: "medio"),
+        ])
+        let payload = CloudShareText.payload(summary: nil, tracks: [track]) { start, end in
+            reordered.editorRuns(overlapping: start, sourceEnd: end).map { ($0.editorStart, $0.editorEnd) }
+        }
+        #expect(payload.tracks.count == 1)
+        let mappedTrackCues = payload.tracks[0].cues
+        #expect(mappedTrackCues.count == 3)
+        #expect(abs(mappedTrackCues[0].start - 3.0) < 0.0001 && abs(mappedTrackCues[0].end - 4.0) < 0.0001)
+        #expect(abs(mappedTrackCues[1].start - 5.0) < 0.0001 && abs(mappedTrackCues[1].end - 6.0) < 0.0001)
+        #expect(abs(mappedTrackCues[2].start - 8.0) < 0.0001 && abs(mappedTrackCues[2].end - 9.0) < 0.0001)
+    }
+
     private func writeSolidColorMovie(
         to url: URL,
         size: CGSize,

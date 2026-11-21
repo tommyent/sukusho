@@ -99,19 +99,34 @@ nonisolated enum CloudShareText {
     }
 
     /// `map` moves a cue onto the shared video's timeline, or returns nil
-    /// when it was cut, as the transcript's cues are. A track the Worker
-    /// would refuse is left out, since one bad field costs the whole request
-    /// its poster and transcript too.
+    /// when it was cut, as the transcript's cues are.
     static func payload(summary: String?, tracks: [RecordingCaptionTrack], transcriptLang: String? = nil,
                         map: (TimeInterval, TimeInterval) -> (Double, Double)?) -> Payload {
+        payload(summary: summary, tracks: tracks, transcriptLang: transcriptLang) { start, end in
+            map(start, end).map { [$0] } ?? []
+        }
+    }
+
+    /// `mapRuns` maps one source cue into every surviving touching editor-time
+    /// run, emitted in editor order. A track the Worker would refuse is left
+    /// out, since one bad field costs the whole request its poster and
+    /// transcript too.
+    static func payload(summary: String?, tracks: [RecordingCaptionTrack], transcriptLang: String? = nil,
+                        mapRuns: (TimeInterval, TimeInterval) -> [(Double, Double)]) -> Payload {
         var seen = Set<String>()
         var wire: [Track] = []
         for track in tracks {
-            let cues = track.cues.compactMap { cue -> Cue? in
+            let cues = track.cues.flatMap { cue -> [Cue] in
                 let text = cue.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !text.isEmpty, let (start, end) = map(cue.start, cue.end),
-                      start.isFinite, end.isFinite, start >= 0, end > start else { return nil }
-                return Cue(start: start, end: end, text: text)
+                guard !text.isEmpty else { return [] }
+                return mapRuns(cue.start, cue.end).compactMap { start, end in
+                    guard start.isFinite, end.isFinite, start >= 0, end > start else { return nil }
+                    return Cue(start: start, end: end, text: text)
+                }
+            }
+            .sorted { lhs, rhs in
+                if abs(lhs.start - rhs.start) > 0.000_001 { return lhs.start < rhs.start }
+                return lhs.end < rhs.end
             }
             let label = track.label.trimmingCharacters(in: .whitespacesAndNewlines)
             let shared = Track(lang: track.lang, label: label, cues: cues)
