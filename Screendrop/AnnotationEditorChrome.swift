@@ -466,6 +466,7 @@ private struct GlassWindowChromeModifier: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
     @State private var titlebarBeforeGlass: (transparent: Bool, separator: NSTitlebarSeparatorStyle)?
     @State private var trackedWindowID: ObjectIdentifier?
+    @State private var fullScreenRevision = 0
 
     private var windowID: ObjectIdentifier? { window.map(ObjectIdentifier.init) }
 
@@ -477,7 +478,22 @@ private struct GlassWindowChromeModifier: ViewModifier {
                     titlebarBeforeGlass = nil
                 }
             }
-            .task(id: "\(floatingChrome)#\(windowID?.hashValue ?? 0)") {
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.willEnterFullScreenNotification)) { note in
+                if let window, note.object as? NSWindow === window {
+                    _ = LibraryWindowButtonCapsule.update(window, shown: false)
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { note in
+                if let window, note.object as? NSWindow === window {
+                    fullScreenRevision += 1
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { note in
+                if let window, note.object as? NSWindow === window {
+                    fullScreenRevision += 1
+                }
+            }
+            .task(id: "\(floatingChrome)#\(windowID?.hashValue ?? 0)#\(fullScreenRevision)") {
                 if #available(macOS 27, *), let window {
                     if floatingChrome {
                         if titlebarBeforeGlass == nil {

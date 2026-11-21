@@ -1076,7 +1076,7 @@ enum LibraryWindowButtonCapsule {
     ) -> Bool {
         guard let window, let content = window.contentView, let frame = content.superview else { return true }
         let existing = frame.subviews.filter { $0.identifier == id }
-        guard shown else {
+        guard shown, !window.styleMask.contains(.fullScreen) else {
             existing.forEach { $0.removeFromSuperview() }
             return true
         }
