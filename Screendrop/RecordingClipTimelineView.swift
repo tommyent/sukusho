@@ -46,6 +46,9 @@ struct RecordingClipTimelineView: NSViewRepresentable {
     /// Shared focus/modal guard so the AppKit strip yields during crop or
     /// document restore even when it holds first responder.
     var allowsKeyboardShortcuts: () -> Bool = { true }
+    var canDetachAudio: ((UUID) -> Bool)? = nil
+    var onDetachAudio: ((UUID) -> Void)? = nil
+    var onToggleMute: ((UUID) -> Void)? = nil
 
     func makeNSView(context: Context) -> RecordingClipTimelineControl {
         RecordingClipTimelineControl()
@@ -67,6 +70,9 @@ struct RecordingClipTimelineView: NSViewRepresentable {
         nsView.snapGuideDidChange = onSnapGuide
         nsView.trimPreviewDidChange = onTrimPreview
         nsView.allowsKeyboardShortcuts = allowsKeyboardShortcuts
+        nsView.canDetachAudio = canDetachAudio
+        nsView.detachAudioRequested = onDetachAudio
+        nsView.toggleMuteRequested = onToggleMute
         nsView.update(
             timeline: timeline,
             sourceDuration: sourceDuration,
@@ -93,6 +99,9 @@ final class RecordingClipTimelineControl: NSView {
     var snapGuideDidChange: ((TimeInterval?) -> Void)?
     var trimPreviewDidChange: ((TimeInterval?) -> Void)?
     var allowsKeyboardShortcuts: () -> Bool = { true }
+    var canDetachAudio: ((UUID) -> Bool)?
+    var detachAudioRequested: ((UUID) -> Void)?
+    var toggleMuteRequested: ((UUID) -> Void)?
 
     private enum Edge: Equatable {
         case leading
@@ -524,6 +533,36 @@ final class RecordingClipTimelineControl: NSView {
             menu.addItem(later)
         }
 
+        if let contextClipID, let clip = timeline.segments.first(where: { $0.id == contextClipID }) {
+            let canDetach = canDetachAudio?(contextClipID) == true
+            if canDetach || toggleMuteRequested != nil {
+                menu.addItem(.separator())
+            }
+            if canDetach {
+                let detach = NSMenuItem(
+                    title: "Detach Audio",
+                    action: #selector(detachAudioFromContextMenu),
+                    keyEquivalent: ""
+                )
+                detach.target = self
+                detach.image = NSImage(systemSymbolName: "waveform.badge.minus", accessibilityDescription: nil)
+                menu.addItem(detach)
+            }
+            if toggleMuteRequested != nil {
+                let mute = NSMenuItem(
+                    title: clip.isMuted ? "Unmute Clip" : "Mute Clip",
+                    action: #selector(toggleMuteFromContextMenu),
+                    keyEquivalent: ""
+                )
+                mute.target = self
+                mute.image = NSImage(
+                    systemSymbolName: clip.isMuted ? "speaker.wave.2" : "speaker.slash",
+                    accessibilityDescription: nil
+                )
+                menu.addItem(mute)
+            }
+        }
+
         menu.addItem(.separator())
 
         let delete = NSMenuItem(
@@ -555,6 +594,16 @@ final class RecordingClipTimelineControl: NSView {
               let index = timeline.segments.firstIndex(where: { $0.id == contextClipID }),
               index + 1 < timeline.segments.count else { return }
         reorderRequested?(contextClipID, index + 1)
+    }
+
+    @objc private func detachAudioFromContextMenu() {
+        guard let contextClipID else { return }
+        detachAudioRequested?(contextClipID)
+    }
+
+    @objc private func toggleMuteFromContextMenu() {
+        guard let contextClipID else { return }
+        toggleMuteRequested?(contextClipID)
     }
 
     @objc private func deleteFromContextMenu() {
@@ -946,6 +995,17 @@ final class RecordingClipTimelineControl: NSView {
                let badge = badgeRect(
                    text: speedText,
                    symbol: "hare.fill",
+                   origin: CGPoint(x: leadingX, y: content.minY),
+                   maxX: content.maxX
+               ) {
+                drawBadge(badge)
+                leadingX = badge.frame.maxX + 4
+            }
+
+            if clip.isMuted,
+               let badge = badgeRect(
+                   text: "Muted",
+                   symbol: "speaker.slash.fill",
                    origin: CGPoint(x: leadingX, y: content.minY),
                    maxX: content.maxX
                ) {

@@ -9,6 +9,7 @@
 import AppKit
 import Observation
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Timeline
 
@@ -25,11 +26,14 @@ struct StudioTimelineEditor: View {
     @State private var isScrubbing = false
     @State private var isResetClipsConfirmationPresented = false
     /// Isolated snap-guide state so showing/moving the yellow guide during a
-    /// trim only invalidates `StudioSnapGuideOverlay`, never the lane stack.
+    /// trim or audio drag only invalidates `StudioSnapGuideOverlay`, never the lane stack.
     @State private var snapGuide = StudioSnapGuideState()
     /// Anchor time while ⇧-dragging on the ruler to mark an I/O range.
     @State private var rangeAnchor: TimeInterval?
     @GestureState private var isRulerGestureActive = false
+    /// Active soloed audio lane and the per-clip mutes captured before soloing.
+    @State private var soloState: (lane: Int, mutes: [UUID: Bool])?
+    @State private var isAudioDropTargeted = false
 
     /// Step per zoom button press / keyboard shortcut.
     private static let zoomStep: Double = 1.6
@@ -48,7 +52,10 @@ struct StudioTimelineEditor: View {
     var body: some View {
         VStack(spacing: StudioTimelineMetrics.rowSpacing) {
             transport
-            lanes
+            HStack(alignment: .top, spacing: 0) {
+                trackGutter
+                lanes
+            }
         }
         .padding(.horizontal, 16)
         .padding(.top, 12)
@@ -59,10 +66,52 @@ struct StudioTimelineEditor: View {
                 .fill(Color(nsColor: .separatorColor).opacity(0.45))
                 .frame(height: 0.5)
         }
+        .alert("Couldn't Add Media", isPresented: Binding(
+            get: { model.mediaImportError != nil },
+            set: { if !$0 { model.mediaImportError = nil } }
+        )) {
+            Button("OK", role: .cancel) { model.mediaImportError = nil }
+        } message: {
+            Text(model.mediaImportError ?? "")
+        }
+    }
+
+    private var trackGutter: some View {
+        VStack(spacing: StudioTimelineMetrics.rowSpacing) {
+            Color.clear
+                .frame(height: StudioTimelineMetrics.playheadLaneHeight)
+            Color.clear
+                .frame(height: StudioTimelineMetrics.rulerHeight)
+            Image(systemName: "film")
+                .font(.system(size: 11.5, weight: .regular))
+                .foregroundStyle(Palette.secondaryLabel)
+                .frame(maxWidth: .infinity)
+                .frame(height: StudioTimelineMetrics.clipLaneHeight)
+                .help("Video clips")
+            Image(systemName: "viewfinder")
+                .font(.system(size: 11.5, weight: .regular))
+                .foregroundStyle(Palette.secondaryLabel)
+                .frame(maxWidth: .infinity)
+                .frame(height: StudioTimelineMetrics.zoomLaneHeight)
+                .help("Zooms")
+            ForEach(0..<model.audioLaneCount, id: \.self) { lane in
+                StudioAudioLaneGlyph(
+                    model: model,
+                    lane: lane,
+                    height: StudioAudioLaneMetrics.laneHeight,
+                    soloState: $soloState
+                )
+            }
+            Color.clear
+                .frame(height: StudioTimelineMetrics.scrollerGutter)
+        }
+        .frame(width: StudioAudioLaneMetrics.gutterWidth)
+        .padding(.trailing, 8)
     }
 
     private var lanes: some View {
-        GeometryReader { proxy in
+        let audioLaneCount = model.audioLaneCount
+        return GeometryReader { proxy in
             // The proxy width leads the stored one by a frame, so lay the
             // lanes out from it and keep the state copy for the controls.
             let scale = StudioTimelineScale(
@@ -88,7 +137,7 @@ struct StudioTimelineEditor: View {
                     if !active { finishRulerGesture() }
                 }
 
-                scrollingLanes(scale: scale)
+                scrollingLanes(scale: scale, audioLaneCount: audioLaneCount)
             }
             .overlay {
                 StudioTimelineInkMarks(model: model, scale: scale, scrollX: scrollX)
@@ -113,22 +162,43 @@ struct StudioTimelineEditor: View {
                     size: proxy.size
                 )
             }
+            .onDrop(of: [.fileURL], isTargeted: $isAudioDropTargeted) { providers, location in
+                guard model.canImportAudioMedia else { return false }
+                let dropTime = scale.time(forX: location.x + scrollX)
+                Task { @MainActor in
+                    var urls: [URL] = []
+                    for provider in providers {
+                        let url: URL? = await withCheckedContinuation { continuation in
+                            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                                continuation.resume(returning: url)
+                            }
+                        }
+                        if let url { urls.append(url) }
+                    }
+                    let audioURLs = urls.filter(RecordingAudioClip.canImport)
+                    if !audioURLs.isEmpty {
+                        model.importAudioFiles(audioURLs, atEditorTime: dropTime)
+                    }
+                }
+                return true
+            }
             .onChange(of: proxy.size.width, initial: true) { _, width in
                 viewportWidth = max(width, 1)
                 clampZoom()
             }
         }
-        .frame(height: StudioTimelineMetrics.lanesHeight)
+        .frame(height: StudioTimelineMetrics.lanesHeight(audioLaneCount: audioLaneCount))
         .onChange(of: model.duration) { _, _ in clampZoom() }
     }
 
-    /// The two lanes that carry real edit targets live in a horizontal scroll
+    /// The lanes that carry real edit targets live in a horizontal scroll
     /// view sized to the zoomed timeline. The ruler, playhead and lane chrome
     /// stay viewport-sized and redraw against `scrollX` instead - a rounded
     /// rectangle or Canvas tens of thousands of points wide would be a single
     /// oversized layer, while an AppKit view only ever draws its visible rect.
-    private func scrollingLanes(scale: StudioTimelineScale) -> some View {
-        ZStack(alignment: .topLeading) {
+    private func scrollingLanes(scale: StudioTimelineScale, audioLaneCount: Int) -> some View {
+        let visibleRange = scale.visibleRange(scrollX: scrollX)
+        return ZStack(alignment: .topLeading) {
             VStack(spacing: StudioTimelineMetrics.rowSpacing) {
                 Color.clear
                     .frame(height: StudioTimelineMetrics.clipLaneHeight)
@@ -136,6 +206,13 @@ struct StudioTimelineEditor: View {
                     showsHint: model.zoomEnabled && model.zoomTimelineBlocks.isEmpty
                 )
                     .frame(height: StudioTimelineMetrics.zoomLaneHeight)
+                ForEach(0..<audioLaneCount, id: \.self) { lane in
+                    StudioAudioLaneBackground(
+                        showsHint: lane == 0 && model.audioClips.isEmpty && model.canImportAudioMedia,
+                        isDropTarget: isAudioDropTargeted && lane == 0
+                    )
+                    .frame(height: StudioAudioLaneMetrics.laneHeight)
+                }
                 Color.clear
                     .frame(height: StudioTimelineMetrics.scrollerGutter)
             }
@@ -151,13 +228,30 @@ struct StudioTimelineEditor: View {
                     StudioZoomLane(
                         model: model,
                         scale: scale,
-                        visibleRange: scale.visibleRange(scrollX: scrollX),
+                        visibleRange: visibleRange,
                         onScrubbing: { isScrubbing = $0 }
                     )
                     .frame(
                         width: scale.contentWidth,
                         height: StudioTimelineMetrics.zoomLaneHeight
                     )
+
+                    ForEach(0..<audioLaneCount, id: \.self) { lane in
+                        StudioAudioLane(
+                            model: model,
+                            lane: lane,
+                            snaps: model.snapsEdits,
+                            scale: scale,
+                            visibleRange: visibleRange,
+                            laneSpacing: StudioTimelineMetrics.rowSpacing,
+                            onScrubbing: { isScrubbing = $0 },
+                            onSnapGuide: { if snapGuide.time != $0 { snapGuide.time = $0 } }
+                        )
+                        .frame(
+                            width: scale.contentWidth,
+                            height: StudioAudioLaneMetrics.laneHeight
+                        )
+                    }
 
                     Color.clear
                         .frame(height: StudioTimelineMetrics.scrollerGutter)
@@ -177,7 +271,7 @@ struct StudioTimelineEditor: View {
                 }
             }
         }
-        .frame(height: StudioTimelineMetrics.scrollingLanesHeight)
+        .frame(height: StudioTimelineMetrics.scrollingLanesHeight(audioLaneCount: audioLaneCount))
     }
 
     private var clipLane: some View {
@@ -214,7 +308,10 @@ struct StudioTimelineEditor: View {
             onTrimPreview: { model.previewSourceTime($0) },
             allowsKeyboardShortcuts: {
                 model.isLoaded && !model.isRestoringDocument && !model.isEditingSourceRegion
-            }
+            },
+            canDetachAudio: { model.canDetachAudio(fromClipID: $0) },
+            onDetachAudio: { model.detachAudio(fromClipID: $0) },
+            onToggleMute: { model.toggleClipMuted(id: $0) }
         )
     }
 
@@ -356,9 +453,21 @@ struct StudioTimelineEditor: View {
 
     private var editControls: some View {
         HStack(spacing: 6) {
+            if model.canImportAudioMedia {
+                StudioTransportTray {
+                    timelineButton("Add Audio…", systemImage: "waveform.badge.plus") {
+                        pickAudioFiles()
+                    }
+                }
+            }
+
             StudioTransportTray {
                 timelineButton("Split at Playhead (⌘B)", systemImage: "scissors") {
-                    model.splitClip(at: model.currentTime)
+                    if let audioID = model.selectedAudioClipID {
+                        model.splitAudioClip(id: audioID, at: model.currentTime)
+                    } else {
+                        model.splitClip(at: model.currentTime)
+                    }
                 }
                 .keyboardShortcut("b", modifiers: .command)
 
@@ -481,16 +590,31 @@ struct StudioTimelineEditor: View {
     }
 
     private var canDeleteSelection: Bool {
-        model.selectedCueID != nil || model.canDeleteSelectedClip || model.rangeSelection != nil
+        model.selectedAudioClipID != nil || model.selectedCueID != nil || model.canDeleteSelectedClip || model.rangeSelection != nil
     }
 
     private func deleteSelection() {
-        if let cueID = model.selectedCueID {
+        if let audioID = model.selectedAudioClipID {
+            model.removeAudioClip(id: audioID)
+        } else if let cueID = model.selectedCueID {
             model.removeZoomCue(id: cueID)
         } else if model.canDeleteSelectedClip {
             model.deleteSelectedClip()
         } else if model.rangeSelection != nil {
             model.deleteRange()
+        }
+    }
+
+    private func pickAudioFiles() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = RecordingAudioFormat.importContentTypes
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.title = "Add Audio to Timeline"
+        panel.begin { response in
+            guard response == .OK, !panel.urls.isEmpty else { return }
+            model.importAudioFiles(panel.urls, atEditorTime: model.currentTime)
         }
     }
 
@@ -576,10 +700,18 @@ private enum StudioTimelineMetrics {
     /// top of a zoom block.
     static let scrollerGutter: CGFloat = 8
 
-    static let scrollingLanesHeight = clipLaneHeight + zoomLaneHeight
-        + scrollerGutter + rowSpacing * 2
-    static let lanesHeight = playheadLaneHeight + rulerHeight
-        + scrollingLanesHeight + rowSpacing * 2
+    static func scrollingLanesHeight(audioLaneCount: Int) -> CGFloat {
+        let count = max(1, audioLaneCount)
+        return clipLaneHeight
+            + zoomLaneHeight
+            + CGFloat(count) * StudioAudioLaneMetrics.laneHeight
+            + scrollerGutter
+            + rowSpacing * CGFloat(count + 2)
+    }
+
+    static func lanesHeight(audioLaneCount: Int) -> CGFloat {
+        playheadLaneHeight + rulerHeight + scrollingLanesHeight(audioLaneCount: audioLaneCount) + rowSpacing * 2
+    }
 }
 
 /// The playhead and the skim line, with the only reads of the playhead's

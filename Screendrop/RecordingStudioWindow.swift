@@ -205,7 +205,9 @@ private struct RecordingStudioContent: View {
             StudioKeyCommands(model: model)
         }
         .onDeleteCommand {
-            if let selectedCueID = model.selectedCueID {
+            if let selectedAudioClipID = model.selectedAudioClipID {
+                model.removeAudioClip(id: selectedAudioClipID)
+            } else if let selectedCueID = model.selectedCueID {
                 model.removeZoomCue(id: selectedCueID)
             } else if model.selectedClipID != nil {
                 model.deleteSelectedClip()

@@ -36,6 +36,11 @@ private enum StudioTranscriptTab: CaseIterable, Identifiable {
     }
 }
 
+private enum StudioInspectorContent: Hashable {
+    case main
+    case audio(UUID)
+}
+
 struct StudioInspector: View {
     /// Whole-number playback rates offered for a clip, within
     /// `RecordingClipSegment`'s 1...8 range.
@@ -54,171 +59,22 @@ struct StudioInspector: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FloatingGlassChrome private var floatingChrome
 
+    private var inspectorContent: StudioInspectorContent {
+        if let clip = model.selectedAudioClip { return .audio(clip.id) }
+        return .main
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 0) {
-                // Timeline selections edit at the top, where attention lands
-                // after clicking a zoom or clip, instead of pushing the
-                // sections below around mid-panel.
-                if let selected = model.selectedCue {
-                    InspectorSection(
-                        title: "Selected Zoom",
-                        accessory: {
-                            InspectorToggle(
-                                "Use this zoom",
-                                isOn: Binding(
-                                    get: { selected.isEnabled },
-                                    set: { isEnabled in
-                                        var updated = selected
-                                        updated.isEnabled = isEnabled
-                                        model.updateZoomCue(updated)
-                                    }
-                                )
-                            )
-                        }
-                    ) {
-                        if model.zoomEnabled {
-                            selectedZoomControls(for: selected)
-                        } else {
-                            InspectorHint("Zooms are off. Turn on Zoom & Clicks to change this one.")
-                        }
+                switch inspectorContent {
+                case .audio:
+                    if let clip = model.selectedAudioClip {
+                        selectedAudioPage(for: clip)
                     }
-                    InspectorSectionDivider()
-                } else if let selectedClip = model.selectedClip {
-                    InspectorSection("Selected Clip") {
-                        selectedClipControls(for: selectedClip)
-                    }
-                    InspectorSectionDivider()
-                }
-
-                // The look, as the image editor lays it out: Styles, then
-                // Background (upstream v0.35's Canvas and Frame).
-                RecordingStudioStyleStrip(model: model, presetStore: stylePresetStore)
-
-                InspectorSection(
-                    "Background",
-                    accessory: {
-                        if model.style.background != .none {
-                            InspectorClearButton(help: "Remove background") {
-                                model.style.background = .none
-                            }
-                        }
-                    }
-                ) {
-                    backgroundControls
-                }
-
-                // The video's own edge, a heading of its own as the image editor's Screenshot is.
-                InspectorSection(
-                    "Video",
-                    accessory: {
-                        if !usesDefaultLayout {
-                            InspectorResetButton(help: "Reset padding, corners and shadow") {
-                                model.style.padding = 0.06
-                                model.style.cornerRadius = 0.02
-                                model.style.shadow = 0.45
-                            }
-                        }
-                    }
-                ) {
-                    videoControls
-                }
-
-                InspectorGroupBreak()
-
-                // As in the image editor: a section that can be off has a switch and shows its
-                // options while on; the rest are always open. No chevrons (Fable pass 3, #4).
-                InspectorSection("Redactions") {
-                    RecordingRedactionControls(model: model)
-                }
-
-                InspectorSection("Zoom & Clicks", isOn: $model.zoomEnabled, toggleTitle: "Enable zooms") {
-                    zoomControls
-                }
-
-                if model.pointerIsSynthesized {
-                    InspectorSection(
-                        "Cursor",
-                        isOn: Binding(
-                            get: { !model.style.hidesCursor },
-                            set: { model.style.hidesCursor = !$0 }
-                        ),
-                        toggleTitle: "Show mouse pointer",
-                        accessory: {
-                            if !model.style.hidesCursor,
-                               model.style.cursorScale != RecordingStudioStyle.defaultCursorScale {
-                                InspectorResetButton(help: "Reset cursor size") {
-                                    model.style.cursorScale = RecordingStudioStyle.defaultCursorScale
-                                }
-                            }
-                        }
-                    ) {
-                        cursorControls
-                    }
-                }
-
-                if model.hasKeystrokes {
-                    InspectorSection("Keystrokes", isOn: $model.showsKeystrokes, toggleTitle: "Show keystrokes") {
-                        keystrokeControls
-                    }
-                }
-
-                if model.hasInk {
-                    InspectorSection("Drawings", isOn: $model.showsInk, toggleTitle: "Show drawings") {
-                        inkControls
-                    }
-                }
-
-                if model.canTranscribe || model.hasSubtitles {
-                    // A switch once there are subtitles to show; until then the section holds
-                    // what makes them.
-                    InspectorSection(
-                        "Transcription",
-                        isOn: model.hasSubtitles && !model.transcriptionState.isTranscribing
-                            ? $model.showsSubtitles : nil,
-                        toggleTitle: "Show subtitles",
-                        accessory: {
-                            if model.transcriptionState.isTranscribing {
-                                ProgressView()
-                                    .controlSize(.mini)
-                                    .frame(width: 24, height: 24)
-                            }
-                        }
-                    ) {
-                        transcriptionControls
-                    }
-                }
-
-                if model.isProject {
-                    InspectorSection("Chapters") {
-                        chapterControls
-                    }
-                }
-
-                if model.hasCameraVideo {
-                    InspectorSection("Camera", isOn: $model.style.camera.isVisible, toggleTitle: "Show camera") {
-                        cameraControls
-                    }
-                }
-
-                InspectorSection(
-                    "Audio",
-                    accessory: {
-                        if model.hasReplacementAudio {
-                            if model.hasRecordedAudio {
-                                InspectorResetButton(help: "Use the recorded audio again") {
-                                    model.removeReplacementAudio()
-                                }
-                            } else {
-                                InspectorClearButton(help: "Remove this audio") {
-                                    model.removeReplacementAudio()
-                                }
-                            }
-                        }
-                    }
-                ) {
-                    audioControls
+                case .main:
+                    mainInspectorSections
                 }
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -227,6 +83,7 @@ struct StudioInspector: View {
             .padding(.top, floatingChrome ? -6 : 0)
             .padding(.bottom, model.isProject ? 12 : PreviewPeekTab.pillHeight * 1.1)
             }
+            .id(inspectorContent)
             .scrollContentBackground(.hidden)
             .scrollEdgeEffectStyle(.soft, for: .all)
             .clipped()
@@ -306,6 +163,237 @@ struct StudioInspector: View {
         )
         .task {
             await wallpaperStore.reload()
+        }
+    }
+
+    // MARK: Main inspector & audio clip page
+
+    @ViewBuilder
+    private var mainInspectorSections: some View {
+        // Timeline selections edit at the top, where attention lands
+        // after clicking a zoom or clip, instead of pushing the
+        // sections below around mid-panel.
+        if let selected = model.selectedCue {
+            InspectorSection(
+                title: "Selected Zoom",
+                accessory: {
+                    InspectorToggle(
+                        "Use this zoom",
+                        isOn: Binding(
+                            get: { selected.isEnabled },
+                            set: { isEnabled in
+                                var updated = selected
+                                updated.isEnabled = isEnabled
+                                model.updateZoomCue(updated)
+                            }
+                        )
+                    )
+                }
+            ) {
+                if model.zoomEnabled {
+                    selectedZoomControls(for: selected)
+                } else {
+                    InspectorHint("Zooms are off. Turn on Zoom & Clicks to change this one.")
+                }
+            }
+            InspectorSectionDivider()
+        } else if let selectedClip = model.selectedClip {
+            InspectorSection("Selected Clip") {
+                selectedClipControls(for: selectedClip)
+            }
+            InspectorSectionDivider()
+        }
+
+        // The look, as the image editor lays it out: Styles, then
+        // Background (upstream v0.35's Canvas and Frame).
+        RecordingStudioStyleStrip(model: model, presetStore: stylePresetStore)
+
+        InspectorSection(
+            "Background",
+            accessory: {
+                if model.style.background != .none {
+                    InspectorClearButton(help: "Remove background") {
+                        model.style.background = .none
+                    }
+                }
+            }
+        ) {
+            backgroundControls
+        }
+
+        // The video's own edge, a heading of its own as the image editor's Screenshot is.
+        InspectorSection(
+            "Video",
+            accessory: {
+                if !usesDefaultLayout {
+                    InspectorResetButton(help: "Reset padding, corners and shadow") {
+                        model.style.padding = 0.06
+                        model.style.cornerRadius = 0.02
+                        model.style.shadow = 0.45
+                    }
+                }
+            }
+        ) {
+            videoControls
+        }
+
+        InspectorGroupBreak()
+
+        // As in the image editor: a section that can be off has a switch and shows its
+        // options while on; the rest are always open. No chevrons (Fable pass 3, #4).
+        InspectorSection("Redactions") {
+            RecordingRedactionControls(model: model)
+        }
+
+        InspectorSection("Zoom & Clicks", isOn: $model.zoomEnabled, toggleTitle: "Enable zooms") {
+            zoomControls
+        }
+
+        if model.pointerIsSynthesized {
+            InspectorSection(
+                "Cursor",
+                isOn: Binding(
+                    get: { !model.style.hidesCursor },
+                    set: { model.style.hidesCursor = !$0 }
+                ),
+                toggleTitle: "Show mouse pointer",
+                accessory: {
+                    if !model.style.hidesCursor,
+                       model.style.cursorScale != RecordingStudioStyle.defaultCursorScale {
+                        InspectorResetButton(help: "Reset cursor size") {
+                            model.style.cursorScale = RecordingStudioStyle.defaultCursorScale
+                        }
+                    }
+                }
+            ) {
+                cursorControls
+            }
+        }
+
+        if model.hasKeystrokes {
+            InspectorSection("Keystrokes", isOn: $model.showsKeystrokes, toggleTitle: "Show keystrokes") {
+                keystrokeControls
+            }
+        }
+
+        if model.hasInk {
+            InspectorSection("Drawings", isOn: $model.showsInk, toggleTitle: "Show drawings") {
+                inkControls
+            }
+        }
+
+        if model.canTranscribe || model.hasSubtitles {
+            // A switch once there are subtitles to show; until then the section holds
+            // what makes them.
+            InspectorSection(
+                "Transcription",
+                isOn: model.hasSubtitles && !model.transcriptionState.isTranscribing
+                    ? $model.showsSubtitles : nil,
+                toggleTitle: "Show subtitles",
+                accessory: {
+                    if model.transcriptionState.isTranscribing {
+                        ProgressView()
+                            .controlSize(.mini)
+                            .frame(width: 24, height: 24)
+                    }
+                }
+            ) {
+                transcriptionControls
+            }
+        }
+
+        if model.isProject {
+            InspectorSection("Chapters") {
+                chapterControls
+            }
+        }
+
+        if model.hasCameraVideo {
+            InspectorSection("Camera", isOn: $model.style.camera.isVisible, toggleTitle: "Show camera") {
+                cameraControls
+            }
+        }
+
+        InspectorSection(
+            "Audio",
+            accessory: {
+                if model.hasReplacementAudio {
+                    if model.hasRecordedAudio {
+                        InspectorResetButton(help: "Use the recorded audio again") {
+                            model.removeReplacementAudio()
+                        }
+                    } else {
+                        InspectorClearButton(help: "Remove this audio") {
+                            model.removeReplacementAudio()
+                        }
+                    }
+                }
+            }
+        ) {
+            audioControls
+        }
+    }
+
+    private func selectedAudioPage(for clip: RecordingAudioClip) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Button {
+                        model.selectedAudioClipID = nil
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 10.5, weight: .semibold))
+                            Text("Inspector")
+                                .font(.inspectorLabel)
+                        }
+                        .foregroundStyle(Palette.secondaryLabel)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Back to Inspector")
+
+                    Spacer(minLength: 0)
+
+                    if model.selectedAudioClipIDs.count > 1 {
+                        Text("\(model.selectedAudioClipIDs.count) selected")
+                            .font(.inspectorLabel.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Button {
+                        model.removeAudioClip(id: clip.id)
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Remove Audio")
+                    .accessibilityLabel("Remove Audio")
+                }
+
+                HStack(spacing: 6) {
+                    Image(systemName: clip.source == .file ? "music.note" : "waveform")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color(nsColor: .systemIndigo))
+                    Text(clip.displayName)
+                        .font(.inspectorSectionHeader)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+            .padding(.horizontal, InspectorMetrics.horizontalPadding)
+            .padding(.top, 10)
+            .padding(.bottom, 10)
+
+            InspectorSectionDivider()
+
+            StudioAudioClipInspectorControls(model: model, clip: clip)
+                .padding(.horizontal, InspectorMetrics.horizontalPadding)
+                .padding(.vertical, 12)
         }
     }
 
@@ -571,6 +659,36 @@ struct StudioInspector: View {
                     }
                 )
                 .help("Audio speeds up with the clip")
+            }
+
+            if model.hasRecordedAudio || model.replacementAudio != nil {
+                InspectorFieldPair {
+                    InspectorSlider(
+                        "Volume",
+                        value: Binding(
+                            get: { CGFloat(clip.volume) },
+                            set: { model.setClipVolume(Double($0), forClipID: clip.id) }
+                        ),
+                        range: CGFloat(RecordingClipSegment.volumeRange.lowerBound)...CGFloat(RecordingClipSegment.volumeRange.upperBound),
+                        format: .percent()
+                    )
+                    .disabled(clip.isMuted)
+                } trailing: {
+                    InspectorActionButton(
+                        clip.isMuted ? "Unmute" : "Mute",
+                        systemImage: clip.isMuted ? "speaker.slash.fill" : "speaker.wave.2"
+                    ) {
+                        model.toggleClipMuted(id: clip.id)
+                    }
+                    .help("Silence this clip's own sound")
+                }
+
+                if model.canDetachAudio(fromClipID: clip.id) {
+                    InspectorActionButton("Detach Audio", systemImage: "waveform.badge.minus") {
+                        model.detachAudio(fromClipID: clip.id)
+                    }
+                    .help("Move this clip's sound onto an audio lane")
+                }
             }
 
             if model.canDeleteSelectedClip {
@@ -1026,9 +1144,20 @@ struct StudioInspector: View {
     /// the explaining is left to tooltips.
     private var audioControls: some View {
         VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
+            // The soundtrack in use comes first: the levels and actions below act on it.
+            if let replacement = model.replacementAudio {
+                replacementChip(for: replacement)
+            }
+
             // A silent recording has nothing to send out, but it can still
             // be given a soundtrack - so only the export half is withheld.
-            if model.hasRecordedAudio || model.hasReplacementAudio {
+            if model.replacementAudio != nil {
+                InspectorFieldPair {
+                    InspectorSlider("Volume", value: $model.audioVolume, range: 0...2, format: .percent())
+                } trailing: {
+                    StudioSoundtrackSyncSlider(model: model)
+                }
+            } else if model.hasRecordedAudio {
                 InspectorSlider("Volume", value: $model.audioVolume, range: 0...2, format: .percent())
             }
 
@@ -1060,13 +1189,27 @@ struct StudioInspector: View {
                 }
                 .help(
                     model.hasRecordedAudio
-                        ? "Swap in an audio file, aligned to the start of the edited timeline"
+                        ? "Swap in an audio file for the video's sound, lined up with the cut as it stands"
                         : "Lay an audio file over this silent recording"
                 )
             }
 
-            if let replacement = model.replacementAudio {
-                replacementChip(for: replacement)
+            if model.replacementAudio != nil, model.replacementAudioDrift != nil {
+                InspectorHint("It was made for a different cut. Export the audio again after your edits for a full-length replacement.")
+            }
+
+            if !model.audioClipsPastEnd.isEmpty {
+                HStack(spacing: InspectorMetrics.rowSpacing) {
+                    InspectorHint(
+                        model.audioClipsPastEnd.count == 1
+                            ? "1 audio clip starts after the video ends."
+                            : "\(model.audioClipsPastEnd.count) audio clips start after the video ends.",
+                        tint: .orange
+                    )
+                    InspectorActionButton("Remove", systemImage: "trash") {
+                        model.removeAudioClipsPastEnd()
+                    }
+                }
             }
 
             if let message = model.replacementAudioError {
@@ -1094,7 +1237,10 @@ struct StudioInspector: View {
             .help("Export just the soundtrack of the current cut")
             .disabled(model.isIsolatingVoice || model.hasUnreadableDraft)
             .popover(isPresented: $isAudioExportOptionsPresented, arrowEdge: .bottom) {
-                StudioAudioExportOptions(format: $model.audioExportFormat) {
+                StudioAudioExportOptions(
+                    format: $model.audioExportFormat,
+                    includesAddedAudio: model.audioClips.isEmpty ? nil : $model.audioExportIncludesClips
+                ) {
                     isAudioExportOptionsPresented = false
                     model.exportAudio()
                 }
@@ -1219,6 +1365,7 @@ struct StudioInspector: View {
 /// Asks for the soundtrack format at export time.
 private struct StudioAudioExportOptions: View {
     @Binding var format: RecordingAudioFormat
+    var includesAddedAudio: Binding<Bool>? = nil
     let onExport: () -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -1242,6 +1389,11 @@ private struct StudioAudioExportOptions: View {
                     ? "Compact AAC audio, accepted by most enhancement tools."
                     : "Uncompressed, for tools that accept nothing else."
             )
+
+            if let includesAddedAudio {
+                InspectorToggleRow("Include audio clips", isOn: includesAddedAudio)
+                    .help("Mix audio lane clips into the exported file")
+            }
 
             HStack(spacing: 8) {
                 Spacer(minLength: 0)
