@@ -291,8 +291,8 @@ struct StudioEditingTests {
         ))
         #expect(abs(drawn.lowerBound - 11.0) < 0.0001 && abs(drawn.upperBound - 12.0) < 0.0001)
 
-        let moved = studioMovedSourceRange(clipTimeline: backward, editorStart: 3.0, editorLength: 2.0)
-        #expect(abs(moved.start - 10.0) < 0.0001 && abs(moved.end - 12.0) < 0.0001)
+        let movedZoom = studioMovedSourceRange(clipTimeline: backward, editorStart: 3.0, editorLength: 2.0)
+        #expect(abs(movedZoom.start - 10.0) < 0.0001 && abs(movedZoom.end - 12.0) < 0.0001)
 
         // moving(segmentID:to:) reorders and returns nil for no-op or unknown ID.
         let moved = try #require(normalized.moving(segmentID: overlappingThird.id, to: 0))
@@ -386,14 +386,14 @@ struct StudioEditingTests {
             RecordingClipSegment(sourceStart: 0.0, sourceEnd: 2.0),
         ])
         let fractionalCapture = PointerCaptureFile(
-            samples: [
-                PointerSample(t: 0.0, x: 0.1, y: 0.1),
-                PointerSample(t: 1.9, x: 0.1, y: 0.1),
-                PointerSample(t: 6.0, x: 0.9, y: 0.9),
-                PointerSample(t: 7.0, x: 0.9, y: 0.9),
+            travel: [
+                PointerTravelSample(time: 0.0, x: 0.1, y: 0.1),
+                PointerTravelSample(time: 1.9, x: 0.1, y: 0.1),
+                PointerTravelSample(time: 6.0, x: 0.9, y: 0.9),
+                PointerTravelSample(time: 7.0, x: 0.9, y: 0.9),
             ],
             presses: [
-                PointerPressEvent(t: 6.954, x: 0.9, y: 0.9, button: 0, phase: .down),
+                PointerPressEvent(time: 6.954, x: 0.9, y: 0.9, button: 0, phase: .down),
             ]
         )
         let fractionalViewport = ViewportTimeline.build(
