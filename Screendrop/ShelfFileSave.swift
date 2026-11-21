@@ -12,10 +12,15 @@
 import Foundation
 
 nonisolated enum ShelfFileSave {
+    enum KeptOriginal: Equatable, Sendable {
+        /// The new file is in place, but moving the original (or its retained backup) to Trash failed.
+        case trashFailed(URL)
+        /// A cross-format Replace saved the new file, then found the original had changed before Trash and left it alone.
+        case sourceChanged(URL)
+    }
+
     enum Outcome: Equatable, Sendable {
-        /// `keptOriginal`: a Replace whose new file is in place, but whose original (or its retained backup)
-        /// could not be moved to the Trash and remains at this URL.
-        case saved(URL, keptOriginal: URL? = nil)
+        case saved(URL, keptOriginal: KeptOriginal? = nil)
         /// The source isn't the file that was optimized any more; nothing was written or moved.
         case changed
         case failed(String)
@@ -38,6 +43,7 @@ nonisolated enum ShelfFileSave {
                      outputIdentity: FileIdentity?, replacing: Bool,
                      in destinationFolder: URL? = nil,
                      beforeInstall: (URL) throws -> Void = { _ in },
+                     beforeRetire: (URL) throws -> Void = { _ in },
                      retire: (URL) throws -> URL = moveToTrash) -> Outcome {
         guard let identity, identity == FileIdentity(original) else { return .changed }
         guard let outputIdentity else { return .failed("The optimized file couldn't be verified.") }
@@ -56,36 +62,76 @@ nonisolated enum ShelfFileSave {
             guard let written = FileIdentity(staged), written == outputIdentity else {
                 return .failed("The file couldn't be written completely.")
             }
-            // Asked again now that the new file is ready: the last moment before anything moves.
-            guard identity == FileIdentity(original) else { return .changed }
 
-            if replacing, sameFormat {
-                let ext = original.pathExtension
-                let backupName = "\(base) (original \(UUID().uuidString.prefix(8)))" + (ext.isEmpty ? "" : ".\(ext)")
-                let backup = folder.appendingPathComponent(backupName)
-                // Install atomically with a retained backup so the original never leaves its folder before
-                // the replacement is in place; only then move the backup to the Trash.
-                _ = try files.replaceItemAt(original, withItemAt: staged, backupItemName: backupName,
-                                            options: [.withoutDeletingBackupItem])
-                do {
-                    _ = try retire(backup)
-                } catch {
-                    return .saved(original, keptOriginal: backup)
+            let coordinator = NSFileCoordinator(filePresenter: nil)
+            var coordinatorError: NSError?
+            var coordinatedOutcome: Outcome?
+
+            if replacing {
+                let options: NSFileCoordinator.WritingOptions = sameFormat ? .forReplacing : .forDeleting
+                coordinator.coordinate(writingItemAt: original, options: options, error: &coordinatorError) { coordinatedOriginal in
+                    // Check the source fingerprint inside the coordinated write accessor so check and mutation stay together.
+                    guard identity == FileIdentity(coordinatedOriginal) else {
+                        coordinatedOutcome = .changed
+                        return
+                    }
+                    let targetFolder = coordinatedOriginal.deletingLastPathComponent()
+                    let targetBase = coordinatedOriginal.deletingPathExtension().lastPathComponent
+                    do {
+                        if sameFormat {
+                            let ext = coordinatedOriginal.pathExtension
+                            let backupName = "\(targetBase) (original \(UUID().uuidString.prefix(8)))" + (ext.isEmpty ? "" : ".\(ext)")
+                            let backup = targetFolder.appendingPathComponent(backupName)
+                            // Install atomically with a retained backup so the original never leaves its folder before
+                            // the replacement is in place; only then move the backup to the Trash.
+                            _ = try files.replaceItemAt(coordinatedOriginal, withItemAt: staged, backupItemName: backupName,
+                                                        options: [.withoutDeletingBackupItem])
+                            do {
+                                _ = try retire(backup)
+                                coordinatedOutcome = .saved(coordinatedOriginal)
+                            } catch {
+                                coordinatedOutcome = .saved(coordinatedOriginal, keptOriginal: .trashFailed(backup))
+                            }
+                            return
+                        }
+
+                        let name = "\(targetBase).\(result.pathExtension)"
+                        let destination = try installUniquely(from: staged, named: name, in: targetFolder, beforeInstall: beforeInstall)
+                        try beforeRetire(destination)
+                        // Re-check before Trash: if the source changed meanwhile, leave the newer original alone
+                        // and keep the newly saved output as a separate file.
+                        guard identity == FileIdentity(coordinatedOriginal) else {
+                            coordinatedOutcome = .saved(destination, keptOriginal: .sourceChanged(coordinatedOriginal))
+                            return
+                        }
+                        do {
+                            _ = try retire(coordinatedOriginal)
+                            coordinatedOutcome = .saved(destination)
+                        } catch {
+                            coordinatedOutcome = .saved(destination, keptOriginal: .trashFailed(coordinatedOriginal))
+                        }
+                    } catch {
+                        coordinatedOutcome = .failed(error.localizedDescription)
+                    }
                 }
-                return .saved(original)
+            } else {
+                coordinator.coordinate(readingItemAt: original, options: .withoutChanges, error: &coordinatorError) { coordinatedOriginal in
+                    guard identity == FileIdentity(coordinatedOriginal) else {
+                        coordinatedOutcome = .changed
+                        return
+                    }
+                    let name = (!sameFormat ? base : "\(base) optimized") + "." + result.pathExtension
+                    do {
+                        let destination = try installUniquely(from: staged, named: name, in: folder, beforeInstall: beforeInstall)
+                        coordinatedOutcome = .saved(destination)
+                    } catch {
+                        coordinatedOutcome = .failed(error.localizedDescription)
+                    }
+                }
             }
 
-            let name = (replacing || !sameFormat ? base : "\(base) optimized") + "." + result.pathExtension
-            let destination = try installUniquely(from: staged, named: name, in: folder, beforeInstall: beforeInstall)
-            // Another format gets another name, so the original is retired after its replacement is in place.
-            // If it can't be, the new file is saved all the same, and that is what is reported.
-            guard replacing else { return .saved(destination) }
-            do {
-                _ = try retire(original)
-            } catch {
-                return .saved(destination, keptOriginal: original)
-            }
-            return .saved(destination)
+            if let coordinatorError { return .failed(coordinatorError.localizedDescription) }
+            return coordinatedOutcome ?? .failed("The file couldn't be coordinated.")
         } catch {
             return .failed(error.localizedDescription)
         }
@@ -102,7 +148,11 @@ nonisolated enum ShelfFileSave {
             switch outcome {
             case .saved(let file, let keptOriginal):
                 saved.append(file)
-                if let keptOriginal { kept.append(keptOriginal) }
+                switch keptOriginal {
+                case .trashFailed(let url): kept.append(url)
+                case .sourceChanged: changed += 1
+                case nil: break
+                }
             case .changed: changed += 1
             case .failed(let reason):
                 if !failures.contains(reason) { failures.append(reason) }

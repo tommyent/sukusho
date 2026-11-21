@@ -52,11 +52,12 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
         func save(_ result: URL, of original: URL, identity: FileIdentity? = nil, outputIdentity: FileIdentity? = nil,
                   replacing: Bool, in folder: URL? = nil,
                   beforeInstall: (URL) throws -> Void = { _ in },
+                  beforeRetire: (URL) throws -> Void = { _ in },
                   retire: ((URL) throws -> URL)? = nil) -> ShelfFileSave.Outcome {
             ShelfFileSave.save(result, of: original, identity: identity ?? FileIdentity(original),
                                outputIdentity: outputIdentity ?? FileIdentity(result),
                                replacing: replacing, in: folder, beforeInstall: beforeInstall,
-                               retire: retire ?? self.retire)
+                               beforeRetire: beforeRetire, retire: retire ?? self.retire)
         }
 
         var names: [String] {
@@ -181,7 +182,7 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
         let outcome = desk.save(result, of: original, replacing: true) { _ in
             throw CocoaError(.fileWriteNoPermission)
         }
-        guard case .saved(let installed, let keptBackup?) = outcome else {
+        guard case .saved(let installed, .trashFailed(let keptBackup)) = outcome else {
             Issue.record("expected saved with kept backup: \(outcome)")
             return
         }
@@ -207,10 +208,33 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
         let outcome = desk.save(webP, of: photo, replacing: true) { _ in
             throw CocoaError(.fileWriteNoPermission)
         }
-        #expect(outcome == .saved(desk.folder.appending(path: "photo.webp"), keptOriginal: photo))
+        #expect(outcome == .saved(desk.folder.appending(path: "photo.webp"), keptOriginal: .trashFailed(photo)))
         #expect(desk.text(desk.folder.appending(path: "photo.webp")) == "webp")
         #expect(desk.text(photo) == "png bytes")
         #expect(desk.names == ["photo.png", "photo.webp"])
+    }
+
+    /// Sol 6.2 #2: if another app edits the PNG between installing photo.webp and retiring photo.png,
+    /// Replace must NOT Trash the newer PNG and keeps the newly saved WebP as a separate file.
+    @Test func aSourceEditedBetweenInstallAndRetireIsNeverTrashed() throws {
+        let desk = try Desk()
+        defer { desk.remove() }
+        let photo = try desk.file("photo.png", "old png bytes")
+        let webP = try desk.file("photo.webp", "smaller webp", in: desk.results)
+        let sourceID = FileIdentity(photo)
+
+        let outcome = desk.save(webP, of: photo, identity: sourceID, replacing: true, beforeRetire: { installed in
+            #expect(FileManager.default.fileExists(atPath: installed.path))
+            try Data("newer edited png bytes".utf8).write(to: photo)
+        })
+        #expect(outcome == .saved(desk.folder.appending(path: "photo.webp"), keptOriginal: .sourceChanged(photo)))
+        #expect(desk.text(photo) == "newer edited png bytes")
+        #expect(desk.text(desk.folder.appending(path: "photo.webp")) == "smaller webp")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: desk.trash.path).isEmpty)
+
+        let summary = ShelfFileSave.summary(of: [outcome], replacing: true)
+        #expect(!summary.isFailure)
+        #expect(summary.detail.contains("changed"))
     }
 
     /// Astra OR2: the original must not be gone when the new file can't be put in place.
