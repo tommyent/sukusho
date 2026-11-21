@@ -247,8 +247,14 @@ nonisolated enum StudioAudioConform {
                     template.originID = clip.lineageID
                     template.trimStart = f0
                     template.trimEnd = f1
-                    if abs(f0 - clip.trimStart) > 0.002 { template.fadeIn = 0 }
-                    if abs(f1 - clip.trimEnd) > 0.002 { template.fadeOut = 0 }
+                    if abs(f0 - clip.trimStart) > 0.002 {
+                        template.fadeIn = 0
+                        template.keepsLeadingSplit = false
+                    }
+                    if abs(f1 - clip.trimEnd) > 0.002 {
+                        template.fadeOut = 0
+                        template.keepsTrailingSplit = false
+                    }
                     capturedHidden.append(HiddenLinkedRange(
                         segmentID: oldSeg.id,
                         sourceStart: s0,
@@ -357,15 +363,22 @@ nonisolated enum StudioAudioConform {
                 restored.trimStart = subF0
                 restored.trimEnd = subF1
                 restored.speed = derivedSpeed
-                if abs(subF0 - entry.clip.trimStart) > 0.002 { restored.fadeIn = 0 }
-                if abs(subF1 - entry.clip.trimEnd) > 0.002 { restored.fadeOut = 0 }
+                if abs(subF0 - entry.clip.trimStart) > 0.002 {
+                    restored.fadeIn = 0
+                    restored.keepsLeadingSplit = false
+                }
+                if abs(subF1 - entry.clip.trimEnd) > 0.002 {
+                    restored.fadeOut = 0
+                    restored.keepsTrailingSplit = false
+                }
 
                 // Seamlessly rejoin an adjacent restored/surviving piece of the same lineage
-                // when neither side carries an explicit fade at the join.
+                // when neither side carries an explicit split boundary or fade at the join.
                 if let matchIndex = result.firstIndex(where: { existing in
                     existing.isLinked
                         && existing.lineageID == lineage
                         && existing.lane == restored.lane
+                        && !existing.keepsTrailingSplit && !restored.keepsLeadingSplit
                         && existing.fadeOut < 0.001 && restored.fadeIn < 0.001
                         && abs(existing.speed - restored.speed) < 0.000_1
                         && abs(existing.end - restored.start) < 0.002
@@ -373,11 +386,13 @@ nonisolated enum StudioAudioConform {
                 }) {
                     result[matchIndex].trimEnd = restored.trimEnd
                     result[matchIndex].fadeOut = restored.fadeOut
+                    result[matchIndex].keepsTrailingSplit = restored.keepsTrailingSplit
                     healedBoundaries.append((lineage, restored.end))
                 } else if let matchIndex = result.firstIndex(where: { existing in
                     existing.isLinked
                         && existing.lineageID == lineage
                         && existing.lane == restored.lane
+                        && !restored.keepsTrailingSplit && !existing.keepsLeadingSplit
                         && restored.fadeOut < 0.001 && existing.fadeIn < 0.001
                         && abs(existing.speed - restored.speed) < 0.000_1
                         && abs(restored.end - existing.start) < 0.002
@@ -386,6 +401,7 @@ nonisolated enum StudioAudioConform {
                     result[matchIndex].start = restored.start
                     result[matchIndex].trimStart = restored.trimStart
                     result[matchIndex].fadeIn = restored.fadeIn
+                    result[matchIndex].keepsLeadingSplit = restored.keepsLeadingSplit
                     healedBoundaries.append((lineage, restored.start))
                 } else {
                     if result.contains(where: { $0.id == restored.id }) { restored.id = UUID() }
@@ -404,6 +420,7 @@ nonisolated enum StudioAudioConform {
                     left.sourceEnd = s1
                     left.clip.trimEnd = rf1
                     left.clip.fadeOut = 0
+                    left.clip.keepsTrailingSplit = false
                     remainingHidden.append(left)
                 }
             }
@@ -415,6 +432,7 @@ nonisolated enum StudioAudioConform {
                     right.sourceStart = s0
                     right.clip.trimStart = rf0
                     right.clip.fadeIn = 0
+                    right.clip.keepsLeadingSplit = false
                     remainingHidden.append(right)
                 }
             }
@@ -440,6 +458,7 @@ nonisolated enum StudioAudioConform {
                    existing.isLinked
                        && existing.lineageID == clip.lineageID
                        && existing.lane == clip.lane
+                       && !existing.keepsTrailingSplit && !clip.keepsLeadingSplit
                        && existing.isMuted == clip.isMuted
                        && existing.fadeOut < 0.001 && clip.fadeIn < 0.001
                        && abs(existing.volume - clip.volume) < 0.000_1
@@ -452,6 +471,7 @@ nonisolated enum StudioAudioConform {
                }) {
                 merged[index].trimEnd = clip.trimEnd
                 merged[index].fadeOut = clip.fadeOut
+                merged[index].keepsTrailingSplit = clip.keepsTrailingSplit
             } else {
                 merged.append(clip)
             }
@@ -490,7 +510,7 @@ nonisolated enum StudioAudioConform {
                 let neighbours = result.enumerated()
                     .filter { $0.offset != index && $0.element.lane == clip.lane }
                     .map(\.element)
-                if grewAtEnd > 0.001, abs(clip.end - oldEndHere) < 0.002, clip.trimEnd < clip.fileDuration - 0.001 {
+                if grewAtEnd > 0.001, !clip.keepsTrailingSplit, abs(clip.end - oldEndHere) < 0.002, clip.trimEnd < clip.fileDuration - 0.001 {
                     let room = neighbours.map(\.start).filter { $0 >= clip.end - 0.002 }.min() ?? .infinity
                     let wanted = grewAtEnd / speed
                     let grow = min(wanted, room - clip.end, (clip.fileDuration - clip.trimEnd) / max(clip.speed, 0.01))
@@ -499,7 +519,7 @@ nonisolated enum StudioAudioConform {
                         healedBoundaries.append((clip.lineageID, clip.end))
                     }
                 }
-                if grewAtStart > 0.001, abs(clip.start - oldStartHere) < 0.002, clip.trimStart > 0.001 {
+                if grewAtStart > 0.001, !clip.keepsLeadingSplit, abs(clip.start - oldStartHere) < 0.002, clip.trimStart > 0.001 {
                     let room = neighbours.map(\.end).filter { $0 <= clip.start + 0.002 }.max() ?? -.infinity
                     let wanted = grewAtStart / speed
                     let grow = min(wanted, clip.start - max(room, editorStart), clip.trimStart / max(clip.speed, 0.01))
@@ -639,9 +659,15 @@ nonisolated enum StudioAudioConform {
                 pieces[index].id = UUID()
                 pieces[index].originID = clip.lineageID
             }
-            // A fade belongs to the clip's own end, not to a cut inside it.
-            if abs(pieces[index].trimStart - clip.trimStart) > 0.002 { pieces[index].fadeIn = 0 }
-            if abs(pieces[index].trimEnd - clip.trimEnd) > 0.002 { pieces[index].fadeOut = 0 }
+            // A fade or explicit split flag belongs to the clip's own end, not to a video cut inside it.
+            if abs(pieces[index].trimStart - clip.trimStart) > 0.002 {
+                pieces[index].fadeIn = 0
+                pieces[index].keepsLeadingSplit = false
+            }
+            if abs(pieces[index].trimEnd - clip.trimEnd) > 0.002 {
+                pieces[index].fadeOut = 0
+                pieces[index].keepsTrailingSplit = false
+            }
         }
         return pieces
     }
@@ -756,14 +782,16 @@ nonisolated enum StudioAudioConform {
         var leading = clip
         leading.trimEnd = fileTime
         leading.fadeOut = 0
+        leading.keepsTrailingSplit = true
         var trailing = clip
         trailing.id = UUID()
-        // Explicit user split creates an independent clip boundary so later
-        // video conforms or heals never merge the split back together.
-        trailing.originID = nil
+        // Keep shared lineage for hidden-range coverage subtraction while
+        // marking the split edges so auto-joining never erases the user split.
+        trailing.originID = clip.lineageID
         trailing.start = time
         trailing.trimStart = fileTime
         trailing.fadeIn = 0
+        trailing.keepsLeadingSplit = true
         return (leading, trailing)
     }
 

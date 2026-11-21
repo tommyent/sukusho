@@ -79,6 +79,10 @@ nonisolated struct RecordingAudioClip: Identifiable, Codable, Equatable, Hashabl
     /// edge healing and hidden-range restoration never double-restore the same
     /// interval across split pieces.
     var originID: UUID? = nil
+    /// Explicit user `Split Audio` boundaries that must never be auto-joined
+    /// during linked-audio conform, even while both halves share `lineageID`.
+    var keepsLeadingSplit = false
+    var keepsTrailingSplit = false
 
     /// Stable clip-lineage identifier shared by pieces conformed from one clip.
     var lineageID: UUID { originID ?? id }
@@ -103,6 +107,7 @@ nonisolated struct RecordingAudioClip: Identifiable, Codable, Equatable, Hashabl
     private enum CodingKeys: String, CodingKey {
         case id, source, fileName, displayName, start, trimStart, trimEnd, fileDuration
         case volume, fadeIn, fadeOut, speed, lane, isLinked, isMuted, originID
+        case keepsLeadingSplit, keepsTrailingSplit
     }
 
     init(from decoder: any Decoder) throws {
@@ -123,6 +128,8 @@ nonisolated struct RecordingAudioClip: Identifiable, Codable, Equatable, Hashabl
         isLinked = try container.decodeIfPresent(Bool.self, forKey: .isLinked) ?? false
         isMuted = try container.decodeIfPresent(Bool.self, forKey: .isMuted) ?? false
         originID = try container.decodeIfPresent(UUID.self, forKey: .originID)
+        keepsLeadingSplit = try container.decodeIfPresent(Bool.self, forKey: .keepsLeadingSplit) ?? false
+        keepsTrailingSplit = try container.decodeIfPresent(Bool.self, forKey: .keepsTrailingSplit) ?? false
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -143,6 +150,8 @@ nonisolated struct RecordingAudioClip: Identifiable, Codable, Equatable, Hashabl
         if isLinked { try container.encode(isLinked, forKey: .isLinked) }
         if isMuted { try container.encode(isMuted, forKey: .isMuted) }
         if let originID { try container.encode(originID, forKey: .originID) }
+        if keepsLeadingSplit { try container.encode(true, forKey: .keepsLeadingSplit) }
+        if keepsTrailingSplit { try container.encode(true, forKey: .keepsTrailingSplit) }
     }
 
     /// Kept inside its file, its ranges and the video without clamping valid
