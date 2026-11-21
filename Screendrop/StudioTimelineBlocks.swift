@@ -373,10 +373,10 @@ func studioOccupiedLaneSpans(
 ) -> [StudioLaneSpan] {
     cues.compactMap { cue -> StudioLaneSpan? in
         guard cue.end > cue.start else { return nil }
-        let slices = clipTimeline.slices(overlapping: cue.start, sourceEnd: cue.end)
-        if let first = slices.first, let last = slices.last {
-            return StudioLaneSpan(id: cue.id, editorStart: first.editorStart, editorEnd: last.editorEnd)
+        if let span = clipTimeline.editorSpan(overlapping: cue.start, sourceEnd: cue.end) {
+            return StudioLaneSpan(id: cue.id, editorStart: span.lowerBound, editorEnd: span.upperBound)
         }
+        guard clipTimeline.isInRecordingOrder else { return nil }
         var cutTime: TimeInterval = 0
         for segment in clipTimeline.segments {
             if cue.end <= segment.sourceStart + 0.000_001 {

@@ -109,6 +109,10 @@ nonisolated struct PointerTimeline: Sendable {
         guard duration.isFinite, duration > 0 else { return .empty }
         let timelineDuration = clipTimeline?.duration ?? duration
         guard timelineDuration.isFinite, timelineDuration > 0 else { return .empty }
+        // Frames that open footage from another moment, where the pointer
+        // lands instead of gliding over from where it was.
+        let hardCuts = clipTimeline?.hardCuts ?? []
+        let hardCutFrames = Set(hardCuts.map { Int(($0 * stepRate).rounded(.up)) })
 
         let safeSize = CGSize(
             width: recordingSizeInPoints.width > 0 ? recordingSizeInPoints.width : 1_000,
@@ -179,7 +183,8 @@ nonisolated struct PointerTimeline: Sendable {
             if upcomingPressIndex < pressSamples.count {
                 let press = pressSamples[upcomingPressIndex]
                 let remaining = press.time - time
-                if remaining >= 0, remaining <= anticipationWindow {
+                let crossesHardCut = hardCuts.contains { $0 > time && $0 <= press.time }
+                if !crossesHardCut, remaining >= 0, remaining <= anticipationWindow {
                     target = press.location
                     approachingPress = remaining <= interceptWindow
                 }
@@ -194,16 +199,22 @@ nonisolated struct PointerTimeline: Sendable {
             let motion = isDragging
                 ? PointerSpring.track
                 : (approachingPress ? PointerSpring.intercept : PointerSpring.glide)
-            xSpring.step(toward: target.x, using: motion, dt: dt)
-            ySpring.step(toward: target.y, using: motion, dt: dt)
-
-            magnificationSpring.step(toward: isPressed ? 0.8 : 1, using: PointerSpring.settle, dt: dt)
+            if hardCutFrames.contains(frameIndex) {
+                xSpring.snap(to: target.x)
+                ySpring.snap(to: target.y)
+                magnificationSpring.snap(to: isPressed ? 0.8 : 1)
+            } else {
+                xSpring.step(toward: target.x, using: motion, dt: dt)
+                ySpring.step(toward: target.y, using: motion, dt: dt)
+                magnificationSpring.step(toward: isPressed ? 0.8 : 1, using: PointerSpring.settle, dt: dt)
+            }
 
             let press: PointerPressFrame?
             if latestPressIndex >= 0 {
                 let event = pressSamples[latestPressIndex]
+                let latestHardCutTime = hardCuts.last { $0 <= time } ?? -.infinity
                 let elapsed = time - event.time
-                press = elapsed <= pulseDuration
+                press = event.time >= latestHardCutTime && elapsed <= pulseDuration
                     ? PointerPressFrame(
                         location: event.location,
                         progress: min(max(elapsed / pulseDuration, 0), 1)
@@ -224,8 +235,10 @@ nonisolated struct PointerTimeline: Sendable {
 
         let tiltOffset = max(1, Int((tiltSampleWindow * stepRate).rounded()))
         let recordingWidth = max(Double(safeSize.width), 1)
+        var latestHardCut = 0
         for index in frames.indices {
-            let previous = frames[max(0, index - tiltOffset)].location
+            if hardCutFrames.contains(index) { latestHardCut = index }
+            let previous = frames[max(latestHardCut, index - tiltOffset)].location
             let current = frames[index].location
             let deltaInPoints = (current.x - previous.x) * recordingWidth
             frames[index].tiltDegrees = min(max(

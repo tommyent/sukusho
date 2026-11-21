@@ -34,6 +34,16 @@ nonisolated struct RecordingClipSegment: Identifiable, Codable, Equatable, Senda
         self.speed = speed
     }
 
+    /// This clip over another source range, keeping its speed and any other
+    /// per-clip attributes.
+    func covering(_ start: TimeInterval, _ end: TimeInterval, id: UUID? = nil) -> RecordingClipSegment {
+        var copy = self
+        copy.id = id ?? self.id
+        copy.sourceStart = start
+        copy.sourceEnd = end
+        return copy
+    }
+
     /// Raw duration of the source range this clip covers.
     var duration: TimeInterval {
         max(0, sourceEnd - sourceStart)
@@ -148,23 +158,28 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
                 max(segment.speed.isFinite ? segment.speed : 1, RecordingClipSegment.minimumSpeed),
                 RecordingClipSegment.maximumSpeed
             )
-            return RecordingClipSegment(id: id, sourceStart: start, sourceEnd: end, speed: speed)
-        }
-        .sorted {
-            if abs($0.sourceStart - $1.sourceStart) > 0.000_001 {
-                return $0.sourceStart < $1.sourceStart
-            }
-            return $0.sourceEnd < $1.sourceEnd
+            var clip = segment.covering(start, end, id: id)
+            clip.speed = speed
+            return clip
         }
 
-        // A corrupt/old project should never produce overlapping source
-        // ranges. Keep the first range and trim later ranges forward.
-        var previousEnd: TimeInterval = 0
+        // Clips can play in any order, but no moment of the recording plays
+        // twice: a clip that overlaps one before it in the list keeps the part
+        // that doesn't (its leading part, if the overlap is in its middle),
+        // preserving its identity and list order.
+        var taken: [ClosedRange<TimeInterval>] = []
         normalized = normalized.compactMap { segment in
             var segment = segment
-            segment.sourceStart = max(segment.sourceStart, previousEnd)
+            for range in taken.sorted(by: { $0.lowerBound < $1.lowerBound })
+            where range.upperBound > segment.sourceStart && range.lowerBound < segment.sourceEnd {
+                if range.lowerBound <= segment.sourceStart {
+                    segment.sourceStart = range.upperBound
+                } else {
+                    segment.sourceEnd = range.lowerBound
+                }
+            }
             guard segment.duration >= RecordingClipSegment.minimumDuration else { return nil }
-            previousEnd = segment.sourceEnd
+            taken.append(segment.sourceStart...segment.sourceEnd)
             return segment
         }
 
@@ -239,18 +254,8 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
         }
 
         let trailingID = UUID()
-        let leading = RecordingClipSegment(
-            id: segment.id,
-            sourceStart: segment.sourceStart,
-            sourceEnd: sourceTime,
-            speed: segment.speed
-        )
-        let trailing = RecordingClipSegment(
-            id: trailingID,
-            sourceStart: sourceTime,
-            sourceEnd: segment.sourceEnd,
-            speed: segment.speed
-        )
+        let leading = segment.covering(segment.sourceStart, sourceTime)
+        let trailing = segment.covering(sourceTime, segment.sourceEnd, id: trailingID)
         var next = segments
         next.replaceSubrange(location.segmentIndex...location.segmentIndex, with: [leading, trailing])
         return (RecordingClipTimeline(segments: next), trailingID)
@@ -303,11 +308,10 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
 
             var keptSegmentID = false
             for piece in pieces where piece.end - piece.start >= RecordingClipSegment.minimumDuration {
-                next.append(RecordingClipSegment(
-                    id: keptSegmentID ? UUID() : segment.id,
-                    sourceStart: piece.start,
-                    sourceEnd: piece.end,
-                    speed: segment.speed
+                next.append(segment.covering(
+                    piece.start,
+                    piece.end,
+                    id: keptSegmentID ? UUID() : segment.id
                 ))
                 keptSegmentID = true
             }
@@ -358,11 +362,123 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
         return result
     }
 
+    /// Where a stretch of the recording shows as one block on the edited
+    /// timeline. In recording order its pieces always touch (a cut removes
+    /// the time between them), so this is first to last. Once clips are
+    /// reordered they may not, and the longest run that touches stands for it.
+    func editorSpan(overlapping sourceStart: TimeInterval, sourceEnd: TimeInterval) -> Range<TimeInterval>? {
+        var best: Range<TimeInterval>?
+        var run: Range<TimeInterval>?
+        for slice in slices(overlapping: sourceStart, sourceEnd: sourceEnd) {
+            if let current = run, abs(current.upperBound - slice.editorStart) < 0.000_5 {
+                run = current.lowerBound..<slice.editorEnd
+            } else {
+                run = slice.editorStart..<slice.editorEnd
+            }
+            if let run, run.upperBound - run.lowerBound > (best.map { $0.upperBound - $0.lowerBound } ?? -1) {
+                best = run
+            }
+        }
+        return best
+    }
+
     func isUnedited(sourceDuration: TimeInterval) -> Bool {
         guard segments.count == 1, let only = segments.first else { return false }
         return abs(only.sourceStart) < 0.000_001
             && abs(only.sourceEnd - sourceDuration) < 0.000_001
             && abs(only.speed - 1) < 0.000_001
+    }
+
+    /// Every cut on the edited timeline: where each clip starts, and the end.
+    var editPoints: [TimeInterval] {
+        var points: [TimeInterval] = []
+        var cursor: TimeInterval = 0
+        for segment in segments {
+            points.append(cursor)
+            cursor += segment.editorDuration
+        }
+        points.append(cursor)
+        return points
+    }
+
+    /// The cut with a stretch of the edited video taken out, everything
+    /// after closing up. Clips the stretch only partly covers are trimmed
+    /// or split; the leading survivor keeps the clip's identity. Nil when
+    /// nothing would be left.
+    func removingEditorRange(_ range: ClosedRange<TimeInterval>) -> RecordingClipTimeline? {
+        guard range.lowerBound.isFinite, range.upperBound.isFinite, range.upperBound > range.lowerBound else {
+            return self
+        }
+        var next: [RecordingClipSegment] = []
+        var editorStart: TimeInterval = 0
+        for segment in segments {
+            let editorEnd = editorStart + segment.editorDuration
+            defer { editorStart = editorEnd }
+            let cutLow = max(range.lowerBound, editorStart)
+            let cutHigh = min(range.upperBound, editorEnd)
+            guard cutHigh > cutLow else {
+                next.append(segment)
+                continue
+            }
+            func source(_ editor: TimeInterval) -> TimeInterval {
+                min(segment.sourceStart + (editor - editorStart) * segment.speed, segment.sourceEnd)
+            }
+            var keptID = false
+            let leadingEnd = source(cutLow)
+            if cutLow - editorStart > 0.000_5,
+               leadingEnd - segment.sourceStart >= RecordingClipSegment.minimumDuration {
+                next.append(segment.covering(segment.sourceStart, leadingEnd))
+                keptID = true
+            }
+            let trailingStart = source(cutHigh)
+            if editorEnd - cutHigh > 0.000_5,
+               segment.sourceEnd - trailingStart >= RecordingClipSegment.minimumDuration {
+                next.append(segment.covering(
+                    trailingStart,
+                    segment.sourceEnd,
+                    id: keptID ? UUID() : segment.id
+                ))
+            }
+        }
+        guard !next.isEmpty else { return nil }
+        return RecordingClipTimeline(segments: next)
+    }
+
+    /// Editor times of cuts that jump back in the recording, where clips have
+    /// been put in a new order. Motion (zoom, the pointer) lands on these
+    /// instead of easing across from another moment. Ordinary forward cuts
+    /// keep their easing.
+    var hardCuts: [TimeInterval] {
+        var cuts: [TimeInterval] = []
+        var editorStart: TimeInterval = 0
+        var previous: RecordingClipSegment?
+        for segment in segments {
+            if let previous, segment.sourceStart < previous.sourceEnd - 0.000_5 {
+                cuts.append(editorStart)
+            }
+            editorStart += segment.editorDuration
+            previous = segment
+        }
+        return cuts
+    }
+
+    /// Whether the clips play in recording order.
+    var isInRecordingOrder: Bool { hardCuts.isEmpty }
+
+    /// The cut with one clip moved to a new position in the list.
+    func moving(segmentID: UUID, to destination: Int) -> RecordingClipTimeline? {
+        guard let index = segments.firstIndex(where: { $0.id == segmentID }) else { return nil }
+        let target = min(max(destination, 0), segments.count - 1)
+        guard target != index else { return nil }
+        var next = segments
+        let segment = next.remove(at: index)
+        next.insert(segment, at: target)
+        return RecordingClipTimeline(segments: next)
+    }
+
+    /// The clip playing at an editor time.
+    func segment(at editorTime: TimeInterval) -> RecordingClipSegment? {
+        location(at: editorTime).map { segments[$0.segmentIndex] }
     }
 }
 

@@ -71,6 +71,9 @@ struct RecordingEditDocument: Codable, Equatable {
     var showsInk: Bool?
     /// Strokes deleted in Studio. input.json keeps them.
     var hiddenInkStrokeIDs: [UUID]?
+    /// Timeline markers flagged with M, stored in source time so they follow
+    /// their footage across cuts.
+    var markers: [RecordingMarker]?
 
     private enum CodingKeys: String, CodingKey {
         case formatVersion
@@ -102,6 +105,7 @@ struct RecordingEditDocument: Codable, Equatable {
         case redactions
         case showsInk
         case hiddenInkStrokeIDs
+        case markers
     }
 
     init(
@@ -128,7 +132,8 @@ struct RecordingEditDocument: Codable, Equatable {
         backgroundMusic: RecordingBackgroundMusic? = nil,
         redactions: [RecordingRedaction] = [],
         showsInk: Bool? = nil,
-        hiddenInkStrokeIDs: [UUID]? = nil
+        hiddenInkStrokeIDs: [UUID]? = nil,
+        markers: [RecordingMarker]? = nil
     ) {
         self.style = StoredRecordingStudioStyle(style)
         self.zoomEnabled = zoomEnabled
@@ -161,6 +166,7 @@ struct RecordingEditDocument: Codable, Equatable {
         self.redactions = redactions
         self.showsInk = showsInk
         self.hiddenInkStrokeIDs = hiddenInkStrokeIDs
+        self.markers = markers
     }
 
     /// Uploads and shared deliverables are movies even when the export picker last chose GIF,
@@ -267,6 +273,7 @@ struct RecordingEditDocument: Codable, Equatable {
         for region in redactions { try region.validate() }
         showsInk = try container.decodeIfPresent(Bool.self, forKey: .showsInk)
         hiddenInkStrokeIDs = try container.decodeIfPresent([UUID].self, forKey: .hiddenInkStrokeIDs)
+        markers = try container.decodeIfPresent([RecordingMarker].self, forKey: .markers)
     }
 }
 

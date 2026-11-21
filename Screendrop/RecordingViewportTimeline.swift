@@ -262,6 +262,9 @@ nonisolated struct ViewportTimeline: Sendable {
         let duration = clipTimeline.duration
         guard duration.isFinite, duration > 0 else { return .identity }
 
+        // Cuts to footage from another moment: the camera lands on them
+        // instead of easing across.
+        let hardCutFrames = Set(clipTimeline.hardCuts.map { Int(($0 * stepRate).rounded(.up)) })
         let pointerSamples = mergedPointerSamples(from: capture)
         let activitySamples = pointerSamples.filter {
             isRetainedSourceEvent($0.time, in: clipTimeline)
@@ -293,9 +296,15 @@ nonisolated struct ViewportTimeline: Sendable {
         for frameIndex in 0..<frameCount {
             let editorTime = min(Double(frameIndex) * dt, duration)
             let time = clipTimeline.sourceTime(at: editorTime)
-            while latestPressIndex + 1 < pressEvents.count,
-                  pressEvents[latestPressIndex + 1].time <= time {
-                latestPressIndex += 1
+            if hardCutFrames.contains(frameIndex) {
+                // Reordered clips jump backward in source time, so re-anchor
+                // the press cursor to the new source instant.
+                latestPressIndex = pressEvents.lastIndex(atOrBefore: time, by: \.time) ?? -1
+            } else {
+                while latestPressIndex + 1 < pressEvents.count,
+                      pressEvents[latestPressIndex + 1].time <= time {
+                    latestPressIndex += 1
+                }
             }
             let active = activeCue(at: time, cues: cues)
             let targetMagnification = max(1, active?.zoom ?? 1)
@@ -328,9 +337,10 @@ nonisolated struct ViewportTimeline: Sendable {
             let pursuitHalfExtent = 1 / (2 * pursuitMagnification)
 
             let activeChanged = active?.id != previousActive?.id
-            let shouldSnap = activeChanged
-                && (active?.skipsEasing == true
-                    || previousActive?.skipsEasing == true)
+            let shouldSnap = hardCutFrames.contains(frameIndex)
+                || (activeChanged
+                    && (active?.skipsEasing == true
+                        || previousActive?.skipsEasing == true))
 
             if shouldSnap {
                 halfExtentSpring.snap(to: targetHalfExtent)
