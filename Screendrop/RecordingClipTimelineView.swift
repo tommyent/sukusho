@@ -111,9 +111,20 @@ final class RecordingClipTimelineControl: NSView {
     private var contextTime: TimeInterval?
     private var contextClipID: UUID?
     private var lastHoverCallbackTimestamp: TimeInterval = 0
+    /// Counts `needsDisplay = true` requests so hostless tests can observe
+    /// invalidation without attaching the view to a window.
+    private(set) var displayRequestCount = 0
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
+
+    override var needsDisplay: Bool {
+        get { super.needsDisplay }
+        set {
+            if newValue { displayRequestCount += 1 }
+            super.needsDisplay = newValue
+        }
+    }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
@@ -324,8 +335,11 @@ final class RecordingClipTimelineControl: NSView {
 
         contextTime = time
         contextClipID = location.segmentID
-        selectedClipID = location.segmentID
-        selectionDidChange?(location.segmentID)
+        if selectedClipID != location.segmentID {
+            selectedClipID = location.segmentID
+            selectionDidChange?(location.segmentID)
+            needsDisplay = true
+        }
 
         let menu = NSMenu()
         let split = NSMenuItem(
@@ -361,6 +375,7 @@ final class RecordingClipTimelineControl: NSView {
         if selectedClipID != contextClipID {
             selectedClipID = contextClipID
             selectionDidChange?(contextClipID)
+            needsDisplay = true
         }
         deleteRequested?()
     }

@@ -694,6 +694,7 @@ struct StudioPlaybackTests {
         #expect(newStore.onChange != nil)
 
         // Repeating with identical inputs does not dirty again.
+        let countBeforeRepeat = control.displayRequestCount
         #expect(!control.update(
             timeline: trimmed,
             sourceDuration: 12,
@@ -701,5 +702,41 @@ struct StudioPlaybackTests {
             selectedClipID: second.id,
             playheadTime: 3.5
         ))
+        #expect(control.displayRequestCount == countBeforeRepeat)
+
+        // Context-menu selection over a different clip must invalidate locally,
+        // because the follow-up model update sees the same selectedClipID.
+        var menuSelectedID: UUID?
+        control.selectionDidChange = { menuSelectedID = $0 }
+        let rightClickFirstClip = try #require(NSEvent.mouseEvent(
+            with: .rightMouseDown,
+            location: NSPoint(x: 100, y: 26),
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 1
+        ))
+        let countBeforeMenu = control.displayRequestCount
+        let menu = control.menu(for: rightClickFirstClip)
+        #expect(menu != nil)
+        #expect(menuSelectedID == first.id)
+        #expect(control.displayRequestCount == countBeforeMenu + 1)
+
+        // Echoing the menu's selection back through `update` needs no second redraw.
+        #expect(!control.update(
+            timeline: trimmed,
+            sourceDuration: 12,
+            thumbnails: newStore,
+            selectedClipID: first.id,
+            playheadTime: 3.5
+        ))
+        #expect(control.displayRequestCount == countBeforeMenu + 1)
+
+        // Opening the context menu on the already-selected clip does not redraw.
+        #expect(control.menu(for: rightClickFirstClip) != nil)
+        #expect(control.displayRequestCount == countBeforeMenu + 1)
     }
 }
