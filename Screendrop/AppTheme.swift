@@ -42,7 +42,7 @@ nonisolated struct AppTheme: Sendable, Equatable, Identifiable {
     }
 
     nonisolated struct Ground: Sendable, Equatable {
-        /// What the Library's cards and the editors' canvas sit on, under Dots, Plain or a wallpaper.
+        /// What the Library's cards and the editors' canvas sit on, under Grid, Plain or a wallpaper.
         var workspace: ThemeColor
         /// Glass's default picture effects. Classic and Chip have no theme-specific picture effects.
         var backdrop: Backdrop? = nil

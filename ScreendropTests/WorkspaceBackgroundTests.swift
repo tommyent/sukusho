@@ -12,27 +12,77 @@ struct WorkspaceBackgroundTests {
         }
         #expect(WorkspaceBackground.shown(.wallpaper, reduceTransparency: true, increaseContrast: false) == .plain)
         #expect(WorkspaceBackground.shown(.wallpaper, reduceTransparency: false, increaseContrast: true) == .plain)
-        #expect(WorkspaceBackground.shown(.dots, reduceTransparency: true, increaseContrast: true) == .dots)
         #expect(WorkspaceBackground.shown(.grid, reduceTransparency: true, increaseContrast: true) == .grid)
         #expect(!BackgroundChoice(style: .grid).needsTextBacking)
-        #expect(WorkspaceBackground.Style.allCases.map(\.title) == ["Dots", "Grid", "Solid Color", "Picture"])
+        #expect(WorkspaceBackground.Style.allCases.map(\.title) == ["Grid", "Solid Color", "Picture"])
     }
 
-    @Test func gridStylePersistsAndUnknownStyleFallsBackToDots() throws {
+    @Test func gridStyleIsDefaultAndUnknownStyleFallsBackToGrid() throws {
         let suite = UUID().uuidString
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
 
+        #expect(BackgroundChoice().style == .grid)
         defaults.set("grid", forKey: WorkspaceBackground.styleKey)
         var prefs = BackgroundPreferences(migrating: defaults)
         #expect(prefs.editors.day.style == .grid)
+        #expect(prefs.app.day.style == .grid)
         #expect(try JSONDecoder().decode(BackgroundPreferences.self, from: JSONEncoder().encode(prefs)) == prefs)
 
-        // Simulates an older build or corrupted value: unknown style falls back to Dots without crashing.
+        // Simulates an older build or corrupted value: unknown style falls back to Grid without crashing.
         defaults.set("future-style", forKey: WorkspaceBackground.styleKey)
         prefs = BackgroundPreferences(migrating: defaults)
-        #expect(prefs.editors.day.style == .dots)
+        #expect(prefs.editors.day.style == .grid)
         #expect(WorkspaceBackground.Style(rawValue: "future-style") == nil)
+    }
+
+    @Test func storedDotsMigratesToGridAcrossDestinationsAndSlotsAndRewritesOnSave() throws {
+        // Legacy UserDefaults key with saved "dots" migrates to Grid for both destinations.
+        let suite = UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("dots", forKey: WorkspaceBackground.styleKey)
+        let fromLegacy = BackgroundPreferences(migrating: defaults)
+        #expect(fromLegacy.editors.day.style == .grid)
+        #expect(fromLegacy.editors.night.style == .grid)
+        #expect(fromLegacy.app.day.style == .grid)
+        #expect(fromLegacy.app.night.style == .grid)
+
+        // Saved JSON containing legacy "dots" in any destination or day/night slot decodes as Grid
+        // and rewrites as "grid" when settings next save, keeping other settings intact.
+        let legacyJSON = """
+        {
+            "app": {
+                "day": { "style": "dots", "picture": "", "dim": 0.3, "blur": false },
+                "night": { "style": "dots", "picture": "", "dim": 0.4, "blur": true },
+                "usesNight": true
+            },
+            "editors": {
+                "day": { "style": "dots", "picture": "", "dim": 0.3, "blur": false },
+                "night": { "style": "dots", "picture": "", "dim": 0.5, "blur": false },
+                "usesNight": true
+            },
+            "dayStart": 480,
+            "nightStart": 1200
+        }
+        """
+        let decoded = try JSONDecoder().decode(BackgroundPreferences.self, from: Data(legacyJSON.utf8))
+        #expect(decoded.app.day.style == .grid)
+        #expect(decoded.app.night.style == .grid && decoded.app.night.blur)
+        #expect(decoded.editors.day.style == .grid)
+        #expect(decoded.editors.night.style == .grid && decoded.editors.night.dim == 0.5)
+        #expect(decoded.app.usesNight && decoded.editors.usesNight)
+        #expect(decoded.dayStart == 480 && decoded.nightStart == 1200)
+        for theme in AppTheme.builtIns {
+            #expect(decoded.backgrounds(for: .app, theme: theme).day.style == .grid)
+            #expect(decoded.backgrounds(for: .app, theme: theme).night.style == .grid)
+            #expect(decoded.backgrounds(for: .editors, theme: theme).day.style == .grid)
+            #expect(decoded.backgrounds(for: .editors, theme: theme).night.style == .grid)
+        }
+
+        let rewritten = try String(decoding: JSONEncoder().encode(decoded), as: UTF8.self)
+        #expect(!rewritten.contains("\"dots\""))
+        #expect(rewritten.contains("\"grid\""))
     }
 
     @Test func scheduleAndDestinationsAreIndependentOfTheme() throws {
@@ -67,7 +117,7 @@ struct WorkspaceBackgroundTests {
         defaults.set("", forKey: WorkspaceBackground.wallpaperPathKey)
         let mixed = BackgroundPreferences(migrating: defaults)
         #expect(mixed.app.day.style == .wallpaper && mixed.app.day.blur)
-        #expect(mixed.editors.day.style == .dots)
+        #expect(mixed.editors.day.style == .grid)
 
         defaults.set(AppTheme.classicDark.id, forKey: AppTheme.darkKey)
         defaults.set(true, forKey: GlassPicture.solidBackgroundKey)
@@ -85,13 +135,14 @@ struct WorkspaceBackgroundTests {
         defer { defaults.removePersistentDomain(forName: suite) }
         var prefs = BackgroundPreferences(migrating: defaults)
         prefs = try JSONDecoder().decode(BackgroundPreferences.self, from: JSONEncoder().encode(prefs))
-        #expect(prefs.backgrounds(for: .app, theme: .classicLight).day.style == .dots)
+        #expect(prefs.backgrounds(for: .app, theme: .classicLight).day.style == .grid)
+        #expect(prefs.backgrounds(for: .app, theme: .chipDark).day.style == .grid)
         #expect(prefs.backgrounds(for: .app, theme: .glassLight).day.style == .wallpaper)
-        #expect(prefs.backgrounds(for: .editors, theme: .glassLight).day.style == .dots)
+        #expect(prefs.backgrounds(for: .editors, theme: .glassLight).day.style == .grid)
         prefs[.editors].day.style = .plain
         #expect(prefs.backgrounds(for: .app, theme: .glassDark).day.style == .wallpaper)
-        prefs[.app].day.style = .dots
-        #expect(prefs.backgrounds(for: .app, theme: .glassDark).day.style == .dots)
+        prefs[.app].day.style = .grid
+        #expect(prefs.backgrounds(for: .app, theme: .glassDark).day.style == .grid)
     }
 
     @Test func dimIsHalfAsMuchAgainInDarkModeAndStaysInRange() {
@@ -136,7 +187,7 @@ struct WorkspaceBackgroundTests {
 
         #expect(WorkspaceBackground.pixelSize(of: plain) == CGSize(width: 300, height: 200))
         #expect(WorkspaceBackground.pixelSize(of: turned) == CGSize(width: 200, height: 300))
-        // A deleted or unreadable wallpaper has no size, and the workspace shows Dots.
+        // A deleted or unreadable wallpaper has no size, and the workspace shows Grid.
         #expect(WorkspaceBackground.pixelSize(of: directory.appendingPathComponent("deleted.png")) == nil)
         #expect(WorkspaceBackground.pixelSize(of: text) == nil)
     }

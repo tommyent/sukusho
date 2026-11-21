@@ -81,7 +81,7 @@ struct AppearanceSettingsPane: View {
                 let night = choices.wrappedValue.usesNight && editingNight
                 let choice = night ? choices.night : choices.day
                 Picker("Style", selection: choice.style) {
-                    ForEach([WorkspaceBackground.Style.wallpaper, .plain, .dots, .grid]) { Text($0.title).tag($0) }
+                    ForEach([WorkspaceBackground.Style.wallpaper, .plain, .grid]) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.segmented)
                 if choice.wrappedValue.style == .wallpaper {

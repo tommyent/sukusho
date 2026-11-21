@@ -511,7 +511,7 @@ struct CaptureLibraryView: View {
             browser(cardWidth: cardWidth.wrappedValue)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .modifier(LibraryBrowserSurface(
-                    showsDots: comments.isShown ? comments.visibleComments.isEmpty
+                    showsWorkspace: comments.isShown ? comments.visibleComments.isEmpty
                         : likes.isShown ? likes.visibleLikes.isEmpty : true
                 ))
                 .overlay(alignment: .bottom) {
@@ -1492,16 +1492,16 @@ private struct LibrarySidebarSurface: ViewModifier {
     }
 }
 
-/// The browser's ground: the editor's dotted workspace behind the grid and
+/// The browser's ground: the editor's workspace behind the grid and
 /// the empty pages when the floating glass layout is off; otherwise
 /// `LibraryWindowSurface` extends the ground under the whole window.
 private struct LibraryBrowserSurface: ViewModifier {
-    let showsDots: Bool
+    let showsWorkspace: Bool
     @FloatingGlassChrome private var floatingChrome
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if showsDots && !floatingChrome {
+        if showsWorkspace && !floatingChrome {
             content.background { AnnotationEditorWorkspaceBackground(destination: .app).allowsHitTesting(false) }
         } else {
             content

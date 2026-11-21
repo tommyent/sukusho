@@ -13,16 +13,35 @@ import ImageIO
 /// These settings apply to the app's windows on screen.
 nonisolated enum WorkspaceBackground {
     enum Style: String, Codable, CaseIterable, Identifiable, Sendable {
-        case dots, grid, plain, wallpaper
+        case grid, plain, wallpaper
 
         var id: Self { self }
         var title: String {
             switch self {
-            case .dots: "Dots"
             case .grid: "Grid"
             case .plain: "Solid Color"
             case .wallpaper: "Picture"
             }
+        }
+
+        /// Maps legacy `"dots"` preferences to `.grid` so saved settings
+        /// migrate on load and rewrite as `"grid"` when next saved.
+        init?(stored rawValue: String) {
+            if rawValue == "dots" {
+                self = .grid
+            } else {
+                self.init(rawValue: rawValue)
+            }
+        }
+
+        init(from decoder: any Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            guard let style = Self(stored: raw) else {
+                throw DecodingError.dataCorrupted(
+                    .init(codingPath: decoder.codingPath, debugDescription: "Unknown WorkspaceBackground.Style: \(raw)")
+                )
+            }
+            self = style
         }
     }
 
@@ -42,7 +61,7 @@ nonisolated enum WorkspaceBackground {
     private static let sizeStep: CGFloat = 256
 
     /// Reduce Transparency and Increase Contrast get the flat grey instead
-    /// of a photo; Dots, Grid and Plain draw as chosen.
+    /// of a photo; Grid and Plain draw as chosen.
     static func shown(_ style: Style, reduceTransparency: Bool, increaseContrast: Bool) -> Style {
         style == .wallpaper && (reduceTransparency || increaseContrast) ? .plain : style
     }
@@ -91,7 +110,7 @@ enum BackgroundDestination: String, CaseIterable, Identifiable {
 }
 
 struct BackgroundChoice: Codable, Equatable {
-    var style: WorkspaceBackground.Style = .dots
+    var style: WorkspaceBackground.Style = .grid
     var picture = ""
     var solidRGB: UInt32?
     var dim = WorkspaceBackground.defaultDim
@@ -160,12 +179,12 @@ struct BackgroundPreferences: Codable, Equatable {
 
     init(migrating defaults: UserDefaults) {
         var editor = BackgroundChoice(
-            style: defaults.string(forKey: WorkspaceBackground.styleKey).flatMap(WorkspaceBackground.Style.init) ?? .dots,
+            style: defaults.string(forKey: WorkspaceBackground.styleKey).flatMap(WorkspaceBackground.Style.init(stored:)) ?? .grid,
             picture: defaults.string(forKey: WorkspaceBackground.wallpaperPathKey) ?? "",
             dim: defaults.object(forKey: WorkspaceBackground.dimKey) as? Double ?? WorkspaceBackground.defaultDim,
             blur: defaults.bool(forKey: WorkspaceBackground.blurKey)
         )
-        if editor.style == .wallpaper && editor.picture.isEmpty { editor.style = .dots }
+        if editor.style == .wallpaper && editor.picture.isEmpty { editor.style = .grid }
         editors = DestinationBackgrounds(day: editor)
         let light = AppTheme.named(defaults.string(forKey: AppTheme.lightKey), dark: false)
         let dark = AppTheme.named(defaults.string(forKey: AppTheme.darkKey), dark: true)

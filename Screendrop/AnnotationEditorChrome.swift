@@ -141,7 +141,6 @@ struct AnnotationEditorWorkspaceBackground: View {
         ZStack {
             Rectangle().fill(ground)
             switch style {
-            case .dots: WorkspaceDots()
             case .grid: WorkspaceGrid()
             case .plain:
                 if choice.style == .plain, let rgb = choice.solidRGB, !reduceTransparency && contrast != .increased {
@@ -175,7 +174,7 @@ private struct WindowPicture: View {
             if let picture {
                 let effects = choice.pictureEffects(for: destination, theme: theme)
                 WorkspaceWallpaper(url: picture.url, version: picture.version, blur: effects.blur,
-                                   dimming: ground.opacity(effects.dim), dotsWhenUnreadable: false)
+                                   dimming: ground.opacity(effects.dim), gridWhenUnreadable: false)
             }
         }
         // A detach reports nil; keep the live window, as a swapped accessor's late nil would leave the backdrop windowless.
@@ -549,7 +548,7 @@ private struct GlassInspectorToolbarModifier: ViewModifier {
 }
 
 /// The chosen photo at the window's pixel size, decoded and cached by the
-/// wallpaper thumbnails' cache. Dots stand in while it can't be read, such
+/// wallpaper thumbnails' cache. The grid stands in while it can't be read, such
 /// as after the file was deleted.
 private struct WorkspaceWallpaper: View {
     let url: URL
@@ -558,9 +557,9 @@ private struct WorkspaceWallpaper: View {
     /// In points; 0 draws the photo sharp.
     let blur: CGFloat
     let dimming: Color
-    /// The editor's Workspace shows Dots for a file it can't read; Glass, which has already fallen back
+    /// The editor's Workspace shows Grid for a file it can't read; Glass, which has already fallen back
     /// (`GlassPicture.resolve`), shows its plain ground.
-    var dotsWhenUnreadable = true
+    var gridWhenUnreadable = true
     private var blurred: Bool { blur > 0 }
 
     @Environment(\.displayScale) private var displayScale
@@ -574,7 +573,7 @@ private struct WorkspaceWallpaper: View {
                                                              height: proxy.size.height * displayScale))
             Group {
                 if failed {
-                    if dotsWhenUnreadable { WorkspaceDots() }
+                    if gridWhenUnreadable { WorkspaceGrid() }
                 } else if let image {
                     Image(decorative: image, scale: 1)
                         .resizable()
@@ -623,7 +622,7 @@ private struct WorkspaceWallpaper: View {
 extension View {
     /// A chrome-coloured backing under text drawn straight on the workspace,
     /// shown only while a wallpaper may be behind it, as the Library's cards
-    /// have under their titles. With Dots or Plain nothing changes. `capsule`
+    /// have under their titles. With Grid or Plain nothing changes. `capsule`
     /// fits a small padded label, such as the editor's zoom readout.
     func workspaceTextPlate(capsule: Bool = false) -> some View { modifier(WorkspaceTextPlate(capsule: capsule)) }
 }
@@ -666,35 +665,7 @@ private struct WorkspaceTextPlate: ViewModifier {
     }
 }
 
-/// Today's 18 pt dot grid, the default.
-private struct WorkspaceDots: View {
-    private let dotSpacing: CGFloat = 18
-    private let dotRadius: CGFloat = 1.15
-
-    var body: some View {
-        Canvas { context, size in
-            var path = Path()
-            let offset = dotSpacing / 2
-
-            stride(from: offset, through: size.width, by: dotSpacing).forEach { x in
-                stride(from: offset, through: size.height, by: dotSpacing).forEach { y in
-                    path.addEllipse(in: CGRect(
-                        x: x - dotRadius,
-                        y: y - dotRadius,
-                        width: dotRadius * 2,
-                        height: dotRadius * 2
-                    ))
-                }
-            }
-
-            context.fill(path, with: .color(Color.secondary.opacity(0.14)))
-        }
-        .allowsHitTesting(false)
-    }
-}
-
-/// 18 pt hairline grid with a major line every 5 cells (90 pt), offset by
-/// 9 pt like `WorkspaceDots`.
+/// 18 pt hairline grid with a major line every 5 cells (90 pt), offset by 9 pt.
 private struct WorkspaceGrid: View {
     @Environment(\.displayScale) private var displayScale
     private let spacing: CGFloat = 18
