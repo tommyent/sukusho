@@ -551,6 +551,22 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
         return start...end
     }
 
+    /// Source-time range for the inspector's Add Redaction command: uses the
+    /// kept-footage start (clamped if at a tail-trimmed end) while extending to
+    /// the original `sourceDuration` so restoring a trimmed tail stays masked.
+    func redactionCoverageSourceRange(
+        atEditorTime editorTime: TimeInterval,
+        sourceDuration: TimeInterval,
+        minimum: TimeInterval
+    ) -> ClosedRange<TimeInterval>? {
+        guard sourceDuration >= minimum,
+              let insertion = insertionSourceRange(atEditorTime: editorTime, length: minimum, minimum: minimum) else {
+            return nil
+        }
+        let start = min(insertion.lowerBound, sourceDuration - minimum)
+        return start...sourceDuration
+    }
+
     func isUnedited(sourceDuration: TimeInterval) -> Bool {
         guard segments.count == 1, let only = segments.first else { return false }
         return abs(only.sourceStart) < 0.000_001

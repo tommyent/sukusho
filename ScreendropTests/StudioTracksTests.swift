@@ -893,6 +893,54 @@ struct StudioTracksTests {
         #expect(multi.editorSpan(overlapping: imageRange.lowerBound, sourceEnd: imageRange.upperBound) != nil)
     }
 
+    @Test func addRedactionKeepsOriginalSourceEndBeforeAndAfterRestoringCut() throws {
+        let sourceDuration: TimeInterval = 10
+        let trimmed = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 5, speed: 1)
+        ])
+        let restored = RecordingClipTimeline.full(sourceDuration: sourceDuration)
+        let frame = 1.0 / 30.0
+
+        // Add Redaction at source 2 while trimmed to 0...5 keeps source end 10.
+        let midRange = try #require(trimmed.redactionCoverageSourceRange(
+            atEditorTime: 2.0,
+            sourceDuration: sourceDuration,
+            minimum: RecordingRedaction.minimumDuration
+        ))
+        #expect(abs(midRange.lowerBound - 2.0) < 0.0001)
+        #expect(abs(midRange.upperBound - 10.0) < 0.0001)
+
+        let midRedaction = RecordingRedaction(start: midRange.lowerBound, end: midRange.upperBound)
+        try midRedaction.validate(sourceDuration: sourceDuration)
+        // Before restoring the cut: covers trimmed playback [2..5).
+        #expect(midRedaction.covers(editorTime: 2.5, frameDuration: frame, timeline: trimmed))
+        let trimmedBlocks = RecordingOverlayTimelineBlock.blocks(for: [midRedaction], clipTimeline: trimmed) { ($0.start, $0.end) }
+        #expect(trimmedBlocks.count == 1)
+        #expect(abs(trimmedBlocks[0].editorStart - 2.0) < 0.0001)
+        #expect(abs(trimmedBlocks[0].editorEnd - 5.0) < 0.0001)
+
+        // After restoring the cut: tail frames [5..10) remain redacted.
+        #expect(midRedaction.covers(editorTime: 5.5, frameDuration: frame, timeline: restored))
+        #expect(midRedaction.covers(editorTime: 9.9, frameDuration: frame, timeline: restored))
+        let restoredBlocks = RecordingOverlayTimelineBlock.blocks(for: [midRedaction], clipTimeline: restored) { ($0.start, $0.end) }
+        #expect(restoredBlocks.count == 1)
+        #expect(abs(restoredBlocks[0].editorStart - 2.0) < 0.0001)
+        #expect(abs(restoredBlocks[0].editorEnd - 10.0) < 0.0001)
+
+        // Add Redaction at the tail-trimmed end (5.0) still starts inside kept footage (4.9)
+        // AND keeps original source end (10.0) after restoring the cut.
+        let endRange = try #require(trimmed.redactionCoverageSourceRange(
+            atEditorTime: trimmed.duration,
+            sourceDuration: sourceDuration,
+            minimum: RecordingRedaction.minimumDuration
+        ))
+        #expect(abs(endRange.lowerBound - 4.9) < 0.0001)
+        #expect(abs(endRange.upperBound - 10.0) < 0.0001)
+        let endRedaction = RecordingRedaction(start: endRange.lowerBound, end: endRange.upperBound)
+        #expect(endRedaction.covers(editorTime: 4.95, frameDuration: frame, timeline: trimmed))
+        #expect(endRedaction.covers(editorTime: 8.0, frameDuration: frame, timeline: restored))
+    }
+
     // MARK: - Preview vs Export pixel comparison (including animated GIF + Text)
 
     @Test func previewAndExportRenderMatchingFramesForTextAndAnimatedGIF() throws {

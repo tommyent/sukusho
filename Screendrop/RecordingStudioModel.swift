@@ -4353,9 +4353,9 @@ final class RecordingStudioModel {
 
     func addRedaction() {
         guard isSelectingRedaction,
-              let range = sourceRange(
-                startingAt: currentTime,
-                length: sourceDuration,
+              let range = clipTimeline.redactionCoverageSourceRange(
+                atEditorTime: min(max(currentTime, 0), duration),
+                sourceDuration: sourceDuration,
                 minimum: RecordingRedaction.minimumDuration
               ) else { return }
         let region = RecordingRedaction(start: range.lowerBound, end: range.upperBound, rect: workingVideoCropRect)
