@@ -453,7 +453,9 @@ struct StudioEditingTests {
             selectedClipID: first.id,
             playheadTime: 4.0
         )
-        control.snapPoints = [4.0]
+        // Even with empty static snapPoints, the strip snaps to its own playheadTime (4.0 s)
+        // so the dock never has to read currentTime on every playback tick.
+        control.snapPoints = []
         control.snaps = true
 
         var guides: [TimeInterval?] = []

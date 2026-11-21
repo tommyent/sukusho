@@ -1528,11 +1528,12 @@ final class RecordingStudioModel {
         showNotice(snapsEdits ? "Snapping On" : "Snapping Off")
     }
 
-    /// Editor times a trimmed video edge can catch on: the playhead, markers,
-    /// recorded clicks (and audio clip edges once wired).
+    /// Static editor times a trimmed video edge can catch on: markers, recorded
+    /// clicks (and audio clip edges once wired). The clip strip adds its own
+    /// `playheadTime` during a drag so reading this never pulls the timeline
+    /// dock into the 20 ms playback tick.
     var clipSnapPoints: [TimeInterval] {
         StudioEditing.clipSnapPoints(
-            playhead: currentTime,
             markers: markerEditorTimes.map(\.time),
             recordedClicks: visibleRecordedPressTimes
         )

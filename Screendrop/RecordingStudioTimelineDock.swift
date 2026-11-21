@@ -7,6 +7,7 @@
 //
 
 import AppKit
+import Observation
 import SwiftUI
 
 // MARK: - Timeline
@@ -23,9 +24,9 @@ struct StudioTimelineEditor: View {
     @State private var scrollPosition = ScrollPosition(edge: .leading)
     @State private var isScrubbing = false
     @State private var isResetClipsConfirmationPresented = false
-    /// While a trimmed edge catches on a snap point, that editor time: a
-    /// full-height guide runs through every track there.
-    @State private var snapGuideTime: TimeInterval?
+    /// Isolated snap-guide state so showing/moving the yellow guide during a
+    /// trim only invalidates `StudioSnapGuideOverlay`, never the lane stack.
+    @State private var snapGuide = StudioSnapGuideState()
     /// Anchor time while ⇧-dragging on the ruler to mark an I/O range.
     @State private var rangeAnchor: TimeInterval?
     @GestureState private var isRulerGestureActive = false
@@ -105,19 +106,12 @@ struct StudioTimelineEditor: View {
                 )
             }
             .overlay(alignment: .topLeading) {
-                if let snapGuideTime {
-                    let guideX = scale.x(for: snapGuideTime) - scrollX
-                    if guideX >= -1, guideX <= proxy.size.width + 1 {
-                        let top = StudioTimelineMetrics.playheadLaneHeight + StudioTimelineMetrics.rowSpacing
-                        let guideHeight = max(0, proxy.size.height - top - StudioTimelineMetrics.scrollerGutter)
-                        Rectangle()
-                            .fill(Color(nsColor: .systemYellow))
-                            .frame(width: 1.5, height: guideHeight)
-                            .offset(x: guideX - 0.75, y: top)
-                            .allowsHitTesting(false)
-                            .transaction { $0.animation = nil }
-                    }
-                }
+                StudioSnapGuideOverlay(
+                    state: snapGuide,
+                    scale: scale,
+                    scrollX: scrollX,
+                    size: proxy.size
+                )
             }
             .onChange(of: proxy.size.width, initial: true) { _, width in
                 viewportWidth = max(width, 1)
@@ -216,7 +210,7 @@ struct StudioTimelineEditor: View {
             onReorder: { model.moveClip(id: $0, to: $1) },
             snapPoints: model.clipSnapPoints,
             snaps: model.snapsEdits,
-            onSnapGuide: { if snapGuideTime != $0 { snapGuideTime = $0 } },
+            onSnapGuide: { if snapGuide.time != $0 { snapGuide.time = $0 } },
             onTrimPreview: { model.previewSourceTime($0) },
             allowsKeyboardShortcuts: {
                 model.isLoaded && !model.isRestoringDocument && !model.isEditingSourceRegion
@@ -778,6 +772,34 @@ private struct StudioMarkerFlagShape: Shape {
         path.addLine(to: CGPoint(x: rect.minX, y: rect.height * 0.6))
         path.closeSubpath()
         return path
+    }
+}
+
+@Observable
+private final class StudioSnapGuideState {
+    var time: TimeInterval?
+}
+
+private struct StudioSnapGuideOverlay: View {
+    let state: StudioSnapGuideState
+    let scale: StudioTimelineScale
+    let scrollX: CGFloat
+    let size: CGSize
+
+    var body: some View {
+        if let time = state.time {
+            let guideX = scale.x(for: time) - scrollX
+            if guideX >= -1, guideX <= size.width + 1 {
+                let top = StudioTimelineMetrics.playheadLaneHeight + StudioTimelineMetrics.rowSpacing
+                let guideHeight = max(0, size.height - top - StudioTimelineMetrics.scrollerGutter)
+                Rectangle()
+                    .fill(Color(nsColor: .systemYellow))
+                    .frame(width: 1.5, height: guideHeight)
+                    .offset(x: guideX - 0.75, y: top)
+                    .allowsHitTesting(false)
+                    .transaction { $0.animation = nil }
+            }
+        }
     }
 }
 

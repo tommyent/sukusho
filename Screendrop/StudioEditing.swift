@@ -250,14 +250,14 @@ nonisolated enum StudioEditing {
 
     /// Editor times a trimmed video clip edge can snap to.
     static func clipSnapPoints(
-        playhead: TimeInterval,
+        playhead: TimeInterval? = nil,
         markers: [TimeInterval],
         recordedClicks: [TimeInterval],
         audioClipEdges: [TimeInterval] = []
     ) -> [TimeInterval] {
         var points: [TimeInterval] = []
-        points.reserveCapacity(1 + audioClipEdges.count + markers.count + recordedClicks.count)
-        if playhead.isFinite { points.append(playhead) }
+        points.reserveCapacity((playhead == nil ? 0 : 1) + audioClipEdges.count + markers.count + recordedClicks.count)
+        if let playhead, playhead.isFinite { points.append(playhead) }
         points.append(contentsOf: audioClipEdges.filter(\.isFinite))
         points.append(contentsOf: markers.filter(\.isFinite))
         points.append(contentsOf: recordedClicks.filter(\.isFinite))
