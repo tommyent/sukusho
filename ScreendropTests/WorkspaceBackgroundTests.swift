@@ -82,6 +82,11 @@ struct WorkspaceBackgroundTests {
         #expect(WorkspaceBackground.dimOpacity(-1, dark: true) == 0)
         #expect(WorkspaceBackground.dimOpacity(5, dark: false) == 0.8)
         #expect(WorkspaceBackground.dimOpacity(5, dark: true) == 0.9)
+        var picture = BackgroundChoice(style: .wallpaper, dim: 0.3, usesGlassDimDefault: true)
+        #expect(abs(picture.pictureEffects(for: .editors, theme: .glassDark).dim - 0.45) < 1e-9)
+        #expect(picture.pictureEffects(for: .app, theme: .glassDark).dim == AppTheme.glassDark.ground.backdrop?.dim)
+        picture.usesGlassDimDefault = false
+        #expect(abs(picture.pictureEffects(for: .app, theme: .glassDark).dim - 0.45) < 1e-9)
     }
 
     @Test func photosDecodeAtTheWindowsPixelSizeAndNeverLarger() {

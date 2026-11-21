@@ -101,8 +101,16 @@ struct BackgroundChoice: Codable, Equatable {
     func pictureEffects(for destination: BackgroundDestination, theme: AppTheme) -> AppTheme.Backdrop {
         let glass = destination == .app ? theme.ground.backdrop : nil
         let radius = glass?.blur ?? WorkspaceBackground.blurRadius
-        return AppTheme.Backdrop(blur: blur ? radius : 0,
-                                 dim: usesGlassDimDefault == true ? glass?.dim ?? dim : dim)
+        let amount = dimSetting(for: destination, theme: theme)
+        return AppTheme.Backdrop(
+            blur: blur ? radius : 0,
+            dim: usesGlassDimDefault == true && glass != nil ? amount : WorkspaceBackground.dimOpacity(amount, dark: theme.isDark)
+        )
+    }
+
+    func dimSetting(for destination: BackgroundDestination, theme: AppTheme) -> Double {
+        if usesGlassDimDefault == true, destination == .app, let glass = theme.ground.backdrop { return glass.dim }
+        return dim
     }
 
     var needsTextBacking: Bool { style == .wallpaper || (style == .plain && solidRGB != nil) }

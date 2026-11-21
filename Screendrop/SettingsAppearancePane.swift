@@ -190,7 +190,7 @@ private struct WorkspaceWallpaperSettings: View {
             if !Task.isCancelled { defaultPicture = resolved.url }
         }
 
-        let dim = Binding(get: { choice.pictureEffects(for: destination, theme: theme).dim }, set: { value in
+        let dim = Binding(get: { choice.dimSetting(for: destination, theme: theme) }, set: { value in
             choice.usesGlassDimDefault = false
             choice.dim = value
         })
