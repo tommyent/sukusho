@@ -62,6 +62,40 @@ struct EditorViewportTests {
         near(camera.frame.maxY, 656, "Zoomed image scrolled to its bottom reaches the window edge")
     }
 
+    /// Crop mode adds overscroll so zoomed-in edges can scroll past the viewport
+    /// border and clear the top tool dock.
+    @Test static func cropOverscrollWithTopReserve() {
+        let layout = AnnotationCanvasViewport.Layout(
+            canvasSize: CGSize(width: 2000, height: 1000),
+            viewportSize: CGSize(width: 1068, height: 656),
+            displayScale: 2, fitInsets: CGSize(width: 60, height: 54),
+            topReserve: 64, overscroll: 26
+        )
+        var camera = AnnotationCanvasViewport()
+        camera.configure(layout)
+        camera.zoom(to: 2)
+
+        camera.pan(by: CGSize(width: 10_000, height: 10_000))
+        near(camera.frame.minX, 26, "Left overscroll clears the viewport edge")
+        near(camera.frame.minY, 90, "Top overscroll clears the top tool dock")
+
+        camera.pan(by: CGSize(width: -20_000, height: -20_000))
+        near(camera.frame.maxX, 1042, "Right overscroll clears the viewport edge")
+        near(camera.frame.maxY, 630, "Bottom overscroll clears the viewport edge")
+
+        // Leaving crop mode places the newly cropped image over its cut box before animating to fit.
+        var postCrop = layout
+        postCrop.canvasSize = CGSize(width: 500, height: 400)
+        postCrop.fitInsets = CGSize(width: 34, height: 28)
+        postCrop.overscroll = 0
+        let cutBox = CGRect(x: 200, y: 150, width: 250, height: 200)
+        camera.show(cutBox, in: postCrop)
+        sameFrame(camera.frame, cutBox, "show places the cropped image over its cut box")
+        #expect(!camera.isFitting)
+        camera.fit()
+        #expect(camera.isFitting)
+    }
+
     @Test static func viewport() {
         let layout = AnnotationCanvasViewport.Layout(
             canvasSize: CGSize(width: 2000, height: 1000),
