@@ -394,6 +394,13 @@ nonisolated enum LauncherList {
         guard !merged.isEmpty else { return [] }
         return [LauncherSection(title: "Results", inFavorites: false, rows: merged)]
     }
+
+    /// Moves `selection` by `offset` within `rows` in a single pass, falling back to index 0.
+    static func movedSelection(from selection: LauncherRowID?, by offset: Int, in rows: [LauncherRow]) -> LauncherRowID? {
+        guard !rows.isEmpty else { return nil }
+        let current = selection.flatMap { id in rows.firstIndex { $0.id == id } } ?? 0
+        return rows[min(max(current + offset, 0), rows.count - 1)].id
+    }
 }
 
 /// Finds apps by listing folders. No Spotlight, no LaunchServices database walk.

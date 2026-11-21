@@ -59,10 +59,9 @@ final class ClipboardPopupState {
     }
 
     func moveLauncher(by offset: Int) {
-        let rows = visibleLauncherRows
-        guard !rows.isEmpty else { return }
-        let current = rows.firstIndex { $0.id == selectedLauncherRow?.id } ?? 0
-        launcherSelection = rows[min(max(current + offset, 0), rows.count - 1)].id
+        if let next = LauncherList.movedSelection(from: launcherSelection, by: offset, in: visibleLauncherRows) {
+            launcherSelection = next
+        }
     }
 }
 

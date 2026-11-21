@@ -161,6 +161,24 @@ struct ClipboardLauncherSearchTests {
         #expect(pro.flatMap(\.rows).map(\.title) == ["Proxyman", "Adobe Premiere Pro", "proj-high", "proj-low"])
     }
 
+    @Test func movedSelectionAdvancesAndClampsWithoutRebuilding() {
+        let rows = (0..<5).map { i in
+            LauncherRow(
+                id: LauncherRowID(inFavorites: false, path: "/tmp/f\(i)"),
+                kind: .folder, path: "/tmp/f\(i)", title: "f\(i)", detail: "/tmp", isFavorite: false
+            )
+        }
+        #expect(LauncherList.movedSelection(from: nil, by: 1, in: []) == nil)
+        #expect(LauncherList.movedSelection(from: nil, by: 1, in: rows) == rows[1].id)
+        #expect(LauncherList.movedSelection(from: nil, by: -1, in: rows) == rows[0].id)
+        #expect(LauncherList.movedSelection(from: rows[3].id, by: 1, in: rows) == rows[4].id)
+        #expect(LauncherList.movedSelection(from: rows[4].id, by: 1, in: rows) == rows[4].id)
+        #expect(LauncherList.movedSelection(from: rows[3].id, by: -1, in: rows) == rows[2].id)
+        // A stale selection ID falls back to index 0.
+        let stale = LauncherRowID(inFavorites: false, path: "/tmp/gone")
+        #expect(LauncherList.movedSelection(from: stale, by: 1, in: rows) == rows[1].id)
+    }
+
     @Test func scannerSyntheticTreeAndFavoritesPersistence() throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("sukusho-launcher-scan-\(UUID().uuidString)")
