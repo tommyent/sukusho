@@ -11,7 +11,7 @@ import SwiftUI
 struct StatusSuccess: View {
     let title: String
     let systemImage: String
-    /// Glass is drawn (`DrawnGlass`), which the bar knows.
+    /// Floating glass chrome is drawn (`FloatingGlassChrome`), which the bar knows.
     let onGlass: Bool
 
     var body: some View {
