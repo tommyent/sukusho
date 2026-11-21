@@ -819,6 +819,43 @@ struct StudioEditingTests {
         #expect(abs(mappedTrackCues[0].start - 3.0) < 0.0001 && abs(mappedTrackCues[0].end - 4.0) < 0.0001)
         #expect(abs(mappedTrackCues[1].start - 5.0) < 0.0001 && abs(mappedTrackCues[1].end - 6.0) < 0.0001)
         #expect(abs(mappedTrackCues[2].start - 8.0) < 0.0001 && abs(mappedTrackCues[2].end - 9.0) < 0.0001)
+
+        // Ambiguous partial corrected cue (two raw words corrected to one word, then cut in half)
+        // is omitted from shared cues rather than resurrecting the original unedited word.
+        let halfCut = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 1.0, sourceEnd: 2.0)
+        ])
+        let correctedTranscript = RecordingTranscript(
+            words: [
+                .init(text: "secret ", start: 0.0, end: 1.0),
+                .init(text: "raw ", start: 1.0, end: 2.0),
+            ],
+            cues: [
+                .init(start: 0.0, end: 2.0, text: "Redacted"),
+            ]
+        )
+        #expect(correctedTranscript.sharedEntries(in: halfCut).cues.isEmpty)
+
+        // Touching reversed clips [2..4, 0..2] break cue runs at the backward join and rebuild in editor order.
+        let reversedAdjacent = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 2.0, sourceEnd: 4.0),
+            RecordingClipSegment(sourceStart: 0.0, sourceEnd: 2.0),
+        ])
+        let reversedTranscript = RecordingTranscript(
+            words: [
+                .init(text: "first ", start: 0.5, end: 1.5),
+                .init(text: "second", start: 2.5, end: 3.5),
+            ],
+            cues: [
+                .init(start: 0.0, end: 4.0, text: "First Second"),
+            ]
+        )
+        let reversedShared = reversedTranscript.sharedEntries(in: reversedAdjacent)
+        #expect(reversedShared.cues.count == 2)
+        #expect(reversedShared.cues[0].text == "Second")
+        #expect(abs(reversedShared.cues[0].start - 0.0) < 0.0001 && abs(reversedShared.cues[0].end - 2.0) < 0.0001)
+        #expect(reversedShared.cues[1].text == "First")
+        #expect(abs(reversedShared.cues[1].start - 2.0) < 0.0001 && abs(reversedShared.cues[1].end - 4.0) < 0.0001)
     }
 
     // MARK: - Live trim preview of restored footage

@@ -91,29 +91,26 @@ nonisolated struct RecordingTranscript: Sendable {
                     mappedCues.append((run.editorStart, run.editorEnd, trimmed))
                     continue
                 }
-                if !timed.isEmpty {
-                    let keepWord: (RecordingTranscriptWord) -> Bool = { word in
-                        let covered = sliceCoverage(of: word.start, to: word.end, in: run.slices)
-                        return abs(covered - (word.end - word.start)) < 0.001
+                // Match export's rule: never substitute raw automatic words for a
+                // corrected cue whose word count or timings no longer align.
+                guard !timed.isEmpty,
+                      timed.count == corrected.count,
+                      timed.allSatisfy({ $0.end <= cue.end + 0.001 }) else {
+                    continue
+                }
+                let surviving = zip(timed, corrected)
+                    .compactMap { pair -> (editorStart: TimeInterval, text: String)? in
+                        let covered = sliceCoverage(of: pair.0.start, to: pair.0.end, in: run.slices)
+                        guard abs(covered - (pair.0.end - pair.0.start)) < 0.001,
+                              let wordEditorStart = timeline.editorTime(forSourceEventTime: pair.0.start) else {
+                            return nil
+                        }
+                        return (wordEditorStart, pair.1)
                     }
-                    let rebuilt: String
-                    if timed.count == corrected.count, timed.allSatisfy({ $0.end <= cue.end + 0.001 }) {
-                        rebuilt = zip(timed, corrected)
-                            .filter { keepWord($0.0) }
-                            .map(\.1)
-                            .joined(separator: " ")
-                    } else {
-                        rebuilt = timed
-                            .filter(keepWord)
-                            .map(\.displayText)
-                            .filter { !$0.isEmpty }
-                            .joined(separator: " ")
-                    }
-                    if !rebuilt.isEmpty {
-                        mappedCues.append((run.editorStart, run.editorEnd, rebuilt))
-                    }
-                } else {
-                    mappedCues.append((run.editorStart, run.editorEnd, trimmed))
+                    .sorted { $0.editorStart < $1.editorStart }
+                let rebuilt = surviving.map(\.text).joined(separator: " ")
+                if !rebuilt.isEmpty {
+                    mappedCues.append((run.editorStart, run.editorEnd, rebuilt))
                 }
             }
         }

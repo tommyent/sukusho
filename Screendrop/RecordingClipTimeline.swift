@@ -429,12 +429,17 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
         var editorDuration: TimeInterval { editorEnd - editorStart }
     }
 
-    /// Every touching editor-time run where `sourceStart..<sourceEnd` survives,
-    /// in playback (editor) order.
+    /// Every touching monotonic editor-time run where `sourceStart..<sourceEnd`
+    /// survives, in playback (editor) order. Runs break at backward joins so a
+    /// cue or block spanning reversed adjacent clips never merges across a jump
+    /// backward in source time.
     func editorRuns(overlapping sourceStart: TimeInterval, sourceEnd: TimeInterval) -> [EditorRun] {
         var runs: [EditorRun] = []
         for slice in slices(overlapping: sourceStart, sourceEnd: sourceEnd) {
-            if let last = runs.last, abs(last.editorEnd - slice.editorStart) < 0.000_5 {
+            if let last = runs.last,
+               let lastSlice = last.slices.last,
+               abs(last.editorEnd - slice.editorStart) < 0.000_5,
+               lastSlice.sourceEnd <= slice.sourceStart + 0.000_5 {
                 runs[runs.count - 1] = EditorRun(
                     editorStart: last.editorStart,
                     editorEnd: slice.editorEnd,
