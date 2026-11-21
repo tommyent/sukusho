@@ -661,10 +661,47 @@ final class RecordingClipTimelineControl: NSView {
         return (closest.0, closest.1)
     }
 
+    /// Test seam exposing a clip's drawn frame in view coordinates.
+    func clipFrame(for clipID: UUID) -> CGRect? {
+        clipRect(for: clipID)
+    }
+
+    /// Test seam exposing the strip's current x coordinate for an editor time.
+    func xCoordinate(for editorTime: TimeInterval) -> CGFloat {
+        xPosition(for: editorTime)
+    }
+
+    private var displayDuration: TimeInterval {
+        if case .trim = dragTarget, let startDuration = dragStartTimeline?.duration, startDuration > 0 {
+            return startDuration
+        }
+        return timeline.duration
+    }
+
+    private func drawnEditorRange(for clipID: UUID) -> Range<TimeInterval>? {
+        if case .trim(let trimmedID, let edge) = dragTarget,
+           let startTimeline = dragStartTimeline,
+           let startRange = startTimeline.editorRange(for: clipID) {
+            guard clipID == trimmedID,
+                  let draft = timeline.segments.first(where: { $0.id == clipID }) else {
+                return startRange
+            }
+            switch edge {
+            case .leading:
+                let start = startRange.upperBound - draft.editorDuration
+                return min(start, startRange.upperBound)..<startRange.upperBound
+            case .trailing:
+                let end = startRange.lowerBound + draft.editorDuration
+                return startRange.lowerBound..<max(startRange.lowerBound, end)
+            }
+        }
+        return timeline.editorRange(for: clipID)
+    }
+
     private func clipRect(for clipID: UUID) -> CGRect? {
         guard let index = timeline.segments.firstIndex(where: { $0.id == clipID }),
-              let range = timeline.editorRange(for: clipID),
-              timeline.duration > 0 else { return nil }
+              let range = drawnEditorRange(for: clipID),
+              displayDuration > 0 else { return nil }
         let rawMinX = xPosition(for: range.lowerBound)
         let rawMaxX = xPosition(for: range.upperBound)
         let leadingInset = index == 0
@@ -684,15 +721,17 @@ final class RecordingClipTimelineControl: NSView {
     }
 
     private func xPosition(for editorTime: TimeInterval) -> CGFloat {
-        guard timeline.duration > 0 else { return timelineRect.minX }
-        let fraction = min(max(editorTime / timeline.duration, 0), 1)
+        let scaleDuration = displayDuration
+        guard scaleDuration > 0 else { return timelineRect.minX }
+        let fraction = min(max(editorTime / scaleDuration, 0), 1)
         return timelineRect.minX + CGFloat(fraction) * timelineRect.width
     }
 
     private func editorTime(forX x: CGFloat) -> TimeInterval {
-        guard timeline.duration > 0, timelineRect.width > 0 else { return 0 }
+        let scaleDuration = displayDuration
+        guard scaleDuration > 0, timelineRect.width > 0 else { return 0 }
         let fraction = min(max((x - timelineRect.minX) / timelineRect.width, 0), 1)
-        return Double(fraction) * timeline.duration
+        return Double(fraction) * scaleDuration
     }
 
     private func drawTrack() {

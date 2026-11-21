@@ -436,6 +436,12 @@ struct StudioEditingTests {
         #expect(previews.last != nil)
         control.mouseDragged(with: try mouse(.leftMouseDragged, x: 203))
         #expect(guides.last == 4.0)
+        // Fixed scale during trim: dragged trailing edge aligns with the 4.0 s snap guide (~x = 200),
+        // not shifted rightward to ~222 by dividing by the shorter 9 s draft duration.
+        let snappedFrame = try #require(control.clipFrame(for: first.id))
+        let guideX = control.xCoordinate(for: 4.0)
+        #expect(abs(guideX - 200.0) < 1.5)
+        #expect(abs((snappedFrame.maxX + 2.0) - guideX) < 0.5)
 
         // Holding ⌘ while dragging turns snapping off and clears the snap guide.
         control.mouseDragged(with: try mouse(.leftMouseDragged, x: 203, flags: .command))
