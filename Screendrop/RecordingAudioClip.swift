@@ -165,18 +165,82 @@ nonisolated struct RecordingAudioClip: Identifiable, Codable, Equatable, Hashabl
     }
 }
 
+/// A bounded loudness outline of an audio file for the timeline.
+nonisolated struct RecordingAudioWaveform: Equatable, Sendable {
+    var samples: [Float]
+    var peaksPerSecond: Double
+
+    static let empty = RecordingAudioWaveform(
+        samples: [],
+        peaksPerSecond: Double(RecordingAudioPeaks.peaksPerSecond)
+    )
+
+    var isEmpty: Bool { samples.isEmpty }
+}
+
 /// A coarse loudness outline of an audio file for the timeline.
 nonisolated enum RecordingAudioPeaks {
     /// Enough for a bar every few points at the timeline's closest zoom.
     static let peaksPerSecond = 100
+    /// Upper bound on retained peak samples per audio source (~48 KB max even
+    /// for multi-hour recordings).
+    static let maximumPeaks = 12_000
 
-    /// Normalized 0...1 peaks, `peaksPerSecond` per second of audio.
+    /// Compacts `peaks` in place by pairwise maxima whenever it exceeds
+    /// `maxCount`, halving `peaksPerSecond` on each pass.
+    static func compactInPlace(
+        _ peaks: inout [Float],
+        peaksPerSecond: inout Double,
+        maxCount: Int = maximumPeaks
+    ) {
+        let cap = max(2, maxCount)
+        while peaks.count > cap {
+            let pairs = peaks.count / 2
+            for i in 0..<pairs {
+                peaks[i] = max(peaks[i * 2], peaks[i * 2 + 1])
+            }
+            if peaks.count.isMultiple(of: 2) {
+                peaks.removeLast(peaks.count - pairs)
+            } else {
+                peaks[pairs] = peaks[peaks.count - 1]
+                peaks.removeLast(peaks.count - (pairs + 1))
+            }
+            peaksPerSecond /= 2
+        }
+    }
+
+    /// Computes the aligned start and end X coordinates of waveform bars that
+    /// intersect `visibleXRange`, so zoomed multi-hour clips only draw bars
+    /// inside the viewport.
+    static func visibleBarBounds(
+        width: CGFloat,
+        visibleXRange: ClosedRange<CGFloat>?,
+        bar: CGFloat = 2,
+        gap: CGFloat = 2
+    ) -> (start: CGFloat, end: CGFloat) {
+        let maxEnd = width - bar
+        guard maxEnd > gap else { return (gap, gap) }
+        guard let visibleXRange else { return (gap, maxEnd) }
+        let stride = bar + gap
+        let low = max(gap, visibleXRange.lowerBound - bar)
+        let firstIndex = max(0, floor((low - gap) / stride))
+        let start = gap + firstIndex * stride
+        let end = min(maxEnd, visibleXRange.upperBound)
+        return (start, max(start, end))
+    }
+
+    /// Normalized 0...1 peaks, bounded to `maximumPeaks` samples.
     static func load(url: URL) async -> [Float] {
+        await loadWaveform(url: url).samples
+    }
+
+    /// Streams audio into a bounded, in-place normalized waveform outline.
+    static func loadWaveform(url: URL) async -> RecordingAudioWaveform {
         let asset = AVURLAsset(url: url)
         // Every track, mixed: a recording's system audio and microphone are
         // separate tracks, and either may be the silent one.
         guard let tracks = try? await asset.loadTracks(withMediaType: .audio), !tracks.isEmpty,
-              let reader = try? AVAssetReader(asset: asset) else { return [] }
+              let reader = try? AVAssetReader(asset: asset) else { return .empty }
         let sampleRate = 8_000
         let output = AVAssetReaderAudioMixOutput(audioTracks: tracks, audioSettings: [
             AVFormatIDKey: kAudioFormatLinearPCM,
@@ -188,14 +252,15 @@ nonisolated enum RecordingAudioPeaks {
             AVLinearPCMIsNonInterleaved: false
         ])
         reader.add(output)
-        guard reader.startReading() else { return [] }
+        guard reader.startReading() else { return .empty }
 
-        let samplesPerPeak = sampleRate / peaksPerSecond
+        var effectivePeaksPerSecond = Double(peaksPerSecond)
+        var samplesPerPeak = max(1, sampleRate / peaksPerSecond)
         var peaks: [Float] = []
         var current: Int16 = 0
         var count = 0
         while let buffer = output.copyNextSampleBuffer() {
-            if Task.isCancelled { reader.cancelReading(); return [] }
+            if Task.isCancelled { reader.cancelReading(); return .empty }
             guard let block = CMSampleBufferGetDataBuffer(buffer) else { continue }
             var length = 0
             var pointer: UnsafeMutablePointer<CChar>?
@@ -210,15 +275,27 @@ nonisolated enum RecordingAudioPeaks {
                         peaks.append(Float(current) / Float(Int16.max))
                         current = 0
                         count = 0
+                        if peaks.count > maximumPeaks {
+                            compactInPlace(&peaks, peaksPerSecond: &effectivePeaksPerSecond, maxCount: maximumPeaks)
+                            samplesPerPeak *= 2
+                        }
                     }
                 }
             }
         }
-        if count > 0 { peaks.append(Float(current) / Float(Int16.max)) }
-        // Quiet tracks still read: scale so the loudest peak fills the lane.
-        if let loudest = peaks.max(), loudest > 0.01 {
-            peaks = peaks.map { min(1, $0 / loudest) }
+        if count > 0 {
+            peaks.append(Float(current) / Float(Int16.max))
+            if peaks.count > maximumPeaks {
+                compactInPlace(&peaks, peaksPerSecond: &effectivePeaksPerSecond, maxCount: maximumPeaks)
+            }
         }
-        return peaks
+        // Quiet tracks still read: normalize in place without allocating a second array.
+        if let loudest = peaks.max(), loudest > 0.01 {
+            let scale = 1 / loudest
+            for index in peaks.indices {
+                peaks[index] = min(1, peaks[index] * scale)
+            }
+        }
+        return RecordingAudioWaveform(samples: peaks, peaksPerSecond: effectivePeaksPerSecond)
     }
 }

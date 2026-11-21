@@ -171,13 +171,18 @@ struct StudioAudioLane: View {
         let pointsPerSecond = max(scale.pointsPerSecond, 1)
         let isAlsoSelected = !state.isSelected && model.selectedAudioClipIDs.contains(clip.id)
         let runsPastEnd = clip.end > model.duration + 0.01
+        let visibleXLow = max(0, CGFloat(visibleRange.lowerBound - clip.start) * pointsPerSecond)
+        let visibleXHigh = min(state.width, CGFloat(visibleRange.upperBound - clip.start) * pointsPerSecond)
+        let visibleXRange = visibleXLow...max(visibleXLow, visibleXHigh)
+
         return ZStack(alignment: .topLeading) {
             StudioWaveform(
-                peaks: model.waveformPeaks(for: clip),
+                waveform: model.waveformPeaks(for: clip),
                 color: style.onTint.opacity(0.55),
                 from: clip.trimStart,
                 to: clip.trimStart + Double(state.width / pointsPerSecond) * clip.speed,
-                gain: CGFloat(clip.volume)
+                gain: CGFloat(clip.volume),
+                visibleXRange: visibleXRange
             )
             .padding(.top, 13)
             .padding(.bottom, 3)
@@ -468,25 +473,36 @@ private struct StudioFadeShade: View {
     }
 }
 
-/// Rounded bars of an audio file's loudness between two file times.
+/// Rounded bars of an audio file's loudness between two file times, drawing
+/// only the bars that intersect the visible viewport slice.
 struct StudioWaveform: View {
-    let peaks: [Float]
+    let waveform: RecordingAudioWaveform
     let color: Color
     let from: TimeInterval
     let to: TimeInterval
     /// Scales the bars with the clip's level.
     var gain: CGFloat = 1
+    /// Visible X range in local coordinates, so long zoomed clips only draw
+    /// bars that are actually on screen.
+    var visibleXRange: ClosedRange<CGFloat>? = nil
 
     var body: some View {
         Canvas { context, size in
-            guard !peaks.isEmpty, to > from, size.width > 4 else { return }
-            let perSecond = Double(RecordingAudioPeaks.peaksPerSecond)
+            guard !waveform.isEmpty, to > from, size.width > 4 else { return }
+            let peaks = waveform.samples
+            let perSecond = waveform.peaksPerSecond
             let bar: CGFloat = 2
             let gap: CGFloat = 2
+            let bounds = RecordingAudioPeaks.visibleBarBounds(
+                width: size.width,
+                visibleXRange: visibleXRange,
+                bar: bar,
+                gap: gap
+            )
             var path = Path()
             var clipped = Path()
-            var x: CGFloat = gap
-            while x < size.width - bar {
+            var x = bounds.start
+            while x < bounds.end {
                 let t0 = from + Double(x / size.width) * (to - from)
                 let t1 = from + Double((x + bar) / size.width) * (to - from)
                 let i0 = max(0, Int(t0 * perSecond))

@@ -272,7 +272,9 @@ final class RecordingStudioModel {
     /// Waveform outlines of the audio files, by file name, and of the
     /// recording's own audio and the soundtrack replacing it under
     /// `recordingPeaksKey` and `soundtrackPeaksKey`.
-    private(set) var audioPeaks: [String: [Float]] = [:]
+    private(set) var audioPeaks: [String: RecordingAudioWaveform] = [:]
+    /// Keys currently being decoded so repeated lookups never spawn duplicate tasks.
+    private var loadingAudioPeaks: Set<String> = []
     /// File names of audio clips whose files are missing or unreadable.
     private(set) var missingAudioClipFiles: Set<String> = []
     static let recordingPeaksKey = "\u{1}recording"
@@ -1100,6 +1102,7 @@ final class RecordingStudioModel {
             replacementAudio = nil
             audioSources.replacement = []
             audioPeaks[Self.soundtrackPeaksKey] = nil
+            loadingAudioPeaks.remove(Self.soundtrackPeaksKey)
         }
         audioClips = (document.audioClips ?? []).map { $0.sanitized() }
         hiddenLinkedAudio.removeAll()
@@ -1241,6 +1244,7 @@ final class RecordingStudioModel {
         selectedAudioClipID = nil
         selectedAudioClipIDs.removeAll()
         audioPeaks.removeAll()
+        loadingAudioPeaks.removeAll()
         missingAudioClipFiles.removeAll()
         editUndoManager.removeAllActions()
         zoomEditSnapshot = nil
@@ -4489,14 +4493,17 @@ final class RecordingStudioModel {
     }
 
     private func loadPeaks(for fileName: String, url: URL) {
-        guard audioPeaks[fileName] == nil else { return }
+        guard audioPeaks[fileName] == nil, loadingAudioPeaks.insert(fileName).inserted else { return }
         Task { [weak self] in
-            let peaks = await Task.detached(priority: .utility) { await RecordingAudioPeaks.load(url: url) }.value
+            let waveform = await Task.detached(priority: .utility) {
+                await RecordingAudioPeaks.loadWaveform(url: url)
+            }.value
             guard let self, !self.isTornDown else { return }
+            self.loadingAudioPeaks.remove(fileName)
             // A soundtrack replaced while this one was being read must not
             // have its outline taken over by the old file's.
             if fileName == Self.soundtrackPeaksKey, self.replacementAudio?.url != url { return }
-            self.audioPeaks[fileName] = peaks
+            self.audioPeaks[fileName] = waveform
         }
     }
 
@@ -4607,13 +4614,13 @@ final class RecordingStudioModel {
     }
 
     /// The waveform outline of whatever a clip plays.
-    func waveformPeaks(for clip: RecordingAudioClip) -> [Float] {
+    func waveformPeaks(for clip: RecordingAudioClip) -> RecordingAudioWaveform {
         switch clip.source {
-        case .file: return audioPeaks[clip.fileName] ?? []
-        case .recording: return audioPeaks[Self.recordingPeaksKey] ?? []
+        case .file: return audioPeaks[clip.fileName] ?? .empty
+        case .recording: return audioPeaks[Self.recordingPeaksKey] ?? .empty
         case .replacement:
             if !clip.fileName.isEmpty, let pinned = audioPeaks[clip.fileName] { return pinned }
-            return audioPeaks[Self.soundtrackPeaksKey] ?? []
+            return audioPeaks[Self.soundtrackPeaksKey] ?? .empty
         }
     }
 
@@ -5062,6 +5069,7 @@ final class RecordingStudioModel {
     ) {
         replacementAudio = audio
         audioPeaks[Self.soundtrackPeaksKey] = nil
+        loadingAudioPeaks.remove(Self.soundtrackPeaksKey)
         if let audio {
             replacementAudioReference = nil
             replacementAudioError = nil

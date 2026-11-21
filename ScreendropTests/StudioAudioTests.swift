@@ -1104,6 +1104,31 @@ struct StudioAudioTests {
         #expect(paddedLow[1] == -1_000_000)
     }
 
+    @Test func waveformPeakStorageCapsLongMediaAndDrawsOnlyVisibleViewportSlice() {
+        // Simulate an hour-long recording (360,000 peaks at 100/sec) with one loud impulse.
+        var peaks = [Float](repeating: 0.1, count: 360_000)
+        peaks[180_000] = 0.95
+        var rate = Double(RecordingAudioPeaks.peaksPerSecond)
+        RecordingAudioPeaks.compactInPlace(&peaks, peaksPerSecond: &rate)
+        #expect(peaks.count <= RecordingAudioPeaks.maximumPeaks)
+        #expect(abs((peaks.max() ?? 0) - 0.95) < 0.001)
+        // Duration represented by peaks / rate remains ~3600 seconds.
+        let representedDuration = Double(peaks.count) / rate
+        #expect(abs(representedDuration - 3600) < 1.0)
+
+        // Zoomed 100,000 pt wide clip with a 1,000 pt viewport only draws ~250 bars instead of 25,000.
+        let bounds = RecordingAudioPeaks.visibleBarBounds(
+            width: 100_000,
+            visibleXRange: 40_000...41_000,
+            bar: 2,
+            gap: 2
+        )
+        let barsDrawn = Int((bounds.end - bounds.start) / 4)
+        #expect(bounds.start >= 39_996 && bounds.start <= 40_002)
+        #expect(bounds.end <= 41_000)
+        #expect(barsDrawn >= 245 && barsDrawn <= 255)
+    }
+
     // MARK: - Helpers
 
     private func makeDirectory() throws -> URL {
