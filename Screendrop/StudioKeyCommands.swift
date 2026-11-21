@@ -2,14 +2,21 @@
 //  StudioKeyCommands.swift
 //  Screendrop
 //
-//  Window-level playback keys for the Studio editor. They work wherever focus
-//  sits in the Studio window, and stand aside while a text field is being
-//  edited, a sheet is open, or crop or redaction picking is active.
+//  Window-level playback and editing keys for the Studio editor. They work
+//  wherever focus sits in the Studio window, and stand aside while a text
+//  field is being edited, a sheet is open, or crop or redaction picking is
+//  active.
 //
 //    J  K  L      play backward / pause / play forward; again to go faster
 //    K + J / L    hold K and tap J or L to step a frame
 //    ←  →         one frame; with ⇧, one second
+//    ↑  ↓         previous / next edit point or marker
 //    Home  End    start / end
+//    I  O         mark range in / out
+//    ⌫            ripple-delete marked range (when no block/clip is selected)
+//    ⌥X           clear marked range
+//    M            add or remove marker at playhead
+//    N            toggle trim snapping
 //
 
 import AppKit
@@ -104,11 +111,18 @@ struct StudioKeyCommands: NSViewRepresentable {
             heldKKeyCode = nil
         }
 
-        /// True when the key was one of the editor's playback keys and has been dealt with.
+        /// True when the key was one of the editor's playback or editing keys
+        /// and has been dealt with.
         private func handle(_ event: NSEvent) -> Bool {
-            guard let model, model.isLoaded, !model.isRestoringDocument, !model.isEditingSourceRegion,
-                  let window, event.window === window, window.attachedSheet == nil,
-                  !(window.firstResponder is NSText) else { return false }
+            guard let model, let window,
+                  StudioEditing.shouldHandleKeyEvent(
+                      isLoaded: model.isLoaded,
+                      isRestoringDocument: model.isRestoringDocument,
+                      isEditingSourceRegion: model.isEditingSourceRegion,
+                      isWindowMatch: event.window === window,
+                      hasAttachedSheet: window.attachedSheet != nil,
+                      isEditingText: window.firstResponder is NSText
+                  ) else { return false }
 
             // Reconcile against live key state in case menu tracking or another
             // modal loop swallowed K's key-up while the window stayed key.
@@ -125,7 +139,7 @@ struct StudioKeyCommands: NSViewRepresentable {
             let hasFocusedControl = (window.firstResponder is NSControl)
                 || StudioKeyCommands.isInspectorScrubberFocused(in: window)
 
-            guard let action = StudioPlayback.keyAction(
+            if let action = StudioPlayback.keyAction(
                 keyCode: event.keyCode,
                 characters: event.charactersIgnoringModifiers,
                 hasShift: hasShift,
@@ -133,25 +147,59 @@ struct StudioKeyCommands: NSViewRepresentable {
                 isKHeld: heldKKeyCode != nil,
                 isARepeat: event.isARepeat,
                 hasFocusedControl: hasFocusedControl
+            ) {
+                switch action {
+                case .shuttle(let forward):
+                    model.shuttle(forward: forward)
+                case .pauseAndHoldK:
+                    heldKKeyCode = event.keyCode
+                    model.pause()
+                case .stepFrames(let count):
+                    model.stepFrames(count)
+                case .stepSeconds(let delta):
+                    model.pause()
+                    model.seek(to: model.currentTime + delta)
+                case .seekToStart:
+                    model.pause()
+                    model.seek(to: 0)
+                case .seekToEnd:
+                    model.pause()
+                    model.seek(to: model.duration)
+                case .consume:
+                    break
+                }
+                return true
+            }
+
+            var editingModifiers: StudioKeyModifiers = []
+            if modifiers.contains(.shift) { editingModifiers.insert(.shift) }
+            if modifiers.contains(.option) { editingModifiers.insert(.option) }
+            if modifiers.contains(.command) { editingModifiers.insert(.command) }
+            if modifiers.contains(.control) { editingModifiers.insert(.control) }
+
+            guard let editAction = StudioEditing.keyAction(
+                keyCode: event.keyCode,
+                characters: event.charactersIgnoringModifiers,
+                modifiers: editingModifiers,
+                isARepeat: event.isARepeat,
+                hasFocusedControl: hasFocusedControl,
+                hasRangeSelection: model.rangeSelection != nil,
+                hasDeletableSelection: model.hasDeletableTimelineSelection
             ) else { return false }
 
-            switch action {
-            case .shuttle(let forward):
-                model.shuttle(forward: forward)
-            case .pauseAndHoldK:
-                heldKKeyCode = event.keyCode
-                model.pause()
-            case .stepFrames(let count):
-                model.stepFrames(count)
-            case .stepSeconds(let delta):
-                model.pause()
-                model.seek(to: model.currentTime + delta)
-            case .seekToStart:
-                model.pause()
-                model.seek(to: 0)
-            case .seekToEnd:
-                model.pause()
-                model.seek(to: model.duration)
+            switch editAction {
+            case .markRange(let edge):
+                model.markRange(edge)
+            case .clearRange:
+                model.clearRange()
+            case .deleteRange:
+                model.deleteRange()
+            case .toggleMarker:
+                model.toggleMarker()
+            case .toggleSnapping:
+                model.toggleSnapping()
+            case .seekToEditPoint(let forward):
+                model.seekToEditPoint(forward: forward)
             case .consume:
                 break
             }

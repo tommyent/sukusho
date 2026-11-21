@@ -231,9 +231,25 @@ final class RecordingStudioModel {
         }
     }
     var selectedClipID: UUID?
+    /// A stretch of the edited video marked with I and O (or ⇧-drag on the
+    /// ruler) for ripple deletion.
+    var rangeSelection: ClosedRange<TimeInterval>?
+    /// Moments flagged with M, stored on the source clock so they stay
+    /// attached to their footage across cuts.
+    private(set) var markers: [RecordingMarker] = []
     /// A block is being dragged on the timeline. The preview stays on the
     /// playhead meanwhile instead of chasing the pointer.
     var isDraggingTimelineBlock = false
+    /// A video clip's edge is being dragged; the preview shows the frame at
+    /// that edge rather than skimming.
+    var isTrimmingClip = false
+    /// Whether trim drags snap to the playhead, markers, clicks, and audio edges.
+    var snapsEdits = (UserDefaults.standard.object(forKey: RecordingStudioModel.snapsEditsKey) as? Bool) ?? true {
+        didSet {
+            UserDefaults.standard.set(snapsEdits, forKey: Self.snapsEditsKey)
+        }
+    }
+    static let snapsEditsKey = "StudioTimelineSnapping"
     /// Storyboard tiles for the clip lane, sampled on demand at whatever
     /// density the lane's current zoom needs.
     let timelineThumbnails = RecordingTimelineThumbnailStore()
@@ -973,6 +989,11 @@ final class RecordingStudioModel {
         showsInk = document.showsInk ?? true
         hiddenInkStrokeIDs = Set(document.hiddenInkStrokeIDs ?? [])
         inkTimeline = RecordingInkTimeline(strokes: pointerCapture.ink, hiding: hiddenInkStrokeIDs)
+        markers = (document.markers ?? [])
+            .filter { $0.sourceTime.isFinite && $0.sourceTime >= 0 }
+            .sorted { $0.sourceTime < $1.sourceTime }
+        rangeSelection = nil
+        isTrimmingClip = false
         keystrokePlacement = document.keystrokePlacement ?? .bottomCenter
         showsSubtitles = document.showsSubtitles ?? true
         subtitleCues = document.subtitleCues ?? []
@@ -1059,6 +1080,9 @@ final class RecordingStudioModel {
         viewportRebuildTask?.cancel()
         viewportRebuildTask = nil
         isDraggingTimelineBlock = false
+        isTrimmingClip = false
+        rangeSelection = nil
+        markers.removeAll()
         lastSavedDocument = nil
         pointerCapture = PointerCaptureFile()
         pointerTimeline = .empty
@@ -1457,6 +1481,200 @@ final class RecordingStudioModel {
         selectedClipID != nil && clipTimeline.segments.count > 1
     }
 
+    var hasDeletableTimelineSelection: Bool {
+        selectedCueID != nil || canDeleteSelectedClip
+    }
+
+    var canMoveSelectedClipEarlier: Bool {
+        guard let selectedClipID,
+              let index = clipTimeline.segments.firstIndex(where: { $0.id == selectedClipID }) else {
+            return false
+        }
+        return index > 0
+    }
+
+    var canMoveSelectedClipLater: Bool {
+        guard let selectedClipID,
+              let index = clipTimeline.segments.firstIndex(where: { $0.id == selectedClipID }) else {
+            return false
+        }
+        return index + 1 < clipTimeline.segments.count
+    }
+
+    func moveSelectedClip(by offset: Int) {
+        guard let selectedClipID,
+              let index = clipTimeline.segments.firstIndex(where: { $0.id == selectedClipID }) else {
+            return
+        }
+        moveClip(id: selectedClipID, to: index + offset)
+    }
+
+    // MARK: - Range, markers, snapping & navigation
+
+    func toggleSnapping() {
+        snapsEdits.toggle()
+        showNotice(snapsEdits ? "Snapping On" : "Snapping Off")
+    }
+
+    /// Editor times a trimmed video edge can catch on: the playhead, markers,
+    /// recorded clicks (and audio clip edges once wired).
+    var clipSnapPoints: [TimeInterval] {
+        StudioEditing.clipSnapPoints(
+            playhead: currentTime,
+            markers: markerEditorTimes.map(\.time),
+            recordedClicks: visibleRecordedPressTimes
+        )
+    }
+
+    /// Every moment worth stopping at with ↑/↓: video cuts and markers.
+    var editPoints: [TimeInterval] {
+        StudioEditing.editPoints(
+            timeline: clipTimeline,
+            markerTimes: markerEditorTimes.map(\.time),
+            duration: duration
+        )
+    }
+
+    /// Jumps the playhead to the previous or next cut or marker.
+    func seekToEditPoint(forward: Bool) {
+        guard isLoaded, !isRestoringDocument, !isEditingSourceRegion else { return }
+        let target = StudioEditing.nextEditPoint(
+            from: currentTime,
+            in: editPoints,
+            duration: duration,
+            forward: forward
+        )
+        pause()
+        seek(to: target)
+    }
+
+    /// I and O: mark where the ripple-delete range starts or ends.
+    func markRange(_ edge: StudioRangeEdge) {
+        guard isLoaded, !isRestoringDocument, !isEditingSourceRegion, duration > 0 else { return }
+        clearTimelineSelection()
+        rangeSelection = StudioEditing.markedRange(
+            current: rangeSelection,
+            edge: edge,
+            at: currentTime,
+            duration: duration
+        )
+    }
+
+    func clearRange() {
+        rangeSelection = nil
+    }
+
+    /// Ripple-deletes the marked editor range, closing up everything after it.
+    func deleteRange() {
+        guard isLoaded, !isRestoringDocument, !isEditingSourceRegion, let range = rangeSelection else { return }
+        guard range.upperBound - range.lowerBound >= RecordingClipSegment.minimumDuration else {
+            rangeSelection = nil
+            return
+        }
+        guard let next = clipTimeline.removingEditorRange(range) else {
+            showNotice("Can't remove the whole video")
+            return
+        }
+        rangeSelection = nil
+        applyClipTimeline(
+            next,
+            selectedID: nil,
+            selectsClip: false,
+            playheadTime: range.lowerBound,
+            actionName: "Delete Range"
+        )
+    }
+
+    /// Markers that still have surviving footage in the cut, in playback order.
+    var markerEditorTimes: [(marker: RecordingMarker, time: TimeInterval)] {
+        StudioEditing.markerEditorTimes(markers, in: clipTimeline)
+    }
+
+    /// M: drops a marker at the playhead, or removes an existing one there.
+    func toggleMarker() {
+        guard isLoaded, !isRestoringDocument, !isEditingSourceRegion else { return }
+        let tolerance = max(frameDuration, StudioEditing.markerToggleToleranceMinimum)
+        if let existing = markerEditorTimes.first(where: { abs($0.time - currentTime) <= tolerance }) {
+            applyMarkers(markers.filter { $0.id != existing.marker.id }, actionName: "Remove Marker")
+            showNotice("Marker Removed")
+        } else {
+            let marker = RecordingMarker(sourceTime: clipTimeline.sourceTime(at: currentTime))
+            applyMarkers(markers + [marker], actionName: "Add Marker")
+            showNotice("Marker")
+        }
+    }
+
+    func removeMarker(id: UUID) {
+        applyMarkers(markers.filter { $0.id != id }, actionName: "Remove Marker")
+    }
+
+    private func applyMarkers(_ next: [RecordingMarker], actionName: String) {
+        let sorted = next.sorted { $0.sourceTime < $1.sourceTime }
+        guard sorted != markers else { return }
+        let previous = markers
+        registerUndo(actionName) { target in
+            target.applyMarkers(previous, actionName: actionName)
+        }
+        markers = sorted
+        scheduleProjectSave()
+    }
+
+    /// Puts a clip at another position in the clip list. Zoom and pointer
+    /// timelines snap across cuts that jump backward in source time.
+    func moveClip(id: UUID, to index: Int) {
+        guard isLoaded, !isRestoringDocument, !isEditingSourceRegion,
+              let next = clipTimeline.moving(segmentID: id, to: index) else {
+            return
+        }
+        let playhead = next.editorRange(for: id)?.lowerBound ?? currentTime
+        applyClipTimeline(
+            next,
+            selectedID: id,
+            playheadTime: playhead,
+            actionName: "Move Clip"
+        )
+    }
+
+    /// Shows the exact recording frame at the edge being trimmed; `nil` hands
+    /// the preview back to the playhead.
+    func previewSourceTime(_ time: TimeInterval?) {
+        guard let time else {
+            isTrimmingClip = false
+            hoverPreviewTime = nil
+            return
+        }
+        guard isLoaded else { return }
+        pause()
+        isTrimmingClip = true
+        if let editor = clipTimeline.editorTime(forSourceTime: time) {
+            hoverPreviewTime = editor
+        } else if let fallback = nearestEditorTime(forSourceTime: time) {
+            hoverPreviewTime = fallback
+        }
+    }
+
+    private func nearestEditorTime(forSourceTime sourceTime: TimeInterval) -> TimeInterval? {
+        guard sourceTime.isFinite, !clipTimeline.segments.isEmpty else { return nil }
+        var bestDistance = TimeInterval.greatestFiniteMagnitude
+        var bestEditorTime: TimeInterval?
+        var editorStart: TimeInterval = 0
+        for segment in clipTimeline.segments {
+            let editorEnd = editorStart + segment.editorDuration
+            let startDistance = abs(sourceTime - segment.sourceStart)
+            if startDistance < bestDistance {
+                bestDistance = startDistance
+                bestEditorTime = editorStart
+            }
+            let endDistance = abs(sourceTime - segment.sourceEnd)
+            if endDistance < bestDistance {
+                bestDistance = endDistance
+                bestEditorTime = editorEnd
+            }
+            editorStart = editorEnd
+        }
+        return bestEditorTime
+    }
+
     func selectClip(id: UUID) {
         guard clipTimeline.segments.contains(where: { $0.id == id }) else { return }
         clearTimelineSelection()
@@ -1550,17 +1768,24 @@ final class RecordingStudioModel {
     func resetClips() {
         let full = RecordingClipTimeline.full(sourceDuration: sourceDuration)
         guard full != clipTimeline else { return }
+        let keepSelection = selectedClipID != nil
         applyClipTimeline(
             full,
-            selectedID: full.segments.first?.id,
+            selectedID: keepSelection ? full.segments.first?.id : nil,
+            selectsClip: keepSelection,
             playheadTime: 0,
             actionName: "Reset Clips"
         )
     }
 
+    /// Single choke point for every structural edit to `clipTimeline`.
+    /// Updates clips, selection, motion timelines, playback, and undo together.
+    /// Linked-audio conform hooks in here so audio follows every cut, trim,
+    /// ripple delete, and reorder.
     private func applyClipTimeline(
         _ requestedTimeline: RecordingClipTimeline,
         selectedID: UUID?,
+        selectsClip: Bool = true,
         playheadTime: TimeInterval,
         actionName: String,
         hoverTime: TimeInterval? = nil
@@ -1570,11 +1795,13 @@ final class RecordingStudioModel {
 
         let previousTimeline = clipTimeline
         let previousSelection = selectedClipID
+        let hadSelection = selectedClipID != nil
         let previousTime = currentTime
         registerUndo(actionName) { target in
             target.applyClipTimeline(
                 previousTimeline,
                 selectedID: previousSelection,
+                selectsClip: hadSelection,
                 playheadTime: previousTime,
                 actionName: actionName
             )
@@ -1582,14 +1809,24 @@ final class RecordingStudioModel {
 
         pause()
         hoverPreviewTime = nil
+        isTrimmingClip = false
+        rangeSelection = nil
         clipTimeline = next
         duration = next.duration
-        selectedClipID = selectedID.flatMap { id in
-            next.segments.contains(where: { $0.id == id }) ? id : nil
-        } ?? next.segments.first?.id
+        if selectsClip {
+            // Keep the requested clip when it survived; otherwise fall back to
+            // whatever sits under the new playhead only if a clip was already
+            // selected — never jump selection back to the first clip.
+            let clamped = min(max(playheadTime, 0), next.duration)
+            selectedClipID = selectedID.flatMap { id in
+                next.segments.contains(where: { $0.id == id }) ? id : nil
+            } ?? (hadSelection ? next.location(at: clamped)?.segmentID : nil)
+        } else {
+            selectedClipID = nil
+        }
         // Both motion timelines integrate along editor time, so a cut, trim,
-        // or speed change invalidates them even when their source data did not
-        // change.
+        // reorder, or speed change invalidates them even when their source
+        // data did not change.
         rebuildPointerTimeline()
         rebuildViewportTimeline()
 
@@ -2043,20 +2280,20 @@ final class RecordingStudioModel {
         studioOccupiedLaneSpans(cues: zoomCues, clipTimeline: clipTimeline)
     }
 
-    /// One visual block per cue on the edited timeline. A cue's per-segment
-    /// slices are always contiguous in editor time (a cut removes the editor
-    /// time between them), so they merge into a single block - cutting a clip
-    /// inside a zoom never splits the zoom's lane representation.
+    /// One visual block per cue on the edited timeline. In recording order a
+    /// cue's slices always touch; after reordering they may not, so the
+    /// longest touching run stands for the block.
     var zoomTimelineBlocks: [RecordingZoomTimelineBlock] {
         zoomCues
             .filter { !$0.isImplicit }
             .compactMap { cue in
-                let slices = clipTimeline.slices(overlapping: cue.start, sourceEnd: cue.end)
-                guard let first = slices.first, let last = slices.last else { return nil }
+                guard let span = clipTimeline.editorSpan(overlapping: cue.start, sourceEnd: cue.end) else {
+                    return nil
+                }
                 return RecordingZoomTimelineBlock(
                     cue: cue,
-                    editorStart: first.editorStart,
-                    editorEnd: last.editorEnd
+                    editorStart: span.lowerBound,
+                    editorEnd: span.upperBound
                 )
             }
     }
@@ -2185,7 +2422,8 @@ final class RecordingStudioModel {
             redactions: redactions,
             showsInk: showsInk ? nil : false,
             hiddenInkStrokeIDs: hiddenInkStrokeIDs.isEmpty
-                ? nil : hiddenInkStrokeIDs.sorted { $0.uuidString < $1.uuidString }
+                ? nil : hiddenInkStrokeIDs.sorted { $0.uuidString < $1.uuidString },
+            markers: markers.isEmpty ? nil : markers
         )
     }
 
@@ -2996,6 +3234,7 @@ final class RecordingStudioModel {
         applyClipTimeline(
             next,
             selectedID: selectedClipID,
+            selectsClip: selectedClipID != nil,
             playheadTime: playhead,
             actionName: actionName
         )
