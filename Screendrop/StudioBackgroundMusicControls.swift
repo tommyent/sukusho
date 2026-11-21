@@ -98,7 +98,7 @@ struct StudioBackgroundMusicControls: View {
                 .truncationMode(.middle)
             Spacer(minLength: 4)
             if let music = model.backgroundMusic {
-                Text(Duration.seconds(music.duration).formatted(.time(pattern: .minuteSecond)))
+                Text(studioClock(music.duration))
                     .font(.inspectorLabel.monospacedDigit())
                     .foregroundStyle(.secondary)
             }

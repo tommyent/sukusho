@@ -305,10 +305,8 @@ private struct RecordingStudioContent: View {
     /// resolution.
     private var windowSubtitle: String {
         guard model.isLoaded else { return "" }
-        let total = Int(model.duration.rounded())
-        let clock = String(format: "%d:%02d", total / 60, total % 60)
         let size = model.videoSize
-        return [model.saveStatus, "\(clock) · \(Int(size.width)) × \(Int(size.height))"]
+        return [model.saveStatus, "\(studioClock(model.duration)) · \(Int(size.width)) × \(Int(size.height))"]
             .filter { !$0.isEmpty }
             .joined(separator: " · ")
     }
@@ -1520,9 +1518,7 @@ private struct StudioTranslatedCueRow: View {
     }
 
     private var timestamp: String? {
-        guard let editorTime else { return nil }
-        let total = max(0, Int(editorTime.rounded()))
-        return String(format: "%d:%02d", total / 60, total % 60)
+        editorTime.map(studioTimecode)
     }
 }
 
@@ -1669,9 +1665,7 @@ private struct StudioSubtitleRow: View {
     }
 
     private var timestamp: String? {
-        guard let editorTime else { return nil }
-        let total = max(0, Int(editorTime.rounded()))
-        return String(format: "%d:%02d", total / 60, total % 60)
+        editorTime.map(studioTimecode)
     }
 }
 
@@ -2425,7 +2419,7 @@ private struct StudioTimelineEditor: View {
         HStack(spacing: 12) {
             HStack(spacing: 0) {
                 StudioTimecodeField(model: model)
-                    .frame(width: 58, alignment: .trailing)
+                    .frame(width: model.duration >= 3600 ? 74 : 58, alignment: .trailing)
                 Text(" / \(studioPreciseTimecode(model.duration))")
                     .font(.system(size: 12, weight: .medium).monospacedDigit())
                     .foregroundStyle(.secondary)
@@ -2996,11 +2990,15 @@ private struct StudioTimelineRuler: View {
                     )
                 }
 
+                // The start needs no label: the playhead parks over it, and
+                // the lane's leading edge already says where the cut begins.
+                guard time > 0 else { continue }
+
                 // A final whole-second tick can format identically to a
-                // fractional endpoint (for example 4.2 -> 00:04). Let the
+                // fractional endpoint (for example 4.2 -> 0:04). Let the
                 // actual endpoint own that label.
                 let timeLabel = Self.label(for: time, step: step)
-                if time == 0 || timeLabel != endpointLabel {
+                if timeLabel != endpointLabel {
                     drawLabel(timeLabel, at: tickX)
                 }
             }
@@ -3039,21 +3037,6 @@ private struct StudioTimelineRuler: View {
     private static func label(for time: Double, step: Double) -> String {
         step < 1 ? studioPreciseTimecode(time) : studioTimecode(time)
     }
-}
-
-private func studioTimecode(_ seconds: Double) -> String {
-    let safe = max(0, seconds.isFinite ? seconds : 0)
-    let total = Int(safe.rounded(.down))
-    let hours = total / 3600
-    let minutes = (total % 3600) / 60
-    let remainingSeconds = total % 60
-    return hours > 0
-        ? String(format: "%d:%02d:%02d", hours, minutes, remainingSeconds)
-        : String(format: "%02d:%02d", minutes, remainingSeconds)
-}
-
-func studioPreciseTimecode(_ seconds: Double) -> String {
-    StudioPlayback.preciseTimecode(seconds)
 }
 
 /// Frame around the zoom lane. It stays pinned to the viewport while the cue
@@ -3999,7 +3982,7 @@ private struct StudioInspector: View {
                             Text("Drawing \(number)")
                             Spacer()
                             if let time = model.editorTime(forSourceTime: stroke.startTime) {
-                                Text(String(format: "%d:%02d", Int(time) / 60, Int(time) % 60))
+                                Text(studioTimecode(time))
                                     .monospacedDigit()
                             } else {
                                 Text("Cut")
@@ -4069,7 +4052,7 @@ private struct StudioInspector: View {
                     Button {
                         model.jumpToChapter(chapter)
                     } label: {
-                        Text(String(format: "%d:%02d", Int(chapter.start) / 60, Int(chapter.start) % 60))
+                        Text(studioTimecode(chapter.start))
                             .monospacedDigit()
                     }
                     .buttonStyle(.plain)
@@ -4548,7 +4531,7 @@ private struct StudioInspector: View {
                     )
             }
 
-            Text(Self.clockText(replacement.duration))
+            Text(studioClock(replacement.duration))
                 .font(.inspectorLabel.monospacedDigit())
                 .foregroundStyle(.secondary)
         }
@@ -4571,15 +4554,10 @@ private struct StudioInspector: View {
         }
     }
 
-    private static func clockText(_ seconds: TimeInterval) -> String {
-        let total = Int(max(0, seconds).rounded())
-        return String(format: "%d:%02d", total / 60, total % 60)
-    }
-
     /// Short spans read better in seconds than as 0:00 timecode.
     private static func spanText(_ seconds: TimeInterval) -> String {
         let value = max(0, seconds)
-        return value < 60 ? String(format: "%.1fs", value) : clockText(value)
+        return value < 60 ? String(format: "%.1fs", value) : studioClock(value)
     }
 
     // MARK: Helpers

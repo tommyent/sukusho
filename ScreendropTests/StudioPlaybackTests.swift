@@ -53,20 +53,65 @@ struct StudioPlaybackTests {
         }
     }
 
-    @Test func preciseTimecodeCarriesTenthsAndUnchangedPrefillSkipsSeek() {
-        #expect(StudioPlayback.preciseTimecode(0) == "00:00.0")
-        #expect(StudioPlayback.preciseTimecode(12.049) == "00:12.0")
-        #expect(StudioPlayback.preciseTimecode(59.96) == "01:00.0")
-        #expect(StudioPlayback.preciseTimecode(3599.96) == "60:00.0")
-        #expect(StudioPlayback.preciseTimecode(-5) == "00:00.0")
-        #expect(StudioPlayback.preciseTimecode(.nan) == "00:00.0")
+    @Test func studioTimeFormattersHandlePositionsLengthsTenthsCarryAndHours() {
+        // Positions (`studioTimecode`) round down so a label never runs ahead of its frame.
+        #expect(studioTimecode(0) == "0:00")
+        #expect(studioTimecode(4.9) == "0:04")
+        #expect(studioTimecode(59.99) == "0:59")
+        #expect(studioTimecode(60) == "1:00")
+        #expect(studioTimecode(605.9) == "10:05")
+        #expect(studioTimecode(3599.9) == "59:59")
+        #expect(studioTimecode(3600) == "1:00:00")
+        #expect(studioTimecode(3665.9) == "1:01:05")
+        #expect(studioTimecode(36_000) == "10:00:00")
 
-        // Opening at 12.049 prefills "00:12.0"; pressing Return untouched must not seek.
+        // Lengths (`studioClock`) round to the nearest second.
+        #expect(studioClock(0) == "0:00")
+        #expect(studioClock(4.4) == "0:04")
+        #expect(studioClock(4.5) == "0:05")
+        #expect(studioClock(59.4) == "0:59")
+        #expect(studioClock(59.5) == "1:00")
+        #expect(studioClock(3599.4) == "59:59")
+        #expect(studioClock(3599.5) == "1:00:00")
+        #expect(studioClock(3661.4) == "1:01:01")
+
+        // Playhead readouts (`studioPreciseTimecode`) count integer tenths and carry cleanly.
+        #expect(studioPreciseTimecode(0) == "0:00.0")
+        #expect(studioPreciseTimecode(12.049) == "0:12.0")
+        #expect(studioPreciseTimecode(59.94) == "0:59.9")
+        #expect(studioPreciseTimecode(59.96) == "1:00.0")
+        #expect(studioPreciseTimecode(65.26) == "1:05.3")
+        #expect(studioPreciseTimecode(3599.94) == "59:59.9")
+        #expect(studioPreciseTimecode(3599.96) == "1:00:00.0")
+        #expect(studioPreciseTimecode(3661.44) == "1:01:01.4")
+
+        // Invalid or negative inputs clamp to zero; huge finite inputs never overflow.
+        for bad: Double in [-5, -0.1, .nan, .infinity, -.infinity] {
+            #expect(studioTimecode(bad) == "0:00")
+            #expect(studioClock(bad) == "0:00")
+            #expect(studioPreciseTimecode(bad) == "0:00.0")
+        }
+        #expect(!studioTimecode(.greatestFiniteMagnitude).isEmpty)
+        #expect(!studioClock(.greatestFiniteMagnitude).isEmpty)
+        #expect(!studioPreciseTimecode(.greatestFiniteMagnitude).isEmpty)
+    }
+
+    @Test func preciseTimecodeCarriesTenthsAndUnchangedPrefillSkipsSeek() {
+        #expect(StudioPlayback.preciseTimecode(0) == "0:00.0")
+        #expect(StudioPlayback.preciseTimecode(12.049) == "0:12.0")
+        #expect(StudioPlayback.preciseTimecode(59.96) == "1:00.0")
+        #expect(StudioPlayback.preciseTimecode(3599.96) == "1:00:00.0")
+        #expect(StudioPlayback.preciseTimecode(-5) == "0:00.0")
+        #expect(StudioPlayback.preciseTimecode(.nan) == "0:00.0")
+
+        // Opening at 12.049 prefills "0:12.0"; pressing Return untouched must not seek.
         let prefill = StudioPlayback.preciseTimecode(12.049)
         #expect(StudioPlayback.submittedTimecode(prefill, prefill: prefill) == nil)
         #expect(StudioPlayback.submittedTimecode("  \(prefill)  ", prefill: prefill) == nil)
-        // Changing the text commits the new target.
+        // Changing the text commits the new target, with or without leading zeroes.
+        #expect(StudioPlayback.submittedTimecode("0:12.5", prefill: prefill) == 12.5)
         #expect(StudioPlayback.submittedTimecode("00:12.5", prefill: prefill) == 12.5)
+        #expect(StudioPlayback.submittedTimecode("1:00:00.0", prefill: prefill) == 3600)
         #expect(StudioPlayback.submittedTimecode("12", prefill: prefill) == 12)
     }
 

@@ -424,16 +424,11 @@ nonisolated enum StudioPlayback {
         )
     }
 
-    /// Formats seconds as `mm:ss.t` from a single rounded total of tenths so
-    /// boundary values like `59.96` carry cleanly to `01:00.0`.
+    /// Formats seconds as `m:ss.f` (or `h:mm:ss.f` past an hour) from a single
+    /// rounded total of tenths so boundary values like `59.96` carry cleanly to
+    /// `1:00.0`.
     static func preciseTimecode(_ seconds: TimeInterval) -> String {
-        let safe = max(0, seconds.isFinite ? seconds : 0)
-        let clamped = min(safe, Double(Int.max / 10))
-        let totalTenths = Int((clamped * 10).rounded())
-        let totalMinutes = totalTenths / 600
-        let wholeSeconds = (totalTenths % 600) / 10
-        let tenths = totalTenths % 10
-        return String(format: "%02d:%02d.%d", totalMinutes, wholeSeconds, tenths)
+        studioPreciseTimecode(seconds)
     }
 
     /// Returns the seek target when submitting the timecode field, or `nil` if
@@ -530,4 +525,40 @@ nonisolated enum StudioPlayback {
             return nil
         }
     }
+}
+
+// Studio writes every time one of two ways: `m:ss` for positions and
+// lengths on the ruler, blocks, clips and window title, and `m:ss.f` for the
+// playhead readouts. No leading zero on the minutes, `h:mm:ss` past an hour.
+
+/// A position on the timeline, `m:ss`, rounded down so a label never runs
+/// ahead of the frame it marks.
+nonisolated func studioTimecode(_ seconds: Double) -> String {
+    studioClockText(wholeSeconds: Int(studioSafeSeconds(seconds).rounded(.down)))
+}
+
+/// A length, `m:ss`, rounded to the nearest second.
+nonisolated func studioClock(_ seconds: Double) -> String {
+    studioClockText(wholeSeconds: Int(studioSafeSeconds(seconds).rounded()))
+}
+
+/// The playhead's time, `m:ss.f`. Counted in rounded integer tenths so
+/// 59.96 reads 1:00.0, never 0:60.0.
+nonisolated func studioPreciseTimecode(_ seconds: Double) -> String {
+    let tenths = Int((studioSafeSeconds(seconds) * 10).rounded())
+    return "\(studioClockText(wholeSeconds: tenths / 10)).\(tenths % 10)"
+}
+
+private nonisolated func studioSafeSeconds(_ seconds: Double) -> Double {
+    let safe = max(0, seconds.isFinite ? seconds : 0)
+    return min(safe, 1e15)
+}
+
+private nonisolated func studioClockText(wholeSeconds total: Int) -> String {
+    let hours = total / 3600
+    let minutes = (total % 3600) / 60
+    let remainingSeconds = total % 60
+    return hours > 0
+        ? String(format: "%d:%02d:%02d", hours, minutes, remainingSeconds)
+        : String(format: "%d:%02d", minutes, remainingSeconds)
 }
