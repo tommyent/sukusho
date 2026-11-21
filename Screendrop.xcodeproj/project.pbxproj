@@ -189,6 +189,8 @@
 		AB0D00000000000000000003 /* Screendrop/RecordingCaptionTracks.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0D00000000000000000004 /* Screendrop/RecordingCaptionTracks.swift */; };
 		AB0C00000000000000000017 /* Screendrop/AgentAccessServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0C00000000000000000018 /* Screendrop/AgentAccessServer.swift */; };
 		ED2B00000000000000000001 /* Screendrop/StudioPlayback.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED2B00000000000000000002 /* Screendrop/StudioPlayback.swift */; };
+		ED2C00000000000000000001 /* Screendrop/RecordingTimelineThumbnails.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED2C00000000000000000002 /* Screendrop/RecordingTimelineThumbnails.swift */; };
+		ED2C00000000000000000003 /* Screendrop/RecordingClipTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED2C00000000000000000004 /* Screendrop/RecordingClipTimelineView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -402,6 +404,8 @@
 		AF5E00000000000000000012 /* Screendrop/RecordingPointerStream.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingPointerStream.swift; sourceTree = SOURCE_ROOT; };
 		AF5E00000000000000000011 /* Screendrop/RecordingInk.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingInk.swift; sourceTree = SOURCE_ROOT; };
 		ED2B00000000000000000002 /* Screendrop/StudioPlayback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/StudioPlayback.swift; sourceTree = SOURCE_ROOT; };
+		ED2C00000000000000000002 /* Screendrop/RecordingTimelineThumbnails.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingTimelineThumbnails.swift; sourceTree = SOURCE_ROOT; };
+		ED2C00000000000000000004 /* Screendrop/RecordingClipTimelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingClipTimelineView.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -659,6 +663,8 @@
 				AB0D00000000000000000004 /* Screendrop/RecordingCaptionTracks.swift */,
 				AB0C00000000000000000018 /* Screendrop/AgentAccessServer.swift */,
 				ED2B00000000000000000002 /* Screendrop/StudioPlayback.swift */,
+				ED2C00000000000000000002 /* Screendrop/RecordingTimelineThumbnails.swift */,
+				ED2C00000000000000000004 /* Screendrop/RecordingClipTimelineView.swift */,
 			);
 			name = "Tested logic";
 			sourceTree = "<group>";
@@ -968,6 +974,8 @@
 				AB0D00000000000000000003 /* Screendrop/RecordingCaptionTracks.swift in Sources */,
 				AB0C00000000000000000017 /* Screendrop/AgentAccessServer.swift in Sources */,
 				ED2B00000000000000000001 /* Screendrop/StudioPlayback.swift in Sources */,
+				ED2C00000000000000000001 /* Screendrop/RecordingTimelineThumbnails.swift in Sources */,
+				ED2C00000000000000000003 /* Screendrop/RecordingClipTimelineView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

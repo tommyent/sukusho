@@ -630,11 +630,8 @@ private struct StudioCanvas: View {
                         .padding(12)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                         .allowsHitTesting(false)
-                } else if let skimTime {
-                    StudioCanvasBadge(text: "Previewing \(studioPreciseTimecode(skimTime))")
-                        .padding(10)
-                        .allowsHitTesting(false)
-                        .transition(.opacity)
+                } else {
+                    StudioCanvasSkimBadge(model: model)
                 }
 
                 if let notice = model.notice {
@@ -671,7 +668,6 @@ private struct StudioCanvas: View {
                     .fill(Color.black)
                     .shadow(color: .black.opacity(colorScheme == .dark ? 0.45 : 0.16), radius: 14, y: 5)
             }
-            .animation(.easeOut(duration: 0.15), value: skimTime == nil)
             .animation(.easeOut(duration: 0.15), value: model.notice?.id)
             .position(x: proxy.size.width / 2, y: proxy.size.height / 2)
         }
@@ -688,15 +684,6 @@ private struct StudioCanvas: View {
                 .padding(12)
             }
         }
-    }
-
-    /// The hovered timeline moment while the preview skims away from the
-    /// playhead; nil when the canvas shows the playhead frame.
-    private var skimTime: TimeInterval? {
-        guard !model.isPlaying,
-              let hover = model.hoverPreviewTime,
-              abs(hover - model.currentTime) > 0.05 else { return nil }
-        return hover
     }
 
     private var canvasEdge: Color {
@@ -723,6 +710,31 @@ private struct StudioCanvas: View {
         guard size.width > 0, size.height > 0 else { return bounds }
         let scale = min(bounds.width / size.width, bounds.height / size.height)
         return CGSize(width: size.width * scale, height: size.height * scale)
+    }
+}
+
+/// Shown over the canvas while the pointer skims away from the playhead.
+/// Kept in its own view so hover moves redraw only this badge.
+private struct StudioCanvasSkimBadge: View {
+    let model: RecordingStudioModel
+
+    private var skimTime: TimeInterval? {
+        guard !model.isPlaying,
+              let hover = model.hoverPreviewTime,
+              abs(hover - model.currentTime) > 0.05 else { return nil }
+        return hover
+    }
+
+    var body: some View {
+        Group {
+            if let skimTime {
+                StudioCanvasBadge(text: "Previewing \(studioPreciseTimecode(skimTime))")
+                    .padding(10)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.15), value: skimTime == nil)
     }
 }
 
@@ -2119,6 +2131,10 @@ private struct StudioTimelineEditor: View {
     @State private var scrollX: CGFloat = 0
     @State private var scrollPosition = ScrollPosition(edge: .leading)
     @State private var isResetClipsConfirmationPresented = false
+    /// The pointer's place over the lanes. An observable object rather than
+    /// plain state, so a moving pointer redraws the playhead layer and not
+    /// the timeline dock.
+    @State private var skim = StudioSkimState()
 
     /// Step per zoom button press / keyboard shortcut.
     private static let zoomStep: Double = 1.6
@@ -2174,13 +2190,16 @@ private struct StudioTimelineEditor: View {
                 scrollingLanes(scale: scale)
             }
             .overlay {
-                StudioTimelineHoverMarker(model: model, scale: scale, scrollX: scrollX)
-            }
-            .overlay {
                 StudioTimelineInkMarks(model: model, scale: scale, scrollX: scrollX)
             }
             .overlay {
-                StudioTimelineChapters(model: model, scale: scale, scrollX: scrollX)
+                StudioTimelineChapters(
+                    model: model,
+                    skim: skim,
+                    scale: scale,
+                    scrollX: scrollX,
+                    onPlayheadMove: followPlayhead(to:)
+                )
             }
             .onChange(of: proxy.size.width, initial: true) { _, width in
                 viewportWidth = max(width, 1)
@@ -2189,7 +2208,6 @@ private struct StudioTimelineEditor: View {
         }
         .frame(height: StudioTimelineMetrics.lanesHeight)
         .onChange(of: model.duration) { _, _ in clampZoom() }
-        .onChange(of: model.currentTime) { _, time in followPlayhead(to: time) }
     }
 
     /// The two lanes that carry real edit targets live in a horizontal scroll
@@ -2249,7 +2267,7 @@ private struct StudioTimelineEditor: View {
     private var clipLane: some View {
         RecordingClipTimelineView(
             selectedClipID: model.selectedClipID,
-            playheadTime: model.currentTime,
+            playheadTime: $model.currentTime,
             timeline: model.clipTimeline,
             sourceDuration: model.sourceDuration,
             thumbnails: model.timelineThumbnails,
@@ -2259,6 +2277,7 @@ private struct StudioTimelineEditor: View {
                 model.seek(to: time)
             },
             onHover: { time in
+                skim.time = time
                 model.hoverPreviewTime = time
             },
             onSplit: { model.splitClip(at: $0) },
@@ -2633,11 +2652,54 @@ private struct StudioTimelineScale: Equatable {
     }
 }
 
+/// The pointer's place over the lanes, as an editor time.
+@MainActor
+@Observable
+final class StudioSkimState {
+    var time: TimeInterval?
+}
+
+/// The playhead and the skim line, with the only reads of the playhead's
+/// time and the pointer's place in the dock. Both change many times a
+/// second; kept here, they redraw this layer instead of every lane.
+private struct StudioPlayheadLayer: View {
+    let model: RecordingStudioModel
+    let skim: StudioSkimState
+    let chapters: [RecordingChapter]
+    let scale: StudioTimelineScale
+    let scrollX: CGFloat
+    /// The playhead moved, so the lanes can scroll to keep it in sight.
+    let onMove: (TimeInterval) -> Void
+
+    var body: some View {
+        ZStack {
+            StudioTimelineHoverMarker(
+                time: skim.time ?? model.hoverPreviewTime,
+                scale: scale,
+                scrollX: scrollX
+            )
+            StudioTimelinePlayhead(
+                time: model.currentTime,
+                chapters: chapters,
+                scale: scale,
+                scrollX: scrollX
+            ) { time in
+                model.pause()
+                model.seek(to: time)
+            }
+        }
+        .transaction { $0.animation = nil }
+        .onChange(of: model.currentTime) { _, time in onMove(time) }
+    }
+}
+
 /// Map chapter names only when chapter/transcript edits change, not on playback ticks.
 private struct StudioTimelineChapters: View {
     let model: RecordingStudioModel
+    let skim: StudioSkimState
     let scale: StudioTimelineScale
     let scrollX: CGFloat
+    let onPlayheadMove: (TimeInterval) -> Void
 
     var body: some View {
         let chapters = model.visibleChapters
@@ -2654,7 +2716,14 @@ private struct StudioTimelineChapters: View {
         .clipped()
         // The crown stays above the marker controls, with its original, unclipped hit area.
         .overlay {
-            StudioTimelinePlayhead(model: model, chapters: chapters, scale: scale, scrollX: scrollX)
+            StudioPlayheadLayer(
+                model: model,
+                skim: skim,
+                chapters: chapters,
+                scale: scale,
+                scrollX: scrollX,
+                onMove: onPlayheadMove
+            )
         }
     }
 }
@@ -2772,10 +2841,11 @@ private struct StudioTimelineChapterMarker: View {
 /// ruler. The crown is the only hit target - everywhere else the overlay
 /// passes clicks through to the tracks underneath.
 private struct StudioTimelinePlayhead: View {
-    let model: RecordingStudioModel
+    let time: TimeInterval
     let chapters: [RecordingChapter]
     let scale: StudioTimelineScale
     let scrollX: CGFloat
+    let onSeek: (TimeInterval) -> Void
 
     fileprivate enum Metrics {
         static let crownWidth: CGFloat = 11
@@ -2788,7 +2858,6 @@ private struct StudioTimelinePlayhead: View {
     private static let coordinateSpace = "studio.playheadLane"
 
     var body: some View {
-        let time = model.currentTime
         GeometryReader { proxy in
             let width = max(proxy.size.width, 1)
             // Viewport space: the playhead overlay never scrolls, it just
@@ -2840,8 +2909,7 @@ private struct StudioTimelinePlayhead: View {
                             coordinateSpace: .named(Self.coordinateSpace)
                         )
                         .onChanged { value in
-                            model.pause()
-                            model.seek(to: scale.time(forX: value.location.x + scrollX))
+                            onSeek(scale.time(forX: value.location.x + scrollX))
                         }
                     )
             }
@@ -2854,14 +2922,12 @@ private struct StudioTimelinePlayhead: View {
 /// through the ruler. The clip lane draws the rest of the skim line, in the
 /// same 42% accent.
 private struct StudioTimelineHoverMarker: View {
-    // Read here, not by the timeline, so hover ticks redraw only this view.
-    let model: RecordingStudioModel
+    let time: TimeInterval?
     let scale: StudioTimelineScale
     let scrollX: CGFloat
 
     var body: some View {
         GeometryReader { proxy in
-            let time = model.hoverPreviewTime
             let x = time.map { scale.x(for: $0) - scrollX } ?? -1
             let crown = StudioTimelinePlayhead.Metrics.self
             let lineTop = crown.crownHeight - 2
@@ -4328,7 +4394,7 @@ private struct StudioInspector: View {
                         StudioSubtitleRow(
                             model: model,
                             cue: cue,
-                            isActive: model.activeSubtitleCue?.id == cue.id
+                            isActive: model.activeSubtitleCueID == cue.id
                         )
                         .id(cue.id)
 
@@ -4343,7 +4409,7 @@ private struct StudioInspector: View {
             .frame(maxHeight: 300)
             .background(shape.fill(InspectorControlPalette.trackFill(for: colorScheme)))
             .clipShape(shape)
-            .onChange(of: model.activeSubtitleCue?.id) { _, activeID in
+            .onChange(of: model.activeSubtitleCueID) { _, activeID in
                 // Follow playback through the list, but never yank the list
                 // around while the user is scrubbing or editing.
                 guard let activeID, model.isPlaying else { return }

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 
@@ -600,5 +601,105 @@ struct StudioPlaybackTests {
         #expect(StudioPlayback.keyAction(keyCode: 29, characters: "0", hasShift: false, hasOtherModifiers: true, isKHeld: false, isARepeat: false) == nil)
         #expect(StudioPlayback.keyAction(keyCode: 6, characters: "z", hasShift: false, hasOtherModifiers: true, isKHeld: false, isARepeat: false) == nil)
         #expect(StudioPlayback.keyAction(keyCode: 51, characters: "\u{7f}", hasShift: false, hasOtherModifiers: false, isKHeld: false, isARepeat: false) == nil)
+    }
+
+    // MARK: - Clip strip dirty-check
+
+    @Test @MainActor func clipTimelineControlSkipsRedrawOnPlayheadTickAndRedrawsOnVisualInputChanges() throws {
+        let control = RecordingClipTimelineControl(frame: NSRect(x: 0, y: 0, width: 600, height: 52))
+        let store = RecordingTimelineThumbnailStore()
+        let first = RecordingClipSegment(sourceStart: 0, sourceEnd: 5, speed: 1)
+        let second = RecordingClipSegment(sourceStart: 5, sourceEnd: 10, speed: 1)
+        let timeline = RecordingClipTimeline(segments: [first, second])
+
+        // First update populates inputs and requests a draw.
+        let initialDirty = control.update(
+            timeline: timeline,
+            sourceDuration: 10,
+            thumbnails: store,
+            selectedClipID: first.id,
+            playheadTime: 0
+        )
+        #expect(initialDirty)
+
+        // Pure playhead ticks during playback must not dirty the strip,
+        // while still keeping the stored playhead current for `s` splits.
+        for tick in 1...100 {
+            let dirty = control.update(
+                timeline: timeline,
+                sourceDuration: 10,
+                thumbnails: store,
+                selectedClipID: first.id,
+                playheadTime: Double(tick) * 0.02
+            )
+            #expect(!dirty)
+        }
+        var splitTime: TimeInterval?
+        control.splitRequested = { splitTime = $0 }
+        let sKey = try #require(NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: "s",
+            charactersIgnoringModifiers: "s",
+            isARepeat: false,
+            keyCode: 1
+        ))
+        control.keyDown(with: sKey)
+        #expect(splitTime == 2.0)
+
+        // Changing selection dirties the strip.
+        #expect(control.update(
+            timeline: timeline,
+            sourceDuration: 10,
+            thumbnails: store,
+            selectedClipID: second.id,
+            playheadTime: 2.0
+        ))
+
+        // Changing timeline dirties the strip.
+        let trimmed = RecordingClipTimeline(segments: [
+            RecordingClipSegment(id: first.id, sourceStart: 0, sourceEnd: 4, speed: 1),
+            second
+        ])
+        #expect(control.update(
+            timeline: trimmed,
+            sourceDuration: 10,
+            thumbnails: store,
+            selectedClipID: second.id,
+            playheadTime: 2.0
+        ))
+
+        // Changing sourceDuration dirties the strip.
+        #expect(control.update(
+            timeline: trimmed,
+            sourceDuration: 12,
+            thumbnails: store,
+            selectedClipID: second.id,
+            playheadTime: 2.0
+        ))
+
+        // Swapping thumbnail store dirties the strip and wires its onChange hook.
+        let newStore = RecordingTimelineThumbnailStore()
+        #expect(control.update(
+            timeline: trimmed,
+            sourceDuration: 12,
+            thumbnails: newStore,
+            selectedClipID: second.id,
+            playheadTime: 2.0
+        ))
+        #expect(newStore.onChange != nil)
+
+        // Repeating with identical inputs does not dirty again.
+        #expect(!control.update(
+            timeline: trimmed,
+            sourceDuration: 12,
+            thumbnails: newStore,
+            selectedClipID: second.id,
+            playheadTime: 3.5
+        ))
     }
 }

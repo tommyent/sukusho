@@ -11,10 +11,10 @@ import AppKit
 import SwiftUI
 
 struct RecordingClipTimelineView: NSViewRepresentable {
-    /// Plain values: the control's own selection and scrub changes reach the
-    /// model through `onSelect`/`onSeek`, which set these properties.
+    /// Selection is a plain value; playhead is a binding so the enclosing
+    /// timeline view's `body` does not observe `currentTime` on every tick.
     let selectedClipID: UUID?
-    let playheadTime: TimeInterval
+    @Binding var playheadTime: TimeInterval
 
     let timeline: RecordingClipTimeline
     let sourceDuration: TimeInterval
@@ -119,15 +119,23 @@ final class RecordingClipTimelineControl: NSView {
         true
     }
 
+    @discardableResult
     func update(
         timeline: RecordingClipTimeline,
         sourceDuration: TimeInterval,
         thumbnails: RecordingTimelineThumbnailStore,
         selectedClipID: UUID?,
         playheadTime: TimeInterval
-    ) {
-        if dragTarget == nil {
+    ) -> Bool {
+        // Only what the strip draws asks for a redraw. The playhead is the
+        // overlay's to draw, so its ticks during playback cost nothing here.
+        var changed = false
+        if dragTarget == nil, self.timeline != timeline {
             self.timeline = timeline
+            changed = true
+        }
+        if self.sourceDuration != sourceDuration || self.selectedClipID != selectedClipID {
+            changed = true
         }
         self.sourceDuration = sourceDuration
         if self.thumbnails !== thumbnails {
@@ -137,10 +145,12 @@ final class RecordingClipTimelineControl: NSView {
             thumbnails.onChange = { [weak self] in
                 self?.needsDisplay = true
             }
+            changed = true
         }
         self.selectedClipID = selectedClipID
         self.playheadTime = min(max(playheadTime, 0), max(timeline.duration, 0))
-        needsDisplay = true
+        if changed { needsDisplay = true }
+        return changed
     }
 
     override func updateTrackingAreas() {

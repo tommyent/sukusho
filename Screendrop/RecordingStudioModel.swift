@@ -177,7 +177,9 @@ final class RecordingStudioModel {
     @ObservationIgnored private var renameUndoMark: (id: UUID, revision: Int)?
 
     private(set) var subtitleCues: [RecordingSubtitleCue] = []
-    private(set) var subtitleTimeline = SubtitleTimeline.empty
+    private(set) var subtitleTimeline = SubtitleTimeline.empty {
+        didSet { refreshPlayheadMarks() }
+    }
     /// Word-level timing behind the cues; empty for projects transcribed
     /// before transcript editing shipped (cues only).
     private(set) var transcriptWords: [RecordingTranscriptWord] = [] {
@@ -221,7 +223,13 @@ final class RecordingStudioModel {
     private(set) var pointerTimeline = PointerTimeline.empty
     private(set) var keystrokeTimeline = KeystrokeCaptionTimeline.empty
     var selectedCueID: UUID?
-    private(set) var clipTimeline = RecordingClipTimeline(segments: [])
+    private(set) var clipTimeline = RecordingClipTimeline(segments: []) {
+        didSet {
+            if clipTimeline != oldValue {
+                refreshPlayheadMarks()
+            }
+        }
+    }
     var selectedClipID: UUID?
     /// Storyboard tiles for the clip lane, sampled on demand at whatever
     /// density the lane's current zoom needs.
@@ -239,7 +247,17 @@ final class RecordingStudioModel {
     /// otherwise hard to see ("2×", "◀ 1×").
     private(set) var notice: StudioNotice?
     private var noticeTask: Task<Void, Never>?
-    var currentTime: TimeInterval = 0
+    var currentTime: TimeInterval = 0 {
+        didSet {
+            if currentTime != oldValue { refreshPlayheadMarks() }
+        }
+    }
+    /// The clip and the subtitle under the playhead. Stored, and assigned
+    /// only when the playhead crosses into another one, so views that read
+    /// them are not redrawn on every 20 ms playback tick the way a read of
+    /// `currentTime` would redraw them.
+    private(set) var playheadClipID: UUID?
+    private(set) var activeSubtitleCueID: UUID?
     /// Live scrub-preview time while the pointer hovers the trim strip
     /// without committing to a new playhead position, matching Final
     /// Cut/iMovie skimming. `nil` shows the real playhead again.
@@ -2562,8 +2580,8 @@ final class RecordingStudioModel {
 
     /// Cue under the playhead right now, for highlighting the list row.
     var activeSubtitleCue: RecordingSubtitleCue? {
-        guard hasSubtitles else { return nil }
-        return subtitleTimeline.cue(at: clipTimeline.sourceTime(at: currentTime))
+        guard let activeSubtitleCueID else { return nil }
+        return subtitleCues.first { $0.id == activeSubtitleCueID }
     }
 
     // MARK: - Chapters
@@ -2999,6 +3017,15 @@ final class RecordingStudioModel {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return result
+    }
+
+    private func refreshPlayheadMarks() {
+        let clipID = clipTimeline.location(at: currentTime)?.segmentID
+        if clipID != playheadClipID { playheadClipID = clipID }
+        let cueID = subtitleTimeline.isEmpty
+            ? nil
+            : subtitleTimeline.cue(at: clipTimeline.sourceTime(at: currentTime))?.id
+        if cueID != activeSubtitleCueID { activeSubtitleCueID = cueID }
     }
 
     /// Recomputes which word the playhead is on; assigns only on change so
