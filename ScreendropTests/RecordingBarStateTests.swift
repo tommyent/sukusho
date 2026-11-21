@@ -102,4 +102,16 @@ struct RecordingBarStateTests {
         AppWindowCaptureVisibility.applyBugReportChange(false, defaults: defaults)
         #expect(defaults.bool(forKey: "includeAppWindowsInCaptures"))
     }
+
+    @Test func visibleBarMidpointResolvesDisplayEvenWhenTransparentPanelOverlapsSeam() {
+        let left = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let right = CGRect(x: 1440, y: 0, width: 1440, height: 900)
+        // 760pt panel centered at x = 1750 spans [1370, 2130], overlapping the left display by 70pt,
+        // while the visible 500pt bar spans [1500, 2000] entirely on the right display.
+        let panel = CGRect(x: 1370, y: 100, width: 760, height: 182)
+        let barInPanel = CGRect(x: 130, y: 64, width: 500, height: 52)
+        let visibleBar = BarPanelGeometry.screenRect(forPanelRect: barInPanel, in: panel)
+        #expect(panel.intersects(left))
+        #expect(BarPanelGeometry.screenIndex(forVisibleBar: visibleBar, screenFrames: [left, right]) == 1)
+    }
 }

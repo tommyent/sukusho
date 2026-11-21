@@ -148,20 +148,30 @@ final class RecordingBarPresenter {
         return BarPanelGeometry.screenRect(forPanelRect: barFrameInPanel, in: panel.frame)
     }
 
+    /// The display owning the visible bar (resolved from its midpoint, ignoring transparent panel
+    /// slack that can spill across a display seam).
+    var barScreen: NSScreen? {
+        guard let panel else { return nil }
+        let visibleBar = barFrameInPanel != .zero
+            ? BarPanelGeometry.screenRect(forPanelRect: barFrameInPanel, in: panel.frame)
+            : panel.frame
+        let screens = NSScreen.screens
+        if let index = BarPanelGeometry.screenIndex(forVisibleBar: visibleBar, screenFrames: screens.map(\.frame)) {
+            return screens[index]
+        }
+        return panel.screen ?? NSScreen.main
+    }
+
+    var barDisplayID: CGDirectDisplayID? {
+        barScreen.flatMap(ActiveDisplayResolver.displayID(for:))
+    }
+
     /// Keeps the visible bar (and amber pill, when shown) inside the destination screen's visible
     /// frame after drags, size changes, or display reconfigurations.
     func clampPanelToScreen() {
         guard let panel, panel.isVisible, barFrameInPanel != .zero else { return }
         guard NSEvent.pressedMouseButtons & 1 == 0 else { return }
-        let visibleBar = BarPanelGeometry.screenRect(forPanelRect: barFrameInPanel, in: panel.frame)
-        let screens = NSScreen.screens
-        let targetScreen: NSScreen?
-        if let index = BarPanelGeometry.screenIndex(forVisibleBar: visibleBar, screenFrames: screens.map(\.frame)) {
-            targetScreen = screens[index]
-        } else {
-            targetScreen = panel.screen ?? NSScreen.main
-        }
-        guard let visibleFrame = targetScreen?.visibleFrame else { return }
+        guard let visibleFrame = barScreen?.visibleFrame else { return }
         let visibleContent = BarPanelGeometry.visibleContentInPanel(
             barFrame: barFrameInPanel,
             bannerFrame: visibilityBannerFrameInPanel,
@@ -178,8 +188,8 @@ final class RecordingBarPresenter {
     }
 
     private func isPositioned(_ panel: NSPanel, onDisplayID displayID: CGDirectDisplayID?) -> Bool {
-        guard let target = ActiveDisplayResolver.screen(for: displayID) else { return true }
-        return target.frame.intersects(panel.frame)
+        guard let displayID else { return true }
+        return barDisplayID == displayID
     }
 
     private func position(_ panel: NSPanel, displayID: CGDirectDisplayID?) {
