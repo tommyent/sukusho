@@ -34,6 +34,8 @@ final class WindowManager {
     private lazy var axWorker = WindowAXWorker(gate: gate)
     private var nextCaptureID: UInt64 = 0
     private var didPromptAccessibility = false
+    private var fullScreenExitObserver: NSObjectProtocol?
+    private var fullScreenExitTimeout: DispatchWorkItem?
 
     private init() {}
 
@@ -41,6 +43,16 @@ final class WindowManager {
     /// the user turns Window Management off. Any already-disabled `AXEnhancedUserInterface` is still restored.
     func cancelPending() {
         gate.cancelAll()
+        clearPendingOwnFullScreenObserver()
+    }
+
+    private func clearPendingOwnFullScreenObserver() {
+        if let observer = fullScreenExitObserver {
+            NotificationCenter.default.removeObserver(observer)
+            fullScreenExitObserver = nil
+        }
+        fullScreenExitTimeout?.cancel()
+        fullScreenExitTimeout = nil
     }
 
     // MARK: - Capturing a target before opening the popup
@@ -79,6 +91,7 @@ final class WindowManager {
             return
         }
 
+        clearPendingOwnFullScreenObserver()
         let token = gate.begin()
         if app == NSRunningApplication.current {
             guard let window = ownActiveWindow() else {
@@ -217,12 +230,27 @@ final class WindowManager {
     // MARK: - Own windows (AppKit)
 
     private func perform(_ action: WindowAction, onOwnWindow window: NSWindow, token: UInt64) {
+        clearPendingOwnFullScreenObserver()
         if window.styleMask.contains(.fullScreen) {
-            window.toggleFullScreen(nil)
-            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(500)) { [weak self, weak window] in
-                guard let self, self.gate.isCurrent(token), let window, window.isVisible else { return }
-                self.apply(action, toOwnWindow: window)
+            fullScreenExitObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didExitFullScreenNotification,
+                object: window,
+                queue: .main
+            ) { [weak self, weak window] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.clearPendingOwnFullScreenObserver()
+                    guard self.gate.isCurrent(token), let window, window.isVisible,
+                          !window.styleMask.contains(.fullScreen) else { return }
+                    self.apply(action, toOwnWindow: window)
+                }
             }
+            let timeout = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated { self?.clearPendingOwnFullScreenObserver() }
+            }
+            fullScreenExitTimeout = timeout
+            DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(5), execute: timeout)
+            window.toggleFullScreen(nil)
             return
         }
         apply(action, toOwnWindow: window)
@@ -399,9 +427,21 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
         screens: [DisplayScreen],
         token: UInt64
     ) -> Bool {
-        if boolAttribute(Self.fullScreenAttr, on: window) == true {
-            AXUIElementSetAttributeValue(window, Self.fullScreenAttr, kCFBooleanFalse)
-            guard gate.wait(token: token, duration: 0.5) else { return false }
+        guard let isFullScreen = boolAttribute(Self.fullScreenAttr, on: window) else { return false }
+        if isFullScreen {
+            let exitOutcome = WindowFullScreenExit.exitAndConfirm(
+                maxPolls: 40,
+                requestExit: {
+                    AXUIElementSetAttributeValue(window, Self.fullScreenAttr, kCFBooleanFalse)
+                },
+                readIsFullScreen: {
+                    self.boolAttribute(Self.fullScreenAttr, on: window)
+                },
+                waitStep: {
+                    self.gate.wait(token: token, duration: 0.05)
+                }
+            )
+            guard exitOutcome == .exited else { return false }
         }
         guard gate.isCurrent(token) else { return false }
         return apply(action, to: window, in: axApp, screens: screens, token: token)

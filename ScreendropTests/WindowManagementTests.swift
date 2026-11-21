@@ -326,4 +326,55 @@ struct WindowManagementTests {
         gate.cancelAll()
         #expect(!gate.isCurrent(second))
     }
+
+    @Test func fullScreenExitConfirmsBeforePlacingAndStopsOnRejectionOrTimeout() {
+        // Rejected AXFullScreen write stops immediately without polling.
+        var polls = 0
+        let rejected = WindowFullScreenExit.exitAndConfirm(
+            maxPolls: 5,
+            requestExit: { .attributeUnsupported },
+            readIsFullScreen: { polls += 1; return false },
+            waitStep: { true }
+        )
+        #expect(rejected == .writeFailed)
+        #expect(polls == 0)
+
+        // Delayed exit confirms once AXFullScreen reports false.
+        var states = [true, true, false]
+        let exited = WindowFullScreenExit.exitAndConfirm(
+            maxPolls: 5,
+            requestExit: { .success },
+            readIsFullScreen: { states.removeFirst() },
+            waitStep: { true }
+        )
+        #expect(exited == .exited)
+        #expect(states.isEmpty)
+
+        // Window that stays full-screen past maxPolls times out instead of placing while full-screen.
+        let timedOut = WindowFullScreenExit.exitAndConfirm(
+            maxPolls: 3,
+            requestExit: { .success },
+            readIsFullScreen: { true },
+            waitStep: { true }
+        )
+        #expect(timedOut == .timedOut)
+
+        // Cancelled mid-exit stops immediately.
+        let cancelled = WindowFullScreenExit.exitAndConfirm(
+            maxPolls: 5,
+            requestExit: { .success },
+            readIsFullScreen: { true },
+            waitStep: { false }
+        )
+        #expect(cancelled == .cancelled)
+
+        // Messaging timeout / read error mid-exit stops immediately.
+        let readFailed = WindowFullScreenExit.exitAndConfirm(
+            maxPolls: 5,
+            requestExit: { .success },
+            readIsFullScreen: { nil },
+            waitStep: { true }
+        )
+        #expect(readFailed == .readFailed)
+    }
 }

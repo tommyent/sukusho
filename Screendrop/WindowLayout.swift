@@ -420,3 +420,29 @@ nonisolated final class WindowOperationGate: Sendable {
         }
     }
 }
+
+/// Bounded confirmation loop for exiting full screen before placing an external AX window.
+nonisolated enum WindowFullScreenExit {
+    enum Outcome: Equatable, Sendable {
+        case exited
+        case writeFailed
+        case timedOut
+        case cancelled
+        case readFailed
+    }
+
+    static func exitAndConfirm(
+        maxPolls: Int = 40,
+        requestExit: () -> AXError,
+        readIsFullScreen: () -> Bool?,
+        waitStep: () -> Bool
+    ) -> Outcome {
+        guard requestExit() == .success else { return .writeFailed }
+        for _ in 0..<maxPolls {
+            guard waitStep() else { return .cancelled }
+            guard let stillFullScreen = readIsFullScreen() else { return .readFailed }
+            if !stillFullScreen { return .exited }
+        }
+        return .timedOut
+    }
+}
