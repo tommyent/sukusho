@@ -199,7 +199,7 @@ nonisolated enum StudioAudioConform {
     /// moment of it goes wherever that moment of the recording went, so
     /// video that was removed takes its sound with it and a clip that
     /// changed speed retimes the sound under it. An unlinked clip stays in
-    /// one piece and keeps its starting moment.
+    /// one piece and follows the footage moment under its start.
     static func conform(
         _ clips: [RecordingAudioClip],
         from old: RecordingClipTimeline,

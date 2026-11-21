@@ -593,7 +593,7 @@ struct StudioAudioClipInspectorControls: View {
                         label: { Text(RecordingClipSegment.speedTitle($0)).font(.inspectorSegment) }
                     )
                     .help("How fast this clip plays. It keeps its start.")
-                    InspectorHint("Not linked: stays whole when the video is cut, and keeps its starting moment. Plays \(Self.clock(clip.fileSpan)) of its \(Self.clock(clip.fileDuration)) file.")
+                    InspectorHint("Not linked: stays whole when the video is cut, and follows the footage moment under its start. Plays \(Self.clock(clip.fileSpan)) of its \(Self.clock(clip.fileDuration)) file.")
                 }
 
                 HStack(spacing: InspectorMetrics.rowSpacing) {

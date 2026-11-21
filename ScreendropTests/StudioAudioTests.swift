@@ -67,7 +67,7 @@ struct StudioAudioTests {
         #expect(abs(afterSpeed[1].duration - 1.5) < 0.001)
     }
 
-    @Test func conformUnlinkedClipStaysWholeAndMovesWithStartPoint() {
+    @Test func conformUnlinkedClipStaysWholeAndFollowsAnchoredFootageMoment() {
         let old = RecordingClipTimeline.full(sourceDuration: 10)
         let new = RecordingClipTimeline(segments: [
             RecordingClipSegment(sourceStart: 3, sourceEnd: 10)
@@ -727,13 +727,10 @@ struct StudioAudioTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         // Screen has 900 Hz system + 220 Hz raw mic; isolated mic is 440 Hz; replacement is 520 Hz.
+        let systemURL = try makeTone(in: dir, name: "sys", frequency: 900, amplitude: 0.25, duration: 1.5)
+        let micURL = try makeTone(in: dir, name: "mic", frequency: 220, amplitude: 0.35, duration: 1.5)
         let screenURL = dir.appendingPathComponent("screen.mov")
-        let micTrackID = try await makeDualTrackScreenAudio(
-            at: screenURL,
-            systemFrequency: 900,
-            micFrequency: 220,
-            duration: 1.5
-        )
+        let micTrackID = try await writeDualTrackAudioMovie(systemURL: systemURL, micURL: micURL, to: screenURL)
         let isolatedURL = try makeTone(in: dir, name: "isolated", frequency: 440, amplitude: 0.35, duration: 1.5)
         let shortReplacementURL = try makeTone(in: dir, name: "short-repl", frequency: 520, amplitude: 0.35, duration: 0.8)
         let fullReplacementURL = try makeTone(in: dir, name: "full-repl", frequency: 520, amplitude: 0.35, duration: 1.5)
