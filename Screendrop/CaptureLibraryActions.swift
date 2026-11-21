@@ -286,7 +286,10 @@ extension CaptureLibraryModel {
         run("Uploading…") {
             StudioProjectRegistry.shared.flushDrafts()
             let source = LibraryUploadSource.capture(item, url: item.fileURL)
-            let link = try await source.upload(options: options, title: options.trimmedTitleOrNil)
+            defer { self.uploadingItemID = nil }
+            let link = try await source.upload(options: options, title: options.trimmedTitleOrNil) {
+                self.uploadingItemID = $0
+            }
             CloudShareLinks.copy([link], message: options.message, feedback: self.actionFeedback)
             self.refresh()
         }

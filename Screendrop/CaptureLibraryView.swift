@@ -662,10 +662,23 @@ struct CaptureLibraryView: View {
 
     @ViewBuilder private var statusLeading: some View {
         if let title = model.operationTitle {
-            ProgressView().controlSize(.mini)
-            Text(title)
-            if let export = model.agentPromptExport {
-                Text("\(Int((export.progress * 100).rounded()))%").monospacedDigit()
+            if let id = model.uploadingItemID,
+               let progress = CloudUploader.shared.uploadProgress[id] {
+                let status = LibraryUploadProgress(progress: progress, title: title)
+                ProgressView(value: status.fraction)
+                    .progressViewStyle(.linear)
+                    .controlSize(.mini)
+                    .frame(width: 120)
+                    .accessibilityLabel("Upload progress")
+                Text(status.label)
+                Text(status.fraction, format: .percent.precision(.fractionLength(0)).rounded(rule: .down))
+                    .foregroundStyle(floatingChrome ? AppTheme.glassTitleInk(dark: colorScheme == .dark).color : Color.primary)
+            } else {
+                ProgressView().controlSize(.mini)
+                Text(title)
+                if let export = model.agentPromptExport {
+                    Text("\(Int((export.progress * 100).rounded()))%").monospacedDigit()
+                }
             }
         } else if let done = model.actionFeedback.message {
             StatusSuccess(title: done, systemImage: "checkmark.circle.fill", onGlass: floatingChrome)

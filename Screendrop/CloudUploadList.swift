@@ -387,3 +387,17 @@ enum LibraryUploadSource<Capture> {
         }
     }
 }
+
+/// Clamped progress and status label for the Library status bar while a capture uploads.
+nonisolated struct LibraryUploadProgress: Equatable {
+    static let maxDisplayedFraction = 0.99
+
+    let fraction: Double
+    let label: String
+
+    init(progress: Double, title: String) {
+        let clamped = progress.isFinite ? min(max(progress, 0), Self.maxDisplayedFraction) : 0
+        self.fraction = clamped
+        self.label = clamped >= Self.maxDisplayedFraction ? "Finishing upload…" : title
+    }
+}

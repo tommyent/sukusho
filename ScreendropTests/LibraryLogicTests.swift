@@ -294,4 +294,19 @@ struct LibraryLogicTests {
         #expect(CaptureTagField.matches("zzz", in: tags).isEmpty)
         #expect(CaptureTagField.matches("on", in: []).isEmpty)
     }
+
+    @Test func libraryUploadProgressClampsAndSwitchesToFinishingLabel() {
+        let zero = LibraryUploadProgress(progress: 0, title: "Uploading…")
+        #expect(zero.fraction == 0 && zero.label == "Uploading…")
+        let mid = LibraryUploadProgress(progress: 0.427, title: "Uploading…")
+        #expect(mid.fraction == 0.427 && mid.label == "Uploading…")
+        let almost = LibraryUploadProgress(progress: 0.99, title: "Uploading…")
+        #expect(almost.fraction == 0.99 && almost.label == "Finishing upload…")
+        let done = LibraryUploadProgress(progress: 1.0, title: "Uploading…")
+        #expect(done.fraction == 0.99 && done.label == "Finishing upload…")
+        let neg = LibraryUploadProgress(progress: -0.5, title: "Uploading…")
+        #expect(neg.fraction == 0 && neg.label == "Uploading…")
+        let nan = LibraryUploadProgress(progress: .nan, title: "Uploading…")
+        #expect(nan.fraction == 0 && nan.label == "Uploading…")
+    }
 }

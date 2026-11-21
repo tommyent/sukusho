@@ -179,6 +179,8 @@ final class CaptureLibraryModel {
     /// The first scan has finished; later refreshes show only the status bar's spinner.
     private(set) var hasLoaded = false
     var operationTitle: String?
+    /// The History ID of a single Library capture currently uploading, for status bar progress.
+    var uploadingItemID: UUID?
     /// The status bar's done mark for an Agent Prompt export, which no longer opens Finder.
     var savedAgentPrompt: URL?
     /// The status bar's done mark for a gallery whose link was just copied.
