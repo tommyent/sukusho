@@ -385,8 +385,8 @@ final class ShakeToUpload {
                     }
                     let destination = folder
                     let outcomes = await Task.detached {
-                        rows.compactMap { row -> ShelfFileSave.Outcome? in
-                            guard let result = row.result, result.outcome == .optimized || result.outcome == .converted else { return nil }
+                        ShelfOptimization.rowsToSave(from: rows, replacing: replacing).compactMap { row -> ShelfFileSave.Outcome? in
+                            guard let result = row.result else { return nil }
                             return ShelfFileSave.save(result.url, of: row.file, identity: result.source,
                                                       outputIdentity: result.output, replacing: replacing, in: destination)
                         }

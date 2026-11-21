@@ -68,10 +68,23 @@ final class ShelfOptimization {
 
         /// True once the optimizer has finished this row, whether it produced a result or kept the original.
         var isSettled: Bool { result != nil || largerFormat != nil }
-        /// A smaller or converted file was made for it: something to save.
-        var hasNewFile: Bool { result?.outcome == .optimized || result?.outcome == .converted }
+        /// A smaller or converted file was made for it: something plain Save can write.
+        var hasNewFile: Bool { Self.canSave(outcome: result?.outcome) }
+        /// A strictly smaller file was made for it: something Replace may swap in for the original.
+        var isStrictlySmaller: Bool {
+            guard let result else { return false }
+            return Self.canReplace(outcome: result.outcome, originalBytes: result.originalByteCount, resultBytes: result.resultByteCount)
+        }
         /// Sukusho wasn't allowed to open it, so there is nothing of it to copy, share or save.
         var isUnreadable: Bool { result?.outcome == .failed(ImageOptimizer.unreadableReason) }
+
+        static func canSave(outcome: ImageOptimizationResult.Outcome?) -> Bool {
+            outcome == .optimized || outcome == .converted
+        }
+
+        static func canReplace(outcome: ImageOptimizationResult.Outcome, originalBytes: Int64, resultBytes: Int64) -> Bool {
+            canSave(outcome: outcome) && resultBytes < originalBytes
+        }
     }
 
     private(set) var rows: [Row]
@@ -172,8 +185,15 @@ final class ShelfOptimization {
         return await work(rows)
     }
 
+    /// Rows eligible for Save (any new file) or Replace (strictly smaller results only).
+    nonisolated static func rowsToSave(from rows: [Row], replacing: Bool) -> [Row] {
+        rows.filter { replacing ? $0.isStrictlySmaller : $0.hasNewFile }
+    }
+
     /// Save has something to write: at least one file came out smaller or converted.
-    var canSave: Bool { rows.contains(where: \.hasNewFile) }
+    var canSave: Bool { !Self.rowsToSave(from: rows, replacing: false).isEmpty }
+    /// Replace has something to swap in: at least one file came out strictly smaller than its original.
+    var canReplace: Bool { !Self.rowsToSave(from: rows, replacing: true).isEmpty }
     /// Copy, Share and Upload have something to take: at least one file Sukusho could read.
     var canHandOver: Bool { rows.contains { !$0.isUnreadable } }
 

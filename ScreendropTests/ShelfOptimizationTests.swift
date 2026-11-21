@@ -132,6 +132,33 @@ import UniformTypeIdentifiers
         list.discard()
     }
 
+    /// Sol 6.2 #4: a same-size conversion can be saved as a separate file, but Replace requires a strictly
+    /// smaller result.
+    @Test func replaceRequiresStrictlySmallerResultWhileSaveAllowsSameSizeConversion() async throws {
+        #expect(ShelfOptimization.Row.canSave(outcome: .converted))
+        #expect(!ShelfOptimization.Row.canReplace(outcome: .converted, originalBytes: 12_000, resultBytes: 12_000))
+        #expect(!ShelfOptimization.Row.canReplace(outcome: .converted, originalBytes: 12_000, resultBytes: 12_001))
+        #expect(ShelfOptimization.Row.canReplace(outcome: .converted, originalBytes: 12_000, resultBytes: 11_999))
+        #expect(ShelfOptimization.Row.canReplace(outcome: .optimized, originalBytes: 12_000, resultBytes: 10_000))
+        #expect(!ShelfOptimization.Row.canReplace(outcome: .alreadyOptimized, originalBytes: 12_000, resultBytes: 10_000))
+
+        let folder = FileManager.default.temporaryDirectory.appending(path: "SukushoShelfReplace-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let png = folder.appending(path: "flat.png")
+        let jpeg = folder.appending(path: "noisy.jpeg")
+        try picture(png, shade: 0.6)
+        try noisyJPEG(jpeg)
+
+        let list = model([png, jpeg], .webP, in: folder)
+        try await settled(list)
+        #expect(list.canSave)
+        #expect(list.canReplace)
+        #expect(ShelfOptimization.rowsToSave(from: list.rows, replacing: true).map(\.file) == [png])
+        #expect(ShelfOptimization.rowsToSave(from: list.rows, replacing: false).map(\.file) == [png])
+        list.discard()
+    }
+
     private func model(_ files: [URL], _ format: ShelfOptimization.Format, in folder: URL) -> ShelfOptimization {
         let tools = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appending(path: "Vendor/optimizers")
         return ShelfOptimization(files: files, format: format, optimizer: ImageOptimizer(toolsDirectory: tools, outputDirectory: folder.appending(path: "out")),

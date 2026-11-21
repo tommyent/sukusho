@@ -157,7 +157,7 @@ struct ShakeShelfHolding: View {
                 }
             }
 
-            actionButton("arrow.left.arrow.right", label: "Replace Originals", help: "Replace originals (originals go to Trash)", disabled: !model.canSave) {
+            actionButton("arrow.left.arrow.right", label: "Replace Originals", help: "Replace originals (originals go to Trash)", disabled: !model.canReplace) {
                 finish(.save(replacing: true))
             }
 
