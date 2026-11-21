@@ -31,8 +31,6 @@ struct StudioTimelineEditor: View {
     /// Anchor time while ⇧-dragging on the ruler to mark an I/O range.
     @State private var rangeAnchor: TimeInterval?
     @GestureState private var isRulerGestureActive = false
-    /// Active soloed audio lane and the per-clip mutes captured before soloing.
-    @State private var soloState: (lane: Int, mutes: [UUID: Bool])?
     @State private var isAudioDropTargeted = false
 
     /// Step per zoom button press / keyboard shortcut.
@@ -98,8 +96,7 @@ struct StudioTimelineEditor: View {
                 StudioAudioLaneGlyph(
                     model: model,
                     lane: lane,
-                    height: StudioAudioLaneMetrics.laneHeight,
-                    soloState: $soloState
+                    height: StudioAudioLaneMetrics.laneHeight
                 )
             }
             Color.clear

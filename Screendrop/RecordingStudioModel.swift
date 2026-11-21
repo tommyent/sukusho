@@ -252,6 +252,8 @@ final class RecordingStudioModel {
     /// Linked audio ranges temporarily hidden by trimming a video clip inward,
     /// kept so dragging the trim back out restores them.
     private var hiddenLinkedAudio: [StudioAudioConform.HiddenLinkedRange] = []
+    /// Currently soloed audio lane and the pre-solo mutes, tracked in Undo/Redo.
+    private(set) var audioSoloState: StudioAudioLaneSolo?
     /// The audio clip the inspector shows: the last one clicked.
     var selectedAudioClipID: UUID? {
         didSet {
@@ -1101,6 +1103,7 @@ final class RecordingStudioModel {
         }
         audioClips = (document.audioClips ?? []).map { $0.sanitized() }
         hiddenLinkedAudio.removeAll()
+        audioSoloState = nil
         if let selectedAudioClipID, !audioClips.contains(where: { $0.id == selectedAudioClipID }) {
             self.selectedAudioClipID = nil
         }
@@ -1234,6 +1237,7 @@ final class RecordingStudioModel {
         playbackAudioPlacement = nil
         audioClips.removeAll()
         hiddenLinkedAudio.removeAll()
+        audioSoloState = nil
         selectedAudioClipID = nil
         selectedAudioClipIDs.removeAll()
         audioPeaks.removeAll()
@@ -4659,36 +4663,26 @@ final class RecordingStudioModel {
         })
     }
 
-    /// Mutes or unmutes every clip on a lane in one step.
+    /// Mutes or unmutes every clip on a lane in one undoable step, restoring
+    /// other lanes' saved mutes if a lane was soloed.
     func setAudioLaneMuted(_ muted: Bool, lane: Int) {
-        let next = audioClips.map { clip in
-            var clip = clip
-            if clip.lane == lane { clip.isMuted = muted }
-            return clip
-        }
-        applyAudioClips(next, actionName: muted ? "Mute Lane" : "Unmute Lane")
+        let updated = StudioAudioLaneSolo.setLaneMuted(
+            muted,
+            lane: lane,
+            clips: audioClips,
+            current: audioSoloState
+        )
+        applyAudioClips(updated.clips, solo: .some(updated.solo), actionName: updated.actionName)
     }
 
-    /// Mutes every lane but `lane`, returning the previous per-clip mute state
-    /// so a second ⌥-click can restore it.
-    func soloAudioLane(_ lane: Int) -> [UUID: Bool] {
-        let before = Dictionary(uniqueKeysWithValues: audioClips.map { ($0.id, $0.isMuted) })
-        let next = audioClips.map { clip in
-            var clip = clip
-            clip.isMuted = clip.lane != lane
-            return clip
-        }
-        applyAudioClips(next, actionName: "Solo Lane")
-        return before
-    }
-
-    func restoreAudioMutes(_ mutes: [UUID: Bool]) {
-        let next = audioClips.map { clip in
-            var clip = clip
-            if let muted = mutes[clip.id] { clip.isMuted = muted }
-            return clip
-        }
-        applyAudioClips(next, actionName: "Unsolo Lane")
+    /// Toggles solo on `lane` in one undoable step.
+    func toggleSoloAudioLane(_ lane: Int) {
+        let updated = StudioAudioLaneSolo.toggle(
+            lane: lane,
+            clips: audioClips,
+            current: audioSoloState
+        )
+        applyAudioClips(updated.clips, solo: .some(updated.solo), actionName: updated.actionName)
     }
 
     func isAudioLaneMuted(_ lane: Int) -> Bool {
@@ -4858,14 +4852,25 @@ final class RecordingStudioModel {
 
     /// `keeping` names a clip that gets the lane it asks for; anything in
     /// its way moves down.
-    private func applyAudioClips(_ requested: [RecordingAudioClip], actionName: String, keeping: UUID? = nil) {
+    private func applyAudioClips(
+        _ requested: [RecordingAudioClip],
+        solo requestedSolo: StudioAudioLaneSolo?? = nil,
+        actionName: String,
+        keeping: UUID? = nil
+    ) {
         flushPendingAudioEdits()
         let all = StudioAudioConform.resolvingLanes(requested, first: keeping)
-        guard all != audioClips else { return }
-        let previous = audioClips
-        registerUndo(actionName) { target in
-            target.applyAudioClips(previous, actionName: actionName)
+        var nextSolo = requestedSolo ?? audioSoloState
+        if let solo = nextSolo, !all.contains(where: { $0.lane == solo.lane }) {
+            nextSolo = nil
         }
+        guard all != audioClips || nextSolo != audioSoloState else { return }
+        let previous = audioClips
+        let previousSolo = audioSoloState
+        registerUndo(actionName) { target in
+            target.applyAudioClips(previous, solo: .some(previousSolo), actionName: actionName)
+        }
+        audioSoloState = nextSolo
         replaceAudioClips(all)
         if let selectedAudioClipID, !all.contains(where: { $0.id == selectedAudioClipID }) {
             self.selectedAudioClipID = nil

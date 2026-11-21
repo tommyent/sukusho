@@ -28,7 +28,8 @@ nonisolated struct StudioReplacementReference: Equatable, Sendable {
 
     var label: String { displayName ?? fileName }
 
-    /// Outcome of resolving a saved replacement reference against disk.
+    /// Unresolved persisted reference to an imported soundtrack whose file is
+    /// missing or unreadable, kept so saving or undoing never drops it.
     static func resolve(
         fileName: String?,
         displayName: String?,
@@ -718,5 +719,56 @@ nonisolated enum StudioAudioConform {
             distance = abs(point - time)
         }
         return best
+    }
+}
+
+/// Tracks which audio lane is soloed alongside the pre-solo mute state of
+/// every clip, so Undo/Redo and normal mute clicks never drift from the UI.
+nonisolated struct StudioAudioLaneSolo: Equatable, Sendable {
+    var lane: Int
+    var previousMutes: [UUID: Bool]
+
+    static func toggle(
+        lane targetLane: Int,
+        clips: [RecordingAudioClip],
+        current: StudioAudioLaneSolo?
+    ) -> (clips: [RecordingAudioClip], solo: StudioAudioLaneSolo?, actionName: String) {
+        if let current, current.lane == targetLane {
+            let restored = clips.map { clip -> RecordingAudioClip in
+                var clip = clip
+                if let muted = current.previousMutes[clip.id] { clip.isMuted = muted }
+                return clip
+            }
+            return (restored, nil, "Unsolo Lane")
+        }
+        let baseMutes = current?.previousMutes ?? Dictionary(uniqueKeysWithValues: clips.map { ($0.id, $0.isMuted) })
+        let soloed = clips.map { clip -> RecordingAudioClip in
+            var clip = clip
+            clip.isMuted = clip.lane != targetLane
+            return clip
+        }
+        return (soloed, StudioAudioLaneSolo(lane: targetLane, previousMutes: baseMutes), "Solo Lane")
+    }
+
+    static func setLaneMuted(
+        _ muted: Bool,
+        lane targetLane: Int,
+        clips: [RecordingAudioClip],
+        current: StudioAudioLaneSolo?
+    ) -> (clips: [RecordingAudioClip], solo: StudioAudioLaneSolo?, actionName: String) {
+        var next = clips
+        if let current {
+            next = next.map { clip in
+                var clip = clip
+                if let wasMuted = current.previousMutes[clip.id] { clip.isMuted = wasMuted }
+                return clip
+            }
+        }
+        next = next.map { clip in
+            var clip = clip
+            if clip.lane == targetLane { clip.isMuted = muted }
+            return clip
+        }
+        return (next, nil, muted ? "Mute Lane" : "Unmute Lane")
     }
 }

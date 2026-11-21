@@ -368,22 +368,15 @@ struct StudioAudioLaneGlyph: View {
     @Bindable var model: RecordingStudioModel
     let lane: Int
     let height: CGFloat
-    @Binding var soloState: (lane: Int, mutes: [UUID: Bool])?
 
     var body: some View {
         let isMuted = model.isAudioLaneMuted(lane)
-        let isSoloed = soloState?.lane == lane
+        let isSoloed = model.audioSoloState?.lane == lane
         let hasClips = model.audioClips.contains { $0.lane == lane }
         Button {
             if NSEvent.modifierFlags.contains(.option) {
-                if let solo = soloState {
-                    model.restoreAudioMutes(solo.mutes)
-                    soloState = nil
-                    if solo.lane == lane { return }
-                }
-                soloState = (lane, model.soloAudioLane(lane))
+                model.toggleSoloAudioLane(lane)
             } else {
-                soloState = nil
                 model.setAudioLaneMuted(!isMuted, lane: lane)
             }
         } label: {
@@ -399,6 +392,9 @@ struct StudioAudioLaneGlyph: View {
         .help("Audio \(lane + 1). Click to mute the lane, ⌥-click to hear it alone.")
         .accessibilityLabel("Audio \(lane + 1)")
         .accessibilityValue(isSoloed ? "Soloed" : isMuted ? "Muted" : "Active")
+        .accessibilityAction(named: isSoloed ? "Unsolo lane \(lane + 1)" : "Solo lane \(lane + 1)") {
+            model.toggleSoloAudioLane(lane)
+        }
     }
 }
 

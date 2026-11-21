@@ -962,6 +962,41 @@ struct StudioAudioTests {
         #expect(StudioAudioComposer.envelopeSpans(for: sameLayout, plan: samePlan)[sameTrackID] == nil)
     }
 
+    @Test func audioLaneSoloStateRoundTripsThroughToggleSwitchAndMuteClick() {
+        var c0 = RecordingAudioClip(fileName: "a.wav", displayName: "A", start: 0, fileDuration: 2)
+        c0.lane = 0
+        var c1 = RecordingAudioClip(fileName: "b.wav", displayName: "B", start: 0, fileDuration: 2)
+        c1.lane = 1
+        var c2 = RecordingAudioClip(fileName: "c.wav", displayName: "C", start: 0, fileDuration: 2)
+        c2.lane = 2
+        c2.isMuted = true // lane 2 started muted before solo
+        let initial = [c0, c1, c2]
+
+        // Solo lane 0: lane 1 becomes muted, lane 2 stays muted, solo remembers original mutes.
+        let step1 = StudioAudioLaneSolo.toggle(lane: 0, clips: initial, current: nil)
+        #expect(step1.solo?.lane == 0)
+        #expect(step1.clips[0].isMuted == false)
+        #expect(step1.clips[1].isMuted == true)
+        #expect(step1.clips[2].isMuted == true)
+
+        // Switching solo to lane 1 keeps original pre-solo mutes (c2 muted, c0/c1 unmuted).
+        let step2 = StudioAudioLaneSolo.toggle(lane: 1, clips: step1.clips, current: step1.solo)
+        #expect(step2.solo?.lane == 1)
+        #expect(step2.clips[0].isMuted == true)
+        #expect(step2.clips[1].isMuted == false)
+        #expect(step2.clips[2].isMuted == true)
+
+        // Unsoloing lane 1 restores exact pre-solo mutes.
+        let step3 = StudioAudioLaneSolo.toggle(lane: 1, clips: step2.clips, current: step2.solo)
+        #expect(step3.solo == nil)
+        #expect(step3.clips.map(\.isMuted) == [false, false, true])
+
+        // Normal mute click while lane 0 is soloed restores other lanes' saved mutes before muting lane 0.
+        let muteWhileSoloed = StudioAudioLaneSolo.setLaneMuted(true, lane: 0, clips: step1.clips, current: step1.solo)
+        #expect(muteWhileSoloed.solo == nil)
+        #expect(muteWhileSoloed.clips.map(\.isMuted) == [true, false, true])
+    }
+
     // MARK: - Helpers
 
     private func makeDirectory() throws -> URL {
