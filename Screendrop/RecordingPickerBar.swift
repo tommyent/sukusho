@@ -29,7 +29,6 @@ struct RecordingPickerControls: View {
     @AppStorage(ScreendropPreferences.recordingCleanDesktopKey) private var cleanDesktop = true
     @AppStorage(ScreendropPreferences.recordingBugReportKey) private var bugReport = false
     @AppStorage(ScreendropPreferences.includeAppWindowsInCapturesKey) private var includeAppWindows = false
-    @AppStorage(ScreendropPreferences.recordingBugReportAddedAppWindowsKey) private var bugReportAddedAppWindows = false
     @AppStorage(ScreendropPreferences.recordingAppLogsKey) private var appLogs = false
     @AppStorage(ScreendropPreferences.recordingStartDelaySecondsKey) private var startDelaySeconds = 0
     @AppStorage(ScreendropPreferences.recordingTeleprompterEnabledKey) private var teleprompterEnabled = false
@@ -124,8 +123,7 @@ struct RecordingPickerControls: View {
 
             Button {
                 tooltipDismiss()
-                includeAppWindows.toggle()
-                bugReportAddedAppWindows = false
+                ScreendropPreferences.setIncludeAppWindowsInCapturesManually(!includeAppWindows)
             } label: {
                 BarToggleLabel(
                     id: .includeAppWindows,
@@ -166,13 +164,7 @@ struct RecordingPickerControls: View {
             // switch, and turns them back off with itself unless they were on before.
             .onChange(of: bugReport) { _, on in
                 if !on { appLogs = false }
-                if on, !includeAppWindows {
-                    includeAppWindows = true
-                    bugReportAddedAppWindows = true
-                } else if !on, bugReportAddedAppWindows {
-                    includeAppWindows = false
-                    bugReportAddedAppWindows = false
-                }
+                ScreendropPreferences.applyBugReportAppWindowVisibility(on)
             }
 
             if bugReport {

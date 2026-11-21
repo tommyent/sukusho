@@ -221,3 +221,35 @@ nonisolated enum BarPanelGeometry {
         )
     }
 }
+
+/// Ownership rules for "Include Sukusho windows in captures": Bug report enables it automatically
+/// and records that it owns the flag, so turning Bug report off disables it again. Any manual
+/// write (Settings, the amber pill, or the bar eye button) takes ownership by clearing that flag.
+nonisolated enum AppWindowCaptureVisibility {
+    static func setManually(
+        _ include: Bool,
+        defaults: UserDefaults = .standard,
+        includeKey: String = "includeAppWindowsInCaptures",
+        addedByBugReportKey: String = "recordingBugReportAddedAppWindows"
+    ) {
+        defaults.set(include, forKey: includeKey)
+        defaults.set(false, forKey: addedByBugReportKey)
+    }
+
+    static func applyBugReportChange(
+        _ bugReportOn: Bool,
+        defaults: UserDefaults = .standard,
+        includeKey: String = "includeAppWindowsInCaptures",
+        addedByBugReportKey: String = "recordingBugReportAddedAppWindows"
+    ) {
+        let include = defaults.bool(forKey: includeKey)
+        let added = defaults.bool(forKey: addedByBugReportKey)
+        if bugReportOn, !include {
+            defaults.set(true, forKey: includeKey)
+            defaults.set(true, forKey: addedByBugReportKey)
+        } else if !bugReportOn, added {
+            defaults.set(false, forKey: includeKey)
+            defaults.set(false, forKey: addedByBugReportKey)
+        }
+    }
+}

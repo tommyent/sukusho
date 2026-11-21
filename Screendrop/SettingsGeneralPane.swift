@@ -34,6 +34,13 @@ struct GeneralSettingsPane: View {
         )
     }
 
+    private var includeAppWindowsBinding: Binding<Bool> {
+        Binding(
+            get: { includeAppWindowsInCaptures },
+            set: { ScreendropPreferences.setIncludeAppWindowsInCapturesManually($0) }
+        )
+    }
+
     var body: some View {
         Form {
             Section("Save Location") {
@@ -99,7 +106,7 @@ struct GeneralSettingsPane: View {
                     "Include Sukusho windows in captures",
                     detail: "Show preview cards, recording controls, Settings, and other Sukusho windows in Sukusho’s own screenshots and recordings. This includes the clipboard popup. Outside Sukusho’s own screenshots, the popup asks macOS to limit sharing."
                 ).control { label in
-                    Toggle(isOn: $includeAppWindowsInCaptures) { label }
+                    Toggle(isOn: includeAppWindowsBinding) { label }
                 }
                 .toggleStyle(.switch)
             }

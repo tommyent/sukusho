@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import Testing
 
 /// The recording bar's direction B rules: dark grey off, coloured on, light grey only for a
@@ -73,5 +74,32 @@ struct RecordingBarStateTests {
         let clampedHigh = BarPanelGeometry.clampedPanelFrame(panelHigh, visibleContentInPanel: barInPanel, to: screen)
         let barAfterHigh = BarPanelGeometry.screenRect(forPanelRect: barInPanel, in: clampedHigh)
         #expect(barAfterHigh.maxY == screen.maxY)
+    }
+
+    @Test func manualVisibilityChoiceClearsBugReportOwnership() {
+        let suiteName = "RecordingBarStateTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        // Bug report enables app windows and takes ownership, then turning Bug report off reverts it.
+        AppWindowCaptureVisibility.applyBugReportChange(true, defaults: defaults)
+        #expect(defaults.bool(forKey: "includeAppWindowsInCaptures"))
+        #expect(defaults.bool(forKey: "recordingBugReportAddedAppWindows"))
+        AppWindowCaptureVisibility.applyBugReportChange(false, defaults: defaults)
+        #expect(!defaults.bool(forKey: "includeAppWindowsInCaptures"))
+        #expect(!defaults.bool(forKey: "recordingBugReportAddedAppWindows"))
+
+        // Bug report enables app windows, then user explicitly turns Capture Visibility off and back on
+        // (e.g. from Settings before opening the bar): turning Bug report off must keep it on.
+        AppWindowCaptureVisibility.applyBugReportChange(true, defaults: defaults)
+        AppWindowCaptureVisibility.setManually(false, defaults: defaults)
+        #expect(!defaults.bool(forKey: "includeAppWindowsInCaptures"))
+        #expect(!defaults.bool(forKey: "recordingBugReportAddedAppWindows"))
+        AppWindowCaptureVisibility.setManually(true, defaults: defaults)
+        #expect(defaults.bool(forKey: "includeAppWindowsInCaptures"))
+        #expect(!defaults.bool(forKey: "recordingBugReportAddedAppWindows"))
+
+        AppWindowCaptureVisibility.applyBugReportChange(false, defaults: defaults)
+        #expect(defaults.bool(forKey: "includeAppWindowsInCaptures"))
     }
 }

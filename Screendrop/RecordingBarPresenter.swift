@@ -356,10 +356,7 @@ private struct RecordingBarView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             .coordinateSpace(.named(BarCoordinateSpace.panel))
             .environment(tooltip)
-            .onChange(of: includeAppWindowsInCaptures) { _, isOn in
-                if !isOn {
-                    UserDefaults.standard.set(false, forKey: ScreendropPreferences.recordingBugReportAddedAppWindowsKey)
-                }
+            .onChange(of: includeAppWindowsInCaptures) { _, _ in
                 PreviewWindowCaptureExclusion.shared.refreshRegisteredWindows()
                 Task { await RecordingSourceCatalog.shared.refresh() }
                 presenter.clampPanelToScreen()
@@ -446,7 +443,10 @@ private struct RecordingBarView: View {
                 .accessibilityHidden(true)
             Text("Sukusho windows will be captured")
                 .foregroundStyle(BarMetrics.activeTint)
-            Toggle("Include Sukusho windows in captures", isOn: $includeAppWindowsInCaptures)
+            Toggle("Include Sukusho windows in captures", isOn: Binding(
+                get: { includeAppWindowsInCaptures },
+                set: { ScreendropPreferences.setIncludeAppWindowsInCapturesManually($0) }
+            ))
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.mini)

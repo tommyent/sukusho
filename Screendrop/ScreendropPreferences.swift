@@ -255,6 +255,25 @@ enum ScreendropPreferences {
         UserDefaults.standard.bool(forKey: includeAppWindowsInCapturesKey)
     }
 
+    /// Manual user writes from Settings, the amber pill, or the recording bar eye button clear
+    /// Bug report's ownership flag so turning Bug report off later preserves the explicit choice.
+    static func setIncludeAppWindowsInCapturesManually(_ include: Bool) {
+        AppWindowCaptureVisibility.setManually(
+            include,
+            includeKey: includeAppWindowsInCapturesKey,
+            addedByBugReportKey: recordingBugReportAddedAppWindowsKey
+        )
+    }
+
+    /// Automatic Bug report writes preserve whether Bug report turned visibility on.
+    static func applyBugReportAppWindowVisibility(_ bugReportOn: Bool) {
+        AppWindowCaptureVisibility.applyBugReportChange(
+            bugReportOn,
+            includeKey: includeAppWindowsInCapturesKey,
+            addedByBugReportKey: recordingBugReportAddedAppWindowsKey
+        )
+    }
+
     /// Whether captured windows include their drop shadow. Defaults to off
     /// (tighter, shadow-free crops).
     static var captureTextKeepsLineBreaks: Bool {
