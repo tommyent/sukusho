@@ -71,7 +71,7 @@ final class ShakeToUpload {
 
     /// What the shelf does with the files it holds, once they are optimized.
     enum Finish {
-        case share, upload, gallery, copy, save(replacing: Bool), done
+        case share, upload, gallery, copy, save(replacing: Bool, askWhere: Bool = false), done
     }
 
     /// The files being optimized on the shelf, while it holds them.
@@ -371,19 +371,33 @@ final class ShakeToUpload {
         // choice then finishes with its own list's results and leaves the shelf alone: it dismisses,
         // clears or changes the shelf only while its list is still the one on show (ShelfStage.finish).
         Task {
-            if case .save(let replacing) = finish {
-                // Each new file beside its original, as "name optimized.png" or "name.webp", or with
-                // `replacing` in its place, with the original in the Trash (ShelfFileSave).
-                let done = await stage.finish(holding) { rows in
-                    await Task.detached {
+            if case .save(let replacing, let askWhere) = finish {
+                // Each new file beside its original (or in a folder chosen with Option), as
+                // "name optimized.png" or "name.webp", or with `replacing` in its place, with the original
+                // in the Trash (ShelfFileSave).
+                let done = await stage.finish(holding) { rows -> (outcomes: [ShelfFileSave.Outcome], folder: URL?)? in
+                    var folder: URL?
+                    if !replacing, askWhere {
+                        let initial = rows.first(where: \.hasNewFile)?.file.deletingLastPathComponent()
+                        let count = rows.count(where: \.hasNewFile)
+                        guard count > 0, let picked = await self.chooseSaveFolder(initial: initial, count: count) else { return nil }
+                        folder = picked
+                    }
+                    let destination = folder
+                    let outcomes = await Task.detached {
                         rows.compactMap { row -> ShelfFileSave.Outcome? in
                             guard let result = row.result, result.outcome == .optimized || result.outcome == .converted else { return nil }
-                            return ShelfFileSave.save(result.url, of: row.file, identity: result.source, replacing: replacing)
+                            return ShelfFileSave.save(result.url, of: row.file, identity: result.source, replacing: replacing, in: destination)
                         }
                     }.value
+                    return (outcomes, destination)
                 }
                 guard let done else { return }
-                report(done.value, replacing: replacing)
+                guard let saved = done.value else {
+                    if !done.isShowing { holding.discard() }
+                    return
+                }
+                report(saved.outcomes, replacing: replacing, folder: saved.folder)
                 holding.discard()
                 if done.isShowing { dismiss() }
                 return
@@ -427,8 +441,32 @@ final class ShakeToUpload {
         }
     }
 
+    /// Asks where to put the saved files when Option is held on Save. Lowers the status-bar shelf while
+    /// the folder picker is open so the shelf doesn't float over it.
+    private func chooseSaveFolder(initial: URL?, count: Int) async -> URL? {
+        let shelfPanel = panel
+        let savedLevel = shelfPanel?.level
+        shelfPanel?.level = .normal
+        defer {
+            if let shelfPanel, let savedLevel, panel === shelfPanel {
+                shelfPanel.level = savedLevel
+                shelfPanel.makeKey()
+            }
+        }
+        let openPanel = NSOpenPanel()
+        openPanel.title = count == 1 ? "Save Optimized File" : "Save Optimized Files"
+        openPanel.prompt = "Save Here"
+        openPanel.canChooseDirectories = true
+        openPanel.canChooseFiles = false
+        openPanel.canCreateDirectories = true
+        openPanel.allowsMultipleSelection = false
+        openPanel.directoryURL = initial
+        NSApp.activate(ignoringOtherApps: true)
+        return await openPanel.begin() == .OK ? openPanel.url : nil
+    }
+
     /// Says what a Save did. A file changed since it was optimized was left exactly as it is.
-    private func report(_ outcomes: [ShelfFileSave.Outcome], replacing: Bool) {
+    private func report(_ outcomes: [ShelfFileSave.Outcome], replacing: Bool, folder: URL? = nil) {
         var saved: [URL] = []
         var changed = 0
         var kept = 0
@@ -454,8 +492,10 @@ final class ShakeToUpload {
         } else if saved.isEmpty {
             toast.showDone("Nothing to Save", detail: skipped ?? "No file came out smaller.", symbol: "equal.circle", displayID: Self.display)
         } else {
+            let destination = replacing ? "The originals are in the Trash."
+                : folder.map { "In \($0.lastPathComponent)" } ?? "Beside the originals"
             toast.showDone(saved.count == 1 ? "Saved" : "\(saved.count) Files Saved",
-                           detail: skipped ?? (replacing ? "The originals are in the Trash." : "Beside the originals"), displayID: Self.display)
+                           detail: skipped ?? destination, displayID: Self.display)
         }
         if !saved.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(saved) }
     }

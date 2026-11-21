@@ -67,6 +67,38 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
         // A second save doesn't write over the first.
         let again = ShelfFileSave.save(result, of: original, identity: FileIdentity(original), replacing: false, retire: desk.retire)
         #expect(again == .saved(desk.folder.appending(path: "shot optimized 2.png")))
+
+        // Converting to another format uses the new extension beside the original, without overwriting.
+        let photo = try desk.file("photo.jpeg", "jpeg bytes")
+        let webP = try desk.file("photo.webp", "smaller webp", in: desk.results)
+        #expect(ShelfFileSave.save(webP, of: photo, identity: FileIdentity(photo), replacing: false, retire: desk.retire)
+            == .saved(desk.folder.appending(path: "photo.webp")))
+        #expect(ShelfFileSave.save(webP, of: photo, identity: FileIdentity(photo), replacing: false, retire: desk.retire)
+            == .saved(desk.folder.appending(path: "photo 2.webp")))
+        #expect(desk.text(photo) == "jpeg bytes")
+    }
+
+    @Test func saveIntoChosenFolderWritesThereAndAvoidsCollisions() throws {
+        let desk = try Desk()
+        defer { desk.remove() }
+        let chosen = desk.folder.appending(path: "chosen")
+        try FileManager.default.createDirectory(at: chosen, withIntermediateDirectories: true)
+        let original = try desk.file("shot.png", "original pixels, long")
+        let result = try desk.file("shot.png", "smaller", in: desk.results)
+
+        let first = ShelfFileSave.save(result, of: original, identity: FileIdentity(original), replacing: false, in: chosen, retire: desk.retire)
+        #expect(first == .saved(chosen.appending(path: "shot optimized.png")))
+        #expect(desk.text(chosen.appending(path: "shot optimized.png")) == "smaller")
+        #expect(desk.text(original) == "original pixels, long")
+
+        let second = ShelfFileSave.save(result, of: original, identity: FileIdentity(original), replacing: false, in: chosen, retire: desk.retire)
+        #expect(second == .saved(chosen.appending(path: "shot optimized 2.png")))
+
+        let photo = try desk.file("photo.jpeg", "jpeg bytes")
+        let webP = try desk.file("photo.webp", "webp bytes", in: desk.results)
+        let converted = ShelfFileSave.save(webP, of: photo, identity: FileIdentity(photo), replacing: false, in: chosen, retire: desk.retire)
+        #expect(converted == .saved(chosen.appending(path: "photo.webp")))
+        #expect(desk.text(photo) == "jpeg bytes")
     }
 
     @Test func replaceInstallsTheNewFileAndRetiresTheOriginal() throws {

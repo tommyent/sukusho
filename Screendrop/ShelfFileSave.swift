@@ -21,15 +21,17 @@ nonisolated enum ShelfFileSave {
         case failed(String)
     }
 
-    /// Writes `result` beside `original` ("name optimized.png", or "name.webp" for another format), or with
-    /// `replacing` in its place. `identity` is the contents the result was made from
-    /// (`ImageOptimizationResult.source`): the original must still hold exactly those. `retire` takes the
-    /// original out of the way and says where it went, so it can be put back: the Trash, outside tests.
+    /// Writes `result` beside `original` ("name optimized.png", or "name.webp" for another format), in
+    /// `destinationFolder` when one was chosen, or with `replacing` in `original`'s place. `identity` is
+    /// the contents the result was made from (`ImageOptimizationResult.source`): the original must still
+    /// hold exactly those. `retire` takes the original out of the way and says where it went, so it can be
+    /// put back: the Trash, outside tests.
     static func save(_ result: URL, of original: URL, identity: FileIdentity?, replacing: Bool,
+                     in destinationFolder: URL? = nil,
                      retire: (URL) throws -> URL = moveToTrash) -> Outcome {
         guard let identity, identity == FileIdentity(original) else { return .changed }
         let files = FileManager.default
-        let folder = original.deletingLastPathComponent()
+        let folder = replacing ? original.deletingLastPathComponent() : (destinationFolder ?? original.deletingLastPathComponent())
         let base = original.deletingPathExtension().lastPathComponent
         let sameFormat = result.pathExtension.lowercased() == original.pathExtension.lowercased()
 
