@@ -29,10 +29,12 @@ extension AnnotationEditorModel {
     /// Leaving crop mode: shows the current image at `imageRect` under the
     /// layout without the crop handle margin, then asks the canvas to animate
     /// to the fit. A crop thereby grows out of the box it was cut from.
+    /// Projected 3D canvases direct-fit instead of flashing at the flat box.
     func revealCanvasLeavingCrop(imageAt imageRect: CGRect?) {
         let background = AnnotationBackgroundLayout.make(contentSize: canvasContentSize, settings: backgroundSettings)
         let screenshotRect = canvasExpansion.imageFrame(in: background.imageRect, imageSize: imageSize)
-        guard let imageRect, var layout = canvasViewport.layout,
+        guard !backgroundSettings.camera.hasEffect,
+              let imageRect, var layout = canvasViewport.layout,
               screenshotRect.width > 0 else {
             resetZoom()
             return
