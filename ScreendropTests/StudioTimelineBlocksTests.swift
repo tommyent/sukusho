@@ -241,18 +241,76 @@ struct StudioTimelineBlocksTests {
         let tinyGap: ClosedRange<TimeInterval> = 14...14.3
         #expect(studioDraftRange(anchor: 14.1, pointer: 14.2, gap: tinyGap, minimumLength: minimum) == nil)
 
-        // 4. A hidden cue in the cut-out 10..15 source stretch never causes overlap on commit.
-        let hiddenOccupied: [ClosedRange<TimeInterval>] = [10...15, 19...23]
-        let trimmed = try #require(studioDrawnSourceSpan(
-            for: 9.0...11.0,
+        // 4. A hidden cue in the cut-out 10..15 source stretch acts as an editor-time barrier at
+        // the cut (10.0), so both the draft and the committed block stop at 10.0 and land identically.
+        let hiddenCue = ZoomCue(start: 10, end: 15)
+        let visibleCue = ZoomCue(id: existingID, start: 19, end: 23)
+        let allCues = [hiddenCue, visibleCue]
+        let occupiedSpans = studioOccupiedLaneSpans(cues: allCues, clipTimeline: clipTimeline)
+        let hiddenOccupied = allCues.map { $0.start...$0.end }
+
+        // Forward draw from 9.0 across the cut toward 11.0 stops at 10.0 and commits to exact 9..10.
+        let beforeCutGap = try #require(studioGap(around: 9.0, toward: 11.0, spans: occupiedSpans, duration: clipTimeline.duration))
+        #expect(beforeCutGap == 0...10)
+        let beforeCutDraft = try #require(studioDraftRange(anchor: 9.0, pointer: 11.0, gap: beforeCutGap, minimumLength: minimum))
+        #expect(abs(beforeCutDraft.lowerBound - 9.0) < 0.0001)
+        #expect(abs(beforeCutDraft.upperBound - 10.0) < 0.0001)
+
+        let beforeCutSource = try #require(studioDrawnSourceSpan(
+            for: beforeCutDraft,
             clipTimeline: clipTimeline,
             sourceDuration: sourceDuration,
             among: hiddenOccupied,
             minimum: minimum
         ))
-        // Trimmed to the source range before the cut-out cue (9...10), still >= minimum.
-        #expect(abs(trimmed.lowerBound - 9.0) < 0.0001)
-        #expect(abs(trimmed.upperBound - 10.0) < 0.0001)
+        #expect(abs(beforeCutSource.lowerBound - 9.0) < 0.0001)
+        #expect(abs(beforeCutSource.upperBound - 10.0) < 0.0001)
+        let beforeCutSlices = clipTimeline.slices(overlapping: beforeCutSource.lowerBound, sourceEnd: beforeCutSource.upperBound)
+        #expect(abs((try #require(beforeCutSlices.first).editorStart) - beforeCutDraft.lowerBound) < 0.0001)
+        #expect(abs((try #require(beforeCutSlices.last).editorEnd) - beforeCutDraft.upperBound) < 0.0001)
+
+        // Backward draw from 11.0 across the cut toward 9.0 stops at 10.0 and commits to exact 10..11 (source 15..17).
+        let afterCutGap = try #require(studioGap(around: 11.0, toward: 9.0, spans: occupiedSpans, duration: clipTimeline.duration))
+        #expect(afterCutGap == 10...12)
+        let afterCutDraft = try #require(studioDraftRange(anchor: 11.0, pointer: 9.0, gap: afterCutGap, minimumLength: minimum))
+        #expect(abs(afterCutDraft.lowerBound - 10.0) < 0.0001)
+        #expect(abs(afterCutDraft.upperBound - 11.0) < 0.0001)
+        let afterCutSource = try #require(studioDrawnSourceSpan(
+            for: afterCutDraft,
+            clipTimeline: clipTimeline,
+            sourceDuration: sourceDuration,
+            among: hiddenOccupied,
+            minimum: minimum
+        ))
+        #expect(abs(afterCutSource.lowerBound - 15.0) < 0.0001)
+        #expect(abs(afterCutSource.upperBound - 17.0) < 0.0001)
+        let afterCutSlices = clipTimeline.slices(overlapping: afterCutSource.lowerBound, sourceEnd: afterCutSource.upperBound)
+        #expect(abs((try #require(afterCutSlices.first).editorStart) - afterCutDraft.lowerBound) < 0.0001)
+        #expect(abs((try #require(afterCutSlices.last).editorEnd) - afterCutDraft.upperBound) < 0.0001)
+
+        // Moving a 2 s cue from editor 2..4 to 8..10 against the hidden zoom at cut 10.0 maps the
+        // trailing edge to clip 1's end (10.0), not clip 2's start (15.0), so it parks cleanly at 8..10.
+        let movingCue = ZoomCue(start: 2, end: 4)
+        let moveSpans = studioOccupiedLaneSpans(cues: [movingCue, hiddenCue, visibleCue], clipTimeline: clipTimeline)
+        let moveDelta = StudioLaneOverlap.forbidden(spans: moveSpans).clampedDelta(
+            10,
+            blockID: movingCue.id,
+            editorStart: 2,
+            editorEnd: 4,
+            kind: .move,
+            duration: clipTimeline.duration
+        )
+        #expect(abs(moveDelta - 6.0) < 0.0001)
+        let movedAtCut = studioMovedSourceRange(
+            clipTimeline: clipTimeline,
+            editorStart: 2 + moveDelta,
+            editorLength: 2
+        )
+        #expect(abs(movedAtCut.start - 8.0) < 0.0001)
+        #expect(abs(movedAtCut.end - 10.0) < 0.0001)
+        let movedAtCutSlices = clipTimeline.slices(overlapping: movedAtCut.start, sourceEnd: movedAtCut.end)
+        #expect(abs((try #require(movedAtCutSlices.first).editorStart) - 8.0) < 0.0001)
+        #expect(abs((try #require(movedAtCutSlices.last).editorEnd) - 10.0) < 0.0001)
     }
 
     // MARK: - Clip strip tidy-ups

@@ -2059,6 +2059,12 @@ final class RecordingStudioModel {
         recordedPressTimes.compactMap { clipTimeline.editorTime(forSourceTime: $0) }
     }
 
+    /// All occupied zoom spans in editor time, including cues hidden inside a
+    /// cut as zero-width barriers at the cut's editor time.
+    var zoomOverlapSpans: [StudioLaneSpan] {
+        studioOccupiedLaneSpans(cues: zoomCues, clipTimeline: clipTimeline)
+    }
+
     /// One visual block per cue on the edited timeline. A cue's per-segment
     /// slices are always contiguous in editor time (a cut removes the editor
     /// time between them), so they merge into a single block - cutting a clip

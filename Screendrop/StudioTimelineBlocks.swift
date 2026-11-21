@@ -290,21 +290,91 @@ func studioDraftRange(
 /// The empty stretch of track around `time`: from the end of the last block
 /// before it to the start of the first block after it, or the timeline's
 /// ends. Nil when `time` is inside a block.
+///
+/// Zero-width spans represent occupied deleted ranges sitting at an editor-time
+/// cut. When `time` lands right on a cut, `toward` decides which side of the
+/// cut the drag is entering.
 func studioGap(
     around time: TimeInterval,
+    toward: TimeInterval? = nil,
     spans: [StudioLaneSpan],
     duration: TimeInterval
 ) -> ClosedRange<TimeInterval>? {
     guard !spans.contains(where: { $0.editorStart < time && time < $0.editorEnd }) else { return nil }
-    let floor = spans.map(\.editorEnd).filter { $0 <= time }.max() ?? 0
-    let ceiling = spans.map(\.editorStart).filter { $0 >= time }.min() ?? duration
+    let floor = spans.compactMap { span -> TimeInterval? in
+        if span.editorStart == span.editorEnd, span.editorStart == time {
+            return (toward ?? time) >= time ? span.editorEnd : nil
+        }
+        return span.editorEnd <= time ? span.editorEnd : nil
+    }.max() ?? 0
+    let ceiling = spans.compactMap { span -> TimeInterval? in
+        if span.editorStart == span.editorEnd, span.editorStart == time {
+            return (toward ?? time) < time ? span.editorStart : nil
+        }
+        return span.editorStart >= time ? span.editorStart : nil
+    }.min() ?? duration
     return floor...max(floor, ceiling)
 }
 
+/// Source time at the start of an editor-time range: at a cut, lands on the
+/// clip after the cut so a block beginning there sits in that clip.
+func studioSourceStart(
+    atEditorTime editorTime: TimeInterval,
+    in clipTimeline: RecordingClipTimeline
+) -> TimeInterval {
+    clipTimeline.sourceTime(at: editorTime)
+}
+
+/// Source time at the end of an editor-time range: at a cut, lands on the clip
+/// before the cut so a block ending there does not swallow the deleted source
+/// span.
+func studioSourceEnd(
+    atEditorTime editorTime: TimeInterval,
+    in clipTimeline: RecordingClipTimeline
+) -> TimeInterval {
+    guard !clipTimeline.segments.isEmpty, clipTimeline.duration > 0 else { return 0 }
+    let clamped = min(max(editorTime, 0), clipTimeline.duration)
+    var editorStart: TimeInterval = 0
+    for (index, segment) in clipTimeline.segments.enumerated() {
+        let editorEnd = editorStart + segment.editorDuration
+        if clamped <= editorEnd + 0.000_000_1
+            || index == clipTimeline.segments.index(before: clipTimeline.segments.endIndex) {
+            let offset = min(max(clamped - editorStart, 0), segment.editorDuration)
+            let sourceOffset = min(offset * segment.speed, segment.duration)
+            return segment.sourceStart + sourceOffset
+        }
+        editorStart = editorEnd
+    }
+    return clipTimeline.segments.last?.sourceEnd ?? 0
+}
+
+/// Editor-time spans for every zoom cue, including cues hidden inside a cut as
+/// zero-width barriers at their cut's editor time so drafts and drags stop
+/// cleanly at the cut instead of colliding in source time on commit.
+func studioOccupiedLaneSpans(
+    cues: [ZoomCue],
+    clipTimeline: RecordingClipTimeline
+) -> [StudioLaneSpan] {
+    cues.compactMap { cue -> StudioLaneSpan? in
+        guard cue.end > cue.start else { return nil }
+        let slices = clipTimeline.slices(overlapping: cue.start, sourceEnd: cue.end)
+        if let first = slices.first, let last = slices.last {
+            return StudioLaneSpan(id: cue.id, editorStart: first.editorStart, editorEnd: last.editorEnd)
+        }
+        var cutTime: TimeInterval = 0
+        for segment in clipTimeline.segments {
+            if cue.end <= segment.sourceStart + 0.000_001 {
+                break
+            }
+            cutTime += segment.editorDuration
+        }
+        return StudioLaneSpan(id: cue.id, editorStart: cutTime, editorEnd: cutTime)
+    }
+}
+
 /// The recording under a range drawn on a track whose blocks can't overlap.
-/// The track has fitted the range between the blocks it draws, so this only
-/// trims away what it couldn't see: a cue cut out of the edit draws nothing,
-/// and the round trip through editor time can land a hair inside a neighbour.
+/// The track has fitted the range between the blocks (and cut barriers) it
+/// knows about, so this only trims away any rounding hair against a neighbour.
 /// Nil when that leaves less than `minimum`, which the track already measured,
 /// in editor time.
 func studioDrawnSourceSpan(
@@ -314,8 +384,8 @@ func studioDrawnSourceSpan(
     among occupied: [ClosedRange<TimeInterval>],
     minimum: TimeInterval
 ) -> ClosedRange<TimeInterval>? {
-    var lower = min(max(0, clipTimeline.sourceTime(at: range.lowerBound)), sourceDuration)
-    let end = min(max(lower, clipTimeline.sourceTime(at: range.upperBound)), sourceDuration)
+    var lower = min(max(0, studioSourceStart(atEditorTime: range.lowerBound, in: clipTimeline)), sourceDuration)
+    let end = min(max(lower, studioSourceEnd(atEditorTime: range.upperBound, in: clipTimeline)), sourceDuration)
     while let covering = occupied.first(where: { $0.lowerBound <= lower && lower < $0.upperBound }) {
         lower = covering.upperBound
     }
@@ -719,7 +789,7 @@ where Item.ID == UUID {
         guard case .create(_, let minimumLength, _) = empty else { return nil }
         let gap: ClosedRange<TimeInterval>? = switch overlap {
         case .allowed: 0...scale.duration
-        case .forbidden(let spans): studioGap(around: start, spans: spans, duration: scale.duration)
+        case .forbidden(let spans): studioGap(around: start, toward: current, spans: spans, duration: scale.duration)
         }
         guard let gap else { return nil }
         return studioDraftRange(anchor: start, pointer: current, gap: gap, minimumLength: minimumLength)
@@ -768,10 +838,10 @@ func studioMovedSourceRange(
     editorLength: TimeInterval
 ) -> (start: TimeInterval, end: TimeInterval) {
     let start = min(max(0, editorStart), max(0, clipTimeline.duration - editorLength))
-    return (
-        clipTimeline.sourceTime(at: start),
-        clipTimeline.sourceTime(at: start + editorLength)
-    )
+    let sourceStart = studioSourceStart(atEditorTime: start, in: clipTimeline)
+    guard editorLength > 0 else { return (sourceStart, sourceStart) }
+    let sourceEnd = max(sourceStart, studioSourceEnd(atEditorTime: start + editorLength, in: clipTimeline))
+    return (sourceStart, sourceEnd)
 }
 
 // MARK: - Drawing

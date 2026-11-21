@@ -3160,9 +3160,7 @@ private struct StudioZoomLane: View {
             selectedID: model.selectedCueID,
             scale: scale,
             height: StudioTimelineMetrics.zoomLaneHeight,
-            overlap: .forbidden(spans: blocks.map {
-                StudioLaneSpan(id: $0.id, editorStart: $0.editorStart, editorEnd: $0.editorEnd)
-            }),
+            overlap: .forbidden(spans: model.zoomOverlapSpans),
             empty: .create(tint: Palette.highlight, minimumLength: ZoomCue.minimumDuration) { range in
                 model.addZoomCue(overEditorRange: range)
             },
@@ -3247,11 +3245,11 @@ private struct StudioZoomLane: View {
             cue.end = range.end
             model.moveZoomCue(cue)
         case .trimLeading:
-            let source = model.sourceTime(atEditorTime: base.editorStart + edit.delta)
+            let source = studioSourceStart(atEditorTime: base.editorStart + edit.delta, in: model.clipTimeline)
             cue.start = min(max(0, source), base.item.end - ZoomCue.minimumDuration)
             model.updateZoomCue(cue)
         case .trimTrailing:
-            let source = model.sourceTime(atEditorTime: base.editorEnd + edit.delta)
+            let source = studioSourceEnd(atEditorTime: base.editorEnd + edit.delta, in: model.clipTimeline)
             cue.end = max(base.item.start + ZoomCue.minimumDuration, min(model.sourceDuration, source))
             model.updateZoomCue(cue)
         }

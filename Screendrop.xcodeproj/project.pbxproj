@@ -194,6 +194,8 @@
 		C11D00000000000000000001 /* Screendrop/ClipboardLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = C11D00000000000000000002 /* Screendrop/ClipboardLauncher.swift */; };
 		ED2D00000000000000000001 /* Screendrop/StudioTimelineBlocks.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED2D00000000000000000002 /* Screendrop/StudioTimelineBlocks.swift */; };
 		ED2D00000000000000000003 /* Screendrop/DesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED2D00000000000000000004 /* Screendrop/DesignSystem.swift */; };
+		ED2D00000000000000000005 /* Screendrop/RecordingViewportTimeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED2D00000000000000000006 /* Screendrop/RecordingViewportTimeline.swift */; };
+		ED2D00000000000000000007 /* Screendrop/RecordingMotionSpring.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED2D00000000000000000008 /* Screendrop/RecordingMotionSpring.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -412,6 +414,8 @@
 		C11D00000000000000000002 /* Screendrop/ClipboardLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/ClipboardLauncher.swift; sourceTree = SOURCE_ROOT; };
 		ED2D00000000000000000002 /* Screendrop/StudioTimelineBlocks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/StudioTimelineBlocks.swift; sourceTree = SOURCE_ROOT; };
 		ED2D00000000000000000004 /* Screendrop/DesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/DesignSystem.swift; sourceTree = SOURCE_ROOT; };
+		ED2D00000000000000000006 /* Screendrop/RecordingViewportTimeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingViewportTimeline.swift; sourceTree = SOURCE_ROOT; };
+		ED2D00000000000000000008 /* Screendrop/RecordingMotionSpring.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingMotionSpring.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -674,6 +678,8 @@
 				C11D00000000000000000002 /* Screendrop/ClipboardLauncher.swift */,
 				ED2D00000000000000000002 /* Screendrop/StudioTimelineBlocks.swift */,
 				ED2D00000000000000000004 /* Screendrop/DesignSystem.swift */,
+				ED2D00000000000000000006 /* Screendrop/RecordingViewportTimeline.swift */,
+				ED2D00000000000000000008 /* Screendrop/RecordingMotionSpring.swift */,
 			);
 			name = "Tested logic";
 			sourceTree = "<group>";
@@ -988,6 +994,8 @@
 				C11D00000000000000000001 /* Screendrop/ClipboardLauncher.swift in Sources */,
 				ED2D00000000000000000001 /* Screendrop/StudioTimelineBlocks.swift in Sources */,
 				ED2D00000000000000000003 /* Screendrop/DesignSystem.swift in Sources */,
+				ED2D00000000000000000005 /* Screendrop/RecordingViewportTimeline.swift in Sources */,
+				ED2D00000000000000000007 /* Screendrop/RecordingMotionSpring.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
