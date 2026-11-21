@@ -36,8 +36,15 @@ private enum StudioTranscriptTab: CaseIterable, Identifiable {
     }
 }
 
+/// Which page the Studio inspector is showing. Clicking a block on the
+/// timeline or canvas swaps to that block's page; going back returns to
+/// `.main`.
 private enum StudioInspectorContent: Hashable {
     case main
+    case zoom(UUID)
+    case text(UUID)
+    case image(UUID)
+    case redaction(UUID)
     case audio(UUID)
 }
 
@@ -60,6 +67,10 @@ struct StudioInspector: View {
     @FloatingGlassChrome private var floatingChrome
 
     private var inspectorContent: StudioInspectorContent {
+        if let text = model.selectedText { return .text(text.id) }
+        if let image = model.selectedImage { return .image(image.id) }
+        if let redaction = model.selectedRedaction { return .redaction(redaction.id) }
+        if let cue = model.selectedCue { return .zoom(cue.id) }
         if let clip = model.selectedAudioClip { return .audio(clip.id) }
         return .main
     }
@@ -69,6 +80,22 @@ struct StudioInspector: View {
             ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 0) {
                 switch inspectorContent {
+                case .text:
+                    if let text = model.selectedText {
+                        selectedTextPage(for: text)
+                    }
+                case .image:
+                    if let image = model.selectedImage {
+                        selectedImagePage(for: image)
+                    }
+                case .redaction:
+                    if let redaction = model.selectedRedaction {
+                        selectedRedactionPage(for: redaction)
+                    }
+                case .zoom:
+                    if let selected = model.selectedCue {
+                        selectedZoomPage(for: selected)
+                    }
                 case .audio:
                     if let clip = model.selectedAudioClip {
                         selectedAudioPage(for: clip)
@@ -166,38 +193,11 @@ struct StudioInspector: View {
         }
     }
 
-    // MARK: Main inspector & audio clip page
+    // MARK: Main inspector & per-block pages
 
     @ViewBuilder
     private var mainInspectorSections: some View {
-        // Timeline selections edit at the top, where attention lands
-        // after clicking a zoom or clip, instead of pushing the
-        // sections below around mid-panel.
-        if let selected = model.selectedCue {
-            InspectorSection(
-                title: "Selected Zoom",
-                accessory: {
-                    InspectorToggle(
-                        "Use this zoom",
-                        isOn: Binding(
-                            get: { selected.isEnabled },
-                            set: { isEnabled in
-                                var updated = selected
-                                updated.isEnabled = isEnabled
-                                model.updateZoomCue(updated)
-                            }
-                        )
-                    )
-                }
-            ) {
-                if model.zoomEnabled {
-                    selectedZoomControls(for: selected)
-                } else {
-                    InspectorHint("Zooms are off. Turn on Zoom & Clicks to change this one.")
-                }
-            }
-            InspectorSectionDivider()
-        } else if let selectedClip = model.selectedClip {
+        if let selectedClip = model.selectedClip {
             InspectorSection("Selected Clip") {
                 selectedClipControls(for: selectedClip)
             }
@@ -336,65 +336,196 @@ struct StudioInspector: View {
 
     private func selectedAudioPage(for clip: RecordingAudioClip) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
+            pageHeader(
+                clip.displayName,
+                systemImage: clip.source == .file ? "music.note" : "waveform",
+                onBack: { model.selectedAudioClipID = nil }
+            ) {
                 HStack(spacing: 6) {
-                    Button {
-                        model.selectedAudioClipID = nil
-                    } label: {
-                        HStack(spacing: 3) {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 10.5, weight: .semibold))
-                            Text("Inspector")
-                                .font(.inspectorLabel)
-                        }
-                        .foregroundStyle(Palette.secondaryLabel)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help("Back to Inspector")
-
-                    Spacer(minLength: 0)
-
                     if model.selectedAudioClipIDs.count > 1 {
                         Text("\(model.selectedAudioClipIDs.count) selected")
                             .font(.inspectorLabel.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
-
-                    Button {
-                        model.removeAudioClip(id: clip.id)
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.system(size: 11.5, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 22, height: 22)
-                            .contentShape(Rectangle())
+                    InspectorIconButton(systemName: "trash", help: "Remove Audio") {
+                        withAnimation(.morphIfAllowed) { model.removeAudioClip(id: clip.id) }
                     }
-                    .buttonStyle(.plain)
-                    .help("Remove Audio")
-                    .accessibilityLabel("Remove Audio")
-                }
-
-                HStack(spacing: 6) {
-                    Image(systemName: clip.source == .file ? "music.note" : "waveform")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Color(nsColor: .systemIndigo))
-                    Text(clip.displayName)
-                        .font(.inspectorSectionHeader)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
                 }
             }
-            .padding(.horizontal, InspectorMetrics.horizontalPadding)
-            .padding(.top, 10)
-            .padding(.bottom, 10)
 
-            InspectorSectionDivider()
-
-            StudioAudioClipInspectorControls(model: model, clip: clip)
-                .padding(.horizontal, InspectorMetrics.horizontalPadding)
-                .padding(.vertical, 12)
+            pageBody {
+                StudioAudioClipInspectorControls(model: model, clip: clip)
+            }
         }
+    }
+
+    private func selectedTextPage(for text: RecordingTextOverlay) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            pageHeader(
+                "Text",
+                systemImage: "textformat",
+                onBack: { model.selectedTextID = nil }
+            ) {
+                InspectorIconButton(systemName: "trash", help: "Remove Text") {
+                    withAnimation(.morphIfAllowed) { model.removeText(id: text.id) }
+                }
+            }
+
+            pageBody {
+                StudioTextInspectorControls(model: model, text: text)
+            }
+        }
+    }
+
+    private func selectedImagePage(for image: RecordingImageOverlay) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            pageHeader(
+                image.isAnimated ? "GIF" : "Image",
+                systemImage: image.isAnimated ? "photo.stack" : "photo",
+                onBack: { model.selectedImageID = nil }
+            ) {
+                InspectorIconButton(systemName: "trash", help: "Remove Image") {
+                    withAnimation(.morphIfAllowed) { model.removeImage(id: image.id) }
+                }
+            }
+
+            pageBody {
+                StudioImageInspectorControls(model: model, image: image)
+            }
+        }
+    }
+
+    private func selectedRedactionPage(for redaction: RecordingRedaction) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            pageHeader(
+                redaction.mode.title,
+                systemImage: redaction.mode.systemImage,
+                onBack: { model.selectedRedactionID = nil }
+            ) {
+                InspectorIconButton(systemName: "trash", help: "Remove \(redaction.mode.title)") {
+                    withAnimation(.morphIfAllowed) { model.removeRedaction(id: redaction.id) }
+                }
+            }
+
+            pageBody {
+                StudioRedactionInspectorControls(model: model, redaction: redaction)
+            }
+        }
+    }
+
+    private func selectedZoomPage(for selected: ZoomCue) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            pageHeader(
+                "Zoom",
+                systemImage: selected.anchorMode == .pinnedAnchor ? "scope" : "viewfinder",
+                isOn: Binding(
+                    get: { selected.isEnabled },
+                    set: { isEnabled in
+                        var updated = selected
+                        updated.isEnabled = isEnabled
+                        model.updateZoomCue(updated)
+                    }
+                ),
+                toggleTitle: "Use this zoom",
+                onBack: { model.selectedCueID = nil }
+            ) {
+                InspectorIconButton(systemName: "trash", help: "Remove Zoom") {
+                    withAnimation(.morphIfAllowed) { model.removeZoomCue(id: selected.id) }
+                }
+            }
+
+            if !model.zoomEnabled {
+                pageBody {
+                    HStack(spacing: InspectorMetrics.rowSpacing) {
+                        InspectorHint("Zooms are off for this recording.")
+                        Spacer(minLength: 0)
+                        Button("Turn On") {
+                            withAnimation(.morphIfAllowed) { model.zoomEnabled = true }
+                        }
+                        .buttonStyle(.plain)
+                        .font(.inspectorValue)
+                        .foregroundStyle(Palette.label)
+                    }
+                }
+            } else {
+                pageBody(isActive: selected.isEnabled) {
+                    selectedZoomControls(for: selected)
+                }
+            }
+        }
+    }
+
+    private func pageHeader<Accessory: View>(
+        _ title: String,
+        systemImage: String,
+        backTitle: String = "Inspector",
+        isOn: Binding<Bool>? = nil,
+        toggleTitle: String = "",
+        onBack: @escaping () -> Void,
+        @ViewBuilder accessory: () -> Accessory = { EmptyView() }
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                Button(action: onBack) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text(backTitle)
+                            .font(.inspectorValue)
+                    }
+                    .foregroundStyle(Palette.secondaryLabel)
+                    .frame(height: 24)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Back to \(backTitle)")
+                .keyboardShortcut(model.isEditingSourceRegion ? nil : .cancelAction)
+
+                Spacer(minLength: 0)
+
+                accessory()
+            }
+
+            HStack(spacing: 8) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Palette.label)
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Palette.label)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 0)
+                if let isOn {
+                    InspectorToggle(
+                        toggleTitle.isEmpty ? title : toggleTitle,
+                        isOn: Binding(
+                            get: { isOn.wrappedValue },
+                            set: { value in
+                                withAnimation(.foldIfAllowed) { isOn.wrappedValue = value }
+                            }
+                        ),
+                        size: .regular
+                    )
+                }
+            }
+        }
+        .padding(.horizontal, InspectorMetrics.horizontalPadding)
+        .padding(.top, 10)
+        .padding(.bottom, 4)
+    }
+
+    private func pageBody<Content: View>(
+        isActive: Bool = true,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
+            content()
+        }
+        .padding(.horizontal, InspectorMetrics.horizontalPadding)
+        .padding(.vertical, InspectorMetrics.sectionVerticalPadding / 2 + 3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .opacity(isActive ? 1 : 0.45)
     }
 
     // MARK: Background

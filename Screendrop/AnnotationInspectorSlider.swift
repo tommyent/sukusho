@@ -418,6 +418,23 @@ struct InspectorSlider: View {
     }
 }
 
+/// A scrub field alone on its row. Fields are always half the panel wide,
+/// so one without a partner sits in the left column of the grid rather
+/// than stretching across it.
+struct InspectorHalfField<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        InspectorFieldPair {
+            content()
+        } trailing: {
+            Color.clear
+                .frame(height: 1)
+                .accessibilityHidden(true)
+        }
+    }
+}
+
 /// Lays two related fields side by side at equal widths, the way Sketch pairs
 /// X/Y and W/H.
 struct InspectorFieldPair<Leading: View, Trailing: View>: View {

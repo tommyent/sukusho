@@ -59,6 +59,38 @@ private func glassForeground(isInked: Bool, tint: Color?, isEnabled: Bool) -> Co
 
 // MARK: - Buttons
 
+/// A round glass icon button. `isOn` inks it solid, for the selected tool in
+/// a dock. Disabled buttons keep their glass but drop the interactive press
+/// response and dim their glyph.
+struct GlassIconButton: View {
+    let systemImage: String
+    let help: String
+    var size: CGFloat = GlassMetrics.buttonSize
+    var symbolSize: CGFloat = GlassMetrics.symbolSize
+    var isOn = false
+    /// A functional color such as `Palette.record`; wins over `isOn`.
+    var tint: Color? = nil
+    let action: () -> Void
+
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: symbolSize, weight: .semibold))
+                .foregroundStyle(glassForeground(isInked: isOn, tint: tint, isEnabled: isEnabled))
+                .contentTransition(.symbolEffect(.replace.downUp))
+                .frame(width: size, height: size)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.screendrop(isInked: isOn, tint: tint, isEnabled: isEnabled), in: .circle)
+        .help(help)
+        .accessibilityLabel(help)
+        .accessibilityAddTraits(isOn ? .isSelected : [])
+    }
+}
+
 /// A glass capsule holding an optional icon and a title. `isProminent` inks
 /// it solid for the one primary action of a surface.
 struct GlassCapsuleButton: View {

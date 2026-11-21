@@ -1296,11 +1296,12 @@ func studioPlaceUpdatedZoomCue(
 
 // MARK: - Drawing
 
-/// How a block is painted: the bright tint with white marks on it, as in
-/// Edits and CapCut. Selection doesn't change the body; a rim goes around it.
+/// How a block is painted: tinted softly at rest with matching label ink so
+/// a busy multi-track timeline stays calm, and filled solid with `onTint`
+/// marks when selected.
 struct StudioBlockStyle {
     let tint: NSColor
-    /// Marks on the body.
+    /// Marks on the solid, selected fill.
     var onTint: Color = .white
 
     static let zoom = StudioBlockStyle(tint: .controlAccentColor)
@@ -1310,7 +1311,34 @@ struct StudioBlockStyle {
     static let effect = StudioBlockStyle(tint: .systemGray)
     static let audio = StudioBlockStyle(tint: .systemIndigo)
 
-    /// The tint, lifted a touch toward white in light mode; the pointer
+    /// Tinted at rest, deepened slightly on hover, filled solid when selected.
+    func fill(isSelected: Bool, isHovering: Bool) -> Color {
+        if isSelected {
+            return fill(isHovering: isHovering)
+        }
+        return Color(nsColor: tint).opacity(isHovering ? 0.32 : 0.22)
+    }
+
+    func label(isSelected: Bool) -> Color {
+        isSelected ? onTint : restingLabel
+    }
+
+    /// The tint, deepened on light backgrounds and lifted on dark ones, so
+    /// resting labels read cleanly over their soft tint fill.
+    private var restingLabel: Color {
+        let tint = tint
+        return Color(nsColor: NSColor(name: nil) { appearance in
+            var resolved = tint
+            appearance.performAsCurrentDrawingAppearance {
+                resolved = tint.usingColorSpace(.sRGB) ?? tint
+            }
+            return appearance.isDarkAppearance
+                ? resolved.blended(withFraction: 0.2, of: .white) ?? resolved
+                : resolved.blended(withFraction: 0.4, of: .black) ?? resolved
+        })
+    }
+
+    /// The solid tint, lifted a touch toward white in light mode; the pointer
     /// lifts it a little more.
     func fill(isHovering: Bool) -> Color {
         let tint = tint

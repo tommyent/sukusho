@@ -25,15 +25,21 @@ struct RecordingRedactionControls: View {
             }
             ForEach(model.redactions) { region in
                 Button {
-                    model.selectedRedactionID = region.id
+                    model.selectRedaction(id: region.id)
                     if let time = model.editorTime(forSourceTime: region.start) { model.seek(to: time) }
                 } label: {
                     HStack {
+                        Image(systemName: region.mode.systemImage)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
                         Text(region.mode.title)
                         Spacer()
                         Text("\(region.start, format: .number.precision(.fractionLength(2)))–\(region.end, format: .number.precision(.fractionLength(2))) s")
                             .monospacedDigit()
-                        if region.id == model.selectedRedactionID { Image(systemName: "checkmark") }
+                            .foregroundStyle(.secondary)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(.tertiary)
                     }
                 }
                 .buttonStyle(.plain)

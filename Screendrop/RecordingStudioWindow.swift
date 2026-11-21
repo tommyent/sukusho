@@ -860,6 +860,21 @@ private struct StudioCanvasComposition: View {
                     StudioCameraBubble(model: model, layout: layout)
                 }
 
+                // Images, then text, sit on the canvas above the camera and
+                // under the subtitles, matching the exporter's draw order.
+                if !isEditingVideoCrop {
+                    let texts = model.texts(atEditorTime: model.displayTime)
+                    let images = overlayImages
+                    if !texts.isEmpty || !images.isEmpty {
+                        StudioCanvasOverlayLayer(
+                            images: images,
+                            texts: texts,
+                            sourceTime: model.sourceTime(atEditorTime: model.displayTime),
+                            canvasSize: canvasSize
+                        )
+                    }
+                }
+
                 if let subtitle = model.subtitleText(at: model.displayTime) {
                     StudioSubtitleBarView(
                         text: subtitle,
@@ -877,10 +892,43 @@ private struct StudioCanvasComposition: View {
                         canvasSize: canvasSize
                     )
                 }
+
+                // Redactions, images, and texts can be picked and arranged
+                // while paused; while playing, clicking the picture still pauses.
+                if !isEditingVideoCrop, !model.isPlaying, zoomTarget == nil {
+                    let regions = model.redactions(atEditorTime: model.displayTime)
+                    if !regions.isEmpty {
+                        StudioRedactionEditingLayer(
+                            model: model,
+                            redactions: regions,
+                            pictureRect: layout.frameRect(for: state),
+                            canvasSize: canvasSize
+                        )
+                    }
+                    let images = model.images(atEditorTime: model.displayTime)
+                    if !images.isEmpty {
+                        StudioImageEditingLayer(model: model, images: images, canvasSize: canvasSize)
+                    }
+                    let texts = model.texts(atEditorTime: model.displayTime)
+                    if !texts.isEmpty {
+                        StudioTextEditingLayer(model: model, texts: texts, canvasSize: canvasSize)
+                    }
+                }
             }
             .frame(width: canvasSize.width, height: canvasSize.height)
         }
         .frame(width: canvasSize.width, height: canvasSize.height)
+    }
+
+    /// Active images whose decoded frames are already in memory. Reading
+    /// `overlayImageRevision` ensures newly decoded images redraw right away.
+    private var overlayImages: [(overlay: RecordingImageOverlay, image: RecordingOverlayImage)] {
+        _ = model.overlayImageRevision
+        return model.images(atEditorTime: model.displayTime).compactMap { overlay in
+            guard let url = model.overlayImageURL(for: overlay),
+                  let image = model.overlayImages.cachedImage(at: url) else { return nil }
+            return (overlay, image)
+        }
     }
 
     /// The selected zoom, shown as a target on the paused canvas.
