@@ -29,6 +29,13 @@
 		AFB600000000000000000005 /* Screendrop/RecordingMusicAnalysis.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFB600000000000000000006 /* Screendrop/RecordingMusicAnalysis.swift */; };
 		AFB600000000000000000003 /* Screendrop/RecordingMusicEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFB600000000000000000004 /* Screendrop/RecordingMusicEnvelope.swift */; };
 		AFB600000000000000000001 /* Screendrop/RecordingBackgroundMusic.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFB600000000000000000002 /* Screendrop/RecordingBackgroundMusic.swift */; };
+		AF8A00000000000000000001 /* Screendrop/RecordingAudioClip.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF8A00000000000000000101 /* Screendrop/RecordingAudioClip.swift */; };
+		AF8A00000000000000000002 /* Screendrop/StudioAudioEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF8A00000000000000000102 /* Screendrop/StudioAudioEngine.swift */; };
+		AF8A00000000000000000003 /* Screendrop/StudioAudioComposer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF8A00000000000000000103 /* Screendrop/StudioAudioComposer.swift */; };
+		AF8A00000000000000000004 /* Screendrop/RecordingAudioGain.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF8A00000000000000000104 /* Screendrop/RecordingAudioGain.swift */; };
+		AF8A00000000000000000005 /* Screendrop/RecordingBackgroundMusicMixer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF8A00000000000000000105 /* Screendrop/RecordingBackgroundMusicMixer.swift */; };
+		AF8A00000000000000000006 /* Screendrop/RecordingAudioExport.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF8A00000000000000000106 /* Screendrop/RecordingAudioExport.swift */; };
+		AF8A00000000000000000007 /* Screendrop/VideoTrimSelection.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF8A00000000000000000107 /* Screendrop/VideoTrimSelection.swift */; };
 		AF1700000000000000000004 /* Screendrop/RecordingReplacementAudio.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1700000000000000000104 /* Screendrop/RecordingReplacementAudio.swift */; };
 		AF1700000000000000000003 /* Screendrop/RecordingCompositionBuilder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1700000000000000000103 /* Screendrop/RecordingCompositionBuilder.swift */; };
 		AF1700000000000000000002 /* Screendrop/RecordingVoiceIsolation.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF1700000000000000000102 /* Screendrop/RecordingVoiceIsolation.swift */; };
@@ -261,6 +268,13 @@
 		AFB600000000000000000006 /* Screendrop/RecordingMusicAnalysis.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingMusicAnalysis.swift; sourceTree = SOURCE_ROOT; };
 		AFB600000000000000000004 /* Screendrop/RecordingMusicEnvelope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingMusicEnvelope.swift; sourceTree = SOURCE_ROOT; };
 		AFB600000000000000000002 /* Screendrop/RecordingBackgroundMusic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingBackgroundMusic.swift; sourceTree = SOURCE_ROOT; };
+		AF8A00000000000000000101 /* Screendrop/RecordingAudioClip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingAudioClip.swift; sourceTree = SOURCE_ROOT; };
+		AF8A00000000000000000102 /* Screendrop/StudioAudioEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/StudioAudioEngine.swift; sourceTree = SOURCE_ROOT; };
+		AF8A00000000000000000103 /* Screendrop/StudioAudioComposer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/StudioAudioComposer.swift; sourceTree = SOURCE_ROOT; };
+		AF8A00000000000000000104 /* Screendrop/RecordingAudioGain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingAudioGain.swift; sourceTree = SOURCE_ROOT; };
+		AF8A00000000000000000105 /* Screendrop/RecordingBackgroundMusicMixer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingBackgroundMusicMixer.swift; sourceTree = SOURCE_ROOT; };
+		AF8A00000000000000000106 /* Screendrop/RecordingAudioExport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingAudioExport.swift; sourceTree = SOURCE_ROOT; };
+		AF8A00000000000000000107 /* Screendrop/VideoTrimSelection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/VideoTrimSelection.swift; sourceTree = SOURCE_ROOT; };
 		AF1700000000000000000104 /* Screendrop/RecordingReplacementAudio.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingReplacementAudio.swift; sourceTree = SOURCE_ROOT; };
 		AF1700000000000000000103 /* Screendrop/RecordingCompositionBuilder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingCompositionBuilder.swift; sourceTree = SOURCE_ROOT; };
 		AF1700000000000000000102 /* Screendrop/RecordingVoiceIsolation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingVoiceIsolation.swift; sourceTree = SOURCE_ROOT; };
@@ -524,6 +538,13 @@
 				AF3100000000000000000004 /* Screendrop/FreeToUseMusicPreview.swift */,
 				AF3100000000000000000002 /* Screendrop/FreeToUseMusicAPI.swift */,
 				AFB600000000000000000002 /* Screendrop/RecordingBackgroundMusic.swift */,
+				AF8A00000000000000000101 /* Screendrop/RecordingAudioClip.swift */,
+				AF8A00000000000000000102 /* Screendrop/StudioAudioEngine.swift */,
+				AF8A00000000000000000103 /* Screendrop/StudioAudioComposer.swift */,
+				AF8A00000000000000000104 /* Screendrop/RecordingAudioGain.swift */,
+				AF8A00000000000000000105 /* Screendrop/RecordingBackgroundMusicMixer.swift */,
+				AF8A00000000000000000106 /* Screendrop/RecordingAudioExport.swift */,
+				AF8A00000000000000000107 /* Screendrop/VideoTrimSelection.swift */,
 				AFB600000000000000000004 /* Screendrop/RecordingMusicEnvelope.swift */,
 				AFB600000000000000000006 /* Screendrop/RecordingMusicAnalysis.swift */,
 				AF1700000000000000000104 /* Screendrop/RecordingReplacementAudio.swift */,
@@ -833,6 +854,13 @@
 				AF3100000000000000000003 /* Screendrop/FreeToUseMusicPreview.swift in Sources */,
 				AF3100000000000000000001 /* Screendrop/FreeToUseMusicAPI.swift in Sources */,
 				AFB600000000000000000001 /* Screendrop/RecordingBackgroundMusic.swift in Sources */,
+				AF8A00000000000000000001 /* Screendrop/RecordingAudioClip.swift in Sources */,
+				AF8A00000000000000000002 /* Screendrop/StudioAudioEngine.swift in Sources */,
+				AF8A00000000000000000003 /* Screendrop/StudioAudioComposer.swift in Sources */,
+				AF8A00000000000000000004 /* Screendrop/RecordingAudioGain.swift in Sources */,
+				AF8A00000000000000000005 /* Screendrop/RecordingBackgroundMusicMixer.swift in Sources */,
+				AF8A00000000000000000006 /* Screendrop/RecordingAudioExport.swift in Sources */,
+				AF8A00000000000000000007 /* Screendrop/VideoTrimSelection.swift in Sources */,
 				AFB600000000000000000003 /* Screendrop/RecordingMusicEnvelope.swift in Sources */,
 				AFB600000000000000000005 /* Screendrop/RecordingMusicAnalysis.swift in Sources */,
 				AF1700000000000000000004 /* Screendrop/RecordingReplacementAudio.swift in Sources */,
