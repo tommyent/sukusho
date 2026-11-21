@@ -28,10 +28,11 @@ extension AnnotationEditorModel {
 
     var isCropDragging: Bool { cropDrag != nil }
 
-    private var minimumCropSize: CGSize {
-        CGSize(
-            width: min(Self.minimumCropPixels, imageSize.width),
-            height: min(Self.minimumCropPixels, imageSize.height)
+    private func minimumCropSize(for drag: CropDrag) -> CGSize {
+        CropGeometry.minimumSize(
+            preferred: Self.minimumCropPixels,
+            in: cropBounds,
+            startingFrom: drag.target == .newSelection ? nil : drag.startRect
         )
     }
 
@@ -121,7 +122,7 @@ extension AnnotationEditorModel {
             startPoint: point,
             startPointer: pointer,
             pointer: pointer,
-            hasTravelled: target != .newSelection
+            hasTravelled: false
         )
     }
 
@@ -129,7 +130,7 @@ extension AnnotationEditorModel {
         guard var drag = cropDrag else { return }
         drag.pointer = pointer
         if !drag.hasTravelled {
-            drag.hasTravelled = hypot(pointer.x - drag.startPointer.x, pointer.y - drag.startPointer.y) >= 3
+            drag.hasTravelled = drag.shouldActivate(at: pointer)
         }
         cropDrag = drag
         applyCropDrag()
@@ -179,7 +180,7 @@ extension AnnotationEditorModel {
             at: point,
             in: cropBounds,
             lockedAspect: cropAspect.pixelRatio(imageSize: imageSize),
-            minimumSize: minimumCropSize,
+            minimumSize: minimumCropSize(for: drag),
             holdsAspect: flags.contains(.shift),
             fromCenter: flags.contains(.option)
         )

@@ -261,6 +261,29 @@ nonisolated enum CropGeometry {
         return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
     }
 
+    /// Minimum selection size inside `bounds`: `preferred` capped at half each
+    /// image dimension (at least 1 px, or the bound if smaller), and never
+    /// larger than `start` when resizing a box that already starts smaller.
+    static func minimumSize(
+        preferred: CGFloat,
+        in bounds: CGRect,
+        startingFrom start: CGRect? = nil
+    ) -> CGSize {
+        func axis(_ preferred: CGFloat, bound: CGFloat, start: CGFloat?) -> CGFloat {
+            guard bound > 0 else { return 0 }
+            let cap = Swift.max(Swift.min(1, bound), (bound / 2).rounded(.down))
+            var floor = Swift.min(preferred, cap)
+            if let start, start > 0 {
+                floor = Swift.min(floor, start)
+            }
+            return floor
+        }
+        return CGSize(
+            width: axis(preferred, bound: bounds.width, start: start?.width),
+            height: axis(preferred, bound: bounds.height, start: start?.height)
+        )
+    }
+
     // MARK: Private
 
     /// One dimension of a resize: what stays fixed, how big the drag asks the
@@ -345,6 +368,15 @@ nonisolated struct CropDrag {
 }
 
 extension CropDrag {
+    /// Whether pointer travel from `startPointer` to `pointer` is enough to
+    /// begin mutating the selection. A handle or move activates on any motion
+    /// (never on mouse-down); a new selection waits for 3 pt so a stray click
+    /// outside the box leaves it alone.
+    func shouldActivate(at pointer: CGPoint) -> Bool {
+        let distance = hypot(pointer.x - startPointer.x, pointer.y - startPointer.y)
+        return target == .newSelection ? distance >= 3 : distance > 0
+    }
+
     /// The selection this drag makes with the pointer at `point` (pixels).
     /// `lockedAspect` is a preset's ratio; without one, `holdsAspect` (Shift)
     /// keeps the ratio the drag started with, or a square for a new selection.

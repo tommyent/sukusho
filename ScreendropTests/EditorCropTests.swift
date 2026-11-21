@@ -231,6 +231,57 @@ struct EditorCropTests {
         #expect(abs(reshaped.width / reshaped.height - 16.0 / 9.0) < 0.02)
     }
 
+    // MARK: - Handle floor and mouse-down travel guard
+
+    @Test static func handleFloorAllowsTinyImageTrimAndSmallSmartCropWithoutJump() {
+        // Tiny 16x16 image: floor caps at half (8x8), allowing ordinary freeform trimming.
+        let tinyBounds = CGRect(x: 0, y: 0, width: 16, height: 16)
+        let tinyMin = CropGeometry.minimumSize(preferred: 24, in: tinyBounds, startingFrom: tinyBounds)
+        #expect(tinyMin == CGSize(width: 8, height: 8))
+        let trimmed = CropGeometry.snapped(
+            CropGeometry.resize(
+                tinyBounds,
+                handle: .bottomRight,
+                by: CGSize(width: -6, height: -5),
+                in: tinyBounds,
+                aspect: nil,
+                minimumSize: tinyMin
+            ),
+            in: tinyBounds
+        )
+        #expect(trimmed == CGRect(x: 0, y: 0, width: 10, height: 11))
+
+        // Ultra-tiny 1x1 and 2x2 bounds keep a 1 px floor.
+        #expect(CropGeometry.minimumSize(preferred: 24, in: CGRect(x: 0, y: 0, width: 1, height: 1)) == CGSize(width: 1, height: 1))
+        #expect(CropGeometry.minimumSize(preferred: 24, in: CGRect(x: 0, y: 0, width: 2, height: 2)) == CGSize(width: 1, height: 1))
+
+        // 10x10 smart-crop box inside a larger image: mouse-down with zero travel must not activate.
+        let smartBox = CGRect(x: 200, y: 200, width: 10, height: 10)
+        let handleDrag = CropDrag(
+            target: .handle(.bottomRight),
+            startRect: smartBox,
+            startPoint: CGPoint(x: 210, y: 210),
+            startPointer: CGPoint(x: 210, y: 210),
+            pointer: CGPoint(x: 210, y: 210),
+            hasTravelled: false
+        )
+        #expect(!handleDrag.shouldActivate(at: CGPoint(x: 210, y: 210)))
+        #expect(handleDrag.shouldActivate(at: CGPoint(x: 211, y: 210)))
+
+        // Moving 1 px outward grows 10x10 -> 11x10 rather than snapping up to 24x24.
+        let smallMin = CropGeometry.minimumSize(preferred: 24, in: bounds, startingFrom: smartBox)
+        #expect(smallMin == CGSize(width: 10, height: 10))
+        let nudgedOut = handleDrag.rect(
+            at: CGPoint(x: 211, y: 210),
+            in: bounds,
+            lockedAspect: nil,
+            minimumSize: smallMin,
+            holdsAspect: false,
+            fromCenter: false
+        )
+        #expect(nudgedOut == CGRect(x: 200, y: 200, width: 11, height: 10))
+    }
+
     // MARK: - Pixel-exact apply path
 
     @Test static func applyCrop4KPreservesExactPixelRectWithoutExtraColumn() throws {
