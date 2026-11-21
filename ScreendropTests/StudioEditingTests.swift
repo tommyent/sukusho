@@ -996,21 +996,29 @@ struct StudioEditingTests {
         var gate = StudioPlayerItemGate()
         let cutGen1 = gate.beginCutBuild(isAsync: true)
         #expect(!gate.isCutReady)
-        #expect(gate.beginSourcePreview(isAsync: true) == nil) // blocked until cut is ready
-        #expect(gate.finishCutBuild(generation: cutGen1))
+        let blockedSource = gate.beginSourcePreview(isAsync: true)
+        #expect(blockedSource == nil) // blocked until cut is ready
+        let finishedCut1 = gate.finishCutBuild(generation: cutGen1)
+        #expect(finishedCut1)
         #expect(gate.isCutReady)
 
         // Start async source preview, then supersede it with a new cut rebuild: stale source task is rejected.
-        let sourceGen = try #require(gate.beginSourcePreview(isAsync: true))
+        let rawSourceGen = gate.beginSourcePreview(isAsync: true)
+        let sourceGen = try #require(rawSourceGen)
         let cutGen2 = gate.beginCutBuild(isAsync: true)
-        #expect(!gate.finishSourcePreview(generation: sourceGen))
-        #expect(gate.finishCutBuild(generation: cutGen2))
+        let staleFinish = gate.finishSourcePreview(generation: sourceGen)
+        #expect(!staleFinish)
+        let finishedCut2 = gate.finishCutBuild(generation: cutGen2)
+        #expect(finishedCut2)
         #expect(!gate.isShowingSourcePreview)
 
         // Normal source preview -> release restores saved cut item cleanly.
-        let sourceGen2 = try #require(gate.beginSourcePreview(isAsync: false))
-        #expect(gate.finishSourcePreview(generation: sourceGen2))
-        #expect(gate.endSourcePreview())
+        let rawSourceGen2 = gate.beginSourcePreview(isAsync: false)
+        let sourceGen2 = try #require(rawSourceGen2)
+        let activeFinish = gate.finishSourcePreview(generation: sourceGen2)
+        #expect(activeFinish)
+        let restored = gate.endSourcePreview()
+        #expect(restored)
         #expect(!gate.isShowingSourcePreview && gate.isCutReady)
     }
 
