@@ -13,8 +13,7 @@ struct InspectorAutoFold: ViewModifier {
     @Binding var isPresented: Bool
     let foldBelow: CGFloat
     let window: NSWindow?
-
-    @State private var state = InspectorFoldState()
+    @Binding var state: InspectorFoldState
 
     func body(content: Content) -> some View {
         content
@@ -95,16 +94,46 @@ enum InspectorVisibilityStore {
     }
 }
 
+private struct OwnedInspectorAutoFold: ViewModifier {
+    @Binding var isPresented: Bool
+    let foldBelow: CGFloat
+    let window: NSWindow?
+    @State private var state = InspectorFoldState()
+
+    func body(content: Content) -> some View {
+        content.modifier(InspectorAutoFold(
+            isPresented: $isPresented,
+            foldBelow: foldBelow,
+            window: window,
+            state: $state
+        ))
+    }
+}
+
 extension View {
     func inspectorAutoFold(
         isPresented: Binding<Bool>,
         below width: CGFloat,
         window: NSWindow?
     ) -> some View {
-        modifier(InspectorAutoFold(
+        modifier(OwnedInspectorAutoFold(
             isPresented: isPresented,
             foldBelow: width,
             window: window
+        ))
+    }
+
+    func inspectorAutoFold(
+        isPresented: Binding<Bool>,
+        below width: CGFloat,
+        window: NSWindow?,
+        state: Binding<InspectorFoldState>
+    ) -> some View {
+        modifier(InspectorAutoFold(
+            isPresented: isPresented,
+            foldBelow: width,
+            window: window,
+            state: state
         ))
     }
 }

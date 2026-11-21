@@ -8,12 +8,20 @@ import SwiftUI
 struct CaptureLibraryWindow: View {
     @State private var isOpen = true
     @State private var handledInitialWindowPlacement = false
+    @State private var columnVisibility = NavigationSplitViewVisibility.automatic
+    @State private var inspectorVisible = InspectorVisibilityStore.initial(forKey: CaptureLibraryView.inspectorKey)
+    @State private var inspectorFoldState = InspectorFoldState()
     @State private var hostWindow = WeakWindow()
 
     var body: some View {
         Group {
             if isOpen {
-                CaptureLibraryView(handledInitialWindowPlacement: $handledInitialWindowPlacement)
+                CaptureLibraryView(
+                    handledInitialWindowPlacement: $handledInitialWindowPlacement,
+                    columnVisibility: $columnVisibility,
+                    inspectorVisible: $inspectorVisible,
+                    inspectorFoldState: $inspectorFoldState
+                )
             } else {
                 Color.clear
             }
@@ -33,7 +41,11 @@ struct CaptureLibraryWindow: View {
 }
 
 struct CaptureLibraryView: View {
+    static let inspectorKey = "captureLibrary.inspectorVisible"
     @Binding var handledInitialWindowPlacement: Bool
+    @Binding var columnVisibility: NavigationSplitViewVisibility
+    @Binding var inspectorVisible: Bool
+    @Binding var inspectorFoldState: InspectorFoldState
     @State private var model = CaptureLibraryModel.shared
     @State private var cloud = CloudLibraryModel.shared
     @State private var comments = CommentsLibraryModel.shared
@@ -46,9 +58,6 @@ struct CaptureLibraryView: View {
     @State private var libraryWindow: NSWindow?
     @State private var searchFocusRequest = 0
     @State private var glassMetrics = GlassWindowButtonMetrics.fallback
-    @State private var columnVisibility = NavigationSplitViewVisibility.automatic
-    private static let inspectorKey = "captureLibrary.inspectorVisible"
-    @State private var inspectorVisible = InspectorVisibilityStore.initial(forKey: inspectorKey)
 
     private var inspectorChoice: Binding<Bool> {
         InspectorVisibilityStore.binding($inspectorVisible, key: Self.inspectorKey)
@@ -128,7 +137,12 @@ struct CaptureLibraryView: View {
         // 860 pt holds the sidebar, the grid and the inspector; below 900 the inspector folds
         // away on its own, and without it the window goes down to 620 (Fable #7).
         .frame(minWidth: inspectorVisible ? 860 : 620, minHeight: 540)
-        .inspectorAutoFold(isPresented: $inspectorVisible, below: 900, window: handledInitialWindowPlacement ? libraryWindow : nil)
+        .inspectorAutoFold(
+            isPresented: $inspectorVisible,
+            below: 900,
+            window: handledInitialWindowPlacement ? libraryWindow : nil,
+            state: $inspectorFoldState
+        )
         .onAppear {
             AppActivationPolicy.enter()
             model.sortOrder = savedSort
