@@ -14,6 +14,7 @@ struct StudioTimecodeField: View {
     @Bindable var model: RecordingStudioModel
     @State private var isEditing = false
     @State private var text = ""
+    @State private var prefill = ""
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -27,7 +28,7 @@ struct StudioTimecodeField: View {
                     .accessibilityLabel("Go to Timecode")
                     .focused($isFocused)
                     .onSubmit {
-                        if let time = StudioPlayback.seconds(from: text) {
+                        if let time = StudioPlayback.submittedTimecode(text, prefill: prefill) {
                             model.pause()
                             model.seek(to: time)
                         }
@@ -43,7 +44,9 @@ struct StudioTimecodeField: View {
                 Button {
                     guard model.isLoaded, !model.isRestoringDocument, !model.isEditingSourceRegion else { return }
                     model.pause()
-                    text = studioPreciseTimecode(model.currentTime)
+                    let initial = studioPreciseTimecode(model.currentTime)
+                    prefill = initial
+                    text = initial
                     isEditing = true
                 } label: {
                     Text(readout)

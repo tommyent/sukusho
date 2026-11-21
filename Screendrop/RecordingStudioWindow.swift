@@ -3053,10 +3053,7 @@ private func studioTimecode(_ seconds: Double) -> String {
 }
 
 func studioPreciseTimecode(_ seconds: Double) -> String {
-    let safe = max(0, seconds.isFinite ? seconds : 0)
-    let totalMinutes = Int(safe) / 60
-    let remaining = safe.truncatingRemainder(dividingBy: 60)
-    return String(format: "%02d:%04.1f", totalMinutes, remaining)
+    StudioPlayback.preciseTimecode(seconds)
 }
 
 /// Frame around the zoom lane. It stays pinned to the viewport while the cue

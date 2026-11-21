@@ -286,6 +286,29 @@ nonisolated enum StudioPlayback {
         )
     }
 
+    /// Formats seconds as `mm:ss.t` from a single rounded total of tenths so
+    /// boundary values like `59.96` carry cleanly to `01:00.0`.
+    static func preciseTimecode(_ seconds: TimeInterval) -> String {
+        let safe = max(0, seconds.isFinite ? seconds : 0)
+        let clamped = min(safe, Double(Int.max / 10))
+        let totalTenths = Int((clamped * 10).rounded())
+        let totalMinutes = totalTenths / 600
+        let wholeSeconds = (totalTenths % 600) / 10
+        let tenths = totalTenths % 10
+        return String(format: "%02d:%02d.%d", totalMinutes, wholeSeconds, tenths)
+    }
+
+    /// Returns the seek target when submitting the timecode field, or `nil` if
+    /// the prefilled text is unchanged (so pressing Return without editing
+    /// preserves sub-tenth playhead precision) or cannot be parsed.
+    static func submittedTimecode(_ text: String, prefill: String) -> TimeInterval? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed != prefill.trimmingCharacters(in: .whitespacesAndNewlines) else {
+            return nil
+        }
+        return seconds(from: trimmed)
+    }
+
     /// Seconds from `ss`, `m:ss`, or `h:mm:ss`, allowing a decimal fraction on
     /// the last component.
     static func seconds(from text: String) -> TimeInterval? {

@@ -43,6 +43,23 @@ struct StudioPlaybackTests {
         }
     }
 
+    @Test func preciseTimecodeCarriesTenthsAndUnchangedPrefillSkipsSeek() {
+        #expect(StudioPlayback.preciseTimecode(0) == "00:00.0")
+        #expect(StudioPlayback.preciseTimecode(12.049) == "00:12.0")
+        #expect(StudioPlayback.preciseTimecode(59.96) == "01:00.0")
+        #expect(StudioPlayback.preciseTimecode(3599.96) == "60:00.0")
+        #expect(StudioPlayback.preciseTimecode(-5) == "00:00.0")
+        #expect(StudioPlayback.preciseTimecode(.nan) == "00:00.0")
+
+        // Opening at 12.049 prefills "00:12.0"; pressing Return untouched must not seek.
+        let prefill = StudioPlayback.preciseTimecode(12.049)
+        #expect(StudioPlayback.submittedTimecode(prefill, prefill: prefill) == nil)
+        #expect(StudioPlayback.submittedTimecode("  \(prefill)  ", prefill: prefill) == nil)
+        // Changing the text commits the new target.
+        #expect(StudioPlayback.submittedTimecode("00:12.5", prefill: prefill) == 12.5)
+        #expect(StudioPlayback.submittedTimecode("12", prefill: prefill) == 12)
+    }
+
     // MARK: - Frame duration and stepping
 
     @Test func frameDurationUsesNominalFrameRateWithThirtyFpsFallback() {
