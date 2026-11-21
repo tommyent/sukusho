@@ -277,16 +277,26 @@ nonisolated enum RecordingTranscriptionService {
         let audioFile = try AVAudioFile(forReading: narrationURL)
         let analyzer = SpeechAnalyzer(modules: [transcriber])
 
-        // Result collection must be consuming before audio is fed in, or the
-        // analyzer's early results are dropped on the floor.
-        async let collectedWords = collectWords(from: transcriber)
-        if let lastSampleTime = try await analyzer.analyzeSequence(from: audioFile) {
-            try await analyzer.finalizeAndFinish(through: lastSampleTime)
-        } else {
-            await analyzer.cancelAndFinishNow()
+        let words = try await withTaskCancellationHandler {
+            // Start collecting before feeding audio so the early results are kept.
+            async let collectedWords = collectWords(from: transcriber)
+            do {
+                try Task.checkCancellation()
+                if let lastSampleTime = try await analyzer.analyzeSequence(from: audioFile) {
+                    try await analyzer.finalizeAndFinish(through: lastSampleTime)
+                } else {
+                    await analyzer.cancelAndFinishNow()
+                }
+                let words = try await collectedWords
+                try Task.checkCancellation()
+                return words
+            } catch {
+                await analyzer.cancelAndFinishNow()
+                throw error
+            }
+        } onCancel: {
+            Task { await analyzer.cancelAndFinishNow() }
         }
-
-        let words = try await collectedWords
         let cues = makeCues(from: words)
         guard !cues.isEmpty else { throw TranscriptionError.noSpeechDetected }
         return RecordingTranscript(words: words, cues: cues)
