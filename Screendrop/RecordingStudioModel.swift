@@ -1729,7 +1729,12 @@ final class RecordingStudioModel {
     }
 
     var hasDeletableTimelineSelection: Bool {
-        selectedAudioClipID != nil || selectedCueID != nil || canDeleteSelectedClip
+        selectedTextID != nil
+            || selectedImageID != nil
+            || selectedRedactionID != nil
+            || selectedAudioClipID != nil
+            || selectedCueID != nil
+            || canDeleteSelectedClip
     }
 
     var canMoveSelectedClipEarlier: Bool {
@@ -4013,7 +4018,7 @@ final class RecordingStudioModel {
 
     /// The texts showing at an editor time, bottom to top.
     func texts(atEditorTime time: TimeInterval) -> [RecordingTextOverlay] {
-        guard !textOverlays.isEmpty, clipTimeline.location(at: time) != nil else { return [] }
+        guard activeTrimSourcePreviewTime == nil, !textOverlays.isEmpty, clipTimeline.location(at: time) != nil else { return [] }
         let sourceTime = clipTimeline.sourceTime(at: time)
         return textOverlays.filter { $0.isActive(atSourceTime: sourceTime) }
     }
@@ -4226,7 +4231,7 @@ final class RecordingStudioModel {
 
     /// The images showing at an editor time, bottom to top.
     func images(atEditorTime time: TimeInterval) -> [RecordingImageOverlay] {
-        guard !imageOverlays.isEmpty, clipTimeline.location(at: time) != nil else { return [] }
+        guard activeTrimSourcePreviewTime == nil, !imageOverlays.isEmpty, clipTimeline.location(at: time) != nil else { return [] }
         let sourceTime = clipTimeline.sourceTime(at: time)
         return imageOverlays.filter { $0.isActive(atSourceTime: sourceTime) }
     }
@@ -4327,7 +4332,7 @@ final class RecordingStudioModel {
 
     /// The redactions showing at an editor time.
     func redactions(atEditorTime time: TimeInterval) -> [RecordingRedaction] {
-        guard !redactions.isEmpty, clipTimeline.location(at: time) != nil else { return [] }
+        guard activeTrimSourcePreviewTime == nil, !redactions.isEmpty, clipTimeline.location(at: time) != nil else { return [] }
         let sourceTime = clipTimeline.sourceTime(at: time)
         return redactions.filter { $0.start <= sourceTime && sourceTime < $0.end }
     }
@@ -4451,7 +4456,7 @@ final class RecordingStudioModel {
         redactionPreview.update(redactions: all, clipTimeline: clipTimeline)
         if wasEmpty {
             do { try rebuildScreenPlayerItem(preserving: currentTime) }
-            catch { redactionPreviewError = error.localizedDescription }
+            catch { cutRedactionPreviewError = error.localizedDescription }
         } else {
             scheduleRedactionRefresh()
         }
@@ -4479,12 +4484,14 @@ final class RecordingStudioModel {
             try? await Task.sleep(for: .milliseconds(16))
             guard let self, !Task.isCancelled else { return }
             self.redactionRefreshTask = nil
-            guard !self.isPlaying, !self.isTornDown, let item = self.screenPlayer.currentItem else { return }
+            guard !self.isPlaying, !self.isTornDown,
+                  self.activeTrimSourcePreviewTime == nil,
+                  let item = self.screenPlayer.currentItem else { return }
             if !self.redactions.isEmpty {
                 do {
                     item.videoComposition = try await self.redactionPreview.composition(asset: item.asset)
                 } catch {
-                    self.redactionPreviewError = error.localizedDescription
+                    self.cutRedactionPreviewError = error.localizedDescription
                     return
                 }
             } else {

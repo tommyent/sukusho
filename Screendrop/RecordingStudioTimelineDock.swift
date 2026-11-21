@@ -775,31 +775,52 @@ struct StudioTimelineEditor: View {
     }
 
     private var zoomControls: some View {
-        HStack(spacing: 6) {
-            if zoom > 1.0001 {
-                Text(String(format: "%.1f×", zoom))
-                    .font(.system(size: 10, weight: .medium).monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-
-            StudioTransportTray {
-                timelineButton("Zoom Out (⌘-)", systemImage: "minus.magnifyingglass") {
-                    applyZoom(factor: 1 / Self.zoomStep, anchorTime: buttonZoomAnchor)
+        GlassEffectContainer(spacing: GlassMetrics.containerSpacing) {
+            HStack(spacing: GlassMetrics.gap) {
+                if zoom > 1.0001 {
+                    Text(String(format: "%.1f×", zoom))
+                        .font(.system(size: 10, weight: .medium).monospacedDigit())
+                        .foregroundStyle(.secondary)
                 }
-                .keyboardShortcut("-", modifiers: .command)
-                .disabled(zoom <= 1.0001)
 
-                timelineButton("Zoom In (⌘=)", systemImage: "plus.magnifyingglass") {
-                    applyZoom(factor: Self.zoomStep, anchorTime: buttonZoomAnchor)
-                }
-                .keyboardShortcut("=", modifiers: .command)
-                .disabled(zoom >= scale.maxZoom - 0.0001)
+                StudioTransportTray {
+                    timelineButton(
+                        model.snapsEdits
+                            ? "Snapping On (N). Hold ⌘ while dragging to turn off."
+                            : "Snapping Off (N). Hold ⌘ while dragging to snap.",
+                        systemImage: "arrow.right.and.line.vertical.and.arrow.left",
+                        isActive: model.snapsEdits
+                    ) {
+                        model.toggleSnapping()
+                    }
 
-                timelineButton("Fit Timeline (⌘0)", systemImage: "arrow.left.and.right") {
-                    fitTimeline()
+                    timelineButton("Add or Remove Marker (M)", systemImage: "bookmark") {
+                        model.toggleMarker()
+                    }
+                    .disabled(!model.isLoaded || model.isRestoringDocument)
                 }
-                .keyboardShortcut("0", modifiers: .command)
-                .disabled(zoom <= 1.0001)
+                .glassEffectID("timelineTools", in: glass)
+
+                StudioTransportTray {
+                    timelineButton("Zoom Out (⌘-)", systemImage: "minus.magnifyingglass") {
+                        applyZoom(factor: 1 / Self.zoomStep, anchorTime: buttonZoomAnchor)
+                    }
+                    .keyboardShortcut("-", modifiers: .command)
+                    .disabled(zoom <= 1.0001)
+
+                    timelineButton("Zoom In (⌘=)", systemImage: "plus.magnifyingglass") {
+                        applyZoom(factor: Self.zoomStep, anchorTime: buttonZoomAnchor)
+                    }
+                    .keyboardShortcut("=", modifiers: .command)
+                    .disabled(zoom >= scale.maxZoom - 0.0001)
+
+                    timelineButton("Fit Timeline (⌘0)", systemImage: "arrow.left.and.right") {
+                        fitTimeline()
+                    }
+                    .keyboardShortcut("0", modifiers: .command)
+                    .disabled(zoom <= 1.0001)
+                }
+                .glassEffectID("zoomTools", in: glass)
             }
         }
     }
@@ -1282,7 +1303,7 @@ private struct StudioTimelineMarkers: View {
                         }
                         .offset(
                             x: x - Self.hitWidth / 2,
-                            y: StudioTimelineMetrics.playheadLaneHeight + StudioTimelineMetrics.rowSpacing
+                            y: StudioTimelineMetrics.playheadLaneHeight
                         )
                     }
                 }
@@ -1329,7 +1350,7 @@ private struct StudioSnapGuideOverlay: View {
         if let time = state.time {
             let guideX = scale.x(for: time) - scrollX
             if guideX >= -1, guideX <= size.width + 1 {
-                let top = StudioTimelineMetrics.playheadLaneHeight + StudioTimelineMetrics.rowSpacing
+                let top = StudioTimelineMetrics.playheadLaneHeight
                 let guideHeight = max(0, size.height - top - StudioTimelineMetrics.scrollerGutter)
                 Rectangle()
                     .fill(Color(nsColor: .systemYellow))
