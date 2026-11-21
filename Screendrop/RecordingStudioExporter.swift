@@ -264,7 +264,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             }
         }
 
-        let cameraFeed = try await CameraFrameFeed(
+        let cameraFeed = try await RecordingCameraFrameFeed(
             url: configuration.cameraURL,
             offset: configuration.cameraOffset
         )
@@ -386,7 +386,9 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             if screenReader.status == .failed {
                 throw ExportError.readerFailed(screenReader.error)
             }
-            try cameraFeed?.checkFailure()
+            if let cameraFailure = cameraFeed?.failureError {
+                throw ExportError.readerFailed(cameraFailure)
+            }
             guard renderedFrames > 0 else { throw ExportError.readerFailed(nil) }
         } catch {
             screenReader.cancelReading()
@@ -418,7 +420,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
         writer: AVAssetWriter,
         adaptor: AVAssetWriterInputPixelBufferAdaptor,
         compositor: StudioFrameCompositor,
-        cameraFeed: CameraFrameFeed?,
+        cameraFeed: RecordingCameraFrameFeed?,
         clipTimeline: RecordingClipTimeline,
         timing: RecordingExportTiming,
         cancelFlag: CancelFlag,
@@ -521,7 +523,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
                 throw ExportError.writerFailed(writer.error)
             }
 
-            let cameraBuffer = cameraFeed?.latestFrame(at: sourceTime)
+            let cameraBuffer = try cameraFeed?.latestFrame(at: sourceTime)
             let nextTime = timing.time(forFrame: frame + 1)
             let sourceRepeats = (pending == nil || pending!.time > nextTime)
                 && clipTimeline.location(at: nextTime)?.segmentID == location.segmentID
@@ -615,79 +617,6 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
         case .low: factor = 1.25
         }
         return max(2_500_000, Int(Double(width * height) * factor))
-    }
-}
-
-// MARK: - Camera frame feed
-
-/// Sequential decoder for the camera movie that answers "latest camera frame
-/// at screen-time t". Screen frames arrive in order, so a one-frame
-/// look-ahead over the camera reader is all that's needed.
-nonisolated private final class CameraFrameFeed: @unchecked Sendable {
-    private let reader: AVAssetReader
-    private let output: AVAssetReaderTrackOutput
-    private let offset: TimeInterval
-    private var currentFrame: CVPixelBuffer?
-    private var pendingFrame: (buffer: CVPixelBuffer, time: TimeInterval)?
-    private var isFinished = false
-
-    init?(url: URL?, offset: TimeInterval) async throws {
-        guard let url else { return nil }
-        let asset = AVURLAsset(url: url)
-        guard let track = try await asset.loadTracks(withMediaType: .video).first else {
-            return nil
-        }
-
-        let reader = try AVAssetReader(asset: asset)
-        let output = AVAssetReaderTrackOutput(
-            track: track,
-            outputSettings: [
-                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-                // IOSurface-backed so the bubble scaler can read it on the GPU.
-                kCVPixelBufferMetalCompatibilityKey as String: true,
-                kCVPixelBufferIOSurfacePropertiesKey as String: [:]
-            ]
-        )
-        output.alwaysCopiesSampleData = false
-        reader.add(output)
-        guard reader.startReading() else {
-            throw reader.error ?? RecordingStudioExporter.ExportError.noVideoTrack
-        }
-
-        self.reader = reader
-        self.output = output
-        self.offset = offset
-    }
-
-    func latestFrame(at screenTime: TimeInterval) -> CVPixelBuffer? {
-        while !isFinished {
-            if let pending = pendingFrame {
-                // Promote the very first frame unconditionally: the camera
-                // starts a beat after the screen (capture warmup), and holding
-                // its first frame from t=0 beats the bubble popping in late.
-                guard pending.time <= screenTime || currentFrame == nil else { break }
-                currentFrame = pending.buffer
-                pendingFrame = nil
-            }
-            guard let sample = output.copyNextSampleBuffer() else {
-                isFinished = true
-                break
-            }
-            guard let buffer = CMSampleBufferGetImageBuffer(sample) else { continue }
-            let time = CMSampleBufferGetPresentationTimeStamp(sample).seconds + offset
-            pendingFrame = (buffer: buffer, time: time)
-        }
-        return currentFrame
-    }
-
-    func cancel() {
-        reader.cancelReading()
-    }
-
-    func checkFailure() throws {
-        if reader.status == .failed {
-            throw RecordingStudioExporter.ExportError.readerFailed(reader.error)
-        }
     }
 }
 

@@ -6,6 +6,7 @@
 //
 
 import AVFoundation
+import CoreVideo
 
 nonisolated enum RecordingCompositionBuilder {
     static func makeAsset(
@@ -128,5 +129,126 @@ nonisolated enum RecordingCompositionBuilder {
             )
         }
         return composition
+    }
+}
+
+/// Sequential decoder for the camera movie that answers "latest camera frame
+/// at screen-time t". Reordered clips can jump backward in source time, so a
+/// backward jump cancels and restarts the reader near the target moment and
+/// drops the cached frame rather than freezing on later footage.
+nonisolated final class RecordingCameraFrameFeed: @unchecked Sendable {
+    private static let readerOutputSettings: [String: Any] = [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        // IOSurface-backed so the bubble scaler can read it on the GPU.
+        kCVPixelBufferMetalCompatibilityKey as String: true,
+        kCVPixelBufferIOSurfacePropertiesKey as String: [:]
+    ]
+    /// Lookback when restarting a reader after a backward cut, so sparse
+    /// camera frames just before the cut boundary are still decoded.
+    private static let restartLookback: TimeInterval = 1.0
+
+    private let asset: AVURLAsset
+    private let track: AVAssetTrack
+    private let offset: TimeInterval
+    private let trackDuration: TimeInterval
+    private var reader: AVAssetReader
+    private var output: AVAssetReaderTrackOutput
+    private var currentFrame: CVPixelBuffer?
+    private var pendingFrame: (buffer: CVPixelBuffer, time: TimeInterval)?
+    private var lastScreenTime: TimeInterval?
+    private var isFinished = false
+
+    init?(url: URL?, offset: TimeInterval) async throws {
+        guard let url else { return nil }
+        let asset = AVURLAsset(url: url)
+        guard let track = try await asset.loadTracks(withMediaType: .video).first else {
+            return nil
+        }
+        let durationSeconds = (try? await asset.load(.duration).seconds) ?? 0
+        let (reader, output) = try Self.makeReader(asset: asset, track: track, startTime: nil)
+
+        self.asset = asset
+        self.track = track
+        self.offset = offset
+        self.trackDuration = durationSeconds.isFinite ? max(0, durationSeconds) : 0
+        self.reader = reader
+        self.output = output
+    }
+
+    private static func makeReader(
+        asset: AVURLAsset,
+        track: AVAssetTrack,
+        startTime: TimeInterval?
+    ) throws -> (AVAssetReader, AVAssetReaderTrackOutput) {
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(
+            track: track,
+            outputSettings: readerOutputSettings
+        )
+        output.alwaysCopiesSampleData = false
+        reader.add(output)
+        if let startTime, startTime > 0 {
+            reader.timeRange = CMTimeRange(
+                start: CMTime(seconds: startTime, preferredTimescale: 600),
+                duration: .positiveInfinity
+            )
+        }
+        guard reader.startReading() else {
+            throw reader.error ?? CocoaError(.fileReadCorruptFile)
+        }
+        return (reader, output)
+    }
+
+    private func restart(for screenTime: TimeInterval) throws {
+        reader.cancelReading()
+        currentFrame = nil
+        pendingFrame = nil
+        isFinished = false
+
+        let rawStart = max(0, screenTime - offset - Self.restartLookback)
+        let clampedStart = trackDuration > 0
+            ? min(rawStart, max(0, trackDuration - Self.restartLookback))
+            : rawStart
+        let (nextReader, nextOutput) = try Self.makeReader(
+            asset: asset,
+            track: track,
+            startTime: clampedStart > 0 ? clampedStart : nil
+        )
+        reader = nextReader
+        output = nextOutput
+    }
+
+    func latestFrame(at screenTime: TimeInterval) throws -> CVPixelBuffer? {
+        if let last = lastScreenTime, screenTime < last - 0.000_5 {
+            try restart(for: screenTime)
+        }
+        lastScreenTime = screenTime
+
+        while !isFinished {
+            if let pending = pendingFrame {
+                // Promote the very first frame unconditionally: the camera
+                // starts a beat after the screen (capture warmup), and holding
+                // its first frame from t=0 beats the bubble popping in late.
+                guard pending.time <= screenTime || currentFrame == nil else { break }
+                currentFrame = pending.buffer
+                pendingFrame = nil
+            }
+            guard let sample = output.copyNextSampleBuffer() else {
+                isFinished = true
+                break
+            }
+            guard let buffer = CMSampleBufferGetImageBuffer(sample) else { continue }
+            let time = CMSampleBufferGetPresentationTimeStamp(sample).seconds + offset
+            pendingFrame = (buffer: buffer, time: time)
+        }
+        return currentFrame
+    }
+
+    func cancel() {
+        reader.cancelReading()
+    }
+
+    var failureError: Error? {
+        reader.status == .failed ? reader.error : nil
     }
 }

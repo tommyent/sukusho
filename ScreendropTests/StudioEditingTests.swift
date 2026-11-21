@@ -1,5 +1,7 @@
 import AppKit
+import AVFoundation
 import CoreGraphics
+import CoreVideo
 import Foundation
 import Testing
 
@@ -449,5 +451,108 @@ struct StudioEditingTests {
         #expect(StudioEditing.keyAction(keyCode: 123, characters: nil, modifiers: [], isARepeat: false) == nil)
         #expect(StudioEditing.keyAction(keyCode: 124, characters: nil, modifiers: [], isARepeat: false) == nil)
         #expect(StudioEditing.keyAction(keyCode: 34, characters: "i", modifiers: .command, isARepeat: false) == nil)
+    }
+
+    // MARK: - Webcam feed across backward cuts
+
+    @Test func cameraFrameFeedRestartsAcrossBackwardCut() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("camera.mov")
+
+        // 4-second movie: 0s=Red, 1s=Green, 2s=Blue, 3s=White.
+        let colors: [(r: UInt8, g: UInt8, b: UInt8)] = [
+            (240, 20, 20),
+            (20, 240, 20),
+            (20, 20, 240),
+            (240, 240, 240),
+        ]
+        try await writeSolidColorMovie(to: url, size: CGSize(width: 64, height: 64), colors: colors)
+
+        let feed = try #require(try await RecordingCameraFrameFeed(url: url, offset: 0.2))
+        defer { feed.cancel() }
+
+        func sampleRGB(_ buffer: CVPixelBuffer) -> (r: Int, g: Int, b: Int) {
+            CVPixelBufferLockBaseAddress(buffer, .readOnly)
+            defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+            let ptr = CVPixelBufferGetBaseAddress(buffer)!.assumingMemoryBound(to: UInt8.self)
+            let bpr = CVPixelBufferGetBytesPerRow(buffer)
+            let offset = 32 * bpr + 32 * 4
+            return (Int(ptr[offset + 2]), Int(ptr[offset + 1]), Int(ptr[offset]))
+        }
+
+        // First clip: source 2..4 -> camera 2.2s (Blue) then 3.2s (White).
+        let atBlue = try #require(try feed.latestFrame(at: 2.5))
+        let blueRGB = sampleRGB(atBlue)
+        #expect(blueRGB.b > 180 && blueRGB.r < 80)
+
+        let atWhite = try #require(try feed.latestFrame(at: 3.5))
+        let whiteRGB = sampleRGB(atWhite)
+        #expect(whiteRGB.r > 180 && whiteRGB.g > 180 && whiteRGB.b > 180)
+
+        // Backward cut to second clip: source 0..2 -> camera restarts to 0s (Red), then 1s (Green).
+        let atRed = try #require(try feed.latestFrame(at: 0.0))
+        let redRGB = sampleRGB(atRed)
+        #expect(redRGB.r > 180 && redRGB.g < 80 && redRGB.b < 80)
+
+        let atGreen = try #require(try feed.latestFrame(at: 1.5))
+        let greenRGB = sampleRGB(atGreen)
+        #expect(greenRGB.g > 180 && greenRGB.r < 80 && greenRGB.b < 80)
+    }
+
+    private func writeSolidColorMovie(
+        to url: URL,
+        size: CGSize,
+        colors: [(r: UInt8, g: UInt8, b: UInt8)]
+    ) async throws {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: Int(size.width),
+            AVVideoHeightKey: Int(size.height),
+        ])
+        input.expectsMediaDataInRealTime = false
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: input,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: Int(size.width),
+                kCVPixelBufferHeightKey as String: Int(size.height),
+            ]
+        )
+        writer.add(input)
+        writer.startWriting()
+        writer.startSession(atSourceTime: .zero)
+
+        let width = Int(size.width)
+        let height = Int(size.height)
+        for (index, color) in colors.enumerated() {
+            var pixelBuffer: CVPixelBuffer?
+            CVPixelBufferCreate(
+                kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA, nil, &pixelBuffer
+            )
+            let buffer = try #require(pixelBuffer)
+            CVPixelBufferLockBaseAddress(buffer, [])
+            let base = CVPixelBufferGetBaseAddress(buffer)!.assumingMemoryBound(to: UInt8.self)
+            let bpr = CVPixelBufferGetBytesPerRow(buffer)
+            for y in 0..<height {
+                for x in 0..<width {
+                    let i = y * bpr + x * 4
+                    base[i] = color.b
+                    base[i + 1] = color.g
+                    base[i + 2] = color.r
+                    base[i + 3] = 255
+                }
+            }
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+            while !input.isReadyForMoreMediaData {
+                try await Task.sleep(nanoseconds: 1_000_000)
+            }
+            adaptor.append(buffer, withPresentationTime: CMTime(seconds: Double(index), preferredTimescale: 600))
+        }
+        input.markAsFinished()
+        await writer.finishWriting()
+        if let error = writer.error { throw error }
     }
 }
