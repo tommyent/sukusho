@@ -1183,22 +1183,55 @@ func studioMovedZoomCue(
     return cue
 }
 
+/// Base cue to anchor against during a trim edit. Normal cues keep their full
+/// source range (preserving overhangs into forward cuts), while a cue split
+/// across a backward join clamps to the displayed monotonic piece so trimming
+/// one edge cannot jump to the other piece or trim the wrong clip.
+func studioEditableBaseCue(
+    for base: StudioLaneBlock<ZoomCue>,
+    in clipTimeline: RecordingClipTimeline
+) -> ZoomCue {
+    guard clipTimeline.editorRuns(overlapping: base.item.start, sourceEnd: base.item.end).count > 1 else {
+        return base.item
+    }
+    let run = studioMonotonicRun(around: (base.editorStart + base.editorEnd) / 2, in: clipTimeline)
+    let start = min(max(base.editorStart, run.lowerBound), run.upperBound)
+    let end = min(max(base.editorEnd, start), run.upperBound)
+    var clamped = base.item
+    let sourceStart = studioSourceStart(atEditorTime: start, in: clipTimeline)
+    let sourceEnd = max(sourceStart, studioSourceEnd(atEditorTime: end, in: clipTimeline))
+    clamped.start = sourceStart
+    clamped.end = sourceEnd
+    return clamped
+}
+
 /// Resolves the target source time for a leading or trailing trim edit on a
 /// zoom block; a zero editor delta preserves the drag's original source edge.
+/// Constrained to the displayed monotonic run so trimming across a backward
+/// join never lands on earlier-source footage from an adjacent clip.
 func studioTrimmedZoomSourceTime(
     for edit: StudioBlockEdit<ZoomCue>,
     clipTimeline: RecordingClipTimeline
 ) -> (edge: StudioBlockEdge, sourceTime: TimeInterval)? {
+    let run = studioMonotonicRun(around: (edit.base.editorStart + edit.base.editorEnd) / 2, in: clipTimeline)
     switch edit.kind {
     case .trimLeading:
-        let source = abs(edit.delta) < 0.000_001
-            ? edit.base.item.start
-            : studioSourceStart(atEditorTime: edit.base.editorStart + edit.delta, in: clipTimeline)
+        if abs(edit.delta) < 0.000_001 {
+            return (.leading, edit.base.item.start)
+        }
+        let target = min(max(edit.base.editorStart + edit.delta, run.lowerBound), run.upperBound)
+        let source = target >= run.upperBound - 0.000_001
+            ? studioSourceEnd(atEditorTime: run.upperBound, in: clipTimeline)
+            : studioSourceStart(atEditorTime: target, in: clipTimeline)
         return (.leading, source)
     case .trimTrailing:
-        let source = abs(edit.delta) < 0.000_001
-            ? edit.base.item.end
-            : studioSourceEnd(atEditorTime: edit.base.editorEnd + edit.delta, in: clipTimeline)
+        if abs(edit.delta) < 0.000_001 {
+            return (.trailing, edit.base.item.end)
+        }
+        let target = min(max(edit.base.editorEnd + edit.delta, run.lowerBound), run.upperBound)
+        let source = target <= run.lowerBound + 0.000_001
+            ? studioSourceStart(atEditorTime: run.lowerBound, in: clipTimeline)
+            : studioSourceEnd(atEditorTime: target, in: clipTimeline)
         return (.trailing, source)
     case .move:
         return nil

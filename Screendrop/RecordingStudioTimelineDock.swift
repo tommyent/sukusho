@@ -1408,7 +1408,7 @@ private struct StudioZoomLane: View {
                     id: base.item.id,
                     edge: trim.edge,
                     toSourceTime: trim.sourceTime,
-                    base: base.item
+                    base: studioEditableBaseCue(for: base, in: model.clipTimeline)
                 )
             }
         }

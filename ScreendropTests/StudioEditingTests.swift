@@ -310,6 +310,39 @@ struct StudioEditingTests {
         let movedZoom = studioMovedSourceRange(clipTimeline: backward, editorStart: 3.0, editorLength: 2.0)
         #expect(abs(movedZoom.start - 10.0) < 0.0001 && abs(movedZoom.end - 12.0) < 0.0001)
 
+        // Cue covering source 0..4 over touching reversed clips [2..4, 0..2]:
+        // editorSpan breaks at the backward join so the block displays one monotonic piece (0..2 = source 2..4),
+        // and trimming its leading/trailing edge clamps to that piece instead of trimming clip 2 (0..2).
+        let touchingReversed = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 2, sourceEnd: 4),
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 2),
+        ])
+        let spanningCue = ZoomCue(start: 0, end: 4)
+        let displayedSpan = try #require(touchingReversed.editorSpan(overlapping: spanningCue.start, sourceEnd: spanningCue.end))
+        #expect(abs(displayedSpan.lowerBound - 0.0) < 0.0001 && abs(displayedSpan.upperBound - 2.0) < 0.0001)
+        let displayedBlock = StudioLaneBlock(
+            item: spanningCue,
+            editorStart: displayedSpan.lowerBound,
+            editorEnd: displayedSpan.upperBound
+        )
+        let editableBase = studioEditableBaseCue(for: displayedBlock, in: touchingReversed)
+        #expect(abs(editableBase.start - 2.0) < 0.0001 && abs(editableBase.end - 4.0) < 0.0001)
+        // Dragging leading edge past the backward join (to editor 2.1) clamps at source 4.0, never 0.1.
+        let clampedLeading = try #require(studioTrimmedZoomSourceTime(
+            for: StudioBlockEdit(base: displayedBlock, kind: .trimLeading, delta: 2.1),
+            clipTimeline: touchingReversed
+        ))
+        #expect(abs(clampedLeading.sourceTime - 4.0) < 0.0001)
+        let placedAfterTrim = try #require(studioPlaceTrimmedZoomCue(
+            id: spanningCue.id,
+            edge: .trailing,
+            proposedSourceTime: 3.5,
+            base: editableBase,
+            in: [spanningCue],
+            sourceDuration: 4
+        ))
+        #expect(abs(placedAfterTrim[0].start - 2.0) < 0.0001 && abs(placedAfterTrim[0].end - 3.5) < 0.0001)
+
         // moving(segmentID:to:) reorders and returns nil for no-op or unknown ID.
         let moved = try #require(normalized.moving(segmentID: overlappingThird.id, to: 0))
         #expect(moved.segments.map(\.id) == [overlappingThird.id, first.id, second.id])
