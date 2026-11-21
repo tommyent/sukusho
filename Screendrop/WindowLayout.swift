@@ -637,6 +637,19 @@ nonisolated enum WindowFullScreenPoll: Equatable, Sendable {
     }
 }
 
+/// Pure guard for disabling `AXEnhancedUserInterface` before a move: rechecks cancellation after
+/// reading the attribute so a stale token never issues a new disable write.
+nonisolated enum WindowEnhancedUIGuard {
+    static func disableIfNeeded(
+        isCurrent: () -> Bool,
+        readEnabled: () -> Bool?,
+        writeDisabled: () -> Bool
+    ) -> Bool {
+        guard isCurrent(), readEnabled() == true, isCurrent() else { return false }
+        return writeDisabled()
+    }
+}
+
 /// Bounded confirmation loop for exiting full screen before placing an external AX window.
 nonisolated enum WindowFullScreenExit {
     enum Outcome: Equatable, Sendable {

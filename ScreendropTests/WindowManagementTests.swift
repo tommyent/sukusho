@@ -453,6 +453,40 @@ struct WindowManagementTests {
         #expect(!gate.isCurrent(second))
     }
 
+    @Test func enhancedUIGuardSkipsDisableWriteWhenCancelledDuringRead() {
+        let gate = WindowOperationGate()
+        let token = gate.begin()
+
+        // Cancelled while reading AXEnhancedUserInterface -> no disable write is issued.
+        var writes = 0
+        let disabledWhenCancelled = WindowEnhancedUIGuard.disableIfNeeded(
+            isCurrent: { gate.isCurrent(token) },
+            readEnabled: {
+                gate.cancelAll()
+                return true
+            },
+            writeDisabled: {
+                writes += 1
+                return true
+            }
+        )
+        #expect(!disabledWhenCancelled)
+        #expect(writes == 0)
+
+        // Still current after read -> disable write proceeds and reports true so caller restores on exit.
+        let token2 = gate.begin()
+        let disabledWhenCurrent = WindowEnhancedUIGuard.disableIfNeeded(
+            isCurrent: { gate.isCurrent(token2) },
+            readEnabled: { true },
+            writeDisabled: {
+                writes += 1
+                return true
+            }
+        )
+        #expect(disabledWhenCurrent)
+        #expect(writes == 1)
+    }
+
     @Test func fullScreenExitConfirmsOnlyOnExplicitFalseAndHandlesTransientErrors() {
         // Error classification: only `.success` + `false` confirms exit; `.noValue`/`.failure` stay transient.
         #expect(WindowFullScreenPoll.from(error: .success, boolValue: false) == .exited)

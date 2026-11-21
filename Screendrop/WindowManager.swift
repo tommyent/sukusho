@@ -464,9 +464,9 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
         }
 
         // Chromium/Electron apps fight or animate AX frame writes when AXEnhancedUserInterface
-        // is enabled; toggle it off only when the write succeeds and always restore it before
+        // is enabled; toggle it off only while `token` is still current and always restore it before
         // releasing the serial queue (even if the token became stale mid-move).
-        let restoreEnhancedUI = disableEnhancedUIIfNeeded(on: axApp)
+        let restoreEnhancedUI = disableEnhancedUIIfNeeded(on: axApp, token: token)
         var restored = !restoreEnhancedUI
         func restoreIfNeeded() -> Bool {
             guard !restored else { return true }
@@ -521,9 +521,12 @@ private nonisolated final class WindowAXWorker: @unchecked Sendable {
 
     // MARK: - AX helpers
 
-    private func disableEnhancedUIIfNeeded(on axApp: AXUIElement) -> Bool {
-        guard boolAttribute(Self.enhancedUIAttr, on: axApp) == true else { return false }
-        return setEnhancedUI(false, on: axApp) == .success
+    private func disableEnhancedUIIfNeeded(on axApp: AXUIElement, token: UInt64) -> Bool {
+        WindowEnhancedUIGuard.disableIfNeeded(
+            isCurrent: { self.gate.isCurrent(token) },
+            readEnabled: { self.boolAttribute(Self.enhancedUIAttr, on: axApp) },
+            writeDisabled: { self.setEnhancedUI(false, on: axApp) == .success }
+        )
     }
 
     @discardableResult
