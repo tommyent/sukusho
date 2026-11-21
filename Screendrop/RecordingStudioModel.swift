@@ -2151,6 +2151,7 @@ final class RecordingStudioModel {
 
         func piece(
             _ source: RecordingAudioClip.Source,
+            fileName: String = "",
             name: String,
             sourceStart: TimeInterval,
             sourceEnd: TimeInterval,
@@ -2161,7 +2162,7 @@ final class RecordingStudioModel {
             let length = (sourceEnd - sourceStart) / speed
             guard length >= RecordingAudioClip.minimumDuration, fileEnd > fileStart else { return nil }
             var clip = RecordingAudioClip(
-                fileName: "",
+                fileName: fileName,
                 displayName: name,
                 start: editorRange.lowerBound + (sourceStart - segment.sourceStart) / speed,
                 fileDuration: max(fileDuration, fileEnd)
@@ -2187,9 +2188,21 @@ final class RecordingStudioModel {
             detached.append(clip)
         }
         if let replacementAudio, let sync = replacementAudioSync {
+            let pinnedFileName = session != nil ? replacementAudio.url.lastPathComponent : ""
+            if !pinnedFileName.isEmpty {
+                audioSources.pinnedReplacements[pinnedFileName] = [
+                    StudioAudioSources.Track(track: replacementAudio.track, range: replacementAudio.range, asset: replacementAudio.asset)
+                ]
+                if let existingPeaks = audioPeaks[Self.soundtrackPeaksKey] {
+                    audioPeaks[pinnedFileName] = existingPeaks
+                } else {
+                    loadPeaks(for: pinnedFileName, url: replacementAudio.url)
+                }
+                undoReferencedFiles.insert(pinnedFileName)
+            }
             for part in sync.pieces(from: segment.sourceStart, to: segment.sourceEnd, fileDuration: replacementAudio.duration) {
                 recorded(to: part.sourceStart)
-                if let clip = piece(.replacement, name: replacementAudio.displayName,
+                if let clip = piece(.replacement, fileName: pinnedFileName, name: replacementAudio.displayName,
                                     sourceStart: part.sourceStart, sourceEnd: part.sourceEnd,
                                     fileStart: part.fileStart, fileEnd: part.fileEnd,
                                     fileDuration: replacementAudio.duration) {
@@ -4028,8 +4041,8 @@ final class RecordingStudioModel {
     // MARK: - Export
 
     private func replacementAudioURLForExport(includeAudio: Bool) throws -> URL? {
-        let usesReplacementClip = audioClips.contains { $0.source == .replacement }
-        guard includeAudio, RecordingAudioGain.normalized(Double(audioVolume)) > 0 || usesReplacementClip else {
+        let usesUnpinnedReplacementClip = audioClips.contains { $0.source == .replacement && $0.fileName.isEmpty }
+        guard includeAudio, RecordingAudioGain.normalized(Double(audioVolume)) > 0 || usesUnpinnedReplacementClip else {
             return nil
         }
         let url = replacementAudio?.url ?? replacementAudioReference.flatMap {
@@ -4507,38 +4520,73 @@ final class RecordingStudioModel {
         missingAudioClipFiles.removeAll()
         guard !audioClips.isEmpty else { return }
         let fileClips = audioClips.filter { $0.source == .file }
-        guard let directory = mediaDirectoryURL else {
-            missingAudioClipFiles.formUnion(fileClips.map(\.fileName))
-            return
+        if !fileClips.isEmpty {
+            if let directory = mediaDirectoryURL {
+                for name in Set(fileClips.map(\.fileName)) {
+                    guard RecordingAudioClip.isSafeFileName(name) else {
+                        missingAudioClipFiles.insert(name)
+                        continue
+                    }
+                    undoReferencedFiles.insert(name)
+                    let url = directory.appendingPathComponent(name)
+                    if audioSources.files[name] == nil {
+                        let tracks: [StudioAudioSources.Track]
+                        if FileManager.default.fileExists(atPath: url.path) {
+                            tracks = Array(await StudioAudioSources.Track.loadAll(of: AVURLAsset(url: url)).prefix(1))
+                            guard !Task.isCancelled, !isTornDown else { return }
+                        } else {
+                            tracks = []
+                        }
+                        if tracks.isEmpty {
+                            missingAudioClipFiles.insert(name)
+                            continue
+                        }
+                        audioSources.files[name] = tracks
+                    }
+                    loadPeaks(for: name, url: url)
+                }
+            } else {
+                missingAudioClipFiles.formUnion(fileClips.map(\.fileName))
+            }
         }
-        let fileNames = Set(fileClips.map(\.fileName))
-        for name in fileNames {
-            guard RecordingAudioClip.isSafeFileName(name) else {
-                missingAudioClipFiles.insert(name)
-                continue
-            }
-            undoReferencedFiles.insert(name)
-            let url = directory.appendingPathComponent(name)
-            if audioSources.files[name] == nil {
-                let tracks: [StudioAudioSources.Track]
-                if FileManager.default.fileExists(atPath: url.path) {
-                    tracks = Array(await StudioAudioSources.Track.loadAll(of: AVURLAsset(url: url)).prefix(1))
-                    guard !Task.isCancelled, !isTornDown else { return }
-                } else {
-                    tracks = []
+        let pinnedClips = audioClips.filter { $0.source == .replacement && !$0.fileName.isEmpty }
+        if !pinnedClips.isEmpty {
+            if let directory = session?.directoryURL {
+                for name in Set(pinnedClips.map(\.fileName)) {
+                    guard RecordingAudioClip.isSafeFileName(name) else {
+                        missingAudioClipFiles.insert(name)
+                        continue
+                    }
+                    undoReferencedFiles.insert(name)
+                    let url = directory.appendingPathComponent(name)
+                    if audioSources.pinnedReplacements[name] == nil {
+                        let tracks: [StudioAudioSources.Track]
+                        if FileManager.default.fileExists(atPath: url.path) {
+                            tracks = Array(await StudioAudioSources.Track.loadAll(of: AVURLAsset(url: url)).prefix(1))
+                            guard !Task.isCancelled, !isTornDown else { return }
+                        } else {
+                            tracks = []
+                        }
+                        if tracks.isEmpty {
+                            missingAudioClipFiles.insert(name)
+                            continue
+                        }
+                        audioSources.pinnedReplacements[name] = tracks
+                    }
+                    loadPeaks(for: name, url: url)
                 }
-                if tracks.isEmpty {
-                    missingAudioClipFiles.insert(name)
-                    continue
-                }
-                audioSources.files[name] = tracks
+            } else {
+                missingAudioClipFiles.formUnion(pinnedClips.map(\.fileName))
             }
-            loadPeaks(for: name, url: url)
         }
     }
 
     func isAudioClipMissing(_ clip: RecordingAudioClip) -> Bool {
-        clip.source == .file && missingAudioClipFiles.contains(clip.fileName)
+        switch clip.source {
+        case .file: missingAudioClipFiles.contains(clip.fileName)
+        case .replacement: !clip.fileName.isEmpty && missingAudioClipFiles.contains(clip.fileName)
+        case .recording: false
+        }
     }
 
     var selectedAudioClip: RecordingAudioClip? {
@@ -4577,7 +4625,9 @@ final class RecordingStudioModel {
         switch clip.source {
         case .file: audioPeaks[clip.fileName] ?? []
         case .recording: audioPeaks[Self.recordingPeaksKey] ?? []
-        case .replacement: audioPeaks[Self.soundtrackPeaksKey] ?? []
+        case .replacement:
+            if !clip.fileName.isEmpty, let pinned = audioPeaks[clip.fileName] { return pinned }
+            return audioPeaks[Self.soundtrackPeaksKey] ?? []
         }
     }
 
@@ -5023,9 +5073,9 @@ final class RecordingStudioModel {
             replacementAudioError = nil
             undoReferencedFiles.insert(audio.url.lastPathComponent)
             replacementAudioSync = sync ?? .flat(over: clipTimeline)
-            audioSources.replacement = [
-                StudioAudioSources.Track(track: audio.track, range: audio.range, asset: audio.asset)
-            ]
+            let track = StudioAudioSources.Track(track: audio.track, range: audio.range, asset: audio.asset)
+            audioSources.replacement = [track]
+            audioSources.pinnedReplacements[audio.url.lastPathComponent] = [track]
             loadPeaks(for: Self.soundtrackPeaksKey, url: audio.url)
             return
         }
@@ -5091,9 +5141,15 @@ final class RecordingStudioModel {
         guard hasReplacementAudio else { return }
         pause()
         replacementAudioError = nil
-        // Sound detached from the soundtrack has nothing left to play.
+        // Legacy unpinned replacement clips have nothing left to play; clips
+        // pinned to their own replacement file keep playing independently.
         setSoundtrack(
-            SoundtrackState(audio: nil, sync: nil, clips: audioClips.filter { $0.source != .replacement }),
+            SoundtrackState(
+                audio: nil,
+                reference: nil,
+                sync: nil,
+                clips: audioClips.filter { $0.source != .replacement || !$0.fileName.isEmpty }
+            ),
             actionName: "Remove Replaced Audio"
         )
     }
@@ -5158,13 +5214,18 @@ final class RecordingStudioModel {
             }
         } catch { return } // An unreadable snapshot may still need an imported soundtrack.
         let referencedMusic = Set([savedDocument?.backgroundMusic?.fileName, draftDocument?.backgroundMusic?.fileName, lastSavedDocument?.backgroundMusic?.fileName, backgroundMusicSettings?.fileName].compactMap { $0 } + keptDocuments.compactMap { $0.backgroundMusic?.fileName })
+        let pinnedClipFiles = ([savedDocument, draftDocument, lastSavedDocument].compactMap { $0 } + keptDocuments)
+            .flatMap { $0.audioClips ?? [] }
+            .filter { $0.source == .replacement && !$0.fileName.isEmpty }
+            .map(\.fileName)
+            + audioClips.filter { $0.source == .replacement && !$0.fileName.isEmpty }.map(\.fileName)
         let referencedNames = Set([
             savedDocument?.replacementAudioFileName,
             draftDocument?.replacementAudioFileName,
             lastSavedDocument?.replacementAudioFileName,
             replacementAudio?.url.lastPathComponent,
             replacementAudioReference?.fileName
-        ].compactMap { $0 } + keptDocuments.compactMap(\.replacementAudioFileName) + Array(undoReferencedFiles))
+        ].compactMap { $0 } + keptDocuments.compactMap(\.replacementAudioFileName) + pinnedClipFiles + Array(undoReferencedFiles))
         let names = (try? FileManager.default.contentsOfDirectory(
             atPath: session.directoryURL.path
         )) ?? []

@@ -538,6 +538,75 @@ struct StudioAudioTests {
         ) == true)
     }
 
+    @Test func detachedReplacementClipPinnedToSourceFileSurvivesReplacementSwapAndReset() async throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StudioAudioPinnedTest-\(UUID().uuidString)", isDirectory: true)
+        let mediaDir = dir.appendingPathComponent("media", isDirectory: true)
+        try FileManager.default.createDirectory(at: mediaDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let screenURL = dir.appendingPathComponent("screen.wav")
+        try makeToneWAV(at: screenURL, frequency: 220, duration: 2.0, amplitude: 0.3)
+        let soundtrackA = dir.appendingPathComponent("audio-replacement.A.wav")
+        try makeToneWAV(at: soundtrackA, frequency: 520, duration: 2.0, amplitude: 0.4)
+        let soundtrackB = dir.appendingPathComponent("audio-replacement.B.wav")
+        try makeToneWAV(at: soundtrackB, frequency: 980, duration: 1.0, amplitude: 0.4)
+
+        // Segment 0 plays soundtrack B (0..1s); segment 1 is muted and detached to pinned soundtrack A (1..2s).
+        let seg0 = RecordingClipSegment(sourceStart: 0, sourceEnd: 1.0)
+        var seg1 = RecordingClipSegment(sourceStart: 1.0, sourceEnd: 2.0)
+        seg1.isMuted = true
+        let timeline = RecordingClipTimeline(segments: [seg0, seg1])
+
+        var detachedA = RecordingAudioClip(
+            fileName: soundtrackA.lastPathComponent,
+            displayName: "Soundtrack A",
+            start: 1.0,
+            fileDuration: 2.0
+        )
+        detachedA.source = .replacement
+        detachedA.trimStart = 1.0
+        detachedA.trimEnd = 2.0
+
+        // Active replacement is now shorter soundtrack B.
+        let preparedWithB = try await StudioAudioComposer.prepareExport(
+            screenAsset: AVURLAsset(url: screenURL),
+            screenURL: screenURL,
+            timeline: timeline,
+            replacementURL: soundtrackB,
+            replacementSync: .flat(over: timeline),
+            clips: [detachedA],
+            mediaDirectory: mediaDir,
+            volume: 1,
+            microphoneTrackID: nil,
+            isolatedMicrophoneURL: nil,
+            backgroundMusic: nil
+        )
+        let samplesWithB = try await renderMonoSamples(asset: preparedWithB.composition, mix: preparedWithB.mix, duration: 2.0)
+        // First half plays B (980 Hz); second half plays pinned A (520 Hz), NOT B or silence.
+        #expect(goertzel(samplesWithB, at: 0.25, length: 0.4, frequency: 980) > 0.25)
+        #expect(goertzel(samplesWithB, at: 1.25, length: 0.4, frequency: 520) > 0.25)
+        #expect(goertzel(samplesWithB, at: 1.25, length: 0.4, frequency: 980) < 0.03)
+
+        // Resetting replacement to nil still plays pinned A in the detached clip!
+        let preparedAfterReset = try await StudioAudioComposer.prepareExport(
+            screenAsset: AVURLAsset(url: screenURL),
+            screenURL: screenURL,
+            timeline: timeline,
+            replacementURL: nil,
+            replacementSync: nil,
+            clips: [detachedA],
+            mediaDirectory: mediaDir,
+            volume: 1,
+            microphoneTrackID: nil,
+            isolatedMicrophoneURL: nil,
+            backgroundMusic: nil
+        )
+        let samplesAfterReset = try await renderMonoSamples(asset: preparedAfterReset.composition, mix: preparedAfterReset.mix, duration: 2.0)
+        #expect(goertzel(samplesAfterReset, at: 0.25, length: 0.4, frequency: 220) > 0.15)
+        #expect(goertzel(samplesAfterReset, at: 1.25, length: 0.4, frequency: 520) > 0.25)
+    }
+
     // MARK: - Helpers
 
     private func makeDirectory() throws -> URL {

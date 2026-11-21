@@ -99,9 +99,9 @@ enum RecordingSessionRenderer {
         let exportSettings = editDocument?.exportSettings ?? RecordingExportPreferences.lastSettings.forVideoRendering
         let audioVolume = RecordingAudioGain.normalized(editDocument?.audioVolume ?? 1)
         let audioClips = editDocument?.audioClips ?? []
-        let usesReplacementClip = audioClips.contains { $0.source == .replacement }
+        let usesUnpinnedReplacementClip = audioClips.contains { $0.source == .replacement && $0.fileName.isEmpty }
         let usesRecordingClip = audioClips.contains { $0.source == .recording }
-        let audioReplacementURL = !exportSettings.removeAudio && (audioVolume > 0 || usesReplacementClip)
+        let audioReplacementURL = !exportSettings.removeAudio && (audioVolume > 0 || usesUnpinnedReplacementClip)
             ? editDocument?.replacementAudioFileName.map {
                 session.directoryURL.appendingPathComponent($0)
             }

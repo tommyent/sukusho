@@ -46,6 +46,8 @@ nonisolated struct StudioAudioSources: @unchecked Sendable {
     var recording: [Track] = []
     /// The soundtrack standing in for it.
     var replacement: [Track] = []
+    /// Detached soundtrack clips pinned to their own replacement file in the session folder.
+    var pinnedReplacements: [String: [Track]] = [:]
     /// Imported audio, by its name in the media folder.
     var files: [String: [Track]] = [:]
 
@@ -57,7 +59,8 @@ nonisolated struct StudioAudioSources: @unchecked Sendable {
         switch clip.source {
         case .file: files[clip.fileName] ?? []
         case .recording: recording
-        case .replacement: replacement
+        case .replacement:
+            clip.fileName.isEmpty ? replacement : (pinnedReplacements[clip.fileName] ?? [])
         }
     }
 
@@ -111,12 +114,15 @@ nonisolated struct StudioAudioSources: @unchecked Sendable {
             ) else {
                 throw RecordingReplacementAudio.LoadError.unreadable
             }
-            sources.replacement = [Track(track: loaded.track, range: loaded.range, asset: loaded.asset)]
+            let track = Track(track: loaded.track, range: loaded.range, asset: loaded.asset)
+            sources.replacement = [track]
+            sources.pinnedReplacements[replacementURL.lastPathComponent] = [track]
         }
         let videoDuration = timeline?.duration ?? .infinity
-        let fileClips = clips.filter { $0.source == .file }
-        var seen: Set<String> = []
-        for clip in fileClips {
+        let sessionDirectory = mediaDirectory?.deletingLastPathComponent()
+            ?? replacementURL?.deletingLastPathComponent()
+        var seenFiles: Set<String> = []
+        for clip in clips where clip.source == .file {
             let isAudible = !clip.isMuted && clip.audibleVolume > 0
                 && min(clip.end, videoDuration) - max(clip.start, 0) >= 0.01
             guard RecordingAudioClip.isSafeFileName(clip.fileName), let mediaDirectory else {
@@ -125,7 +131,7 @@ nonisolated struct StudioAudioSources: @unchecked Sendable {
                 }
                 continue
             }
-            if !seen.insert(clip.fileName).inserted {
+            if !seenFiles.insert(clip.fileName).inserted {
                 if strictMissingClips && isAudible && sources.files[clip.fileName] == nil {
                     throw StudioAudioComposer.AudioError.missingAudioClip(clip.displayName)
                 }
@@ -141,6 +147,37 @@ nonisolated struct StudioAudioSources: @unchecked Sendable {
             }
             if !tracks.isEmpty {
                 sources.files[clip.fileName] = tracks
+            } else if strictMissingClips && isAudible {
+                throw StudioAudioComposer.AudioError.missingAudioClip(clip.displayName)
+            }
+        }
+        var seenPinned: Set<String> = []
+        for clip in clips where clip.source == .replacement && !clip.fileName.isEmpty {
+            let isAudible = !clip.isMuted && clip.audibleVolume > 0
+                && min(clip.end, videoDuration) - max(clip.start, 0) >= 0.01
+            guard RecordingAudioClip.isSafeFileName(clip.fileName), let sessionDirectory else {
+                if strictMissingClips && isAudible {
+                    throw StudioAudioComposer.AudioError.missingAudioClip(clip.displayName)
+                }
+                continue
+            }
+            if sources.pinnedReplacements[clip.fileName] != nil { continue }
+            if !seenPinned.insert(clip.fileName).inserted {
+                if strictMissingClips && isAudible && sources.pinnedReplacements[clip.fileName] == nil {
+                    throw StudioAudioComposer.AudioError.missingAudioClip(clip.displayName)
+                }
+                continue
+            }
+            let url = sessionDirectory.appendingPathComponent(clip.fileName)
+            let tracks: [Track]
+            if FileManager.default.fileExists(atPath: url.path) {
+                let asset = AVURLAsset(url: url)
+                tracks = Array(await Track.loadAll(of: asset).prefix(1))
+            } else {
+                tracks = []
+            }
+            if !tracks.isEmpty {
+                sources.pinnedReplacements[clip.fileName] = tracks
             } else if strictMissingClips && isAudible {
                 throw StudioAudioComposer.AudioError.missingAudioClip(clip.displayName)
             }
