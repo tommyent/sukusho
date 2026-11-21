@@ -427,14 +427,12 @@ struct GlassPaneToggleButton: View {
     let diameter: CGFloat
     let action: () -> Void
 
-    @Environment(\.colorScheme) private var colorScheme
-
     var body: some View {
         Button(action: action) {
             Label(title, systemImage: symbol)
                 .labelStyle(.iconOnly)
-                .font(.system(size: max(12, diameter * 0.46), weight: .medium))
-                .foregroundStyle(AppTheme.glassTitleInk(dark: colorScheme == .dark).color)
+                .font(.system(size: max(12, diameter * 0.46), weight: .semibold))
+                .foregroundStyle(Color.primary)
                 .frame(width: diameter, height: diameter)
                 .background {
                     // The window-button pill's lift (`applyLiftShadow`), drawn in SwiftUI and only outside the circle,
