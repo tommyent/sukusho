@@ -34,6 +34,7 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     let directoryURL: URL
 
     var sessionSnapshotsURL: URL { directoryURL.appendingPathComponent("sessions", isDirectory: true) }
+    var mediaDirectoryURL: URL { directoryURL.appendingPathComponent("media", isDirectory: true) }
 
     var screenURL: URL { directoryURL.appendingPathComponent(Self.screenFileName) }
     var cameraURL: URL { directoryURL.appendingPathComponent(Self.cameraFileName) }

@@ -79,6 +79,9 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
         let fitContentAspect: CGFloat?
         let usesUniformPadding: Bool
         let redactions: [RecordingRedaction]
+        let textOverlays: [RecordingTextOverlay]
+        let imageOverlays: [RecordingImageOverlay]
+        let mediaDirectory: URL?
         /// Pen strokes drawn during the take; nil when hidden or none.
         let ink: RecordingInkTimeline?
 
@@ -112,6 +115,9 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             fitContentAspect: CGFloat? = nil,
             usesUniformPadding: Bool = false,
             redactions: [RecordingRedaction] = [],
+            textOverlays: [RecordingTextOverlay] = [],
+            imageOverlays: [RecordingImageOverlay] = [],
+            mediaDirectory: URL? = nil,
             ink: RecordingInkTimeline? = nil
         ) {
             self.screenURL = screenURL
@@ -143,6 +149,9 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             self.fitContentAspect = fitContentAspect
             self.usesUniformPadding = usesUniformPadding
             self.redactions = redactions
+            self.textOverlays = textOverlays
+            self.imageOverlays = imageOverlays
+            self.mediaDirectory = mediaDirectory
             self.ink = ink
         }
     }
@@ -380,6 +389,9 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             fitContentAspect: configuration.fitContentAspect,
             usesUniformPadding: configuration.usesUniformPadding,
             redactions: configuration.redactions,
+            textOverlays: configuration.textOverlays,
+            imageOverlays: configuration.imageOverlays,
+            mediaDirectory: configuration.mediaDirectory,
             ink: configuration.ink,
             clipTimeline: clipTimeline
         )
@@ -673,6 +685,10 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
     private let backdrop: CGImage?
     private let timing: RecordingExportTiming
     private let redactions: [RecordingRedaction]
+    private let textOverlays: [RecordingTextOverlay]
+    private let imageOverlays: [RecordingImageOverlay]
+    private let mediaDirectory: URL?
+    private let overlayImages = RecordingOverlayImageStore()
     private let ink: RecordingInkTimeline?
     private let clipTimeline: RecordingClipTimeline
     private let redactionContext = CIContext(options: [.cacheIntermediates: false])
@@ -711,6 +727,9 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
         fitContentAspect: CGFloat? = nil,
         usesUniformPadding: Bool = false,
         redactions: [RecordingRedaction] = [],
+        textOverlays: [RecordingTextOverlay] = [],
+        imageOverlays: [RecordingImageOverlay] = [],
+        mediaDirectory: URL? = nil,
         ink: RecordingInkTimeline? = nil,
         clipTimeline: RecordingClipTimeline
     ) {
@@ -736,6 +755,9 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
         self.reframe = reframe
         self.timing = timing
         self.redactions = redactions
+        self.textOverlays = textOverlays
+        self.imageOverlays = mediaDirectory == nil ? [] : imageOverlays
+        self.mediaDirectory = mediaDirectory
         self.ink = ink
         self.clipTimeline = clipTimeline
         self.pointerScale = style.cursorScale
@@ -784,7 +806,12 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
         let active = redactions.filter {
             $0.covers(editorTime: editorTime, frameDuration: timing.frameInterval, timeline: clipTimeline)
         }
-        let screenFrame = try RecordingRedactionFilter.buffer(from: screenFrame, redactions: active, context: redactionContext)
+        let screenFrame = try RecordingRedactionFilter.buffer(
+            from: screenFrame,
+            redactions: active,
+            sourceTime: sourceTime,
+            context: redactionContext
+        )
         // shortcut: active masks bypass settled reuse; cache filtered sources if export cost warrants it.
         let bypassScreenCache = bypassScreenCache || !active.isEmpty
         let sampleRects = timing.screenSampleRects(at: editorTime) { time in
@@ -922,9 +949,41 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
             drawCameraBubble(cameraFrame, in: context)
         }
 
+        // Images, then text, sit on the canvas above the camera and under
+        // the subtitles.
+        drawImageOverlays(at: sourceTime, in: context)
+        drawTextOverlays(at: sourceTime, in: context)
+
         // The subtitle bar lives in canvas space - over the background too,
         // not just the card - and above everything else, camera included.
         drawSubtitleBar(at: sourceTime, in: context)
+    }
+
+    private func drawImageOverlays(at sourceTime: TimeInterval, in context: CGContext) {
+        guard let mediaDirectory else { return }
+        let active = imageOverlays.filter { $0.isActive(atSourceTime: sourceTime) }
+        guard !active.isEmpty else { return }
+        context.saveGState()
+        context.translateBy(x: 0, y: canvasSize.height)
+        context.scaleBy(x: 1, y: -1)
+        for overlay in active {
+            guard let image = overlayImages.image(at: mediaDirectory.appendingPathComponent(overlay.fileName)) else { continue }
+            RecordingImageOverlayRenderer.draw(overlay, image: image, atSourceTime: sourceTime, canvasSize: canvasSize, in: context)
+        }
+        context.restoreGState()
+    }
+
+    private func drawTextOverlays(at sourceTime: TimeInterval, in context: CGContext) {
+        let active = textOverlays.filter { $0.isActive(atSourceTime: sourceTime) }
+        guard !active.isEmpty else { return }
+        context.saveGState()
+        // The shared renderer works top-down, like the preview's canvas.
+        context.translateBy(x: 0, y: canvasSize.height)
+        context.scaleBy(x: 1, y: -1)
+        for overlay in active {
+            RecordingTextOverlayRenderer.draw(overlay, atSourceTime: sourceTime, canvasSize: canvasSize, in: context)
+        }
+        context.restoreGState()
     }
 
     private func submitMetal(

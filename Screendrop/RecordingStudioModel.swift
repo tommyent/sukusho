@@ -160,8 +160,24 @@ final class RecordingStudioModel {
     private(set) var redactionEditError: String?
     var isEditingSourceRegion: Bool { isCroppingVideo || isSelectingRedaction }
     private var playerItemTask: Task<Void, Never>?
+    private let redactionPreview = RecordingRedactionPreviewSource()
+    private var redactionRefreshTask: Task<Void, Never>?
     private var redactionFailureObserver: NSObjectProtocol?
     private var redactionStatusObserver: NSKeyValueObservation?
+    private var redactionEditSnapshot: [RecordingRedaction]?
+    private var redactionCoalesceTask: Task<Void, Never>?
+    private(set) var textOverlays: [RecordingTextOverlay] = []
+    var selectedTextID: UUID?
+    private var textEditSnapshot: [RecordingTextOverlay]?
+    private var textCoalesceTask: Task<Void, Never>?
+    private(set) var imageOverlays: [RecordingImageOverlay] = []
+    var selectedImageID: UUID?
+    let overlayImages = RecordingOverlayImageStore()
+    private(set) var overlayImageRevision = 0
+    var mediaImportError: String?
+    private var imageEditSnapshot: [RecordingImageOverlay]?
+    private var imageCoalesceTask: Task<Void, Never>?
+    private var mediaLoadTask: Task<Void, Never>?
     /// The preview's copy of the reframe camera, kept current with every
     /// edit that would change the exported crop.
     private(set) var previewReframe: ReframeTrack?
@@ -1048,6 +1064,7 @@ final class RecordingStudioModel {
         rebuildPreviewReframe()
         loadTimelineThumbnails()
         loadStylePoster()
+        loadOverlayMedia()
 
         if let session {
             openedOnDraft = session.hasUnsavedDraft
@@ -1162,6 +1179,19 @@ final class RecordingStudioModel {
             timelineThumbnails.cancel()
         }
         redactions = document.redactions
+        if let selectedRedactionID, !redactions.contains(where: { $0.id == selectedRedactionID }) {
+            self.selectedRedactionID = nil
+        }
+        redactionPreview.update(redactions: redactions, clipTimeline: clipTimeline)
+        textOverlays = document.textOverlays ?? []
+        if let selectedTextID, !textOverlays.contains(where: { $0.id == selectedTextID }) {
+            self.selectedTextID = nil
+        }
+        imageOverlays = document.imageOverlays ?? []
+        if let selectedImageID, !imageOverlays.contains(where: { $0.id == selectedImageID }) {
+            self.selectedImageID = nil
+        }
+        if isLoaded { loadOverlayMedia() }
         audioExportFormat = document.audioExportFormatValue
         audioVolume = CGFloat(RecordingAudioGain.normalized(document.audioVolume ?? 1))
     }
@@ -1184,6 +1214,12 @@ final class RecordingStudioModel {
         cutRedactionPreviewError = nil
         playerItemTask?.cancel()
         playerItemTask = nil
+        redactionRefreshTask?.cancel()
+        redactionCoalesceTask?.cancel()
+        textCoalesceTask?.cancel()
+        imageCoalesceTask?.cancel()
+        mediaLoadTask?.cancel()
+        overlayImages.removeAll()
         clearRedactionObservers()
         audioExportTask?.cancel()
         backgroundMusicTask?.cancel()
@@ -2017,6 +2053,9 @@ final class RecordingStudioModel {
         selectedCueID = nil
         selectedClipID = nil
         selectedAudioClipID = nil
+        selectedTextID = nil
+        selectedImageID = nil
+        selectedRedactionID = nil
     }
 
     func undo() {
@@ -2377,10 +2416,13 @@ final class RecordingStudioModel {
 
         playerItemTask?.cancel()
         playerItemTask = nil
+        redactionRefreshTask?.cancel()
+        redactionRefreshTask = nil
         activeTrimSourcePreviewTime = nil
         trimSourcePreviewError = nil
         readyCutPlayerItem = nil
         cutRedactionPreviewError = nil
+        redactionPreview.update(redactions: redactions, clipTimeline: clipTimeline)
         let generation = playerItemGate.beginCutBuild(isAsync: !redactions.isEmpty)
         let item = AVPlayerItem(asset: playbackAsset)
         // Sped-up speech keeps its pitch, as it does in the export.
@@ -2393,13 +2435,10 @@ final class RecordingStudioModel {
             // Never display the previous, potentially unmasked paused frame while rebuilding.
             isPreparingRedactionPreview = true
             replaceScreenPlayerItem(nil, observeRedactionFailure: false)
-            let regions = redactions
-            let timeline = clipTimeline
+            let previewSource = redactionPreview
             playerItemTask = Task { [weak self] in
                 do {
-                    item.videoComposition = try await RecordingRedactionFilter.composition(
-                        asset: playbackAsset, redactions: regions, timeline: timeline
-                    )
+                    item.videoComposition = try await previewSource.composition(asset: playbackAsset)
                     guard let self, !Task.isCancelled, !self.isTornDown,
                           self.playerItemGate.finishCutBuild(generation: generation) else { return }
                     self.playerItemTask = nil
@@ -2933,6 +2972,8 @@ final class RecordingStudioModel {
             isolateVoice: voiceIsolationEnabled && isolatedMicrophone != nil,
             backgroundMusic: backgroundMusicSettings,
             redactions: redactions,
+            textOverlays: textOverlays.isEmpty ? nil : textOverlays,
+            imageOverlays: imageOverlays.isEmpty ? nil : imageOverlays,
             showsInk: showsInk ? nil : false,
             hiddenInkStrokeIDs: hiddenInkStrokeIDs.isEmpty
                 ? nil : hiddenInkStrokeIDs.sorted { $0.uuidString < $1.uuidString },
@@ -3881,17 +3922,378 @@ final class RecordingStudioModel {
         return CGSize(width: videoSize.width / scale, height: videoSize.height / scale)
     }
 
-    // MARK: - Video crop
+    // MARK: - Overlay ranges
+
+    private func sourceRange(
+        startingAt editorTime: TimeInterval,
+        length: TimeInterval,
+        minimum: TimeInterval
+    ) -> ClosedRange<TimeInterval>? {
+        guard sourceDuration >= minimum else { return nil }
+        let source = clipTimeline.sourceTime(at: min(max(editorTime, 0), duration))
+        let start = min(max(0, source), sourceDuration - minimum)
+        return start...min(sourceDuration, start + length)
+    }
+
+    private func sourceRange(
+        fromEditorTime editorStart: TimeInterval,
+        toEditorTime editorEnd: TimeInterval,
+        minimum: TimeInterval
+    ) -> ClosedRange<TimeInterval>? {
+        guard sourceDuration >= minimum else { return nil }
+        let low = studioSourceStart(atEditorTime: min(editorStart, editorEnd), in: clipTimeline)
+        let high = studioSourceEnd(atEditorTime: max(editorStart, editorEnd), in: clipTimeline)
+        return clampedSourceRange(start: low, end: high, minimum: minimum)
+    }
+
+    private func clampedSourceRange(start: TimeInterval, end: TimeInterval, minimum: TimeInterval) -> ClosedRange<TimeInterval> {
+        let lower = min(max(0, start), max(0, sourceDuration - minimum))
+        let upper = min(max(end, lower + minimum), sourceDuration)
+        return lower...max(lower, upper)
+    }
+
+    // MARK: - Text overlays
+
+    var selectedText: RecordingTextOverlay? {
+        textOverlays.first { $0.id == selectedTextID }
+    }
+
+    var textTimelineBlocks: [RecordingOverlayTimelineBlock<RecordingTextOverlay>] {
+        RecordingOverlayTimelineBlock.blocks(for: textOverlays, clipTimeline: clipTimeline) {
+            ($0.start, $0.end)
+        }
+    }
+
+    /// The texts showing at an editor time, bottom to top.
+    func texts(atEditorTime time: TimeInterval) -> [RecordingTextOverlay] {
+        guard !textOverlays.isEmpty, clipTimeline.location(at: time) != nil else { return [] }
+        let sourceTime = clipTimeline.sourceTime(at: time)
+        return textOverlays.filter { $0.isActive(atSourceTime: sourceTime) }
+    }
+
+    func selectText(id: UUID) {
+        guard textOverlays.contains(where: { $0.id == id }) else { return }
+        clearTimelineSelection()
+        selectedTextID = id
+    }
+
+    /// Adds a text at the playhead, three seconds long.
+    func addText(atEditorTime time: TimeInterval) {
+        guard let range = sourceRange(startingAt: time, length: RecordingTextOverlay.defaultDuration,
+                                      minimum: RecordingTextOverlay.minimumDuration) else { return }
+        insertText(RecordingTextOverlay(start: range.lowerBound, end: range.upperBound))
+    }
+
+    /// Adds a text over a range dragged across the text track.
+    func addText(fromEditorTime editorStart: TimeInterval, toEditorTime editorEnd: TimeInterval) {
+        guard let range = sourceRange(fromEditorTime: editorStart, toEditorTime: editorEnd,
+                                      minimum: RecordingTextOverlay.minimumDuration) else { return }
+        insertText(RecordingTextOverlay(start: range.lowerBound, end: range.upperBound))
+    }
+
+    private func insertText(_ overlay: RecordingTextOverlay) {
+        applyTexts(textOverlays + [overlay], actionName: "Add Text")
+        selectText(id: overlay.id)
+    }
+
+    func removeText(id: UUID) {
+        applyTexts(textOverlays.filter { $0.id != id }, actionName: "Remove Text")
+        if selectedTextID == id { selectedTextID = nil }
+    }
+
+    func beginTextEdit() {
+        if textEditSnapshot == nil { textEditSnapshot = textOverlays }
+    }
+
+    func endTextEdit(actionName: String = "Edit Text") {
+        textCoalesceTask?.cancel()
+        textCoalesceTask = nil
+        guard let previous = textEditSnapshot else { return }
+        textEditSnapshot = nil
+        guard previous != textOverlays else { return }
+        registerUndo(actionName) { target in
+            target.applyTexts(previous, actionName: actionName)
+        }
+    }
+
+    func setText(_ overlay: RecordingTextOverlay) {
+        guard let index = textOverlays.firstIndex(where: { $0.id == overlay.id }) else { return }
+        var texts = textOverlays
+        var updated = overlay
+        let range = clampedSourceRange(start: overlay.start, end: overlay.end, minimum: RecordingTextOverlay.minimumDuration)
+        updated.start = range.lowerBound
+        updated.end = range.upperBound
+        updated.fontSize = min(max(updated.fontSize, RecordingTextOverlay.fontSizeRange.lowerBound),
+                               RecordingTextOverlay.fontSizeRange.upperBound)
+        updated.center = CGPoint(x: min(max(updated.center.x, 0), 1), y: min(max(updated.center.y, 0), 1))
+        texts[index] = updated
+        replaceTexts(texts)
+    }
+
+    func editText(_ overlay: RecordingTextOverlay, actionName: String) {
+        beginTextEdit()
+        setText(overlay)
+        textCoalesceTask?.cancel()
+        textCoalesceTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            self?.endTextEdit(actionName: actionName)
+        }
+    }
+
+    func updateText(_ overlay: RecordingTextOverlay, actionName: String) {
+        beginTextEdit()
+        setText(overlay)
+        endTextEdit(actionName: actionName)
+    }
+
+    private func replaceTexts(_ texts: [RecordingTextOverlay]) {
+        textOverlays = texts
+        scheduleProjectSave()
+    }
+
+    private func applyTexts(_ texts: [RecordingTextOverlay], actionName: String) {
+        guard texts != textOverlays else { return }
+        let previous = textOverlays
+        registerUndo(actionName) { target in
+            target.applyTexts(previous, actionName: actionName)
+        }
+        replaceTexts(texts)
+        if let selectedTextID, !texts.contains(where: { $0.id == selectedTextID }) {
+            self.selectedTextID = nil
+        }
+    }
+
+    // MARK: - Media & Image overlays
+
+    /// Where imported images and audio are copied; nil for a bare movie,
+    /// which has no project folder to keep them in.
+    var mediaDirectoryURL: URL? {
+        session?.mediaDirectoryURL
+    }
+
+    var canImportMedia: Bool { mediaDirectoryURL != nil && isLoaded }
+
+    /// Copies picked images and GIFs into the project's `media` folder and places
+    /// them from `time`. Audio routing hooks in right beside image import.
+    func importMedia(_ urls: [URL], atEditorTime time: TimeInterval) {
+        guard let directory = mediaDirectoryURL else { return }
+        mediaImportError = nil
+        Task { [weak self] in
+            var imageTime = time
+            var audioTime = time
+            var rejected: [String] = []
+            for url in urls {
+                guard let self, !self.isTornDown else { return }
+                if RecordingOverlayImage.canImport(url) {
+                    if let placed = await self.importImage(url, into: directory, atEditorTime: imageTime) {
+                        imageTime = placed
+                    } else {
+                        rejected.append(url.lastPathComponent)
+                    }
+                } else if let placed = await self.importAudioMedia(url, into: directory, atEditorTime: audioTime) {
+                    audioTime = placed
+                } else {
+                    rejected.append(url.lastPathComponent)
+                }
+            }
+            if !rejected.isEmpty {
+                self?.mediaImportError = "Couldn't add \(rejected.joined(separator: ", ")). Images and animated GIF, APNG, WebP, or HEIC files can be added."
+            }
+        }
+    }
+
+    /// One file, awaited. False when the file isn't supported media.
+    func importMediaFile(_ url: URL, atEditorTime time: TimeInterval) async -> Bool {
+        guard let directory = mediaDirectoryURL, !isTornDown else { return false }
+        if RecordingOverlayImage.canImport(url) {
+            return await importImage(url, into: directory, atEditorTime: time) != nil
+        }
+        return await importAudioMedia(url, into: directory, atEditorTime: time) != nil
+    }
+
+    /// Seam for audio clip import (`neon-studio-audio` replaces this stub).
+    func importAudioMedia(_ url: URL, into directory: URL, atEditorTime time: TimeInterval) async -> TimeInterval? {
+        _ = (url, directory, time)
+        return nil
+    }
+
+    func copyMediaIntoProject(_ url: URL, directory: URL) -> String? {
+        let fileName = UUID().uuidString + (url.pathExtension.isEmpty ? "" : ".\(url.pathExtension.lowercased())")
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let accessing = url.startAccessingSecurityScopedResource()
+            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+            try FileManager.default.copyItem(at: url, to: directory.appendingPathComponent(fileName))
+            return fileName
+        } catch {
+            return nil
+        }
+    }
+
+    /// Adds one image at an editor time. Returns where the next one goes.
+    private func importImage(_ url: URL, into directory: URL, atEditorTime time: TimeInterval) async -> TimeInterval? {
+        guard let fileName = copyMediaIntoProject(url, directory: directory) else { return nil }
+        let storedURL = directory.appendingPathComponent(fileName)
+        let store = overlayImages
+        let decoded = await Task.detached(priority: .userInitiated) { store.image(at: storedURL) }.value
+        guard let decoded, !isTornDown,
+              let range = sourceRange(startingAt: time, length: RecordingImageOverlay.defaultDuration,
+                                      minimum: RecordingImageOverlay.minimumDuration) else {
+            try? FileManager.default.removeItem(at: storedURL)
+            return nil
+        }
+        var overlay = RecordingImageOverlay(
+            fileName: fileName,
+            displayName: url.deletingPathExtension().lastPathComponent,
+            start: range.lowerBound,
+            end: range.upperBound
+        )
+        overlay.aspect = decoded.aspect
+        overlay.isAnimated = decoded.isAnimated
+        // At most 40% of the canvas wide and half of it tall.
+        let canvas = basePreviewCanvasSize
+        let heightLimitedWidth = canvas.width > 0 ? 0.5 * canvas.height * decoded.aspect / canvas.width : 0.4
+        overlay.width = min(0.4, heightLimitedWidth)
+        overlayImageRevision &+= 1
+        applyImages(imageOverlays + [overlay], actionName: "Add Image")
+        selectImage(id: overlay.id)
+        return clipTimeline.editorTime(forSourceTime: range.upperBound) ?? time + RecordingImageOverlay.defaultDuration
+    }
+
+    private func loadOverlayMedia() {
+        mediaLoadTask?.cancel()
+        guard let directory = mediaDirectoryURL, !imageOverlays.isEmpty else { return }
+        let imageFiles = Set(imageOverlays.map(\.fileName))
+        let store = overlayImages
+        mediaLoadTask = Task { [weak self] in
+            await Task.detached(priority: .userInitiated) {
+                for name in imageFiles {
+                    _ = store.image(at: directory.appendingPathComponent(name))
+                }
+            }.value
+            guard let self, !Task.isCancelled else { return }
+            self.overlayImageRevision &+= 1
+        }
+    }
+
+    var selectedImage: RecordingImageOverlay? {
+        imageOverlays.first { $0.id == selectedImageID }
+    }
+
+    var imageTimelineBlocks: [RecordingOverlayTimelineBlock<RecordingImageOverlay>] {
+        RecordingOverlayTimelineBlock.blocks(for: imageOverlays, clipTimeline: clipTimeline) {
+            ($0.start, $0.end)
+        }
+    }
+
+    /// The images showing at an editor time, bottom to top.
+    func images(atEditorTime time: TimeInterval) -> [RecordingImageOverlay] {
+        guard !imageOverlays.isEmpty, clipTimeline.location(at: time) != nil else { return [] }
+        let sourceTime = clipTimeline.sourceTime(at: time)
+        return imageOverlays.filter { $0.isActive(atSourceTime: sourceTime) }
+    }
+
+    func overlayImageURL(for overlay: RecordingImageOverlay) -> URL? {
+        mediaDirectoryURL?.appendingPathComponent(overlay.fileName)
+    }
+
+    func selectImage(id: UUID) {
+        guard imageOverlays.contains(where: { $0.id == id }) else { return }
+        clearTimelineSelection()
+        selectedImageID = id
+    }
+
+    func removeImage(id: UUID) {
+        applyImages(imageOverlays.filter { $0.id != id }, actionName: "Remove Image")
+        if selectedImageID == id { selectedImageID = nil }
+    }
+
+    func beginImageEdit() {
+        if imageEditSnapshot == nil { imageEditSnapshot = imageOverlays }
+    }
+
+    func endImageEdit(actionName: String = "Edit Image") {
+        imageCoalesceTask?.cancel()
+        imageCoalesceTask = nil
+        guard let previous = imageEditSnapshot else { return }
+        imageEditSnapshot = nil
+        guard previous != imageOverlays else { return }
+        registerUndo(actionName) { target in
+            target.applyImages(previous, actionName: actionName)
+        }
+    }
+
+    func setImage(_ overlay: RecordingImageOverlay) {
+        guard let index = imageOverlays.firstIndex(where: { $0.id == overlay.id }) else { return }
+        var updated = overlay
+        let range = clampedSourceRange(start: overlay.start, end: overlay.end, minimum: RecordingImageOverlay.minimumDuration)
+        updated.start = range.lowerBound
+        updated.end = range.upperBound
+        updated.width = min(max(updated.width, RecordingImageOverlay.widthRange.lowerBound),
+                            RecordingImageOverlay.widthRange.upperBound)
+        updated.center = CGPoint(x: min(max(updated.center.x, 0), 1), y: min(max(updated.center.y, 0), 1))
+        updated.opacity = min(max(updated.opacity, 0), 1)
+        var all = imageOverlays
+        all[index] = updated
+        imageOverlays = all
+        scheduleProjectSave()
+    }
+
+    func editImage(_ overlay: RecordingImageOverlay, actionName: String) {
+        beginImageEdit()
+        setImage(overlay)
+        imageCoalesceTask?.cancel()
+        imageCoalesceTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            self?.endImageEdit(actionName: actionName)
+        }
+    }
+
+    private func applyImages(_ all: [RecordingImageOverlay], actionName: String) {
+        guard all != imageOverlays else { return }
+        let previous = imageOverlays
+        registerUndo(actionName) { target in
+            target.applyImages(previous, actionName: actionName)
+        }
+        imageOverlays = all
+        scheduleProjectSave()
+        if let selectedImageID, !all.contains(where: { $0.id == selectedImageID }) {
+            self.selectedImageID = nil
+        }
+    }
+
+    // MARK: - Redactions & Video crop
 
     var selectedRedaction: RecordingRedaction? {
         redactions.first { $0.id == selectedRedactionID }
+    }
+
+    var redactionTimelineBlocks: [RecordingOverlayTimelineBlock<RecordingRedaction>] {
+        RecordingOverlayTimelineBlock.blocks(for: redactions, clipTimeline: clipTimeline) {
+            ($0.start, $0.end)
+        }
+    }
+
+    /// The redactions showing at an editor time.
+    func redactions(atEditorTime time: TimeInterval) -> [RecordingRedaction] {
+        guard !redactions.isEmpty, clipTimeline.location(at: time) != nil else { return [] }
+        let sourceTime = clipTimeline.sourceTime(at: time)
+        return redactions.filter { $0.start <= sourceTime && sourceTime < $0.end }
+    }
+
+    func selectRedaction(id: UUID) {
+        guard redactions.contains(where: { $0.id == id }) else { return }
+        clearTimelineSelection()
+        selectedRedactionID = id
     }
 
     func beginRedaction() {
         guard isLoaded, !hasRunningWork else { return }
         pause()
         cancelVideoCrop()
-        selectedCueID = nil
+        clearTimelineSelection()
         hoverPreviewTime = nil
         workingVideoCropRect = CGRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5)
         videoCropAspect = .freeform
@@ -3904,21 +4306,144 @@ final class RecordingStudioModel {
         guard isSelectingRedaction else { return }
         let start = min(sourceTime(atEditorTime: currentTime), max(0, sourceDuration - 0.01))
         let region = RecordingRedaction(start: start, end: sourceDuration, rect: workingVideoCropRect)
-        applyRedactions(redactions + [region])
-        selectedRedactionID = region.id
+        applyRedactions(redactions + [region], actionName: "Add Redaction")
+        selectRedaction(id: region.id)
         isSelectingRedaction = false
     }
 
-    func updateRedaction(_ region: RecordingRedaction) {
-        applyRedactions(redactions.map { $0.id == region.id ? region : $0 })
+    /// Adds a pixelate or blur block at the playhead, three seconds long,
+    /// centered on the recorded picture; drag its handles on the canvas to place it.
+    func addRedaction(atEditorTime time: TimeInterval, mode: RecordingRedaction.Mode = .pixelate) {
+        guard isLoaded, !hasRunningWork,
+              let range = sourceRange(startingAt: time, length: RecordingRedaction.defaultDuration,
+                                      minimum: RecordingRedaction.minimumDuration) else { return }
+        let region = RecordingRedaction(
+            start: range.lowerBound,
+            end: range.upperBound,
+            rect: RecordingRedaction.defaultRect,
+            mode: mode
+        )
+        applyRedactions(redactions + [region], actionName: mode == .blur ? "Add Blur" : "Add Pixelate")
+        selectRedaction(id: region.id)
+    }
+
+    func updateRedaction(_ region: RecordingRedaction, actionName: String = "Video Redaction") {
+        applyRedactions(redactions.map { $0.id == region.id ? region : $0 }, actionName: actionName)
     }
 
     func removeRedaction(_ id: UUID) {
-        applyRedactions(redactions.filter { $0.id != id })
+        applyRedactions(redactions.filter { $0.id != id }, actionName: "Remove Redaction")
         if selectedRedactionID == id { selectedRedactionID = nil }
     }
 
-    private func applyRedactions(_ next: [RecordingRedaction]) {
+    func removeRedaction(id: UUID) {
+        removeRedaction(id)
+    }
+
+    func beginRedactionEdit() {
+        if redactionEditSnapshot == nil { redactionEditSnapshot = redactions }
+    }
+
+    func endRedactionEdit(actionName: String = "Edit Redaction") {
+        redactionCoalesceTask?.cancel()
+        redactionCoalesceTask = nil
+        guard let previous = redactionEditSnapshot else { return }
+        redactionEditSnapshot = nil
+        guard previous != redactions else { return }
+        do { for region in redactions { try region.validate(sourceDuration: sourceDuration) } }
+        catch {
+            redactions = previous
+            redactionPreview.update(redactions: previous, clipTimeline: clipTimeline)
+            redactionEditError = error.localizedDescription
+            scheduleRedactionRefresh()
+            return
+        }
+        guard writeDraftNow() else {
+            redactions = previous
+            redactionPreview.update(redactions: previous, clipTimeline: clipTimeline)
+            FailureAlert.present(message: "The video redaction could not be saved",
+                                 error: CocoaError(.fileWriteUnknown),
+                                 detail: "The change was not applied. Resolve the project storage problem and try again.")
+            scheduleRedactionRefresh()
+            return
+        }
+        registerUndo(actionName) { $0.applyRedactions(previous, actionName: actionName) }
+        scheduleProjectSave()
+        QuickLookPreviewPresenter.dismiss()
+        if let session { ScreenshotPreviewStack.shared.dismissRecordingSession(session.directoryURL) }
+        RecordingProjectStore.shared.reload()
+        loadTimelineThumbnails()
+        loadStylePoster()
+    }
+
+    /// Applies an edited region during a continuous canvas or timeline drag,
+    /// keeping it validated and inside the recording and picture.
+    func setRedaction(_ redaction: RecordingRedaction) {
+        guard let index = redactions.firstIndex(where: { $0.id == redaction.id }) else { return }
+        redactionEditError = nil
+        var updated = redaction
+        let range = clampedSourceRange(start: redaction.start, end: redaction.end, minimum: RecordingRedaction.minimumDuration)
+        updated.start = range.lowerBound
+        updated.end = range.upperBound
+        updated.rect = RecordingRedaction.clamped(redaction.rect)
+        updated.strength = min(max(updated.strength, 0), 1)
+        updated.cornerRadius = min(max(updated.cornerRadius, RecordingRedaction.cornerRadiusRange.lowerBound),
+                                   RecordingRedaction.cornerRadiusRange.upperBound)
+        updated.fadeIn = min(max(updated.fadeIn, RecordingRedaction.fadeRange.lowerBound),
+                             RecordingRedaction.fadeRange.upperBound)
+        updated.fadeOut = min(max(updated.fadeOut, RecordingRedaction.fadeRange.lowerBound),
+                              RecordingRedaction.fadeRange.upperBound)
+        do { try updated.validate(sourceDuration: sourceDuration) }
+        catch { redactionEditError = error.localizedDescription; return }
+        var all = redactions
+        all[index] = updated
+        let wasEmpty = redactions.isEmpty
+        redactions = all
+        redactionPreview.update(redactions: all, clipTimeline: clipTimeline)
+        if wasEmpty {
+            do { try rebuildScreenPlayerItem(preserving: currentTime) }
+            catch { redactionPreviewError = error.localizedDescription }
+        } else {
+            scheduleRedactionRefresh()
+        }
+        scheduleProjectSave()
+    }
+
+    func editRedaction(_ redaction: RecordingRedaction, actionName: String) {
+        beginRedactionEdit()
+        setRedaction(redaction)
+        redactionCoalesceTask?.cancel()
+        redactionCoalesceTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            self?.endRedactionEdit(actionName: actionName)
+        }
+    }
+
+    /// Refreshes the paused player frame when a redaction is moved, resized,
+    /// or adjusted without tearing down the player item.
+    private func scheduleRedactionRefresh() {
+        guard !isPlaying, redactionRefreshTask == nil else { return }
+        redactionRefreshTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(16))
+            guard let self, !Task.isCancelled else { return }
+            self.redactionRefreshTask = nil
+            guard !self.isPlaying, !self.isTornDown, let item = self.screenPlayer.currentItem else { return }
+            if !self.redactions.isEmpty {
+                do {
+                    item.videoComposition = try await self.redactionPreview.composition(asset: item.asset)
+                } catch {
+                    self.redactionPreviewError = error.localizedDescription
+                    return
+                }
+            } else {
+                item.videoComposition = nil
+            }
+            self.movePlayers(to: self.displayTime)
+        }
+    }
+
+    private func applyRedactions(_ next: [RecordingRedaction], actionName: String = "Video Redaction") {
         redactionEditError = nil
         guard next != redactions else { return }
         do { for region in next { try region.validate(sourceDuration: sourceDuration) } }
@@ -3926,14 +4451,19 @@ final class RecordingStudioModel {
         let previous = redactions
         pause()
         redactions = next
+        redactionPreview.update(redactions: next, clipTimeline: clipTimeline)
         guard writeDraftNow() else {
             redactions = previous
+            redactionPreview.update(redactions: previous, clipTimeline: clipTimeline)
             FailureAlert.present(message: "The video redaction could not be saved",
                                  error: CocoaError(.fileWriteUnknown),
                                  detail: "The change was not applied. Resolve the project storage problem and try again.")
             return
         }
-        registerUndo("Video Redaction") { $0.applyRedactions(previous) }
+        registerUndo(actionName) { $0.applyRedactions(previous, actionName: actionName) }
+        if let selectedRedactionID, !next.contains(where: { $0.id == selectedRedactionID }) {
+            self.selectedRedactionID = nil
+        }
         scheduleProjectSave()
         QuickLookPreviewPresenter.dismiss()
         if let session { ScreenshotPreviewStack.shared.dismissRecordingSession(session.directoryURL) }
@@ -4113,6 +4643,9 @@ final class RecordingStudioModel {
             fitContentAspect: fitContentAspect,
             usesUniformPadding: exportAspect == .original,
             redactions: redactions,
+            textOverlays: textOverlays,
+            imageOverlays: imageOverlays,
+            mediaDirectory: mediaDirectoryURL,
             ink: showsInk && !inkTimeline.isEmpty ? inkTimeline : nil
         )
     }
@@ -5303,6 +5836,18 @@ final class RecordingStudioModel {
             try? FileManager.default.removeItem(
                 at: session.directoryURL.appendingPathComponent(name)
             )
+        }
+        let mediaDirectory = session.mediaDirectoryURL
+        let referencedImages = Set(
+            [savedDocument?.imageOverlays, draftDocument?.imageOverlays, lastSavedDocument?.imageOverlays, imageOverlays]
+                .compactMap { $0 }.flatMap { $0.map(\.fileName) }
+            + keptDocuments.compactMap(\.imageOverlays).flatMap { $0.map(\.fileName) }
+        )
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: mediaDirectory.path)) ?? [] {
+            let fileURL = mediaDirectory.appendingPathComponent(name)
+            if RecordingOverlayImage.canImport(fileURL), !referencedImages.contains(name) {
+                try? FileManager.default.removeItem(at: fileURL)
+            }
         }
     }
 

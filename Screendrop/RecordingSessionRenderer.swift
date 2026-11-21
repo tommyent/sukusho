@@ -263,6 +263,9 @@ enum RecordingSessionRenderer {
             fitContentAspect: fitContentAspect,
             usesUniformPadding: aspect == .original,
             redactions: document?.redactions ?? [],
+            textOverlays: document?.textOverlays ?? [],
+            imageOverlays: document?.imageOverlays ?? [],
+            mediaDirectory: session.mediaDirectoryURL,
             ink: document?.showsInk ?? true
                 ? RecordingInkTimeline(strokes: capture.ink, hiding: Set(document?.hiddenInkStrokeIDs ?? []))
                 : nil
