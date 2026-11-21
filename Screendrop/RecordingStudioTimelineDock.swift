@@ -254,7 +254,7 @@ struct StudioTimelineEditor: View {
 
     private func finishRulerGesture() {
         if let range = model.rangeSelection, rangeAnchor != nil,
-           range.upperBound - range.lowerBound < RecordingClipSegment.minimumDuration {
+           range.upperBound - range.lowerBound <= 0.000_5 {
             model.clearRange()
         }
         rangeAnchor = nil

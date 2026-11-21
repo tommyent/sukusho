@@ -52,15 +52,26 @@ struct StudioEditingTests {
         #expect(abs(splitMiddle.segments[2].sourceEnd - 10) < 0.0001)
         #expect(splitMiddle.segments[2].speed == 2)
 
-        // Deleting nearly the whole video returns nil rather than an empty timeline.
+        // Deleting the whole video returns .removesEntireVideo; cutting near an edge
+        // that would leave a sub-minimum unmarked stub returns .leavesShortClip rather
+        // than silently consuming unmarked footage.
+        #expect(timeline.removeEditorRange(0...10) == .removesEntireVideo)
         #expect(timeline.removingEditorRange(0...10) == nil)
-        #expect(timeline.removingEditorRange(0.05...9.99) == nil)
+        #expect(timeline.removeEditorRange(0.08...0.30) == .leavesShortClip)
+        #expect(timeline.removingEditorRange(0.08...0.30) == nil)
+        #expect(timeline.removeEditorRange(0.05...9.99) == .leavesShortClip)
+        #expect(timeline.removeEditorRange(2.0...2.0) == .emptyRange)
 
-        // Tiny sub-minimum leading stub is dropped and does not steal clipA's ID from its trailing survivor.
-        let tinyStub = try #require(timeline.removingEditorRange(0.05...1.0))
-        #expect(tinyStub.segments[0].id == clipA.id)
-        #expect(abs(tinyStub.segments[0].sourceStart - 1.0) < 0.0001)
-        #expect(abs(tinyStub.segments[0].sourceEnd - 4.0) < 0.0001)
+        // At 8x, a 0.05 s editor range marks 0.40 s of source with room for both survivors.
+        let fast = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 16, speed: 8)
+        ])
+        let fastCut = try #require(fast.removingEditorRange(0.50...0.55))
+        #expect(fastCut.segments.count == 2)
+        #expect(abs(fastCut.segments[0].sourceStart - 0) < 0.0001)
+        #expect(abs(fastCut.segments[0].sourceEnd - 4.0) < 0.0001)
+        #expect(abs(fastCut.segments[1].sourceStart - 4.4) < 0.0001)
+        #expect(abs(fastCut.segments[1].sourceEnd - 16.0) < 0.0001)
     }
 
     @Test func rangeMarkingTracksInOutAndReopensWhenInPassesOut() throws {
@@ -69,6 +80,11 @@ struct StudioEditingTests {
 
         let narrowedOut = try #require(StudioEditing.markedRange(current: firstIn, edge: .end, at: 6.5, duration: 10))
         #expect(narrowedOut == 3.0...6.5)
+
+        // Short positive editor ranges (e.g. 0.05 s at 8x) are preserved when setting In before Out.
+        let shortOut = try #require(StudioEditing.markedRange(current: nil, edge: .end, at: 0.55, duration: 2.0))
+        let shortRange = try #require(StudioEditing.markedRange(current: shortOut, edge: .start, at: 0.50, duration: 2.0))
+        #expect(abs(shortRange.lowerBound - 0.50) < 0.0001 && abs(shortRange.upperBound - 0.55) < 0.0001)
 
         // Moving In past Out opens to the end until O is pressed again.
         let reopened = try #require(StudioEditing.markedRange(current: narrowedOut, edge: .start, at: 7.0, duration: 10))

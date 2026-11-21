@@ -413,13 +413,24 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
         return points
     }
 
-    /// The cut with a stretch of the edited video taken out, everything
-    /// after closing up. Clips the stretch only partly covers are trimmed
-    /// or split; the leading survivor keeps the clip's identity. Nil when
-    /// nothing would be left.
-    func removingEditorRange(_ range: ClosedRange<TimeInterval>) -> RecordingClipTimeline? {
-        guard range.lowerBound.isFinite, range.upperBound.isFinite, range.upperBound > range.lowerBound else {
-            return self
+    /// Outcome of ripple-deleting an editor-time range.
+    enum EditorRangeRemoval: Equatable, Sendable {
+        case removed(RecordingClipTimeline)
+        case emptyRange
+        case removesEntireVideo
+        case leavesShortClip
+    }
+
+    /// Validates and removes a stretch of the edited video, closing up
+    /// everything after it. Rejects empty ranges, cuts that leave no video,
+    /// and cuts that would silently swallow an unmarked piece shorter than
+    /// `RecordingClipSegment.minimumDuration`.
+    func removeEditorRange(_ range: ClosedRange<TimeInterval>) -> EditorRangeRemoval {
+        let tolerance = 0.000_5
+        guard range.lowerBound.isFinite,
+              range.upperBound.isFinite,
+              range.upperBound - range.lowerBound > tolerance else {
+            return .emptyRange
         }
         var next: [RecordingClipSegment] = []
         var editorStart: TimeInterval = 0
@@ -428,7 +439,7 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
             defer { editorStart = editorEnd }
             let cutLow = max(range.lowerBound, editorStart)
             let cutHigh = min(range.upperBound, editorEnd)
-            guard cutHigh > cutLow else {
+            guard cutHigh - cutLow > tolerance else {
                 next.append(segment)
                 continue
             }
@@ -436,15 +447,19 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
                 min(segment.sourceStart + (editor - editorStart) * segment.speed, segment.sourceEnd)
             }
             var keptID = false
-            let leadingEnd = source(cutLow)
-            if cutLow - editorStart > 0.000_5,
-               leadingEnd - segment.sourceStart >= RecordingClipSegment.minimumDuration {
+            if cutLow - editorStart > tolerance {
+                let leadingEnd = source(cutLow)
+                guard leadingEnd - segment.sourceStart >= RecordingClipSegment.minimumDuration - tolerance else {
+                    return .leavesShortClip
+                }
                 next.append(segment.covering(segment.sourceStart, leadingEnd))
                 keptID = true
             }
-            let trailingStart = source(cutHigh)
-            if editorEnd - cutHigh > 0.000_5,
-               segment.sourceEnd - trailingStart >= RecordingClipSegment.minimumDuration {
+            if editorEnd - cutHigh > tolerance {
+                let trailingStart = source(cutHigh)
+                guard segment.sourceEnd - trailingStart >= RecordingClipSegment.minimumDuration - tolerance else {
+                    return .leavesShortClip
+                }
                 next.append(segment.covering(
                     trailingStart,
                     segment.sourceEnd,
@@ -452,8 +467,16 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
                 ))
             }
         }
-        guard !next.isEmpty else { return nil }
-        return RecordingClipTimeline(segments: next)
+        guard !next.isEmpty else { return .removesEntireVideo }
+        return .removed(RecordingClipTimeline(segments: next))
+    }
+
+    /// The cut with a stretch of the edited video taken out, everything
+    /// after closing up. Nil when the range is empty, removes the whole video,
+    /// or would leave a clip shorter than `RecordingClipSegment.minimumDuration`.
+    func removingEditorRange(_ range: ClosedRange<TimeInterval>) -> RecordingClipTimeline? {
+        guard case .removed(let next) = removeEditorRange(range) else { return nil }
+        return next
     }
 
     /// Editor times of cuts that jump back in the recording, where clips have

@@ -1567,22 +1567,23 @@ final class RecordingStudioModel {
     /// Ripple-deletes the marked editor range, closing up everything after it.
     func deleteRange() {
         guard isLoaded, !isRestoringDocument, !isEditingSourceRegion, let range = rangeSelection else { return }
-        guard range.upperBound - range.lowerBound >= RecordingClipSegment.minimumDuration else {
-            rangeSelection = nil
-            return
-        }
-        guard let next = clipTimeline.removingEditorRange(range) else {
+        switch clipTimeline.removeEditorRange(range) {
+        case .emptyRange:
+            showNotice("Mark a range to delete")
+        case .removesEntireVideo:
             showNotice("Can't remove the whole video")
-            return
+        case .leavesShortClip:
+            showNotice("Remaining clip would be too short")
+        case .removed(let next):
+            rangeSelection = nil
+            applyClipTimeline(
+                next,
+                selectedID: nil,
+                selectsClip: false,
+                playheadTime: range.lowerBound,
+                actionName: "Delete Range"
+            )
         }
-        rangeSelection = nil
-        applyClipTimeline(
-            next,
-            selectedID: nil,
-            selectsClip: false,
-            playheadTime: range.lowerBound,
-            actionName: "Delete Range"
-        )
     }
 
     /// Markers that still have surviving footage in the cut, in playback order.

@@ -131,7 +131,7 @@ nonisolated enum StudioEditing {
         case .start:
             let end = current.map { max($0.upperBound, clamped) } ?? duration
             var range = clamped...max(clamped, end)
-            if range.upperBound - range.lowerBound < RecordingClipSegment.minimumDuration {
+            if range.upperBound - range.lowerBound <= 0.000_5 {
                 // An In point at or past the old Out point opens to the end until O is pressed.
                 range = clamped...duration
             }
