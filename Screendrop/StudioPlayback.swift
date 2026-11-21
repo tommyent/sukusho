@@ -25,6 +25,35 @@ nonisolated enum StudioPlaybackKeyAction: Equatable, Sendable {
     case consume
 }
 
+nonisolated struct StudioPlaybackCapabilities: Equatable, Sendable {
+    var isReady: Bool
+    var canPlayFastForward: Bool
+    var canPlaySlowForward: Bool
+    var canPlayReverse: Bool
+    var canPlaySlowReverse: Bool
+    var canPlayFastReverse: Bool
+
+    /// Per AVFoundation's `AVPlayerItem` contract, ready items support forward
+    /// rates in `1...2` unconditionally; `> 2` requires `canPlayFastForward`,
+    /// `-1` requires `canPlayReverse`, `< -1` requires `canPlayFastReverse`,
+    /// and fractional rates require the matching slow capability.
+    func supports(rate: Float) -> Bool {
+        guard isReady, rate.isFinite, rate != 0 else { return false }
+        if rate > 2 { return canPlayFastForward }
+        if rate >= 1 { return true }
+        if rate > 0 { return canPlaySlowForward }
+        if rate == -1 { return canPlayReverse }
+        if rate > -1 { return canPlaySlowReverse }
+        return canPlayFastReverse
+    }
+}
+
+nonisolated enum StudioShuttleResolution: Equatable, Sendable {
+    case play(rate: Float)
+    case seekStep(TimeInterval, notice: String)
+    case ignore
+}
+
 nonisolated struct StudioPlaybackBoundaryState: Equatable, Sendable {
     var isPlaying: Bool
     var shuttleRate: Float
@@ -49,6 +78,32 @@ nonisolated enum StudioPlayback {
             return direction * min(base * 2, maxShuttleRate)
         }
         return direction
+    }
+
+    /// Resolves a J/K/L shuttle request against the current player item's
+    /// readiness and playback capabilities so the model never publishes or
+    /// applies a rate the item cannot run.
+    static func resolveShuttle(
+        currentRate: Float,
+        isPlaying: Bool,
+        forward: Bool,
+        capabilities: StudioPlaybackCapabilities
+    ) -> StudioShuttleResolution {
+        guard capabilities.isReady else { return .ignore }
+        let desired = nextShuttleRate(currentRate: currentRate, isPlaying: isPlaying, forward: forward)
+        if capabilities.supports(rate: desired) {
+            return .play(rate: desired)
+        }
+        if !forward {
+            if isPlaying, currentRate < 0, capabilities.supports(rate: currentRate) {
+                return .play(rate: currentRate)
+            }
+            return .seekStep(-1, notice: "-1s")
+        }
+        if isPlaying, currentRate > 0, capabilities.supports(rate: currentRate) {
+            return .play(rate: currentRate)
+        }
+        return .ignore
     }
 
     /// "2×", "◀ 1×".

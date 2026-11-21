@@ -228,6 +228,51 @@ struct StudioPlaybackTests {
         #expect(RecordingClipSegment.speedTitle(2.0) == "2×")
     }
 
+    @Test func shuttleResolutionRespectsPlayerCapabilitiesAndReadiness() {
+        let notReady = StudioPlaybackCapabilities(
+            isReady: false,
+            canPlayFastForward: true,
+            canPlaySlowForward: true,
+            canPlayReverse: true,
+            canPlaySlowReverse: true,
+            canPlayFastReverse: true
+        )
+        #expect(StudioPlayback.resolveShuttle(currentRate: 1, isPlaying: false, forward: true, capabilities: notReady) == .ignore)
+
+        // Supports -1× reverse, lacks fast reverse: second J stays at -1× instead of promising -2×.
+        let reverseOnly = StudioPlaybackCapabilities(
+            isReady: true,
+            canPlayFastForward: false,
+            canPlaySlowForward: false,
+            canPlayReverse: true,
+            canPlaySlowReverse: false,
+            canPlayFastReverse: false
+        )
+        #expect(StudioPlayback.resolveShuttle(currentRate: 1, isPlaying: false, forward: false, capabilities: reverseOnly) == .play(rate: -1))
+        #expect(StudioPlayback.resolveShuttle(currentRate: -1, isPlaying: true, forward: false, capabilities: reverseOnly) == .play(rate: -1))
+
+        // Forward without fast forward runs 1× and 2×, then caps at 2× instead of requesting 4×.
+        #expect(StudioPlayback.resolveShuttle(currentRate: 1, isPlaying: false, forward: true, capabilities: reverseOnly) == .play(rate: 1))
+        #expect(StudioPlayback.resolveShuttle(currentRate: 1, isPlaying: true, forward: true, capabilities: reverseOnly) == .play(rate: 2))
+        #expect(StudioPlayback.resolveShuttle(currentRate: 2, isPlaying: true, forward: true, capabilities: reverseOnly) == .play(rate: 2))
+
+        // Lacks reverse entirely: falls back to -1s seek and reports the action taken.
+        let noReverse = StudioPlaybackCapabilities(
+            isReady: true,
+            canPlayFastForward: true,
+            canPlaySlowForward: false,
+            canPlayReverse: false,
+            canPlaySlowReverse: false,
+            canPlayFastReverse: false
+        )
+        #expect(StudioPlayback.resolveShuttle(currentRate: 1, isPlaying: false, forward: false, capabilities: noReverse) == .seekStep(-1, notice: "-1s"))
+
+        // Camera capability check: clip speed × shuttleRate > 2 requires fast forward.
+        #expect(reverseOnly.supports(rate: 2))
+        #expect(!reverseOnly.supports(rate: 4))
+        #expect(!reverseOnly.supports(rate: -2))
+    }
+
     @Test func studioNoticesGetFreshIdentityForRepeatedText() {
         let first = StudioNotice(text: "2×")
         let second = StudioNotice(text: "2×")

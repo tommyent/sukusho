@@ -1112,37 +1112,66 @@ final class RecordingStudioModel {
         cameraPlayer.pause()
     }
 
+    private static func playbackCapabilities(of item: AVPlayerItem?) -> StudioPlaybackCapabilities {
+        guard let item else {
+            return StudioPlaybackCapabilities(
+                isReady: false,
+                canPlayFastForward: false,
+                canPlaySlowForward: false,
+                canPlayReverse: false,
+                canPlaySlowReverse: false,
+                canPlayFastReverse: false
+            )
+        }
+        return StudioPlaybackCapabilities(
+            isReady: item.status == .readyToPlay,
+            canPlayFastForward: item.canPlayFastForward,
+            canPlaySlowForward: item.canPlaySlowForward,
+            canPlayReverse: item.canPlayReverse,
+            canPlaySlowReverse: item.canPlaySlowReverse,
+            canPlayFastReverse: item.canPlayFastReverse
+        )
+    }
+
     /// J/K/L. Forward plays, and each further press doubles the speed up
     /// to 8×; backward does the same in reverse. Turning around starts
-    /// again from normal speed.
+    /// again from normal speed. Respects the current item's readiness and
+    /// playback capabilities before publishing or applying a rate.
     func shuttle(forward: Bool) {
         guard isLoaded, !isRestoringDocument, !isEditingSourceRegion, !isPreparingRedactionPreview, redactionPreviewError == nil else { return }
-        if !forward, screenPlayer.currentItem?.canPlayReverse != true {
-            // Nothing to play backward: step back a second instead.
-            pause()
-            seek(to: currentTime - 1)
-            return
-        }
-        let nextRate = StudioPlayback.nextShuttleRate(
+        let capabilities = Self.playbackCapabilities(of: screenPlayer.currentItem)
+        let resolution = StudioPlayback.resolveShuttle(
             currentRate: shuttleRate,
             isPlaying: isPlaying,
-            forward: forward
+            forward: forward,
+            capabilities: capabilities
         )
-        if isPlaying, shuttleRate * nextRate > 0 {
-            shuttleRate = nextRate
-            screenPlayer.rate = shuttleRate
-            syncCameraPlayback()
-        } else {
-            if isPlaying {
-                screenPlayer.pause()
-                cameraPlayer.pause()
-                isPlaying = false
+        switch resolution {
+        case .ignore:
+            return
+        case .seekStep(let delta, let noticeText):
+            pause()
+            seek(to: currentTime + delta)
+            showNotice(noticeText)
+        case .play(let nextRate):
+            if isPlaying, shuttleRate * nextRate > 0 {
+                if shuttleRate != nextRate {
+                    shuttleRate = nextRate
+                    screenPlayer.rate = shuttleRate
+                    syncCameraPlayback()
+                }
+            } else {
+                if isPlaying {
+                    screenPlayer.pause()
+                    cameraPlayer.pause()
+                    isPlaying = false
+                }
+                shuttleRate = nextRate
+                startPlayback()
             }
-            shuttleRate = nextRate
-            startPlayback()
-        }
-        if isPlaying {
-            showNotice(Self.shuttleTitle(shuttleRate))
+            if isPlaying {
+                showNotice(Self.shuttleTitle(shuttleRate))
+            }
         }
     }
 
@@ -1653,10 +1682,19 @@ final class RecordingStudioModel {
         // the camera bubble at that rate or the two drift apart immediately.
         let rate = Float(speed(atEditorTime: currentTime)) * shuttleRate
         let cameraTime = CMTime(seconds: max(0, sourceTime - cameraOffset), preferredTimescale: 600)
+        guard Self.playbackCapabilities(of: cameraPlayer.currentItem).supports(rate: rate) else {
+            cameraPlayer.pause()
+            cameraPlayer.seek(to: cameraTime, toleranceBefore: .zero, toleranceAfter: .zero)
+            return
+        }
         cameraPlayer.seek(to: cameraTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.isPlaying else { return }
-                self.cameraPlayer.rate = rate
+                if Self.playbackCapabilities(of: self.cameraPlayer.currentItem).supports(rate: rate) {
+                    self.cameraPlayer.rate = rate
+                } else {
+                    self.cameraPlayer.pause()
+                }
             }
         }
     }
@@ -1668,15 +1706,26 @@ final class RecordingStudioModel {
             cameraPlayer.pause()
             return
         }
+        let targetRate = Float(speed(atEditorTime: currentTime)) * shuttleRate
+        let expected = sourceTime - cameraOffset
+        guard Self.playbackCapabilities(of: cameraPlayer.currentItem).supports(rate: targetRate) else {
+            if cameraPlayer.rate != 0 { cameraPlayer.pause() }
+            if expected.isFinite {
+                cameraPlayer.seek(
+                    to: CMTime(seconds: max(0, expected), preferredTimescale: 600),
+                    toleranceBefore: .zero,
+                    toleranceAfter: .zero
+                )
+            }
+            return
+        }
         if cameraPlayer.rate == 0 {
             syncCameraPlayback()
             return
         }
-        let targetRate = Float(speed(atEditorTime: currentTime)) * shuttleRate
         if abs(cameraPlayer.rate - targetRate) > 0.01 {
             cameraPlayer.rate = targetRate
         }
-        let expected = sourceTime - cameraOffset
         let actual = cameraPlayer.currentTime().seconds
         guard expected.isFinite, actual.isFinite else { return }
         if abs(expected - actual) > 0.12 * Double(max(1, abs(shuttleRate))) {
