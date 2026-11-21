@@ -292,6 +292,13 @@ struct StudioPlaybackTests {
         #expect(StudioPlayback.keyAction(keyCode: 115, characters: nil, hasShift: false, hasOtherModifiers: false, isKHeld: false, isARepeat: false) == .seekToStart)
         #expect(StudioPlayback.keyAction(keyCode: 119, characters: nil, hasShift: false, hasOtherModifiers: false, isKHeld: false, isARepeat: false) == .seekToEnd)
 
+        // Focused inspector controls (e.g. Audio › Volume scrub handle) keep Left/Right and Home/End.
+        #expect(StudioPlayback.keyAction(keyCode: 123, characters: nil, hasShift: false, hasOtherModifiers: false, isKHeld: false, isARepeat: false, hasFocusedControl: true) == nil)
+        #expect(StudioPlayback.keyAction(keyCode: 124, characters: nil, hasShift: false, hasOtherModifiers: false, isKHeld: false, isARepeat: false, hasFocusedControl: true) == nil)
+        #expect(StudioPlayback.keyAction(keyCode: 124, characters: nil, hasShift: true, hasOtherModifiers: false, isKHeld: false, isARepeat: false, hasFocusedControl: true) == nil)
+        #expect(StudioPlayback.keyAction(keyCode: 115, characters: nil, hasShift: false, hasOtherModifiers: false, isKHeld: false, isARepeat: false, hasFocusedControl: true) == nil)
+        #expect(StudioPlayback.keyAction(keyCode: 119, characters: nil, hasShift: false, hasOtherModifiers: false, isKHeld: false, isARepeat: false, hasFocusedControl: true) == nil)
+
         // Modified letters and Sukusho's existing shortcuts pass through untouched.
         #expect(StudioPlayback.keyAction(keyCode: 37, characters: "l", hasShift: true, hasOtherModifiers: false, isKHeld: false, isARepeat: false) == nil)
         #expect(StudioPlayback.keyAction(keyCode: 37, characters: "l", hasShift: false, hasOtherModifiers: true, isKHeld: false, isARepeat: false) == nil)

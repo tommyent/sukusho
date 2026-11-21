@@ -234,28 +234,31 @@ nonisolated enum StudioPlayback {
     }
 
     /// Maps a Studio window keyDown event to its playback action, leaving all
-    /// other shortcuts (Space, ⌘B, ⌘0, ⌘Z, ⇧⌘Z, ⌫, etc.) untouched.
+    /// other shortcuts (Space, ⌘B, ⌘0, ⌘Z, ⇧⌘Z, ⌫, etc.) untouched and
+    /// yielding navigation/arrow keys when a focusable control (such as an
+    /// inspector scrub handle or `NSControl`) has focus.
     static func keyAction(
         keyCode: UInt16,
         characters: String?,
         hasShift: Bool,
         hasOtherModifiers: Bool,
         isKHeld: Bool,
-        isARepeat: Bool
+        isARepeat: Bool,
+        hasFocusedControl: Bool = false
     ) -> StudioPlaybackKeyAction? {
         switch keyCode {
         case 123, 124: // ← →
-            guard !hasOtherModifiers else { return nil }
+            guard !hasFocusedControl, !hasOtherModifiers else { return nil }
             let forward = keyCode == 124
             if hasShift {
                 return .stepSeconds(forward ? 1 : -1)
             }
             return .stepFrames(forward ? 1 : -1)
         case 115: // Home
-            guard !hasShift, !hasOtherModifiers else { return nil }
+            guard !hasFocusedControl, !hasShift, !hasOtherModifiers else { return nil }
             return .seekToStart
         case 119: // End
-            guard !hasShift, !hasOtherModifiers else { return nil }
+            guard !hasFocusedControl, !hasShift, !hasOtherModifiers else { return nil }
             return .seekToEnd
         default:
             break

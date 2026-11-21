@@ -16,6 +16,23 @@ import AppKit
 import SwiftUI
 
 struct StudioKeyCommands: NSViewRepresentable {
+    /// Inspector scrub handles currently focused via SwiftUI `@FocusState`,
+    /// which own Left/Right arrow keys outside AppKit's `NSText`/`NSControl`
+    /// responder hierarchy.
+    private static var focusedInspectorScrubbers: Set<UUID> = []
+
+    static var isInspectorScrubberFocused: Bool {
+        !focusedInspectorScrubbers.isEmpty
+    }
+
+    static func setInspectorScrubberFocused(_ id: UUID, focused: Bool) {
+        if focused {
+            focusedInspectorScrubbers.insert(id)
+        } else {
+            focusedInspectorScrubbers.remove(id)
+        }
+    }
+
     let model: RecordingStudioModel
 
     func makeNSView(context: Context) -> MonitorView {
@@ -84,13 +101,16 @@ struct StudioKeyCommands: NSViewRepresentable {
             let hasShift = modifiers.contains(.shift)
             let hasOtherModifiers = !modifiers.subtracting(.shift).isEmpty
 
+            let hasFocusedControl = (window.firstResponder is NSControl) || StudioKeyCommands.isInspectorScrubberFocused
+
             guard let action = StudioPlayback.keyAction(
                 keyCode: event.keyCode,
                 characters: event.charactersIgnoringModifiers,
                 hasShift: hasShift,
                 hasOtherModifiers: hasOtherModifiers,
                 isKHeld: isKHeld,
-                isARepeat: event.isARepeat
+                isARepeat: event.isARepeat,
+                hasFocusedControl: hasFocusedControl
             ) else { return false }
 
             switch action {
