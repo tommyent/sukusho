@@ -201,6 +201,8 @@ struct ClipboardLauncherSearchTests {
         try fm.createSymbolicLink(atPath: root.path + "/Apps/Alias.app", withDestinationPath: root.path + "/Apps/Alpha.app")
         try fm.createSymbolicLink(atPath: root.path + "/Apps/Escaping.app", withDestinationPath: root.path + "/Outside/Sneaky.app")
         try fm.createSymbolicLink(atPath: root.path + "/Apps/LinkedOutside", withDestinationPath: root.path + "/OutsideDir")
+        // An alias whose lexical prefix sits inside the root but traverses an intermediate symlink out of the root.
+        try fm.createSymbolicLink(atPath: root.path + "/Apps/ViaIntermediate.app", withDestinationPath: root.path + "/Apps/LinkedOutside/Nested.app")
         fm.createFile(atPath: root.path + "/Apps/readme.app", contents: Data())
 
         let found = LauncherAppScanner.scan(
@@ -210,7 +212,7 @@ struct ClipboardLauncherSearchTests {
         let byName = Dictionary(found.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
         let alpha = byName["Alpha"] ?? byName["Alias"]
         #expect(Set(byName.keys).subtracting(["Alpha", "Alias"]) == ["Beta", "Delta", "Epsilon"])
-        #expect(byName["Sneaky"] == nil && byName["Escaping"] == nil && byName["Nested"] == nil)
+        #expect(byName["Sneaky"] == nil && byName["Escaping"] == nil && byName["Nested"] == nil && byName["ViaIntermediate"] == nil)
         #expect(found.count == 4)
         #expect(alpha?.version == "1.0")
         #expect(byName["Beta"]?.version == nil)

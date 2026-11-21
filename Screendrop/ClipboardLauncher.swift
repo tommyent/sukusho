@@ -600,29 +600,77 @@ nonisolated enum LauncherAppScanner {
         return st.st_mode & S_IFMT
     }
 
-    /// Follows symlink targets lexically via `readlink` without touching paths outside `allowedRoots`.
+    /// Follows symlink targets lexically via `readlink` and validates every intermediate path component
+    /// beneath a trusted root using `lstat`, so an alias targeting `<root>/<symlink-to-outside>/App.app`
+    /// is rejected without touching the symlink's destination. Under Apple's read-only `/System` root,
+    /// intermediate symlinks (such as `/System/Cryptexes/App`) are allowed only if their target stays
+    /// inside `/System`.
     static func symlinkStaysInside(_ path: String, allowedRoots: [String], maxHops: Int = 8) -> Bool {
         var current = path
-        for _ in 0..<maxHops {
+        var hopsLeft = maxHops
+        while hopsLeft > 0 {
+            hopsLeft -= 1
             guard let target = try? FileManager.default.destinationOfSymbolicLink(atPath: current) else {
                 return false
             }
             let parent = URL(fileURLWithPath: (current as NSString).deletingLastPathComponent, isDirectory: true)
             let resolved = URL(fileURLWithPath: target, relativeTo: parent).standardizedFileURL.path
-            guard isPath(resolved, inside: allowedRoots) else { return false }
-            guard let kind = fileType(at: resolved) else { return false }
-            if kind == S_IFDIR { return true }
-            if kind != S_IFLNK { return false }
-            current = resolved
+            guard let verified = verifyComponents(of: resolved, allowedRoots: allowedRoots, hopsLeft: &hopsLeft) else {
+                return false
+            }
+            switch verified {
+            case .directory:
+                return true
+            case .leafSymlink(let leaf):
+                current = leaf
+            }
         }
         return false
     }
 
-    private static func isPath(_ path: String, inside roots: [String]) -> Bool {
-        roots.contains { root in
-            let clean = root.hasSuffix("/") ? String(root.dropLast()) : root
-            return path == clean || path.hasPrefix(clean + "/")
+    private enum VerifiedTarget {
+        case directory
+        case leafSymlink(String)
+    }
+
+    private static func verifyComponents(
+        of path: String,
+        allowedRoots: [String],
+        hopsLeft: inout Int
+    ) -> VerifiedTarget? {
+        guard let root = matchingRoot(for: path, in: allowedRoots) else { return nil }
+        guard path != root else { return fileType(at: root) == S_IFDIR ? .directory : nil }
+        let relative = String(path.dropFirst(root.count + 1))
+        let components = relative.split(separator: "/").map(String.init)
+        var cursor = root
+        for (index, comp) in components.enumerated() {
+            let isLeaf = index == components.count - 1
+            cursor += "/" + comp
+            guard let kind = fileType(at: cursor) else { return nil }
+            if isLeaf {
+                if kind == S_IFDIR { return .directory }
+                if kind == S_IFLNK { return .leafSymlink(cursor) }
+                return nil
+            }
+            if kind == S_IFDIR { continue }
+            guard kind == S_IFLNK, root == "/System", hopsLeft > 0,
+                  let linkTarget = try? FileManager.default.destinationOfSymbolicLink(atPath: cursor) else {
+                return nil
+            }
+            hopsLeft -= 1
+            let linkParent = URL(fileURLWithPath: (cursor as NSString).deletingLastPathComponent, isDirectory: true)
+            let expanded = URL(fileURLWithPath: linkTarget, relativeTo: linkParent).standardizedFileURL.path
+            let remainder = components[(index + 1)...].joined(separator: "/")
+            return verifyComponents(of: expanded + "/" + remainder, allowedRoots: ["/System"], hopsLeft: &hopsLeft)
         }
+        return nil
+    }
+
+    private static func matchingRoot(for path: String, in roots: [String]) -> String? {
+        roots
+            .map { $0.hasSuffix("/") ? String($0.dropLast()) : $0 }
+            .filter { path == $0 || path.hasPrefix($0 + "/") }
+            .max(by: { $0.count < $1.count })
     }
 
     static func isDirectory(_ path: String) -> Bool {
