@@ -118,6 +118,32 @@ struct AreaPickerGuidesTests {
         #expect(AreaPickerGuides.position(pointer: point, in: bounds, pixelScale: scale, isDragging: false, isAdjusting: true, hasSnap: false) == nil)
         #expect(AreaPickerGuides.position(pointer: point, in: bounds, pixelScale: scale, isDragging: false, isAdjusting: false, hasSnap: true) == nil)
     }
+
+    @Test func invalidatesSeparateNarrowStripsAndSkipsEqualPositions() {
+        let a = AreaPickerGuides(x: 100, y: 200)
+        let b = AreaPickerGuides(x: 500, y: 600)
+
+        // Sub-pixel jitter that keeps aligned coordinates equal triggers no redraw.
+        #expect(AreaPickerGuides.dirtyRects(from: a, to: a, in: bounds).isEmpty)
+        #expect(AreaPickerGuides.dirtyRects(from: nil, to: nil, in: bounds).isEmpty)
+
+        // Diagonal move invalidates 4 separate narrow strips, never a display-sized bounding box.
+        let diagonal = AreaPickerGuides.dirtyRects(from: a, to: b, in: bounds)
+        #expect(diagonal.count == 4)
+        for rect in diagonal {
+            #expect(min(rect.width, rect.height) == 4)
+            #expect(bounds.contains(rect))
+        }
+
+        // Single-axis move invalidates only the changed axis.
+        let horizontalOnly = AreaPickerGuides.dirtyRects(from: a, to: AreaPickerGuides(x: 500, y: 200), in: bounds)
+        #expect(horizontalOnly.count == 2)
+        #expect(horizontalOnly.allSatisfy { $0.width == 4 && $0.height == bounds.height })
+
+        // Appearing and disappearing invalidate the 2 strips on that display.
+        #expect(AreaPickerGuides.dirtyRects(from: nil, to: a, in: bounds).count == 2)
+        #expect(AreaPickerGuides.dirtyRects(from: a, to: nil, in: bounds).count == 2)
+    }
 }
 
 private extension CGRect {

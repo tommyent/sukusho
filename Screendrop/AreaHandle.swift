@@ -85,6 +85,10 @@ nonisolated struct AreaPickerSession {
 
 /// The horizontal and vertical hairline guides through the pointer before a drag starts.
 nonisolated struct AreaPickerGuides: Equatable, Sendable {
+    static let outlineWidth: CGFloat = 2
+    static let hairlineWidth: CGFloat = 1
+    private static let stripHalfWidth: CGFloat = outlineWidth / 2 + 1
+
     let x: CGFloat
     let y: CGFloat
 
@@ -105,6 +109,32 @@ nonisolated struct AreaPickerGuides: Equatable, Sendable {
             x: align(pointer.x, in: bounds.minX...bounds.maxX, scale: pixelScale.width),
             y: align(pointer.y, in: bounds.minY...bounds.maxY, scale: pixelScale.height)
         )
+    }
+
+    /// Separate vertical and horizontal dirty strips to invalidate when idle guides move from `previous` to `current`.
+    /// Empty when the aligned coordinates did not change; never merges perpendicular strips into one bounding box.
+    static func dirtyRects(from previous: AreaPickerGuides?, to current: AreaPickerGuides?, in bounds: CGRect) -> [CGRect] {
+        guard previous != current else { return [] }
+        var rects: [CGRect] = []
+        if previous?.x != current?.x {
+            if let previous { rects.append(previous.verticalStrip(in: bounds)) }
+            if let current { rects.append(current.verticalStrip(in: bounds)) }
+        }
+        if previous?.y != current?.y {
+            if let previous { rects.append(previous.horizontalStrip(in: bounds)) }
+            if let current { rects.append(current.horizontalStrip(in: bounds)) }
+        }
+        return rects.filter { !$0.isEmpty }
+    }
+
+    func verticalStrip(in bounds: CGRect) -> CGRect {
+        CGRect(x: x - Self.stripHalfWidth, y: bounds.minY, width: Self.stripHalfWidth * 2, height: bounds.height)
+            .intersection(bounds)
+    }
+
+    func horizontalStrip(in bounds: CGRect) -> CGRect {
+        CGRect(x: bounds.minX, y: y - Self.stripHalfWidth, width: bounds.width, height: Self.stripHalfWidth * 2)
+            .intersection(bounds)
     }
 
     /// Snaps a 1-point stroke center to whole pixels: half-pixel offset on odd scales (1x), whole-pixel on even (2x).

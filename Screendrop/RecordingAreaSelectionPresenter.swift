@@ -348,15 +348,49 @@ private final class RecordingAreaSelectionView: NSView {
         nil
     }
 
+    private static let hintText = "Hold Shift to snap to a box  ·  Hold Option to zoom in"
+
     private var modifiers: NSEvent.ModifierFlags {
         NSEvent.modifierFlags.subtracting(heldSinceOpen)
+    }
+
+    private var showsLoupe: Bool {
+        isScreenshot && modifiers.contains(.option) && pointer != nil && frozenImage != nil
+    }
+
+    private var currentGuides: AreaPickerGuides? {
+        AreaPickerGuides.position(
+            pointer: pointer,
+            in: bounds,
+            pixelScale: pixelScale,
+            isDragging: selectionRect != nil,
+            isAdjusting: adjusting != nil,
+            hasSnap: (pressedSnap ?? snapRect) != nil
+        )
+    }
+
+    private var showsHintBadge: Bool {
+        guard let hintInset, selectionRect == nil, pressedSnap == nil, snapRect == nil, !showsLoupe else { return false }
+        let size = badgeSize(for: Self.hintText)
+        let origin = CGPoint(x: bounds.midX - size.width / 2, y: hintInset)
+        let reach = CGRect(origin: origin, size: size).insetBy(dx: -48, dy: -48)
+        return pointer.map(reach.contains) != true
     }
 
     // MARK: - Drawing
 
     override func draw(_ dirtyRect: NSRect) {
         NSColor.black.withAlphaComponent(0.28).setFill()
-        bounds.fill()
+        var count = 0
+        var rects: UnsafePointer<NSRect>?
+        getRectsBeingDrawn(&rects, count: &count)
+        if let rects, count > 0 {
+            for index in 0..<count {
+                rects[index].fill(using: .copy)
+            }
+        } else {
+            dirtyRect.fill(using: .copy)
+        }
 
         let activeSnap = pressedSnap ?? snapRect
         if let adjusting {
@@ -381,29 +415,19 @@ private final class RecordingAreaSelectionView: NSView {
             drawBadge(sizeLabel(for: activeSnap)) { self.badgeOrigin(for: activeSnap, size: $0) }
         }
 
-        if let guides = AreaPickerGuides.position(
-            pointer: pointer,
-            in: bounds,
-            pixelScale: pixelScale,
-            isDragging: selectionRect != nil,
-            isAdjusting: adjusting != nil,
-            hasSnap: activeSnap != nil
-        ) {
+        if let guides = currentGuides {
             drawGuides(guides)
         }
 
-        let showsLoupe = isScreenshot && modifiers.contains(.option) && pointer != nil && frozenImage != nil
         if showsLoupe, let pointer, let frozenImage {
             drawLoupe(of: frozenImage, at: pointer)
         }
 
         // Only while nothing else is drawn, and not under the pointer: it
         // never meets the size label, the loupe or an area being placed.
-        if let hintInset, selectionRect == nil, pressedSnap == nil, snapRect == nil, !showsLoupe {
-            drawBadge("Hold Shift to snap to a box  ·  Hold Option to zoom in") { size in
-                let origin = CGPoint(x: self.bounds.midX - size.width / 2, y: hintInset)
-                let reach = CGRect(origin: origin, size: size).insetBy(dx: -48, dy: -48)
-                return self.pointer.map(reach.contains) == true ? nil : origin
+        if let hintInset, showsHintBadge {
+            drawBadge(Self.hintText) { size in
+                CGPoint(x: self.bounds.midX - size.width / 2, y: hintInset)
             }
         }
     }
@@ -425,8 +449,8 @@ private final class RecordingAreaSelectionView: NSView {
         }
 
         // White over black, matching the loupe's crosshair so the lines read on light and dark content.
-        stroke(color: .black.withAlphaComponent(0.45), width: 2)
-        stroke(color: .white.withAlphaComponent(0.85), width: 1)
+        stroke(color: .black.withAlphaComponent(0.45), width: AreaPickerGuides.outlineWidth)
+        stroke(color: .white.withAlphaComponent(0.85), width: AreaPickerGuides.hairlineWidth)
     }
 
     private func drawHole(_ rect: CGRect, color: NSColor) {
@@ -445,15 +469,25 @@ private final class RecordingAreaSelectionView: NSView {
         return "\(pixelWidth) × \(pixelHeight)"
     }
 
-    /// `origin` places the badge given its size, or returns nil to leave it out.
-    private func drawBadge(_ label: String, at origin: (CGSize) -> CGPoint?) {
-        let attributes: [NSAttributedString.Key: Any] = [
+    private static let badgePadding = CGSize(width: 10, height: 6)
+
+    private func attributedBadgeLabel(_ label: String) -> NSAttributedString {
+        NSAttributedString(string: label, attributes: [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold),
             .foregroundColor: NSColor.white
-        ]
-        let attributedLabel = NSAttributedString(string: label, attributes: attributes)
+        ])
+    }
+
+    private func badgeSize(for label: String) -> CGSize {
+        let textSize = attributedBadgeLabel(label).size()
+        return CGSize(width: textSize.width + Self.badgePadding.width * 2, height: textSize.height + Self.badgePadding.height * 2)
+    }
+
+    /// `origin` places the badge given its size, or returns nil to leave it out.
+    private func drawBadge(_ label: String, at origin: (CGSize) -> CGPoint?) {
+        let attributedLabel = attributedBadgeLabel(label)
         let textSize = attributedLabel.size()
-        let padding = CGSize(width: 10, height: 6)
+        let padding = Self.badgePadding
         let badgeSize = CGSize(width: textSize.width + padding.width * 2, height: textSize.height + padding.height * 2)
         guard let badgeOrigin = origin(badgeSize) else { return }
         let badgeRect = CGRect(origin: badgeOrigin, size: badgeSize)
@@ -574,8 +608,7 @@ private final class RecordingAreaSelectionView: NSView {
     }
 
     override func mouseExited(with event: NSEvent) {
-        pointer = nil
-        if adjusting == nil { needsDisplay = true }
+        clearPointer()
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -747,13 +780,31 @@ private final class RecordingAreaSelectionView: NSView {
         let local = convert(window.convertPoint(fromScreen: screenLocation), from: nil)
         if bounds.minX <= local.x, local.x <= bounds.maxX, bounds.minY <= local.y, local.y <= bounds.maxY {
             movePointer(to: local)
-        } else if pointer != nil {
-            pointer = nil
-            if adjusting == nil { needsDisplay = true }
+        } else {
+            clearPointer()
         }
     }
 
+    func clearPointer() {
+        guard pointer != nil else { return }
+        let previousGuides = currentGuides
+        let previousSnap = pressedSnap ?? snapRect
+        let previousLoupe = showsLoupe
+        let previousHint = showsHintBadge
+        pointer = nil
+        invalidatePointerChange(
+            previousGuides: previousGuides,
+            previousSnap: previousSnap,
+            previousLoupe: previousLoupe,
+            previousHint: previousHint
+        )
+    }
+
     private func movePointer(to point: CGPoint) {
+        let previousGuides = currentGuides
+        let previousSnap = pressedSnap ?? snapRect
+        let previousLoupe = showsLoupe
+        let previousHint = showsHintBadge
         pointer = point
         // Also here: a release the key monitor never saw still ends the hold.
         heldSinceOpen.formIntersection(NSEvent.modifierFlags)
@@ -766,7 +817,31 @@ private final class RecordingAreaSelectionView: NSView {
             snapDepth = 0
             scrollRemainder = 0
         }
-        if adjusting == nil { needsDisplay = true }
+        invalidatePointerChange(
+            previousGuides: previousGuides,
+            previousSnap: previousSnap,
+            previousLoupe: previousLoupe,
+            previousHint: previousHint
+        )
+    }
+
+    /// Invalidates only the narrow old/new guide strips for idle pointer movement; falls back to full-view
+    /// invalidation whenever a snap box, loupe, or hint badge changes.
+    private func invalidatePointerChange(
+        previousGuides: AreaPickerGuides?,
+        previousSnap: CGRect?,
+        previousLoupe: Bool,
+        previousHint: Bool
+    ) {
+        guard adjusting == nil else { return }
+        let currentSnap = pressedSnap ?? snapRect
+        if previousSnap != nil || currentSnap != nil || previousLoupe || showsLoupe || previousHint != showsHintBadge {
+            needsDisplay = true
+            return
+        }
+        for rect in AreaPickerGuides.dirtyRects(from: previousGuides, to: currentGuides, in: bounds) {
+            setNeedsDisplay(rect)
+        }
     }
 
     // MARK: - Keys
