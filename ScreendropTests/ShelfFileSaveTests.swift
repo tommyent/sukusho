@@ -179,9 +179,9 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
         let original = try desk.file("shot.png", "original pixels, long")
         let result = try desk.file("shot.png", "smaller", in: desk.results)
 
-        let outcome = desk.save(result, of: original, replacing: true) { _ in
+        let outcome = desk.save(result, of: original, replacing: true, retire: { _ in
             throw CocoaError(.fileWriteNoPermission)
-        }
+        })
         guard case .saved(let installed, .trashFailed(let keptBackup)) = outcome else {
             Issue.record("expected saved with kept backup: \(outcome)")
             return
@@ -205,9 +205,9 @@ func rewriteKeepingSizeAndDate(_ url: URL, with data: Data) throws {
         defer { desk.remove() }
         let photo = try desk.file("photo.png", "png bytes")
         let webP = try desk.file("photo.webp", "webp", in: desk.results)
-        let outcome = desk.save(webP, of: photo, replacing: true) { _ in
+        let outcome = desk.save(webP, of: photo, replacing: true, retire: { _ in
             throw CocoaError(.fileWriteNoPermission)
-        }
+        })
         #expect(outcome == .saved(desk.folder.appending(path: "photo.webp"), keptOriginal: .trashFailed(photo)))
         #expect(desk.text(desk.folder.appending(path: "photo.webp")) == "webp")
         #expect(desk.text(photo) == "png bytes")
