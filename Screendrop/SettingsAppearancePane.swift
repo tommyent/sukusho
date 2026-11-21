@@ -12,12 +12,15 @@ struct AppearanceSettingsPane: View {
     @AppStorage(AppAppearance.key) private var mode = AppAppearance.automatic
     @AppStorage(AppTheme.lightKey) private var lightTheme = AppTheme.classicLight.id
     @AppStorage(AppTheme.darkKey) private var darkTheme = AppTheme.classicDark.id
-    @AppStorage(WorkspaceBackground.styleKey) private var workspaceStyle = WorkspaceBackground.Style.dots
+    @Bindable private var backgrounds = WindowBackgroundStore.shared
+    @State private var destination = BackgroundDestination.app
+    @State private var editingNight = false
+    @CurrentTheme private var theme
     @Environment(\.overGlassPicture) private var overGlassPicture
 
     var body: some View {
         Form {
-            Section("Appearance") {
+            Section("Theme") {
                 if overGlassPicture {
                     LabeledContent {
                         InspectorSegmented(
@@ -32,14 +35,14 @@ struct AppearanceSettingsPane: View {
                     } label: {
                         SettingsControlLabel(
                             "Mode",
-                            detail: "Light or dark for Sukusho's windows. System follows macOS."
+                            detail: "System follows macOS."
                         )
                     }
                     .onChange(of: mode) { AppAppearance.apply() }
                 } else {
                     SettingsControlLabel(
                         "Mode",
-                        detail: "Light or dark for Sukusho's windows. System follows macOS."
+                        detail: "System follows macOS."
                     ).control { label in
                         Picker(selection: $mode) {
                             ForEach(AppAppearance.allCases) { Text($0.title).tag($0) }
@@ -51,60 +54,92 @@ struct AppearanceSettingsPane: View {
                     }
                     .onChange(of: mode) { AppAppearance.apply() }
                 }
-                themePicker("Light theme", detail: "How Sukusho looks while it's light.", dark: false, selection: $lightTheme)
-                themePicker("Dark theme", detail: "How Sukusho looks while it's dark.", dark: true, selection: $darkTheme)
+                themePicker("Light theme", dark: false, selection: $lightTheme)
+                themePicker("Dark theme", dark: true, selection: $darkTheme)
             }
 
-            if [lightTheme, darkTheme].contains(where: { $0.hasPrefix("glass") }) {
-                Section("Glass") { GlassPictureSettings() }
-            }
-
-            Section("Workspace") {
-                SettingsControlLabel(
-                    "Workspace background",
-                    detail: "Behind Classic and Chip Library windows, the image editor and Studio; with a Glass theme, the Glass section controls the Library background instead. Captures, exports and uploads never include it."
-                ).control { label in
-                    Picker(selection: $workspaceStyle) {
-                        ForEach(WorkspaceBackground.Style.allCases) { style in
-                            Text(style.title).tag(style)
-                        }
-                    } label: {
-                        label
-                    }
+            Section("Background") {
+                Picker("Applies to", selection: $destination) {
+                    ForEach(BackgroundDestination.allCases) { Text($0.rawValue).tag($0) }
                 }
-                if workspaceStyle == .wallpaper {
-                    WorkspaceWallpaperSettings()
+                .pickerStyle(.segmented)
+                Text(destination == .app ? "Library, Settings, and other app windows." : "Image editor and Studio.")
+                    .font(.caption).foregroundStyle(.secondary)
+                let choices = $backgrounds.preferences[destination]
+                Toggle("Use a different background at night", isOn: choices.usesNight)
+                .accessibilityLabel("Use a different background at night")
+                if choices.wrappedValue.usesNight {
+                    Picker("Edit background", selection: $editingNight) {
+                        Text("Day").tag(false)
+                        Text("Night").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                }
+                let night = choices.wrappedValue.usesNight && editingNight
+                let choice = night ? choices.night : choices.day
+                Picker("Style", selection: choice.style) {
+                    ForEach([WorkspaceBackground.Style.wallpaper, .plain, .dots]) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                if choice.wrappedValue.style == .wallpaper {
+                    WorkspaceWallpaperSettings(choice: choice, destination: destination, identity: destination.rawValue + (night ? "Night" : "Day"))
+                        .id(destination.rawValue + (night ? "Night" : "Day"))
+                } else if choice.wrappedValue.style == .plain {
+                    ColorPicker("Color", selection: Binding(
+                        get: { choice.wrappedValue.solidRGB.map { ThemeColor.rgb($0).color } ?? theme.ground.workspace.color },
+                        set: { choice.wrappedValue.solidRGB = ThemeColor.hex($0) }
+                    ), supportsOpacity: false)
+                    .accessibilityLabel("Background color")
+                }
+            }
+            if backgrounds.preferences.app.usesNight || backgrounds.preferences.editors.usesNight {
+                Section("Schedule") {
+                    timePicker("Day begins", minute: $backgrounds.preferences.dayStart, other: backgrounds.preferences.nightStart)
+                    timePicker("Night begins", minute: $backgrounds.preferences.nightStart, other: backgrounds.preferences.dayStart)
                 }
             }
         }
+        .onAppear { editingNight = backgrounds.isNight }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
         .contentMargins(.top, 8, for: .scrollContent)
     }
 
+    private func timePicker(_ title: String, minute: Binding<Int>, other: Int) -> some View {
+        DatePicker(title, selection: Binding(get: {
+            Calendar.current.date(bySettingHour: minute.wrappedValue / 60, minute: minute.wrappedValue % 60, second: 0, of: .now) ?? .now
+        }, set: { date in
+            let value = Calendar.current.component(.hour, from: date) * 60 + Calendar.current.component(.minute, from: date)
+            if value != other { minute.wrappedValue = value }
+        }), displayedComponents: .hourAndMinute)
+        .accessibilityLabel(title)
+    }
+
     /// A slot's menu: the themes of its appearance. A saved choice Sukusho doesn't have shows as the Classic it draws.
-    private func themePicker(_ title: String, detail: String, dark: Bool, selection: Binding<String>) -> some View {
-        SettingsControlLabel(title, detail: detail).control { label in
-            Picker(selection: Binding(get: { AppTheme.named(selection.wrappedValue, dark: dark).id },
-                                      set: { selection.wrappedValue = $0 })) {
-                ForEach(AppTheme.builtIns.filter { $0.isDark == dark }) { Text($0.name).tag($0.id) }
-            } label: {
-                label
-            }
+    private func themePicker(_ title: String, dark: Bool, selection: Binding<String>) -> some View {
+        Picker(title, selection: Binding(get: { AppTheme.named(selection.wrappedValue, dark: dark).id },
+                                         set: { selection.wrappedValue = $0 })) {
+            ForEach(AppTheme.builtIns.filter { $0.isDark == dark }) { Text($0.name).tag($0.id) }
         }
+        .accessibilityLabel(title)
     }
 }
 
 /// The Wallpaper choice's rows: the wallpapers the screenshot background
 /// picker keeps, Add… and Unsplash, then Dim and Blur.
 private struct WorkspaceWallpaperSettings: View {
-    @AppStorage(WorkspaceBackground.wallpaperPathKey) private var wallpaperPath = ""
-    @AppStorage(WorkspaceBackground.dimKey) private var dim = WorkspaceBackground.defaultDim
-    @AppStorage(WorkspaceBackground.blurKey) private var blurs = false
+    @Binding var choice: BackgroundChoice
+    let destination: BackgroundDestination
+    let identity: String
+    @CurrentTheme private var theme
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var defaultPicture: URL?
+    @State private var host = WeakWindow()
+    @State private var screenChanges = 0
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var addError: String?
-    private let picks = LatestPick.for(WorkspaceBackground.wallpaperPathKey)
+    private var picks: LatestPick { .for(identity) }
 
     private let store = AnnotationWallpaperStore.shared
     private let columns = Array(repeating: GridItem(.flexible(), spacing: DS.Space.s), count: 6)
@@ -112,9 +147,16 @@ private struct WorkspaceWallpaperSettings: View {
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.m) {
             LazyVGrid(columns: columns, spacing: DS.Space.s) {
+                InspectorTile(title: "Default picture", aspectRatio: 1.35, isSelected: choice.picture.isEmpty) {
+                    choose(nil)
+                } content: {
+                    AnnotationCustomWallpaperPreview(wallpaper: AnnotationCustomWallpaper(
+                        url: defaultPicture ?? GlassPicture.ownPicture(dark: colorScheme == .dark)
+                    ), maxPixelSize: 320)
+                }
                 ForEach(store.recentWallpapers) { wallpaper in
                     InspectorTile(title: wallpaper.title, aspectRatio: 1.35, isSelected: isChosen(wallpaper)) {
-                        choose(wallpaper.url)
+                        choose(wallpaper.url, importing: store.importWallpaper)
                     } content: {
                         AnnotationCustomWallpaperPreview(wallpaper: wallpaper, maxPixelSize: 320)
                     }
@@ -130,31 +172,43 @@ private struct WorkspaceWallpaperSettings: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            UnsplashWallpaperSearchView(search: UnsplashWallpaperSearch.shared) { choose($0) }
+            UnsplashWallpaperSearchView(search: UnsplashWallpaperSearch.shared) { choose($0, importing: store.importWallpaper) }
         }
 
+        .onWindowChange { window in
+            if let window, host.window !== window { host.window = window; screenChanges += 1 }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeScreenNotification)) { note in
+            if let window = host.window, note.object as? NSWindow === window { screenChanges += 1 }
+        }
+        .task(id: "\(colorScheme == .dark)#\(screenChanges)") {
+            let desktop = host.window?.screen.flatMap { NSWorkspace.shared.desktopImageURL(for: $0) }
+            let resolved = await GlassPicture.resolve(picked: "", desktop: desktop, dark: colorScheme == .dark)
+            if !Task.isCancelled { defaultPicture = resolved.url }
+        }
+
+        let dim = Binding(get: { choice.pictureEffects(for: destination, theme: theme).dim }, set: { value in
+            choice.usesGlassDimDefault = false
+            choice.dim = value
+        })
         LabeledContent {
             HStack(spacing: DS.Space.l) {
-                Slider(value: $dim, in: WorkspaceBackground.dimRange, step: 0.05)
+                Slider(value: dim, in: WorkspaceBackground.dimRange, step: 0.05)
                     .frame(width: 180)
                     .accessibilityLabel("Dim")
-                    .accessibilityValue(dim.formatted(.percent.precision(.fractionLength(0))))
-                Text(dim, format: .percent.precision(.fractionLength(0)))
+                    .accessibilityValue(dim.wrappedValue.formatted(.percent.precision(.fractionLength(0))))
+                Text(dim.wrappedValue, format: .percent.precision(.fractionLength(0)))
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
                     .frame(width: 40, alignment: .trailing)
             }
         } label: {
-            SettingsControlLabel("Dim", detail: "Fades the wallpaper into the workspace gray so cards and canvases stand out, half as much again in dark mode.")
+            Text("Dim")
         }
 
-        SettingsControlLabel(
-            "Blur",
-            detail: "Softens the wallpaper so a busy photo sits back."
-        ).control { label in
-            Toggle(isOn: $blurs) { label }
-        }
-        .toggleStyle(.switch)
+        Toggle("Blur picture", isOn: $choice.blur)
+            .accessibilityLabel("Blur picture")
+            .toggleStyle(.switch)
 
         if reduceTransparency || contrast == .increased {
             Text("Reduce Transparency or Increase Contrast is on in Accessibility settings, so the workspaces use the plain gray.")
@@ -164,23 +218,23 @@ private struct WorkspaceWallpaperSettings: View {
         }
     }
 
-    /// Nothing chosen yet, or the chosen file is gone: the workspaces show Dots meanwhile.
+    /// The renderer falls back to the default picture if an import disappeared.
     private var missingMessage: String? {
-        if wallpaperPath.isEmpty { return "Choose a wallpaper. Until then the workspaces show dots." }
-        guard !FileManager.default.fileExists(atPath: wallpaperPath) else { return nil }
-        return "The chosen wallpaper is gone, so the workspaces show dots. Choose another."
+        if choice.picture.isEmpty { return nil }
+        guard !FileManager.default.fileExists(atPath: choice.picture) else { return nil }
+        return "The chosen wallpaper is gone, so the default picture is shown. Choose another."
     }
 
     private func isChosen(_ wallpaper: AnnotationCustomWallpaper) -> Bool {
-        wallpaper.url.standardizedFileURL.path == wallpaperPath
+        wallpaper.url.standardizedFileURL.path == choice.picture
     }
 
     /// A tile or a found picture at once, an added one once it's copied in (`importing`); the latest pick wins.
-    private func choose(_ url: URL, importing: @escaping (URL) async throws -> URL = { $0 }) {
+    private func choose(_ url: URL?, importing: @escaping (URL) async throws -> URL = { $0 }) {
         Task {
             await picks.choose(url, importing: importing, apply: { path in
-                store.addRecentWallpaper(URL(fileURLWithPath: path))
-                wallpaperPath = path
+                if !path.isEmpty { store.addRecentWallpaper(URL(fileURLWithPath: path)) }
+                choice.picture = path
                 addError = nil
             }, failed: { addError = "Couldn't add the wallpaper: \($0.localizedDescription)" })
         }
@@ -198,112 +252,6 @@ private struct WorkspaceWallpaperSettings: View {
     }
 }
 
-/// Glass's picture: the default (the desktop picture, or Sukusho's own while macOS would ask first), the wallpapers
-/// the workspace keeps, and Add…. Every choice, a recent tile too, goes through `importWallpaper`, which copies a file
-/// from outside Sukusho's folder in, so the choice stays when the original moves. What's shown is resolved off the
-/// main thread, as the windows resolve it (`GlassPicture.resolve`).
-private struct GlassPictureSettings: View {
-    @AppStorage(GlassPicture.solidBackgroundKey) private var solidBackground = false
-    @AppStorage(GlassPicture.pathKey) private var path = ""
-    @Environment(\.colorScheme) private var colorScheme
-    @State private var addError: String?
-    /// The default for this window's screen, and what Glass shows for the current choice.
-    @State private var resolved: (fallback: URL, shown: URL)?
-    @State private var host = WeakWindow()
-    @State private var windowChanges = 0
-    private let picks = LatestPick.for(GlassPicture.pathKey)
-
-    private let store = AnnotationWallpaperStore.shared
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: DS.Space.s), count: 6)
-
-    var body: some View {
-        let dark = colorScheme == .dark
-        SettingsControlLabel(
-            "Solid background",
-            detail: "Use a solid background instead of a blurred picture behind Glass windows."
-        ).control { label in
-            Toggle(isOn: $solidBackground) { label }
-        }
-        .toggleStyle(.switch)
-
-        if !solidBackground {
-            VStack(alignment: .leading, spacing: DS.Space.m) {
-                SettingsControlLabel(
-                    "Picture",
-                    detail: "Behind Glass's frosted panes. By default your desktop picture, or Sukusho's own when macOS would ask before Sukusho reads yours."
-                )
-                LazyVGrid(columns: columns, spacing: DS.Space.s) {
-                    let own = resolved.map { $0.fallback == GlassPicture.ownPicture(dark: dark) } ?? true
-                    InspectorTile(title: own ? "Sukusho's" : "Desktop", aspectRatio: 1.35, isSelected: path.isEmpty) {
-                        choose(nil)
-                    } content: {
-                        if let resolved {
-                            AnnotationCustomWallpaperPreview(wallpaper: AnnotationCustomWallpaper(url: resolved.fallback), maxPixelSize: 320)
-                        }
-                    }
-                    .accessibilityLabel(own ? "Sukusho's picture" : "Desktop picture")
-                    ForEach(store.recentWallpapers) { wallpaper in
-                        InspectorTile(title: wallpaper.title, aspectRatio: 1.35,
-                                      isSelected: wallpaper.url.standardizedFileURL.path == path) {
-                            choose(wallpaper.url)
-                        } content: {
-                            AnnotationCustomWallpaperPreview(wallpaper: wallpaper, maxPixelSize: 320)
-                        }
-                        .accessibilityLabel(store.accessibilityTitle(for: wallpaper))
-                    }
-                    AnnotationAddWallpaperTile(action: add)
-                        .help("Add a picture")
-                        .accessibilityLabel("Add Picture…")
-                }
-                if let message = addError ?? unreadableMessage {
-                    Text(message).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .onWindowChange { host.window = $0; windowChanges += 1 }
-            // As the backdrop does (`GlassBackdrop`): another screen, or Sukusho back in front, may mean another picture.
-            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didChangeScreenNotification), perform: refreshIfOwn)
-            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification), perform: refreshIfOwn)
-            .task(id: "\(path)#\(dark)#\(windowChanges)") {
-                let desktop = host.window?.screen.flatMap { NSWorkspace.shared.desktopImageURL(for: $0) }
-                let fallback = await GlassPicture.resolve(picked: "", desktop: desktop, dark: dark).url
-                let shown = path.isEmpty ? fallback : await GlassPicture.resolve(picked: path, desktop: desktop, dark: dark).url
-                if !Task.isCancelled { resolved = (fallback, shown) }
-            }
-        }
-    }
-
-    /// The picked file is gone or doesn't decode: Glass shows the default meanwhile.
-    private var unreadableMessage: String? {
-        guard !path.isEmpty, let resolved, resolved.shown.path != path else { return nil }
-        return "The chosen picture can't be read, so Glass shows the default. Choose another."
-    }
-
-    private func refreshIfOwn(_ note: Notification) {
-        if let window = host.window, note.object as? NSWindow === window { windowChanges += 1 }
-    }
-
-    /// Copied into Sukusho's folder first unless it's already there (`importWallpaper` keeps those as they are);
-    /// nil is the default. The latest pick wins, so a slow copy can't undo a newer choice.
-    private func choose(_ url: URL?) {
-        Task {
-            await picks.choose(url, importing: store.importWallpaper, apply: { path = $0; addError = nil },
-                               failed: { addError = "Couldn't use the picture: \($0.localizedDescription)" })
-        }
-    }
-
-    private func add() {
-        let panel = NSOpenPanel()
-        panel.title = "Add Glass Picture"
-        panel.prompt = "Add"
-        panel.allowedContentTypes = AnnotationWallpaperStore.supportedContentTypes
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        choose(url)
-    }
-}
-
-/// Settings › Appearance › Mode: Sukusho's windows follow macOS, or stay light or dark.
 enum AppAppearance: String, CaseIterable, Identifiable {
     case automatic, light, dark
 

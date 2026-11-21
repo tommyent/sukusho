@@ -25,18 +25,13 @@ struct AnnotationEditorInspector: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // One slot for the tool's options, under its name, pinned above the
-            // scrolling sections and the same height for every tool, so it never
-            // scrolls away and nothing below it moves (Fable #1).
-            InspectorSection(toolSlot.heading) {
-                VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
+            if toolSlot != .tool(.select) || model.selectionCount > 0 {
+                InspectorSection(toolSlot.heading) {
                     if toolSlot == .crop {
                         AnnotationCropControls(model: model, onEditorAction: onEditorAction)
                             .help(toolSlot.line)
                     }
-                    if showsStyleControls {
-                        styleControls
-                    }
+                    if showsStyleControls { styleControls }
                     if showsSlotLine {
                         Text(toolSlot.line)
                             .font(.inspectorLabel)
@@ -44,11 +39,6 @@ struct AnnotationEditorInspector: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                .frame(
-                    maxWidth: .infinity,
-                    minHeight: InspectorMetrics.toolOptionsHeight,
-                    alignment: .topLeading
-                )
             }
 
             // While cropping, Crop's options are all there is to set.

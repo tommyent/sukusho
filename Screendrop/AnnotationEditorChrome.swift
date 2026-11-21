@@ -127,56 +127,36 @@ enum WorkspaceChrome {
     }
 }
 
-/// The ground behind the Library's browser, the editor's canvas and Studio's
-/// canvas: Dots, Plain or a wallpaper, from Settings › Appearance › Workspace, on the theme's ground.
+/// Window decoration only. The capture and movie renderers use their own document backgrounds.
 struct AnnotationEditorWorkspaceBackground: View {
-    @AppStorage(WorkspaceBackground.styleKey) private var style = WorkspaceBackground.Style.dots
-    @AppStorage(WorkspaceBackground.wallpaperPathKey) private var wallpaperPath = ""
-    @AppStorage(WorkspaceBackground.dimKey) private var dim = WorkspaceBackground.defaultDim
-    @AppStorage(WorkspaceBackground.blurKey) private var blurs = false
-
-    @Environment(\.colorScheme) private var colorScheme
+    var destination: BackgroundDestination = .editors
+    @CurrentTheme private var theme
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
-    @CurrentTheme private var theme
 
     var body: some View {
-        // Classic's is a flat, fully desaturated gray rather than a system
-        // material - vibrancy materials pick up a bluish cast from the accent
-        // color and whatever's behind the window, which reads as tinted
-        // rather than neutral.
+        let choice = WindowBackgroundStore.shared.choice(for: destination)
+        let style = WorkspaceBackground.shown(choice.style, reduceTransparency: reduceTransparency, increaseContrast: contrast == .increased)
         let ground = theme.ground.workspace.color
         ZStack {
             Rectangle().fill(ground)
-
-            switch WorkspaceBackground.shown(style, reduceTransparency: reduceTransparency,
-                                             increaseContrast: contrast == .increased) {
-            case .dots:
-                WorkspaceDots()
+            switch style {
+            case .dots: WorkspaceDots()
             case .plain:
-                EmptyView()
-            case .wallpaper:
-                if wallpaperPath.isEmpty {
-                    WorkspaceDots()
-                } else {
-                    WorkspaceWallpaper(
-                        url: URL(fileURLWithPath: wallpaperPath),
-                        blur: blurs ? WorkspaceBackground.blurRadius : 0,
-                        dimming: ground.opacity(WorkspaceBackground.dimOpacity(dim, dark: colorScheme == .dark))
-                    )
+                if choice.style == .plain, let rgb = choice.solidRGB, !reduceTransparency && contrast != .increased {
+                    Rectangle().fill(ThemeColor.rgb(rgb).color)
                 }
+            case .wallpaper:
+                WindowPicture(choice: choice, destination: destination)
             }
         }
     }
 }
 
-/// Glass's picture (`AppTheme.Ground.backdrop`) under a whole window: the Library, its popup and Settings, never the
-/// editor or Studio, which keep the Workspace setting. Callers draw it only while it's drawn (`DrawnGlass`). The
-/// picture is resolved off the main thread (`GlassPicture.resolve`) for the window's own screen, and again when the
-/// window changes screen or Sukusho comes to the front, since the desktop picture may have changed meanwhile.
-struct GlassBackdrop: View {
-    let backdrop: AppTheme.Backdrop
-    @AppStorage(GlassPicture.pathKey) private var picked = ""
+private struct WindowPicture: View {
+    let choice: BackgroundChoice
+    let destination: BackgroundDestination
+    private var picked: String { choice.picture }
     @Environment(\.colorScheme) private var colorScheme
     @CurrentTheme private var theme
     @State private var host = WeakWindow()
@@ -192,8 +172,9 @@ struct GlassBackdrop: View {
         ZStack {
             Rectangle().fill(ground)
             if let picture {
-                WorkspaceWallpaper(url: picture.url, version: picture.version, blur: backdrop.blur,
-                                   dimming: ground.opacity(backdrop.dim), dotsWhenUnreadable: false)
+                let effects = choice.pictureEffects(for: destination, theme: theme)
+                WorkspaceWallpaper(url: picture.url, version: picture.version, blur: effects.blur,
+                                   dimming: ground.opacity(effects.dim), dotsWhenUnreadable: false)
             }
         }
         // A detach reports nil; keep the live window, as a swapped accessor's late nil would leave the backdrop windowless.
@@ -214,7 +195,8 @@ struct GlassBackdrop: View {
 }
 
 extension EnvironmentValues {
-    /// Set while Glass's picture is drawn under the window: text there takes frost or a plate, never the bare picture.
+    @Entry var backgroundDestination = BackgroundDestination.app
+    /// Text over the Glass picture needs a frosted backing.
     @Entry var overGlassPicture = false
 }
 
@@ -634,15 +616,15 @@ extension View {
 private struct WorkspaceTextPlate: ViewModifier {
     let capsule: Bool
 
-    @AppStorage(WorkspaceBackground.styleKey) private var style = WorkspaceBackground.Style.dots
+    @Environment(\.backgroundDestination) private var destination
+
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.overGlassPicture) private var overGlassPicture
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if !overGlassPicture && WorkspaceBackground.shown(style, reduceTransparency: reduceTransparency,
-                                                           increaseContrast: contrast == .increased) != .wallpaper {
+        if reduceTransparency || contrast == .increased || (!overGlassPicture && !WindowBackgroundStore.shared.choice(for: destination).needsTextBacking) {
             content
         } else if capsule {
             content.background(WorkspaceChrome.background, in: Capsule())

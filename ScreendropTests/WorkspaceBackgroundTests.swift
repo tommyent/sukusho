@@ -13,7 +13,29 @@ struct WorkspaceBackgroundTests {
         #expect(WorkspaceBackground.shown(.wallpaper, reduceTransparency: true, increaseContrast: false) == .plain)
         #expect(WorkspaceBackground.shown(.wallpaper, reduceTransparency: false, increaseContrast: true) == .plain)
         #expect(WorkspaceBackground.shown(.dots, reduceTransparency: true, increaseContrast: true) == .dots)
-        #expect(WorkspaceBackground.Style.allCases.map(\.title) == ["Dots", "Plain", "Wallpaper"])
+        #expect(WorkspaceBackground.Style.allCases.map(\.title) == ["Dots", "Solid Color", "Picture"])
+    }
+
+    @Test func scheduleAndDestinationsAreIndependentOfTheme() throws {
+        let suite = UUID().uuidString
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("wallpaper", forKey: WorkspaceBackground.styleKey)
+        defaults.set("/editor.jpg", forKey: WorkspaceBackground.wallpaperPathKey)
+        defaults.set("/library.jpg", forKey: GlassPicture.pathKey)
+        var prefs = BackgroundPreferences(migrating: defaults, theme: .glassDark)
+        #expect(prefs.app.day.picture == "/library.jpg")
+        #expect(prefs.editors.day.picture == "/editor.jpg")
+        prefs[.app].night.style = .plain
+        prefs[.app].usesNight = true
+        #expect(!prefs.editors.usesNight && prefs.app.day.style == .wallpaper)
+        #expect(prefs.isNight(at: prefs.nightStart))
+        #expect(!prefs.isNight(at: prefs.dayStart))
+        #expect(prefs.isNight(at: 0))
+        swap(&prefs.dayStart, &prefs.nightStart)
+        #expect(!prefs.isNight(at: 0))
+        #expect(prefs.isNight(at: prefs.nightStart))
+        #expect(try JSONDecoder().decode(BackgroundPreferences.self, from: JSONEncoder().encode(prefs)) == prefs)
     }
 
     @Test func dimIsHalfAsMuchAgainInDarkModeAndStaysInRange() {
@@ -146,14 +168,13 @@ struct WorkspaceBackgroundTests {
         let defaults = UserDefaults.standard
         let previous = defaults.volatileDomain(forName: UserDefaults.argumentDomain)
         var on = previous
-        on[WorkspaceBackground.styleKey] = WorkspaceBackground.Style.wallpaper.rawValue
-        on[WorkspaceBackground.wallpaperPathKey] = path
-        on[WorkspaceBackground.dimKey] = 0.8
-        on[WorkspaceBackground.blurKey] = true
+        var preferences = BackgroundPreferences(migrating: defaults, theme: .classicDark)
+        preferences.editors.day = BackgroundChoice(style: .wallpaper, picture: path, dim: 0.8, blur: true)
+        preferences.app = preferences.editors
+        on[WindowBackgroundStore.key] = try JSONEncoder().encode(preferences)
         defaults.setVolatileDomain(on, forName: UserDefaults.argumentDomain)
         defer { defaults.setVolatileDomain(previous, forName: UserDefaults.argumentDomain) }
-        #expect(defaults.string(forKey: WorkspaceBackground.styleKey) == "wallpaper")
-        #expect(defaults.bool(forKey: WorkspaceBackground.blurKey))
+        #expect(WindowBackgroundStore.shared.choice(for: .editors) == preferences.editors.day)
         return try await body()
     }
 

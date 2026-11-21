@@ -122,12 +122,8 @@ nonisolated struct ThemeTuning: Codable, Equatable, Sendable {
         hex == 0xFFFFFF ? .white(opacity: opacity) : .rgb(hex, opacity: opacity)
     }
 
-    /// A picked colour as sRGB hex; the colour panel can hand back any colour space.
-    static func hex(_ color: Color) -> UInt32 {
-        let srgb = NSColor(color).usingColorSpace(.sRGB) ?? .white
-        func byte(_ value: CGFloat) -> UInt32 { UInt32((min(max(value, 0), 1) * 255).rounded()) }
-        return byte(srgb.redComponent) << 16 | byte(srgb.greenComponent) << 8 | byte(srgb.blueComponent)
-    }
+    static func hex(_ color: Color) -> UInt32 { ThemeColor.hex(color) }
+
 }
 
 nonisolated extension ThemeTuning {

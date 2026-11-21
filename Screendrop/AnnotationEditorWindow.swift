@@ -16,7 +16,15 @@ struct AnnotationEditorWindow: View {
     @State private var probe = PixelProbe()
     @State private var wallpaperStore = AnnotationWallpaperStore.shared
     @State private var backgroundPresetStore = AnnotationBackgroundPresetStore.shared
-    @State private var isInspectorPresented = true
+    private static let inspectorKey = "annotationEditor.inspectorVisible"
+    @State private var isInspectorPresented = UserDefaults.standard.object(forKey: inspectorKey) as? Bool ?? true
+
+    private var inspectorChoice: Binding<Bool> {
+        Binding(get: { isInspectorPresented }, set: { visible in
+            isInspectorPresented = visible
+            UserDefaults.standard.set(visible, forKey: Self.inspectorKey)
+        })
+    }
     @State private var isFinishing = false
     @State private var isSaving = false
     @State private var isUploading = false
@@ -44,7 +52,6 @@ struct AnnotationEditorWindow: View {
             .background {
                 if floatingChrome {
                     AnnotationEditorWorkspaceBackground()
-                        .backgroundExtensionEffect()
                         .ignoresSafeArea()
                 }
             }
@@ -211,7 +218,7 @@ struct AnnotationEditorWindow: View {
                     }
                 }
             ))
-            .inspector(isPresented: $isInspectorPresented) {
+            .inspector(isPresented: inspectorChoice) {
                 AnnotationEditorInspector(
                     model: model,
                     wallpaperStore: wallpaperStore,
@@ -224,12 +231,13 @@ struct AnnotationEditorWindow: View {
                 .glassInspectorToolbar(enabled: floatingChrome)
             }
             .glassInspectorToggleOverlay(
-                enabled: floatingChrome && isInspectorPresented && !model.isCropping,
-                isPresented: $isInspectorPresented,
+                enabled: floatingChrome && !model.isCropping,
+                isPresented: inspectorChoice,
                 metrics: glassMetrics,
                 isDisabled: isBusy,
                 onToggle: clearInspectorFocus
             )
+            .environment(\.backgroundDestination, .editors)
             .glassWindowChrome(
                 window: editorWindow,
                 hasSidebar: false,
@@ -239,7 +247,7 @@ struct AnnotationEditorWindow: View {
             )
             // Below this the inspector folds away and the window can go down to the canvas's
             // own minimum; it was stuck at 1040 pt with the inspector (Fable #7).
-            .inspectorAutoFold(isPresented: $isInspectorPresented, below: 1000)
+            .inspectorAutoFold(isPresented: $isInspectorPresented, below: 1000) { editorWindow?.inLiveResize == true }
             .environment(probe)
     }
 
@@ -286,21 +294,14 @@ struct AnnotationEditorWindow: View {
         if !floatingChrome {
             inspectorToggleButton
         } else if !isInspectorPresented {
-            GlassPaneToggleButton(
-                title: "Show Inspector",
-                symbol: "sidebar.right",
-                diameter: glassMetrics.diameter
-            ) {
-                clearInspectorFocus()
-                isInspectorPresented = true
-            }
+            Color.clear.frame(width: glassMetrics.diameter).accessibilityHidden(true)
         }
     }
 
     private var inspectorToggleButton: some View {
         Button {
             clearInspectorFocus()
-            isInspectorPresented.toggle()
+            inspectorChoice.wrappedValue.toggle()
         } label: {
             Label(isInspectorPresented ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.right")
                 .labelStyle(.iconOnly)

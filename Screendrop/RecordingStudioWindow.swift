@@ -155,13 +155,7 @@ private struct RecordingStudioContent: View {
                     if !floatingChrome {
                         inspectorToggleButton
                     } else if !isInspectorPresented {
-                        GlassPaneToggleButton(
-                            title: "Show Inspector",
-                            symbol: "sidebar.right",
-                            diameter: glassMetrics.diameter
-                        ) {
-                            isInspectorPresented = true
-                        }
+                        Color.clear.frame(width: glassMetrics.diameter).accessibilityHidden(true)
                     }
                 }
             }
@@ -173,11 +167,12 @@ private struct RecordingStudioContent: View {
                 .glassInspectorToolbar(enabled: floatingChrome)
         }
         .glassInspectorToggleOverlay(
-            enabled: floatingChrome && isInspectorPresented && !model.isSelectingRedaction && !model.isCroppingVideo,
+            enabled: floatingChrome && !model.isSelectingRedaction && !model.isCroppingVideo,
             isPresented: $isInspectorPresented,
             metrics: glassMetrics
         )
-        .glassWindowChrome(
+        .environment(\.backgroundDestination, .editors)
+            .glassWindowChrome(
             window: studioWindow,
             hasSidebar: false,
             sidebarVisible: false,
@@ -3582,6 +3577,7 @@ private struct StudioInspector: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
             // The Revert To bar keeps clear of the preview peek pill itself;
             // without the bar (a plain movie), the end of the list must.
+            .padding(.top, floatingChrome ? -6 : 0)
             .padding(.bottom, model.isProject ? 12 : PreviewPeekTab.pillHeight * 1.1)
             }
             .scrollContentBackground(.hidden)

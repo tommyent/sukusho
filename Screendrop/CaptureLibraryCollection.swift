@@ -49,6 +49,7 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
     let cardWidth: CGFloat
     @Binding var selection: Set<String>
     let isBusy: Bool
+    var takesInitialFocus = false
     var accessibilityLabel = "Captures"
     /// The card for an entry, given whether it's selected and a callback for
     /// where its title is drawn (clicking the title renames).
@@ -69,6 +70,7 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
         let collection = LibraryCollectionView()
+        collection.takesInitialFocus = takesInitialFocus
         collection.autoresizingMask = [.width]
         collection.setAccessibilityLabel(accessibilityLabel)
         collection.backgroundColors = [.clear]
@@ -89,6 +91,12 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
             guard let coordinator, !coordinator.parent.isBusy else { return }
             if let onReturn = coordinator.parent.onReturn { onReturn() }
             else { coordinator.parent.onAction(.rename) }
+        }
+        collection.selectFirstCapture = { [weak coordinator = context.coordinator] in
+            guard let coordinator, let collection = coordinator.collection,
+                  let first = coordinator.order.paths.first else { return }
+            collection.selectItems(at: [first], scrollPosition: .nearestVerticalEdge)
+            coordinator.selectionChanged()
         }
         collection.contextMenuProvider = { [weak coordinator = context.coordinator] event in
             coordinator?.menu(for: event)
@@ -311,6 +319,8 @@ struct CaptureLibraryCollection<Entry: Identifiable>: NSViewRepresentable where 
 }
 
 final class LibraryCollectionView: NSCollectionView, NSUserInterfaceValidations {
+    var takesInitialFocus = false
+    var selectFirstCapture: (() -> Void)?
     var returnPressed: (() -> Void)?
     var command: ((CaptureLibraryAction) -> Void)?
     var contextMenuProvider: ((NSEvent) -> NSMenu?)?
@@ -343,7 +353,10 @@ final class LibraryCollectionView: NSCollectionView, NSUserInterfaceValidations 
         pressMonitor = nil
         setPressed(nil)
         super.viewWillMove(toWindow: newWindow)
-        guard newWindow != nil else { return }
+        guard let newWindow else { return }
+        if takesInitialFocus {
+            newWindow.initialFirstResponder = self
+        }
         pressMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp, .leftMouseDragged]) { [weak self] event in
             guard let self else { return event }
             return trackMouseEvent(event)
@@ -445,6 +458,12 @@ final class LibraryCollectionView: NSCollectionView, NSUserInterfaceValidations 
         pendingRename?.cancel()
         pendingRename = nil
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        // AppKit moves an existing selection with arrows, but needs a starting item.
+        if takesInitialFocus, selectionIndexPaths.isEmpty, (123...126).contains(event.keyCode),
+           flags.isDisjoint(with: [.command, .control, .option, .shift]) {
+            selectFirstCapture?()
+            return
+        }
         if flags.contains(.command), event.charactersIgnoringModifiers == "c" { command?(.copy); return }
         if flags.contains([.command, .shift]), event.charactersIgnoringModifiers?.lowercased() == "c" { command?(.copyOriginal); return }
         if flags.isDisjoint(with: [.control, .option]), event.keyCode == 51 { command?(.trash); return }

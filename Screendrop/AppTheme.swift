@@ -281,6 +281,13 @@ nonisolated enum ThemeColor: Sendable, Equatable {
     /// macOS's window background, which picks up the desktop picture's tint when the Mac allows it.
     case windowBackground
 
+    /// A picked colour as sRGB hex; the colour panel can hand back any colour space.
+    static func hex(_ color: Color) -> UInt32 {
+        let srgb = NSColor(color).usingColorSpace(.sRGB) ?? .white
+        func byte(_ value: CGFloat) -> UInt32 { UInt32((min(max(value, 0), 1) * 255).rounded()) }
+        return byte(srgb.redComponent) << 16 | byte(srgb.greenComponent) << 8 | byte(srgb.blueComponent)
+    }
+
     var color: Color {
         switch self {
         case .rgb(let hex, let opacity):
@@ -330,7 +337,7 @@ nonisolated enum ThemeColor: Sendable, Equatable {
 /// on, for Classic/Chip, and under Reduce Transparency or Increase Contrast.
 @propertyWrapper struct DrawnGlass: DynamicProperty {
     @CurrentTheme private var theme
-    @AppStorage(GlassPicture.solidBackgroundKey) private var solidBackground = false
+    private var solidBackground: Bool { WindowBackgroundStore.shared.choice(for: .app).style != .wallpaper }
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var contrast
 

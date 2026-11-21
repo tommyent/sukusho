@@ -13,6 +13,7 @@ struct CaptureLibraryView: View {
     @State private var history = ScreenshotHistoryStore.shared
     @State private var projects = RecordingProjectStore.shared
     @State private var libraryWindow: NSWindow?
+    @FocusState private var searchFocused: Bool
     @State private var handledInitialWindowPlacement = false
     @State private var glassMetrics = GlassWindowButtonMetrics.fallback
     @State private var columnVisibility = NavigationSplitViewVisibility.automatic
@@ -119,6 +120,10 @@ struct CaptureLibraryView: View {
                     let size = CGSize(width: min(1180, screen.width), height: min(760, screen.height))
                     window.setFrame(CGRect(x: screen.midX - size.width / 2, y: screen.midY - size.height / 2,
                                            width: size.width, height: size.height), display: true)
+                    // SwiftUI can promote the toolbar search field while installing the window.
+                    if let grid = window.initialFirstResponder as? LibraryCollectionView {
+                        window.makeFirstResponder(grid)
+                    }
                 }
             }
         }
@@ -499,7 +504,15 @@ struct CaptureLibraryView: View {
             LikesLibraryPage(likes: likes)
         } else if cloud.isShown {
             CloudLibraryPage(cloud: cloud, cardWidth: cardWidth, layout: layout)
-        } else if !model.hasLoaded {
+        } else {
+            // Keep the keyboard target in the window while the capture index loads.
+            LibraryCaptureCollection(items: model.visibleItems, layout: layout, cardWidth: cardWidth, model: model)
+                .overlay { capturePlaceholder }
+        }
+    }
+
+    @ViewBuilder private var capturePlaceholder: some View {
+        if !model.hasLoaded {
             ProgressView("Loading Library…").workspaceTextPlate().frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if model.visibleItems.isEmpty {
             if !model.searchText.isEmpty {
@@ -542,8 +555,6 @@ struct CaptureLibraryView: View {
                 }
                 .workspaceTextPlate()
             }
-        } else {
-            LibraryCaptureCollection(items: model.visibleItems, layout: layout, cardWidth: cardWidth, model: model)
         }
     }
 
@@ -797,11 +808,23 @@ struct CaptureLibraryView: View {
     }
 
     private func searchField(onGlass: Bool) -> some View {
-        LibrarySearchField(
-            text: $model.searchText,
-            prompt: saved.isShown ? "Search saved" : clipboard.isShown ? (clipboard.showsSnippets ? "Search snippets" : "Search clipboard") : comments.isShown ? "Search comments" : likes.isShown ? "Search likes" : cloud.isShown ? (cloud.showsReceived ? "Search received files" : cloud.showsFiles ? "Search files" : "Search uploads") : "Search captures",
-            bezel: !onGlass
-        )
+        HStack(spacing: 4) {
+            if onGlass {
+                Button { searchFocused = true } label: {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+                .accessibilityLabel("Search")
+            }
+            LibrarySearchField(
+                text: $model.searchText,
+                prompt: saved.isShown ? "Search saved" : clipboard.isShown ? (clipboard.showsSnippets ? "Search snippets" : "Search clipboard") : comments.isShown ? "Search comments" : likes.isShown ? "Search likes" : cloud.isShown ? (cloud.showsReceived ? "Search received files" : cloud.showsFiles ? "Search files" : "Search uploads") : "Search captures",
+                bezel: !onGlass
+            )
+            .focused($searchFocused)
+        }
         .padding(.horizontal, onGlass ? 8 : 0)
         .frame(minWidth: 120, idealWidth: 320, maxWidth: 320)
         .frame(height: onGlass ? 34 : nil)
@@ -840,7 +863,7 @@ struct LibraryCaptureCollection: View {
 
     var body: some View {
         CaptureLibraryCollection(items: items, revision: model.contentRevision, layout: layout,
-            cardWidth: cardWidth, selection: $model.selection, isBusy: model.isBusy,
+            cardWidth: cardWidth, selection: $model.selection, isBusy: model.isBusy, takesInitialFocus: true,
             cell: { item, selected, onTitleFrame in
                 AnyView(LibraryCellContent(item: item, selected: selected, layout: layout, onTitleFrame: onTitleFrame))
             },
@@ -882,12 +905,13 @@ private struct LibrarySearchField: NSViewRepresentable {
     func makeNSView(context: Context) -> NSSearchField {
         let field = NSSearchField()
         if !bezel {
-            field.cell = GlassSearchFieldCell(textCell: "")
+            (field.cell as? NSSearchFieldCell)?.searchButtonCell = nil
             field.isEditable = true
             field.isSelectable = true
             field.isBezeled = false
             field.isBordered = false
         }
+        field.focusRingType = .none
         field.sendsSearchStringImmediately = true
         field.target = context.coordinator
         field.action = #selector(Coordinator.search(_:))
@@ -926,18 +950,6 @@ private struct LibrarySearchField: NSViewRepresentable {
     }
 }
 
-private final class GlassSearchFieldCell: NSSearchFieldCell {
-    override func searchTextRect(forBounds rect: NSRect) -> NSRect {
-        let text = super.searchTextRect(forBounds: rect)
-        let search = searchButtonRect(forBounds: rect)
-        let cancel = cancelButtonRect(forBounds: rect)
-        // The borderless cell gives its text the button's space as well.
-        let left = max(text.minX, search.maxX + 4)
-        let right = cancel.isEmpty ? text.maxX : min(text.maxX, cancel.minX - 4)
-        return NSRect(x: left, y: text.minY, width: max(0, right - left), height: text.height)
-    }
-}
-
 /// Liquid Glass capsule shared by floating controls.
 final class CapsuleGlassView: NSGlassEffectView {
     var onFrameMetrics: ((GlassWindowButtonMetrics) -> Void)?
@@ -952,12 +964,13 @@ final class CapsuleGlassView: NSGlassEffectView {
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
+        if newSize.height > 0 { cornerRadius = newSize.height / 2 }
         reportMetricsIfNeeded()
     }
 
     override func layout() {
         super.layout()
-        cornerRadius = bounds.height / 2
+        if bounds.height > 0 { cornerRadius = bounds.height / 2 }
         reportMetricsIfNeeded()
     }
 
@@ -1047,10 +1060,11 @@ enum LibraryWindowButtonCapsule {
         existing.forEach { $0.removeFromSuperview() }
         var titlebar: NSView = close
         while let up = titlebar.superview, up !== frame { titlebar = up }
-        let capsule = CapsuleGlassView()
+        let buttonBounds = close.convert(close.bounds, to: frame).union(zoom.convert(zoom.bounds, to: frame))
+        let capsule = CapsuleGlassView(frame: buttonBounds.insetBy(dx: -padding, dy: -padding))
         capsule.identifier = id
         capsule.style = .regular
-        capsule.cornerRadius = 14
+        capsule.cornerRadius = capsule.bounds.height / 2
         capsule.applyLiftShadow()
         capsule.onFrameMetrics = onMetrics
         capsule.translatesAutoresizingMaskIntoConstraints = false
@@ -1386,7 +1400,7 @@ private struct LibraryBrowserSurface: ViewModifier {
     @ViewBuilder
     func body(content: Content) -> some View {
         if showsDots && !floatingChrome {
-            content.background { AnnotationEditorWorkspaceBackground().allowsHitTesting(false) }
+            content.background { AnnotationEditorWorkspaceBackground(destination: .app).allowsHitTesting(false) }
         } else {
             content
         }
@@ -1454,24 +1468,10 @@ private struct LibraryWindowSurface: ViewModifier {
 
     @ViewBuilder
     func body(content: Content) -> some View {
-        if let backdrop = glass {
+        if floatingChrome {
             content
-                .environment(\.overGlassPicture, true)
-                .background { GlassBackdrop(backdrop: backdrop).backgroundExtensionEffect().ignoresSafeArea() }
-        } else if floatingChrome {
-            content
-                .background {
-                    if theme.chrome.glass {
-                        Rectangle()
-                            .fill(theme.ground.workspace.color)
-                            .backgroundExtensionEffect()
-                            .ignoresSafeArea()
-                    } else {
-                        AnnotationEditorWorkspaceBackground()
-                            .backgroundExtensionEffect()
-                            .ignoresSafeArea()
-                    }
-                }
+                .environment(\.overGlassPicture, glass != nil)
+                .background { AnnotationEditorWorkspaceBackground(destination: .app).backgroundExtensionEffect().ignoresSafeArea() }
         } else {
             content
                 .background { WorkspaceChrome.background.ignoresSafeArea() }

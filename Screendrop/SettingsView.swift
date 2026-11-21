@@ -326,13 +326,13 @@ private struct SettingsDetailView: View {
                     Rectangle().fill(frost.tint.color)
                 }
                 .ignoresSafeArea()
+            } else if floatingChrome && WindowBackgroundStore.shared.choice(for: .app).needsTextBacking {
+                Rectangle().fill(.regularMaterial).ignoresSafeArea()
             }
         }
         .background {
-            if let glass {
-                GlassBackdrop(backdrop: glass).backgroundExtensionEffect().ignoresSafeArea()
-            } else if floatingChrome {
-                Rectangle().fill(theme.ground.workspace.color).backgroundExtensionEffect().ignoresSafeArea()
+            if floatingChrome {
+                AnnotationEditorWorkspaceBackground(destination: .app).backgroundExtensionEffect().ignoresSafeArea()
             }
         }
         .toolbarBackgroundVisibility(floatingChrome ? .hidden : .automatic, for: .windowToolbar)

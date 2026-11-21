@@ -3,6 +3,8 @@
 //  Screendrop
 //
 
+import AppKit
+import Observation
 import CoreGraphics
 import Foundation
 import ImageIO
@@ -11,15 +13,15 @@ import ImageIO
 /// content (Settings › Appearance › Workspace). Screen only: no export, Copy,
 /// upload or Agent Prompt path reads these settings.
 nonisolated enum WorkspaceBackground {
-    enum Style: String, CaseIterable, Identifiable, Sendable {
+    enum Style: String, Codable, CaseIterable, Identifiable, Sendable {
         case dots, plain, wallpaper
 
         var id: Self { self }
         var title: String {
             switch self {
             case .dots: "Dots"
-            case .plain: "Plain"
-            case .wallpaper: "Wallpaper"
+            case .plain: "Solid Color"
+            case .wallpaper: "Picture"
             }
         }
     }
@@ -80,5 +82,138 @@ nonisolated enum WorkspaceBackground {
         // Orientations 5 to 8 turn the photo a quarter.
         let orientation = properties[kCGImagePropertyOrientation] as? Int ?? 1
         return orientation >= 5 ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
+    }
+}
+
+enum BackgroundDestination: String, CaseIterable, Identifiable {
+    case app = "App Windows", editors = "Editors"
+    var id: Self { self }
+}
+
+struct BackgroundChoice: Codable, Equatable {
+    var style: WorkspaceBackground.Style = .dots
+    var picture = ""
+    var solidRGB: UInt32?
+    var dim = WorkspaceBackground.defaultDim
+    var blur = false
+    var usesGlassDimDefault: Bool?
+
+    func pictureEffects(for destination: BackgroundDestination, theme: AppTheme) -> AppTheme.Backdrop {
+        let glass = destination == .app ? theme.ground.backdrop : nil
+        let radius = glass?.blur ?? WorkspaceBackground.blurRadius
+        return AppTheme.Backdrop(blur: blur ? radius : 0,
+                                 dim: usesGlassDimDefault == true ? glass?.dim ?? dim : dim)
+    }
+
+    var needsTextBacking: Bool { style == .wallpaper || (style == .plain && solidRGB != nil) }
+}
+
+struct DestinationBackgrounds: Codable, Equatable {
+    var day: BackgroundChoice
+    var night: BackgroundChoice
+    var usesNight = false
+
+    init(day: BackgroundChoice) {
+        self.day = day
+        night = day
+    }
+}
+
+struct BackgroundPreferences: Codable, Equatable {
+    var app: DestinationBackgrounds
+    var editors: DestinationBackgrounds
+    var dayStart = 7 * 60
+    var nightStart = 19 * 60
+
+    subscript(destination: BackgroundDestination) -> DestinationBackgrounds {
+        get { destination == .app ? app : editors }
+        set {
+            if destination == .app { app = newValue } else { editors = newValue }
+        }
+    }
+
+    func isNight(at minute: Int) -> Bool {
+        if nightStart > dayStart { return minute >= nightStart || minute < dayStart }
+        return minute >= nightStart && minute < dayStart
+    }
+
+    init(migrating defaults: UserDefaults, theme: AppTheme) {
+        let editor = BackgroundChoice(
+            style: defaults.string(forKey: WorkspaceBackground.styleKey).flatMap(WorkspaceBackground.Style.init) ?? .dots,
+            picture: defaults.string(forKey: WorkspaceBackground.wallpaperPathKey) ?? "",
+            dim: defaults.object(forKey: WorkspaceBackground.dimKey) as? Double ?? WorkspaceBackground.defaultDim,
+            blur: defaults.bool(forKey: WorkspaceBackground.blurKey)
+        )
+        editors = DestinationBackgrounds(day: editor)
+        if let glass = theme.ground.backdrop {
+            app = DestinationBackgrounds(day: BackgroundChoice(
+                style: defaults.bool(forKey: GlassPicture.solidBackgroundKey) ? .plain : .wallpaper,
+                picture: defaults.string(forKey: GlassPicture.pathKey) ?? "",
+                dim: glass.dim, blur: glass.blur > 0, usesGlassDimDefault: true
+            ))
+        } else {
+            app = editors
+        }
+    }
+}
+
+@MainActor @Observable final class WindowBackgroundStore {
+    static let shared = WindowBackgroundStore()
+    static let key = "WindowBackgroundPreferencesV1"
+    var preferences: BackgroundPreferences {
+        didSet {
+            if let data = try? JSONEncoder().encode(preferences) { UserDefaults.standard.set(data, forKey: Self.key) }
+            if oldValue.dayStart != preferences.dayStart || oldValue.nightStart != preferences.nightStart ||
+                oldValue.app.usesNight != preferences.app.usesNight || oldValue.editors.usesNight != preferences.editors.usesNight {
+                refreshClock()
+            }
+        }
+    }
+    private(set) var isNight = false
+    @ObservationIgnored private var timer: Timer?
+
+    private init() {
+        let defaults = UserDefaults.standard
+        if let data = defaults.data(forKey: Self.key), let saved = try? JSONDecoder().decode(BackgroundPreferences.self, from: data) {
+            preferences = saved
+        } else {
+            let dark: Bool
+            switch defaults.string(forKey: "appAppearance") {
+            case "dark": dark = true
+            case "light": dark = false
+            default: dark = NSApplication.shared.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            }
+            preferences = BackgroundPreferences(migrating: defaults, theme: .current(dark: dark))
+            if let data = try? JSONEncoder().encode(preferences) { defaults.set(data, forKey: Self.key) }
+        }
+        for name in [NSApplication.didBecomeActiveNotification, .NSSystemTimeZoneDidChange, .NSSystemClockDidChange] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshClock() }
+            }
+        }
+        refreshClock()
+    }
+
+    func choice(for destination: BackgroundDestination) -> BackgroundChoice {
+        let choices = preferences[destination]
+        return choices.usesNight && isNight ? choices.night : choices.day
+    }
+
+    private func refreshClock() {
+        timer?.invalidate()
+        let now = Date(), calendar = Calendar.current
+        let minute = calendar.component(.hour, from: now) * 60 + calendar.component(.minute, from: now)
+        isNight = preferences.isNight(at: minute)
+        guard preferences.app.usesNight || preferences.editors.usesNight else { return }
+        let next = [preferences.dayStart, preferences.nightStart].compactMap { minute in
+            calendar.nextDate(after: now, matching: DateComponents(hour: minute / 60, minute: minute % 60),
+                              matchingPolicy: .nextTime)
+        }.min()
+        guard let next else { return }
+        let timer = Timer(fire: next, interval: 0, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshClock() }
+        }
+        self.timer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 }

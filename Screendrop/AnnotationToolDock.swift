@@ -35,7 +35,7 @@ struct AnnotationToolDock: View {
                     AnnotationDockButton(
                         systemImage: tool.systemImage,
                         title: tool.title,
-                        help: tool.helpText,
+                        help: tool == .select ? tool.helpText + ". " + AnnotationToolSlot.tool(.select).line : tool.helpText,
                         isSelected: model.selectedTool == tool && !probe.isPicking && !probe.isMeasuringTool
                     ) {
                         onSelectTool(tool)
@@ -123,6 +123,7 @@ struct AnnotationDockButton: View {
         .onHover { isHovering = $0 }
         .help(help)
         .accessibilityLabel(title)
+        .accessibilityHint(help)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }

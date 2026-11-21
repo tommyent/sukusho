@@ -247,6 +247,7 @@ struct ClipboardPopupView: View {
     @FocusState private var searchFocused: Bool
     @CurrentTheme private var theme
     @DrawnGlass private var glass
+    @FloatingGlassChrome private var floatingChrome
 
     var body: some View {
         let sections = state.sections
@@ -268,10 +269,10 @@ struct ClipboardPopupView: View {
         // Glass: the frost's own material, as tuned too; under Reduce Transparency or Increase Contrast, its opaque
         // chrome, not a material over the desktop.
         .background(glass != nil ? AnyShapeStyle((theme.card.recipe.frost?.material ?? .regular).material)
-                    : theme.chrome.glass ? AnyShapeStyle(WorkspaceChrome.background) : AnyShapeStyle(.regularMaterial),
+                    : floatingChrome ? AnyShapeStyle(.regularMaterial) : AnyShapeStyle(WorkspaceChrome.background),
                     in: RoundedRectangle(cornerRadius: 22))
         // Glass frosts its own picture, as the Library window does, not whatever lies behind the popup.
-        .background { if let glass { GlassBackdrop(backdrop: glass) } }
+        .background { AnnotationEditorWorkspaceBackground(destination: .app) }
         .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(.white.opacity(0.18), lineWidth: 0.5))
         .clipShape(RoundedRectangle(cornerRadius: 22))
         .onAppear { searchFocused = true }
