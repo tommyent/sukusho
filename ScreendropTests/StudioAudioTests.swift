@@ -1315,6 +1315,40 @@ struct StudioAudioTests {
         #expect(reconciled.clips[1].id == c2.id && reconciled.clips[1].isMuted == true)
     }
 
+    @Test func splitPlusLeadingTrimReopenDoesNotDoubleRestore5To6Seconds() {
+        let full = RecordingClipTimeline.full(sourceDuration: 10)
+        var linked = RecordingAudioClip(fileName: "voice.wav", displayName: "Voice", start: 0, fileDuration: 10)
+        linked.isLinked = true
+
+        // Step 1: Split video at 5 s (two seamless segments 0...5 and 5...10).
+        let segA = RecordingClipSegment(sourceStart: 0, sourceEnd: 5)
+        let segB = RecordingClipSegment(sourceStart: 5, sourceEnd: 10)
+        let splitTimeline = RecordingClipTimeline(segments: [segA, segB])
+        let afterSplit = StudioAudioConform.conform([linked], hidden: [], from: full, to: splitTimeline)
+        #expect(afterSplit.clips.count == 1)
+
+        // Step 2: Trim second video clip's leading edge from 5 s to 6 s.
+        var trimmedB = segB
+        trimmedB.sourceStart = 6
+        let trimmedTimeline = RecordingClipTimeline(segments: [segA, trimmedB])
+        let afterTrim = StudioAudioConform.conform(afterSplit.clips, hidden: afterSplit.hidden, from: splitTimeline, to: trimmedTimeline)
+        #expect(afterTrim.clips.count == 2)
+        // Both conformed pieces share the same original clip lineage.
+        #expect(afterTrim.clips[0].lineageID == afterTrim.clips[1].lineageID)
+        #expect(afterTrim.hidden.count == 1)
+
+        // Step 3: Reopen second video clip's leading edge back to 5 s.
+        let afterReopen = StudioAudioConform.conform(afterTrim.clips, hidden: afterTrim.hidden, from: trimmedTimeline, to: splitTimeline)
+        // 5...6 s must NOT be doubled onto a second lane; the clip heals seamlessly into 0...10 s on lane 0!
+        let covering5to6 = afterReopen.clips.filter { $0.start < 6.0 - 0.001 && $0.end > 5.0 + 0.001 }
+        #expect(covering5to6.count == 1)
+        #expect(afterReopen.clips.count == 1)
+        #expect(afterReopen.clips[0].lane == 0)
+        #expect(abs(afterReopen.clips[0].start - 0) < 0.001)
+        #expect(abs(afterReopen.clips[0].end - 10) < 0.001)
+        #expect(afterReopen.hidden.isEmpty)
+    }
+
     // MARK: - Helpers
 
     private func makeDirectory() throws -> URL {

@@ -4839,6 +4839,7 @@ final class RecordingStudioModel {
         }
         var copy = clip
         copy.id = UUID()
+        copy.originID = nil
         copy.start = clip.end
         applyAudioClips(audioClips + [copy], actionName: "Duplicate Audio")
         selectAudioClip(id: copy.id)

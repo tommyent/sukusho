@@ -244,6 +244,7 @@ nonisolated enum StudioAudioConform {
                     let f1 = min(clip.trimEnd, fileLow + (s1 - sourceLow) * filePerSource)
                     guard f1 - f0 >= RecordingAudioClip.minimumFileSpan else { return }
                     var template = clip
+                    template.originID = clip.lineageID
                     template.trimStart = f0
                     template.trimEnd = f1
                     if abs(f0 - clip.trimStart) > 0.002 { template.fadeIn = 0 }
@@ -307,50 +308,75 @@ nonisolated enum StudioAudioConform {
             )
             let editorEnd = editorStart + (f1 - f0) / derivedSpeed
 
-            // Avoid duplicating a range already restored by edge healing, matching
-            // by original clip identity so distinct clips sharing a file both heal.
-            if let coveredIndex = result.firstIndex(where: { existing in
+            // Subtract any sub-intervals of [editorStart, editorEnd] already
+            // covered by surviving or edge-healed pieces of the same original
+            // clip lineage, so a split + re-trim never plays any interval twice.
+            let lineage = entry.clip.lineageID
+            let coveringPieces = result.enumerated().filter { _, existing in
                 existing.isLinked
-                    && existing.id == entry.clip.id
-                    && existing.start <= editorStart + 0.005
-                    && existing.end >= editorEnd - 0.005
-            }) {
-                if abs(f0 - entry.clip.trimStart) <= 0.002,
-                   abs(result[coveredIndex].trimStart - entry.clip.trimStart) <= 0.002,
-                   entry.clip.fadeIn > 0, result[coveredIndex].fadeIn == 0 {
+                    && existing.lineageID == lineage
+                    && existing.end > editorStart + 0.002
+                    && existing.start < editorEnd - 0.002
+            }
+            for (coveredIndex, existing) in coveringPieces {
+                if existing.start <= editorStart + 0.005,
+                   abs(f0 - entry.clip.trimStart) <= 0.002,
+                   abs(existing.trimStart - entry.clip.trimStart) <= 0.002,
+                   entry.clip.fadeIn > 0, existing.fadeIn == 0 {
                     result[coveredIndex].fadeIn = entry.clip.fadeIn
                 }
-                if abs(f1 - entry.clip.trimEnd) <= 0.002,
-                   abs(result[coveredIndex].trimEnd - entry.clip.trimEnd) <= 0.002,
-                   entry.clip.fadeOut > 0, result[coveredIndex].fadeOut == 0 {
+                if existing.end >= editorEnd - 0.005,
+                   abs(f1 - entry.clip.trimEnd) <= 0.002,
+                   abs(existing.trimEnd - entry.clip.trimEnd) <= 0.002,
+                   entry.clip.fadeOut > 0, existing.fadeOut == 0 {
                     result[coveredIndex].fadeOut = entry.clip.fadeOut
                 }
-            } else if f1 - f0 >= RecordingAudioClip.minimumFileSpan,
-                      editorEnd - editorStart >= RecordingAudioClip.minimumPlayableDuration {
-                var restored = entry.clip
-                restored.start = editorStart
-                restored.trimStart = f0
-                restored.trimEnd = f1
-                restored.speed = derivedSpeed
-                if abs(f0 - entry.clip.trimStart) > 0.002 { restored.fadeIn = 0 }
-                if abs(f1 - entry.clip.trimEnd) > 0.002 { restored.fadeOut = 0 }
+            }
+            var uncovered: [(TimeInterval, TimeInterval)] = [(editorStart, editorEnd)]
+            for (_, existing) in coveringPieces {
+                uncovered = uncovered.flatMap { low, high -> [(TimeInterval, TimeInterval)] in
+                    if existing.end <= low + 0.002 || existing.start >= high - 0.002 {
+                        return [(low, high)]
+                    }
+                    var parts: [(TimeInterval, TimeInterval)] = []
+                    if existing.start > low + 0.002 { parts.append((low, existing.start)) }
+                    if existing.end < high - 0.002 { parts.append((existing.end, high)) }
+                    return parts
+                }
+            }
 
-                // Seamlessly rejoin an adjacent restored/surviving piece of the same clip.
+            for (subStart, subEnd) in uncovered {
+                let subF0 = f0 + (subStart - editorStart) * derivedSpeed
+                let subF1 = min(f1, f0 + (subEnd - editorStart) * derivedSpeed)
+                guard subF1 - subF0 >= RecordingAudioClip.minimumFileSpan,
+                      subEnd - subStart >= RecordingAudioClip.minimumPlayableDuration else { continue }
+                var restored = entry.clip
+                restored.originID = lineage
+                restored.start = subStart
+                restored.trimStart = subF0
+                restored.trimEnd = subF1
+                restored.speed = derivedSpeed
+                if abs(subF0 - entry.clip.trimStart) > 0.002 { restored.fadeIn = 0 }
+                if abs(subF1 - entry.clip.trimEnd) > 0.002 { restored.fadeOut = 0 }
+
+                // Seamlessly rejoin an adjacent restored/surviving piece of the same lineage.
                 if let matchIndex = result.firstIndex(where: { existing in
                     existing.isLinked
-                        && existing.id == entry.clip.id
+                        && existing.lineageID == lineage
                         && existing.lane == restored.lane
                         && abs(existing.speed - restored.speed) < 0.000_1
-                        && (abs(existing.end - restored.start) < 0.002 && abs(existing.trimEnd - restored.trimStart) < 0.002)
+                        && abs(existing.end - restored.start) < 0.002
+                        && abs(existing.trimEnd - restored.trimStart) < 0.002
                 }) {
                     result[matchIndex].trimEnd = restored.trimEnd
                     result[matchIndex].fadeOut = restored.fadeOut
                 } else if let matchIndex = result.firstIndex(where: { existing in
                     existing.isLinked
-                        && existing.id == entry.clip.id
+                        && existing.lineageID == lineage
                         && existing.lane == restored.lane
                         && abs(existing.speed - restored.speed) < 0.000_1
-                        && (abs(restored.end - existing.start) < 0.002 && abs(restored.trimEnd - existing.trimStart) < 0.002)
+                        && abs(restored.end - existing.start) < 0.002
+                        && abs(restored.trimEnd - existing.trimStart) < 0.002
                 }) {
                     result[matchIndex].start = restored.start
                     result[matchIndex].trimStart = restored.trimStart
@@ -386,7 +412,34 @@ nonisolated enum StudioAudioConform {
             }
         }
 
+        // Merge adjacent healed pieces of the same original clip lineage when
+        // edge healing or hidden-range restoration closes the gap between them.
+        result = mergingContiguousLineage(result)
         return (resolvingLanes(result), remainingHidden)
+    }
+
+    private static func mergingContiguousLineage(_ clips: [RecordingAudioClip]) -> [RecordingAudioClip] {
+        let sorted = clips.sorted { ($0.lane, $0.start) < ($1.lane, $1.start) }
+        var merged: [RecordingAudioClip] = []
+        for clip in sorted {
+            if clip.isLinked,
+               let index = merged.lastIndex(where: { existing in
+                   existing.isLinked
+                       && existing.lineageID == clip.lineageID
+                       && existing.lane == clip.lane
+                       && existing.isMuted == clip.isMuted
+                       && abs(existing.volume - clip.volume) < 0.000_1
+                       && abs(existing.speed - clip.speed) < 0.000_1
+                       && abs(existing.end - clip.start) < 0.002
+                       && abs(existing.trimEnd - clip.trimStart) < 0.002
+               }) {
+                merged[index].trimEnd = clip.trimEnd
+                merged[index].fadeOut = clip.fadeOut
+            } else {
+                merged.append(clip)
+            }
+        }
+        return merged
     }
 
     /// Opening a clip's trim back up brings back the linked sound under
@@ -562,7 +615,10 @@ nonisolated enum StudioAudioConform {
                 && $0.fileSpan >= RecordingAudioClip.minimumFileSpan
         }
         for index in pieces.indices {
-            if index > 0 { pieces[index].id = UUID() }
+            if index > 0 {
+                pieces[index].id = UUID()
+                pieces[index].originID = clip.lineageID
+            }
             // A fade belongs to the clip's own end, not to a cut inside it.
             if abs(pieces[index].trimStart - clip.trimStart) > 0.002 { pieces[index].fadeIn = 0 }
             if abs(pieces[index].trimEnd - clip.trimEnd) > 0.002 { pieces[index].fadeOut = 0 }

@@ -75,6 +75,13 @@ nonisolated struct RecordingAudioClip: Identifiable, Codable, Equatable, Hashabl
     /// Cut, trimmed and retimed with the video above it.
     var isLinked = false
     var isMuted = false
+    /// Shared identity of the original clip when split by video conform, so
+    /// edge healing and hidden-range restoration never double-restore the same
+    /// interval across split pieces.
+    var originID: UUID? = nil
+
+    /// Stable clip-lineage identifier shared by pieces conformed from one clip.
+    var lineageID: UUID { originID ?? id }
 
     /// How much of the file plays.
     var fileSpan: TimeInterval { max(0, trimEnd - trimStart) }
@@ -95,7 +102,7 @@ nonisolated struct RecordingAudioClip: Identifiable, Codable, Equatable, Hashabl
 
     private enum CodingKeys: String, CodingKey {
         case id, source, fileName, displayName, start, trimStart, trimEnd, fileDuration
-        case volume, fadeIn, fadeOut, speed, lane, isLinked, isMuted
+        case volume, fadeIn, fadeOut, speed, lane, isLinked, isMuted, originID
     }
 
     init(from decoder: any Decoder) throws {
@@ -115,6 +122,7 @@ nonisolated struct RecordingAudioClip: Identifiable, Codable, Equatable, Hashabl
         lane = try container.decodeIfPresent(Int.self, forKey: .lane) ?? 0
         isLinked = try container.decodeIfPresent(Bool.self, forKey: .isLinked) ?? false
         isMuted = try container.decodeIfPresent(Bool.self, forKey: .isMuted) ?? false
+        originID = try container.decodeIfPresent(UUID.self, forKey: .originID)
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -134,6 +142,7 @@ nonisolated struct RecordingAudioClip: Identifiable, Codable, Equatable, Hashabl
         if lane != 0 { try container.encode(lane, forKey: .lane) }
         if isLinked { try container.encode(isLinked, forKey: .isLinked) }
         if isMuted { try container.encode(isMuted, forKey: .isMuted) }
+        if let originID { try container.encode(originID, forKey: .originID) }
     }
 
     /// Kept inside its file, its ranges and the video without clamping valid
