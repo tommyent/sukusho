@@ -674,6 +674,52 @@ struct StudioAudioTests {
         #expect(abs(reloadedDouble.speed - 16.0) < 0.001)
     }
 
+    @Test func fullyHiddenLinkedClipHealsOnTrimReopenAndDropsOnSegmentDelete() {
+        let seg = RecordingClipSegment(sourceStart: 0, sourceEnd: 10)
+        let full = RecordingClipTimeline(segments: [seg])
+
+        var linked = RecordingAudioClip(fileName: "sfx.wav", displayName: "SFX", start: 8, fileDuration: 1)
+        linked.isLinked = true
+        linked.volume = 0.75
+        linked.fadeIn = 0.15
+        linked.fadeOut = 0.2
+
+        // Trim segment to 0...7 s: linked clip at 8...9 s is fully hidden.
+        var trimmedSeg = seg
+        trimmedSeg.sourceEnd = 7
+        let trimmed = RecordingClipTimeline(segments: [trimmedSeg])
+        let afterTrim = StudioAudioConform.conform([linked], hidden: [], from: full, to: trimmed)
+        #expect(afterTrim.clips.isEmpty)
+        #expect(afterTrim.hidden.count == 1)
+
+        // Partially reopen to 0...8.5 s: heals 8...8.5 s and retains 8.5...9 s hidden.
+        var halfOpenSeg = trimmedSeg
+        halfOpenSeg.sourceEnd = 8.5
+        let halfOpen = RecordingClipTimeline(segments: [halfOpenSeg])
+        let afterHalf = StudioAudioConform.conform(afterTrim.clips, hidden: afterTrim.hidden, from: trimmed, to: halfOpen)
+        #expect(afterHalf.clips.count == 1)
+        #expect(abs(afterHalf.clips[0].start - 8) < 0.001)
+        #expect(abs(afterHalf.clips[0].end - 8.5) < 0.001)
+        #expect(!afterHalf.hidden.isEmpty)
+
+        // Reopen fully to 0...10 s: heals the full 8...9 s clip back seamlessly!
+        let afterReopen = StudioAudioConform.conform(afterHalf.clips, hidden: afterHalf.hidden, from: halfOpen, to: full)
+        #expect(afterReopen.clips.count == 1)
+        #expect(abs(afterReopen.clips[0].start - 8) < 0.001)
+        #expect(abs(afterReopen.clips[0].end - 9) < 0.001)
+        #expect(abs(afterReopen.clips[0].volume - 0.75) < 0.001)
+        #expect(abs(afterReopen.clips[0].fadeIn - 0.15) < 0.001)
+        #expect(abs(afterReopen.clips[0].fadeOut - 0.2) < 0.001)
+        #expect(afterReopen.hidden.isEmpty)
+
+        // Deliberate delete of the segment drops its hidden ranges.
+        let otherSeg = RecordingClipSegment(sourceStart: 0, sourceEnd: 5)
+        let deleted = RecordingClipTimeline(segments: [otherSeg])
+        let afterDelete = StudioAudioConform.conform(afterTrim.clips, hidden: afterTrim.hidden, from: trimmed, to: deleted)
+        #expect(afterDelete.clips.isEmpty)
+        #expect(afterDelete.hidden.isEmpty)
+    }
+
     // MARK: - Helpers
 
     private func makeDirectory() throws -> URL {

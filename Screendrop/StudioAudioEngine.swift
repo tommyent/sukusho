@@ -167,6 +167,16 @@ nonisolated struct RecordingAudioSync: Codable, Equatable, Sendable {
 nonisolated enum StudioAudioConform {
     private static let epsilon: TimeInterval = 0.000_5
 
+    /// A linked audio slice hidden by trimming its video segment inward,
+    /// retained so dragging the trim back out restores the clip seamlessly.
+    struct HiddenLinkedRange: Equatable, Sendable {
+        var segmentID: UUID
+        var sourceStart: TimeInterval
+        var sourceEnd: TimeInterval
+        var filePerSource: Double
+        var clip: RecordingAudioClip
+    }
+
     /// The audio clips as they should be after the video's clips change
     /// from `old` to `new`.
     ///
@@ -180,7 +190,66 @@ nonisolated enum StudioAudioConform {
         from old: RecordingClipTimeline,
         to new: RecordingClipTimeline
     ) -> [RecordingAudioClip] {
-        guard old != new else { return clips }
+        conform(clips, hidden: [], from: old, to: new).clips
+    }
+
+    /// Conforms `clips` and updates `hidden` linked ranges across reversible
+    /// boundary trims. Deleting a segment drops its hidden ranges; reopening a
+    /// surviving segment's trim heals any hidden ranges back onto the timeline.
+    static func conform(
+        _ clips: [RecordingAudioClip],
+        hidden: [HiddenLinkedRange],
+        from old: RecordingClipTimeline,
+        to new: RecordingClipTimeline
+    ) -> (clips: [RecordingAudioClip], hidden: [HiddenLinkedRange]) {
+        guard old != new else { return (clips, hidden) }
+        let newSegmentsByID = Dictionary(new.segments.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+
+        // Capture linked slices hidden by inward boundary trims on surviving segments.
+        var capturedHidden: [HiddenLinkedRange] = hidden.filter { newSegmentsByID[$0.segmentID] != nil }
+        for clip in clips where clip.isLinked {
+            let clipSpeed = max(clip.speed, 0.01)
+            var oldEditorStart: TimeInterval = 0
+            for oldSeg in old.segments {
+                let oldEditorEnd = oldEditorStart + oldSeg.editorDuration
+                defer { oldEditorStart = oldEditorEnd }
+                guard let newSeg = newSegmentsByID[oldSeg.id] else { continue }
+                let low = max(clip.start, oldEditorStart)
+                let high = min(clip.end, oldEditorEnd)
+                guard high - low > epsilon else { continue }
+                let sourceLow = oldSeg.sourceStart + (low - oldEditorStart) * oldSeg.speed
+                let sourceHigh = oldSeg.sourceStart + (high - oldEditorStart) * oldSeg.speed
+                let fileLow = clip.trimStart + (low - clip.start) * clipSpeed
+                let filePerSource = clipSpeed / oldSeg.speed
+
+                func storeHidden(from s0: TimeInterval, to s1: TimeInterval) {
+                    guard s1 - s0 > epsilon else { return }
+                    let f0 = fileLow + (s0 - sourceLow) * filePerSource
+                    let f1 = min(clip.trimEnd, fileLow + (s1 - sourceLow) * filePerSource)
+                    guard f1 - f0 >= RecordingAudioClip.minimumFileSpan else { return }
+                    var template = clip
+                    template.trimStart = f0
+                    template.trimEnd = f1
+                    if abs(f0 - clip.trimStart) > 0.002 { template.fadeIn = 0 }
+                    if abs(f1 - clip.trimEnd) > 0.002 { template.fadeOut = 0 }
+                    capturedHidden.append(HiddenLinkedRange(
+                        segmentID: oldSeg.id,
+                        sourceStart: s0,
+                        sourceEnd: s1,
+                        filePerSource: filePerSource,
+                        clip: template
+                    ))
+                }
+
+                if newSeg.sourceStart > sourceLow + epsilon {
+                    storeHidden(from: sourceLow, to: min(sourceHigh, newSeg.sourceStart))
+                }
+                if newSeg.sourceEnd < sourceHigh - epsilon {
+                    storeHidden(from: max(sourceLow, newSeg.sourceEnd), to: sourceHigh)
+                }
+            }
+        }
+
         var result: [RecordingAudioClip] = []
         for clip in clips {
             if clip.isLinked {
@@ -191,7 +260,110 @@ nonisolated enum StudioAudioConform {
                 result.append(moved)
             }
         }
-        return resolvingLanes(healingExtensions(result, from: old, to: new))
+        result = healingExtensions(result, from: old, to: new)
+
+        // Heal any hidden ranges revealed by reopening a surviving segment's trim.
+        var segmentEditorStarts: [UUID: TimeInterval] = [:]
+        var cursor: TimeInterval = 0
+        for seg in new.segments {
+            segmentEditorStarts[seg.id] = cursor
+            cursor += seg.editorDuration
+        }
+
+        var remainingHidden: [HiddenLinkedRange] = []
+        for entry in capturedHidden {
+            guard let newSeg = newSegmentsByID[entry.segmentID],
+                  let segEditorStart = segmentEditorStarts[entry.segmentID] else { continue }
+            let revealedStart = max(entry.sourceStart, newSeg.sourceStart)
+            let revealedEnd = min(entry.sourceEnd, newSeg.sourceEnd)
+            guard revealedEnd - revealedStart > epsilon else {
+                remainingHidden.append(entry)
+                continue
+            }
+
+            let speed = max(newSeg.speed, RecordingClipSegment.minimumSpeed)
+            let editorStart = segEditorStart + (revealedStart - newSeg.sourceStart) / speed
+            let f0 = entry.clip.trimStart + (revealedStart - entry.sourceStart) * entry.filePerSource
+            let f1 = min(entry.clip.trimEnd, entry.clip.trimStart + (revealedEnd - entry.sourceStart) * entry.filePerSource)
+            let derivedSpeed = min(
+                max(entry.filePerSource * speed, RecordingAudioClip.derivedSpeedRange.lowerBound),
+                RecordingAudioClip.derivedSpeedRange.upperBound
+            )
+            let editorEnd = editorStart + (f1 - f0) / derivedSpeed
+
+            // Avoid duplicating a range already restored by edge healing.
+            let alreadyCovered = result.contains { existing in
+                existing.isLinked
+                    && existing.source == entry.clip.source
+                    && existing.fileName == entry.clip.fileName
+                    && existing.start <= editorStart + 0.005
+                    && existing.end >= editorEnd - 0.005
+            }
+            if !alreadyCovered,
+               f1 - f0 >= RecordingAudioClip.minimumFileSpan,
+               editorEnd - editorStart >= RecordingAudioClip.minimumPlayableDuration {
+                var restored = entry.clip
+                if result.contains(where: { $0.id == restored.id }) { restored.id = UUID() }
+                restored.start = editorStart
+                restored.trimStart = f0
+                restored.trimEnd = f1
+                restored.speed = derivedSpeed
+                if abs(f0 - entry.clip.trimStart) > 0.002 { restored.fadeIn = 0 }
+                if abs(f1 - entry.clip.trimEnd) > 0.002 { restored.fadeOut = 0 }
+
+                // Seamlessly rejoin an adjacent restored/surviving piece of the same clip.
+                if let matchIndex = result.firstIndex(where: { existing in
+                    existing.isLinked
+                        && existing.source == restored.source
+                        && existing.fileName == restored.fileName
+                        && existing.lane == restored.lane
+                        && abs(existing.speed - restored.speed) < 0.000_1
+                        && (abs(existing.end - restored.start) < 0.002 && abs(existing.trimEnd - restored.trimStart) < 0.002)
+                }) {
+                    result[matchIndex].trimEnd = restored.trimEnd
+                    result[matchIndex].fadeOut = restored.fadeOut
+                } else if let matchIndex = result.firstIndex(where: { existing in
+                    existing.isLinked
+                        && existing.source == restored.source
+                        && existing.fileName == restored.fileName
+                        && existing.lane == restored.lane
+                        && abs(existing.speed - restored.speed) < 0.000_1
+                        && (abs(restored.end - existing.start) < 0.002 && abs(restored.trimEnd - existing.trimStart) < 0.002)
+                }) {
+                    result[matchIndex].start = restored.start
+                    result[matchIndex].trimStart = restored.trimStart
+                    result[matchIndex].fadeIn = restored.fadeIn
+                } else {
+                    result.append(restored)
+                }
+            }
+
+            // Keep any portion that is still outside the reopened trim.
+            if entry.sourceStart < newSeg.sourceStart - epsilon {
+                let s1 = min(entry.sourceEnd, newSeg.sourceStart)
+                let rf1 = entry.clip.trimStart + (s1 - entry.sourceStart) * entry.filePerSource
+                if rf1 - entry.clip.trimStart >= RecordingAudioClip.minimumFileSpan {
+                    var left = entry
+                    left.sourceEnd = s1
+                    left.clip.trimEnd = rf1
+                    left.clip.fadeOut = 0
+                    remainingHidden.append(left)
+                }
+            }
+            if entry.sourceEnd > newSeg.sourceEnd + epsilon {
+                let s0 = max(entry.sourceStart, newSeg.sourceEnd)
+                let rf0 = entry.clip.trimStart + (s0 - entry.sourceStart) * entry.filePerSource
+                if entry.clip.trimEnd - rf0 >= RecordingAudioClip.minimumFileSpan {
+                    var right = entry
+                    right.sourceStart = s0
+                    right.clip.trimStart = rf0
+                    right.clip.fadeIn = 0
+                    remainingHidden.append(right)
+                }
+            }
+        }
+
+        return (resolvingLanes(result), remainingHidden)
     }
 
     /// Opening a clip's trim back up brings back the linked sound under

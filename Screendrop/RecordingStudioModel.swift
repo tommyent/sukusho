@@ -249,6 +249,9 @@ final class RecordingStudioModel {
     /// Linked clips are cut with the video above them; the rest keep their
     /// place (`StudioAudioConform`).
     private(set) var audioClips: [RecordingAudioClip] = []
+    /// Linked audio ranges temporarily hidden by trimming a video clip inward,
+    /// kept so dragging the trim back out restores them.
+    private var hiddenLinkedAudio: [StudioAudioConform.HiddenLinkedRange] = []
     /// The audio clip the inspector shows: the last one clicked.
     var selectedAudioClipID: UUID? {
         didSet {
@@ -1095,6 +1098,7 @@ final class RecordingStudioModel {
             audioPeaks[Self.soundtrackPeaksKey] = nil
         }
         audioClips = (document.audioClips ?? []).map { $0.sanitized() }
+        hiddenLinkedAudio.removeAll()
         if let selectedAudioClipID, !audioClips.contains(where: { $0.id == selectedAudioClipID }) {
             self.selectedAudioClipID = nil
         }
@@ -1227,6 +1231,7 @@ final class RecordingStudioModel {
         playbackAudioLayout = StudioAudioLayout()
         playbackAudioPlacement = nil
         audioClips.removeAll()
+        hiddenLinkedAudio.removeAll()
         selectedAudioClipID = nil
         selectedAudioClipIDs.removeAll()
         audioPeaks.removeAll()
@@ -2210,6 +2215,7 @@ final class RecordingStudioModel {
     private func applyClipTimeline(
         _ requestedTimeline: RecordingClipTimeline,
         audio requestedAudio: [RecordingAudioClip]? = nil,
+        hidden requestedHidden: [StudioAudioConform.HiddenLinkedRange]? = nil,
         selectedID: UUID?,
         selectsClip: Bool = true,
         playheadTime: TimeInterval,
@@ -2218,12 +2224,21 @@ final class RecordingStudioModel {
     ) {
         flushPendingAudioEdits()
         guard let next = requestedTimeline.validatedForCommit(sourceDuration: sourceDuration) else { return }
-        let nextAudio = requestedAudio.map { StudioAudioConform.resolvingLanes($0) }
-            ?? StudioAudioConform.conform(audioClips, from: clipTimeline, to: next)
-        guard next != clipTimeline || nextAudio != audioClips else { return }
+        let nextAudio: [RecordingAudioClip]
+        let nextHidden: [StudioAudioConform.HiddenLinkedRange]
+        if let requestedAudio {
+            nextAudio = StudioAudioConform.resolvingLanes(requestedAudio)
+            nextHidden = requestedHidden ?? hiddenLinkedAudio
+        } else {
+            let conformed = StudioAudioConform.conform(audioClips, hidden: hiddenLinkedAudio, from: clipTimeline, to: next)
+            nextAudio = conformed.clips
+            nextHidden = conformed.hidden
+        }
+        guard next != clipTimeline || nextAudio != audioClips || nextHidden != hiddenLinkedAudio else { return }
 
         let previousTimeline = clipTimeline
         let previousAudio = audioClips
+        let previousHidden = hiddenLinkedAudio
         let previousSelection = selectedClipID
         let hadSelection = selectedClipID != nil
         let previousTime = currentTime
@@ -2231,12 +2246,14 @@ final class RecordingStudioModel {
             target.applyClipTimeline(
                 previousTimeline,
                 audio: previousAudio,
+                hidden: previousHidden,
                 selectedID: previousSelection,
                 selectsClip: hadSelection,
                 playheadTime: previousTime,
                 actionName: actionName
             )
         }
+        hiddenLinkedAudio = nextHidden
 
         pause()
         endTrimSourcePreview(restoreItem: false)
