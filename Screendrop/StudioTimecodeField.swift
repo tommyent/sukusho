@@ -19,10 +19,12 @@ struct StudioTimecodeField: View {
     var body: some View {
         Group {
             if isEditing {
-                TextField("", text: $text)
+                TextField("Go to Timecode", text: $text)
+                    .labelsHidden()
                     .textFieldStyle(.plain)
                     .font(.system(size: 12, weight: .semibold).monospacedDigit())
                     .multilineTextAlignment(.trailing)
+                    .accessibilityLabel("Go to Timecode")
                     .focused($isFocused)
                     .onSubmit {
                         if let time = StudioPlayback.seconds(from: text) {
@@ -37,17 +39,24 @@ struct StudioTimecodeField: View {
                     }
                     .onAppear { isFocused = true }
             } else {
-                Text(studioPreciseTimecode(model.displayTime))
-                    .font(.system(size: 12, weight: .medium).monospacedDigit())
-                    .foregroundStyle(.primary.opacity(0.9))
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        guard model.isLoaded, !model.isRestoringDocument, !model.isEditingSourceRegion else { return }
-                        model.pause()
-                        text = studioPreciseTimecode(model.currentTime)
-                        isEditing = true
-                    }
-                    .help("Click to type a time to go to")
+                let readout = studioPreciseTimecode(model.displayTime)
+                Button {
+                    guard model.isLoaded, !model.isRestoringDocument, !model.isEditingSourceRegion else { return }
+                    model.pause()
+                    text = studioPreciseTimecode(model.currentTime)
+                    isEditing = true
+                } label: {
+                    Text(readout)
+                        .font(.system(size: 12, weight: .medium).monospacedDigit())
+                        .foregroundStyle(.primary.opacity(0.9))
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!model.isLoaded || model.isRestoringDocument || model.isEditingSourceRegion)
+                .accessibilityLabel("Go to Timecode")
+                .accessibilityValue(readout)
+                .help("Click to type a time to go to")
             }
         }
         .onChange(of: model.isEditingSourceRegion) { _, editing in
