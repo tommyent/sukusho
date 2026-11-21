@@ -1,5 +1,6 @@
 import Accelerate
 import CoreGraphics
+import Darwin
 import Foundation
 
 /// One pixel's colour in sRGB, 0–255 per channel, alpha straight (not
@@ -26,6 +27,16 @@ nonisolated struct PixelBuffer: Sendable {
     private let isSRGB: Bool
     private static let sRGB = CGColorSpace(name: CGColorSpace.sRGB)!
 
+    private static func storage(count: Int) -> Data {
+        // Return large editor buffers directly to the kernel when the final image owner goes away.
+        if count >= 4 * 1024 * 1024,
+           let address = mmap(nil, count, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0),
+           address != MAP_FAILED {
+            return Data(bytesNoCopy: address, count: count, deallocator: .unmap)
+        }
+        return Data(count: count)
+    }
+
     /// Force ImageIO's lazy source through one bitmap before a loupe draws it repeatedly.
     static func decodedImage(_ image: CGImage) -> CGImage? {
         let space = image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil } ?? CGColorSpaceCreateDeviceRGB()
@@ -44,7 +55,7 @@ nonisolated struct PixelBuffer: Sendable {
     private init?(image: CGImage, space: CGColorSpace) {
         let width = image.width, height = image.height
         guard width > 0, height > 0 else { return nil }
-        var bytes = Data(count: width * height * 4)
+        var bytes = Self.storage(count: width * height * 4)
         guard var format = vImage_CGImageFormat(bitsPerComponent: 8, bitsPerPixel: 32,
             colorSpace: space, bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
             renderingIntent: .defaultIntent) else { return nil }
@@ -78,14 +89,16 @@ nonisolated struct PixelBuffer: Sendable {
         var sourceBytes = bytes
         if hasTransparency {
             // Lanczos can overshoot premultiplied channels; scale straight colour, then premultiply.
+            sourceBytes = Self.storage(count: bytes.count)
             let error = sourceBytes.withUnsafeMutableBytes { raw in
+                bytes.copyBytes(to: raw)
                 var buffer = vImage_Buffer(data: raw.baseAddress!, height: vImagePixelCount(height),
                     width: vImagePixelCount(width), rowBytes: width * 4)
                 return vImageUnpremultiplyData_RGBA8888(&buffer, &buffer, vImage_Flags(kvImageNoFlags))
             }
             guard error == kvImageNoError else { return nil }
         }
-        var output = Data(count: w * h * 4)
+        var output = Self.storage(count: w * h * 4)
         let error = sourceBytes.withUnsafeBytes { source in
             output.withUnsafeMutableBytes { destination in
                 var input = vImage_Buffer(data: UnsafeMutableRawPointer(mutating: source.baseAddress!),
