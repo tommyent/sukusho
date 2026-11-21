@@ -286,13 +286,14 @@ struct RecordingPickerControls: View {
     }
 
     private func startAreaRecording() {
-        let displayID = ActiveDisplayResolver.activeDisplayID(preferPointer: false)
+        let displayID = RecordingBarPresenter.shared.barDisplayID
+            ?? ActiveDisplayResolver.activeDisplayID(preferPointer: false)
         guard let display = sources.displays.first(where: { $0.displayID == displayID })
             ?? sources.displays.first else { return }
         // Area is the one source that can't morph: the bar has to get out of
         // the way of the selection overlay, so it leaves and comes back as the
         // session controls.
-        RecordingBarPresenter.shared.hide()
+        RecordingBarPresenter.shared.hideForAreaSelection()
         CaptureCoordinator.shared.recordArea(display)
     }
 

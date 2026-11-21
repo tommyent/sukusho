@@ -52,6 +52,7 @@ final class RecordingBarPresenter {
     @ObservationIgnored private var panel: NSPanel?
     @ObservationIgnored private var moveObserver: NSObjectProtocol?
     @ObservationIgnored private var screenObserver: NSObjectProtocol?
+    @ObservationIgnored private var pendingAreaOrigin: (origin: CGPoint, displayID: CGDirectDisplayID)?
 
     private init() {}
 
@@ -82,6 +83,7 @@ final class RecordingBarPresenter {
         // on-screen way to stop it, and the picker couldn't start anything
         // anyway. Leave them in place.
         guard !ScreenRecordingManager.shared.isActive else { return }
+        pendingAreaOrigin = nil
         pickerGeneration += 1
         let panel = panel ?? makePanel()
         PreviewWindowCaptureExclusion.shared.register(window: panel)
@@ -109,20 +111,39 @@ final class RecordingBarPresenter {
         PreviewWindowCaptureExclusion.shared.register(window: panel)
         TeleprompterComposerPresenter.shared.hide()
 
+        let preserved = pendingAreaOrigin
+        pendingAreaOrigin = nil
         let isMorphing = panel.isVisible && isPositioned(panel, onDisplayID: displayID)
         if isMorphing {
             withAnimation(BarMetrics.modeChange) {
                 mode = .recording
             }
+        } else if let preserved, displayID == nil || preserved.displayID == displayID {
+            mode = .recording
+            panel.setFrameOrigin(preserved.origin)
         } else {
             mode = .recording
             position(panel, displayID: displayID)
         }
         panel.orderFrontRegardless()
+        clampPanelToScreen()
         panel.makeKey()
     }
 
+    /// Temporarily hides the bar for Area selection while remembering where the user placed it so
+    /// the recording controls return to the same spot when the take begins on that display.
+    func hideForAreaSelection() {
+        let saved: (CGPoint, CGDirectDisplayID)? = if let panel, panel.isVisible, let displayID = barDisplayID {
+            (panel.frame.origin, displayID)
+        } else {
+            nil
+        }
+        hide()
+        pendingAreaOrigin = saved
+    }
+
     func hide() {
+        pendingAreaOrigin = nil
         pickerGeneration += 1
         if mode == .picker { CaptureCountdownPresenter.shared.cancel() }
         // `orderOut` sends no exit events, so a hover that's live when the
