@@ -802,6 +802,84 @@ struct StudioAudioTests {
         #expect(goertzel(fullSamples, at: 0.4, length: 0.5, frequency: 220) < 0.03)
     }
 
+    @Test func speechCleanupExportOmitsMusicAndLanesWhileFullMixIncludesBoth() async throws {
+        let dir = try makeDirectory()
+        let mediaDir = dir.appendingPathComponent("media", isDirectory: true)
+        try FileManager.default.createDirectory(at: mediaDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let screenURL = try makeTone(in: dir, name: "speech", frequency: 440, amplitude: 0.35, duration: 1.5)
+        let musicURL = try makeTone(in: dir, name: "bed", frequency: 660, amplitude: 0.3, duration: 1.5)
+        let clipURL = try makeTone(in: mediaDir, name: "lane-fx", frequency: 1200, amplitude: 0.3, duration: 1.2)
+        let clip = RecordingAudioClip(fileName: clipURL.lastPathComponent, displayName: "FX", start: 0.1, fileDuration: 1.2)
+        let music = RecordingBackgroundMusicMixer.Configuration(
+            url: musicURL,
+            settings: RecordingBackgroundMusic(
+                fileName: musicURL.lastPathComponent,
+                displayName: "Bed",
+                volume: 0.5,
+                loop: true,
+                duck: false,
+                duckAmount: .medium
+            )
+        )
+        let timeline = RecordingClipTimeline.full(sourceDuration: 1.5)
+
+        // Default cleanup mode (userSelection == false) omits both music bed and audio lanes.
+        let cleanupInclude = RecordingAudioExporter.effectiveIncludeExtras(
+            hasPrimaryAudio: true,
+            hasBackgroundMusic: true,
+            hasAudioClips: true,
+            userSelection: false
+        )
+        #expect(cleanupInclude == false)
+        let cleanupURL = try await RecordingAudioExporter().export(
+            RecordingAudioExporter.Configuration(
+                screenURL: screenURL,
+                clipTimeline: timeline,
+                replacementURL: nil,
+                format: .wav,
+                volume: 1,
+                backgroundMusic: cleanupInclude ? music : nil,
+                audioClips: cleanupInclude ? [clip] : [],
+                mediaDirectory: cleanupInclude ? mediaDir : nil
+            ),
+            progress: { _ in }
+        )
+        defer { try? FileManager.default.removeItem(at: cleanupURL) }
+        let cleanupSamples = try await renderMonoSamples(asset: AVURLAsset(url: cleanupURL), mix: nil, duration: 1.5)
+        #expect(goertzel(cleanupSamples, at: 0.3, length: 0.5, frequency: 440) > 0.2)
+        #expect(goertzel(cleanupSamples, at: 0.3, length: 0.5, frequency: 660) < 0.02)
+        #expect(goertzel(cleanupSamples, at: 0.3, length: 0.5, frequency: 1200) < 0.02)
+
+        // Full-mix mode (userSelection == true) includes speech, music bed, and audio lanes once.
+        let fullMixInclude = RecordingAudioExporter.effectiveIncludeExtras(
+            hasPrimaryAudio: true,
+            hasBackgroundMusic: true,
+            hasAudioClips: true,
+            userSelection: true
+        )
+        #expect(fullMixInclude == true)
+        let fullMixURL = try await RecordingAudioExporter().export(
+            RecordingAudioExporter.Configuration(
+                screenURL: screenURL,
+                clipTimeline: timeline,
+                replacementURL: nil,
+                format: .wav,
+                volume: 1,
+                backgroundMusic: fullMixInclude ? music : nil,
+                audioClips: fullMixInclude ? [clip] : [],
+                mediaDirectory: fullMixInclude ? mediaDir : nil
+            ),
+            progress: { _ in }
+        )
+        defer { try? FileManager.default.removeItem(at: fullMixURL) }
+        let fullSamples = try await renderMonoSamples(asset: AVURLAsset(url: fullMixURL), mix: nil, duration: 1.5)
+        #expect(goertzel(fullSamples, at: 0.3, length: 0.5, frequency: 440) > 0.15)
+        #expect(goertzel(fullSamples, at: 0.3, length: 0.5, frequency: 660) > 0.08)
+        #expect(goertzel(fullSamples, at: 0.3, length: 0.5, frequency: 1200) > 0.15)
+    }
+
     // MARK: - Helpers
 
     private func makeDirectory() throws -> URL {

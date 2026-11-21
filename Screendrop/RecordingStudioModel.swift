@@ -409,8 +409,9 @@ final class RecordingStudioModel {
     var audioExportFormat: RecordingAudioFormat = .m4a {
         didSet { scheduleProjectSave() }
     }
-    /// Mixes the audio lanes into the audio-only export. Off by default,
-    /// so the cleanup round trip never bakes music into the replacement.
+    /// Mixes background music and audio lanes into the audio-only export.
+    /// Off by default so the cleanup round trip exports only the speech track
+    /// and never doubles the music bed or lanes when re-imported.
     var audioExportIncludesClips = false
     /// The soundtrack standing in for the recording's own audio, resolved
     /// so both playback and export can use it without reloading tracks.
@@ -4887,9 +4888,15 @@ final class RecordingStudioModel {
         hasPrimaryAudio || hasBackgroundMusic || !audioClips.isEmpty
     }
 
+    /// True when the project has background music or audio lane clips that can
+    /// be excluded from a speech-cleanup export or included in a full mix.
+    var hasAudioExportExtras: Bool {
+        !audioClips.isEmpty || hasBackgroundMusic
+    }
+
     /// True when clips or background music are the only audio in the project.
     var audioExportDefaultsToExtras: Bool {
-        !hasPrimaryAudio && (!audioClips.isEmpty || hasBackgroundMusic)
+        !hasPrimaryAudio && hasAudioExportExtras
     }
 
     var effectiveAudioExportIncludesClips: Bool {
@@ -4933,7 +4940,7 @@ final class RecordingStudioModel {
             audioExportState = .failed(error.localizedDescription)
             return
         }
-        let includeClips = effectiveAudioExportIncludesClips
+        let includeMix = effectiveAudioExportIncludesClips
         let configuration = RecordingAudioExporter.Configuration(
             screenURL: screenURL,
             clipTimeline: clipTimeline,
@@ -4942,10 +4949,10 @@ final class RecordingStudioModel {
             volume: Double(audioVolume),
             isolatedMicrophoneURL: voiceIsolationEnabled ? isolatedMicrophone?.url : nil,
             microphoneTrackID: microphoneTrackID,
-            backgroundMusic: backgroundMusicConfiguration(includeAudio: true),
+            backgroundMusic: includeMix ? backgroundMusicConfiguration(includeAudio: true) : nil,
             replacementSync: replacementURL == nil ? nil : replacementAudioSync,
-            audioClips: includeClips ? audioClips : [],
-            mediaDirectory: includeClips ? mediaDirectoryURL : nil
+            audioClips: includeMix ? audioClips : [],
+            mediaDirectory: includeMix ? mediaDirectoryURL : nil
         )
         let suggestedFileName = audioExportSuggestedFileName
         let dockProgressID = DockExportProgressCoordinator.shared.start()

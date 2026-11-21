@@ -1273,7 +1273,10 @@ struct StudioInspector: View {
         .popover(isPresented: $isAudioExportOptionsPresented, arrowEdge: .bottom) {
             StudioAudioExportOptions(
                 format: $model.audioExportFormat,
-                includesAddedAudio: model.audioClips.isEmpty ? nil : $model.audioExportIncludesClips,
+                includesAddedAudio: model.hasAudioExportExtras ? $model.audioExportIncludesClips : nil,
+                addedAudioLabel: model.hasBackgroundMusic && !model.audioClips.isEmpty
+                    ? "Include music & clips"
+                    : model.hasBackgroundMusic ? "Include background music" : "Include audio clips",
                 requiresAddedAudio: model.audioExportDefaultsToExtras
             ) {
                 isAudioExportOptionsPresented = false
@@ -1371,6 +1374,7 @@ struct StudioInspector: View {
 private struct StudioAudioExportOptions: View {
     @Binding var format: RecordingAudioFormat
     var includesAddedAudio: Binding<Bool>? = nil
+    var addedAudioLabel = "Include audio clips"
     var requiresAddedAudio = false
     let onExport: () -> Void
 
@@ -1397,12 +1401,12 @@ private struct StudioAudioExportOptions: View {
             )
 
             if let includesAddedAudio {
-                InspectorToggleRow("Include audio clips", isOn: includesAddedAudio)
+                InspectorToggleRow(addedAudioLabel, isOn: includesAddedAudio)
                     .disabled(requiresAddedAudio)
                     .help(
                         requiresAddedAudio
-                            ? "Audio clips are the only audio in this project"
-                            : "Mix audio lane clips into the exported file"
+                            ? "Added audio is the only audio in this project"
+                            : "Off exports only the speech track for cleanup tools, so re-importing won't double your music or lanes"
                     )
             }
 
