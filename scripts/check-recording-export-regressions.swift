@@ -1716,6 +1716,36 @@ struct RecordingExportRegressionChecks {
         print("PASS: late unknown and supported draft revisions survive flush and save, and block delivery")
     }
 
+    static func canonicalStudioRegistry(in directory: URL) async throws {
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("registry.sukushorec"))
+        let alias = directory.appendingPathComponent("registry-alias.sukushorec")
+        try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: session.directoryURL)
+        try await movie(at: session.screenURL)
+        let primary = RecordingStudioModel(url: session.directoryURL)
+        await primary.load()
+        defer { primary.teardown() }
+        primary.addRedaction(atEditorTime: 1)
+        let bytes = try Data(contentsOf: session.draftDocumentURL)
+        let registry = StudioProjectRegistry.shared
+        try check(registry.hasLoadedEditor(for: alias) && registry.document(for: alias)?.redactions.count == 1,
+                  "The alias did not resolve to the open Studio document")
+        try registry.flushDraft(for: alias)
+        let observer = RecordingStudioModel(url: session.directoryURL)
+        await observer.load()
+        defer { observer.teardown() }
+        try check(observer.isLoaded && registry.document(for: alias) == nil, "Duplicate models looked authoritative")
+        var refused = false
+        do { try registry.flushDraft(for: alias) } catch { refused = true }
+        try check(refused, "Two models resolving to one package were allowed to flush")
+        observer.flushDraft()
+        observer.teardown()
+        try check(try Data(contentsOf: session.draftDocumentURL) == bytes, "A second model changed the primary draft")
+        try registry.flushDraft(for: alias)
+        try check(registry.document(for: alias)?.redactions.count == 1, "Closing the duplicate did not restore delivery")
+        print("PASS: registry aliases share one identity and a second Studio model cannot mutate the draft")
+    }
+
     static func main() async throws {
         setbuf(stdout, nil)
         guard let root = ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] else {
@@ -1739,6 +1769,7 @@ struct RecordingExportRegressionChecks {
         try cachedMovieNames(in: directory)
         try await readOnlyDraftDelivery(in: directory)
         try await lateDraftDelivery(in: directory)
+        try await canonicalStudioRegistry(in: directory)
         try await chapterMarkerDrag(in: directory)
         try await chapterAtPlayhead(in: directory)
         try await chapterRenameUndo(in: directory)

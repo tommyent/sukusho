@@ -163,24 +163,31 @@ final class StudioProjectRegistry {
         models.removeValue(forKey: ObjectIdentifier(model))
     }
 
-    func hasLoadedEditor(for url: URL) -> Bool {
-        let path = url.standardizedFileURL.path
-        return models.values.contains {
-            guard let model = $0.model, model.isLoaded else { return false }
-            return model.sessionURL.standardizedFileURL.path == path
+    private func loadedEditors(for url: URL) -> [RecordingStudioModel] {
+        let package = ScreendropApp.canonicalEditorURL(url)
+        return models.values.compactMap(\.model).filter {
+            $0.isLoaded && ScreendropApp.canonicalEditorURL($0.sessionURL) == package
         }
     }
 
+    func hasLoadedEditor(for url: URL) -> Bool {
+        !loadedEditors(for: url).isEmpty
+    }
+
     func document(for url: URL) -> RecordingEditDocument? {
-        // An editor past an unreadable draft or in read-only newer-format mode can't vouch for
-        // the edits; callers then read the files and fail closed.
-        // An unedited, never-saved one has none, so callers read the files and find none either.
-        let path = url.standardizedFileURL.path
-        return models.values.compactMap(\.model).first {
-            $0.isLoaded && !$0.hasUnreadableDraft && !$0.isReadOnlyNewerFormat
-                && !$0.withholdsNewerFormatPreview
-                && $0.sessionURL.standardizedFileURL.path == path
-        }?.deliverableDocument
+        guard let model = try? uniqueEditor(for: url),
+              !model.hasUnreadableDraft, !model.isReadOnlyNewerFormat,
+              !model.withholdsNewerFormatPreview else { return nil }
+        return model.deliverableDocument
+    }
+
+    func uniqueEditor(for url: URL) throws -> RecordingStudioModel? {
+        let editors = loadedEditors(for: url)
+        guard editors.count <= 1 else {
+            throw CocoaError(.fileWriteUnknown, userInfo: [NSLocalizedDescriptionKey:
+                "This recording is open in more than one Studio window. Close the other window before saving or exporting."])
+        }
+        return editors.first
     }
 
     /// Edits to a bare movie have no draft, so a quit loses them.
@@ -215,10 +222,6 @@ final class StudioProjectRegistry {
     /// Flushes only the open editor matching `url` so callers can validate
     /// that specific package before flushing without touching other open editors.
     func flushDraft(for url: URL) throws {
-        let path = url.resolvingSymlinksInPath().standardizedFileURL.path
-        for model in models.values.compactMap(\.model)
-            where model.isLoaded && model.sessionURL.resolvingSymlinksInPath().standardizedFileURL.path == path {
-            try model.flushDraftForDelivery()
-        }
+        try uniqueEditor(for: url)?.flushDraftForDelivery()
     }
 }

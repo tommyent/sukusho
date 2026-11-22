@@ -869,6 +869,7 @@ final class RecordingStudioModel {
     /// that lives in memory and in the draft until the next save.
     private var lastSavedDocument: RecordingEditDocument?
     private var observedEditSidecars: RecordingSession.EditSidecars?
+    private var rejectedRedactionDraftError: Error?
     /// Set while a stored document is being applied to the model, so the
     /// resulting property writes don't register as user edits.
     private var isApplyingDocument = false
@@ -3520,7 +3521,6 @@ final class RecordingStudioModel {
     /// committed `edit.json`, so a crash or a failed save costs nothing.
     @discardableResult
     private func writeDraftNow() -> Bool {
-        guard isLoaded, !isRestoringDocument, !hasUnreadableDraft, !isReadOnlyNewerFormat else { return false }
         do {
             try persistDraft()
             return true
@@ -3530,6 +3530,13 @@ final class RecordingStudioModel {
     }
 
     private func persistDraft() throws {
+        if isReadOnlyNewerFormat, let newerFormatVersion {
+            throw RecordingPackageMedia.ValidationError.unsupportedFormatVersion(newerFormatVersion)
+        }
+        guard isLoaded, !isRestoringDocument, !hasUnreadableDraft, !isReadOnlyNewerFormat else {
+            throw CocoaError(.fileReadCorruptFile, userInfo: [NSLocalizedDescriptionKey:
+                "Studio could not prepare the recording edits for delivery."])
+        }
         let document = currentDocument()
         let changed = document != lastSavedDocument
         guard let session else {
@@ -3538,10 +3545,9 @@ final class RecordingStudioModel {
         }
         do {
             let sidecars = try checkedEditSidecars(in: session)
-            let diskDraft = try sidecars.draft.map {
-                try CaptureManifest.decoder.decode(RecordingEditDocument.self, from: $0).withoutRevision
-            }
-            if changed && document == diskDraft || !changed && diskDraft == nil {
+            let diskDocument = try session.editDocumentForRendering()?.withoutRevision
+            if changed && (document == diskDocument || (!hasEditsSinceOpening && document == openedDocument))
+                || !changed && (sidecars.draft == nil || !hasEditsSinceOpening) {
                 hasUnsavedChanges = changed
                 return
             }
@@ -3570,6 +3576,9 @@ final class RecordingStudioModel {
     }
 
     private func checkedEditSidecars(in session: RecordingSession) throws -> RecordingSession.EditSidecars {
+        if let editor = try StudioProjectRegistry.shared.uniqueEditor(for: session.directoryURL), editor !== self {
+            throw CocoaError(.fileWriteUnknown)
+        }
         let current = try session.readEditSidecars()
         guard current == observedEditSidecars else {
             throw CocoaError(.fileReadCorruptFile, userInfo: [NSLocalizedDescriptionKey:
@@ -3605,13 +3614,8 @@ final class RecordingStudioModel {
     }
 
     func flushDraftForDelivery() throws {
-        if isReadOnlyNewerFormat, let newerFormatVersion {
-            throw RecordingPackageMedia.ValidationError.unsupportedFormatVersion(newerFormatVersion)
-        }
-        guard isLoaded, !isRestoringDocument, !hasUnreadableDraft, !isReadOnlyNewerFormat else {
-            throw CocoaError(.fileReadCorruptFile, userInfo: [NSLocalizedDescriptionKey:
-                "Studio could not prepare the recording edits for delivery."])
-        }
+        // A redaction rejected by storage rolls back in Studio. Delivery must still see the failure.
+        if let rejectedRedactionDraftError { throw rejectedRedactionDraftError }
         try persistDraft()
     }
 
@@ -3631,6 +3635,7 @@ final class RecordingStudioModel {
             observedEditSidecars = updated
             lastSavedDocument = document
             try discardObservedDraft(in: session)
+            rejectedRedactionDraftError = nil
             hasUnsavedChanges = false
             try? session.updateProjectMetadata { $0.savedAt = Date() }
             dropStaleRender(in: session)
@@ -3679,6 +3684,7 @@ final class RecordingStudioModel {
         replacementAudioTask = nil
         do { try discardObservedDraft(in: session, preservingUnreadable: hasUnreadableDraft) }
         catch { FailureAlert.present(message: "The draft could not be discarded", error: error); return }
+        rejectedRedactionDraftError = nil
         hasUnreadableDraft = false
         guard let document = lastSavedDocument else { return }
         let restoreID = beginDocumentRestore()
@@ -5725,11 +5731,14 @@ final class RecordingStudioModel {
             scheduleRedactionRefresh()
             return
         }
-        guard writeDraftNow() else {
+        do {
+            try persistDraft()
+            rejectedRedactionDraftError = nil
+        } catch {
+            rejectedRedactionDraftError = error
             redactions = previous
             redactionPreview.update(redactions: previous, clipTimeline: clipTimeline)
-            FailureAlert.present(message: "The video redaction could not be saved",
-                                 error: CocoaError(.fileWriteUnknown),
+            FailureAlert.present(message: "The video redaction could not be saved", error: error,
                                  detail: "The change was not applied. Resolve the project storage problem and try again.")
             scheduleRedactionRefresh()
             return
@@ -5843,11 +5852,14 @@ final class RecordingStudioModel {
         pause()
         redactions = next
         redactionPreview.update(redactions: next, clipTimeline: clipTimeline)
-        guard writeDraftNow() else {
+        do {
+            try persistDraft()
+            rejectedRedactionDraftError = nil
+        } catch {
+            rejectedRedactionDraftError = error
             redactions = previous
             redactionPreview.update(redactions: previous, clipTimeline: clipTimeline)
-            FailureAlert.present(message: "The video redaction could not be saved",
-                                 error: CocoaError(.fileWriteUnknown),
+            FailureAlert.present(message: "The video redaction could not be saved", error: error,
                                  detail: "The change was not applied. Resolve the project storage problem and try again.")
             return
         }
