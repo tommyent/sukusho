@@ -97,6 +97,12 @@ enum RecordingSessionRenderer {
             try region.validate(sourceDuration: duration)
         }
         let (naturalSize, preferredTransform) = try await videoTrack.load(.naturalSize, .preferredTransform)
+        guard RecordingCompositionBuilder.isSupportedDisplayTransform(
+            preferredTransform,
+            naturalSize: naturalSize
+        ) else {
+            throw RecordingRedactionError.filterFailed
+        }
         let displaySize = RecordingCompositionBuilder.displaySize(
             naturalSize: naturalSize,
             preferredTransform: preferredTransform
@@ -104,6 +110,8 @@ enum RecordingSessionRenderer {
         guard displaySize.width > 0, displaySize.height > 0 else {
             throw RecordingStudioExporter.ExportError.noVideoTrack
         }
+
+        let originalAudioTracks = try await asset.loadTracks(withMediaType: .audio)
 
         let rawStyle = RecordingStudioStyle(
             background: .none,
@@ -117,7 +125,9 @@ enum RecordingSessionRenderer {
         exportSettings.resolution = .original
         exportSettings.frameRate = .fps60
         exportSettings.quality = .high
-        exportSettings.removeAudio = false
+        // Render only the redacted picture; original audio tracks are
+        // passthrough-muxed below without remixing or re-encoding.
+        exportSettings.removeAudio = true
         exportSettings.container = .mov
 
         let configuration = RecordingStudioExporter.Configuration(
@@ -140,10 +150,77 @@ enum RecordingSessionRenderer {
             redactions: resolved.redactions
         )
         onProgress?(0)
+        let hasAudioToMux = !originalAudioTracks.isEmpty
         let renderedURL = try await RecordingStudioExporter().export(configuration) { progress in
-            onProgress?(progress)
+            onProgress?(hasAudioToMux ? progress * 0.9 : progress)
         }
-        return PreparedRawImport(url: renderedURL, isTemporary: true)
+        guard hasAudioToMux else {
+            onProgress?(1)
+            return PreparedRawImport(url: renderedURL, isTemporary: true)
+        }
+
+        let muxComposition = AVMutableComposition()
+        let renderedAsset = AVURLAsset(url: renderedURL)
+        guard let renderedVideoTrack = try await renderedAsset.loadTracks(withMediaType: .video).first else {
+            try? FileManager.default.removeItem(at: renderedURL)
+            throw RecordingStudioExporter.ExportError.noVideoTrack
+        }
+        let renderedVideoRange = try await renderedVideoTrack.load(.timeRange)
+        guard let compVideo = muxComposition.addMutableTrack(
+            withMediaType: .video,
+            preferredTrackID: kCMPersistentTrackID_Invalid
+        ) else {
+            try? FileManager.default.removeItem(at: renderedURL)
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        do {
+            try compVideo.insertTimeRange(renderedVideoRange, of: renderedVideoTrack, at: .zero)
+        } catch {
+            try? FileManager.default.removeItem(at: renderedURL)
+            throw error
+        }
+
+        var insertedAudioCount = 0
+        for audioTrack in originalAudioTracks {
+            let trackRange = try await audioTrack.load(.timeRange)
+            guard trackRange.duration > .zero else { continue }
+            guard let compAudio = muxComposition.addMutableTrack(
+                withMediaType: .audio,
+                preferredTrackID: kCMPersistentTrackID_Invalid
+            ) else {
+                try? FileManager.default.removeItem(at: renderedURL)
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            do {
+                try compAudio.insertTimeRange(trackRange, of: audioTrack, at: trackRange.start)
+                insertedAudioCount += 1
+            } catch {
+                try? FileManager.default.removeItem(at: renderedURL)
+                throw error
+            }
+        }
+        guard insertedAudioCount > 0 else {
+            onProgress?(1)
+            return PreparedRawImport(url: renderedURL, isTemporary: true)
+        }
+
+        defer { try? FileManager.default.removeItem(at: renderedURL) }
+        let muxedURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("raw-redacted-\(UUID().uuidString).mov")
+        guard let exportSession = AVAssetExportSession(
+            asset: muxComposition,
+            presetName: AVAssetExportPresetPassthrough
+        ) else {
+            throw RecordingRedactionError.filterFailed
+        }
+        do {
+            try await exportSession.export(to: muxedURL, as: .mov)
+        } catch {
+            try? FileManager.default.removeItem(at: muxedURL)
+            throw error
+        }
+        onProgress?(1)
+        return PreparedRawImport(url: muxedURL, isTemporary: true)
     }
 
     /// Creates a flattened deliverable when explicitly requested for a session

@@ -106,6 +106,47 @@ nonisolated enum RecordingCompositionBuilder {
         return CGSize(width: abs(rect.width), height: abs(rect.height))
     }
 
+    /// True when `preferredTransform` applies no rotation, reflection, or scale
+    /// to coded pixels (pure identity linear part with finite translation).
+    static func isIdentityTransform(_ transform: CGAffineTransform) -> Bool {
+        let epsilon: CGFloat = 1e-4
+        return transform.a.isFinite && transform.b.isFinite
+            && transform.c.isFinite && transform.d.isFinite
+            && transform.tx.isFinite && transform.ty.isFinite
+            && abs(transform.a - 1) < epsilon
+            && abs(transform.b) < epsilon
+            && abs(transform.c) < epsilon
+            && abs(transform.d - 1) < epsilon
+    }
+
+    /// True when `preferredTransform` is a finite, non-singular, axis-aligned
+    /// orientation (0°, 90°, 180°, 270° with optional reflection/scale) that
+    /// produces a valid positive display size. Shear and arbitrary-angle
+    /// transforms are rejected so export and redaction fail closed.
+    static func isSupportedDisplayTransform(
+        _ transform: CGAffineTransform,
+        naturalSize: CGSize
+    ) -> Bool {
+        let epsilon: CGFloat = 1e-4
+        guard naturalSize.width.isFinite, naturalSize.width > 0,
+              naturalSize.height.isFinite, naturalSize.height > 0,
+              transform.a.isFinite, transform.b.isFinite,
+              transform.c.isFinite, transform.d.isFinite,
+              transform.tx.isFinite, transform.ty.isFinite else {
+            return false
+        }
+        let det = abs(transform.a * transform.d - transform.b * transform.c)
+        guard det > epsilon else { return false }
+        let isHorizontalVertical = abs(transform.b) < epsilon && abs(transform.c) < epsilon
+            && abs(transform.a) > epsilon && abs(transform.d) > epsilon
+        let isQuarterTurn = abs(transform.a) < epsilon && abs(transform.d) < epsilon
+            && abs(transform.b) > epsilon && abs(transform.c) > epsilon
+        guard isHorizontalVertical || isQuarterTurn else { return false }
+        let oriented = displaySize(naturalSize: naturalSize, preferredTransform: transform)
+        return oriented.width.isFinite && oriented.width > 0
+            && oriented.height.isFinite && oriented.height > 0
+    }
+
     /// The centered sub-rectangle of `renderSize` that stays visible inside the
     /// project's video card when `cardSize` and `contentFillSize` differ (for
     /// example under a 9:16 Fill export aspect or a primary video crop).

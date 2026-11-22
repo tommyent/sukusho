@@ -267,23 +267,37 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             kCVPixelBufferIOSurfacePropertiesKey as String: [:]
         ]
 
-        // Readers: single-source primary timelines keep today's fast
-        // AVAssetReaderTrackOutput path; multi-source sequences use one
-        // composition with per-segment orientation/Fit/Fill transforms.
-        // Both build one `StudioCompositionTimeMap` from the actual quantized
-        // 600ths ranges so reader bounds, sample provenance, and redactions
-        // never drift from the composition.
+        // Readers: single-source primary timelines with an identity display
+        // transform keep today's fast AVAssetReaderTrackOutput path; multi-source
+        // sequences and rotated/flipped primary tracks use one composition so
+        // `preferredTransform` is always applied BEFORE source redactions and
+        // framing. Unsupported transforms (shear, arbitrary angles, singular)
+        // fail closed so unredacted or mis-oriented pixels are never written.
+        let (sourceNaturalSize, sourcePreferredTransform) = try await sourceVideo.load(
+            .naturalSize,
+            .preferredTransform
+        )
+        guard RecordingCompositionBuilder.isSupportedDisplayTransform(
+            sourcePreferredTransform,
+            naturalSize: sourceNaturalSize
+        ) else {
+            throw configuration.redactions.isEmpty
+                ? ExportError.noVideoTrack
+                : RecordingRedactionError.filterFailed
+        }
+
         let screenReader: AVAssetReader
         let videoOutput: AVAssetReaderOutput
         let timeMap: StudioCompositionTimeMap
         var retainedImportedSources: [String: StudioVideoSource] = [:]
-        if clipTimeline.hasImportedClips {
-            let (naturalSize, preferredTransform) = try await sourceVideo.load(.naturalSize, .preferredTransform)
+        let needsComposedVideoReader = clipTimeline.hasImportedClips
+            || !RecordingCompositionBuilder.isIdentityTransform(sourcePreferredTransform)
+        if needsComposedVideoReader {
             let primarySource = StudioVideoSource(
                 asset: sourceAsset,
                 videoTrack: sourceVideo,
-                naturalSize: naturalSize,
-                preferredTransform: preferredTransform,
+                naturalSize: sourceNaturalSize,
+                preferredTransform: sourcePreferredTransform,
                 duration: sourceDuration
             )
             for segment in clipTimeline.segments where !segment.isPrimaryRecording {
@@ -301,20 +315,25 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
                 }
             }
             let primaryDisplaySize = primarySource.displaySize
-            let layoutForTarget = RecordingStudioLayout.make(
-                canvasSize: canvasSize,
-                style: configuration.style,
-                includeBubble: false,
-                usesUniformPadding: configuration.usesUniformPadding,
-                contentAspect: configuration.reframe?.sourceAspect ?? configuration.fitContentAspect,
-                contentMode: configuration.fitContentAspect != nil && configuration.reframe == nil ? .fit : .fill,
-                contentCropRect: configuration.videoCropRect
-            )
-            let targetRect = RecordingCompositionBuilder.visibleCardRect(
-                renderSize: primaryDisplaySize,
-                cardSize: layoutForTarget.cardRect.size,
-                contentFillSize: layoutForTarget.contentFillSize
-            )
+            let targetRect: CGRect?
+            if clipTimeline.hasImportedClips {
+                let layoutForTarget = RecordingStudioLayout.make(
+                    canvasSize: canvasSize,
+                    style: configuration.style,
+                    includeBubble: false,
+                    usesUniformPadding: configuration.usesUniformPadding,
+                    contentAspect: configuration.reframe?.sourceAspect ?? configuration.fitContentAspect,
+                    contentMode: configuration.fitContentAspect != nil && configuration.reframe == nil ? .fit : .fill,
+                    contentCropRect: configuration.videoCropRect
+                )
+                targetRect = RecordingCompositionBuilder.visibleCardRect(
+                    renderSize: primaryDisplaySize,
+                    cardSize: layoutForTarget.cardRect.size,
+                    contentFillSize: layoutForTarget.contentFillSize
+                )
+            } else {
+                targetRect = nil
+            }
             let (composedAsset, avVideoComposition, builtTimeMap) = try RecordingCompositionBuilder.makeMultiSourceVideoComposition(
                 primarySource: primarySource,
                 importedSources: retainedImportedSources,
