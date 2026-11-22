@@ -2024,6 +2024,23 @@ struct RecordingExportRegressionChecks {
         print("PASS: preview drag, Copy and upload name a recording's render and master after its export, not render.mov")
     }
 
+    static func backslashPackageName(in directory: URL) async throws {
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("Demo\\v2.sukushorec"))
+        try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
+        try await movie(at: session.screenURL)
+        try session.writeEditDocument(RecordingEditDocument(style: .init(), zoomEnabled: false, zoomCues: []))
+        try check(try ScreendropApp.validatedRecordingPackage(at: session.directoryURL) != nil,
+                  "Opening from Finder refused a package renamed with a backslash")
+        let model = RecordingStudioModel(url: session.directoryURL)
+        await model.load()
+        defer { model.teardown() }
+        try check(model.isLoaded, "Studio did not open a package renamed with a backslash: \(model.loadError ?? "")")
+        let delivered = try await RecordingDeliverable.resolve(for: session.screenURL)
+        try check(delivered.lastPathComponent == "render.mov" && delivered.deletingLastPathComponent().lastPathComponent == "Demo\\v2.sukushorec",
+                  "A package renamed with a backslash did not deliver its render: \(delivered.path)")
+        print("PASS: a package renamed with a backslash opens and delivers its render")
+    }
+
     static func main() async throws {
         setbuf(stdout, nil)
         guard let root = ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] else {
@@ -2050,6 +2067,7 @@ struct RecordingExportRegressionChecks {
         try await revisionConflictsAndFormatting(in: directory)
         try await wallpaperPresetSafety(in: directory)
         try await handOutNames(in: directory)
+        try await backslashPackageName(in: directory)
         try await canonicalStudioRegistry(in: directory)
         try await importedEvidence(in: directory)
         try await packageWallpaper(in: directory)

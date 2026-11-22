@@ -510,6 +510,18 @@ struct StudioVideoOverlayTests {
         #expect(FileManager.default.fileExists(atPath: nonOwned.path))
     }
 
+    @Test func cachedRenderNamesSkipLegacyNamesNoPackageFileCanHave() throws {
+        let dir = try makeTempDir("StudioVideoOverlayCacheNames")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let renamed = dir.appendingPathComponent("Demo\\v2.sukushorec", isDirectory: true)
+        try FileManager.default.createDirectory(at: renamed, withIntermediateDirectories: false)
+        try Data("screen".utf8).write(to: renamed.appendingPathComponent("screen.mov"))
+        #expect(RecordingPackageMedia.cachedVideoFileNames(in: renamed) == ["render.mov", "render.mp4"])
+        #expect(throws: Never.self) { try RecordingPackageMedia.validateRenderInputs(in: renamed) }
+        #expect(RecordingPackageMedia.cachedVideoFileNames(in: dir.appendingPathComponent("Demo v2.sukushorec"))
+                == ["render.mov", "render.mp4", "Demo v2.mov", "Demo v2.mp4"])
+    }
+
     // MARK: - Round 2 regressions (self-import, fades/shadow, conform/linking, package validation)
 
     @Test func selfImportDetectionCatchesDirectStandardizedAndSymlinkedPaths() throws {

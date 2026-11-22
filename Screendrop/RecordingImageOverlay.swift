@@ -684,8 +684,9 @@ nonisolated enum RecordingPackageMedia {
     static func cachedVideoFileNames(in package: URL) -> [String] {
         let legacy = package.deletingPathExtension().lastPathComponent
         let stems = legacy == renderBaseName ? [renderBaseName] : [renderBaseName, legacy]
+        // A Finder name can hold a backslash, which no package file may; such a package has no legacy cache.
         return stems.flatMap { stem in ["mov", "mp4"].map { "\(stem).\($0)" } }
-            .filter { $0 != screenFileName && $0 != cameraFileName }
+            .filter { RecordingOverlayMedia.isSimpleFileName($0) && $0 != screenFileName && $0 != cameraFileName }
     }
 
     /// Resolves `packageDirectory` only when it is a real directory (not a symlink).
