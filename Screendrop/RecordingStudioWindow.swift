@@ -1666,12 +1666,12 @@ private struct StudioVideoOverlayCanvasView: View {
                 StudioPlayerLayerView(player: player, gravity: .resizeAspectFill)
                     .frame(width: max(rect.width, 1), height: max(rect.height, 1))
                     .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                    .rotationEffect(.degrees(overlay.rotation))
                     .shadow(
                         color: .black.opacity(0.5 * strength),
                         radius: 20 * unit * strength,
                         y: 12 * unit * strength
                     )
-                    .rotationEffect(.degrees(overlay.rotation))
                     .opacity(alpha)
                     .position(x: rect.midX, y: rect.midY)
                     .allowsHitTesting(false)

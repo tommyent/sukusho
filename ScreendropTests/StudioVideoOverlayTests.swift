@@ -80,7 +80,7 @@ struct StudioVideoOverlayTests {
         #expect(!decoded.isMuted)
         #expect(decoded.width == RecordingVideoOverlay.widthRange.upperBound)
         #expect(decoded.opacity == 0)
-        #expect(decoded.speed == RecordingVideoOverlay.speedRange.lowerBound)
+        #expect(decoded.speed == RecordingVideoOverlay.derivedSpeedRange.lowerBound)
         #expect(decoded.fileDuration >= decoded.trimEnd)
     }
 
@@ -904,6 +904,136 @@ struct StudioVideoOverlayTests {
         #expect(throws: RecordingPackageMedia.ValidationError.unsafeFile("11111111-1111-1111-1111-111111111111.mov")) {
             try RecordingPackageMedia.validateRenderInputs(in: symOverlay)
         }
+
+        // Detached replacement audio symlink rejected in preflight.
+        let symDetached = try makeValidPackage("SymDetached.sukushorec")
+        try FileManager.default.createSymbolicLink(
+            at: symDetached.appendingPathComponent("audio-replacement-old.m4a"),
+            withDestinationURL: outsideFile
+        )
+        let detachedJSON = """
+        {
+            "audioClips": [
+                { "source": "replacement", "fileName": "audio-replacement-old.m4a" }
+            ]
+        }
+        """
+        try Data(detachedJSON.utf8).write(to: symDetached.appendingPathComponent("edit.json"))
+        #expect(throws: RecordingPackageMedia.ValidationError.unsafeFile("audio-replacement-old.m4a")) {
+            try RecordingPackageMedia.validateRenderInputs(in: symDetached)
+        }
+
+        // Missing muted audio file (truly absent, ENOENT) does NOT block Finished validation,
+        // while a dangling symlink at that path IS rejected.
+        let missingMuted = try makeValidPackage("MissingMuted.sukushorec")
+        let missingMutedJSON = """
+        {
+            "audioClips": [
+                { "source": "file", "fileName": "22222222-2222-2222-2222-222222222222.wav" }
+            ]
+        }
+        """
+        try Data(missingMutedJSON.utf8).write(to: missingMuted.appendingPathComponent("edit.json"))
+        _ = try RecordingPackageMedia.validateRenderInputs(in: missingMuted)
+
+        let dangling = try makeValidPackage("Dangling.sukushorec")
+        try Data(missingMutedJSON.utf8).write(to: dangling.appendingPathComponent("edit.json"))
+        try FileManager.default.createSymbolicLink(
+            at: dangling.appendingPathComponent("media/22222222-2222-2222-2222-222222222222.wav"),
+            withDestinationURL: dir.appendingPathComponent("does-not-exist.wav")
+        )
+        #expect(throws: RecordingPackageMedia.ValidationError.unsafeFile("22222222-2222-2222-2222-222222222222.wav")) {
+            try RecordingPackageMedia.validateRenderInputs(in: dangling)
+        }
+
+        // A valid screen.mov with a symlinked camera.mov still passes Raw validation even though Finished rejects it.
+        let rawScreenURL = try RecordingPackageMedia.validateRawScreenInput(in: symCam)
+        #expect(rawScreenURL.lastPathComponent == "screen.mov")
+    }
+
+    @Test func detachedReplacementAudioSymlinkIsRefusedByAudioComposerWhileExplicitExternalURLWorks() async throws {
+        let dir = try makeTempDir("StudioVideoOverlayDetachedAudio")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let pkg = dir.appendingPathComponent("Pkg.sukushorec", isDirectory: true)
+        try FileManager.default.createDirectory(at: pkg, withIntermediateDirectories: true)
+
+        let screenURL = try await makeToneMovie(in: pkg, name: "screen.mov", frequency: 0, amplitude: 0, duration: 2)
+        let outsideTone = try await makeToneMovie(in: dir, name: "outside.mov", frequency: 440, amplitude: 0.5, duration: 2)
+        let symFileName = "audio-replacement-detached.mov"
+        try FileManager.default.createSymbolicLink(
+            at: pkg.appendingPathComponent(symFileName),
+            withDestinationURL: outsideTone
+        )
+
+        var detachedClip = RecordingAudioClip(
+            fileName: symFileName,
+            displayName: "Detached",
+            start: 0,
+            fileDuration: 2
+        )
+        detachedClip.source = .replacement
+        detachedClip.isMuted = false
+
+        // Package-local lookup refuses the symlinked detached replacement file.
+        let blocked = try await StudioAudioSources.load(
+            screenAsset: AVURLAsset(url: screenURL),
+            replacementURL: nil,
+            clips: [detachedClip],
+            mediaDirectory: pkg.appendingPathComponent("media", isDirectory: true),
+            strictMissingClips: false
+        )
+        #expect(blocked.pinnedReplacements[symFileName] == nil)
+
+        // Standalone playback explicit externalReplacementURLs still loads as before.
+        let explicit = try await StudioAudioSources.load(
+            screenAsset: AVURLAsset(url: screenURL),
+            replacementURL: nil,
+            clips: [detachedClip],
+            mediaDirectory: nil,
+            externalReplacementURLs: [symFileName: outsideTone],
+            strictMissingClips: true
+        )
+        #expect(explicit.pinnedReplacements[symFileName]?.isEmpty == false)
+    }
+
+    @Test func linkedRetimingAboveEightXPreservesSliceDurationAndFollowingOverlayStart() {
+        // Sol's case: a 2x linked overlay over the main track's first 8s (16s file span),
+        // followed by a second overlay at 8...9s, when those first 8s are sped to 8x (1s).
+        let old = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 8, speed: 1),
+            RecordingClipSegment(sourceStart: 8, sourceEnd: 10, speed: 1)
+        ])
+        let sped = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 8, speed: 8),
+            RecordingClipSegment(sourceStart: 8, sourceEnd: 10, speed: 1)
+        ])
+
+        var first = RecordingVideoOverlay(
+            fileName: "a.mov",
+            displayName: "First",
+            start: 0,
+            fileDuration: 16,
+            isLinked: true
+        )
+        first.speed = 2 // 16s file / 2x = 8s edited (0...8)
+
+        let second = RecordingVideoOverlay(
+            fileName: "b.mov",
+            displayName: "Second",
+            start: 8,
+            fileDuration: 1,
+            isLinked: true
+        ) // 8...9
+
+        let conformed = StudioVideoOverlayLane.conform([first, second], from: old, to: sped)
+        #expect(conformed.count == 2)
+        #expect(abs(conformed[0].speed - 16) < 0.001)
+        #expect(abs(conformed[0].start - 0) < 0.001)
+        #expect(abs(conformed[0].end - 1) < 0.001)
+        #expect(abs(conformed[0].sanitized().speed - 16) < 0.001)
+        #expect(abs(conformed[0].sanitized().end - 1) < 0.001)
+        #expect(abs(conformed[1].start - 1) < 0.001)
+        #expect(abs(conformed[1].end - 2) < 0.001)
     }
 
     // MARK: - Helpers

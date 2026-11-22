@@ -60,7 +60,10 @@ nonisolated struct RecordingVideoOverlay: Identifiable, Codable, Equatable, Hash
     static let fadeRange: ClosedRange<TimeInterval> = 0...2
     static let audioFadeRange: ClosedRange<TimeInterval> = 0...5
     static let volumeRange: ClosedRange<Double> = 0...2
+    /// User-selectable speed range in the inspector and timeline menu.
     static let speedRange: ClosedRange<Double> = 0.25...8
+    /// Derived playback speed range after linked main-track retiming (matches `RecordingAudioClip.derivedSpeedRange`).
+    static let derivedSpeedRange: ClosedRange<Double> = 0.03...64
     static let speedPresets: [Double] = [0.5, 0.75, 1, 1.25, 1.5, 2]
     static let defaultCutawayFade: TimeInterval = 0.25
 
@@ -205,7 +208,7 @@ nonisolated struct RecordingVideoOverlay: Identifiable, Codable, Equatable, Hash
 
     func sanitized() -> RecordingVideoOverlay {
         var copy = self
-        copy.speed = min(max(copy.speed.isFinite ? copy.speed : 1, Self.speedRange.lowerBound), Self.speedRange.upperBound)
+        copy.speed = min(max(copy.speed.isFinite ? copy.speed : 1, Self.derivedSpeedRange.lowerBound), Self.derivedSpeedRange.upperBound)
         let minFileSpan = max(Self.minimumFileSpan, Self.minimumDuration * copy.speed)
         copy.fileDuration = copy.fileDuration.isFinite ? max(Self.minimumFileSpan, copy.fileDuration) : Self.minimumDuration
         let rawTrimStart = copy.trimStart.isFinite ? copy.trimStart : 0
@@ -717,8 +720,8 @@ nonisolated enum StudioVideoOverlayLane {
                 let fileStart = fileLow + (sliceLow - sourceLow) * filePerSource
                 let fileEnd = min(overlay.trimEnd, fileLow + (sliceHigh - sourceLow) * filePerSource)
                 let derivedSpeed = min(
-                    max(filePerSource * newSeg.speed, RecordingVideoOverlay.speedRange.lowerBound),
-                    RecordingVideoOverlay.speedRange.upperBound
+                    max(filePerSource * newSeg.speed, RecordingVideoOverlay.derivedSpeedRange.lowerBound),
+                    RecordingVideoOverlay.derivedSpeedRange.upperBound
                 )
                 append(start: sliceEditorStart, fileStart: fileStart, fileEnd: fileEnd, speed: derivedSpeed)
             }
