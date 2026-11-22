@@ -634,6 +634,7 @@ nonisolated enum RecordingPackageMedia {
         case invalidPackage(String)
         case unsafeFile(String)
         case unsupportedFormatVersion(Int)
+        case conflictingEditRevisions
 
         var errorDescription: String? {
             switch self {
@@ -643,6 +644,8 @@ nonisolated enum RecordingPackageMedia {
                 "The recording file \"\(name)\" cannot be opened because it is missing or links outside the package."
             case .unsupportedFormatVersion:
                 RecordingPackageMedia.newerFormatNotice
+            case .conflictingEditRevisions:
+                "The saved edit and draft have the same revision but contain different edits."
             }
         }
     }
@@ -783,7 +786,9 @@ nonisolated enum RecordingPackageMedia {
         }
     }
 
-    static func activeEditSidecar(draftURL: URL?, editURL: URL?) throws -> URL? {
+    static func activeEditSidecar(
+        draftURL: URL?, editURL: URL?, comparingEdits: (Data, Data) throws -> Bool
+    ) throws -> URL? {
         guard let draftURL, let editURL else { return draftURL ?? editURL }
         struct Header: Decodable { var revision: Int? }
         let draft = try Data(contentsOf: draftURL)
@@ -791,14 +796,15 @@ nonisolated enum RecordingPackageMedia {
         let draftRevision = try JSONDecoder().decode(Header.self, from: draft).revision ?? 0
         let savedRevision = try JSONDecoder().decode(Header.self, from: saved).revision ?? 0
         return try activeEditIsDraft(draftRevision: draftRevision, savedRevision: savedRevision,
-                                     sameEdit: draft == saved) ? draftURL : editURL
+                                     sameEdit: try comparingEdits(draft, saved)) ? draftURL : editURL
     }
 
-    static func activeEditIsDraft(draftRevision: Int, savedRevision: Int, sameEdit: Bool) throws -> Bool {
-        guard draftRevision >= 0, savedRevision >= 0,
-              draftRevision != savedRevision || sameEdit else {
-            throw CocoaError(.fileReadCorruptFile, userInfo: [NSLocalizedDescriptionKey:
-                "The saved edit and draft have invalid or conflicting revisions."])
+    static func activeEditIsDraft(
+        draftRevision: Int, savedRevision: Int, sameEdit: @autoclosure () throws -> Bool
+    ) throws -> Bool {
+        guard draftRevision >= 0, savedRevision >= 0 else { throw CocoaError(.fileReadCorruptFile) }
+        if draftRevision == savedRevision, try !sameEdit() {
+            throw ValidationError.conflictingEditRevisions
         }
         return draftRevision > savedRevision
     }
@@ -808,7 +814,9 @@ nonisolated enum RecordingPackageMedia {
     /// sidecars without following symlinks, and decodes any source redactions
     /// from the highest revision. Refuses
     /// unreadable or unsupported-future edits rather than copying raw unmasked.
-    static func validateRawImportInputs(in packageDirectory: URL) throws -> ResolvedRawImport {
+    static func validateRawImportInputs(
+        in packageDirectory: URL, comparingEdits: (Data, Data) throws -> Bool
+    ) throws -> ResolvedRawImport {
         let screenURL = try validateRawScreenInput(in: packageDirectory)
         guard let realPackage = resolveRealPackageDirectory(packageDirectory) else {
             throw ValidationError.invalidPackage(packageDirectory.lastPathComponent)
@@ -820,7 +828,8 @@ nonisolated enum RecordingPackageMedia {
             editURL: editURL,
             packageName: realPackage.lastPathComponent
         )
-        guard let activeEditURL = try activeEditSidecar(draftURL: draftURL, editURL: editURL) else {
+        guard let activeEditURL = try activeEditSidecar(draftURL: draftURL, editURL: editURL,
+                                                       comparingEdits: comparingEdits) else {
             return ResolvedRawImport(screenURL: screenURL, activeEditURL: nil, redactions: [])
         }
         guard let data = try? Data(contentsOf: activeEditURL) else {
@@ -880,7 +889,9 @@ nonisolated enum RecordingPackageMedia {
     /// absent optional references to the renderer's audibility/visibility rules.
     /// Call before offering Finished movie and again before starting the render.
     @discardableResult
-    static func validateRenderInputs(in packageDirectory: URL) throws -> ResolvedRenderInputs {
+    static func validateRenderInputs(
+        in packageDirectory: URL, comparingEdits: (Data, Data) throws -> Bool
+    ) throws -> ResolvedRenderInputs {
         guard let realPackage = resolveRealPackageDirectory(packageDirectory) else {
             throw ValidationError.invalidPackage(packageDirectory.lastPathComponent)
         }
@@ -923,7 +934,7 @@ nonisolated enum RecordingPackageMedia {
             editURL: editURL,
             packageName: realPackage.lastPathComponent
         )
-        let activeEditURL = try activeEditSidecar(draftURL: draftURL, editURL: editURL)
+        let activeEditURL = try activeEditSidecar(draftURL: draftURL, editURL: editURL, comparingEdits: comparingEdits)
         var replacementAudioURL: URL?
         var backgroundMusicURL: URL?
 

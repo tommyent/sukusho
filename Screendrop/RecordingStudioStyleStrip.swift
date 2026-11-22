@@ -41,7 +41,7 @@ struct RecordingStudioStyleStrip: View {
 
     private var appliedPreset: RecordingStudioStylePreset? {
         guard let preset = presetStore.preset(id: model.appliedStylePresetID),
-              preset.matches(model.style) else { return nil }
+              model.matchesStylePreset(preset) else { return nil }
         return preset
     }
 

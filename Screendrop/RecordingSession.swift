@@ -461,7 +461,7 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     var hasUnsavedDraft: Bool {
         guard let draft = loadDraftDocument() else { return false }
         guard let saved = loadEditDocument() else { return true }
-        return draft.revision >= saved.revision && draft.withoutRevision != saved.withoutRevision
+        return draft.revision > saved.revision && draft.withoutRevision != saved.withoutRevision
     }
 
     static func decodeRestorableSnapshot(_ data: Data) throws -> RecordingEditDocument {
@@ -549,6 +549,27 @@ nonisolated struct RecordingSession: Sendable, Equatable {
         // the render survives and export converts it on the way out.
         if let document, Self.differsOnlyByExportContainer(document, stamp) { return safeFinal }
         return nil
+    }
+}
+
+extension RecordingPackageMedia {
+    static func activeEditSidecar(draftURL: URL?, editURL: URL?) throws -> URL? {
+        try activeEditSidecar(draftURL: draftURL, editURL: editURL, comparingEdits: decodedEditsMatch)
+    }
+
+    @discardableResult
+    static func validateRenderInputs(in directory: URL) throws -> ResolvedRenderInputs {
+        try validateRenderInputs(in: directory, comparingEdits: decodedEditsMatch)
+    }
+
+    static func validateRawImportInputs(in directory: URL) throws -> ResolvedRawImport {
+        try validateRawImportInputs(in: directory, comparingEdits: decodedEditsMatch)
+    }
+
+    private static func decodedEditsMatch(_ lhs: Data, _ rhs: Data) throws -> Bool {
+        let decoder = CaptureManifest.decoder
+        return try decoder.decode(RecordingEditDocument.self, from: lhs)
+            == decoder.decode(RecordingEditDocument.self, from: rhs)
     }
 }
 

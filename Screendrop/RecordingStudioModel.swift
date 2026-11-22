@@ -106,6 +106,8 @@ final class RecordingStudioModel {
     /// show its name and detect whether the user has since edited away from
     /// it. Not persisted in the project file: reapplied by content match.
     var appliedStylePresetID: RecordingStudioStylePreset.ID?
+    private var packagedPresetWallpaper: (id: RecordingStudioStylePreset.ID, source: AnnotationBackgroundStyle,
+                                          copy: AnnotationBackgroundStyle)?
     var zoomEnabled = true {
         didSet {
             scheduleProjectSave()
@@ -1094,6 +1096,9 @@ final class RecordingStudioModel {
         } else {
             do {
                 do { document = try read(ignoringDraft: false) }
+                catch RecordingPackageMedia.ValidationError.conflictingEditRevisions {
+                    throw RecordingPackageMedia.ValidationError.conflictingEditRevisions
+                }
                 catch where FileManager.default.fileExists(atPath: session?.draftDocumentURL.path ?? "") {
                     // An unreadable draft: open on the last save and leave the draft alone until Discard.
                     document = try read(ignoringDraft: true)
@@ -1536,8 +1541,26 @@ final class RecordingStudioModel {
     }
 
     func applyStylePreset(_ preset: RecordingStudioStylePreset) {
-        style = preset.value
-        appliedStylePresetID = preset.id
+        guard !isReadOnlyNewerFormat else { return }
+        do {
+            var applied = preset.value
+            let source = applied.background
+            applied.background = try packageBackground(source)
+            packagedPresetWallpaper = applied.background == source ? nil : (preset.id, source, applied.background)
+            style = applied
+            appliedStylePresetID = preset.id
+        } catch {
+            FailureAlert.present(message: "The preset wallpaper could not be copied", error: error)
+        }
+    }
+
+    func matchesStylePreset(_ preset: RecordingStudioStylePreset) -> Bool {
+        var candidate = style
+        if let packagedPresetWallpaper, packagedPresetWallpaper.id == preset.id,
+           candidate.background == packagedPresetWallpaper.copy {
+            candidate.background = packagedPresetWallpaper.source
+        }
+        return preset.matches(candidate)
     }
 
     // MARK: - Playback
@@ -3492,6 +3515,7 @@ final class RecordingStudioModel {
     }
 
     func setBackground(_ background: AnnotationBackgroundStyle) {
+        guard !isReadOnlyNewerFormat else { return }
         do {
             style.background = try packageBackground(background)
             RecordingStudioDefaults.background = background
@@ -3503,6 +3527,7 @@ final class RecordingStudioModel {
     private func packageBackground(_ background: AnnotationBackgroundStyle) throws -> AnnotationBackgroundStyle {
         guard let session, case .customWallpaper(let wallpaper) = background,
               packageWallpaperName(for: background) == nil else { return background }
+        _ = try checkedEditSidecars(in: session)
         guard let name = RecordingOverlayMedia.copyRegularFile(from: wallpaper.url, into: session.mediaDirectoryURL),
               let url = RecordingOverlayMedia.resolveRegularFile(named: name, in: session.mediaDirectoryURL) else {
             throw CocoaError(.fileWriteUnknown)

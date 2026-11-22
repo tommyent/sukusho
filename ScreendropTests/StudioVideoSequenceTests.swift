@@ -1245,7 +1245,7 @@ struct StudioVideoSequenceTests {
         #expect(savedRaw.redactions.isEmpty)
         try JSONEncoder().encode(MinimalEdit(formatVersion: 7, revision: 2, redactions: []))
             .write(to: draftMaskPkg.appendingPathComponent("edit.json"))
-        #expect(throws: CocoaError.self) {
+        #expect(throws: RecordingPackageMedia.ValidationError.conflictingEditRevisions) {
             try RecordingPackageMedia.validateRawImportInputs(in: draftMaskPkg)
         }
 

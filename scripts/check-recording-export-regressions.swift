@@ -1909,6 +1909,97 @@ struct RecordingExportRegressionChecks {
         print("PASS: Studio teardown releases undo-only recording media")
     }
 
+    static func revisionConflictsAndFormatting(in directory: URL) async throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        for revision in [0, 8] {
+            let session = RecordingSession(directoryURL: directory.appendingPathComponent("revision-conflict-\(revision).sukushorec"))
+            try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
+            try await movie(at: session.screenURL)
+            var saved = RecordingEditDocument(style: .init(), zoomEnabled: true, zoomCues: [])
+            saved.revision = revision
+            var draft = saved
+            draft.redactions = [RecordingRedaction(start: 1, end: 3, rect: CGRect(x: 0, y: 0, width: 1, height: 1))]
+            func bytes(_ document: RecordingEditDocument, omitting keys: [String]) throws -> Data {
+                let data = try encoder.encode(document)
+                var json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+                for key in keys { json.removeValue(forKey: key) }
+                return try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted, .sortedKeys])
+            }
+            let omitted = revision == 0 ? ["revision"] : []
+            let savedBytes = try bytes(saved, omitting: omitted)
+            let conflict = try bytes(draft, omitting: omitted)
+            try savedBytes.write(to: session.editDocumentURL)
+            try conflict.write(to: session.draftDocumentURL)
+            let model = RecordingStudioModel(url: session.directoryURL)
+            await model.load()
+            defer { model.teardown() }
+            try check(!model.isLoaded && model.loadError?.contains("same revision") == true
+                      && !model.hasUnreadableDraft && !session.hasUnsavedDraft && model.screenPlayer.currentItem == nil,
+                      "Studio treated a readable conflict as a discardable draft or showed the saved edit")
+            try check(try Data(contentsOf: session.editDocumentURL) == savedBytes
+                      && Data(contentsOf: session.draftDocumentURL) == conflict, "Studio changed a conflicting sidecar")
+            model.teardown()
+
+            let equivalent = try bytes(saved, omitting: omitted + ["zoomEnabled"])
+            try check(equivalent != savedBytes, "Expected different sidecar encodings")
+            try equivalent.write(to: session.draftDocumentURL)
+            let renderInputs = try RecordingPackageMedia.validateRenderInputs(in: session.directoryURL)
+            let rawInputs = try RecordingSessionRenderer.validateRawImport(in: session.directoryURL)
+            try check(renderInputs.activeEditURL?.lastPathComponent == "edit.json" && rawInputs.activeEditURL == renderInputs.activeEditURL,
+                      "Raw and Finished disagreed on equivalent edits")
+            try session.removeEdits()
+            try check(!session.hasSavedProject && !FileManager.default.fileExists(atPath: session.draftDocumentURL.path),
+                      "Revert rejected equivalent edits")
+        }
+        print("PASS: readable revision conflicts withhold Studio without Discard, and semantically equal edits pass all resolvers")
+    }
+
+    static func wallpaperPresetSafety(in directory: URL) async throws {
+        let source = directory.appendingPathComponent("preset-wallpaper.png")
+        let bytes = Data("preset wallpaper".utf8)
+        try bytes.write(to: source)
+        var style = RecordingStudioStyle()
+        style.background = .customWallpaper(AnnotationCustomWallpaper(url: source))
+        style.padding = 0.17
+        let preset = RecordingStudioStylePreset(name: "Fixture preset", style: style)
+
+        for readOnly in [true, false] {
+            let session = RecordingSession(directoryURL: directory.appendingPathComponent("preset-\(readOnly).sukushorec"))
+            try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
+            try await movie(at: session.screenURL)
+            if readOnly {
+                var future = RecordingEditDocument(style: .init(), zoomEnabled: false, zoomCues: [])
+                future.formatVersion = 99
+                try CaptureManifest.encoder.encode(future).write(to: session.editDocumentURL)
+            }
+            let model = RecordingStudioModel(url: session.directoryURL)
+            await model.load()
+            defer { model.teardown() }
+            try check(model.isLoaded && model.isReadOnlyNewerFormat == readOnly, "Preset fixture has the wrong format state")
+            let openingStyle = model.style
+            if readOnly { model.setBackground(style.background) }
+            model.applyStylePreset(preset)
+            if readOnly {
+                try check(model.style == openingStyle && model.appliedStylePresetID == nil
+                          && !FileManager.default.fileExists(atPath: session.mediaDirectoryURL.path),
+                          "Read-only Studio copied a wallpaper or changed its style")
+            } else {
+                try check(model.appliedStylePresetID == preset.id && model.matchesStylePreset(preset),
+                          "Studio did not recognize the packaged preset as selected")
+                model.flushDraft()
+                guard let name = session.loadDraftDocument()?.style.wallpaperMediaName else {
+                    throw Failure(description: "Preset draft referenced the external wallpaper")
+                }
+                try check(try Data(contentsOf: session.mediaDirectoryURL.appendingPathComponent(name)) == bytes,
+                          "Preset copied different wallpaper bytes")
+                model.style.padding += 0.01
+                try check(!model.matchesStylePreset(preset), "Modified style still matched the preset")
+            }
+        }
+        print("PASS: wallpaper changes leave newer-format packages alone and applied presets use a package-relative copy")
+    }
+
     static func main() async throws {
         setbuf(stdout, nil)
         guard let root = ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] else {
@@ -1932,6 +2023,8 @@ struct RecordingExportRegressionChecks {
         try cachedMovieNames(in: directory)
         try await readOnlyDraftDelivery(in: directory)
         try await lateDraftDelivery(in: directory)
+        try await revisionConflictsAndFormatting(in: directory)
+        try await wallpaperPresetSafety(in: directory)
         try await canonicalStudioRegistry(in: directory)
         try await importedEvidence(in: directory)
         try await packageWallpaper(in: directory)

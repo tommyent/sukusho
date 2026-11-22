@@ -1295,3 +1295,22 @@ struct StudioVideoOverlayTests {
         return (bytes[0], bytes[1], bytes[2])
     }
 }
+
+
+extension RecordingPackageMedia {
+    // These fixtures use partial sidecars. The app harness exercises the full edit decoder.
+    @discardableResult
+    static func validateRenderInputs(in directory: URL) throws -> ResolvedRenderInputs {
+        try validateRenderInputs(in: directory, comparingEdits: fixtureEditsMatch)
+    }
+
+    static func validateRawImportInputs(in directory: URL) throws -> ResolvedRawImport {
+        try validateRawImportInputs(in: directory, comparingEdits: fixtureEditsMatch)
+    }
+
+    private static func fixtureEditsMatch(_ lhs: Data, _ rhs: Data) throws -> Bool {
+        let draft = try JSONSerialization.jsonObject(with: lhs) as? NSDictionary
+        let saved = try JSONSerialization.jsonObject(with: rhs) as? NSDictionary
+        return draft == saved
+    }
+}
