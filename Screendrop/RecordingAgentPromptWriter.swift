@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreGraphics
+import CoreImage
 import CoreText
 import Foundation
 import ImageIO
@@ -24,12 +25,14 @@ nonisolated enum RecordingAgentPromptWriter {
     struct Rendered: Sendable {
         let still: Data
         let strip: (data: Data, span: ClosedRange<Double>)?
+        let stripOmittedForRedaction: Bool
 
-        init(still: CGImage, strip: (image: CGImage, span: ClosedRange<Double>)?) throws {
+        init(still: CGImage, strip: (image: CGImage, span: ClosedRange<Double>)?, stripOmittedForRedaction: Bool = false) throws {
             // With a strip beside it, the still needn't be near-lossless; this kept an 89 s, 26-moment export at 12 MB.
             self.still = try jpegData(still, quality: 0.7)
             // About 0.3 MB a strip with UI text still readable.
             self.strip = try strip.map { (try jpegData($0.image, quality: 0.5), $0.span) }
+            self.stripOmittedForRedaction = stripOmittedForRedaction
         }
     }
 
@@ -41,8 +44,8 @@ nonisolated enum RecordingAgentPromptWriter {
     /// The master's stills and strips for `plan`'s moments, ahead of `write`, so the moments
     /// the input log gives render while speech is still being transcribed. Stops when cancelled.
     @concurrent
-    static func prerender(plan: RecordingAgentPromptPlan, master: URL) async -> [String: Rendered] {
-        guard let frames = await MasterFrames(url: master) else { return [:] }
+    static func prerender(plan: RecordingAgentPromptPlan, master: URL, redactions: [RecordingRedaction] = []) async -> [String: Rendered] {
+        guard let frames = await MasterFrames(url: master, redactions: redactions) else { return [:] }
         defer {
             frames.generator.cancelAllCGImageGeneration()
             frames.stillGenerator.cancelAllCGImageGeneration()
@@ -61,6 +64,7 @@ nonisolated enum RecordingAgentPromptWriter {
     /// (the plan's title by default), and a later export of the same name replaces it.
     @concurrent
     static func write(movie: URL?, plan: RecordingAgentPromptPlan, to directory: URL, name: String? = nil, master: URL? = nil,
+                      redactions: [RecordingRedaction] = [],
                       prerendered: [String: Rendered] = [:],
                       progress: @escaping @Sendable (Double) -> Void = { _ in }) async throws -> URL {
         try Task.checkCancellation()
@@ -90,14 +94,16 @@ nonisolated enum RecordingAgentPromptWriter {
         let strips = staging.appendingPathComponent("strips", isDirectory: true)
         // With an edited movie, a master that can't be read only costs the strips.
         var masterFrames: MasterFrames?
-        if let master { masterFrames = await MasterFrames(url: master) }
+        if let master { masterFrames = await MasterFrames(url: master, redactions: redactions) }
         defer {
             masterFrames?.generator.cancelAllCGImageGeneration()
             masterFrames?.stillGenerator.cancelAllCGImageGeneration()
         }
         guard edited != nil || masterFrames != nil else { throw ExportError.invalidMovie }
-        var frameTimes: [Double] = []
+        var frameTimes: [Double?] = []
         var stripSpans: [ClosedRange<Double>?] = []
+        var omittedForRedaction: Set<Int> = []
+        var stripsOmittedForRedaction: Set<Int> = []
         for (index, moment) in plan.moments.enumerated() {
             try Task.checkCancellation()
             let rendered: Rendered
@@ -107,12 +113,31 @@ nonisolated enum RecordingAgentPromptWriter {
                 let actual = frame.actualTime.seconds
                 guard actual.isFinite, actual >= 0, actual < edited.duration,
                       abs(actual - requested) <= edited.frameDuration + 0.001 else { throw ExportError.unavailableFrame(moment.time) }
-                let strip = await masterFrames?.strip(for: moment, plan: plan)
-                rendered = try Rendered(still: frame.image, strip: strip)
+                let strip: (image: CGImage, span: ClosedRange<Double>)?
+                let stripFailed: Bool
+                do {
+                    strip = try await masterFrames?.strip(for: moment, plan: plan)
+                    stripFailed = false
+                } catch is RecordingRedactionError {
+                    strip = nil
+                    stripFailed = true
+                }
+                rendered = try Rendered(still: frame.image, strip: strip, stripOmittedForRedaction: stripFailed)
                 frameTimes.append(actual)
             } else {
                 var master = prerendered[renderKey(moment)]
-                if master == nil { master = try await masterFrames?.rendered(moment, plan: plan) }
+                if master == nil {
+                    do {
+                        master = try await masterFrames?.rendered(moment, plan: plan)
+                    } catch is RecordingRedactionError {
+                        // Fail closed: omit any frame whose redaction could not be applied.
+                        omittedForRedaction.insert(index)
+                        frameTimes.append(nil)
+                        stripSpans.append(nil)
+                        progress(Double(index + 1) / Double(plan.moments.count))
+                        continue
+                    }
+                }
                 guard let master else { throw ExportError.unavailableFrame(moment.time) }
                 rendered = master
                 frameTimes.append(moment.time)
@@ -124,11 +149,13 @@ nonisolated enum RecordingAgentPromptWriter {
                 try strip.data.write(to: strips.appendingPathComponent(RecordingAgentPromptPlan.stillName(index)))
                 stripSpans.append(strip.span)
             } else {
+                if rendered.stripOmittedForRedaction { stripsOmittedForRedaction.insert(index) }
                 stripSpans.append(nil)
             }
             progress(Double(index + 1) / Double(plan.moments.count))
         }
-        try plan.markdown(frameTimes: frameTimes, strips: stripSpans, sourceStills: edited == nil)
+        try plan.markdown(frameTimes: frameTimes, strips: stripSpans, sourceStills: edited == nil,
+                          omittedForRedaction: omittedForRedaction, stripsOmittedForRedaction: stripsOmittedForRedaction)
             .write(to: staging.appendingPathComponent("prompt.md"), atomically: true, encoding: .utf8)
         if let logs = plan.logs {
             try logs.text(timeline: plan.timeline)
@@ -207,14 +234,18 @@ nonisolated enum RecordingAgentPromptWriter {
     }
 
     /// Frames of the unedited screen recording: no zoom, crop or style, and no
-    /// pointer, which the input log has instead.
+    /// pointer, which the input log has instead. Active redactions are applied
+    /// fail-closed before any frame is cropped or saved.
     struct MasterFrames {
         let generator: AVAssetImageGenerator
         /// For whole-frame stills: decodes at most 1920 px, not a full 6K frame.
         let stillGenerator: AVAssetImageGenerator
         let size: CGSize
+        let frameDuration: Double
+        let redactions: [RecordingRedaction]
+        let ciContext: CIContext
 
-        init?(url: URL) async {
+        init?(url: URL, redactions: [RecordingRedaction] = []) async {
             let asset = AVURLAsset(url: url)
             guard let track = try? await asset.loadTracks(withMediaType: .video).first,
                   let natural = try? await track.load(.naturalSize),
@@ -222,6 +253,10 @@ nonisolated enum RecordingAgentPromptWriter {
             let size = natural.applying(transform)
             guard size.width != 0, size.height != 0 else { return nil }
             self.size = CGSize(width: abs(size.width), height: abs(size.height))
+            let rate = (try? await track.load(.nominalFrameRate)) ?? 0
+            frameDuration = rate.isFinite && rate > 0 ? 1 / Double(rate) : 1 / 60
+            self.redactions = redactions
+            ciContext = CIContext(options: [.cacheIntermediates: false])
             func exact(_ maximum: CGSize) -> AVAssetImageGenerator {
                 let generator = AVAssetImageGenerator(asset: asset)
                 generator.appliesPreferredTrackTransform = true
@@ -235,11 +270,22 @@ nonisolated enum RecordingAgentPromptWriter {
             stillGenerator = exact(CGSize(width: 1920, height: 1920))
         }
 
+        private func redact(_ frame: CGImage, editorTime: Double, actualSourceTime: Double, timeline: RecordingClipTimeline) throws -> CGImage {
+            guard !redactions.isEmpty else { return frame }
+            for region in redactions { try region.validate() }
+            let active = redactions.filter {
+                $0.covers(editorTime: editorTime, frameDuration: frameDuration, timeline: timeline)
+                    || (actualSourceTime.isFinite && actualSourceTime < $0.end && actualSourceTime + frameDuration > $0.start)
+            }
+            guard !active.isEmpty else { return frame }
+            return try RecordingRedactionFilter.apply(active, to: frame, context: ciContext)
+        }
+
         /// A 4-column grid of the moment's strip times, each cropped to 720 × 450 pt
         /// of a 2x screen around the moment's focus and drawn at half size, with the
         /// pointer ringed, the pen's strokes drawn in and the edited time in a corner.
-        /// Nil if no frame came back.
-        func strip(for moment: RecordingAgentPromptPlan.Moment, plan: RecordingAgentPromptPlan) async
+        /// Nil if no frame came back. Throws `RecordingRedactionError` if a frame cannot be redacted.
+        func strip(for moment: RecordingAgentPromptPlan.Moment, plan: RecordingAgentPromptPlan) async throws
             -> (image: CGImage, span: ClosedRange<Double>)? {
             let times = plan.stripTimes(for: moment)
             guard let first = times.first, let last = times.last else { return nil }
@@ -264,10 +310,12 @@ nonisolated enum RecordingAgentPromptWriter {
                                       y: CGFloat(rows - 1 - index / columns) * cell.height,
                                       width: cell.width, height: cell.height)
                 let source = plan.timeline.sourceTime(at: time)
-                if let frame = try? await generator.image(at: CMTime(seconds: source, preferredTimescale: 60_000)).image,
-                   let cropped = frame.cropping(to: crop) {
-                    context.draw(cropped, in: cellRect)
-                    drewFrame = true
+                if let extracted = try? await generator.image(at: CMTime(seconds: source, preferredTimescale: 60_000)) {
+                    let frame = try redact(extracted.image, editorTime: time, actualSourceTime: extracted.actualTime.seconds, timeline: plan.timeline)
+                    if let cropped = frame.cropping(to: crop) {
+                        context.draw(cropped, in: cellRect)
+                        drewFrame = true
+                    }
                 }
                 drawMarks(at: source, crop: crop, scale: scale, in: cellRect, ink: ink, plan: plan, context: context)
                 Self.label(RecordingAgentPromptPlan.timestamp(time), in: cellRect, context: context)
@@ -281,14 +329,24 @@ nonisolated enum RecordingAgentPromptWriter {
 
         /// A moment's still and strip; nil if no still came back.
         func rendered(_ moment: RecordingAgentPromptPlan.Moment, plan: RecordingAgentPromptPlan) async throws -> Rendered? {
-            guard let still = await still(for: moment, plan: plan) else { return nil }
-            return try Rendered(still: still, strip: await strip(for: moment, plan: plan))
+            guard let still = try await still(for: moment, plan: plan) else { return nil }
+            let strip: (image: CGImage, span: ClosedRange<Double>)?
+            let stripFailed: Bool
+            do {
+                strip = try await self.strip(for: moment, plan: plan)
+                stripFailed = false
+            } catch is RecordingRedactionError {
+                strip = nil
+                stripFailed = true
+            }
+            return try Rendered(still: still, strip: strip, stripOmittedForRedaction: stripFailed)
         }
 
         /// The whole frame at a moment, at most 1920 px on its long side, marked like a strip.
-        func still(for moment: RecordingAgentPromptPlan.Moment, plan: RecordingAgentPromptPlan) async -> CGImage? {
+        func still(for moment: RecordingAgentPromptPlan.Moment, plan: RecordingAgentPromptPlan) async throws -> CGImage? {
             let source = plan.timeline.sourceTime(at: moment.time)
-            guard let frame = try? await stillGenerator.image(at: CMTime(seconds: source, preferredTimescale: 60_000)).image else { return nil }
+            guard let extracted = try? await stillGenerator.image(at: CMTime(seconds: source, preferredTimescale: 60_000)) else { return nil }
+            let frame = try redact(extracted.image, editorTime: moment.time, actualSourceTime: extracted.actualTime.seconds, timeline: plan.timeline)
             let scale = min(1, 1920 / max(size.width, size.height))
             let rect = CGRect(x: 0, y: 0, width: (size.width * scale).rounded(), height: (size.height * scale).rounded())
             guard let context = CGContext(data: nil, width: Int(rect.width), height: Int(rect.height),

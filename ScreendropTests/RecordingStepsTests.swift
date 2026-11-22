@@ -1,4 +1,6 @@
+import AVFoundation
 import CoreGraphics
+import CoreVideo
 import Foundation
 import ImageIO
 import Testing
@@ -189,6 +191,164 @@ struct RecordingStepsTests {
         let guide = try RecordingSteps(plan: withLogs, systemVersion: nil).write(.guide, stills: stills, to: directory.appendingPathComponent("Guide"))
         #expect(!FileManager.default.fileExists(atPath: guide.appendingPathComponent("logs.txt").path))
         #expect(!(try String(contentsOf: guide.appendingPathComponent("guide.md"), encoding: .utf8)).contains("## Logs"))
+    }
+
+    /// Synthetic 320×240 movie: white background with a solid red secret block at (64..<160, 80..<160).
+    private func makeSecretMovie(at url: URL) async throws {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 320, AVVideoHeightKey: 240,
+        ])
+        let attributes = CVPixelBufferCreationAttributes(
+            pixelFormatType: .init(rawValue: kCVPixelFormatType_32ARGB),
+            size: .init(width: 320, height: 240)
+        )
+        let receiver = writer.inputPixelBufferReceiver(for: input, pixelBufferAttributes: attributes)
+        try writer.start()
+        writer.startSession(atSourceTime: .zero)
+        for frame in 0..<20 {
+            var pixels = try CVMutablePixelBuffer(attributes)
+            try pixels.accessUnsafeMutableRawPlaneBytes { planes in
+                let plane = try #require(planes.first)
+                let context = try #require(CGContext(
+                    data: plane.bytes.baseAddress, width: 320, height: 240,
+                    bitsPerComponent: 8, bytesPerRow: plane.properties.bytesPerRow,
+                    space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue
+                ))
+                context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+                context.fill(CGRect(x: 0, y: 0, width: 320, height: 240))
+                context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+                context.fill(CGRect(x: 64, y: 80, width: 96, height: 80))
+            }
+            try await receiver.append(CVReadOnlyPixelBuffer(pixels), with: CMTime(value: Int64(frame), timescale: 10))
+        }
+        receiver.finish()
+        writer.endSession(atSourceTime: CMTime(value: 2, timescale: 1))
+        await writer.finishWriting()
+        #expect(writer.status == .completed)
+    }
+
+    private func decodeJPEG(_ data: Data) throws -> CGImage {
+        let source = try #require(CGImageSourceCreateWithData(data as CFData, nil))
+        return try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+    }
+
+    private func pixel(_ image: CGImage, x: Int, y: Int) throws -> [UInt8] {
+        let one = try #require(image.cropping(to: CGRect(x: x, y: y, width: 1, height: 1)))
+        var bytes = [UInt8](repeating: 0, count: 4)
+        try bytes.withUnsafeMutableBytes { raw in
+            let context = try #require(CGContext(
+                data: raw.baseAddress, width: 1, height: 1,
+                bitsPerComponent: 8, bytesPerRow: 4, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ))
+            context.draw(one, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        }
+        return bytes
+    }
+
+    private func firstEmbeddedJPEG(in html: String) throws -> Data {
+        let marker = "src=\"data:image/jpeg;base64,"
+        let start = try #require(html.range(of: marker)?.upperBound)
+        let end = try #require(html[start...].firstIndex(of: "\""))
+        return try #require(Data(base64Encoded: String(html[start..<end])))
+    }
+
+    @Test func redactionsApplyToGuideAndBugReportStillsAndPromptStrips() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let movie = directory.appendingPathComponent("secret.mov")
+        try await makeSecretMovie(at: movie)
+        let secretPlan = RecordingAgentPromptPlan(
+            title: "Secret", timeline: .full(sourceDuration: 2), cues: [], words: [],
+            capture: PointerCaptureFile(presses: [.init(time: 0.5, x: 0.1, y: 0.1, button: 0, phase: .down)])
+        )
+        let redaction = RecordingRedaction(
+            start: 0, end: 2, rect: CGRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8), mode: .blur, strength: 1.0
+        )
+
+        // Baseline: without redaction the secret block at (82, 120) is bright red.
+        let unredactedStill = try #require(try await RecordingSteps.stills(plan: secretPlan, master: movie).first ?? nil)
+        let rawPixel = try pixel(try decodeJPEG(unredactedStill), x: 82, y: 120)
+        #expect(rawPixel[0] > 180 && rawPixel[1] < 60 && rawPixel[2] < 60)
+
+        // Guide: both guide.md's image file and guide.html's embedded image show redacted pixels.
+        let guideStills = try await RecordingSteps.stills(plan: secretPlan, master: movie, redactions: [redaction])
+        let steps = RecordingSteps(plan: secretPlan, systemVersion: nil)
+        let guideFolder = try steps.write(.guide, stills: guideStills, to: directory.appendingPathComponent("Guide"))
+        let guideMD = try String(contentsOf: guideFolder.appendingPathComponent("guide.md"), encoding: .utf8)
+        let guideHTML = try String(contentsOf: guideFolder.appendingPathComponent("guide.html"), encoding: .utf8)
+        #expect(guideMD.contains("images/0001.jpg"))
+        for data in [try Data(contentsOf: guideFolder.appendingPathComponent("images/0001.jpg")),
+                     try firstEmbeddedJPEG(in: guideHTML)] {
+            let p = try pixel(try decodeJPEG(data), x: 82, y: 120)
+            #expect(p[1] > 100 && p[2] > 100, "Guide still leaked unredacted secret pixel: \(p)")
+        }
+
+        // Agent Prompt + Bug Report: prompt stills, strips, bug-report.md image, and bug-report.html all show redacted pixels.
+        let prerendered = await RecordingAgentPromptWriter.prerender(plan: secretPlan, master: movie, redactions: [redaction])
+        let promptFolder = try await RecordingAgentPromptWriter.write(
+            movie: nil, plan: secretPlan, to: directory, name: "Prompt", master: movie,
+            redactions: [redaction], prerendered: prerendered
+        )
+        let freshPromptFolder = try await RecordingAgentPromptWriter.write(
+            movie: nil, plan: secretPlan, to: directory, name: "FreshPrompt", master: movie,
+            redactions: [redaction]
+        )
+        let promptStill = try Data(contentsOf: promptFolder.appendingPathComponent("stills/0001.jpg"))
+        #expect(promptStill == (try Data(contentsOf: freshPromptFolder.appendingPathComponent("stills/0001.jpg"))))
+        let promptStrip = try Data(contentsOf: promptFolder.appendingPathComponent("strips/0001.jpg"))
+        #expect(promptStrip == (try Data(contentsOf: freshPromptFolder.appendingPathComponent("strips/0001.jpg"))))
+        let stripPixel = try pixel(try decodeJPEG(promptStrip), x: 82, y: 120)
+        #expect(stripPixel[1] > 100 && stripPixel[2] > 100, "Prompt strip leaked unredacted secret pixel: \(stripPixel)")
+
+        let reportFolder = try steps.write(.bugReport, stills: [promptStill], to: directory.appendingPathComponent("BugReport"))
+        let reportMD = try String(contentsOf: reportFolder.appendingPathComponent("bug-report.md"), encoding: .utf8)
+        let reportHTML = try String(contentsOf: reportFolder.appendingPathComponent("bug-report.html"), encoding: .utf8)
+        #expect(reportMD.contains("images/0001.jpg"))
+        for data in [promptStill,
+                     try Data(contentsOf: reportFolder.appendingPathComponent("images/0001.jpg")),
+                     try firstEmbeddedJPEG(in: reportHTML)] {
+            let p = try pixel(try decodeJPEG(data), x: 82, y: 120)
+            #expect(p[1] > 100 && p[2] > 100, "Bug Report still leaked unredacted secret pixel: \(p)")
+        }
+    }
+
+    @Test func failedRedactionOmitsFramesClosedInGuideBugReportAndPrompt() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let movie = directory.appendingPathComponent("secret.mov")
+        try await makeSecretMovie(at: movie)
+        let secretPlan = RecordingAgentPromptPlan(
+            title: "Secret", timeline: .full(sourceDuration: 2), cues: [], words: [],
+            capture: PointerCaptureFile(presses: [.init(time: 0.5, x: 0.1, y: 0.1, button: 0, phase: .down)])
+        )
+        let invalid = RecordingRedaction(start: 0, end: 2, rect: .zero)
+
+        let stills = try await RecordingSteps.stills(plan: secretPlan, master: movie, redactions: [invalid])
+        #expect(stills == [nil])
+        let steps = RecordingSteps(plan: secretPlan, systemVersion: nil)
+        for format in RecordingSteps.Format.allCases {
+            let folder = try steps.write(format, stills: stills, to: directory.appendingPathComponent(format.title))
+            let images = try FileManager.default.contentsOfDirectory(atPath: folder.appendingPathComponent("images").path)
+            #expect(images.isEmpty)
+            let md = try String(contentsOf: folder.appendingPathComponent(format.fileName + ".md"), encoding: .utf8)
+            let html = try String(contentsOf: folder.appendingPathComponent(format.fileName + ".html"), encoding: .utf8)
+            #expect(md.contains("frame omitted because redaction could not be applied"))
+            #expect(!md.contains("images/0001.jpg"))
+            #expect(html.contains("frame omitted because redaction could not be applied"))
+            #expect(!html.contains("<img"))
+        }
+
+        let promptFolder = try await RecordingAgentPromptWriter.write(
+            movie: nil, plan: secretPlan, to: directory, name: "FailedPrompt", master: movie, redactions: [invalid]
+        )
+        #expect(try FileManager.default.contentsOfDirectory(atPath: promptFolder.appendingPathComponent("stills").path).isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: promptFolder.appendingPathComponent("strips").path))
+        let promptMD = try String(contentsOf: promptFolder.appendingPathComponent("prompt.md"), encoding: .utf8)
+        #expect(promptMD.contains("Frame omitted: redaction could not be applied."))
+        #expect(!promptMD.contains("stills/0001.jpg"))
     }
 }
 

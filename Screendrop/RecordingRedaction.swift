@@ -195,6 +195,22 @@ nonisolated enum RecordingRedactionFilter {
         return result
     }
 
+    /// Applies active redactions to a single still `CGImage`, failing closed on any invalid region or render failure.
+    static func apply(
+        _ redactions: [RecordingRedaction],
+        to image: CGImage,
+        context: CIContext = CIContext(options: [.cacheIntermediates: false])
+    ) throws -> CGImage {
+        guard !redactions.isEmpty else { return image }
+        let output = try apply(redactions, to: CIImage(cgImage: image))
+        let colorSpace = image.colorSpace.flatMap { $0.model == .rgb ? $0 : nil }
+            ?? CGColorSpace(name: CGColorSpace.sRGB)!
+        guard let redacted = context.createCGImage(output, from: output.extent, format: .RGBA8, colorSpace: colorSpace) else {
+            throw RecordingRedactionError.filterFailed
+        }
+        return redacted
+    }
+
     /// Materialize once before either screen renderer; the master is never mutated.
     static func buffer(from source: CVPixelBuffer, redactions: [RecordingRedaction], context: CIContext) throws -> CVPixelBuffer {
         guard !redactions.isEmpty else { return source }

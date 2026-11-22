@@ -11,7 +11,7 @@ enum RecordingStepsExport {
 
     /// Narration (transcribed on-device when the edit has none), the moments and their stills.
     static func prepare(session: RecordingSession, document: RecordingEditDocument?,
-                        progress: @escaping @Sendable (Double) -> Void) async throws -> (steps: RecordingSteps, stills: [Data]) {
+                        progress: @escaping @Sendable (Double) -> Void) async throws -> (steps: RecordingSteps, stills: [Data?]) {
         let timeline = try await RecordingAgentPromptExport.timeline(session: session, document: document)
         let narration = try await RecordingAgentPromptExport.transcript(
             cues: document?.subtitleCues ?? [], words: document?.subtitleWords ?? [], screenURL: session.screenURL,
@@ -20,14 +20,15 @@ enum RecordingStepsExport {
         progress(0.3)
         let plan = RecordingAgentPromptExport.plan(for: session, document: document, timeline: timeline,
                                                    transcript: narration.transcript, transcriptionFailure: narration.failure)
-        let stills = try await RecordingSteps.stills(plan: plan, master: session.screenURL) { progress(0.3 + $0 * 0.7) }
+        let stills = try await RecordingSteps.stills(plan: plan, master: session.screenURL,
+                                                     redactions: document?.redactions ?? []) { progress(0.3 + $0 * 0.7) }
         let steps = RecordingSteps(plan: plan, systemVersion: session.loadCaptureManifest()?.systemVersion,
                                    summary: await summary?(session))
         return (steps, stills)
     }
 
     /// A new folder in the export location, named after the recording and the format.
-    static func write(_ steps: RecordingSteps, format: RecordingSteps.Format, stills: [Data]) throws -> URL {
+    static func write(_ steps: RecordingSteps, format: RecordingSteps.Format, stills: [Data?]) throws -> URL {
         let directory = ScreendropPreferences.exportDirectory
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let name = RecordingAgentPromptWriter.safeName(String(steps.title.prefix(80)) + " " + format.title)
@@ -42,7 +43,7 @@ enum RecordingStepsExport {
         let (steps, stills) = try await prepare(session: session, document: document, progress: progress)
         let folder = try write(steps, format: .guide, stills: stills)
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(steps.markdown(.guide, localFolder: folder), forType: .string)
+        NSPasteboard.general.setString(steps.markdown(.guide, localFolder: folder, stills: stills), forType: .string)
         // The same "ready to paste" chime as the bug report.
         if ScreendropPreferences.playSounds { NSSound(named: "AgentPromptReady")?.play() }
         AccessibilityNotification.Announcement("Guide saved and copied as Markdown").post()

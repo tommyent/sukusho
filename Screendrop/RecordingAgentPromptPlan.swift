@@ -307,7 +307,8 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
 
     /// `strips` holds each moment's strip span, nil where none was written.
     /// `sourceStills`: the stills came from the screen recording, not the edited movie.
-    func markdown(frameTimes: [TimeInterval], strips: [ClosedRange<TimeInterval>?] = [], sourceStills: Bool = false) -> String {
+    func markdown(frameTimes: [TimeInterval?], strips: [ClosedRange<TimeInterval>?] = [], sourceStills: Bool = false,
+                  omittedForRedaction: Set<Int> = [], stripsOmittedForRedaction: Set<Int> = []) -> String {
         var text = "# \(Self.escape(title.split(whereSeparator: \.isWhitespace).joined(separator: " ")))\n\n"
         text += "Use this recorded walkthrough and its evidence as task context.\n\n"
         if let recorded = recordedLine { text += recorded + "\n\n" }
@@ -321,7 +322,7 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
         let hasStrips = strips.contains(where: { $0 != nil })
         let stripSpan = "\(Self.stripFrames) frames of the unedited screen recording, from \(Self.stripLead) s before the moment to \(Self.stripSpan - Self.stripLead) s after it, around where it happened"
         if sourceStills {
-            text += "Each still shows \(recordedScope) at its moment, from the unedited screen recording: cuts and speed changes apply, Studio's zoom, crop, background, camera and redactions don't; \(marks)."
+            text += "Each still shows \(recordedScope) at its moment, from the unedited screen recording: cuts, speed changes and redactions apply, Studio's zoom, crop, background and camera don't; \(marks)."
                 + (hasStrips ? " Each strip shows \(stripSpan).\n\n" : "\n\n")
         } else if hasStrips {
             text += "Each still shows the edited recording. Each strip shows \(stripSpan); \(marks).\n\n"
@@ -349,13 +350,17 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
         for (index, moment) in moments.enumerated() {
             text += "## Moment \(index + 1) — \(Self.timestamp(moment.time))\n\n"
             text += moment.evidence.joined(separator: "\n\n") + "\n\n"
-            if frameTimes.indices.contains(index) {
-                text += "![Frame at \(Self.timestamp(frameTimes[index]))](stills/\(Self.stillName(index)))\n\n"
+            if frameTimes.indices.contains(index), let time = frameTimes[index] {
+                text += "![Frame at \(Self.timestamp(time))](stills/\(Self.stillName(index)))\n\n"
+            } else if omittedForRedaction.contains(index) {
+                text += "Frame omitted: redaction could not be applied.\n\n"
             } else {
                 text += "Frame unavailable.\n\n"
             }
             if strips.indices.contains(index), let span = strips[index] {
                 text += "![Frames \(Self.timestamp(span.lowerBound))–\(Self.timestamp(span.upperBound)) of the unedited screen recording](strips/\(Self.stillName(index)))\n\n"
+            } else if stripsOmittedForRedaction.contains(index) {
+                text += "Strip omitted: redaction could not be applied.\n\n"
             }
         }
         text += "## Transcript\n\n"

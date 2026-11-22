@@ -69,8 +69,9 @@ enum RecordingAgentPromptExport {
         // so they render while speech is transcribed, the export's longest step.
         let early = Self.plan(for: session, document: document, timeline: timeline, transcript: RecordingTranscript(words: [], cues: []))
         let screen = session.screenURL
+        let redactions = document?.redactions ?? []
         async let prerendered = cues.isEmpty && words.isEmpty && canTranscribe
-            ? RecordingAgentPromptWriter.prerender(plan: early, master: screen) : [:]
+            ? RecordingAgentPromptWriter.prerender(plan: early, master: screen, redactions: redactions) : [:]
         let narration = try await transcript(cues: cues, words: words, screenURL: screen, canTranscribe: canTranscribe)
         try Task.checkCancellation()
         let plan = plan(for: session, document: document, timeline: timeline, transcript: narration.transcript,
@@ -80,10 +81,11 @@ enum RecordingAgentPromptExport {
         // Named after the card, then the package's ID, which keeps one folder per recording through renames.
         let id = AgentPromptIndex.recordingID(session)
         let folder = try await RecordingAgentPromptWriter.write(movie: nil, plan: plan, to: directory, name: String(plan.title.prefix(80)) + "_" + id,
-                                                                master: screen, prerendered: await prerendered, progress: progress)
+                                                                master: screen, redactions: redactions, prerendered: await prerendered, progress: progress)
         // The same moments for a person: a bug report to send, from the prompt's own stills.
-        let stills = try plan.moments.indices.map {
-            try Data(contentsOf: folder.appendingPathComponent("stills", isDirectory: true).appendingPathComponent(RecordingAgentPromptPlan.stillName($0)))
+        // A still omitted for redaction failure has no file and stays nil so the bug report omits it too.
+        let stills: [Data?] = plan.moments.indices.map {
+            try? Data(contentsOf: folder.appendingPathComponent("stills", isDirectory: true).appendingPathComponent(RecordingAgentPromptPlan.stillName($0)))
         }
         let report = RecordingSteps(plan: plan, systemVersion: session.loadCaptureManifest()?.systemVersion,
                                     summary: await RecordingStepsExport.summary?(session))

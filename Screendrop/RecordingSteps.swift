@@ -156,8 +156,10 @@ nonisolated struct RecordingSteps: Sendable {
 
     /// The `.md` file. With `localFolder`, it's the text the Guide puts on the clipboard:
     /// images are named, not embedded, under a note that they're files in that folder.
-    func markdown(_ format: Format, localFolder: URL? = nil) -> String {
+    /// When `stills` is provided, any omitted frame (`nil`) is noted rather than linked.
+    func markdown(_ format: Format, localFolder: URL? = nil, stills: [Data?]? = nil) -> String {
         let escape = RecordingAgentPromptPlan.escape
+        let listed = listed(format)
         var text = "# \(escape(title))\n\n"
         if let localFolder {
             let files = logs != nil && format == .bugReport ? "The images and \(RecordingAppLogs.exportFileName) are" : "The images are"
@@ -171,7 +173,11 @@ nonisolated struct RecordingSteps: Sendable {
             case .list(let items, let numbered):
                 text += items.enumerated().map { (numbered ? "\($0 + 1). " : "- ") + escape($1) }.joined(separator: "\n") + "\n\n"
             case .image(let index, let alt):
-                text += localFolder == nil ? "![\(escape(alt))](\(Self.imagePath(index)))\n\n" : "\(escape(alt)): `\(Self.imagePath(index))`\n\n"
+                if let stills, !listed.indices.contains(index) || !stills.indices.contains(listed[index].still) || stills[listed[index].still] == nil {
+                    text += "*\(escape(alt)): frame omitted because redaction could not be applied.*\n\n"
+                } else {
+                    text += localFolder == nil ? "![\(escape(alt))](\(Self.imagePath(index)))\n\n" : "\(escape(alt)): `\(Self.imagePath(index))`\n\n"
+                }
             case .log: text += "The whole log: `\(RecordingAppLogs.exportFileName)`.\n\n"
             }
         }
@@ -179,7 +185,7 @@ nonisolated struct RecordingSteps: Sendable {
     }
 
     /// The `.html` page, which needs nothing beside it: `stills` (one JPEG per step) are embedded.
-    func html(_ format: Format, stills: [Data]) -> String {
+    func html(_ format: Format, stills: [Data?]) -> String {
         let listed = listed(format)
         func escape(_ value: String) -> String {
             value.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;")
@@ -199,7 +205,10 @@ nonisolated struct RecordingSteps: Sendable {
                 guard listed.indices.contains(index), stills.indices.contains(listed[index].still) else {
                     body += "<p class=\"muted\">\(escape(alt)): frame unavailable.</p>\n"; continue
                 }
-                body += "<figure><img src=\"data:image/jpeg;base64,\(stills[listed[index].still].base64EncodedString())\" alt=\"\(escape(alt))\">"
+                guard let data = stills[listed[index].still] else {
+                    body += "<p class=\"muted\">\(escape(alt)): frame omitted because redaction could not be applied.</p>\n"; continue
+                }
+                body += "<figure><img src=\"data:image/jpeg;base64,\(data.base64EncodedString())\" alt=\"\(escape(alt))\">"
                     + "<figcaption>\(escape(alt))</figcaption></figure>\n"
             case .log:
                 guard let logs else { continue }
@@ -252,17 +261,22 @@ nonisolated struct RecordingSteps: Sendable {
     }
 
     /// Each moment's still from the screen recording, pointer ringed and pen strokes drawn,
-    /// as Agent Prompt makes them, without its strips.
+    /// as Agent Prompt makes them, without its strips. Active redactions are applied fail-closed:
+    /// a frame whose redaction fails is omitted (`nil`) rather than returned unredacted.
     @concurrent
-    static func stills(plan: RecordingAgentPromptPlan, master: URL,
-                       progress: @escaping @Sendable (Double) -> Void = { _ in }) async throws -> [Data] {
-        guard let frames = await RecordingAgentPromptWriter.MasterFrames(url: master) else { throw ExportError.invalidMovie }
+    static func stills(plan: RecordingAgentPromptPlan, master: URL, redactions: [RecordingRedaction] = [],
+                       progress: @escaping @Sendable (Double) -> Void = { _ in }) async throws -> [Data?] {
+        guard let frames = await RecordingAgentPromptWriter.MasterFrames(url: master, redactions: redactions) else { throw ExportError.invalidMovie }
         defer { frames.stillGenerator.cancelAllCGImageGeneration() }
-        var stills: [Data] = []
+        var stills: [Data?] = []
         for (index, moment) in plan.moments.enumerated() {
             try Task.checkCancellation()
-            guard let image = await frames.still(for: moment, plan: plan) else { throw ExportError.unavailableFrame(moment.time) }
-            stills.append(try RecordingAgentPromptWriter.Rendered(still: image, strip: nil).still)
+            do {
+                guard let image = try await frames.still(for: moment, plan: plan) else { throw ExportError.unavailableFrame(moment.time) }
+                stills.append(try RecordingAgentPromptWriter.Rendered(still: image, strip: nil).still)
+            } catch is RecordingRedactionError {
+                stills.append(nil)
+            }
             progress(Double(index + 1) / Double(plan.moments.count))
         }
         return stills
@@ -270,14 +284,16 @@ nonisolated struct RecordingSteps: Sendable {
 
     /// Writes the format's `.md` and `.html`, `images/` and, for a bug report with logs, `logs.txt`
     /// into a new folder at `destination`, which must not exist yet. Nothing is left on failure.
-    func write(_ format: Format, stills: [Data], to destination: URL) throws -> URL {
+    func write(_ format: Format, stills: [Data?], to destination: URL) throws -> URL {
         let staging = destination.deletingLastPathComponent().appendingPathComponent(".steps-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: staging.appendingPathComponent("images", isDirectory: true), withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: staging) }
         for (index, item) in listed(format).enumerated() where stills.indices.contains(item.still) {
-            try stills[item.still].write(to: staging.appendingPathComponent(Self.imagePath(index)))
+            if let data = stills[item.still] {
+                try data.write(to: staging.appendingPathComponent(Self.imagePath(index)))
+            }
         }
-        try markdown(format).write(to: staging.appendingPathComponent(format.fileName + ".md"), atomically: true, encoding: .utf8)
+        try markdown(format, stills: stills).write(to: staging.appendingPathComponent(format.fileName + ".md"), atomically: true, encoding: .utf8)
         try html(format, stills: stills).write(to: staging.appendingPathComponent(format.fileName + ".html"), atomically: true, encoding: .utf8)
         if format == .bugReport, let logs {
             try logs.text(timeline: timeline).write(to: staging.appendingPathComponent(RecordingAppLogs.exportFileName),
