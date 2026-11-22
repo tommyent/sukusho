@@ -238,14 +238,15 @@ nonisolated enum StudioAudioConform {
         guard old != new else { return (clips, hidden) }
         let oldSegmentsByID = Dictionary(old.segments.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let newSegmentsByID = Dictionary(new.segments.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        func isSameMediaOccurrence(_ lhs: RecordingClipSegment, _ rhs: RecordingClipSegment) -> Bool {
+            if lhs.isPrimaryRecording || rhs.isPrimaryRecording {
+                return lhs.isPrimaryRecording && rhs.isPrimaryRecording
+            }
+            return lhs.mediaFileName == rhs.mediaFileName
+                && lhs.effectiveOccurrenceID == rhs.effectiveOccurrenceID
+        }
         func matchingNewSegments(for oldSeg: RecordingClipSegment) -> [RecordingClipSegment] {
-            if oldSeg.isPrimaryRecording {
-                return new.segments.filter(\.isPrimaryRecording)
-            }
-            return new.segments.filter { candidate in
-                candidate.mediaFileName == oldSeg.mediaFileName
-                    && candidate.effectiveOccurrenceID == oldSeg.effectiveOccurrenceID
-            }
+            new.segments.filter { isSameMediaOccurrence($0, oldSeg) }
         }
 
         // Retain hidden intervals while at least one eligible flanking segment survives.
@@ -314,7 +315,7 @@ nonisolated enum StudioAudioConform {
                             secondaryID = new.segments
                                 .filter { other in
                                     other.id != newSeg.id
-                                        && other.mediaFileName == newSeg.mediaFileName
+                                        && isSameMediaOccurrence(other, newSeg)
                                         && other.sourceStart >= s1 - epsilon
                                         && (oldSegmentsByID[other.id].map { other.sourceStart > $0.sourceStart + epsilon } ?? true)
                                 }
@@ -323,7 +324,7 @@ nonisolated enum StudioAudioConform {
                             secondaryID = new.segments
                                 .filter { other in
                                     other.id != newSeg.id
-                                        && other.mediaFileName == newSeg.mediaFileName
+                                        && isSameMediaOccurrence(other, newSeg)
                                         && other.sourceEnd <= s0 + epsilon
                                         && (oldSegmentsByID[other.id].map { other.sourceEnd < $0.sourceEnd - epsilon } ?? true)
                                 }
@@ -375,7 +376,12 @@ nonisolated enum StudioAudioConform {
 
         var remainingHidden: [HiddenLinkedRange] = []
         for entry in capturedHidden {
-            let eligible = entry.eligibleSegmentIDs.compactMap { newSegmentsByID[$0] }
+            let ownerAnchor = newSegmentsByID[entry.segmentID] ?? oldSegmentsByID[entry.segmentID]
+            let eligible = entry.eligibleSegmentIDs.compactMap { id -> RecordingClipSegment? in
+                guard let seg = newSegmentsByID[id] else { return nil }
+                if let ownerAnchor, !isSameMediaOccurrence(seg, ownerAnchor) { return nil }
+                return seg
+            }
             guard !eligible.isEmpty else { continue }
 
             let revealedSegments: [(seg: RecordingClipSegment, start: TimeInterval, end: TimeInterval)] = eligible
