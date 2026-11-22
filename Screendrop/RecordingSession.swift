@@ -217,6 +217,42 @@ nonisolated struct RecordingSession: Sendable, Equatable {
         try data.write(to: captureManifestURL, options: .atomic)
     }
 
+    /// Publishes `capture.json` atomically with exclusive creation inside the verified
+    /// package directory. Returns `true` when published, `false` if a manifest (or link)
+    /// already exists at `capture.json` (leaving it untouched), and throws on I/O errors.
+    func writeCaptureManifestIfAbsent(_ manifest: CaptureManifest) throws -> Bool {
+        let data = try CaptureManifest.encoder.encode(manifest)
+        let dirFD = open(directoryURL.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+        guard dirFD >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        defer { close(dirFD) }
+        let tempName = ".\(Self.captureManifestFileName).\(UUID().uuidString).tmp"
+        let tempFD = openat(dirFD, tempName, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        guard tempFD >= 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        defer { unlinkat(dirFD, tempName, 0) }
+        let wroteAll = data.withUnsafeBytes { raw -> Bool in
+            guard let base = raw.baseAddress else { return true }
+            var written = 0
+            while written < raw.count {
+                let step = Darwin.write(tempFD, base.advanced(by: written), raw.count - written)
+                if step < 0 && errno == EINTR { continue }
+                if step <= 0 { return false }
+                written += step
+            }
+            return true
+        }
+        let writeErrno = errno
+        let synced = wroteAll && fsync(tempFD) == 0
+        let syncErrno = errno
+        close(tempFD)
+        guard wroteAll else { throw POSIXError(.init(rawValue: writeErrno) ?? .EIO) }
+        guard synced else { throw POSIXError(.init(rawValue: syncErrno) ?? .EIO) }
+        if linkat(dirFD, tempName, dirFD, Self.captureManifestFileName, 0) == 0 {
+            return true
+        }
+        if errno == EEXIST { return false }
+        throw POSIXError(.init(rawValue: errno) ?? .EIO)
+    }
+
     func writePointerCapture(_ capture: PointerCaptureFile) throws {
         let data = try CaptureManifest.encoder.encode(capture)
         try data.write(to: pointerCaptureURL, options: .atomic)

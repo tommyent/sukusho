@@ -98,6 +98,27 @@ struct RecordingRecoveryChecks {
         let recovered = try interrupted.loadCaptureManifestStrict()
         try check(recovered?.pixelWidth == 160 && recovered?.pixelHeight == 120 && (recovered?.duration ?? 0) > 0.5,
                   "Recovered manifest missing playable metadata: \(String(describing: recovered))")
-        print("CHECK: unknown captureMode, corrupt JSON, and dangling symlink survive recovery untouched; missing manifest recovers")
+
+        // 5. Race: if a manifest arrives mid-scan before recovery publishes capture.json, leave it untouched.
+        let first = try RecordingSessionStore.createSession()
+        let second = try RecordingSessionStore.createSession()
+        try await makeMovie(at: first.screenURL)
+        try FileManager.default.copyItem(at: first.screenURL, to: second.screenURL)
+        let midScanBytes = Data(#"{"captureMode":"tab","version":999}"#.utf8)
+        var raceImported: [URL] = []
+        var raceWriteError: Error?
+        let raceCount = await RecordingRecoveryCoordinator.recoverInterrupted([first, second]) { session in
+            raceImported.append(session.directoryURL)
+            if session == first {
+                do { try midScanBytes.write(to: second.captureManifestURL, options: .atomic) }
+                catch { raceWriteError = error }
+            }
+        }
+        if let raceWriteError { throw raceWriteError }
+        try check(raceCount == 1 && raceImported == [first.directoryURL],
+                  "Recovery race processed \(raceCount) sessions: \(raceImported)")
+        try check(try Data(contentsOf: second.captureManifestURL) == midScanBytes,
+                  "Recovery overwrote manifest written mid-scan")
+        print("CHECK: unknown captureMode, corrupt JSON, dangling symlink, and mid-scan manifest survive recovery untouched; missing manifest recovers")
     }
 }

@@ -42,7 +42,9 @@ enum RecordingRecoveryCoordinator {
             manifest.duration = metadata.duration
             manifest.pixelWidth = metadata.width
             manifest.pixelHeight = metadata.height
-            try? session.writeCaptureManifest(manifest)
+            guard (try? session.writeCaptureManifestIfAbsent(manifest)) == true else {
+                continue
+            }
             await importSession(session)
             recoveredCount += 1
         }
