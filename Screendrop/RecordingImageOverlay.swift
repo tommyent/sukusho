@@ -759,6 +759,25 @@ nonisolated enum RecordingPackageMedia {
         return readFormatVersion(from: data)
     }
 
+    /// Checks version-only headers of both `edit.draft.json` and `edit.json`
+    /// whenever present and rejects the package if either was saved by a newer
+    /// format version (preventing an older draft from bypassing a newer saved
+    /// edit's format guard).
+    static func rejectNewerFormatEdits(
+        draftURL: URL?,
+        editURL: URL?,
+        packageName: String
+    ) throws {
+        for url in [draftURL, editURL].compactMap({ $0 }) {
+            guard let data = try? Data(contentsOf: url) else {
+                throw ValidationError.invalidPackage(packageName)
+            }
+            if let version = readFormatVersion(from: data), version > Self.currentFormatVersion {
+                throw ValidationError.unsupportedFormatVersion(version)
+            }
+        }
+    }
+
     /// Validates a `.sukushorec` package for Raw recording import: verifies
     /// `screen.mov` via `validateRawScreenInput`, checks optional edit/draft
     /// sidecars without following symlinks, and decodes any source redactions
@@ -771,14 +790,16 @@ nonisolated enum RecordingPackageMedia {
         }
         let draftURL = try resolveOptionalPackageFile(named: draftFileName, in: realPackage)
         let editURL = try resolveOptionalPackageFile(named: editFileName, in: realPackage)
+        try rejectNewerFormatEdits(
+            draftURL: draftURL,
+            editURL: editURL,
+            packageName: realPackage.lastPathComponent
+        )
         guard let activeEditURL = draftURL ?? editURL else {
             return ResolvedRawImport(screenURL: screenURL, activeEditURL: nil, redactions: [])
         }
         guard let data = try? Data(contentsOf: activeEditURL) else {
             throw ValidationError.invalidPackage(realPackage.lastPathComponent)
-        }
-        if let version = readFormatVersion(from: data), version > Self.currentFormatVersion {
-            throw ValidationError.unsupportedFormatVersion(version)
         }
         struct RawEditHeader: Decodable {
             var formatVersion: Int?
@@ -873,8 +894,14 @@ nonisolated enum RecordingPackageMedia {
             throw ValidationError.unsafeFile("media")
         }
 
-        // Inspect active edit document (`edit.draft.json` wins over `edit.json`,
-        // matching `RecordingSession.editDocumentForRendering`).
+        // Reject any newer-format edit in either `edit.draft.json` or `edit.json`
+        // before rendering or reusing cached deliverables, then inspect the active
+        // edit document (`edit.draft.json` wins over `edit.json`).
+        try rejectNewerFormatEdits(
+            draftURL: draftURL,
+            editURL: editURL,
+            packageName: realPackage.lastPathComponent
+        )
         let activeEditURL = draftURL ?? editURL
         var replacementAudioURL: URL?
         var backgroundMusicURL: URL?
@@ -882,9 +909,6 @@ nonisolated enum RecordingPackageMedia {
         if let activeEditURL {
             guard let data = try? Data(contentsOf: activeEditURL) else {
                 throw ValidationError.invalidPackage(realPackage.lastPathComponent)
-            }
-            if let version = readFormatVersion(from: data), version > Self.currentFormatVersion {
-                throw ValidationError.unsupportedFormatVersion(version)
             }
             struct PackageEditRefs: Decodable {
                 struct ClipRef: Decodable {
