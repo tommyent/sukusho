@@ -23,9 +23,12 @@ enum RecordingAgentPromptExport {
     }
 
     /// The name the Library card shows (the user's, a model's, else the date), never the package name.
-    static func title(for session: RecordingSession) -> String {
+    /// When `document` is provided, the cached model title is checked against that live edit's redactions
+    /// rather than only the on-disk edit.
+    static func title(for session: RecordingSession, document: RecordingEditDocument? = nil) -> String {
         guard let created = session.loadCaptureManifest()?.createdAt else { return session.displayName }
-        let modelTitle = CaptureLibraryIndex.shared.visibleInsight(for: session)?.title
+        let redactionTag = document.map { CaptureLibraryScanner.redactionTag(for: $0.redactions) }
+        let modelTitle = CaptureLibraryIndex.shared.visibleInsight(for: session, redactionTag: redactionTag)?.title
         let source = session.loadProjectMetadata()?.source
         return CaptureInsightRules.title(customName: session.customName, modelTitle: modelTitle,
                                          sourceTitle: CaptureInsightRules.sourceTitle(appName: source?.appName, windowTitle: source?.windowTitle),
@@ -45,7 +48,7 @@ enum RecordingAgentPromptExport {
             ? .init(screen: screenFile, input: input)
             : nil
         let manifest = session.loadCaptureManifest()
-        return RecordingAgentPromptPlan(title: title(for: session), timeline: timeline, cues: transcript.cues, words: transcript.words,
+        return RecordingAgentPromptPlan(title: title(for: session, document: document), timeline: timeline, cues: transcript.cues, words: transcript.words,
                                         capture: capture, cursorNames: PointerArtworkCapture.names(for: capture?.artwork ?? []),
                                         files: files,
                                         excludesAppWindows: manifest?.includesAppWindows == false,

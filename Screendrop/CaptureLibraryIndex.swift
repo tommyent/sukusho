@@ -105,10 +105,11 @@ final class CaptureLibraryIndex {
     }
 
     /// What the model wrote about a recording session, only when the stored entry still matches
-    /// the session's current on-disk redaction state (guards exports before the next Library scan).
-    func visibleInsight(for session: RecordingSession) -> CaptureInsight? {
+    /// the expected redaction state (`redactionTag` when resolving against an in-memory export
+    /// document, otherwise the session's current on-disk edit).
+    func visibleInsight(for session: RecordingSession, redactionTag: String? = nil) -> CaptureInsight? {
         let id = "recording:" + session.directoryURL.standardizedFileURL.path
-        let currentTag = CaptureLibraryScanner.redactionTag(for: session)
+        let currentTag = redactionTag ?? CaptureLibraryScanner.redactionTag(for: session)
         guard currentTag != CaptureTextIndexPlan.unreadableRedactionTag else { return nil }
         let expected: String? = currentTag.isEmpty ? nil : currentTag
         guard CaptureTextIndexPlan.redactionTag(in: entries[id]?.fingerprint) == expected else { return nil }
