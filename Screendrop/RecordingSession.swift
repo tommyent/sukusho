@@ -181,9 +181,27 @@ nonisolated struct RecordingSession: Sendable, Equatable {
         return try CaptureManifest.decoder.decode(CaptureManifest.self, from: data)
     }
 
+    private func decodeSidecar<T: Decodable>(_ type: T.Type, at url: URL) -> T? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        do {
+            return try CaptureManifest.decoder.decode(type, from: data)
+        } catch {
+            RecordingSidecarQuarantine.preserve(at: url)
+            return nil
+        }
+    }
+
+    private func quarantineIfUnreadable<T: Decodable>(_ type: T.Type, at url: URL) {
+        var info = stat()
+        guard lstat(url.path, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG,
+              let data = try? Data(contentsOf: url) else { return }
+        if (try? CaptureManifest.decoder.decode(type, from: data)) == nil {
+            RecordingSidecarQuarantine.preserve(at: url)
+        }
+    }
+
     func loadCaptureManifest() -> CaptureManifest? {
-        guard let data = try? Data(contentsOf: captureManifestURL) else { return nil }
-        return try? CaptureManifest.decoder.decode(CaptureManifest.self, from: data)
+        decodeSidecar(CaptureManifest.self, at: captureManifestURL)
     }
 
     func loadPointerCapture() -> PointerCaptureFile? {
@@ -192,6 +210,7 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     }
 
     func writeCaptureManifest(_ manifest: CaptureManifest) throws {
+        quarantineIfUnreadable(CaptureManifest.self, at: captureManifestURL)
         let data = try CaptureManifest.encoder.encode(manifest)
         try data.write(to: captureManifestURL, options: .atomic)
     }
@@ -209,11 +228,11 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     }
 
     func loadEditDocument() -> RecordingEditDocument? {
-        guard let data = try? Data(contentsOf: editDocumentURL) else { return nil }
-        return try? CaptureManifest.decoder.decode(RecordingEditDocument.self, from: data)
+        decodeSidecar(RecordingEditDocument.self, at: editDocumentURL)
     }
 
     func writeEditDocument(_ document: RecordingEditDocument) throws {
+        quarantineIfUnreadable(RecordingEditDocument.self, at: editDocumentURL)
         let data = try CaptureManifest.encoder.encode(document)
         try data.write(to: editDocumentURL, options: .atomic)
     }
@@ -221,11 +240,11 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     // MARK: - Working draft
 
     func loadDraftDocument() -> RecordingEditDocument? {
-        guard let data = try? Data(contentsOf: draftDocumentURL) else { return nil }
-        return try? CaptureManifest.decoder.decode(RecordingEditDocument.self, from: data)
+        decodeSidecar(RecordingEditDocument.self, at: draftDocumentURL)
     }
 
     func writeDraftDocument(_ document: RecordingEditDocument) throws {
+        quarantineIfUnreadable(RecordingEditDocument.self, at: draftDocumentURL)
         let data = try CaptureManifest.encoder.encode(document)
         try data.write(to: draftDocumentURL, options: .atomic)
     }
@@ -258,7 +277,12 @@ nonisolated struct RecordingSession: Sendable, Equatable {
         let url = !ignoringDraft && FileManager.default.fileExists(atPath: draftDocumentURL.path)
             ? draftDocumentURL : editDocumentURL
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        return try CaptureManifest.decoder.decode(RecordingEditDocument.self, from: Data(contentsOf: url))
+        do {
+            return try CaptureManifest.decoder.decode(RecordingEditDocument.self, from: Data(contentsOf: url))
+        } catch {
+            RecordingSidecarQuarantine.preserve(at: url)
+            throw error
+        }
     }
 
     /// True when unsaved edits are sitting in the draft. A draft identical to
@@ -271,11 +295,11 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     // MARK: - Project metadata
 
     func loadProjectMetadata() -> RecordingProjectMetadata? {
-        guard let data = try? Data(contentsOf: projectMetadataURL) else { return nil }
-        return try? CaptureManifest.decoder.decode(RecordingProjectMetadata.self, from: data)
+        decodeSidecar(RecordingProjectMetadata.self, at: projectMetadataURL)
     }
 
     func writeProjectMetadata(_ metadata: RecordingProjectMetadata) throws {
+        quarantineIfUnreadable(RecordingProjectMetadata.self, at: projectMetadataURL)
         let data = try CaptureManifest.encoder.encode(metadata)
         try data.write(to: projectMetadataURL, options: .atomic)
     }
@@ -284,7 +308,12 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     func updateProjectMetadata(_ mutate: (inout RecordingProjectMetadata) -> Void) throws {
         var metadata = RecordingProjectMetadata()
         if FileManager.default.fileExists(atPath: projectMetadataURL.path) {
-            metadata = try CaptureManifest.decoder.decode(RecordingProjectMetadata.self, from: Data(contentsOf: projectMetadataURL))
+            do {
+                metadata = try CaptureManifest.decoder.decode(RecordingProjectMetadata.self, from: Data(contentsOf: projectMetadataURL))
+            } catch {
+                RecordingSidecarQuarantine.preserve(at: projectMetadataURL)
+                throw error
+            }
         }
         metadata.version = RecordingProjectMetadata.currentVersion
         mutate(&metadata)
