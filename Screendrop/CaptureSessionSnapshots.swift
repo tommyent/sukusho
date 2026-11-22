@@ -20,8 +20,24 @@ nonisolated struct CaptureSessionSnapshots {
 
     static func encode<T: Encodable>(_ document: T) throws -> Data {
         let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.sortedKeys]
         return try encoder.encode(document)
+    }
+
+    /// Decodes ISO-8601 snapshots, falling back to default numeric dates for legacy snapshots.
+    static func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+        let iso = JSONDecoder()
+        iso.dateDecodingStrategy = .iso8601
+        do {
+            return try iso.decode(type, from: data)
+        } catch let isoError {
+            do {
+                return try JSONDecoder().decode(type, from: data)
+            } catch {
+                throw isoError
+            }
+        }
     }
 
     func entries() throws -> [CaptureSessionSnapshot] {
@@ -74,9 +90,11 @@ nonisolated struct CaptureSessionSnapshots {
             try ScreenshotEditFileTransaction.apply(replacements: [(baseImage, staging.appendingPathComponent("base.\(ext)"))])
         }
         try document.write(to: staging.appendingPathComponent("document.json"), options: .atomic)
-        try Self.encode(entry).write(to: staging.appendingPathComponent("session.json"), options: .atomic)
-        try manager.moveItem(at: staging, to: folder(for: entry.id))
-        return prune(([entry] + existing).sorted {
+        let entryData = try Self.encode(entry)
+        let storedEntry = try Self.decode(CaptureSessionSnapshot.self, from: entryData)
+        try entryData.write(to: staging.appendingPathComponent("session.json"), options: .atomic)
+        try manager.moveItem(at: staging, to: folder(for: storedEntry.id))
+        return prune(([storedEntry] + existing).sorted {
             $0.openedAt == $1.openedAt ? $0.id.uuidString > $1.id.uuidString : $0.openedAt > $1.openedAt
         })
     }
@@ -95,7 +113,7 @@ nonisolated struct CaptureSessionSnapshots {
     }
 
     private func metadata(in folder: URL) throws -> CaptureSessionSnapshot {
-        let entry = try JSONDecoder().decode(CaptureSessionSnapshot.self, from: Data(contentsOf: folder.appendingPathComponent("session.json")))
+        let entry = try Self.decode(CaptureSessionSnapshot.self, from: Data(contentsOf: folder.appendingPathComponent("session.json")))
         guard entry.id.uuidString == folder.lastPathComponent else { throw CocoaError(.fileReadCorruptFile) }
         try validate(entry)
         return entry

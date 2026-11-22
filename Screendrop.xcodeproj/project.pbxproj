@@ -49,6 +49,7 @@
 		AF7A00000000000000000001 /* Screendrop/RecordingAppLogs.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF7A00000000000000000101 /* Screendrop/RecordingAppLogs.swift */; };
 		AF7A00000000000000000002 /* Screendrop/RecordingSteps.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF7A00000000000000000102 /* Screendrop/RecordingSteps.swift */; };
 		AF7B00000000000000000001 /* Screendrop/RecordingSidecarQuarantine.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF7B00000000000000000101 /* Screendrop/RecordingSidecarQuarantine.swift */; };
+		AF7B00000000000000000002 /* Screendrop/CaptureSessionSnapshots.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF7B00000000000000000102 /* Screendrop/CaptureSessionSnapshots.swift */; };
 		AF0500000000000000000003 /* Screendrop/RecordingClipTimeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0500000000000000000103 /* Screendrop/RecordingClipTimeline.swift */; };
 		AF0500000000000000000002 /* Screendrop/RecordingInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0500000000000000000102 /* Screendrop/RecordingInput.swift */; };
 		AF0500000000000000000001 /* Screendrop/RecordingTranscript.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0500000000000000000101 /* Screendrop/RecordingTranscript.swift */; };
@@ -292,6 +293,7 @@
 		AF7A00000000000000000101 /* Screendrop/RecordingAppLogs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingAppLogs.swift; sourceTree = SOURCE_ROOT; };
 		AF7A00000000000000000102 /* Screendrop/RecordingSteps.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingSteps.swift; sourceTree = SOURCE_ROOT; };
 		AF7B00000000000000000101 /* Screendrop/RecordingSidecarQuarantine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingSidecarQuarantine.swift; sourceTree = SOURCE_ROOT; };
+		AF7B00000000000000000102 /* Screendrop/CaptureSessionSnapshots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/CaptureSessionSnapshots.swift; sourceTree = SOURCE_ROOT; };
 		AF0500000000000000000103 /* Screendrop/RecordingClipTimeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingClipTimeline.swift; sourceTree = SOURCE_ROOT; };
 		AF0500000000000000000102 /* Screendrop/RecordingInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingInput.swift; sourceTree = SOURCE_ROOT; };
 		AF0500000000000000000101 /* Screendrop/RecordingTranscript.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingTranscript.swift; sourceTree = SOURCE_ROOT; };
@@ -568,6 +570,7 @@
 				AF7A00000000000000000101 /* Screendrop/RecordingAppLogs.swift */,
 				AF7A00000000000000000102 /* Screendrop/RecordingSteps.swift */,
 				AF7B00000000000000000101 /* Screendrop/RecordingSidecarQuarantine.swift */,
+				AF7B00000000000000000102 /* Screendrop/CaptureSessionSnapshots.swift */,
 				AF0500000000000000000103 /* Screendrop/RecordingClipTimeline.swift */,
 				AF0500000000000000000102 /* Screendrop/RecordingInput.swift */,
 				AF0500000000000000000101 /* Screendrop/RecordingTranscript.swift */,
@@ -888,6 +891,7 @@
 				AF7A00000000000000000001 /* Screendrop/RecordingAppLogs.swift in Sources */,
 				AF7A00000000000000000002 /* Screendrop/RecordingSteps.swift in Sources */,
 				AF7B00000000000000000001 /* Screendrop/RecordingSidecarQuarantine.swift in Sources */,
+				AF7B00000000000000000002 /* Screendrop/CaptureSessionSnapshots.swift in Sources */,
 				AF0500000000000000000003 /* Screendrop/RecordingClipTimeline.swift in Sources */,
 				AF0500000000000000000002 /* Screendrop/RecordingInput.swift in Sources */,
 				AF0500000000000000000001 /* Screendrop/RecordingTranscript.swift in Sources */,

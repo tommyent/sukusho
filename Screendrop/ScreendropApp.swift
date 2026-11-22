@@ -100,6 +100,18 @@ struct ScreendropApp: App {
         }
     }
 
+    /// Canonicalizes an editor URL (resolving symlinks, standardizing path components, and
+    /// matching the filesystem's directory flag) so `openWindow(id: "VIDEO_EDITOR", value:)`
+    /// deduplicates every path alias to the same recording package into one Studio window.
+    nonisolated static func canonicalEditorURL(_ url: URL) -> URL {
+        let resolved = url.resolvingSymlinksInPath().standardizedFileURL
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: resolved.path, isDirectory: &isDirectory) {
+            return URL(fileURLWithPath: resolved.path, isDirectory: isDirectory.boolValue)
+        }
+        return resolved
+    }
+
     /// Validates a recording package opened from Finder (inside Recordings or elsewhere).
     /// Returns the resolved package URL when valid, `nil` for non-recording URLs, or throws
     /// when a `.sukushorec` / `.screendroprec` fails package safety checks.
@@ -117,7 +129,7 @@ struct ScreendropApp: App {
             openWindow(id: "ANNOTATION_EDITOR", value: url)
         }
         let openVideoEditor: (URL) -> Void = { [openWindow] url in
-            let editorURL = ScreenshotHistoryStore.shared.editorURL(for: url)
+            let editorURL = Self.canonicalEditorURL(ScreenshotHistoryStore.shared.editorURL(for: url))
             openWindow(id: "VIDEO_EDITOR", value: editorURL)
             // Refocusing an existing Studio window does not run its load task
             // again. New windows dismiss their card after a successful load.

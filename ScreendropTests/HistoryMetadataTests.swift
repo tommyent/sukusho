@@ -382,4 +382,54 @@ struct HistoryMetadataTests {
             #expect(LibraryArchive.includes(isSaved: mark, inSavedPage: false) != mark)
         }
     }
+
+    @Test func starringANewRecordingDoesNotStampProjectJSONWith1970() throws {
+        try withIndex { history in
+            let folder = history.deletingLastPathComponent()
+            let newProject = folder.appendingPathComponent("new-project.json")
+            let now = Date()
+            #expect(try RecordingLibraryMark.change(at: newProject, from: nil, to: now))
+            let mtime = try #require(newProject.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+            #expect(mtime > now.addingTimeInterval(-60), "New project.json received bogus mtime: \(mtime)")
+            #expect(mtime.timeIntervalSince1970 > 1_000_000_000)
+
+            // Existing project.json still preserves its original modification time.
+            let past = Date(timeIntervalSince1970: 1_700_000_000)
+            try FileManager.default.setAttributes([.modificationDate: past], ofItemAtPath: newProject.path)
+            #expect(try RecordingLibraryMark.change(at: newProject, from: now, to: nil))
+            let preserved = try #require(
+                URL(fileURLWithPath: newProject.path).resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+            )
+            #expect(abs(preserved.timeIntervalSince(past)) < 1)
+        }
+    }
+
+    @Test func captureSessionSnapshotsEncodeDatesAsISO8601AndReadLegacyNumericMetadata() throws {
+        struct DatedDoc: Codable, Equatable { var updatedAt: Date }
+        let sampleDate = Date(timeIntervalSince1970: 1_800_000_000)
+        let encoded = try CaptureSessionSnapshots.encode(DatedDoc(updatedAt: sampleDate))
+        let isoDecoder = JSONDecoder()
+        isoDecoder.dateDecodingStrategy = .iso8601
+        #expect(try isoDecoder.decode(DatedDoc.self, from: encoded) == DatedDoc(updatedAt: sampleDate))
+
+        // Fractional openedAt round-trips cleanly through keep() and read().
+        try withIndex { history in
+            let store = CaptureSessionSnapshots(directory: history.deletingLastPathComponent().appendingPathComponent("sessions", isDirectory: true))
+            let kept = try store.keep(document: encoded, openedAt: Date(timeIntervalSince1970: 1_800_000_123.456))
+            let first = try #require(kept.first)
+            let restored = try store.read(first)
+            #expect(restored.document == encoded)
+
+            // Legacy numeric-date session.json remains readable.
+            let legacyID = UUID()
+            let legacyFolder = store.directory.appendingPathComponent(legacyID.uuidString, isDirectory: true)
+            try FileManager.default.createDirectory(at: legacyFolder, withIntermediateDirectories: true)
+            let legacyEntry = CaptureSessionSnapshot(id: legacyID, openedAt: Date(timeIntervalSince1970: 1_799_000_000), fingerprint: "abc", baseExtension: nil)
+            try JSONEncoder().encode(legacyEntry).write(to: legacyFolder.appendingPathComponent("session.json"))
+            try encoded.write(to: legacyFolder.appendingPathComponent("document.json"))
+            let entries = try store.entries()
+            let loadedLegacy = try #require(entries.first { $0.id == legacyID })
+            #expect(try store.read(loadedLegacy).document == encoded)
+        }
+    }
 }

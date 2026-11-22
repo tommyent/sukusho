@@ -1403,7 +1403,7 @@ extension AnnotationEditorModel {
         guard let sourceURL, !isCropping, !isBlockingCommit else { return }
         do {
             let stored = try sessionStore(for: sourceURL).read(session)
-            let document = try JSONDecoder().decode(AnnotationDocument.self, from: stored.document)
+            let document = try CaptureSessionSnapshots.decode(AnnotationDocument.self, from: stored.document)
             guard let base = stored.baseImage, let size = ScreenshotImageLoader.imageSize(at: base) else {
                 throw CocoaError(.fileReadCorruptFile)
             }

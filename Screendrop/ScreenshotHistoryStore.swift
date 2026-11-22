@@ -438,8 +438,8 @@ final class ScreenshotHistoryStore {
     /// package. Every editor entry point uses this so overlay cards, History,
     /// and after-capture actions cannot accidentally open different editors.
     func editorURL(for mediaURL: URL) -> URL {
-        guard let index = index(for: mediaURL) else { return mediaURL }
-        return items[index].editorURL
+        let resolved = index(for: mediaURL).map { items[$0].editorURL } ?? mediaURL
+        return ScreendropApp.canonicalEditorURL(resolved)
     }
 
     func item(for mediaURL: URL) -> ScreenshotHistoryItem? {

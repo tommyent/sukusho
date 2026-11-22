@@ -170,8 +170,10 @@ enum RecordingLibraryMark {
         defer { try? FileManager.default.removeItem(at: temporary) }
         if original != nil { try FileManager.default.copyItem(at: url, to: temporary) }
         try data.write(to: temporary)
-        let times = [original?.st_atimespec ?? timespec(), original?.st_mtimespec ?? timespec()]
-        guard utimensat(AT_FDCWD, temporary.path, times, 0) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        if let original {
+            let times = [original.st_atimespec, original.st_mtimespec]
+            guard utimensat(AT_FDCWD, temporary.path, times, 0) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+        }
         if original != nil {
             guard rename(temporary.path, url.path) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
         } else {
