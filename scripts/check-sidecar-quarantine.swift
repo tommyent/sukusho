@@ -25,8 +25,8 @@ struct SidecarQuarantineChecks {
         try check(support.path.contains("/tmp/screendrop-idle-save-"), "Storage outside temporary home: \(support.path)")
         let session = try RecordingSessionStore.createSession()
 
-        // 1. Unreadable edit.json is preserved beside edit.json after a save.
-        let corruptEdit = Data(#"{"formatVersion":99,"redactions":[{"start":1,"end":0,"rect":[[0,0],[0,0]]}]}"#.utf8)
+        // 1. Unreadable edit.json of a supported format version is preserved beside edit.json after a save.
+        let corruptEdit = Data(#"{"formatVersion":7,"redactions":[{"start":1,"end":0,"rect":[[0,0],[0,0]]}]}"#.utf8)
         try corruptEdit.write(to: session.editDocumentURL)
         try check(session.loadEditDocument() == nil, "Unreadable edit.json unexpectedly decoded")
 
@@ -116,6 +116,26 @@ struct SidecarQuarantineChecks {
             .filter { $0.hasPrefix("edit.json.unreadable-") }
         try check(maskBackups.count == 1, "Semantically invalid edit.json was not quarantined before overwrite")
 
-        print("CHECK: unreadable, oversized, mismatched, and semantically invalid sidecars are protected before overwrite")
+        // 8. Recognized newer-format sidecars must NOT create quarantine copies on read or Library scan.
+        let futureSession = try RecordingSessionStore.createSession()
+        try futureSession.writeEditDocument(replacement)
+        let newerDraft = Data(#"{"formatVersion":99,"redactions":[{"mode":"mosaic_v2","start":0,"end":2,"rect":[[0,0],[1,1]]}]}"#.utf8)
+        try newerDraft.write(to: futureSession.draftDocumentURL)
+        let beforeFutureReads = try Set(FileManager.default.contentsOfDirectory(atPath: futureSession.directoryURL.path))
+        try check(futureSession.loadDraftDocument() == nil, "Unknown-enum newer draft unexpectedly decoded")
+        _ = futureSession.hasUnsavedDraft
+        var threwUnsupported = false
+        do {
+            _ = try futureSession.editDocumentForRendering()
+        } catch RecordingPackageMedia.ValidationError.unsupportedFormatVersion(99) {
+            threwUnsupported = true
+        }
+        try check(threwUnsupported, "editDocumentForRendering did not reject recognized newer-format draft")
+        _ = CaptureLibraryScanner.redactionTag(for: futureSession)
+        let afterFutureReads = try Set(FileManager.default.contentsOfDirectory(atPath: futureSession.directoryURL.path))
+        try check(afterFutureReads == beforeFutureReads && (try Data(contentsOf: futureSession.draftDocumentURL) == newerDraft),
+                  "Read/scan of recognized newer-format project wrote files: \(afterFutureReads.subtracting(beforeFutureReads))")
+
+        print("CHECK: unreadable, oversized, mismatched, and semantically invalid sidecars are protected; recognized newer formats stay read-only")
     }
 }

@@ -181,12 +181,32 @@ nonisolated struct RecordingSession: Sendable, Equatable {
         return try CaptureManifest.decoder.decode(CaptureManifest.self, from: data)
     }
 
+    private struct SidecarVersionHeader: Decodable {
+        var version: Int?
+    }
+
+    private static func isNewerFormatHeader<T>(_ type: T.Type, in data: Data) -> Bool {
+        if type == RecordingEditDocument.self {
+            return RecordingPackageMedia.readFormatVersion(from: data)
+                .map { $0 > RecordingPackageMedia.currentFormatVersion } ?? false
+        }
+        if type == CaptureManifest.self || type == RecordingProjectMetadata.self {
+            if let version = (try? JSONDecoder().decode(SidecarVersionHeader.self, from: data))?.version {
+                let current = type == RecordingProjectMetadata.self ? RecordingProjectMetadata.currentVersion : 1
+                return version > current
+            }
+        }
+        return false
+    }
+
     private func decodeSidecar<T: Decodable>(_ type: T.Type, at url: URL) -> T? {
         guard let data = try? Data(contentsOf: url) else { return nil }
         do {
             return try CaptureManifest.decoder.decode(type, from: data)
         } catch {
-            _ = try? RecordingSidecarQuarantine.preserve(at: url)
+            if !Self.isNewerFormatHeader(type, in: data) {
+                _ = try? RecordingSidecarQuarantine.preserve(at: url)
+            }
             return nil
         }
     }
@@ -351,10 +371,13 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     func updateProjectMetadata(_ mutate: (inout RecordingProjectMetadata) -> Void) throws {
         var metadata = RecordingProjectMetadata()
         if let resolved = try RecordingPackageMedia.resolveOptionalPackageFile(named: Self.projectMetadataFileName, in: directoryURL) {
+            let data = try Data(contentsOf: resolved)
             do {
-                metadata = try CaptureManifest.decoder.decode(RecordingProjectMetadata.self, from: Data(contentsOf: resolved))
+                metadata = try CaptureManifest.decoder.decode(RecordingProjectMetadata.self, from: data)
             } catch {
-                _ = try? RecordingSidecarQuarantine.preserve(at: resolved)
+                if !Self.isNewerFormatHeader(RecordingProjectMetadata.self, in: data) {
+                    _ = try? RecordingSidecarQuarantine.preserve(at: resolved)
+                }
                 throw error
             }
         }
