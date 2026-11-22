@@ -217,14 +217,7 @@ nonisolated struct RecordingSession: Sendable, Equatable {
 
     func writePointerCapture(_ capture: PointerCaptureFile) throws {
         let data = try CaptureManifest.encoder.encode(capture)
-        do {
-            try data.write(to: pointerCaptureURL, options: .atomic)
-        } catch {
-            // Atomic replacement needs a sibling temporary file. If that
-            // narrow operation fails, make one direct attempt before treating
-            // the pointer sidecar as lost and surfacing the failure to users.
-            try data.write(to: pointerCaptureURL)
-        }
+        try data.write(to: pointerCaptureURL, options: .atomic)
     }
 
     func loadEditDocument() -> RecordingEditDocument? {
