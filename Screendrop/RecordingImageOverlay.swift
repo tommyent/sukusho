@@ -778,10 +778,30 @@ nonisolated enum RecordingPackageMedia {
         }
     }
 
+    static func activeEditSidecar(draftURL: URL?, editURL: URL?) throws -> URL? {
+        guard let draftURL, let editURL else { return draftURL ?? editURL }
+        struct Header: Decodable { var revision: Int? }
+        let draft = try Data(contentsOf: draftURL)
+        let saved = try Data(contentsOf: editURL)
+        let draftRevision = try JSONDecoder().decode(Header.self, from: draft).revision ?? 0
+        let savedRevision = try JSONDecoder().decode(Header.self, from: saved).revision ?? 0
+        return try activeEditIsDraft(draftRevision: draftRevision, savedRevision: savedRevision,
+                                     sameEdit: draft == saved) ? draftURL : editURL
+    }
+
+    static func activeEditIsDraft(draftRevision: Int, savedRevision: Int, sameEdit: Bool) throws -> Bool {
+        guard draftRevision >= 0, savedRevision >= 0,
+              draftRevision != savedRevision || sameEdit else {
+            throw CocoaError(.fileReadCorruptFile, userInfo: [NSLocalizedDescriptionKey:
+                "The saved edit and draft have invalid or conflicting revisions."])
+        }
+        return draftRevision > savedRevision
+    }
+
     /// Validates a `.sukushorec` package for Raw recording import: verifies
     /// `screen.mov` via `validateRawScreenInput`, checks optional edit/draft
     /// sidecars without following symlinks, and decodes any source redactions
-    /// from the effective edit (`edit.draft.json` over `edit.json`). Refuses
+    /// from the highest revision. Refuses
     /// unreadable or unsupported-future edits rather than copying raw unmasked.
     static func validateRawImportInputs(in packageDirectory: URL) throws -> ResolvedRawImport {
         let screenURL = try validateRawScreenInput(in: packageDirectory)
@@ -795,7 +815,7 @@ nonisolated enum RecordingPackageMedia {
             editURL: editURL,
             packageName: realPackage.lastPathComponent
         )
-        guard let activeEditURL = draftURL ?? editURL else {
+        guard let activeEditURL = try activeEditSidecar(draftURL: draftURL, editURL: editURL) else {
             return ResolvedRawImport(screenURL: screenURL, activeEditURL: nil, redactions: [])
         }
         guard let data = try? Data(contentsOf: activeEditURL) else {
@@ -896,13 +916,13 @@ nonisolated enum RecordingPackageMedia {
 
         // Reject any newer-format edit in either `edit.draft.json` or `edit.json`
         // before rendering or reusing cached deliverables, then inspect the active
-        // edit document (`edit.draft.json` wins over `edit.json`).
+        // edit document with the highest revision.
         try rejectNewerFormatEdits(
             draftURL: draftURL,
             editURL: editURL,
             packageName: realPackage.lastPathComponent
         )
-        let activeEditURL = draftURL ?? editURL
+        let activeEditURL = try activeEditSidecar(draftURL: draftURL, editURL: editURL)
         var replacementAudioURL: URL?
         var backgroundMusicURL: URL?
 

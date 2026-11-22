@@ -148,12 +148,12 @@ nonisolated struct RecordingSession: Sendable, Equatable {
         _ other: RecordingEditDocument?
     ) -> Bool {
         guard let other else { return false }
-        var normalized = document
+        var normalized = document.withoutRevision
         normalized.exportSettings?.container = other.exportSettings?.container
         // GIF intermediates omit music, so exportsGIF remains part of the media identity.
         normalized.exportSettings?.gifFrameRate = other.exportSettings?.gifFrameRate
         normalized.exportSettings?.gifWidth = other.exportSettings?.gifWidth
-        return normalized == other
+        return normalized == other.withoutRevision
     }
 
     static func isSessionDirectory(_ url: URL) -> Bool {
@@ -286,8 +286,7 @@ nonisolated struct RecordingSession: Sendable, Equatable {
         try quarantineIfUnreadable(RecordingEditDocument.self, at: editDocumentURL) {
             for redaction in $0.redactions { try redaction.validate() }
         }
-        let data = try CaptureManifest.encoder.encode(document)
-        try data.write(to: editDocumentURL, options: .atomic)
+        try writeNextRevision(of: document, to: editDocumentURL)
     }
 
     // MARK: - Working draft
@@ -300,8 +299,16 @@ nonisolated struct RecordingSession: Sendable, Equatable {
         try quarantineIfUnreadable(RecordingEditDocument.self, at: draftDocumentURL) {
             for redaction in $0.redactions { try redaction.validate() }
         }
-        let data = try CaptureManifest.encoder.encode(document)
-        try data.write(to: draftDocumentURL, options: .atomic)
+        try writeNextRevision(of: document, to: draftDocumentURL)
+    }
+
+    private func writeNextRevision(of document: RecordingEditDocument, to url: URL) throws {
+        try validateEditVersionsForRendering()
+        let newest = max(document.revision, loadEditDocument()?.revision ?? 0, loadDraftDocument()?.revision ?? 0)
+        guard newest < Int.max else { throw CocoaError(.fileWriteUnknown) }
+        var next = document
+        next.revision = newest + 1
+        try CaptureManifest.encoder.encode(next).write(to: url, options: .atomic)
     }
 
     func removeDraftDocument() {
@@ -324,7 +331,7 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     /// editor (flattening, uploads) uses this too, so a deliverable always
     /// reflects the edits the user can see.
     func effectiveEditDocument() -> RecordingEditDocument? {
-        loadDraftDocument() ?? loadEditDocument()
+        try? editDocumentForRendering()
     }
 
     /// Verifies neither `edit.draft.json` (unless `ignoringDraft`) nor `edit.json` is an
@@ -347,20 +354,28 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     /// newer-format edits (across both draft and saved files) must never expose the master.
     func editDocumentForRendering(ignoringDraft: Bool = false) throws -> RecordingEditDocument? {
         let (draftURL, editURL) = try validateEditVersionsForRendering(ignoringDraft: ignoringDraft)
-        guard let url = draftURL ?? editURL else { return nil }
-        do {
-            return try CaptureManifest.decoder.decode(RecordingEditDocument.self, from: Data(contentsOf: url))
-        } catch {
-            _ = try? RecordingSidecarQuarantine.preserve(at: url)
-            throw error
+        func read(_ url: URL) throws -> RecordingEditDocument {
+            do {
+                return try CaptureManifest.decoder.decode(RecordingEditDocument.self, from: Data(contentsOf: url))
+            } catch {
+                _ = try? RecordingSidecarQuarantine.preserve(at: url)
+                throw error
+            }
         }
+        let saved = try editURL.map(read)
+        guard let draft = try draftURL.map(read) else { return saved }
+        guard let saved else { return draft }
+        return try RecordingPackageMedia.activeEditIsDraft(
+            draftRevision: draft.revision, savedRevision: saved.revision, sameEdit: draft == saved
+        ) ? draft : saved
     }
 
     /// True when unsaved edits are sitting in the draft. A draft identical to
     /// the saved document is just a leftover and doesn't count.
     var hasUnsavedDraft: Bool {
         guard let draft = loadDraftDocument() else { return false }
-        return draft != loadEditDocument()
+        guard let saved = loadEditDocument() else { return true }
+        return draft.revision >= saved.revision && draft.withoutRevision != saved.withoutRevision
     }
 
     // MARK: - Project metadata
@@ -422,7 +437,7 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     /// movie (`forVideoRendering`); a local export opts in to an exact match,
     /// so a GIF or HEVC export never gets it.
     func freshFinalURL(matching document: RecordingEditDocument?, forLocalExport: Bool = false) -> URL? {
-        let document = forLocalExport ? document : document?.forVideoRendering
+        let document = forLocalExport ? document?.withoutRevision : document?.forVideoRendering
         // Older renders could include cut caption wording or omit replacement audio.
         guard let existing = existingFinalURL,
               let safeFinal = RecordingPackageMedia.resolvePackageFile(named: existing.lastPathComponent, in: directoryURL),
@@ -430,7 +445,7 @@ nonisolated struct RecordingSession: Sendable, Equatable {
               let data = try? Data(contentsOf: safeStamp),
               let renderStamp = try? CaptureManifest.decoder.decode(RenderStamp.self, from: data),
               renderStamp.layoutVersion == RenderStamp.currentLayoutVersion else { return nil }
-        let stamp = renderStamp.document
+        let stamp = renderStamp.document?.withoutRevision
         if stamp == document { return safeFinal }
         // Swapping only the container leaves every encoded sample intact, so
         // the render survives and export converts it on the way out.

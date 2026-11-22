@@ -1347,6 +1347,7 @@ struct RecordingExportRegressionChecks {
         let data = try CaptureManifest.encoder.encode(stored)
         try check(try CaptureManifest.decoder.decode(RecordingEditDocument.self, from: data) == stored, "Music document did not round trip")
         var legacy = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        legacy["formatVersion"] = 6
         legacy.removeValue(forKey: "backgroundMusic")
         let old = try CaptureManifest.decoder.decode(RecordingEditDocument.self, from: JSONSerialization.data(withJSONObject: legacy))
         try check(old.backgroundMusic == nil && old.formatVersion == 6, "Legacy document selected music or changed version")
@@ -1390,8 +1391,8 @@ struct RecordingExportRegressionChecks {
                                              isolateVoice: true, redactions: redactions)
         let data = try CaptureManifest.encoder.encode(document)
         let decoded = try CaptureManifest.decoder.decode(RecordingEditDocument.self, from: data)
-        try check(decoded.formatVersion == 6 && decoded.isolateVoice && decoded.redactions == redactions,
-                  "Version 6 did not preserve both isolation and redactions")
+        try check(decoded.formatVersion == RecordingEditDocument.currentFormatVersion && decoded.isolateVoice
+                  && decoded.redactions == redactions, "The current format lost isolation or redactions")
         var legacy = try JSONSerialization.jsonObject(with: data) as! [String: Any]
         legacy["formatVersion"] = 5
         legacy.removeValue(forKey: "isolateVoice")
@@ -1458,7 +1459,7 @@ struct RecordingExportRegressionChecks {
         failedModel.flushDraft()
         try check(broken.effectiveEditDocument()?.isolateVoice == false, "Failed render left the saved on-choice active for other exports")
         failedModel.teardown()
-        print("PASS: version 6 preserves isolation and redactions; legacy off; shared video and audio exports use isolated mic plus system audio through cuts; Studio progress/cancel/cache/off, unfinished draft stays off, and failure fallback")
+        print("PASS: the current format preserves isolation and redactions; legacy off; shared video and audio exports use isolated mic plus system audio through cuts; Studio progress/cancel/cache/off, unfinished draft stays off, and failure fallback")
     }
 
     static func cancelShareRetry(in directory: URL) async throws {
@@ -1580,6 +1581,35 @@ struct RecordingExportRegressionChecks {
         print("PASS: loaded sequence and PiP release the Studio model, three players, composition attachment, and both stores")
     }
 
+    static func editRevisionOrdering(in directory: URL) throws {
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("edit-revisions.sukushorec"))
+        try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
+        let saved = RecordingEditDocument(style: .init(), zoomEnabled: true, zoomCues: [])
+        var draft = saved
+        draft.zoomEnabled = false
+        let legacy = try CaptureManifest.encoder.encode(saved)
+        var legacyJSON = try JSONSerialization.jsonObject(with: legacy) as! [String: Any]
+        legacyJSON.removeValue(forKey: "revision")
+        try JSONSerialization.data(withJSONObject: legacyJSON).write(to: session.editDocumentURL)
+        try check(session.loadEditDocument()?.revision == 0, "An edit without a revision did not decode as legacy")
+        try session.writeDraftDocument(draft)
+        let oldDraft = try Data(contentsOf: session.draftDocumentURL)
+        try check(session.hasUnsavedDraft && session.effectiveEditDocument()?.revision == 1
+                  && session.effectiveEditDocument()?.zoomEnabled == false, "The newer draft did not win")
+        try session.writeEditDocument(saved)
+        try oldDraft.write(to: session.draftDocumentURL, options: .atomic)
+        try check(!session.hasUnsavedDraft && session.effectiveEditDocument()?.revision == 2
+                  && session.effectiveEditDocument()?.zoomEnabled == true, "A stale restored draft beat the save")
+        try check(try session.editDocumentForRendering()?.revision == 2, "Rendering selected the stale draft")
+        var conflict = draft
+        conflict.revision = 2
+        try CaptureManifest.encoder.encode(conflict).write(to: session.draftDocumentURL, options: .atomic)
+        var blocked = false
+        do { _ = try session.editDocumentForRendering() } catch { blocked = true }
+        try check(blocked, "Conflicting revisions were accepted for rendering")
+        print("PASS: edit revisions order drafts and saves, decode legacy files, and withhold conflicting edits")
+    }
+
     static func main() async throws {
         setbuf(stdout, nil)
         guard let root = ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] else {
@@ -1598,6 +1628,7 @@ struct RecordingExportRegressionChecks {
             return
         }
         try await studioTeardown(in: directory)
+        try editRevisionOrdering(in: directory)
         try await chapterMarkerDrag(in: directory)
         try await chapterAtPlayhead(in: directory)
         try await chapterRenameUndo(in: directory)

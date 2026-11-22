@@ -1218,26 +1218,36 @@ struct StudioVideoSequenceTests {
             try RecordingPackageMedia.validateRenderInputs(in: symClipPkg)
         }
 
-        // 2. Raw preflight returns draft redactions over saved edit, empty when no edit, and refuses corrupt edit.
+        // 2. Raw preflight uses the highest revision, allows missing edits, and refuses ambiguous or corrupt edits.
         let cleanPkg = try makePkg("Clean.sukushorec")
         let cleanRaw = try RecordingPackageMedia.validateRawImportInputs(in: cleanPkg)
         #expect(cleanRaw.redactions.isEmpty)
 
         let draftMaskPkg = try makePkg("DraftMask.sukushorec")
         let savedNoMaskJSON = """
-        { "formatVersion": 7, "redactions": [] }
+        { "formatVersion": 7, "revision": 1, "redactions": [] }
         """
         let draftMask = RecordingRedaction(start: 0.2, end: 0.8, rect: CGRect(x: 0, y: 0, width: 0.5, height: 1), mode: .pixelate)
         struct MinimalEdit: Encodable {
             let formatVersion: Int
+            let revision: Int
             let redactions: [RecordingRedaction]
         }
         try Data(savedNoMaskJSON.utf8).write(to: draftMaskPkg.appendingPathComponent("edit.json"))
-        try JSONEncoder().encode(MinimalEdit(formatVersion: 7, redactions: [draftMask]))
+        try JSONEncoder().encode(MinimalEdit(formatVersion: 7, revision: 2, redactions: [draftMask]))
             .write(to: draftMaskPkg.appendingPathComponent("edit.draft.json"))
         let draftRaw = try RecordingPackageMedia.validateRawImportInputs(in: draftMaskPkg)
         #expect(draftRaw.redactions.count == 1)
         #expect(draftRaw.redactions[0].mode == .pixelate)
+        try JSONEncoder().encode(MinimalEdit(formatVersion: 7, revision: 3, redactions: []))
+            .write(to: draftMaskPkg.appendingPathComponent("edit.json"))
+        let savedRaw = try RecordingPackageMedia.validateRawImportInputs(in: draftMaskPkg)
+        #expect(savedRaw.redactions.isEmpty)
+        try JSONEncoder().encode(MinimalEdit(formatVersion: 7, revision: 2, redactions: []))
+            .write(to: draftMaskPkg.appendingPathComponent("edit.json"))
+        #expect(throws: CocoaError.self) {
+            try RecordingPackageMedia.validateRawImportInputs(in: draftMaskPkg)
+        }
 
         let corruptPkg = try makePkg("Corrupt.sukushorec")
         try Data("{ not valid json".utf8).write(to: corruptPkg.appendingPathComponent("edit.json"))

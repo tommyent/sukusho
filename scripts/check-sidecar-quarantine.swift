@@ -32,7 +32,7 @@ struct SidecarQuarantineChecks {
 
         let replacement = RecordingEditDocument(style: RecordingStudioStyle(), zoomEnabled: true, zoomCues: [])
         try session.writeEditDocument(replacement)
-        try check(session.loadEditDocument() == replacement, "New edit.json was not saved")
+        try check(session.loadEditDocument()?.withoutRevision == replacement, "New edit.json was not saved")
         let backups = try FileManager.default.contentsOfDirectory(atPath: session.directoryURL.path)
             .filter { $0.hasPrefix("edit.json.unreadable-") }
         try check(backups.count == 1, "Expected 1 edit.json quarantine backup, got \(backups)")

@@ -43,31 +43,17 @@ enum RecordingSessionRenderer {
     }
 
     /// Validates a `.sukushorec` package for Raw recording import, decoding its
-    /// effective edit document (`edit.draft.json` over `edit.json`) so any
+    /// effective edit document so any
     /// unreadable or future-format edit is refused before copying raw.
     @discardableResult
     static func validateRawImport(in packageURL: URL) throws -> RecordingPackageMedia.ResolvedRawImport {
         let resolved = try RecordingPackageMedia.validateRawImportInputs(in: packageURL)
-        if let activeEditURL = resolved.activeEditURL {
-            let document: RecordingEditDocument
-            do {
-                document = try CaptureManifest.decoder.decode(
-                    RecordingEditDocument.self,
-                    from: Data(contentsOf: activeEditURL)
-                )
-            } catch {
-                throw RecordingPackageMedia.ValidationError.invalidPackage(packageURL.lastPathComponent)
-            }
-            if document.isUnsupportedFutureVersion {
-                throw RecordingPackageMedia.ValidationError.unsupportedFormatVersion(document.formatVersion)
-            }
-            return RecordingPackageMedia.ResolvedRawImport(
-                screenURL: resolved.screenURL,
-                activeEditURL: activeEditURL,
-                redactions: document.redactions
-            )
-        }
-        return resolved
+        let document = try RecordingSession(directoryURL: packageURL).editDocumentForRendering()
+        return RecordingPackageMedia.ResolvedRawImport(
+            screenURL: resolved.screenURL,
+            activeEditURL: resolved.activeEditURL,
+            redactions: document?.redactions ?? []
+        )
     }
 
     /// Shared Raw-recording import resolver used by both the sequence lane and

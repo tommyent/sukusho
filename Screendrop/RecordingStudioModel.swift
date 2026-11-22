@@ -1063,11 +1063,8 @@ final class RecordingStudioModel {
             newerFormatVersion = detectedNewer
         }
 
-        lastSavedDocument = session?.loadEditDocument()
-        // A draft that outlived its editor means the last session ended
-        // without a save - a crash, a force quit, or a Studio window that is
-        // still open elsewhere. Reopen on the draft so nothing is lost; the
-        // project simply opens dirty.
+        lastSavedDocument = session?.loadEditDocument()?.withoutRevision
+        // Recover a draft that is newer than the last save.
         func read(ignoringDraft: Bool) throws -> RecordingEditDocument? {
             let document = try session?.editDocumentForRendering(ignoringDraft: ignoringDraft)
             for region in document?.redactions ?? [] { try region.validate(sourceDuration: sourceDuration) }

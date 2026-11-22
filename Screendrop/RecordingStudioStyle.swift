@@ -26,6 +26,13 @@ struct RecordingEditDocument: Codable, Equatable {
     nonisolated static let newerFormatNotice = RecordingPackageMedia.newerFormatNotice
 
     var formatVersion = RecordingEditDocument.currentFormatVersion
+    var revision = 0
+
+    nonisolated var withoutRevision: Self {
+        var document = self
+        document.revision = 0
+        return document
+    }
     nonisolated var isUnsupportedFutureVersion: Bool {
         formatVersion > Self.currentFormatVersion
     }
@@ -97,6 +104,7 @@ struct RecordingEditDocument: Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case formatVersion
+        case revision
         case style
         case zoomEnabled
         case zoomCues
@@ -210,7 +218,7 @@ struct RecordingEditDocument: Codable, Equatable {
     /// Uploads and shared deliverables are movies even when the export picker last chose GIF,
     /// and H.264 even when it chose HEVC: browsers play HEVC only partly, and a share link must play.
     nonisolated var forVideoRendering: Self {
-        var document = self
+        var document = withoutRevision
         document.exportSettings = exportSettings?.forVideoRendering
         return document
     }
@@ -259,6 +267,10 @@ struct RecordingEditDocument: Codable, Equatable {
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         formatVersion = try container.decodeIfPresent(Int.self, forKey: .formatVersion) ?? 1
+        revision = try container.decodeIfPresent(Int.self, forKey: .revision) ?? 0
+        guard revision >= 0 else {
+            throw DecodingError.dataCorruptedError(forKey: .revision, in: container, debugDescription: "Negative edit revision")
+        }
         style = try container.decode(StoredRecordingStudioStyle.self, forKey: .style)
         zoomEnabled = try container.decodeIfPresent(Bool.self, forKey: .zoomEnabled) ?? true
         zoomCues = try container.decodeIfPresent([ZoomCue].self, forKey: .zoomCues) ?? []
