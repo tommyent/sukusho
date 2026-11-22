@@ -298,6 +298,14 @@ nonisolated enum RecordingCompositionBuilder {
         videoTrack: AVAssetTrack,
         timeline: RecordingClipTimeline
     ) throws -> AVMutableComposition {
+        try makeVideoCompositionWithTimeMap(videoTrack: videoTrack, timeline: timeline).composition
+    }
+
+    /// Same single-source composition alongside its exact edit-to-media map.
+    static func makeVideoCompositionWithTimeMap(
+        videoTrack: AVAssetTrack,
+        timeline: RecordingClipTimeline
+    ) throws -> (composition: AVMutableComposition, timeMap: StudioCompositionTimeMap) {
         let composition = AVMutableComposition()
         guard let video = composition.addMutableTrack(
             withMediaType: .video,
@@ -309,20 +317,39 @@ nonisolated enum RecordingCompositionBuilder {
 
         // The same ranges the sound is laid on, so both share every cut.
         let ranges = StudioAudioComposer.editorRanges(for: timeline)
-        for (clip, editorRange) in zip(timeline.segments, ranges) {
-            let range = CMTimeRange(
-                start: CMTime(seconds: clip.sourceStart, preferredTimescale: 600),
-                duration: CMTime(seconds: clip.duration, preferredTimescale: 600)
+        let trackRange = videoTrack.timeRange
+        var entries: [StudioCompositionTimeMap.Entry] = []
+        entries.reserveCapacity(timeline.segments.count)
+
+        for (index, (clip, editorRange)) in zip(timeline.segments, ranges).enumerated() {
+            let requested = CMTimeRange(
+                start: CMTime(seconds: max(0, clip.sourceStart), preferredTimescale: 600),
+                duration: CMTime(seconds: max(0, clip.duration), preferredTimescale: 600)
             )
-            try video.insertTimeRange(range, of: videoTrack, at: editorRange.start)
-            if abs(clip.speed - 1) > 0.000_001 {
+            let available: CMTimeRange
+            if trackRange.duration > .zero {
+                let intersected = CMTimeRangeGetIntersection(requested, otherRange: trackRange)
+                available = intersected.duration > .zero ? intersected : requested
+            } else {
+                available = requested
+            }
+            try video.insertTimeRange(available, of: videoTrack, at: editorRange.start)
+            if abs(clip.speed - 1) > 0.000_001 || abs(available.duration.seconds - editorRange.duration.seconds) > 0.000_5 {
                 video.scaleTimeRange(
-                    CMTimeRange(start: editorRange.start, duration: range.duration),
+                    CMTimeRange(start: editorRange.start, duration: available.duration),
                     toDuration: editorRange.duration
                 )
             }
+            entries.append(StudioCompositionTimeMap.Entry(
+                segmentIndex: index,
+                segmentID: clip.id,
+                isPrimaryRecording: clip.isPrimaryRecording,
+                mediaFileName: clip.mediaFileName,
+                editorRange: editorRange,
+                sourceRange: available
+            ))
         }
-        return composition
+        return (composition, StudioCompositionTimeMap(entries: entries))
     }
 
     /// Multi-source video composition: inserts segments across alternating
@@ -330,7 +357,8 @@ nonisolated enum RecordingCompositionBuilder {
     /// `preferredTransform` and per-clip `Fit`/`Fill` scaling into `renderSize`.
     /// When `redactionSource` is provided (live preview with redactions),
     /// attaches `StudioMultiSourceRedactionCompositor` so redactions apply
-    /// fail-closed to primary-recording segments only.
+    /// fail-closed to primary-recording segments using each instruction's own
+    /// exact edit-to-media time mapping.
     static func makeMultiSourceVideoComposition(
         primarySource: StudioVideoSource,
         importedSources: [String: StudioVideoSource],
@@ -338,7 +366,7 @@ nonisolated enum RecordingCompositionBuilder {
         renderSize: CGSize,
         targetRect: CGRect? = nil,
         redactionSource: RecordingRedactionPreviewSource? = nil
-    ) throws -> (composition: AVMutableComposition, videoComposition: AVMutableVideoComposition) {
+    ) throws -> (composition: AVMutableComposition, videoComposition: AVMutableVideoComposition, timeMap: StudioCompositionTimeMap) {
         let safeRenderSize = CGSize(
             width: max(2, CGFloat(Int(renderSize.width.rounded()) & ~1)),
             height: max(2, CGFloat(Int(renderSize.height.rounded()) & ~1))
@@ -371,9 +399,12 @@ nonisolated enum RecordingCompositionBuilder {
             videoTracks.append(track)
         }
 
+        let frameDuration = CMTime(value: 1, timescale: 60)
         let ranges = StudioAudioComposer.editorRanges(for: timeline)
         var instructions: [any AVVideoCompositionInstructionProtocol] = []
         instructions.reserveCapacity(timeline.segments.count)
+        var entries: [StudioCompositionTimeMap.Entry] = []
+        entries.reserveCapacity(timeline.segments.count)
 
         for (index, (clip, editorRange)) in zip(timeline.segments, ranges).enumerated() {
             let source: StudioVideoSource
@@ -408,6 +439,16 @@ nonisolated enum RecordingCompositionBuilder {
                 )
             }
 
+            let entry = StudioCompositionTimeMap.Entry(
+                segmentIndex: index,
+                segmentID: clip.id,
+                isPrimaryRecording: clip.isPrimaryRecording,
+                mediaFileName: clip.mediaFileName,
+                editorRange: editorRange,
+                sourceRange: available
+            )
+            entries.append(entry)
+
             let transform = placementTransform(
                 naturalSize: source.naturalSize,
                 preferredTransform: source.preferredTransform,
@@ -417,10 +458,10 @@ nonisolated enum RecordingCompositionBuilder {
 
             if let redactionSource {
                 instructions.append(StudioMultiSourceRedactionInstruction(
-                    timeRange: editorRange,
+                    entry: entry,
+                    frameDuration: frameDuration.seconds,
                     trackID: track.trackID,
                     transform: transform,
-                    isPrimaryRecording: clip.isPrimaryRecording,
                     redactionSource: redactionSource,
                     renderSize: safeRenderSize
                 ))
@@ -437,12 +478,12 @@ nonisolated enum RecordingCompositionBuilder {
 
         let videoComposition = AVMutableVideoComposition()
         videoComposition.renderSize = safeRenderSize
-        videoComposition.frameDuration = CMTime(value: 1, timescale: 60)
+        videoComposition.frameDuration = frameDuration
         videoComposition.instructions = instructions
         if redactionSource != nil {
             videoComposition.customVideoCompositorClass = StudioMultiSourceRedactionCompositor.self
         }
-        return (composition, videoComposition)
+        return (composition, videoComposition, StudioCompositionTimeMap(entries: entries))
     }
 
     /// Single-clip preview composition for live trim preview of an imported clip.
@@ -493,8 +534,89 @@ nonisolated enum RecordingCompositionBuilder {
     }
 }
 
+/// Single source of truth mapping actual composition (edited) CMTime ranges
+/// to each segment's inserted source CMTime range and identity. Built once when
+/// the composition is constructed so export provenance, source-time redaction
+/// coverage, preview masking, and reader end times never drift from the
+/// quantized 600ths composition clock.
+nonisolated struct StudioCompositionTimeMap: Equatable, Sendable {
+    struct Entry: Equatable, Sendable {
+        let segmentIndex: Int
+        let segmentID: UUID
+        let isPrimaryRecording: Bool
+        let mediaFileName: String?
+        let editorRange: CMTimeRange
+        let sourceRange: CMTimeRange
+
+        /// Maps a composition timestamp (clamped to `editorRange`) to the
+        /// corresponding timestamp inside the inserted `sourceRange`.
+        func sourceTime(at editorTime: CMTime) -> TimeInterval {
+            let editorDuration = editorRange.duration.seconds
+            let sourceStart = sourceRange.start.seconds
+            let sourceDuration = sourceRange.duration.seconds
+            guard editorDuration > 0, sourceDuration >= 0 else { return sourceStart }
+            let offset = min(max((editorTime - editorRange.start).seconds, 0), editorDuration)
+            return sourceStart + (offset / editorDuration) * sourceDuration
+        }
+
+        /// Actual source-time interval represented by a frame starting at
+        /// `editorTime` with duration `frameDuration` (clamped inside
+        /// `editorRange`), including scaled/intersected track segments.
+        func sourceInterval(
+            at editorTime: CMTime,
+            frameDuration: TimeInterval
+        ) -> (start: TimeInterval, end: TimeInterval) {
+            let clampedFrame = max(0, frameDuration.isFinite ? frameDuration : 0)
+            let start = sourceTime(at: editorTime)
+            let endEditor = editorTime + CMTime(seconds: clampedFrame, preferredTimescale: 600)
+            let end = sourceTime(at: endEditor)
+            if end > start {
+                return (start, end)
+            }
+            // Held terminal frame right at `editorRange.end`: cover the final
+            // frame's source span so a mask reaching `sourceRange.end` covers it.
+            let editorDuration = editorRange.duration.seconds
+            let sourceDuration = sourceRange.duration.seconds
+            guard editorDuration > 0, sourceDuration > 0, clampedFrame > 0 else {
+                return (start, start)
+            }
+            let stepSource = (clampedFrame / editorDuration) * sourceDuration
+            let backStart = max(sourceRange.start.seconds, start - stepSource)
+            return (min(backStart, start), start)
+        }
+    }
+
+    let entries: [Entry]
+
+    var duration: CMTime {
+        entries.last?.editorRange.end ?? .zero
+    }
+
+    var timeRange: CMTimeRange {
+        CMTimeRange(start: .zero, duration: duration)
+    }
+
+    /// Half-open entry lookup `[editorRange.start, editorRange.end)`, matching
+    /// exact CMTime boundaries on the composition's 600ths timescale.
+    func entry(at time: CMTime) -> Entry? {
+        guard !entries.isEmpty else { return nil }
+        for (index, entry) in entries.enumerated() {
+            if CMTimeCompare(time, entry.editorRange.end) < 0 || index == entries.count - 1 {
+                return entry
+            }
+        }
+        return entries.last
+    }
+
+    func entry(at seconds: TimeInterval) -> Entry? {
+        let safe = seconds.isFinite ? max(0, seconds) : 0
+        return entry(at: CMTime(seconds: safe, preferredTimescale: 600))
+    }
+}
+
 /// Custom video composition instruction carrying one segment's source track,
-/// orientation/aspect transform, and primary-only redaction provider.
+/// exact edit-to-media time mapping, orientation/aspect transform, and editable
+/// primary redaction provider.
 nonisolated final class StudioMultiSourceRedactionInstruction: NSObject, AVVideoCompositionInstructionProtocol, @unchecked Sendable {
     let timeRange: CMTimeRange
     let enablePostProcessing = false
@@ -502,25 +624,29 @@ nonisolated final class StudioMultiSourceRedactionInstruction: NSObject, AVVideo
     let requiredSourceTrackIDs: [NSValue]?
     let passthroughTrackID: CMPersistentTrackID = kCMPersistentTrackID_Invalid
 
+    let entry: StudioCompositionTimeMap.Entry
+    let frameDuration: TimeInterval
     let trackID: CMPersistentTrackID
     let transform: CGAffineTransform
-    let isPrimaryRecording: Bool
     let redactionSource: RecordingRedactionPreviewSource
     let renderSize: CGSize
 
+    var isPrimaryRecording: Bool { entry.isPrimaryRecording }
+
     init(
-        timeRange: CMTimeRange,
+        entry: StudioCompositionTimeMap.Entry,
+        frameDuration: TimeInterval,
         trackID: CMPersistentTrackID,
         transform: CGAffineTransform,
-        isPrimaryRecording: Bool,
         redactionSource: RecordingRedactionPreviewSource,
         renderSize: CGSize
     ) {
-        self.timeRange = timeRange
+        self.timeRange = entry.editorRange
+        self.entry = entry
+        self.frameDuration = frameDuration
         self.requiredSourceTrackIDs = [NSNumber(value: trackID)]
         self.trackID = trackID
         self.transform = transform
-        self.isPrimaryRecording = isPrimaryRecording
         self.redactionSource = redactionSource
         self.renderSize = renderSize
         super.init()
@@ -529,7 +655,8 @@ nonisolated final class StudioMultiSourceRedactionInstruction: NSObject, AVVideo
 
 /// Live-playback compositor used only when a multi-source timeline also has
 /// active redactions. Transforms each segment into `renderSize` and applies
-/// `RecordingRedactionFilter.apply` fail-closed to primary segments only.
+/// `RecordingRedactionFilter.apply` fail-closed to primary segments using the
+/// instruction's own exact source-time mapping.
 nonisolated final class StudioMultiSourceRedactionCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
     var sourcePixelBufferAttributes: [String: any Sendable]? {
         [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
@@ -561,8 +688,14 @@ nonisolated final class StudioMultiSourceRedactionCompositor: NSObject, AVVideoC
         let black = CIImage(color: .black).cropped(to: renderExtent)
         var composed = sourceImage.composited(over: black).cropped(to: renderExtent)
 
-        if instruction.isPrimaryRecording {
-            let active = instruction.redactionSource.activeRedactions(atEditorTime: request.compositionTime.seconds)
+        if instruction.entry.isPrimaryRecording {
+            let interval = instruction.entry.sourceInterval(
+                at: request.compositionTime,
+                frameDuration: instruction.frameDuration
+            )
+            let active = instruction.redactionSource.currentRedactions().filter {
+                $0.covers(sourceStart: interval.start, sourceEnd: interval.end)
+            }
             if !active.isEmpty {
                 do {
                     composed = try RecordingRedactionFilter.apply(active, to: composed)

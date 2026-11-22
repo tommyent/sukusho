@@ -261,12 +261,6 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
         let canvasHeight = max(2, Int(outputSize.height.rounded()) & ~1)
         let canvasSize = CGSize(width: canvasWidth, height: canvasHeight)
 
-        let exportStartTime = CMTime.zero
-        let exportTimeRange = CMTimeRange(
-            start: exportStartTime,
-            duration: CMTime(seconds: clipTimeline.duration, preferredTimescale: 600)
-        )
-
         let readerOutputSettings: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
             kCVPixelBufferMetalCompatibilityKey as String: true,
@@ -276,8 +270,12 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
         // Readers: single-source primary timelines keep today's fast
         // AVAssetReaderTrackOutput path; multi-source sequences use one
         // composition with per-segment orientation/Fit/Fill transforms.
+        // Both build one `StudioCompositionTimeMap` from the actual quantized
+        // 600ths ranges so reader bounds, sample provenance, and redactions
+        // never drift from the composition.
         let screenReader: AVAssetReader
         let videoOutput: AVAssetReaderOutput
+        let timeMap: StudioCompositionTimeMap
         var retainedImportedSources: [String: StudioVideoSource] = [:]
         if clipTimeline.hasImportedClips {
             let (naturalSize, preferredTransform) = try await sourceVideo.load(.naturalSize, .preferredTransform)
@@ -317,13 +315,14 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
                 cardSize: layoutForTarget.cardRect.size,
                 contentFillSize: layoutForTarget.contentFillSize
             )
-            let (composedAsset, avVideoComposition) = try RecordingCompositionBuilder.makeMultiSourceVideoComposition(
+            let (composedAsset, avVideoComposition, builtTimeMap) = try RecordingCompositionBuilder.makeMultiSourceVideoComposition(
                 primarySource: primarySource,
                 importedSources: retainedImportedSources,
                 timeline: clipTimeline,
                 renderSize: primaryDisplaySize,
                 targetRect: targetRect
             )
+            timeMap = builtTimeMap
             let tracks = try await composedAsset.loadTracks(withMediaType: .video)
             guard !tracks.isEmpty else { throw ExportError.noVideoTrack }
             screenReader = try AVAssetReader(asset: composedAsset)
@@ -336,10 +335,11 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             screenReader.add(composedOutput)
             videoOutput = composedOutput
         } else {
-            let videoComposition = try RecordingCompositionBuilder.makeVideoComposition(
+            let (videoComposition, builtTimeMap) = try RecordingCompositionBuilder.makeVideoCompositionWithTimeMap(
                 videoTrack: sourceVideo,
                 timeline: clipTimeline
             )
+            timeMap = builtTimeMap
             guard let videoTrack = try await videoComposition.loadTracks(withMediaType: .video).first else {
                 throw ExportError.noVideoTrack
             }
@@ -352,6 +352,11 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             screenReader.add(trackOutput)
             videoOutput = trackOutput
         }
+        guard timeMap.duration > .zero else {
+            throw VideoTrimExportError.invalidRange
+        }
+        let exportStartTime = CMTime.zero
+        let exportTimeRange = timeMap.timeRange
         screenReader.timeRange = exportTimeRange
 
         var audioOutput: AVAssetReaderAudioMixOutput?
@@ -511,7 +516,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
                 compositor: compositor,
                 cameraFeed: cameraFeed,
                 videoOverlayFeed: videoOverlayFeed,
-                clipTimeline: clipTimeline,
+                timeMap: timeMap,
                 timing: timing,
                 cancelFlag: cancelFlag,
                 progress: progress
@@ -573,7 +578,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
         compositor: StudioFrameCompositor,
         cameraFeed: RecordingCameraFrameFeed?,
         videoOverlayFeed: VideoOverlayFrameFeed?,
-        clipTimeline: RecordingClipTimeline,
+        timeMap: StudioCompositionTimeMap,
         timing: RecordingExportTiming,
         cancelFlag: CancelFlag,
         progress: @escaping @Sendable (Double) -> Void
@@ -585,23 +590,31 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
         // the last click). Each tick re-renders the newest source frame at
         // or before it; only writing on source arrivals would hold the last
         // zoomed frame through the move and then visibly jump.
-        let duration = clipTimeline.duration
+        let duration = timeMap.duration.seconds
         let frameCount = timing.frameCount(for: duration)
 
+        struct DecodedSample {
+            let buffer: CVPixelBuffer
+            let pts: CMTime
+            let entry: StudioCompositionTimeMap.Entry
+        }
+
         var decodeSeconds = 0.0
-        func nextSourceFrame() -> (buffer: CVPixelBuffer, time: TimeInterval)? {
+        func nextSourceFrame() -> DecodedSample? {
             let decodeStart = CFAbsoluteTimeGetCurrent()
             defer { decodeSeconds += CFAbsoluteTimeGetCurrent() - decodeStart }
             while let sampleBuffer = output.copyNextSampleBuffer() {
                 guard let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { continue }
-                return (buffer, CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds)
+                let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+                guard let entry = timeMap.entry(at: pts) else { continue }
+                return DecodedSample(buffer: buffer, pts: pts, entry: entry)
             }
             return nil
         }
 
-        var currentBuffer: CVPixelBuffer?
+        var currentSample: DecodedSample?
         var pending = nextSourceFrame()
-        var previousClipID: UUID?
+        var previousSegmentID: UUID?
         var renderSeconds = 0.0
         var writerWaitSeconds = 0.0
         var renderedFrames = 0
@@ -642,28 +655,50 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
 
         for frame in 0..<frameCount {
             if cancelFlag.isCancelled { throw ExportError.cancelled }
-            let editorTime = timing.time(forFrame: frame)
-            guard let location = clipTimeline.location(at: editorTime) else { break }
-            let sourceTime = location.sourceTime
+            let editorCMTime = timing.presentationTime(forFrame: frame)
+            if frame > 0, CMTimeCompare(editorCMTime, timeMap.duration) >= 0 { break }
+            let editorTime = editorCMTime.seconds
+            guard let tickEntry = timeMap.entry(at: editorCMTime) else { break }
 
-            if previousClipID != location.segmentID {
-                // Never carry a sparse screen-capture frame across a hard
-                // edit boundary - the reader may not have caught up yet to
-                // the new clip's starting source position.
-                if previousClipID != nil {
-                    currentBuffer = nil
+            if previousSegmentID != tickEntry.segmentID {
+                // Never carry a sample across a cut boundary to a different segment.
+                if previousSegmentID != nil {
+                    currentSample = nil
                 }
-                previousClipID = location.segmentID
+                previousSegmentID = tickEntry.segmentID
             }
 
-            while let sample = pending, sample.time <= editorTime {
-                currentBuffer = sample.buffer
+            while let sample = pending, CMTimeCompare(sample.pts, editorCMTime) <= 0 {
+                currentSample = sample
                 pending = nextSourceFrame()
             }
-            // Ticks before the first source frame show it early rather than
-            // emitting black; a capture with no frames at all has nothing to
-            // render.
-            guard let sourceBuffer = currentBuffer ?? pending?.buffer else { break }
+
+            // Select ONLY a sample whose own provenance belongs to this cut's
+            // segment; never fall back to a sample from a different segment.
+            let selectedSample: DecodedSample?
+            if let current = currentSample, current.entry.segmentID == tickEntry.segmentID {
+                selectedSample = current
+            } else if let next = pending, next.entry.segmentID == tickEntry.segmentID {
+                selectedSample = next
+            } else {
+                selectedSample = nil
+            }
+            guard let selectedSample else {
+                if pending == nil && currentSample == nil { break }
+                continue
+            }
+
+            let provenance = selectedSample.entry
+            let sourceTime = provenance.sourceTime(at: editorCMTime)
+            let tickSourceInterval = provenance.sourceInterval(
+                at: editorCMTime,
+                frameDuration: timing.frameInterval
+            )
+            let sampleSourceTime = provenance.sourceTime(at: selectedSample.pts)
+            let redactionInterval = (
+                start: min(tickSourceInterval.start, sampleSourceTime),
+                end: max(tickSourceInterval.end, sampleSourceTime)
+            )
 
             if cachedPool == nil { cachedPool = adaptor.pixelBufferPool }
             guard let pool = cachedPool else {
@@ -675,19 +710,20 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
                 throw ExportError.writerFailed(writer.error)
             }
 
-            let isPrimary = clipTimeline.segments[location.segmentIndex].isPrimaryRecording
+            let isPrimary = provenance.isPrimaryRecording
             let cameraBuffer = isPrimary ? try cameraFeed?.latestFrame(at: sourceTime) : nil
             let videoOverlayFrame = try await videoOverlayFeed?.frame(at: editorTime)
-            let nextTime = timing.time(forFrame: frame + 1)
-            let sourceRepeats = (pending == nil || pending!.time > nextTime)
-                && clipTimeline.location(at: nextTime)?.segmentID == location.segmentID
+            let nextCMTime = timing.presentationTime(forFrame: frame + 1)
+            let sourceRepeats = (pending == nil || CMTimeCompare(pending!.pts, nextCMTime) > 0)
+                && timeMap.entry(at: nextCMTime)?.segmentID == provenance.segmentID
             let renderStart = CFAbsoluteTimeGetCurrent()
             let begun = try compositor.begin(
-                screenFrame: sourceBuffer,
+                screenFrame: selectedSample.buffer,
                 cameraFrame: cameraBuffer,
                 videoOverlayFrame: videoOverlayFrame,
                 editorTime: editorTime,
                 sourceTime: sourceTime,
+                redactionSourceInterval: redactionInterval,
                 isPrimaryRecording: isPrimary,
                 sourceRepeatsOnNextFrame: sourceRepeats,
                 into: destinationBuffer
@@ -894,8 +930,8 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
     /// The virtual camera for a frame: identity on imported clips (zooms,
     /// reframe, and primary video crop apply only to primary-recording clips);
     /// reframe crop-and-follow or zoom viewport on primary segments.
-    private func viewportFrame(at editorTime: TimeInterval) -> ViewportFrame {
-        guard clipTimeline.isPrimaryRecording(at: editorTime) else {
+    private func viewportFrame(at editorTime: TimeInterval, isPrimaryRecording: Bool) -> ViewportFrame {
+        guard isPrimaryRecording else {
             return .identity
         }
         let base = reframe?.frame(at: editorTime) ?? viewportTimeline.frame(at: editorTime)
@@ -928,13 +964,14 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
         videoOverlayFrame: VideoOverlayFrameFeed.Frame? = nil,
         editorTime: TimeInterval,
         sourceTime: TimeInterval,
+        redactionSourceInterval: (start: TimeInterval, end: TimeInterval),
         isPrimaryRecording: Bool,
         sourceRepeatsOnNextFrame: Bool,
         into destination: CVPixelBuffer
     ) throws -> PendingFrame {
         let active = isPrimaryRecording
             ? redactions.filter {
-                $0.covers(editorTime: editorTime, frameDuration: timing.frameInterval, timeline: clipTimeline)
+                $0.covers(sourceStart: redactionSourceInterval.start, sourceEnd: redactionSourceInterval.end)
             }
             : []
         let screenFrame = try RecordingRedactionFilter.buffer(
@@ -946,7 +983,7 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
         let bypassScreenCache = bypassScreenCache || !active.isEmpty
         let sampleRects = isPrimaryRecording
             ? timing.screenSampleRects(at: editorTime) { time in
-                layout.frameRect(for: viewportFrame(at: time))
+                layout.frameRect(for: viewportFrame(at: time, isPrimaryRecording: true))
             }
             : [layout.frameRect(for: .identity)]
         let sampleCount = sampleRects.count
@@ -955,7 +992,7 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
         // Cache only a settled layer that can be reused on the next tick.
         // Moving frames and continuously changing video avoid the extra copy.
         let shouldCacheScreen = !bypassScreenCache && sourceRepeatsOnNextFrame && sampleCount == 1
-            && sampleRects[0] == layout.frameRect(for: viewportFrame(at: editorTime + timing.frameInterval))
+            && sampleRects[0] == layout.frameRect(for: viewportFrame(at: editorTime + timing.frameInterval, isPrimaryRecording: isPrimaryRecording))
             && StudioScreenLayerCache.canCapture(width: Int(canvasSize.width), height: Int(canvasSize.height))
         // Mirrors the cache transitions finish(_:) applies in order: a
         // restored layer stays cached, a newly cached one replaces it, and
@@ -1321,7 +1358,7 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
             return
         }
 
-        let drawRect = layout.frameRect(for: viewportFrame(at: editorTime))
+        let drawRect = layout.frameRect(for: viewportFrame(at: editorTime, isPrimaryRecording: true))
         let tip = CGPoint(
             x: drawRect.minX + pointer.location.x * drawRect.width,
             y: canvasSize.height - (drawRect.minY + pointer.location.y * drawRect.height)
@@ -1435,7 +1472,7 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
     /// clip as the source pixels, with widths that scale with the zoom.
     private func drawInk(sourceTime: TimeInterval, editorTime: TimeInterval, in context: CGContext) {
         guard let frames = ink?.frames(at: sourceTime), !frames.isEmpty else { return }
-        let drawRect = layout.frameRect(for: viewportFrame(at: editorTime))
+        let drawRect = layout.frameRect(for: viewportFrame(at: editorTime, isPrimaryRecording: true))
         let lineScale = min(drawRect.width, drawRect.height)
         context.saveGState()
         context.addPath(roundedPath(for: layout.cardRect, radius: layout.cardCornerRadius))

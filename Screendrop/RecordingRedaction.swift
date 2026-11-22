@@ -141,6 +141,16 @@ nonisolated struct RecordingRedaction: Codable, Equatable, Hashable, Identifiabl
             editorTime < $0.editorEnd && editorTime + frameDuration > $0.editorStart
         }
     }
+
+    /// True when this redaction overlaps the half-open primary source interval
+    /// `[sourceStart, sourceEnd)` (or contains the point when `sourceEnd <= sourceStart`).
+    func covers(sourceStart: TimeInterval, sourceEnd: TimeInterval) -> Bool {
+        guard end > start, sourceStart.isFinite, sourceEnd.isFinite else { return false }
+        if sourceEnd > sourceStart {
+            return sourceStart < end && sourceEnd > start
+        }
+        return sourceStart >= start && sourceStart < end
+    }
 }
 
 nonisolated enum RecordingRedactionError: LocalizedError {
@@ -250,6 +260,10 @@ nonisolated final class RecordingRedactionPreviewSource: @unchecked Sendable {
             self.redactions = redactions
             self.clipTimeline = clipTimeline
         }
+    }
+
+    func currentRedactions() -> [RecordingRedaction] {
+        lock.withLock { redactions }
     }
 
     func activeRedactions(
