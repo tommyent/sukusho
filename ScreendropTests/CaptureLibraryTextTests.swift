@@ -59,6 +59,29 @@ struct CaptureLibraryTextTests {
         #expect(try RecordingRedaction.contentFingerprint(firstDecode) != RecordingRedaction.contentFingerprint(modified))
     }
 
+    @Test func writeFencePreventsStaleQueuedSaveFromResurrectingPurgedEntry() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Sukusho-WriteFence-\(UUID())", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = CaptureTextIndexStore(directory: directory)
+        let fence = CaptureTextIndexWriteFence()
+        let oldEntry = CaptureTextEntry(id: "recording:secret", fingerprint: "a:1", paragraphs: ["SECRETKEY"])
+        let staleGeneration = fence.generation(for: oldEntry.id)
+        try fence.saveIfCurrent(oldEntry, generation: staleGeneration, in: store)
+        #expect(store.loadAll()[oldEntry.id] == oldEntry)
+
+        // Purge bumps the generation and deletes on disk; an earlier queued save with the stale generation is ignored.
+        fence.purgeNow(ids: [oldEntry.id], in: store)
+        #expect(store.loadAll()[oldEntry.id] == nil)
+        try fence.saveIfCurrent(oldEntry, generation: staleGeneration, in: store)
+        #expect(store.loadAll()[oldEntry.id] == nil)
+
+        // A fresh save at the post-purge generation writes normally.
+        let rebuilt = CaptureTextEntry(id: oldEntry.id, fingerprint: "a:1:r=deadbeef", paragraphs: ["Redacted"])
+        let nextGeneration = fence.generation(for: rebuilt.id)
+        try fence.saveIfCurrent(rebuilt, generation: nextGeneration, in: store)
+        #expect(store.loadAll()[rebuilt.id] == rebuilt)
+    }
+
     @Test func tallCapturesKeepAReadableShortSide() {
         #expect(CaptureTextIndexPlan.readingSize(width: 3420, height: 2214) == 3420)
         #expect(CaptureTextIndexPlan.readingSize(width: 5120, height: 2880) == 4096)

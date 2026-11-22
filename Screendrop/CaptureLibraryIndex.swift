@@ -69,6 +69,7 @@ final class CaptureLibraryIndex {
     @ObservationIgnored private var runner: Task<Void, Never>?
     /// The last write to the store queued; each waits for the one before.
     @ObservationIgnored private var lastWrite: Task<Void, Never>?
+    @ObservationIgnored private let writeFence = CaptureTextIndexWriteFence()
 
     private init() {}
 
@@ -126,7 +127,7 @@ final class CaptureLibraryIndex {
         var entry = entries[item.id] ?? CaptureTextEntry(id: item.id, fingerprint: "", paragraphs: [])
         entry.dismissedSuggestions = (entry.dismissedSuggestions ?? []) + [CaptureInsightRules.fold(tag)]
         entries[item.id] = entry
-        write { [entry] in try $0.save(entry) }
+        save(entry)
     }
 
     /// Runs a store write after every write queued before it, so the file
@@ -143,6 +144,37 @@ final class CaptureLibraryIndex {
         }
         lastWrite = task
         return task
+    }
+
+    @discardableResult
+    private func save(_ entry: CaptureTextEntry) -> Task<Void, Never> {
+        let fence = writeFence
+        let generation = fence.generation(for: entry.id)
+        return write { store in
+            try fence.saveIfCurrent(entry, generation: generation, in: store)
+        }
+    }
+
+    private func matchesCurrentDiskRedactions(_ item: CaptureLibraryItem) -> Bool {
+        guard item.isVideo,
+              let session = item.session ?? RecordingDeliverable.session(for: item.fileURL) else { return true }
+        let currentTag = CaptureLibraryScanner.redactionTag(for: session)
+        guard currentTag != CaptureTextIndexPlan.unreadableRedactionTag else { return false }
+        let expected: String? = currentTag.isEmpty ? nil : currentTag
+        return CaptureTextIndexPlan.redactionTag(in: item.thumbnailKey) == expected
+    }
+
+    private func purgeStaleRedaction(for item: CaptureLibraryItem) {
+        let hadEntry = entries[item.id] != nil || foldedText[item.id] != nil
+        lastModelFailure[item.id] = nil
+        entries[item.id] = nil
+        foldedText[item.id] = nil
+        writeFence.purgeNow(ids: [item.id], in: store)
+        if hadEntry {
+            CaptureLibraryModel.shared.textIndexDidChange()
+            CaptureLibraryModel.shared.insightsDidChange()
+        }
+        CaptureLibraryModel.shared.refresh()
     }
 
     /// Forgets captures that are gone and queues every capture whose text is
@@ -164,14 +196,13 @@ final class CaptureLibraryIndex {
                 entries[id] = nil
                 foldedText[id] = nil
             }
+            // Atomically bump each removed ID's write generation and unlink from disk under
+            // the write fence so no earlier queued save can resurrect purged bytes.
+            writeFence.purgeNow(ids: removedIDs, in: store)
             if !redactionPurged.isEmpty {
-                // Purge from disk immediately as well as after any in-flight write, so callers
-                // inspecting disk right after a scan never observe stale pre-redaction OCR/insights.
-                store.remove(ids: redactionPurged)
                 CaptureLibraryModel.shared.textIndexDidChange()
                 CaptureLibraryModel.shared.insightsDidChange()
             }
-            write { $0.remove(ids: removedIDs) }
         }
         planInsights(items)
         scheduleRetries()
@@ -268,17 +299,21 @@ final class CaptureLibraryIndex {
                 let isUnreadableRedaction = item.isVideo
                     && CaptureTextIndexPlan.redactionTag(in: item.thumbnailKey) == CaptureTextIndexPlan.unreadableRedactionTag
                 if isStillCurrent && !isUnreadableRedaction {
-                    let previous = entries[item.id]
-                    // Routine edits keep the title the user has seen, unless redactions changed
-                    // (a prior insight could reflect redacted text or frames).
-                    let redactionsChanged = item.isVideo
-                        && CaptureTextIndexPlan.redactionTag(in: previous?.fingerprint) != CaptureTextIndexPlan.redactionTag(in: entry.fingerprint)
-                    entry.insight = redactionsChanged ? nil : previous?.insight
-                    entry.dismissedSuggestions = previous?.dismissedSuggestions
-                    entries[item.id] = entry
-                    foldedText[item.id] = Self.fold(entry)
-                    CaptureLibraryModel.shared.textIndexDidChange()
-                    await write { [entry] in try $0.save(entry) }.value
+                    if !matchesCurrentDiskRedactions(item) {
+                        purgeStaleRedaction(for: item)
+                    } else {
+                        let previous = entries[item.id]
+                        // Routine edits keep the title the user has seen, unless redactions changed
+                        // (a prior insight could reflect redacted text or frames).
+                        let redactionsChanged = item.isVideo
+                            && CaptureTextIndexPlan.redactionTag(in: previous?.fingerprint) != CaptureTextIndexPlan.redactionTag(in: entry.fingerprint)
+                        entry.insight = redactionsChanged ? nil : previous?.insight
+                        entry.dismissedSuggestions = previous?.dismissedSuggestions
+                        entries[item.id] = entry
+                        foldedText[item.id] = Self.fold(entry)
+                        CaptureLibraryModel.shared.textIndexDidChange()
+                        await save(entry).value
+                    }
                 }
             }
             // Re-plans, so a capture edited while it was read is read again.
@@ -294,8 +329,21 @@ final class CaptureLibraryIndex {
     }
 
     private func startInsight() {
-        let item = insightQueue.removeFirst()
-        guard let entry = entries[item.id] else { return }
+        var nextCandidate: (item: CaptureLibraryItem, entry: CaptureTextEntry)?
+        while !insightQueue.isEmpty {
+            let candidate = insightQueue.removeFirst()
+            guard let candidateEntry = entries[candidate.id] else { continue }
+            if !matchesCurrentDiskRedactions(candidate) {
+                purgeStaleRedaction(for: candidate)
+                continue
+            }
+            nextCandidate = (candidate, candidateEntry)
+            break
+        }
+        guard let (item, entry) = nextCandidate else {
+            updatePending()
+            return
+        }
         describing = item
         outstandingInsights += 1
         updatePending()
@@ -309,7 +357,20 @@ final class CaptureLibraryIndex {
             let isStillCurrent = latestItems?.contains(where: {
                 $0.id == item.id && $0.thumbnailKey == item.thumbnailKey
             }) == true && entries[item.id]?.isCurrent(fingerprint: item.thumbnailKey) == true
-            guard isStillCurrent, !item.isVideo || image != nil else {
+            guard isStillCurrent else {
+                insightDeadline?.cancel()
+                insightDeadline = nil
+                describing = nil
+                return
+            }
+            if !matchesCurrentDiskRedactions(item) {
+                insightDeadline?.cancel()
+                insightDeadline = nil
+                describing = nil
+                purgeStaleRedaction(for: item)
+                return
+            }
+            guard !item.isVideo || image != nil else {
                 insightDeadline?.cancel()
                 insightDeadline = nil
                 describing = nil
@@ -329,10 +390,14 @@ final class CaptureLibraryIndex {
                 lastModelFailure[item.id] = nil
                 guard latestItems?.contains(where: { $0.id == item.id && $0.thumbnailKey == item.thumbnailKey }) == true,
                       var current = entries[item.id], current.isCurrent(fingerprint: item.thumbnailKey) else { return }
+                guard matchesCurrentDiskRedactions(item) else {
+                    purgeStaleRedaction(for: item)
+                    return
+                }
                 current.insight = insight
                 entries[item.id] = current
                 CaptureLibraryModel.shared.insightsDidChange()
-                write { [current] in try $0.save(current) }
+                save(current)
             case nil: break
             }
         }

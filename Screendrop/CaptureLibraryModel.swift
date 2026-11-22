@@ -368,15 +368,24 @@ final class CaptureLibraryModel {
 }
 
 nonisolated enum CaptureLibraryScanner {
-    /// Trailing redaction fingerprint tag for a recording session (`""`, `":r=<16hex>"`, or `":r=unreadable"`).
-    static func redactionTag(for session: RecordingSession) -> String {
+    /// Trailing redaction fingerprint tag for an in-memory redaction list (`""`, `":r=<16hex>"`, or `":r=unreadable"`).
+    static func redactionTag(for redactions: [RecordingRedaction]) -> String {
         do {
-            let redactions = try session.editDocumentForRendering()?.redactions ?? []
             for redaction in redactions { try redaction.validate() }
             let digest = try RecordingRedaction.contentFingerprint(redactions)
             return digest.isEmpty ? "" : ":r=\(digest)"
         } catch {
-            return ":r=unreadable"
+            return CaptureTextIndexPlan.unreadableRedactionTag
+        }
+    }
+
+    /// Trailing redaction fingerprint tag for a recording session (`""`, `":r=<16hex>"`, or `":r=unreadable"`).
+    static func redactionTag(for session: RecordingSession) -> String {
+        do {
+            let redactions = try session.editDocumentForRendering()?.redactions ?? []
+            return redactionTag(for: redactions)
+        } catch {
+            return CaptureTextIndexPlan.unreadableRedactionTag
         }
     }
 

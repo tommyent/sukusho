@@ -360,6 +360,31 @@ nonisolated struct CaptureTextIndexStore: Sendable {
     }
 }
 
+/// Serializes per-ID saves against immediate purges so an older queued save
+/// can never recreate a purged file after `purgeNow` removes it.
+nonisolated final class CaptureTextIndexWriteFence: @unchecked Sendable {
+    private let lock = NSLock()
+    private var generations: [String: UInt64] = [:]
+
+    func generation(for id: String) -> UInt64 {
+        lock.withLock { generations[id, default: 0] }
+    }
+
+    func saveIfCurrent(_ entry: CaptureTextEntry, generation: UInt64, in store: CaptureTextIndexStore) throws {
+        try lock.withLock {
+            guard generations[entry.id, default: 0] == generation else { return }
+            try store.save(entry)
+        }
+    }
+
+    func purgeNow(ids: [String], in store: CaptureTextIndexStore) {
+        lock.withLock {
+            for id in ids { generations[id, default: 0] &+= 1 }
+            store.remove(ids: ids)
+        }
+    }
+}
+
 /// Library search text. Plain words match the way the name and tags always
 /// have, ignoring case and accents, so "cafe" finds "Café"; operators such as
 /// `app:chrome` narrow by a field. Every part has to match.
