@@ -249,9 +249,19 @@ nonisolated enum StudioAudioConform {
             new.segments.filter { isSameMediaOccurrence($0, oldSeg) }
         }
 
-        // Retain hidden intervals while at least one eligible flanking segment survives.
+        // Retain hidden intervals while at least one eligible flanking segment
+        // from the original owner's occurrence survives. Checking against the
+        // pre-edit owner before promotion prevents a saved cross-occurrence
+        // secondary from inheriting a deleted repeat's hidden audio.
         var capturedHidden: [HiddenLinkedRange] = hidden.compactMap { entry in
-            let surviving = entry.eligibleSegmentIDs.filter { newSegmentsByID[$0] != nil }
+            let originalOwner = oldSegmentsByID[entry.segmentID] ?? newSegmentsByID[entry.segmentID]
+            let surviving = entry.eligibleSegmentIDs.filter { id in
+                guard let candidate = newSegmentsByID[id] else { return false }
+                if let originalOwner, !isSameMediaOccurrence(candidate, originalOwner) {
+                    return false
+                }
+                return true
+            }
             guard let primary = surviving.first else { return nil }
             var updated = entry
             updated.segmentID = primary

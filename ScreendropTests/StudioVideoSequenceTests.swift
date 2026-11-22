@@ -2000,6 +2000,118 @@ struct StudioVideoSequenceTests {
         #expect(primaryRipple.hidden.contains { $0.secondarySegmentID == primary2.id })
     }
 
+    // MARK: - Round 7 Regression (Finding 22)
+
+    @Test func deletingOccurrenceDropsSavedCrossOccurrenceSecondaryWhileKeepingSameOccurrenceRestore() throws {
+        // Sol's saved-state scenario: A and B are separate occurrences of the same
+        // imported file, with a legacy/Round-5 saved HiddenLinkedRange naming A as
+        // owner and B as secondary.
+        let repeatA = RecordingClipSegment(
+            sourceStart: 0,
+            sourceEnd: 1.50,
+            mediaFileName: "clip.mov",
+            displayName: "Clip",
+            sourceDuration: 2.0
+        )
+        let repeatB = RecordingClipSegment(
+            sourceStart: 1.80,
+            sourceEnd: 2.00,
+            mediaFileName: "clip.mov",
+            displayName: "Clip",
+            sourceDuration: 2.0
+        )
+        let beforeDelete = RecordingClipTimeline(segments: [repeatA, repeatB])
+        var template = RecordingAudioClip(
+            fileName: "tone.m4a",
+            displayName: "Tone",
+            start: 1.50,
+            fileDuration: 2.0
+        )
+        template.trimStart = 0.25
+        template.trimEnd = 0.45
+        template.isLinked = true
+        let savedCrossRange = StudioAudioConform.HiddenLinkedRange(
+            segmentID: repeatA.id,
+            secondarySegmentID: repeatB.id,
+            sourceStart: 1.50,
+            sourceEnd: 1.70,
+            filePerSource: 1.0,
+            clip: template
+        )
+
+        // Step 1: Delete A. B must NOT be promoted to owner or persisted in hidden.
+        let afterDeleteA = RecordingClipTimeline(segments: [repeatB])
+        let deleteResult = StudioAudioConform.conform(
+            [],
+            hidden: [savedCrossRange],
+            from: beforeDelete,
+            to: afterDeleteA
+        )
+        #expect(deleteResult.clips.isEmpty)
+        #expect(deleteResult.hidden.isEmpty)
+
+        // Step 2: Extend B's source start from 1.80 back to 1.50 -> A's tone must NOT appear.
+        var bExtended = repeatB
+        bExtended.sourceStart = 1.50
+        let afterExtendB = RecordingClipTimeline(segments: [bExtended])
+        let extendBResult = StudioAudioConform.conform(
+            deleteResult.clips,
+            hidden: deleteResult.hidden,
+            from: afterDeleteA,
+            to: afterExtendB
+        )
+        #expect(extendBResult.clips.isEmpty)
+
+        // Control: two split pieces of the SAME occurrence still promote the surviving
+        // sibling when the first piece is deleted and restore 0.20 s when widened.
+        let singleRepeat = RecordingClipSegment(
+            sourceStart: 0,
+            sourceEnd: 2.0,
+            mediaFileName: "clip.mov",
+            displayName: "Clip",
+            sourceDuration: 2.0
+        )
+        let splitSame = try #require(RecordingClipTimeline(segments: [singleRepeat]).split(at: 1.60)).timeline
+        var piece1 = splitSame.segments[0]
+        piece1.sourceEnd = 1.50
+        var piece2 = splitSame.segments[1]
+        piece2.sourceStart = 1.80
+        #expect(piece1.effectiveOccurrenceID == piece2.effectiveOccurrenceID)
+
+        let sameBeforeDelete = RecordingClipTimeline(segments: [piece1, piece2])
+        let sameHiddenRange = StudioAudioConform.HiddenLinkedRange(
+            segmentID: piece1.id,
+            secondarySegmentID: piece2.id,
+            sourceStart: 1.50,
+            sourceEnd: 1.70,
+            filePerSource: 1.0,
+            clip: template
+        )
+        let sameAfterDelete = RecordingClipTimeline(segments: [piece2])
+        let sameDeleteResult = StudioAudioConform.conform(
+            [],
+            hidden: [sameHiddenRange],
+            from: sameBeforeDelete,
+            to: sameAfterDelete
+        )
+        #expect(sameDeleteResult.hidden.count == 1)
+        #expect(sameDeleteResult.hidden[0].segmentID == piece2.id)
+        #expect(sameDeleteResult.hidden[0].secondarySegmentID == nil)
+
+        var piece2Extended = piece2
+        piece2Extended.sourceStart = 1.50
+        let sameAfterExtend = RecordingClipTimeline(segments: [piece2Extended])
+        let sameRestoreResult = StudioAudioConform.conform(
+            sameDeleteResult.clips,
+            hidden: sameDeleteResult.hidden,
+            from: sameAfterDelete,
+            to: sameAfterExtend
+        )
+        #expect(sameRestoreResult.clips.count == 1)
+        #expect(abs(sameRestoreResult.clips[0].start - 0.0) < 0.002)
+        #expect(abs(sameRestoreResult.clips[0].end - 0.20) < 0.002)
+    }
+
     // MARK: - Synthetic Movie Helper
 
     private static func writeSyntheticMovie(
