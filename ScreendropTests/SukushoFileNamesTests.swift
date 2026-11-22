@@ -51,13 +51,19 @@ struct SukushoFileNamesTests {
         #expect((legacyTags?["public.filename-extension"] as? [String])?.contains("screendroprec") == true)
 
         let docTypes = try #require(plist["CFBundleDocumentTypes"] as? [[String: Any]])
-        let recordingDoc = try #require(docTypes.first {
-            ($0["LSItemContentTypes"] as? [String])?.contains("com.tommyent.sukusho.recording") == true
+        let sukushoDoc = try #require(docTypes.first {
+            ($0["LSItemContentTypes"] as? [String]) == ["com.tommyent.sukusho.recording"]
         })
-        #expect(recordingDoc["CFBundleTypeRole"] as? String == "Editor")
-        #expect(recordingDoc["LSHandlerRank"] as? String == "Owner")
-        #expect(recordingDoc["LSTypeIsPackage"] as? Bool == true)
-        #expect((recordingDoc["LSItemContentTypes"] as? [String])?.contains("com.fayazahmed.screendrop.recording") == true)
+        #expect(sukushoDoc["CFBundleTypeRole"] as? String == "Editor")
+        #expect(sukushoDoc["LSHandlerRank"] as? String == "Owner")
+        #expect(sukushoDoc["LSTypeIsPackage"] as? Bool == true)
+
+        let legacyDoc = try #require(docTypes.first {
+            ($0["LSItemContentTypes"] as? [String]) == ["com.fayazahmed.screendrop.recording"]
+        })
+        #expect(legacyDoc["CFBundleTypeRole"] as? String == "Editor")
+        #expect(legacyDoc["LSHandlerRank"] as? String == "Alternate")
+        #expect(legacyDoc["LSTypeIsPackage"] as? Bool == true)
 
         // When the built app is registered with Launch Services, UTType resolves .sukushorec as a package.
         if let resolved = UTType(filenameExtension: "sukushorec"), !resolved.isDynamic {
