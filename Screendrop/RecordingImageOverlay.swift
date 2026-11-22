@@ -678,7 +678,14 @@ nonisolated enum RecordingPackageMedia {
         "project.json",
         renderStampFileName
     ]
-    private static let deliverableExtensions = ["mov", "mp4"]
+    static let renderBaseName = "render"
+
+    static func cachedVideoFileNames(in package: URL) -> [String] {
+        let legacy = package.deletingPathExtension().lastPathComponent
+        let stems = legacy == renderBaseName ? [renderBaseName] : [renderBaseName, legacy]
+        return stems.flatMap { stem in ["mov", "mp4"].map { "\(stem).\($0)" } }
+            .filter { $0 != screenFileName && $0 != cameraFileName }
+    }
 
     /// Resolves `packageDirectory` only when it is a real directory (not a symlink).
     static func resolveRealPackageDirectory(_ packageDirectory: URL) -> URL? {
@@ -889,12 +896,8 @@ nonisolated enum RecordingPackageMedia {
             _ = try resolveOptionalPackageFile(named: sidecar, in: realPackage)
         }
 
-        // Cached finished deliverables (`<packageName>.mov` / `.mp4`) read by the render cache.
-        let packageStem = realPackage.deletingPathExtension().lastPathComponent
-        if RecordingOverlayMedia.isSimpleFileName(packageStem) {
-            for ext in deliverableExtensions {
-                _ = try resolveOptionalPackageFile(named: "\(packageStem).\(ext)", in: realPackage)
-            }
+        for name in cachedVideoFileNames(in: realPackage) {
+            _ = try resolveOptionalPackageFile(named: name, in: realPackage)
         }
 
         let isolatedMicrophoneURL = try resolveOptionalPackageFile(named: isolatedAudioFileName, in: realPackage)

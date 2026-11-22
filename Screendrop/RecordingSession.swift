@@ -46,11 +46,7 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     }
 
     func finalURL(for container: VideoExportContainer) -> URL {
-        let fileName = directoryURL
-            .deletingPathExtension()
-            .lastPathComponent
-            .appending(".\(container.fileExtension)")
-        return directoryURL.appendingPathComponent(fileName)
+        directoryURL.appendingPathComponent("\(RecordingPackageMedia.renderBaseName).\(container.fileExtension)")
     }
     var pointerCaptureURL: URL { directoryURL.appendingPathComponent(Self.pointerCaptureFileName) }
     var captureManifestURL: URL { directoryURL.appendingPathComponent(Self.captureManifestFileName) }
@@ -91,13 +87,8 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     /// keeps an existing render valid after the export format is changed -
     /// switching the picker converts on save rather than forcing a re-render.
     var existingFinalURL: URL? {
-        for container in VideoExportContainer.allCases {
-            let candidate = finalURL(for: container)
-            if FileManager.default.fileExists(atPath: candidate.path) {
-                return candidate
-            }
-        }
-        return nil
+        RecordingPackageMedia.cachedVideoFileNames(in: directoryURL).lazy
+            .compactMap { RecordingPackageMedia.resolvePackageFile(named: $0, in: directoryURL) }.first
     }
 
     /// Uses an existing flattened cache when one is available; otherwise
@@ -111,10 +102,12 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     /// into. Targeting a single container would leave a render in the other
     /// one behind, and `existingFinalURL` would then hand out stale footage.
     func removeFinalVideos() {
-        for container in VideoExportContainer.allCases {
-            try? FileManager.default.removeItem(at: finalURL(for: container))
-        }
         try? FileManager.default.removeItem(at: renderStampURL)
+        for name in RecordingPackageMedia.cachedVideoFileNames(in: directoryURL) {
+            if let url = RecordingPackageMedia.resolvePackageFile(named: name, in: directoryURL) {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
     }
 
     /// Adopts a freshly rendered file as this session's deliverable, taking the
@@ -133,14 +126,18 @@ nonisolated struct RecordingSession: Sendable, Equatable {
         ) {
             try FileManager.default.removeItem(at: stamp)
         }
-        if FileManager.default.fileExists(atPath: destinationURL.path) {
-            _ = try FileManager.default.replaceItemAt(destinationURL, withItemAt: temporaryURL)
+        for name in RecordingPackageMedia.cachedVideoFileNames(in: directoryURL)
+            where name != destinationURL.lastPathComponent {
+            if let stale = try RecordingPackageMedia.resolveOptionalPackageFile(named: name, in: directoryURL) {
+                try FileManager.default.removeItem(at: stale)
+            }
+        }
+        if let destination = try RecordingPackageMedia.resolveOptionalPackageFile(
+            named: destinationURL.lastPathComponent, in: directoryURL
+        ) {
+            _ = try FileManager.default.replaceItemAt(destination, withItemAt: temporaryURL)
         } else {
             try FileManager.default.moveItem(at: temporaryURL, to: destinationURL)
-        }
-
-        for stale in VideoExportContainer.allCases where stale != container {
-            try? FileManager.default.removeItem(at: finalURL(for: stale))
         }
         try writeRenderStamp(document)
         return destinationURL

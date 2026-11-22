@@ -1632,6 +1632,30 @@ struct RecordingExportRegressionChecks {
         print("PASS: a stamp failure propagates after replacement and leaves no stale stamp")
     }
 
+    static func cachedMovieNames(in directory: URL) throws {
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("original-cache.sukushorec"))
+        try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
+        let movie = Data("cached movie".utf8)
+        let legacy = session.directoryURL.appendingPathComponent("original-cache.mov")
+        try movie.write(to: legacy)
+        try session.writeRenderStamp(nil)
+        try check(session.freshFinalURL(matching: nil) == legacy, "Legacy cached movie was lost")
+        let pending = directory.appendingPathComponent("pending-cache.mp4")
+        try movie.write(to: pending)
+        let installed = try session.installFinalVideo(movingFrom: pending)
+        try check(installed.lastPathComponent == "render.mp4" && !FileManager.default.fileExists(atPath: legacy.path),
+                  "Installation did not adopt the fixed name and remove the legacy cache")
+        let renamed = RecordingSession(directoryURL: directory.appendingPathComponent("camera.sukushorec"))
+        try FileManager.default.moveItem(at: session.directoryURL, to: renamed.directoryURL)
+        try movie.write(to: renamed.cameraURL)
+        try check(renamed.freshFinalURL(matching: nil)?.lastPathComponent == "render.mp4",
+                  "Renaming a package orphaned its fixed-name render")
+        renamed.removeFinalVideos()
+        try check(renamed.existingFinalURL == nil && FileManager.default.fileExists(atPath: renamed.cameraURL.path),
+                  "Cache removal missed a render or deleted the camera master")
+        print("PASS: fixed render survives rename, legacy cache is found and removed, and camera master survives")
+    }
+
     static func main() async throws {
         setbuf(stdout, nil)
         guard let root = ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] else {
@@ -1652,6 +1676,7 @@ struct RecordingExportRegressionChecks {
         try await studioTeardown(in: directory)
         try editRevisionOrdering(in: directory)
         try renderStampInstallFailure(in: directory)
+        try cachedMovieNames(in: directory)
         try await chapterMarkerDrag(in: directory)
         try await chapterAtPlayhead(in: directory)
         try await chapterRenameUndo(in: directory)
