@@ -13,30 +13,45 @@ import AVFoundation
 
 @MainActor
 enum RecordingRecoveryCoordinator {
+    /// A recording is interrupted only when `capture.json` is missing (`nil`).
+    /// Existing unreadable or newer manifests throw and must never be overwritten.
+    static func needsRecovery(_ session: RecordingSession) -> Bool {
+        do {
+            return try session.loadCaptureManifestStrict() == nil
+        } catch {
+            return false
+        }
+    }
+
+    static func recoverInterrupted(
+        _ sessions: [RecordingSession],
+        importSession: (RecordingSession) async -> Void = { _ = await ScreenshotHistoryStore.shared.importRecordingSession($0) }
+    ) async -> Int {
+        let candidates = sessions.filter(needsRecovery)
+        guard !candidates.isEmpty else { return 0 }
+
+        var recoveredCount = 0
+        for session in candidates {
+            guard let metadata = await playableMetadata(for: session.screenURL) else {
+                // Never delete uncertain footage. It remains in Recordings
+                // for manual inspection even when AVFoundation cannot open it.
+                continue
+            }
+
+            var manifest = CaptureManifest()
+            manifest.duration = metadata.duration
+            manifest.pixelWidth = metadata.width
+            manifest.pixelHeight = metadata.height
+            try? session.writeCaptureManifest(manifest)
+            await importSession(session)
+            recoveredCount += 1
+        }
+        return recoveredCount
+    }
+
     static func recoverInterruptedRecordings() {
         Task {
-            let candidates = RecordingSessionStore.allSessions().filter {
-                $0.loadCaptureManifest() == nil
-            }
-            guard !candidates.isEmpty else { return }
-
-            var recoveredCount = 0
-            for session in candidates {
-                guard let metadata = await playableMetadata(for: session.screenURL) else {
-                    // Never delete uncertain footage. It remains in Recordings
-                    // for manual inspection even when AVFoundation cannot open it.
-                    continue
-                }
-
-                var manifest = CaptureManifest()
-                manifest.duration = metadata.duration
-                manifest.pixelWidth = metadata.width
-                manifest.pixelHeight = metadata.height
-                try? session.writeCaptureManifest(manifest)
-                _ = await ScreenshotHistoryStore.shared.importRecordingSession(session)
-                recoveredCount += 1
-            }
-
+            let recoveredCount = await recoverInterrupted(RecordingSessionStore.allSessions())
             guard recoveredCount > 0 else { return }
             NSApp.activate(ignoringOtherApps: true)
             let alert = NSAlert()

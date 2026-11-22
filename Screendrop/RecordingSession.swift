@@ -10,6 +10,7 @@
 //
 
 import CoreGraphics
+import Darwin
 import Foundation
 
 nonisolated struct RecordingSession: Sendable, Equatable {
@@ -158,6 +159,26 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     static func isSessionDirectory(_ url: URL) -> Bool {
         SukushoFileNames.isRecordingExtension(url.pathExtension)
             && FileManager.default.fileExists(atPath: url.appendingPathComponent(screenFileName).path)
+    }
+
+    /// Loads `capture.json`, returning `nil` only when the file does not exist (`ENOENT`).
+    /// Corrupt JSON, newer/unknown enum cases, or read errors throw so callers never
+    /// mistake an existing manifest for an interrupted recording.
+    func loadCaptureManifestStrict() throws -> CaptureManifest? {
+        let data: Data
+        do {
+            data = try Data(contentsOf: captureManifestURL)
+        } catch {
+            let nsError = error as NSError
+            let isMissing = (nsError.domain == NSCocoaErrorDomain && nsError.code == NSFileReadNoSuchFileError)
+                || (nsError.domain == NSPOSIXErrorDomain && nsError.code == Int(ENOENT))
+            var info = stat()
+            if isMissing && lstat(captureManifestURL.path, &info) != 0 && errno == ENOENT {
+                return nil
+            }
+            throw error
+        }
+        return try CaptureManifest.decoder.decode(CaptureManifest.self, from: data)
     }
 
     func loadCaptureManifest() -> CaptureManifest? {
