@@ -401,12 +401,12 @@ struct LibraryTextIndexChecks {
         index.modelAvailability = { false }
         index.settingsDidChange()
         let liveSession = try RecordingSessionStore.createSession()
-        try await movie(at: liveSession.screenURL, firstLine: "SECRETKEY 99421", secondLine: "PASSCODE 88312")
+        try await movie(at: liveSession.screenURL, firstLine: "LIVETITLE 77321", secondLine: "LIVETITLE 77321")
         try liveSession.writeCaptureManifest(manifest)
         await history.importRecordingSession(liveSession)
         let liveID = "recording:\(liveSession.directoryURL.standardizedFileURL.path)"
         try await waitUntil("live recording indexed") {
-            index.entries[liveID]?.paragraphs.joined().contains("SECRETKEY") == true
+            index.entries[liveID]?.paragraphs.joined().contains("LIVETITLE") == true
         }
         let liveItem = try require(model.items.first { $0.id == liveID })
         let privateTitle = "Private Synthetic Phrase 99421"
