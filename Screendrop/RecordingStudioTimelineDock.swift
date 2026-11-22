@@ -308,8 +308,8 @@ struct StudioTimelineEditor: View {
                     let videos = urls.filter { StudioVideoClipImport.canImport($0) || RecordingVideoOverlay.canImport($0) }
                     let others = urls.filter { !StudioVideoClipImport.canImport($0) && !RecordingVideoOverlay.canImport($0) }
                     if !videos.isEmpty {
-                        switch StudioMediaDropDelegate.videoDestination(
-                            for: targetTrack,
+                        switch StudioMediaDropRouting.videoDestination(
+                            for: targetTrack?.movieDropLane,
                             canDropClip: model.canImportVideoClip,
                             canDropOverlay: model.canImportMedia
                         ) {
@@ -349,11 +349,10 @@ struct StudioTimelineEditor: View {
                 model.cancelPendingRecordingImport()
             }
         } message: { pending in
-            let names = pending.recordingNames.joined(separator: ", ")
             if pending.canImportFinished {
-                Text("Raw recording adds only the screen video of \(names) in this project's framing. Finished movie renders its zooms, camera, and overlays first.")
+                Text("Raw recording adds your screen recording only, with its redactions, in this project's framing. Finished movie renders its zooms, camera, and overlays first.")
             } else {
-                Text("Raw recording adds only the screen video of \(names) in this project's framing. Finished movie isn't available because one of the package's render inputs couldn't be verified.")
+                Text("Raw recording adds your screen recording only, with its redactions, in this project's framing. Finished movie isn't available because one of the package's render inputs couldn't be verified.")
             }
         }
         .alert(
@@ -1130,6 +1129,14 @@ private enum StudioTrack: Hashable, Identifiable {
         }
     }
 
+    var movieDropLane: StudioMovieDropLane {
+        switch self {
+        case .clips: .clips
+        case .videoOverlay: .videoOverlay
+        default: .other
+        }
+    }
+
     var height: CGFloat {
         switch self {
         case .clips: 56
@@ -1221,9 +1228,9 @@ private struct StudioMediaDrop: Equatable {
     var clipInsertionIndex: Int? = nil
 }
 
-/// Takes files from Finder. Movies and Sukusho recordings insert onto the Clips
-/// lane; images and animated GIF/APNG/WebP/HEIC land on Images & Effects; audio
-/// files land on the audio lanes.
+/// Takes files from Finder. Movies and Sukusho recordings route strictly by
+/// hovered lane (Clips for sequence clips, Video Overlay for PiP/cutaways);
+/// images land on Images & Effects; audio files land on the audio lanes.
 private struct StudioMediaDropDelegate: DropDelegate {
     let canDrop: Bool
     let canDropVideo: Bool
@@ -1232,21 +1239,6 @@ private struct StudioMediaDropDelegate: DropDelegate {
     let clipInsertionIndex: (TimeInterval) -> Int
     let onPreview: (StudioMediaDrop?) -> Void
     let onDrop: ([URL], TimeInterval, Int, Int, StudioTrack?) -> Void
-
-    static func videoDestination(
-        for hoveredTrack: StudioTrack?,
-        canDropClip: Bool,
-        canDropOverlay: Bool
-    ) -> StudioTrack? {
-        switch hoveredTrack {
-        case .clips where canDropClip:
-            .clips
-        case .videoOverlay where canDropOverlay:
-            .videoOverlay
-        default:
-            nil
-        }
-    }
 
     private func audioLane(at location: CGPoint) -> Int {
         if case .audio(let lane) = trackAtLocation(location) {
@@ -1267,11 +1259,15 @@ private struct StudioMediaDropDelegate: DropDelegate {
         let at = time(info.location)
         let hoveredTrack = trackAtLocation(info.location)
         let targetAudioTrack = StudioTrack.audio(audioLane(at: info.location))
-        let videoDest = Self.videoDestination(
-            for: hoveredTrack,
+        let videoDest: StudioTrack? = switch StudioMediaDropRouting.videoDestination(
+            for: hoveredTrack?.movieDropLane,
             canDropClip: canDropVideo,
             canDropOverlay: canDrop
-        )
+        ) {
+        case .clips: .clips
+        case .videoOverlay: .videoOverlay
+        default: nil
+        }
         let hasImage = info.hasItemsConforming(to: [.image])
         let hasAudio = info.hasItemsConforming(to: [.audio])
         let hasMovie = info.hasItemsConforming(to: [.movie])

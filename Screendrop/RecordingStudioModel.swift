@@ -415,6 +415,7 @@ final class RecordingStudioModel {
         let urls: [URL]
         let insertionIndex: Int
         let recordingNames: [String]
+        let canImportFinished: Bool
     }
 
     var pendingRecordingImport: PendingRecordingImport?
@@ -805,6 +806,9 @@ final class RecordingStudioModel {
     /// Opened on the last save because the draft couldn't be read. Until it's discarded, nothing
     /// saves over it, and export and upload stay off: the draft may hold redactions this lacks.
     private(set) var hasUnreadableDraft = false
+    /// Opened a project saved by a newer format version; strictly read-only so
+    /// neither `edit.json`, the draft, snapshots, nor media are ever modified.
+    private(set) var isReadOnlyNewerFormat = false
     private var sessionOpenedAt = Date()
     private var keptOpeningSession = false
     private(set) var sessionSnapshots: [CaptureSessionSnapshot] = []
@@ -1054,6 +1058,9 @@ final class RecordingStudioModel {
         // the remembered export choice.
         exportSettings = RecordingExportPreferences.lastSettings
         if let document {
+            if document.isUnsupportedFutureVersion || lastSavedDocument?.isUnsupportedFutureVersion == true {
+                isReadOnlyNewerFormat = true
+            }
             applyDocumentSettings(document)
         } else if session == nil {
             // Legacy bare movies use the same editor, but open visually
@@ -3327,7 +3334,7 @@ final class RecordingStudioModel {
     }
 
     private func scheduleProjectSave() {
-        guard isLoaded, !isApplyingDocument, !isRestoringDocument else { return }
+        guard isLoaded, !isApplyingDocument, !isRestoringDocument, !isReadOnlyNewerFormat else { return }
         hasUnsavedChanges = true
         hasEditsSinceOpening = true
         // The uploaded link no longer matches; bring Upload back.
@@ -3361,7 +3368,7 @@ final class RecordingStudioModel {
     /// nowhere to save. A failure shows Not Saved rather than an alert, and
     /// the draft keeps the edits.
     func autosave() {
-        guard isProject, hasUnsavedChanges else { return }
+        guard isProject, hasUnsavedChanges, !isReadOnlyNewerFormat else { return }
         saveProject(reportingFailure: false)
     }
 
@@ -3414,7 +3421,7 @@ final class RecordingStudioModel {
     /// committed `edit.json`, so a crash or a failed save costs nothing.
     @discardableResult
     private func writeDraftNow() -> Bool {
-        guard isLoaded, !isRestoringDocument, !hasUnreadableDraft else { return false }
+        guard isLoaded, !isRestoringDocument, !hasUnreadableDraft, !isReadOnlyNewerFormat else { return false }
         let document = currentDocument()
         guard let session else {
             hasUnsavedChanges = document != lastSavedDocument
@@ -3475,7 +3482,7 @@ final class RecordingStudioModel {
     /// working copy to `edit.json` and clears the draft.
     @discardableResult
     func saveProject(reportingFailure: Bool = true) -> Bool {
-        guard isLoaded, !isRestoringDocument, !hasUnreadableDraft, let session else { return false }
+        guard isLoaded, !isRestoringDocument, !hasUnreadableDraft, !isReadOnlyNewerFormat, let session else { return false }
         projectSaveTask?.cancel()
         autosaveTask?.cancel()
         let document = currentDocument()
@@ -3504,7 +3511,7 @@ final class RecordingStudioModel {
 
     /// The bar's Discard: drops only the unreadable draft; edits made since opening become the new one.
     func discardUnreadableDraft() {
-        guard hasUnreadableDraft, !isRestoringDocument, let session else { return }
+        guard hasUnreadableDraft, !isRestoringDocument, !isReadOnlyNewerFormat, let session else { return }
         session.removeDraftDocument()
         hasUnreadableDraft = false
         flushDraft()
@@ -3513,7 +3520,7 @@ final class RecordingStudioModel {
     /// Throws away everything since the last save and returns the editor to
     /// that state. Only offered for projects that have actually been saved.
     func discardChanges() async {
-        guard isLoaded, !isRestoringDocument, let session else { return }
+        guard isLoaded, !isRestoringDocument, !isReadOnlyNewerFormat, let session else { return }
         projectSaveTask?.cancel()
         replacementAudioTask?.cancel()
         replacementAudioTask = nil
@@ -3627,7 +3634,7 @@ final class RecordingStudioModel {
     /// A project, loaded, not cropping, and with no export or upload that
     /// is rendering the current edits.
     var canRevert: Bool {
-        isLoaded && isProject && !isEditingSourceRegion && !hasRunningWork
+        isLoaded && isProject && !isEditingSourceRegion && !hasRunningWork && !isReadOnlyNewerFormat
     }
 
     /// File › Revert To › Original: every edit back to what a new recording
@@ -4543,7 +4550,7 @@ final class RecordingStudioModel {
         session?.mediaDirectoryURL
     }
 
-    var canImportMedia: Bool { mediaDirectoryURL != nil && isLoaded }
+    var canImportMedia: Bool { mediaDirectoryURL != nil && isLoaded && !isReadOnlyNewerFormat }
 
     /// Copies picked images and GIFs into the project's `media` folder and places
     /// them from `time`. Audio files target `audioLane` (the highlighted lane on
@@ -4928,7 +4935,7 @@ final class RecordingStudioModel {
                     continue
                 }
                 let fallbackName = url.deletingPathExtension().lastPathComponent
-                guard (try? RecordingPackageMedia.validateRawScreenInput(in: url)) != nil else {
+                guard (try? RecordingSessionRenderer.validateRawImport(in: url)) != nil else {
                     rejectedPackages.append(fallbackName)
                     continue
                 }
@@ -4996,6 +5003,7 @@ final class RecordingStudioModel {
 
     func cancelPendingRecordingImport() {
         pendingRecordingOverlayImport = nil
+        pendingRecordingImport = nil
     }
 
     func cancelVideoOverlayRender() {
@@ -5032,6 +5040,7 @@ final class RecordingStudioModel {
                       self.videoOverlayImportID == importID else { return }
                 let sourceURL: URL
                 let displayName: String
+                var temporaryRawRenderURL: URL?
                 if RecordingSession.isSessionDirectory(url) {
                     if RecordingVideoOverlayMedia.isSelfRecording(url, openSessionURL: self.sessionURL) {
                         sawSelfImport = true
@@ -5041,19 +5050,42 @@ final class RecordingStudioModel {
                     let sourceSession = RecordingSession(directoryURL: url)
                     switch recordingMode {
                     case .raw:
-                        guard let rawScreenURL = try? RecordingPackageMedia.validateRawScreenInput(in: url) else {
-                            rejected.append(fallbackName)
-                            continue
-                        }
+                        let safeName: String
                         if (try? RecordingPackageMedia.resolveOptionalPackageFile(
                             named: RecordingSession.projectMetadataFileName,
                             in: url
                         )) != nil {
-                            displayName = sourceSession.displayName
+                            safeName = sourceSession.displayName
                         } else {
-                            displayName = fallbackName
+                            safeName = fallbackName
                         }
-                        sourceURL = rawScreenURL
+                        do {
+                            let prepared = try await RecordingSessionRenderer.prepareRawImport(for: url) { [weak self] progress in
+                                Task { @MainActor [weak self] in
+                                    if self?.videoOverlayImportID == importID {
+                                        self?.videoOverlayRenderProgress = progress
+                                    }
+                                }
+                            }
+                            if self.videoOverlayImportID == importID {
+                                self.videoOverlayRenderProgress = nil
+                            }
+                            displayName = safeName
+                            sourceURL = prepared.url
+                            if prepared.isTemporary {
+                                temporaryRawRenderURL = prepared.url
+                            }
+                        } catch is CancellationError {
+                            return
+                        } catch RecordingStudioExporter.ExportError.cancelled {
+                            return
+                        } catch {
+                            if self.videoOverlayImportID == importID {
+                                self.videoOverlayRenderProgress = nil
+                            }
+                            rejected.append(fallbackName)
+                            continue
+                        }
                     case .finished:
                         guard (try? RecordingPackageMedia.validateRenderInputs(in: url)) != nil else {
                             rejected.append(fallbackName)
@@ -5090,6 +5122,11 @@ final class RecordingStudioModel {
                 } else {
                     rejected.append(url.lastPathComponent)
                     continue
+                }
+                defer {
+                    if let temporaryRawRenderURL {
+                        try? FileManager.default.removeItem(at: temporaryRawRenderURL)
+                    }
                 }
                 guard !self.isTornDown, !Task.isCancelled, self.videoOverlayImportID == importID else { return }
                 if let placedEnd = await self.importVideoOverlayFile(
@@ -6119,7 +6156,7 @@ final class RecordingStudioModel {
     // MARK: - In-sequence video clips
 
     var canImportVideoClip: Bool {
-        mediaDirectoryURL != nil && isLoaded && !isRestoringDocument && !isEditingSourceRegion && !isImportingVideoClip
+        mediaDirectoryURL != nil && isLoaded && !isRestoringDocument && !isEditingSourceRegion && !isImportingVideoClip && !isReadOnlyNewerFormat
     }
 
     /// Opens a file picker accepting movie files and Sukusho `.sukushorec`
@@ -6151,34 +6188,84 @@ final class RecordingStudioModel {
     /// and Finder drops onto the clips lane. Plain movies import immediately;
     /// Sukusho `.sukushorec` recordings ask raw vs finished each time.
     func requestImportVideoClips(_ urls: [URL], insertionIndex: Int) {
-        guard canImportVideoClip else { return }
-        let supported = urls.filter { StudioVideoClipImport.canImport($0) }
-        guard !supported.isEmpty else {
-            let names = urls.map(\.lastPathComponent).joined(separator: ", ")
-            mediaImportError = "Couldn't add \(names). Choose movie files or Sukusho recordings."
+        guard canImportVideoClip, !urls.isEmpty else { return }
+        mediaImportError = nil
+
+        var accepted: [URL] = []
+        var rejectedSelf = false
+        var rejectedPackages: [String] = []
+        var unsupportedNames: [String] = []
+        var recordingNames: [String] = []
+        var allFinishedValid = true
+
+        for url in urls {
+            if RecordingSession.isSessionDirectory(url) || StudioVideoClipImport.isSukushoRecording(url) {
+                if RecordingVideoOverlayMedia.isSelfRecording(url, openSessionURL: sessionURL) {
+                    rejectedSelf = true
+                    continue
+                }
+                let fallbackName = url.deletingPathExtension().lastPathComponent
+                guard (try? RecordingSessionRenderer.validateRawImport(in: url)) != nil else {
+                    rejectedPackages.append(fallbackName)
+                    continue
+                }
+                let finishedValid = (try? RecordingPackageMedia.validateRenderInputs(in: url)) != nil
+                if !finishedValid {
+                    allFinishedValid = false
+                }
+                let safeDisplayName: String
+                if finishedValid
+                    || (try? RecordingPackageMedia.resolveOptionalPackageFile(
+                        named: RecordingSession.projectMetadataFileName,
+                        in: url
+                    )) != nil {
+                    safeDisplayName = RecordingSession(directoryURL: url).displayName
+                } else {
+                    safeDisplayName = fallbackName
+                }
+                recordingNames.append(safeDisplayName)
+                accepted.append(url)
+            } else if StudioVideoClipImport.isMovieFile(url) {
+                accepted.append(url)
+            } else {
+                unsupportedNames.append(url.lastPathComponent)
+            }
+        }
+
+        if accepted.isEmpty {
+            if !rejectedPackages.isEmpty {
+                mediaImportError = "Couldn't add \(rejectedPackages.joined(separator: ", ")). Check that the recording package and its media files are readable."
+            } else if rejectedSelf {
+                mediaImportError = RecordingVideoOverlayMedia.selfImportErrorMessage
+            } else if !unsupportedNames.isEmpty {
+                mediaImportError = "Couldn't add \(unsupportedNames.joined(separator: ", ")). Choose movie files or Sukusho recordings."
+            }
             return
         }
-        let recordings = supported.filter { StudioVideoClipImport.isSukushoRecording($0) }
-        if !recordings.isEmpty {
+
+        if rejectedSelf {
+            mediaImportError = RecordingVideoOverlayMedia.selfImportErrorMessage
+        } else if !rejectedPackages.isEmpty {
+            mediaImportError = "Couldn't add \(rejectedPackages.joined(separator: ", ")). Check that the recording package and its media files are readable."
+        }
+
+        if !recordingNames.isEmpty {
             pause()
             pendingRecordingImport = PendingRecordingImport(
-                urls: supported,
+                urls: accepted,
                 insertionIndex: insertionIndex,
-                recordingNames: recordings.map { RecordingSession(directoryURL: $0).displayName }
+                recordingNames: recordingNames,
+                canImportFinished: allFinishedValid
             )
             return
         }
-        importVideoClips(supported, insertionIndex: insertionIndex, recordingMode: .rawRecording)
+        importVideoClips(accepted, insertionIndex: insertionIndex, recordingMode: .rawRecording)
     }
 
     func confirmPendingRecordingImport(mode: StudioVideoClipImport.SukushoRecordingMode) {
         guard let pending = pendingRecordingImport else { return }
         pendingRecordingImport = nil
         importVideoClips(pending.urls, insertionIndex: pending.insertionIndex, recordingMode: mode)
-    }
-
-    func cancelPendingRecordingImport() {
-        pendingRecordingImport = nil
     }
 
     func cancelVideoImport() {
@@ -6190,10 +6277,10 @@ final class RecordingStudioModel {
         insertionIndex: Int,
         recordingMode: StudioVideoClipImport.SukushoRecordingMode
     ) {
-        guard let directory = mediaDirectoryURL, videoImportTask == nil else { return }
+        guard let directory = mediaDirectoryURL, videoImportTask == nil, !isReadOnlyNewerFormat else { return }
         pause()
+        let initialError = mediaImportError
         mediaImportError = nil
-        let ownDirectory = sessionURL.standardizedFileURL
 
         videoImportTask = Task { [weak self] in
             defer {
@@ -6203,6 +6290,7 @@ final class RecordingStudioModel {
             }
             var newSegments: [RecordingClipSegment] = []
             var rejected: [String] = []
+            var sawSelfImport = false
             var copiedFilesToCleanupOnCancel: [URL] = []
 
             for url in urls {
@@ -6212,17 +6300,59 @@ final class RecordingStudioModel {
                 }
                 let displayName: String
                 let sourceFileURL: URL
-                if StudioVideoClipImport.isSukushoRecording(url) {
+                var temporaryRawRenderURL: URL?
+                if RecordingSession.isSessionDirectory(url) || StudioVideoClipImport.isSukushoRecording(url) {
+                    if RecordingVideoOverlayMedia.isSelfRecording(url, openSessionURL: self.sessionURL) {
+                        sawSelfImport = true
+                        continue
+                    }
+                    let fallbackName = url.deletingPathExtension().lastPathComponent
                     let sourceSession = RecordingSession(directoryURL: url)
-                    displayName = sourceSession.displayName
                     switch recordingMode {
                     case .rawRecording:
-                        sourceFileURL = sourceSession.screenURL
-                    case .finishedMovie:
-                        if sourceSession.directoryURL.standardizedFileURL == ownDirectory {
-                            rejected.append("\(displayName) (cannot import finished movie into itself)")
+                        let safeName: String
+                        if (try? RecordingPackageMedia.resolveOptionalPackageFile(
+                            named: RecordingSession.projectMetadataFileName,
+                            in: url
+                        )) != nil {
+                            safeName = sourceSession.displayName
+                        } else {
+                            safeName = fallbackName
+                        }
+                        do {
+                            let prepared = try await RecordingSessionRenderer.prepareRawImport(for: url) { [weak self] progress in
+                                Task { @MainActor [weak self] in
+                                    if self?.videoImportTask != nil {
+                                        self?.videoImportTitle = safeName
+                                        self?.videoImportProgress = progress
+                                    }
+                                }
+                            }
+                            self.videoImportProgress = nil
+                            self.videoImportTitle = nil
+                            displayName = safeName
+                            sourceFileURL = prepared.url
+                            if prepared.isTemporary {
+                                temporaryRawRenderURL = prepared.url
+                            }
+                        } catch is CancellationError {
+                            for temp in copiedFilesToCleanupOnCancel { try? FileManager.default.removeItem(at: temp) }
+                            return
+                        } catch RecordingStudioExporter.ExportError.cancelled {
+                            for temp in copiedFilesToCleanupOnCancel { try? FileManager.default.removeItem(at: temp) }
+                            return
+                        } catch {
+                            self.videoImportProgress = nil
+                            self.videoImportTitle = nil
+                            rejected.append(fallbackName)
                             continue
                         }
+                    case .finishedMovie:
+                        guard (try? RecordingPackageMedia.validateRenderInputs(in: url)) != nil else {
+                            rejected.append(fallbackName)
+                            continue
+                        }
+                        displayName = sourceSession.displayName
                         self.videoImportTitle = displayName
                         self.videoImportProgress = 0
                         do {
@@ -6240,6 +6370,8 @@ final class RecordingStudioModel {
                             for temp in copiedFilesToCleanupOnCancel { try? FileManager.default.removeItem(at: temp) }
                             return
                         } catch {
+                            self.videoImportProgress = nil
+                            self.videoImportTitle = nil
                             rejected.append("\(displayName) (\(error.localizedDescription))")
                             continue
                         }
@@ -6249,6 +6381,11 @@ final class RecordingStudioModel {
                 } else {
                     displayName = url.deletingPathExtension().lastPathComponent
                     sourceFileURL = url
+                }
+                defer {
+                    if let temporaryRawRenderURL {
+                        try? FileManager.default.removeItem(at: temporaryRawRenderURL)
+                    }
                 }
 
                 guard !Task.isCancelled, !self.isTornDown else {
@@ -6311,6 +6448,10 @@ final class RecordingStudioModel {
 
             if !rejected.isEmpty {
                 self.mediaImportError = "Couldn't add \(rejected.joined(separator: ", "))."
+            } else if sawSelfImport {
+                self.mediaImportError = RecordingVideoOverlayMedia.selfImportErrorMessage
+            } else if let initialError {
+                self.mediaImportError = initialError
             }
         }
     }
@@ -6363,7 +6504,7 @@ final class RecordingStudioModel {
 
     // MARK: - Audio clips
 
-    var canImportAudioMedia: Bool { mediaDirectoryURL != nil && isLoaded }
+    var canImportAudioMedia: Bool { mediaDirectoryURL != nil && isLoaded && !isReadOnlyNewerFormat }
 
     /// Copies picked audio files into the project's media folder and places
     /// them sequentially from `time` on `preferredLane`.
@@ -7181,6 +7322,7 @@ final class RecordingStudioModel {
     /// Wait until close to collect old imports; the saved project and its
     /// working draft may still need different soundtracks.
     private func removeUnusedReplacementAudio(in session: RecordingSession) {
+        guard !isReadOnlyNewerFormat else { return }
         let savedDocument = session.loadEditDocument()
         let draftDocument = session.loadDraftDocument()
         // A document that exists but cannot be read is not evidence that its
@@ -7230,24 +7372,20 @@ final class RecordingStudioModel {
             )
         }
         let mediaDirectory = session.mediaDirectoryURL
-        let referencedImages = Set(
-            [savedDocument?.imageOverlays, draftDocument?.imageOverlays, lastSavedDocument?.imageOverlays, imageOverlays]
-                .compactMap { $0 }.flatMap { $0.map(\.fileName) }
-            + keptDocuments.compactMap(\.imageOverlays).flatMap { $0.map(\.fileName) }
-        )
-        RecordingOverlayMedia.cleanupUnreferencedImages(in: mediaDirectory, referenced: referencedImages)
-        var referencedVideos = Set<String>(undoReferencedFiles)
+        var referencedMedia = Set<String>(undoReferencedFiles)
         for document in allDocuments {
-            referencedVideos.formUnion((document.clips ?? []).compactMap(\.mediaFileName))
-            referencedVideos.formUnion((document.videoOverlays ?? []).map(\.fileName))
-            referencedVideos.formUnion((document.audioClips ?? []).filter { $0.source == .file }.map(\.fileName))
-            referencedVideos.formUnion((document.hiddenLinkedAudio ?? []).filter { $0.clip.source == .file }.map(\.clip.fileName))
+            referencedMedia.formUnion((document.clips ?? []).compactMap(\.mediaFileName))
+            referencedMedia.formUnion((document.videoOverlays ?? []).map(\.fileName))
+            referencedMedia.formUnion((document.imageOverlays ?? []).map(\.fileName))
+            referencedMedia.formUnion((document.audioClips ?? []).filter { $0.source == .file }.map(\.fileName))
+            referencedMedia.formUnion((document.hiddenLinkedAudio ?? []).filter { $0.clip.source == .file }.map(\.clip.fileName))
         }
-        referencedVideos.formUnion(clipTimeline.segments.compactMap(\.mediaFileName))
-        referencedVideos.formUnion(videoOverlays.map(\.fileName))
-        referencedVideos.formUnion(audioClips.filter { $0.source == .file }.map(\.fileName))
-        referencedVideos.formUnion(hiddenLinkedAudio.filter { $0.clip.source == .file }.map(\.clip.fileName))
-        RecordingOverlayMedia.cleanupUnreferencedVideos(in: mediaDirectory, referenced: referencedVideos)
+        referencedMedia.formUnion(clipTimeline.segments.compactMap(\.mediaFileName))
+        referencedMedia.formUnion(videoOverlays.map(\.fileName))
+        referencedMedia.formUnion(imageOverlays.map(\.fileName))
+        referencedMedia.formUnion(audioClips.filter { $0.source == .file }.map(\.fileName))
+        referencedMedia.formUnion(hiddenLinkedAudio.filter { $0.clip.source == .file }.map(\.clip.fileName))
+        RecordingOverlayMedia.cleanupUnreferencedMedia(in: mediaDirectory, referenced: referencedMedia)
     }
 
     // MARK: - Share to cloud

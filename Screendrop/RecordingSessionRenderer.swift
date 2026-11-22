@@ -35,6 +35,117 @@ enum RecordingSessionRenderer {
 
     private static let renders = InFlightRenders<RenderKey, URL>()
 
+    struct PreparedRawImport: Sendable {
+        let url: URL
+        /// True when a redacted copy was rendered to a temporary movie that
+        /// the caller should remove after copying into the target project.
+        let isTemporary: Bool
+    }
+
+    /// Validates a `.sukushorec` package for Raw recording import, decoding its
+    /// effective edit document (`edit.draft.json` over `edit.json`) so any
+    /// unreadable or future-format edit is refused before copying raw.
+    @discardableResult
+    static func validateRawImport(in packageURL: URL) throws -> RecordingPackageMedia.ResolvedRawImport {
+        let resolved = try RecordingPackageMedia.validateRawImportInputs(in: packageURL)
+        if let activeEditURL = resolved.activeEditURL {
+            let document: RecordingEditDocument
+            do {
+                document = try CaptureManifest.decoder.decode(
+                    RecordingEditDocument.self,
+                    from: Data(contentsOf: activeEditURL)
+                )
+            } catch {
+                throw RecordingPackageMedia.ValidationError.invalidPackage(packageURL.lastPathComponent)
+            }
+            if document.isUnsupportedFutureVersion {
+                throw RecordingPackageMedia.ValidationError.unsupportedFormatVersion(document.formatVersion)
+            }
+            return RecordingPackageMedia.ResolvedRawImport(
+                screenURL: resolved.screenURL,
+                activeEditURL: activeEditURL,
+                redactions: document.redactions
+            )
+        }
+        return resolved
+    }
+
+    /// Shared Raw-recording import resolver used by both the sequence lane and
+    /// the layered video overlay lane:
+    /// - No source redactions: returns `screen.mov` directly for a byte-for-byte copy.
+    /// - Has source redactions: renders a full-size, full-length copy of `screen.mov`
+    ///   with ONLY those redactions applied and original audio intact.
+    /// - Unreadable edit sidecar: throws rather than exposing raw footage.
+    static func prepareRawImport(
+        for packageURL: URL,
+        onProgress: (@Sendable (Double) -> Void)? = nil
+    ) async throws -> PreparedRawImport {
+        let resolved = try validateRawImport(in: packageURL)
+        guard !resolved.redactions.isEmpty else {
+            return PreparedRawImport(url: resolved.screenURL, isTemporary: false)
+        }
+
+        let asset = AVURLAsset(url: resolved.screenURL)
+        let duration = try await asset.load(.duration).seconds
+        guard duration.isFinite, duration > 0 else {
+            throw RecordingStudioExporter.ExportError.noVideoTrack
+        }
+        guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
+            throw RecordingStudioExporter.ExportError.noVideoTrack
+        }
+        for region in resolved.redactions {
+            try region.validate(sourceDuration: duration)
+        }
+        let (naturalSize, preferredTransform) = try await videoTrack.load(.naturalSize, .preferredTransform)
+        let displaySize = RecordingCompositionBuilder.displaySize(
+            naturalSize: naturalSize,
+            preferredTransform: preferredTransform
+        )
+        guard displaySize.width > 0, displaySize.height > 0 else {
+            throw RecordingStudioExporter.ExportError.noVideoTrack
+        }
+
+        let rawStyle = RecordingStudioStyle(
+            background: .none,
+            padding: 0,
+            cornerRadius: 0,
+            shadow: 0,
+            camera: RecordingCameraBubbleSettings(isVisible: false)
+        )
+        var exportSettings = VideoCompressionSettings()
+        exportSettings.codec = .h264
+        exportSettings.resolution = .original
+        exportSettings.frameRate = .fps60
+        exportSettings.quality = .high
+        exportSettings.removeAudio = false
+        exportSettings.container = .mov
+
+        let configuration = RecordingStudioExporter.Configuration(
+            screenURL: resolved.screenURL,
+            cameraURL: nil,
+            cameraOffset: 0,
+            style: rawStyle,
+            viewportTimeline: .identity,
+            pointerTimeline: nil,
+            showsPressEffects: false,
+            keystrokeTimeline: nil,
+            keystrokePlacement: .bottomCenter,
+            subtitleTimeline: nil,
+            subtitleStyle: SubtitleBarStyle(),
+            canvasSize: displaySize,
+            videoCropRect: CropRectEditor.unit,
+            clipTimeline: .full(sourceDuration: duration),
+            exportSettings: exportSettings,
+            audioVolume: 1,
+            redactions: resolved.redactions
+        )
+        onProgress?(0)
+        let renderedURL = try await RecordingStudioExporter().export(configuration) { progress in
+            onProgress?(progress)
+        }
+        return PreparedRawImport(url: renderedURL, isTemporary: true)
+    }
+
     /// Creates a flattened deliverable when explicitly requested for a session
     /// whose raw screen master would not match what the user sees: a camera
     /// source, a cursor-hidden capture, or any saved Studio project. Only a
@@ -49,6 +160,7 @@ enum RecordingSessionRenderer {
     }
 
     static func readyDeliverable(for session: RecordingSession, editDocument: RecordingEditDocument?) -> URL? {
+        if editDocument?.isUnsupportedFutureVersion == true { return nil }
         guard let resolved = try? RecordingPackageMedia.validateRenderInputs(in: session.directoryURL) else {
             return nil
         }
@@ -64,6 +176,9 @@ enum RecordingSessionRenderer {
         editDocument: RecordingEditDocument?,
         onProgress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> URL {
+        if let editDocument, editDocument.isUnsupportedFutureVersion {
+            throw RecordingPackageMedia.ValidationError.unsupportedFormatVersion(editDocument.formatVersion)
+        }
         try RecordingPackageMedia.validateRenderInputs(in: session.directoryURL)
         let editDocument = editDocument?.forVideoRendering
         if let ready = readyDeliverable(for: session, editDocument: editDocument) { return ready }
@@ -98,6 +213,9 @@ enum RecordingSessionRenderer {
         for session: RecordingSession,
         editDocument: RecordingEditDocument?
     ) async throws -> RecordingStudioExporter.Configuration {
+        if let editDocument, editDocument.isUnsupportedFutureVersion {
+            throw RecordingPackageMedia.ValidationError.unsupportedFormatVersion(editDocument.formatVersion)
+        }
         let resolvedInputs = try RecordingPackageMedia.validateRenderInputs(in: session.directoryURL)
         let manifest = session.loadCaptureManifest()
         let pointerSynthesized = manifest?.pointerSynthesized == true

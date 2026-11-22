@@ -72,6 +72,17 @@ private struct RecordingStudioContent: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
+                if model.isReadOnlyNewerFormat {
+                    HStack(spacing: 8) {
+                        Image(systemName: "lock.fill")
+                            .foregroundStyle(.secondary)
+                        Text(RecordingEditDocument.newerFormatNotice)
+                    }
+                    .font(.callout)
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.orange.opacity(0.12))
+                }
                 if model.hasUnreadableDraft {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("The latest edits couldn't be read, so Studio opened the last save. Export and upload stay off until you discard them.")
@@ -188,6 +199,7 @@ private struct RecordingStudioContent: View {
         }
         .inspector(isPresented: $isInspectorPresented) {
             StudioInspector(model: model)
+                .disabled(model.isReadOnlyNewerFormat)
                 .glassInspectorToolbar(enabled: floatingChrome)
         }
         .frame(minWidth: Self.minimumWidth)
@@ -1805,15 +1817,17 @@ private struct StudioRecordingImportSheet: View {
                 optionCard(
                     mode: .rawRecording,
                     title: "Raw recording",
-                    detail: "Inserts the screen capture and its audio directly, framed inside this project's background and corners.",
+                    detail: "Your screen recording only, with its redactions, in this project's framing.",
                     systemImage: "video"
                 )
-                optionCard(
-                    mode: .finishedMovie,
-                    title: "Finished movie",
-                    detail: "Bakes in that recording's zooms, camera bubble, and overlays. Renders on the spot if needed.",
-                    systemImage: "sparkles.tv"
-                )
+                if pending.canImportFinished {
+                    optionCard(
+                        mode: .finishedMovie,
+                        title: "Finished movie",
+                        detail: "Bakes in that recording's zooms, camera bubble, and overlays. Renders on the spot if needed.",
+                        systemImage: "sparkles.tv"
+                    )
+                }
             }
 
             HStack {
