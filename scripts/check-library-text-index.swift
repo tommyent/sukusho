@@ -462,7 +462,9 @@ struct LibraryTextIndexChecks {
         futureEdit.formatVersion = 99
         let futureBytes = try CaptureManifest.encoder.encode(futureEdit)
         try futureBytes.write(to: mixedSession.editDocumentURL, options: .atomic)
-        try mixedSession.writeDraftDocument(RecordingEditDocument(style: RecordingStudioStyle(), zoomEnabled: false, zoomCues: []))
+        // Written as bytes: the app refuses to write a draft beside a newer-format edit.
+        try CaptureManifest.encoder.encode(RecordingEditDocument(style: RecordingStudioStyle(), zoomEnabled: false, zoomCues: []))
+            .write(to: mixedSession.draftDocumentURL, options: .atomic)
         let mixedBefore = try Set(FileManager.default.contentsOfDirectory(atPath: mixedSession.directoryURL.path))
         var rejectedMixed = false
         do {
