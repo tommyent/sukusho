@@ -90,11 +90,13 @@ nonisolated struct CaptureSessionSnapshots {
             try ScreenshotEditFileTransaction.apply(replacements: [(baseImage, staging.appendingPathComponent("base.\(ext)"))])
         }
         try document.write(to: staging.appendingPathComponent("document.json"), options: .atomic)
-        let entryData = try Self.encode(entry)
-        let storedEntry = try Self.decode(CaptureSessionSnapshot.self, from: entryData)
-        try entryData.write(to: staging.appendingPathComponent("session.json"), options: .atomic)
-        try manager.moveItem(at: staging, to: folder(for: storedEntry.id))
-        return prune(([storedEntry] + existing).sorted {
+        // Keep full IEEE-754 timestamp precision in session.json so `openedAt != sessionOpenedAt`
+        // reliably excludes the current session and preserves sub-second ordering.
+        let sessionEncoder = JSONEncoder()
+        sessionEncoder.outputFormatting = [.sortedKeys]
+        try sessionEncoder.encode(entry).write(to: staging.appendingPathComponent("session.json"), options: .atomic)
+        try manager.moveItem(at: staging, to: folder(for: entry.id))
+        return prune(([entry] + existing).sorted {
             $0.openedAt == $1.openedAt ? $0.id.uuidString > $1.id.uuidString : $0.openedAt > $1.openedAt
         })
     }

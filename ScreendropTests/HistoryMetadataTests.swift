@@ -412,20 +412,30 @@ struct HistoryMetadataTests {
         isoDecoder.dateDecodingStrategy = .iso8601
         #expect(try isoDecoder.decode(DatedDoc.self, from: encoded) == DatedDoc(updatedAt: sampleDate))
 
-        // Fractional openedAt round-trips cleanly through keep() and read().
+        // Fractional openedAt keeps exact precision so the current session never appears as a previous session,
+        // and multiple sessions within the same second preserve chronological order.
         try withIndex { history in
             let store = CaptureSessionSnapshots(directory: history.deletingLastPathComponent().appendingPathComponent("sessions", isDirectory: true))
-            let kept = try store.keep(document: encoded, openedAt: Date(timeIntervalSince1970: 1_800_000_123.456))
+            let firstOpenedAt = Date(timeIntervalSince1970: 1_800_000_123.375)
+            let kept = try store.keep(document: encoded, openedAt: firstOpenedAt)
             let first = try #require(kept.first)
+            #expect(first.openedAt == firstOpenedAt)
+            #expect(kept.filter { $0.openedAt != firstOpenedAt }.isEmpty)
             let restored = try store.read(first)
             #expect(restored.document == encoded)
 
-            // Legacy numeric-date session.json remains readable.
+            let secondOpenedAt = Date(timeIntervalSince1970: 1_800_000_123.825)
+            let secondDoc = try CaptureSessionSnapshots.encode(DatedDoc(updatedAt: Date(timeIntervalSince1970: 1_800_000_050)))
+            let both = try store.keep(document: secondDoc, openedAt: secondOpenedAt)
+            #expect(both.map(\.openedAt) == [secondOpenedAt, firstOpenedAt])
+            #expect(both.filter { $0.openedAt != secondOpenedAt }.map(\.openedAt) == [firstOpenedAt])
+
+            // Both numeric-date and ISO-8601 session.json files remain readable.
             let legacyID = UUID()
             let legacyFolder = store.directory.appendingPathComponent(legacyID.uuidString, isDirectory: true)
             try FileManager.default.createDirectory(at: legacyFolder, withIntermediateDirectories: true)
             let legacyEntry = CaptureSessionSnapshot(id: legacyID, openedAt: Date(timeIntervalSince1970: 1_799_000_000), fingerprint: "abc", baseExtension: nil)
-            try JSONEncoder().encode(legacyEntry).write(to: legacyFolder.appendingPathComponent("session.json"))
+            try CaptureSessionSnapshots.encode(legacyEntry).write(to: legacyFolder.appendingPathComponent("session.json"))
             try encoded.write(to: legacyFolder.appendingPathComponent("document.json"))
             let entries = try store.entries()
             let loadedLegacy = try #require(entries.first { $0.id == legacyID })
