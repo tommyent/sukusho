@@ -478,8 +478,8 @@ struct LibraryTextIndexChecks {
         let mixedItem = try require(mixedScanned.first { $0.id == mixedID })
         try check(mixedItem.thumbnailKey.hasSuffix(CaptureTextIndexPlan.unreadableRedactionTag),
                   "Mixed-version scanner did not mark redactions unreadable")
-        try check(await CaptureLibraryIndex.image(for: mixedItem) == nil,
-                  "Mixed-version package leaked an insight frame")
+        let mixedFrame = await CaptureLibraryIndex.image(for: mixedItem)
+        try check(mixedFrame == nil, "Mixed-version package leaked an insight frame")
         let mixedAfter = try Set(FileManager.default.contentsOfDirectory(atPath: mixedSession.directoryURL.path))
         try check(mixedAfter == mixedBefore, "Mixed-version scan wrote into the package: \(mixedAfter.subtracting(mixedBefore))")
         print("CHECK: Library OCR and insight image hide redacted content, rebuild on change, purge when OCR is off, fail closed on dangling/mixed-version edits, fence pre-scan model/live export, and defer unavailable previews")
