@@ -1229,7 +1229,13 @@ struct RecordingExportRegressionChecks {
         try session.writeEditDocument(savedDoc)
         try session.writeDraftDocument(draftDoc)
         let store = CaptureSessionSnapshots(directory: session.sessionSnapshotsURL)
-        let snapshot = try store.keep(document: CaptureSessionSnapshots.encode(snapshotDoc), openedAt: Date()).first!
+        // Legacy snapshots use the default encoder and can predate the version field.
+        let legacyEncoded = try JSONEncoder().encode(snapshotDoc)
+        var legacySnapshot = try JSONSerialization.jsonObject(with: legacyEncoded) as! [String: Any]
+        legacySnapshot.removeValue(forKey: "formatVersion")
+        let snapshot = try store.keep(document: JSONSerialization.data(withJSONObject: legacySnapshot), openedAt: Date()).first!
+        try check(try RecordingSession.decodeRestorableSnapshot(store.read(snapshot).document).formatVersion == 1,
+                  "Legacy recording snapshot did not decode")
         let retained = try [saved.fileName, draft.fileName, snapshotOnly.fileName, replacement].map { name in
             (name, try Data(contentsOf: session.directoryURL.appendingPathComponent(name)))
         }

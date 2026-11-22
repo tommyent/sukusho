@@ -3778,23 +3778,11 @@ final class RecordingStudioModel {
         keptOpeningSession = true
     }
 
-    static func decodeRestorableSnapshot(_ data: Data) throws -> RecordingEditDocument {
-        if let version = RecordingPackageMedia.readFormatVersion(from: data),
-           version > RecordingEditDocument.currentFormatVersion {
-            throw RecordingPackageMedia.ValidationError.unsupportedFormatVersion(version)
-        }
-        let document = try CaptureManifest.decoder.decode(RecordingEditDocument.self, from: data)
-        if document.isUnsupportedFutureVersion {
-            throw RecordingPackageMedia.ValidationError.unsupportedFormatVersion(document.formatVersion)
-        }
-        return document
-    }
-
     func revertToSession(_ snapshot: CaptureSessionSnapshot) {
         guard canRevert, let session else { return }
         do {
             let stored = try CaptureSessionSnapshots(directory: session.sessionSnapshotsURL).read(snapshot)
-            let document = try Self.decodeRestorableSnapshot(stored.document)
+            let document = try RecordingSession.decodeRestorableSnapshot(stored.document)
             revert(to: document, stylePresetID: nil, actionName: "Revert to Session")
         } catch {
             FailureAlert.present(message: "The session could not be restored", error: error)
@@ -7578,18 +7566,7 @@ final class RecordingStudioModel {
         let keptDocuments: [RecordingEditDocument]
         do {
             keptDocuments = try store.strictEntries().map { entry in
-                let raw = try store.read(entry).document
-                guard let version = RecordingPackageMedia.readFormatVersion(from: raw),
-                      version <= RecordingEditDocument.currentFormatVersion else {
-                    throw RecordingPackageMedia.ValidationError.unsupportedFormatVersion(
-                        RecordingPackageMedia.readFormatVersion(from: raw) ?? (RecordingEditDocument.currentFormatVersion + 1)
-                    )
-                }
-                let decoded = try CaptureManifest.decoder.decode(RecordingEditDocument.self, from: raw)
-                if decoded.isUnsupportedFutureVersion {
-                    throw RecordingPackageMedia.ValidationError.unsupportedFormatVersion(decoded.formatVersion)
-                }
-                return decoded
+                try RecordingSession.decodeRestorableSnapshot(store.read(entry).document)
             }
         } catch { return } // An unreadable or newer-format snapshot may still reference media in unknown fields.
         let referencedMusic = Set([savedDocument?.backgroundMusic?.fileName, draftDocument?.backgroundMusic?.fileName, lastSavedDocument?.backgroundMusic?.fileName, backgroundMusicSettings?.fileName].compactMap { $0 } + keptDocuments.compactMap { $0.backgroundMusic?.fileName })

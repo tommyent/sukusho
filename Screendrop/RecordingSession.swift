@@ -402,6 +402,18 @@ nonisolated struct RecordingSession: Sendable, Equatable {
         return draft.revision >= saved.revision && draft.withoutRevision != saved.withoutRevision
     }
 
+    static func decodeRestorableSnapshot(_ data: Data) throws -> RecordingEditDocument {
+        if let version = RecordingPackageMedia.readFormatVersion(from: data),
+           version > RecordingEditDocument.currentFormatVersion {
+            throw RecordingPackageMedia.ValidationError.unsupportedFormatVersion(version)
+        }
+        let document = try CaptureSessionSnapshots.decode(RecordingEditDocument.self, from: data)
+        if document.isUnsupportedFutureVersion {
+            throw RecordingPackageMedia.ValidationError.unsupportedFormatVersion(document.formatVersion)
+        }
+        return document
+    }
+
     // MARK: - Project metadata
 
     func loadProjectMetadata() -> RecordingProjectMetadata? {

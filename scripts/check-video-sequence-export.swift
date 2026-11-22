@@ -926,7 +926,7 @@ struct CheckR2Export {
             precondition(snapModel.isLoaded && !snapModel.isReadOnlyNewerFormat,
                          "Format-7 project with format-99 snapshot should open writable")
             do {
-                _ = try RecordingStudioModel.decodeRestorableSnapshot(futureSnapJSON)
+                _ = try RecordingSession.decodeRestorableSnapshot(futureSnapJSON)
                 preconditionFailure("decodeRestorableSnapshot must refuse format-99 snapshot")
             } catch RecordingPackageMedia.ValidationError.unsupportedFormatVersion(99) {
                 // Expected
