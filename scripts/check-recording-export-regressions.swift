@@ -2,6 +2,8 @@ import AppKit
 import AVFoundation
 import CoreGraphics
 import CoreVideo
+import CoreTransferable
+import UniformTypeIdentifiers
 import Foundation
 import Darwin
 import SwiftUI
@@ -1656,6 +1658,36 @@ struct RecordingExportRegressionChecks {
         print("PASS: fixed render survives rename, legacy cache is found and removed, and camera master survives")
     }
 
+    static func readOnlyDraftDelivery(in directory: URL) async throws {
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("read-only-drag.sukushorec"))
+        try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
+        try await movie(at: session.screenURL)
+        let mask = RecordingRedaction(start: 1, end: 3, rect: CGRect(x: 0.2, y: 0.2, width: 0.6, height: 0.6))
+        let masked = RecordingEditDocument(style: .init(), zoomEnabled: false, zoomCues: [], redactions: [mask])
+        let snapshot = try CaptureSessionSnapshots(directory: session.sessionSnapshotsURL)
+            .keep(document: CaptureSessionSnapshots.encode(masked), openedAt: Date())[0]
+        let model = RecordingStudioModel(url: session.directoryURL)
+        await model.load()
+        try check(model.isLoaded, "Read-only drag's Studio did not load")
+        try check(chmod(session.directoryURL.path, 0o555) == 0, "Could not make the recording read-only")
+        defer {
+            _ = chmod(session.directoryURL.path, 0o755)
+            model.teardown()
+        }
+        model.revertToSession(snapshot)
+        try await until { !model.hasRunningWork }
+        try check(model.redactions == [mask] && !FileManager.default.fileExists(atPath: session.draftDocumentURL.path),
+                  "Fixture did not produce a live mask with a failed draft write")
+        var draftPermissionFailure = false
+        do { _ = try await RecordingSessionRenderer.ensureDeliverable(for: session) }
+        catch let error as CocoaError where error.code == .fileWriteNoPermission { draftPermissionFailure = true }
+        try check(draftPermissionFailure, "The shared delivery path did not propagate the draft write's permission error")
+        let item = CaptureDragExport(url: session.screenURL, isVideo: true)
+        let result = try? await item.exported(as: .movie)
+        try check(result == nil, "The movie drag representation handed out a recording after a failed draft write")
+        print("PASS: read-only Studio draft failure with a live mask blocks the real movie drag representation")
+    }
+
     static func main() async throws {
         setbuf(stdout, nil)
         guard let root = ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] else {
@@ -1677,6 +1709,7 @@ struct RecordingExportRegressionChecks {
         try editRevisionOrdering(in: directory)
         try renderStampInstallFailure(in: directory)
         try cachedMovieNames(in: directory)
+        try await readOnlyDraftDelivery(in: directory)
         try await chapterMarkerDrag(in: directory)
         try await chapterAtPlayhead(in: directory)
         try await chapterRenameUndo(in: directory)

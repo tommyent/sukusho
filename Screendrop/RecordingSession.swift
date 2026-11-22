@@ -314,7 +314,15 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     }
 
     func removeDraftDocument() {
-        try? FileManager.default.removeItem(at: draftDocumentURL)
+        try? removeDraftDocumentIfPresent()
+    }
+
+    func removeDraftDocumentIfPresent() throws {
+        if let draft = try RecordingPackageMedia.resolveOptionalPackageFile(
+            named: Self.draftDocumentFileName, in: directoryURL
+        ) {
+            try FileManager.default.removeItem(at: draft)
+        }
     }
 
     /// Revert to Original: the project's saved edits, its draft and any

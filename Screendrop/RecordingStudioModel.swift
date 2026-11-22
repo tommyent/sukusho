@@ -3519,34 +3519,41 @@ final class RecordingStudioModel {
     @discardableResult
     private func writeDraftNow() -> Bool {
         guard isLoaded, !isRestoringDocument, !hasUnreadableDraft, !isReadOnlyNewerFormat else { return false }
-        let document = currentDocument()
-        guard let session else {
-            hasUnsavedChanges = document != lastSavedDocument
+        do {
+            try persistDraft()
             return true
+        } catch {
+            return false
         }
-        do { if document != openedDocument { try keepOpeningSession() } }
-        catch {
+    }
+
+    private func persistDraft() throws {
+        let document = currentDocument()
+        let changed = document != lastSavedDocument
+        guard let session else {
+            hasUnsavedChanges = changed
+            return
+        }
+        do {
+            if document != openedDocument {
+                do { try keepOpeningSession() }
+                catch where !openedOnDraft {
+                    // A saved opening is still safe in edit.json.
+                    lastSaveSucceeded = false
+                }
+            }
+            if changed {
+                try session.writeDraftDocument(document)
+            } else {
+                try session.removeDraftDocumentIfPresent()
+            }
+            hasUnsavedChanges = changed
+            dropStaleRender(in: session)
+        } catch {
             lastSaveSucceeded = false
             hasUnsavedChanges = true
-            // A saved opening is safe in edit.json; an opening draft is not.
-            if openedOnDraft { return false }
+            throw error
         }
-        if document == lastSavedDocument {
-            // Edited back to the saved state (undo, or a discard landing):
-            // the draft is now noise and would reopen the project dirty.
-            session.removeDraftDocument()
-            hasUnsavedChanges = false
-        } else {
-            do { try session.writeDraftDocument(document) }
-            catch {
-                lastSaveSucceeded = false
-                hasUnsavedChanges = true
-                return false
-            }
-            hasUnsavedChanges = true
-        }
-        dropStaleRender(in: session)
-        return true
     }
 
     /// A cached flatten that no longer matches the edits is worse than no
@@ -3575,6 +3582,17 @@ final class RecordingStudioModel {
         writeDraftNow()
     }
 
+    func flushDraftForDelivery() throws {
+        if isReadOnlyNewerFormat, let newerFormatVersion {
+            throw RecordingPackageMedia.ValidationError.unsupportedFormatVersion(newerFormatVersion)
+        }
+        guard isLoaded, !isRestoringDocument, !hasUnreadableDraft, !isReadOnlyNewerFormat else {
+            throw CocoaError(.fileReadCorruptFile, userInfo: [NSLocalizedDescriptionKey:
+                "Studio could not prepare the recording edits for delivery."])
+        }
+        try persistDraft()
+    }
+
     /// ⌘S, a pause, leaving the window, closing and quitting. Commits the
     /// working copy to `edit.json` and clears the draft.
     @discardableResult
@@ -3586,7 +3604,7 @@ final class RecordingStudioModel {
         do {
             if document != openedDocument { try keepOpeningSession() }
             try session.writeEditDocument(document)
-            session.removeDraftDocument()
+            try session.removeDraftDocumentIfPresent()
             lastSavedDocument = document
             hasUnsavedChanges = false
             try? session.updateProjectMetadata { $0.savedAt = Date() }
@@ -6151,7 +6169,6 @@ final class RecordingStudioModel {
         guard let session, isLoaded, !isExportingGuide, !hasRunningWork, !hasUnreadableDraft,
               !isReadOnlyNewerFormat, !transcriptionState.isTranscribing else { return }
         pause()
-        flushDraft()
         isExportingGuide = true
         Task {
             defer { isExportingGuide = false }
@@ -6165,10 +6182,11 @@ final class RecordingStudioModel {
         guard isLoaded, !hasRunningWork, !hasUnreadableDraft, !isReadOnlyNewerFormat,
               !transcriptionState.isTranscribing else { return }
         pause()
-        flushDraft()
-        let document = currentDocument()
-        let deliverableDocument = self.deliverableDocument
         let session = self.session
+        let deliverableDocument: RecordingEditDocument?
+        do { deliverableDocument = try session.map { try RecordingSessionRenderer.documentForDelivery(for: $0) } ?? nil }
+        catch { exportState = .failed(error.localizedDescription); return }
+        let document = currentDocument()
         let title = projectDisplayName
         let timeline = clipTimeline
         let configuration: RecordingStudioExporter.Configuration?

@@ -10,6 +10,7 @@ import tempfile
 repo = Path(__file__).resolve().parent.parent
 derived = Path(sys.argv[1]).resolve()
 products = derived / "Build/Products/Debug Dev"
+sparkle = derived / "SourcePackages/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64"
 build = derived / "RecordingExportChecks"
 build.mkdir(exist_ok=True)
 bench = Path("/private/tmp/screendrop-team/bench.lock")
@@ -25,15 +26,15 @@ command = [
     "-module-name", "Screendrop", "-target", f"{platform.machine()}-apple-macos27.0",
     "-default-isolation", "MainActor", "-enable-upcoming-feature", "MemberImportVisibility",
     "-enable-upcoming-feature", "NonisolatedNonsendingByDefault", "-D", "DEBUG",
-    "-I", str(products), str(products / "DockProgress.o"), "@" + str(source_list), "-o", str(binary),
+    "-I", str(products), "-F", str(sparkle), "-framework", "Sparkle",
+    "-Xlinker", "-rpath", "-Xlinker", str(sparkle),
+    str(products / "DockProgress.o"), "@" + str(source_list), "-o", str(binary),
 ]
 with (build / "compile.log").open("w") as log:
     if subprocess.run(command, cwd=repo, stdout=log, stderr=subprocess.STDOUT).returncode:
         sys.exit(f"Harness compile failed: {build / 'compile.log'}")
 with tempfile.TemporaryDirectory(prefix="screendrop-recording-checks-", dir="/private/tmp") as root:
-    try:
-        subprocess.run([str(binary)], env=dict(os.environ, CFFIXED_USER_HOME=root), check=True, timeout=120)
-    finally:
-        # UserDefaults ignores CFFIXED_USER_HOME: the export-default checks empty this binary's own
-        # domain, and cfprefsd leaves its empty plist in the real home.
-        (Path.home() / "Library/Preferences" / f"{binary.name}.plist").unlink(missing_ok=True)
+    temporary = Path(root) / "tmp"
+    temporary.mkdir()
+    environment = dict(os.environ, HOME=root, CFFIXED_USER_HOME=root, TMPDIR=str(temporary))
+    subprocess.run([str(binary)], env=environment, check=True, timeout=120)

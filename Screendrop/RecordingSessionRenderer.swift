@@ -209,6 +209,11 @@ enum RecordingSessionRenderer {
         return PreparedRawImport(url: muxedURL, isTemporary: true)
     }
 
+    static func documentForDelivery(for session: RecordingSession) throws -> RecordingEditDocument? {
+        try StudioProjectRegistry.shared.flushDraft(for: session.directoryURL)
+        return try session.editDocumentForRendering()
+    }
+
     /// Creates a flattened deliverable when explicitly requested for a session
     /// whose raw screen master would not match what the user sees: a camera
     /// source, a cursor-hidden capture, or any saved Studio project. Only a
@@ -218,8 +223,7 @@ enum RecordingSessionRenderer {
         for session: RecordingSession,
         onProgress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> URL {
-        try RecordingPackageMedia.validateRenderInputs(in: session.directoryURL)
-        return try await ensureDeliverable(for: session, editDocument: session.editDocumentForRendering(), onProgress: onProgress)
+        try await ensureDeliverable(for: session, editDocument: documentForDelivery(for: session), onProgress: onProgress)
     }
 
     static func readyDeliverable(for session: RecordingSession, editDocument: RecordingEditDocument?) -> URL? {
@@ -269,7 +273,7 @@ enum RecordingSessionRenderer {
         for session: RecordingSession
     ) async throws -> RecordingStudioExporter.Configuration {
         try RecordingPackageMedia.validateRenderInputs(in: session.directoryURL)
-        return try await makeConfiguration(for: session, editDocument: session.editDocumentForRendering())
+        return try await makeConfiguration(for: session, editDocument: documentForDelivery(for: session))
     }
 
     private static func makeConfiguration(

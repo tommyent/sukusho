@@ -143,7 +143,6 @@ final class AgentLiveBackend: AgentBackend {
         guard let library = CaptureLibraryModel.shared.items.first(where: { $0.id == item.id }) else {
             throw AgentToolError("The capture is gone from the Library.")
         }
-        StudioProjectRegistry.shared.flushDrafts()
         if let session = library.session, library.historyIDs.isEmpty {
             _ = await ScreenshotHistoryStore.shared.importRecordingSession(session)
         }
@@ -166,7 +165,6 @@ final class AgentLiveBackend: AgentBackend {
     /// The Library's gallery path.
     func shareGallery(_ items: [AgentItem], settings: AgentShareSettings) async throws -> AgentShareResult {
         guard let share = CloudGalleryShare.configured() else { throw CloudUploadError.notConfigured }
-        StudioProjectRegistry.shared.flushDrafts()
         // Each image is named as its Library card is, as the Library's gallery share names them.
         let shared = try await share.share(items.map { CloudGalleryShare.Image(fileURL: $0.fileURL, title: $0.shownTitle) },
                                            settings: .init(title: settings.title, expiresAt: settings.expiry.date(), password: settings.password,

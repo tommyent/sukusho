@@ -74,6 +74,10 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
     /// means the recording has to be rendered first: pending redactions, or
     /// edits that can't be read.
     static func immediateURL(for url: URL) -> URL? {
+        if let session = RecordingDeliverable.session(for: url) {
+            do { try StudioProjectRegistry.shared.flushDraft(for: session.directoryURL) }
+            catch { return nil }
+        }
         guard let source = try? RecordingPreviewSource(url), source.redactions.isEmpty else { return nil }
         return source.url
     }
@@ -85,9 +89,6 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
         openedFromLibrary = !collapsingPreviewStack
         if openedFromLibrary, !keepingFocus {
             libraryWindow = NSApp.windows.first { $0.identifier?.rawValue == "CAPTURE_LIBRARY" }
-        }
-        if urls.contains(where: { RecordingDeliverable.session(for: $0) != nil }) {
-            StudioProjectRegistry.shared.flushDrafts()
         }
         let immediate = urls.map(Self.immediateURL)
         guard immediate.contains(nil) else {

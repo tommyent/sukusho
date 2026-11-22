@@ -87,7 +87,6 @@ final class LibraryClipUpload: Identifiable {
     deinit { try? FileManager.default.removeItem(at: directory) }
 
     func upload(options: CloudUploadOptions) {
-        StudioProjectRegistry.shared.flushDrafts()
         CloudLibraryModel.shared.uploadSelection(sources, options: options, didUpload: { [self] file, link in
             if let owner = owners[file], let store = ClipboardMonitor.shared.store {
                 try await store.setCloudLink(link, entry: owner.id, position: owner.position)
@@ -102,7 +101,6 @@ final class LibraryClipUpload: Identifiable {
 extension CaptureLibraryModel {
     func shareSelection(_ cards: [LibrarySavedCard]) {
         run("Preparing share…") {
-            StudioProjectRegistry.shared.flushDrafts()
             var values: [LibraryTransferValue] = []
             for card in cards { values += try await card.transferValues() }
             LibrarySharing.show(values.map(\.sharingItem))

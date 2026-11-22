@@ -284,7 +284,6 @@ extension CaptureLibraryModel {
     func upload(_ item: CaptureLibraryItem, options: CloudUploadOptions) {
         guard !isBusy else { return }
         run("Uploading…") {
-            StudioProjectRegistry.shared.flushDrafts()
             let source = LibraryUploadSource.capture(item, url: item.fileURL)
             defer { self.uploadingItemID = nil }
             let link: String
@@ -306,7 +305,6 @@ extension CaptureLibraryModel {
         guard !isBusy, let share = CloudGalleryShare.configured() else { return }
         let total = items.count
         run("Uploading 1 of \(total)…") {
-            StudioProjectRegistry.shared.flushDrafts()
             let dock = DockExportProgressCoordinator.shared.start()
             defer { DockExportProgressCoordinator.shared.finish(dock) }
             let shared = try await share.share(
@@ -361,7 +359,6 @@ extension CaptureLibraryModel {
         panel.begin { response in
             guard response == .OK, let directory = panel.url else { return }
             self.run("Exporting…") {
-                StudioProjectRegistry.shared.flushDrafts()
                 var exported: [URL] = []
                 var failures: [String] = []
                 for item in items {
@@ -390,7 +387,6 @@ extension CaptureLibraryModel {
         panel.begin { response in
             guard response == .OK, let destination = panel.url else { return }
             self.run("Exporting GIF…") {
-                StudioProjectRegistry.shared.flushDrafts()
                 let movie = try await RecordingDeliverable.resolve(for: item.fileURL)
                 let settings = RecordingExportPreferences.lastSettings
                 // Written beside the destination, then renamed over it, so a failure leaves no half GIF.
@@ -431,8 +427,7 @@ extension CaptureLibraryModel {
     }
 
     private func writeAgentPrompt(_ session: RecordingSession, id: String, reveals: Bool = true) async throws {
-        StudioProjectRegistry.shared.flushDrafts()
-        let document = try StudioProjectRegistry.shared.document(for: session.directoryURL) ?? session.editDocumentForRendering()
+        let document = try RecordingSessionRenderer.documentForDelivery(for: session)
         let export = AgentPromptExportProgress(id: id)
         agentPromptExport = export
         defer { if agentPromptExport === export { agentPromptExport = nil } }

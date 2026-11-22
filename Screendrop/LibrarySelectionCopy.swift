@@ -11,7 +11,6 @@ extension CaptureLibraryModel {
         let turn = OptimizedImageCopy.shared.takeTurn()
         run("Copying…") {
             defer { OptimizedImageCopy.shared.finish(turn) }
-            StudioProjectRegistry.shared.flushDrafts()
             if cards.count == 1, case .capture(let item) = cards[0], !item.isVideo {
                 let copied = try await ScreenshotFileActions.copyImageToClipboard(from: item.fileURL, original: original,
                                                                                 turn: turn) { saving, bytes in

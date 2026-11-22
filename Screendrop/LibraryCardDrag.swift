@@ -7,10 +7,8 @@ extension LibrarySavedCard {
         case .capture(let item):
             var file = item.fileURL
             if item.isVideo, let session = item.session ?? RecordingDeliverable.session(for: file) {
+                let edits = try RecordingSessionRenderer.documentForDelivery(for: session)
                 try RecordingPackageMedia.validateRenderInputs(in: session.directoryURL)
-                StudioProjectRegistry.shared.flushDraft(for: session.directoryURL)
-                try RecordingPackageMedia.validateRenderInputs(in: session.directoryURL)
-                let edits = try session.editDocumentForRendering()
                 guard let ready = RecordingSessionRenderer.readyDeliverable(for: session, editDocument: edits) else {
                     return LibraryRecordingPromise.provider(for: session, edits: edits, name: item.name)
                 }
@@ -47,18 +45,16 @@ final class LibraryFileGroup: NSPasteboardItem {
 
 private final class LibraryRecordingPromise: NSObject, NSFilePromiseProviderDelegate {
     let session: RecordingSession
-    let edits: RecordingEditDocument?
     let name: String
 
-    init(session: RecordingSession, edits: RecordingEditDocument?, name: String) {
+    init(session: RecordingSession, name: String) {
         self.session = session
-        self.edits = edits
         self.name = name
     }
 
     static func provider(for session: RecordingSession, edits: RecordingEditDocument?, name: String) -> NSFilePromiseProvider {
         let container = (edits?.exportSettings ?? RecordingExportPreferences.lastSettings).effectiveContainer
-        let delegate = LibraryRecordingPromise(session: session, edits: edits,
+        let delegate = LibraryRecordingPromise(session: session,
                                                name: CaptureLibraryFiles.fileName(name, ext: container.fileExtension))
         let provider = NSFilePromiseProvider(fileType: container.contentType.identifier, delegate: delegate)
         provider.userInfo = delegate // AppKit holds a weak delegate until the destination requests the file.
@@ -71,7 +67,7 @@ private final class LibraryRecordingPromise: NSObject, NSFilePromiseProviderDele
                                          completionHandler: @escaping (Error?) -> Void) {
         Task { @MainActor in
             do {
-                let file = try await RecordingSessionRenderer.ensureDeliverable(for: session, editDocument: edits)
+                let file = try await RecordingSessionRenderer.ensureDeliverable(for: session)
                 try await VideoFileActions.save(from: file, to: url, replacingExisting: false)
                 completionHandler(nil)
             } catch { completionHandler(error) }

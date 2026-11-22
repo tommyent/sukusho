@@ -9,7 +9,6 @@ nonisolated struct CaptureDragExport: Transferable, Sendable {
 
     static var transferRepresentation: some TransferRepresentation {
         FileRepresentation(exportedContentType: .movie) { item in
-            await MainActor.run { StudioProjectRegistry.shared.flushDrafts() }
             return SentTransferredFile(try await RecordingDeliverable.resolve(for: item.url))
         }
         .exportingCondition { $0.isVideo }

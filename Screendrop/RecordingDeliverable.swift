@@ -40,13 +40,14 @@ enum RecordingDeliverable {
     /// later upload is a plain copy.
     static func resolve(for mediaURL: URL) async throws -> URL {
         guard let session = session(for: mediaURL) else { return mediaURL }
-        guard needsRender(for: mediaURL) else {
-            return try await RecordingSessionRenderer.ensureDeliverable(for: session)
+        let document = try RecordingSessionRenderer.documentForDelivery(for: session)
+        if let ready = RecordingSessionRenderer.readyDeliverable(for: session, editDocument: document) {
+            return ready
         }
 
         let dockProgressID = DockExportProgressCoordinator.shared.start()
         defer { DockExportProgressCoordinator.shared.finish(dockProgressID) }
-        return try await RecordingSessionRenderer.ensureDeliverable(for: session) { progress in
+        return try await RecordingSessionRenderer.ensureDeliverable(for: session, editDocument: document) { progress in
             Task { @MainActor in
                 DockExportProgressCoordinator.shared.update(dockProgressID, progress: progress)
             }

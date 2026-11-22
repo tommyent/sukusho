@@ -42,8 +42,7 @@ enum RecordingStepsExport {
     /// Writes the guide with Studio's unsaved edits when it's open on the recording, copies its
     /// Markdown for Jira, Linear or GitHub, and shows `guide.html` in Finder.
     static func exportGuide(session: RecordingSession, progress: @escaping @Sendable (Double) -> Void = { _ in }) async throws -> URL {
-        StudioProjectRegistry.shared.flushDrafts()
-        let document = try StudioProjectRegistry.shared.document(for: session.directoryURL) ?? session.editDocumentForRendering()
+        let document = try RecordingSessionRenderer.documentForDelivery(for: session)
         let (steps, stills) = try await prepare(session: session, document: document, progress: progress)
         let folder = try write(steps, format: .guide, stills: stills)
         NSPasteboard.general.clearContents()
