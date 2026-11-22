@@ -47,8 +47,9 @@ enum RecordingSessionRenderer {
     /// unreadable or future-format edit is refused before copying raw.
     @discardableResult
     static func validateRawImport(in packageURL: URL) throws -> RecordingPackageMedia.ResolvedRawImport {
+        try RecordingPackageMedia.validateRawScreenInput(in: packageURL)
+        let document = try documentForDelivery(for: RecordingSession(directoryURL: packageURL))
         let resolved = try RecordingPackageMedia.validateRawImportInputs(in: packageURL)
-        let document = try RecordingSession(directoryURL: packageURL).editDocumentForRendering()
         return RecordingPackageMedia.ResolvedRawImport(
             screenURL: resolved.screenURL,
             activeEditURL: resolved.activeEditURL,

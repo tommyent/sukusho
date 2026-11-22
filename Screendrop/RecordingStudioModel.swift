@@ -3652,6 +3652,13 @@ final class RecordingStudioModel {
         // A redaction rejected by storage rolls back in Studio. Delivery must still see the failure.
         if let rejectedRedactionDraftError { throw rejectedRedactionDraftError }
         try persistDraft()
+        projectSaveTask?.cancel()
+    }
+
+    private func validateProjectDelivery() throws {
+        guard let session else { return }
+        try flushDraftForDelivery()
+        try RecordingPackageMedia.validateRenderInputs(in: session.directoryURL)
     }
 
     /// ⌘S, a pause, leaving the window, closing and quitting. Commits the
@@ -6314,7 +6321,9 @@ final class RecordingStudioModel {
     func export() {
         // One render at a time: the share pipeline uses the same exporter,
         // so a second encode would just fight it for the media engine.
-        guard !hasRunningWork, isLoaded, !hasUnreadableDraft, !isReadOnlyNewerFormat else { return }
+        guard !hasRunningWork, isLoaded else { return }
+        do { try validateProjectDelivery() }
+        catch { exportState = .failed(error.localizedDescription); return }
         pause()
         let previewURL = sessionURL
 
@@ -7308,18 +7317,17 @@ final class RecordingStudioModel {
     /// Writes the edited soundtrack on its own, for cleanup in a tool that
     /// has no API - the outbound half of the replace-audio round trip.
     func exportAudio() {
-        guard !hasRunningWork, isLoaded, hasAudio, !hasUnreadableDraft, !isReadOnlyNewerFormat else { return }
-        pause()
-
-        audioExportState = .exporting(progress: 0)
-
+        guard !hasRunningWork, isLoaded, hasAudio else { return }
         let replacementURL: URL?
         do {
+            try validateProjectDelivery()
             replacementURL = try replacementAudioURLForExport(includeAudio: true)
         } catch {
             audioExportState = .failed(error.localizedDescription)
             return
         }
+        pause()
+        audioExportState = .exporting(progress: 0)
         let includeMix = effectiveAudioExportIncludesClips
         let configuration = RecordingAudioExporter.Configuration(
             screenURL: screenURL,
@@ -7635,19 +7643,12 @@ final class RecordingStudioModel {
     /// session's flattened deliverable, upload it, and copy the share
     /// link - without leaving the Studio or touching a save panel.
     func shareToCloud(options: CloudUploadOptions, replacingUploadID: String? = nil) {
-        guard !hasRunningWork, isLoaded, !hasUnreadableDraft, !isReadOnlyNewerFormat,
-              canShareToCloud else {
-            return
-        }
+        guard !hasRunningWork, isLoaded else { return }
         sharedVideoError = nil
+        do { try validateProjectDelivery() }
+        catch { shareState = .failed(error.localizedDescription); return }
+        guard canShareToCloud else { return }
         pause()
-        // Flush the draft first so the deliverable-invalidation in the
-        // debounced autosave can't race the file this render produces.
-        projectSaveTask?.cancel()
-        guard writeDraftNow() else {
-            shareState = .failed("The recording edits could not be saved. Try again after resolving the storage problem.")
-            return
-        }
 
         // A fresh deliverable (e.g. sharing again without edits) skips
         // the render and goes straight to upload.

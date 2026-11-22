@@ -1691,19 +1691,46 @@ struct RecordingExportRegressionChecks {
         let item = CaptureDragExport(url: session.screenURL, isVideo: true)
         let result = try? await item.exported(as: .movie)
         try check(result == nil, "The movie drag representation handed out a recording after a failed draft write")
-        print("PASS: read-only Studio draft failure with a live mask blocks the real movie drag representation")
+        model.export()
+        model.shareToCloud(options: CloudUploadOptions(title: "", socialEnabled: false))
+        guard case .failed(let videoError) = model.exportState, case .failed(let shareError) = model.shareState else {
+            throw Failure(description: "Studio Export or Share ignored the draft permission error")
+        }
+        try check(videoError == shareError, "Studio reported different delivery errors for the same draft")
+        try check(!model.hasRunningWork, "Read-only Studio started a delivery task")
+        var rawValidationRefused = false
+        do { _ = try RecordingSessionRenderer.validateRawImport(in: session.directoryURL) }
+        catch let error as CocoaError where error.code == .fileWriteNoPermission { rawValidationRefused = true }
+        var rawImportRefused = false
+        do { _ = try await RecordingSessionRenderer.prepareRawImport(for: session.directoryURL) }
+        catch let error as CocoaError where error.code == .fileWriteNoPermission { rawImportRefused = true }
+        try check(rawValidationRefused && rawImportRefused, "Raw import ignored the live mask's draft write failure")
+        print("PASS: read-only Studio draft failure blocks movie drag, Studio Export and Share, and both Raw import entry points")
     }
 
     static func lateDraftDelivery(in directory: URL) async throws {
         let session = RecordingSession(directoryURL: directory.appendingPathComponent("late-draft.sukushorec"))
         try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
-        try await movie(at: session.screenURL)
+        let video = directory.appendingPathComponent("late-draft-video.mov")
+        let audio = directory.appendingPathComponent("late-draft-audio.wav")
+        try await movie(at: video)
+        try audioTone(at: audio, frequency: 440)
+        let composition = AVMutableComposition()
+        for url in [video, audio] {
+            let asset = AVURLAsset(url: url)
+            for track in try await asset.load(.tracks) {
+                let target = composition.addMutableTrack(withMediaType: track.mediaType, preferredTrackID: kCMPersistentTrackID_Invalid)!
+                try target.insertTimeRange(CMTimeRange(start: .zero, duration: CMTime(value: 8, timescale: 1)), of: track, at: .zero)
+            }
+        }
+        try await AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough)!
+            .export(to: session.screenURL, as: .mov)
         let saved = RecordingEditDocument(style: .init(), zoomEnabled: false, zoomCues: [])
         try session.writeEditDocument(saved)
         let model = RecordingStudioModel(url: session.directoryURL)
         await model.load()
         defer { model.teardown() }
-        try check(model.isLoaded && !model.hasUnsavedChanges, "Expected an unchanged Studio model")
+        try check(model.isLoaded && !model.hasUnsavedChanges && model.hasAudio, "Expected an unchanged Studio model with audio")
         var arriving = saved
         arriving.redactions = [RecordingRedaction(start: 1, end: 3, rect: CGRect(x: 0, y: 0, width: 1, height: 1))]
         for version in [99, RecordingEditDocument.currentFormatVersion] {
@@ -1716,10 +1743,19 @@ struct RecordingExportRegressionChecks {
             try check(!model.saveProject(reportingFailure: false), "Save overwrote a draft that arrived after load")
             var refused = false
             do { _ = try RecordingSessionRenderer.documentForDelivery(for: session) } catch { refused = true }
-            try check(refused && (try Data(contentsOf: session.draftDocumentURL)) == bytes,
+            model.export()
+            model.exportAudio()
+            model.shareToCloud(options: CloudUploadOptions(title: "", socialEnabled: false))
+            guard case .failed(let videoError) = model.exportState,
+                  case .failed(let audioError) = model.audioExportState,
+                  case .failed(let shareError) = model.shareState else {
+                throw Failure(description: "Studio delivery started with disputed edits")
+            }
+            try check(refused && !model.hasRunningWork && videoError == audioError && videoError == shareError
+                      && (try Data(contentsOf: session.draftDocumentURL)) == bytes,
                       "Delivery accepted or deleted the draft that arrived after Studio loaded")
         }
-        print("PASS: late unknown and supported draft revisions survive flush and save, and block delivery")
+        print("PASS: late unknown and supported drafts survive flush and save, and block Studio Export, Export Audio and Share")
     }
 
     static func canonicalStudioRegistry(in directory: URL) async throws {
