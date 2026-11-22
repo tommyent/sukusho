@@ -1714,6 +1714,148 @@ struct StudioVideoSequenceTests {
         return NSImage(cgImage: ctx.makeImage()!, size: NSSize(width: width, height: height))
     }
 
+    // MARK: - Round 5 Regressions (Findings 11, 12, 15)
+
+    @Test func displayTransformGuardAllowsAxisAlignedAndRejectsShearOrOblique() {
+        let size = CGSize(width: 384, height: 216)
+        #expect(RecordingCompositionBuilder.isIdentityTransform(.identity))
+        #expect(RecordingCompositionBuilder.isSupportedDisplayTransform(.identity, naturalSize: size))
+        #expect(!RecordingCompositionBuilder.isIdentityTransform(CGAffineTransform(rotationAngle: .pi / 2)))
+        #expect(RecordingCompositionBuilder.isSupportedDisplayTransform(CGAffineTransform(rotationAngle: .pi / 2), naturalSize: size))
+        #expect(RecordingCompositionBuilder.isSupportedDisplayTransform(CGAffineTransform(rotationAngle: .pi), naturalSize: size))
+        #expect(RecordingCompositionBuilder.isSupportedDisplayTransform(CGAffineTransform(rotationAngle: -.pi / 2), naturalSize: size))
+        #expect(RecordingCompositionBuilder.isSupportedDisplayTransform(CGAffineTransform(scaleX: -1, y: 1), naturalSize: size))
+
+        // Oblique rotation, shear, singular, and zero naturalSize must fail closed.
+        #expect(!RecordingCompositionBuilder.isSupportedDisplayTransform(CGAffineTransform(rotationAngle: .pi / 6), naturalSize: size))
+        #expect(!RecordingCompositionBuilder.isSupportedDisplayTransform(CGAffineTransform(a: 1, b: 0.25, c: 0, d: 1, tx: 0, ty: 0), naturalSize: size))
+        #expect(!RecordingCompositionBuilder.isSupportedDisplayTransform(CGAffineTransform(a: 0, b: 0, c: 0, d: 0, tx: 0, ty: 0), naturalSize: size))
+        #expect(!RecordingCompositionBuilder.isSupportedDisplayTransform(.identity, naturalSize: .zero))
+    }
+
+    @Test func readFormatVersionRecognizesFutureHeaderEvenWithUnknownEnumCase() throws {
+        let futureWithUnknownEnum = Data("""
+        {
+          "formatVersion": 99,
+          "redactions": [{ "mode": "mosaic_v2", "start": 0, "end": 1, "rect": [[0, 0], [0.5, 1]] }]
+        }
+        """.utf8)
+        #expect(RecordingPackageMedia.readFormatVersion(from: futureWithUnknownEnum) == 99)
+        #expect(RecordingPackageMedia.readFormatVersion(from: Data("{}".utf8)) == 1)
+        #expect(RecordingPackageMedia.readFormatVersion(from: Data("{ not json".utf8)) == nil)
+
+        // Package validation must classify a format-99 draft with an unknown enum case
+        // as unsupportedFormatVersion(99), not invalidPackage.
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StudioFutureHeader-\(UUID().uuidString)", isDirectory: true)
+        let pkg = root.appendingPathComponent("Future.sukushorec", isDirectory: true)
+        try FileManager.default.createDirectory(at: pkg, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("stub".utf8).write(to: pkg.appendingPathComponent("screen.mov"))
+        try Data(#"{"formatVersion":7}"#.utf8).write(to: pkg.appendingPathComponent("edit.json"))
+        try futureWithUnknownEnum.write(to: pkg.appendingPathComponent("edit.draft.json"))
+
+        do {
+            _ = try RecordingPackageMedia.validateRawImportInputs(in: pkg)
+            Issue.record("Expected validateRawImportInputs to throw unsupportedFormatVersion(99)")
+        } catch RecordingPackageMedia.ValidationError.unsupportedFormatVersion(99) {
+            // Expected
+        }
+        do {
+            _ = try RecordingPackageMedia.validateRenderInputs(in: pkg)
+            Issue.record("Expected validateRenderInputs to throw unsupportedFormatVersion(99)")
+        } catch RecordingPackageMedia.ValidationError.unsupportedFormatVersion(99) {
+            // Expected
+        }
+    }
+
+    @Test func splittingOneRepeatDoesNotDuplicateLinkedAudioOrPiPFromAnotherRepeat() throws {
+        // Two repeats A and B of the same 2.0 s imported clip ("clip.mov").
+        let repeatA = RecordingClipSegment(
+            sourceStart: 0,
+            sourceEnd: 2.0,
+            mediaFileName: "clip.mov",
+            displayName: "Clip",
+            sourceDuration: 2.0
+        )
+        let repeatB = RecordingClipSegment(
+            sourceStart: 0,
+            sourceEnd: 2.0,
+            mediaFileName: "clip.mov",
+            displayName: "Clip",
+            sourceDuration: 2.0
+        )
+        let initial = RecordingClipTimeline(segments: [repeatA, repeatB])
+
+        // Linked audio and linked PiP live ONLY at 0.25..<1.0 s inside repeat A.
+        var linkedAudio = RecordingAudioClip(
+            fileName: "vo.m4a",
+            displayName: "VO",
+            start: 0.25,
+            fileDuration: 2.0
+        )
+        linkedAudio.trimStart = 0
+        linkedAudio.trimEnd = 0.75
+        linkedAudio.isLinked = true
+        var linkedPiP = RecordingVideoOverlay(
+            fileName: "pip.mov",
+            displayName: "PiP",
+            start: 0.25,
+            fileDuration: 2.0,
+            presentation: .pip,
+            isLinked: true
+        )
+        linkedPiP.trimStart = 0
+        linkedPiP.trimEnd = 0.75
+
+        // Split repeat B at editor time 2.25 s (0.25 s into B).
+        let afterSplitB = try #require(initial.split(at: 2.25)).timeline
+        #expect(afterSplitB.segments.count == 3)
+        #expect(afterSplitB.segments[1].effectiveOccurrenceID == repeatB.effectiveOccurrenceID)
+        #expect(afterSplitB.segments[2].effectiveOccurrenceID == repeatB.effectiveOccurrenceID)
+
+        let conformedAudio = StudioAudioConform.conform(
+            [linkedAudio],
+            hidden: [],
+            from: initial,
+            to: afterSplitB
+        ).clips
+        #expect(conformedAudio.count == 1)
+        #expect(abs(conformedAudio[0].start - 0.25) < 0.002)
+        #expect(abs(conformedAudio[0].end - 1.0) < 0.002)
+
+        let conformedPiP = StudioVideoOverlayLane.conform(
+            [linkedPiP],
+            from: initial,
+            to: afterSplitB
+        )
+        #expect(conformedPiP.count == 1)
+        #expect(abs(conformedPiP[0].start - 0.25) < 0.002)
+        #expect(abs(conformedPiP[0].end - 1.0) < 0.002)
+
+        // Splitting repeat A at 0.50 s must still conform A's own linked audio and PiP
+        // without duplicating anything onto B's pieces.
+        let afterSplitA = try #require(afterSplitB.split(at: 0.50)).timeline
+        let audioAfterSplitA = StudioAudioConform.conform(
+            conformedAudio,
+            hidden: [],
+            from: afterSplitB,
+            to: afterSplitA
+        ).clips
+        #expect(audioAfterSplitA.count == 1)
+        #expect(abs(audioAfterSplitA[0].start - 0.25) < 0.002)
+        #expect(abs(audioAfterSplitA[0].end - 1.0) < 0.002)
+
+        let pipAfterSplitA = StudioVideoOverlayLane.conform(
+            conformedPiP,
+            from: afterSplitB,
+            to: afterSplitA
+        )
+        #expect(pipAfterSplitA.count == 1)
+        #expect(abs(pipAfterSplitA[0].start - 0.25) < 0.002)
+        #expect(abs(pipAfterSplitA[0].end - 1.0) < 0.002)
+    }
+
     // MARK: - Synthetic Movie Helper
 
     private static func writeSyntheticMovie(

@@ -4,10 +4,18 @@ import CoreMedia
 import CoreVideo
 import Foundation
 import ImageIO
+#if HARNESS_LINKED_MODULE
+@testable import Screendrop
+#endif
 
 @main
 struct CheckR2Export {
     static func main() async throws {
+        let homePath = FileManager.default.homeDirectoryForCurrentUser.resolvingSymlinksInPath().path
+        precondition(
+            homePath.hasPrefix("/private/tmp/") || homePath.hasPrefix("/tmp/"),
+            "Harness must run in an isolated temp HOME under /tmp/ or /private/tmp/, got \(homePath)"
+        )
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("CheckR2Export-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
@@ -621,6 +629,356 @@ struct CheckR2Export {
             print("r4_format99_readonly_and_render_guard PASSED")
         }
 
+        // Round 5 — R5-1 (Finding 11): 90°-rotated asymmetric screen.mov redaction
+        // in BOTH Raw import AND normal single-source RecordingStudioExporter, plus
+        // unmasked-side control and fail-closed unsupported 30° transform.
+        let rotatedURL = tempDir.appendingPathComponent("r5-rotated-90-asym.mov")
+        // Coded 384x216 rotated +90° clockwise => displayed 216x384.
+        // Coded bottom half (cy >= 108) maps to display LEFT half (x' in 0..<108).
+        // Coded top half (cy < 108) maps to display RIGHT half (x' in 108..<216).
+        try await writeRotatedAsymmetricMovie(
+            to: rotatedURL,
+            codedSize: CGSize(width: 384, height: 216),
+            duration: 1.0,
+            preferredTransform: CGAffineTransform(rotationAngle: .pi / 2),
+            checkerInBottomCodedHalf: true
+        )
+        // Self-verify raw oriented frame before masking: 216x384, checkerboard ONLY on display left.
+        let rotatedRawGen = AVAssetImageGenerator(asset: AVURLAsset(url: rotatedURL))
+        rotatedRawGen.appliesPreferredTrackTransform = true
+        rotatedRawGen.requestedTimeToleranceBefore = .zero
+        rotatedRawGen.requestedTimeToleranceAfter = .zero
+        let rotatedRawImg = try await rotatedRawGen.image(at: CMTime(seconds: 0.5, preferredTimescale: 600)).image
+        let rawRotLeft = regionDetailScore(of: rotatedRawImg, xRange: 8..<100, yRange: 8..<376)
+        let rawRotRight = regionDetailScore(of: rotatedRawImg, xRange: 116..<208, yRange: 8..<376)
+        print(String(format: "r5_rotated_raw size=%dx%d leftDetail=%.2f rightDetail=%.2f",
+                     rotatedRawImg.width, rotatedRawImg.height, rawRotLeft, rawRotRight))
+        precondition(rotatedRawImg.width == 216 && rotatedRawImg.height == 384,
+                     "Expected 216x384 oriented frame, got \(rotatedRawImg.width)x\(rotatedRawImg.height)")
+        precondition(rawRotLeft > 50.0, "Expected high checkerboard on display left, got \(rawRotLeft)")
+        precondition(rawRotRight < 1.0, "Expected flat grey on display right, got \(rawRotRight)")
+
+        // R5-1a: Raw import of rotated screen.mov with left-half mask (protects checkerboard).
+        let pkgRotRaw = tempDir.appendingPathComponent("R5RotatedRaw.sukushorec", isDirectory: true)
+        try FileManager.default.createDirectory(at: pkgRotRaw, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: rotatedURL, to: pkgRotRaw.appendingPathComponent("screen.mov"))
+        let rotLeftMask = RecordingRedaction(
+            start: 0.0, end: 1.0,
+            rect: CGRect(x: 0, y: 0, width: 0.5, height: 1.0),
+            mode: .pixelate, strength: 1.0
+        )
+        try RecordingSession(directoryURL: pkgRotRaw).writeEditDocument(
+            RecordingEditDocument(style: style, zoomEnabled: false, zoomCues: [], redactions: [rotLeftMask])
+        )
+        let preparedRotRaw = try await RecordingSessionRenderer.prepareRawImport(for: pkgRotRaw)
+        defer { if preparedRotRaw.isTemporary { try? FileManager.default.removeItem(at: preparedRotRaw.url) } }
+        let rotRawGen = AVAssetImageGenerator(asset: AVURLAsset(url: preparedRotRaw.url))
+        rotRawGen.appliesPreferredTrackTransform = true
+        rotRawGen.requestedTimeToleranceBefore = .zero
+        rotRawGen.requestedTimeToleranceAfter = .zero
+        let rotRawImg = try await rotRawGen.image(at: CMTime(seconds: 0.5, preferredTimescale: 600)).image
+        let rotRawLeft = regionDetailScore(of: rotRawImg, xRange: 8..<100, yRange: 8..<376)
+        let rotRawRight = regionDetailScore(of: rotRawImg, xRange: 116..<208, yRange: 8..<376)
+        print(String(format: "r5_rotated_raw_import size=%dx%d leftDetail=%.2f rightDetail=%.2f",
+                     rotRawImg.width, rotRawImg.height, rotRawLeft, rotRawRight))
+        precondition(rotRawImg.width == 216 && rotRawImg.height == 384,
+                     "Expected 216x384 Raw import output, got \(rotRawImg.width)x\(rotRawImg.height)")
+        precondition(rotRawLeft < 1.0 && rotRawRight < 1.0,
+                     "Rotated Raw import leaked protected pixels (left=\(rotRawLeft), right=\(rotRawRight))")
+
+        // R5-1b: Normal single-source RecordingStudioExporter on the same rotated screen.mov.
+        let rotSingleConfig = RecordingStudioExporter.Configuration(
+            screenURL: rotatedURL,
+            cameraURL: nil,
+            cameraOffset: 0,
+            style: style,
+            viewportTimeline: .identity,
+            pointerTimeline: nil,
+            showsPressEffects: false,
+            keystrokeTimeline: nil,
+            keystrokePlacement: .bottomCenter,
+            subtitleTimeline: nil,
+            subtitleStyle: SubtitleBarStyle(),
+            canvasSize: CGSize(width: 216, height: 384),
+            clipTimeline: .full(sourceDuration: 1.0),
+            exportSettings: exportSettings,
+            redactions: [rotLeftMask]
+        )
+        let rotSingleURL = try await RecordingStudioExporter().export(rotSingleConfig) { _ in }
+        defer { try? FileManager.default.removeItem(at: rotSingleURL) }
+        let rotSingleGen = AVAssetImageGenerator(asset: AVURLAsset(url: rotSingleURL))
+        rotSingleGen.appliesPreferredTrackTransform = true
+        rotSingleGen.requestedTimeToleranceBefore = .zero
+        rotSingleGen.requestedTimeToleranceAfter = .zero
+        let rotSingleImg = try await rotSingleGen.image(at: CMTime(seconds: 0.5, preferredTimescale: 600)).image
+        let rotSingleLeft = regionDetailScore(of: rotSingleImg, xRange: 8..<100, yRange: 8..<376)
+        let rotSingleRight = regionDetailScore(of: rotSingleImg, xRange: 116..<208, yRange: 8..<376)
+        print(String(format: "r5_rotated_normal_export size=%dx%d leftDetail=%.2f rightDetail=%.2f",
+                     rotSingleImg.width, rotSingleImg.height, rotSingleLeft, rotSingleRight))
+        precondition(rotSingleImg.width == 216 && rotSingleImg.height == 384,
+                     "Expected 216x384 normal export output, got \(rotSingleImg.width)x\(rotSingleImg.height)")
+        precondition(rotSingleLeft < 1.0 && rotSingleRight < 1.0,
+                     "Rotated normal single-source export leaked protected pixels (left=\(rotSingleLeft), right=\(rotSingleRight))")
+
+        // R5-1c: Control — mask ONLY the right half so the left checkerboard MUST survive.
+        let rotRightMask = RecordingRedaction(
+            start: 0.0, end: 1.0,
+            rect: CGRect(x: 0.5, y: 0, width: 0.5, height: 1.0),
+            mode: .pixelate, strength: 1.0
+        )
+        let rotControlConfig = RecordingStudioExporter.Configuration(
+            screenURL: rotatedURL,
+            cameraURL: nil,
+            cameraOffset: 0,
+            style: style,
+            viewportTimeline: .identity,
+            pointerTimeline: nil,
+            showsPressEffects: false,
+            keystrokeTimeline: nil,
+            keystrokePlacement: .bottomCenter,
+            subtitleTimeline: nil,
+            subtitleStyle: SubtitleBarStyle(),
+            canvasSize: CGSize(width: 216, height: 384),
+            clipTimeline: .full(sourceDuration: 1.0),
+            exportSettings: exportSettings,
+            redactions: [rotRightMask]
+        )
+        let rotControlURL = try await RecordingStudioExporter().export(rotControlConfig) { _ in }
+        defer { try? FileManager.default.removeItem(at: rotControlURL) }
+        let rotControlGen = AVAssetImageGenerator(asset: AVURLAsset(url: rotControlURL))
+        rotControlGen.appliesPreferredTrackTransform = true
+        rotControlGen.requestedTimeToleranceBefore = .zero
+        rotControlGen.requestedTimeToleranceAfter = .zero
+        let rotControlImg = try await rotControlGen.image(at: CMTime(seconds: 0.5, preferredTimescale: 600)).image
+        let rotControlLeft = regionDetailScore(of: rotControlImg, xRange: 8..<100, yRange: 8..<376)
+        precondition(rotControlLeft > 40.0,
+                     "Rotated right-mask control unexpectedly masked unmasked left half (\(rotControlLeft))")
+
+        // R5-1d: Unsupported oblique transform (30°) must fail closed in both Raw import & normal export.
+        let obliqueURL = tempDir.appendingPathComponent("r5-oblique-30.mov")
+        try await writeRotatedAsymmetricMovie(
+            to: obliqueURL,
+            codedSize: CGSize(width: 160, height: 120),
+            duration: 0.5,
+            preferredTransform: CGAffineTransform(rotationAngle: .pi / 6),
+            checkerInBottomCodedHalf: true
+        )
+        let pkgOblique = tempDir.appendingPathComponent("R5Oblique.sukushorec", isDirectory: true)
+        try FileManager.default.createDirectory(at: pkgOblique, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: obliqueURL, to: pkgOblique.appendingPathComponent("screen.mov"))
+        try RecordingSession(directoryURL: pkgOblique).writeEditDocument(
+            RecordingEditDocument(style: style, zoomEnabled: false, zoomCues: [], redactions: [rotLeftMask])
+        )
+        var rawObliqueFailed = false
+        do {
+            let bad = try await RecordingSessionRenderer.prepareRawImport(for: pkgOblique)
+            if bad.isTemporary { try? FileManager.default.removeItem(at: bad.url) }
+        } catch {
+            rawObliqueFailed = true
+        }
+        precondition(rawObliqueFailed, "Raw import must fail closed on unsupported 30° transform")
+
+        var exportObliqueFailed = false
+        let obliqueConfig = RecordingStudioExporter.Configuration(
+            screenURL: obliqueURL,
+            cameraURL: nil,
+            cameraOffset: 0,
+            style: style,
+            viewportTimeline: .identity,
+            pointerTimeline: nil,
+            showsPressEffects: false,
+            keystrokeTimeline: nil,
+            keystrokePlacement: .bottomCenter,
+            subtitleTimeline: nil,
+            subtitleStyle: SubtitleBarStyle(),
+            canvasSize: CGSize(width: 216, height: 384),
+            clipTimeline: .full(sourceDuration: 0.5),
+            exportSettings: exportSettings,
+            redactions: [rotLeftMask]
+        )
+        do {
+            let bad = try await RecordingStudioExporter().export(obliqueConfig) { _ in }
+            try? FileManager.default.removeItem(at: bad)
+        } catch {
+            exportObliqueFailed = true
+        }
+        precondition(exportObliqueFailed, "Normal exporter must fail closed on unsupported 30° transform")
+        print("r5_rotated_redactions_and_fail_closed PASSED")
+
+        // Round 5 — R5-2 (Finding 12): Future-format guard (version-only header, zero metadata
+        // rewrite, zero Discard on newer draft with unknown enum case, direct export blocked).
+        let pkgFutureMeta = tempDir.appendingPathComponent("R5FutureMeta.sukushorec", isDirectory: true)
+        try FileManager.default.createDirectory(at: pkgFutureMeta, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: r4PrimaryURL, to: pkgFutureMeta.appendingPathComponent("screen.mov"))
+        let futureMetaJSON = Data(#"{"customName":"Keep Title","futureMeta":"preserve-me"}"#.utf8)
+        let futureMetaURL = pkgFutureMeta.appendingPathComponent("project.json")
+        try futureMetaJSON.write(to: futureMetaURL)
+        try CaptureManifest.encoder.encode(futureDoc).write(to: pkgFutureMeta.appendingPathComponent("edit.json"))
+        let futureMetaEditBefore = try Data(contentsOf: pkgFutureMeta.appendingPathComponent("edit.json"))
+
+        let futureMetaModel = await MainActor.run { RecordingStudioModel(url: pkgFutureMeta) }
+        await futureMetaModel.load()
+        await MainActor.run {
+            precondition(futureMetaModel.isLoaded, "Compatible format-99 project should open read-only")
+            precondition(futureMetaModel.isReadOnlyNewerFormat, "Expected isReadOnlyNewerFormat == true")
+            precondition(!futureMetaModel.hasUnreadableDraft, "Expected hasUnreadableDraft == false")
+            futureMetaModel.rename(to: "ShouldNotOverwrite")
+            futureMetaModel.setSummary("ShouldNotWriteSummary")
+            futureMetaModel.addChapterAtPlayhead()
+            precondition(!futureMetaModel.saveProject(reportingFailure: false), "saveProject must fail for read-only future project")
+            futureMetaModel.flushDraft()
+            futureMetaModel.export()
+            futureMetaModel.exportAudio()
+            futureMetaModel.exportGuide()
+            futureMetaModel.exportAgentPrompt()
+            do {
+                _ = try futureMetaModel.makeExportConfiguration()
+                preconditionFailure("makeExportConfiguration must throw unsupportedFormatVersion for read-only future project")
+            } catch RecordingPackageMedia.ValidationError.unsupportedFormatVersion(99) {
+                // Expected
+            } catch {
+                preconditionFailure("Unexpected error from makeExportConfiguration: \(error)")
+            }
+            futureMetaModel.teardown()
+        }
+        let futureMetaAfter = try Data(contentsOf: futureMetaURL)
+        let futureMetaEditAfter = try Data(contentsOf: pkgFutureMeta.appendingPathComponent("edit.json"))
+        precondition(futureMetaAfter == futureMetaJSON,
+                     "Opening read-only format-99 project modified project.json or dropped unknown keys!")
+        precondition(futureMetaEditAfter == futureMetaEditBefore,
+                     "Opening read-only format-99 project modified edit.json!")
+        precondition(!FileManager.default.fileExists(atPath: pkgFutureMeta.appendingPathComponent("edit.draft.json").path),
+                     "Opening read-only format-99 project wrote edit.draft.json!")
+
+        // R5-2b: Newer format-99 draft with an unknown enum case over a valid format-7 saved edit.
+        let pkgNewerDraft = tempDir.appendingPathComponent("R5NewerDraftUnknownEnum.sukushorec", isDirectory: true)
+        try FileManager.default.createDirectory(at: pkgNewerDraft, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: r4PrimaryURL, to: pkgNewerDraft.appendingPathComponent("screen.mov"))
+        let savedV7Doc = RecordingEditDocument(style: style, zoomEnabled: false, zoomCues: [])
+        try RecordingSession(directoryURL: pkgNewerDraft).writeEditDocument(savedV7Doc)
+        let savedV7BytesBefore = try Data(contentsOf: pkgNewerDraft.appendingPathComponent("edit.json"))
+        let unknownEnumDraft = Data("""
+        {
+          "formatVersion": 99,
+          "redactions": [{ "mode": "mosaic_v2", "start": 0.0, "end": 1.0, "rect": [[0, 0], [1, 1]] }]
+        }
+        """.utf8)
+        let unknownEnumDraftURL = pkgNewerDraft.appendingPathComponent("edit.draft.json")
+        try unknownEnumDraft.write(to: unknownEnumDraftURL)
+        try futureMetaJSON.write(to: pkgNewerDraft.appendingPathComponent("project.json"))
+
+        let newerDraftModel = await MainActor.run { RecordingStudioModel(url: pkgNewerDraft) }
+        await newerDraftModel.load()
+        await MainActor.run {
+            precondition(newerDraftModel.isLoaded, "Project with format-99 unknown-enum draft should open read-only")
+            precondition(newerDraftModel.isReadOnlyNewerFormat, "Expected isReadOnlyNewerFormat == true for newer draft")
+            precondition(!newerDraftModel.hasUnreadableDraft, "Newer draft must NOT trigger hasUnreadableDraft / Discard")
+            newerDraftModel.discardUnreadableDraft()
+            do {
+                _ = try newerDraftModel.makeExportConfiguration()
+                preconditionFailure("makeExportConfiguration must throw unsupportedFormatVersion(99) for newer draft")
+            } catch RecordingPackageMedia.ValidationError.unsupportedFormatVersion(99) {
+                // Expected
+            } catch {
+                preconditionFailure("Unexpected error: \(error)")
+            }
+            newerDraftModel.teardown()
+        }
+        let unknownDraftAfter = try Data(contentsOf: unknownEnumDraftURL)
+        let savedV7BytesAfter = try Data(contentsOf: pkgNewerDraft.appendingPathComponent("edit.json"))
+        let newerDraftMetaAfter = try Data(contentsOf: pkgNewerDraft.appendingPathComponent("project.json"))
+        precondition(unknownDraftAfter == unknownEnumDraft,
+                     "Newer format-99 draft was modified or discarded!")
+        precondition(savedV7BytesAfter == savedV7BytesBefore,
+                     "Saved edit.json was modified under newer draft!")
+        precondition(newerDraftMetaAfter == futureMetaJSON,
+                     "project.json was modified under newer draft!")
+        print("r5_future_format_header_and_zero_writes PASSED")
+
+        // Round 5 — R5-3 (Finding 13): Writable format-7 project with a format-99 snapshot
+        // referencing media in unknown fields — cleanup must NOT delete either media/ or
+        // package-root files, and snapshot restore must refuse format-99.
+        let pkgFutureSnap = tempDir.appendingPathComponent("R5FutureSnapshot.sukushorec", isDirectory: true)
+        let snapMediaDir = pkgFutureSnap.appendingPathComponent("media", isDirectory: true)
+        try FileManager.default.createDirectory(at: snapMediaDir, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: r4PrimaryURL, to: pkgFutureSnap.appendingPathComponent("screen.mov"))
+        let snapReferencedMov = "\(UUID().uuidString).mov"
+        let snapReferencedAudio = "\(RecordingSession.replacementAudioBaseName).\(UUID().uuidString).m4a"
+        try FileManager.default.copyItem(at: r4ImportURL, to: snapMediaDir.appendingPathComponent(snapReferencedMov))
+        try Data("stub-audio".utf8).write(to: pkgFutureSnap.appendingPathComponent(snapReferencedAudio))
+        let snapSession = RecordingSession(directoryURL: pkgFutureSnap)
+        try snapSession.writeEditDocument(savedV7Doc)
+        let futureSnapJSON = Data("""
+        {
+          "formatVersion": 99,
+          "futureClip": "\(snapReferencedMov)",
+          "futureAudio": "\(snapReferencedAudio)"
+        }
+        """.utf8)
+        _ = try CaptureSessionSnapshots(directory: snapSession.sessionSnapshotsURL).keep(
+            document: futureSnapJSON,
+            openedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+
+        let snapModel = await MainActor.run { RecordingStudioModel(url: pkgFutureSnap) }
+        await snapModel.load()
+        await MainActor.run {
+            precondition(snapModel.isLoaded && !snapModel.isReadOnlyNewerFormat,
+                         "Format-7 project with format-99 snapshot should open writable")
+            do {
+                _ = try RecordingStudioModel.decodeRestorableSnapshot(futureSnapJSON)
+                preconditionFailure("decodeRestorableSnapshot must refuse format-99 snapshot")
+            } catch RecordingPackageMedia.ValidationError.unsupportedFormatVersion(99) {
+                // Expected
+            } catch {
+                preconditionFailure("Unexpected error from decodeRestorableSnapshot: \(error)")
+            }
+            snapModel.teardown()
+        }
+        precondition(FileManager.default.fileExists(atPath: snapMediaDir.appendingPathComponent(snapReferencedMov).path),
+                     "Cleanup deleted media/ file owned by format-99 snapshot!")
+        precondition(FileManager.default.fileExists(atPath: pkgFutureSnap.appendingPathComponent(snapReferencedAudio).path),
+                     "Cleanup deleted package-root replacement audio owned by format-99 snapshot!")
+        print("r5_future_snapshot_cleanup_and_revert_guard PASSED")
+
+        // Round 5 — R5-4 (Finding 14): Raw import with redactions preserves multiple separate
+        // original audio tracks without remixing or re-encoding.
+        let pkgMultiAudio = tempDir.appendingPathComponent("R5MultiAudioRaw.sukushorec", isDirectory: true)
+        try FileManager.default.createDirectory(at: pkgMultiAudio, withIntermediateDirectories: true)
+        let multiAudioScreenURL = pkgMultiAudio.appendingPathComponent("screen.mov")
+        try await writeMultiAudioCheckerboardMovie(
+            to: multiAudioScreenURL,
+            size: CGSize(width: 160, height: 120),
+            duration: 1.0,
+            track1ToneHz: 440,
+            track2ToneHz: 880
+        )
+        let srcAudioTracks = try await AVURLAsset(url: multiAudioScreenURL).loadTracks(withMediaType: .audio)
+        precondition(srcAudioTracks.count == 2, "Expected 2 source audio tracks, got \(srcAudioTracks.count)")
+        try RecordingSession(directoryURL: pkgMultiAudio).writeEditDocument(
+            RecordingEditDocument(style: style, zoomEnabled: false, zoomCues: [], redactions: [leftHalfMask])
+        )
+        let preparedMultiAudio = try await RecordingSessionRenderer.prepareRawImport(for: pkgMultiAudio)
+        defer { if preparedMultiAudio.isTemporary { try? FileManager.default.removeItem(at: preparedMultiAudio.url) } }
+        let outMultiAsset = AVURLAsset(url: preparedMultiAudio.url)
+        let outAudioTracks = try await outMultiAsset.loadTracks(withMediaType: .audio)
+        precondition(outAudioTracks.count == 2, "Raw import with redactions flattened audio tracks: expected 2, got \(outAudioTracks.count)")
+        let outTrack1RMS = try await audioRMS(asset: outMultiAsset, track: outAudioTracks[0], window: 0.2..<0.8)
+        let outTrack2RMS = try await audioRMS(asset: outMultiAsset, track: outAudioTracks[1], window: 0.2..<0.8)
+        let outMultiGen = AVAssetImageGenerator(asset: outMultiAsset)
+        outMultiGen.requestedTimeToleranceBefore = .zero
+        outMultiGen.requestedTimeToleranceAfter = .zero
+        let outMultiImg = try await outMultiGen.image(at: CMTime(seconds: 0.5, preferredTimescale: 600)).image
+        let outMultiLeft = regionDetailScore(of: outMultiImg, xRange: 4..<70, yRange: 4..<116)
+        let outMultiRight = regionDetailScore(of: outMultiImg, xRange: 90..<156, yRange: 4..<116)
+        print(String(format: "r5_raw_multiaudio tracks=%d track1RMS=%.4f track2RMS=%.4f leftMasked=%.2f rightUnmasked=%.2f",
+                     outAudioTracks.count, outTrack1RMS, outTrack2RMS, outMultiLeft, outMultiRight))
+        precondition(outTrack1RMS > 0.08 && outTrack2RMS > 0.08,
+                     "Expected both preserved audio tracks to be audible (t1=\(outTrack1RMS), t2=\(outTrack2RMS))")
+        precondition(outMultiLeft < 1.0 && outMultiRight > 40.0,
+                     "Multi-audio Raw import redaction mismatch (left=\(outMultiLeft), right=\(outMultiRight))")
+        print("r5_raw_multiaudio_preservation PASSED")
+
         print("ALL_EXPORT_AND_PREVIEW_CHECKS_PASSED")
     }
 
@@ -881,6 +1239,10 @@ struct CheckR2Export {
 
     static func audioRMS(asset: AVAsset, window: Range<TimeInterval>) async throws -> Double {
         guard let track = try await asset.loadTracks(withMediaType: .audio).first else { return 0 }
+        return try await audioRMS(asset: asset, track: track, window: window)
+    }
+
+    static func audioRMS(asset: AVAsset, track: AVAssetTrack, window: Range<TimeInterval>) async throws -> Double {
         let reader = try AVAssetReader(asset: asset)
         let sampleRate = 44100.0
         let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
@@ -913,6 +1275,214 @@ struct CheckR2Export {
             }
         }
         return count > 0 ? sqrt(sumSq / Double(count)) : 0
+    }
+
+    /// Writes a video whose coded pixels put a 4x4 checkerboard on only one
+    /// half (`cy >= height/2` when `checkerInBottomCodedHalf`, else `cy < height/2`)
+    /// and flat grey on the other half, tagged with `preferredTransform`.
+    static func writeRotatedAsymmetricMovie(
+        to url: URL,
+        codedSize: CGSize,
+        duration: TimeInterval,
+        preferredTransform: CGAffineTransform,
+        checkerInBottomCodedHalf: Bool
+    ) async throws {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: Int(codedSize.width),
+            AVVideoHeightKey: Int(codedSize.height)
+        ])
+        input.transform = preferredTransform
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: input,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: Int(codedSize.width),
+                kCVPixelBufferHeightKey as String: Int(codedSize.height)
+            ]
+        )
+        writer.add(input)
+        precondition(writer.startWriting(), "writeRotatedAsymmetricMovie start failed: \(String(describing: writer.error))")
+        writer.startSession(atSourceTime: .zero)
+        let fps = 30
+        let total = max(1, Int((duration * Double(fps)).rounded()))
+        let w = Int(codedSize.width)
+        let h = Int(codedSize.height)
+        for f in 0..<total {
+            try await waitUntilReady(input, writer: writer)
+            var pb: CVPixelBuffer?
+            CVPixelBufferCreate(kCFAllocatorDefault, w, h, kCVPixelFormatType_32BGRA, nil, &pb)
+            let buf = pb!
+            CVPixelBufferLockBaseAddress(buf, [])
+            let base = CVPixelBufferGetBaseAddress(buf)!
+            let bpr = CVPixelBufferGetBytesPerRow(buf)
+            for y in 0..<h {
+                let row = base.advanced(by: y * bpr).assumingMemoryBound(to: UInt8.self)
+                let inCheckerHalf = checkerInBottomCodedHalf ? (y >= h / 2) : (y < h / 2)
+                for x in 0..<w {
+                    let v: UInt8 = inCheckerHalf ? ((((x / 4) + (y / 4)) % 2 == 0) ? 255 : 0) : 128
+                    row[x * 4] = v; row[x * 4 + 1] = v; row[x * 4 + 2] = v; row[x * 4 + 3] = 255
+                }
+            }
+            CVPixelBufferUnlockBaseAddress(buf, [])
+            adaptor.append(buf, withPresentationTime: CMTime(value: CMTimeValue(f), timescale: CMTimeScale(fps)))
+        }
+        input.markAsFinished()
+        await writer.finishWriting()
+        precondition(writer.status == .completed, "writeRotatedAsymmetricMovie failed: \(String(describing: writer.error))")
+    }
+
+    /// Writes a checkerboard movie with TWO separate audio tracks (simulating
+    /// mic + system audio masters) using bounded interleaved readiness polling.
+    static func writeMultiAudioCheckerboardMovie(
+        to url: URL,
+        size: CGSize,
+        duration: TimeInterval,
+        track1ToneHz: Double,
+        track2ToneHz: Double
+    ) async throws {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: Int(size.width),
+            AVVideoHeightKey: Int(size.height)
+        ])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: videoInput,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: Int(size.width),
+                kCVPixelBufferHeightKey as String: Int(size.height)
+            ]
+        )
+        writer.add(videoInput)
+
+        let sampleRate = 44100.0
+        let pcmSettings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: false
+        ]
+        let audioInput1 = AVAssetWriterInput(mediaType: .audio, outputSettings: pcmSettings)
+        let audioInput2 = AVAssetWriterInput(mediaType: .audio, outputSettings: pcmSettings)
+        writer.add(audioInput1)
+        writer.add(audioInput2)
+
+        precondition(writer.startWriting(), "writeMultiAudioCheckerboardMovie start failed: \(String(describing: writer.error))")
+        writer.startSession(atSourceTime: .zero)
+
+        var asbd = AudioStreamBasicDescription(
+            mSampleRate: sampleRate,
+            mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked,
+            mBytesPerPacket: 2,
+            mFramesPerPacket: 1,
+            mBytesPerFrame: 2,
+            mChannelsPerFrame: 1,
+            mBitsPerChannel: 16,
+            mReserved: 0
+        )
+        var formatDesc: CMAudioFormatDescription?
+        CMAudioFormatDescriptionCreate(
+            allocator: kCFAllocatorDefault, asbd: &asbd, layoutSize: 0, layout: nil,
+            magicCookieSize: 0, magicCookie: nil, extensions: nil, formatDescriptionOut: &formatDesc
+        )
+
+        func makeAudioSample(startSample: Int, count: Int, toneHz: Double) -> CMSampleBuffer {
+            var pcm = [Int16](repeating: 0, count: count)
+            for i in 0..<count {
+                let t = Double(startSample + i) / sampleRate
+                pcm[i] = Int16(sin(2.0 * .pi * toneHz * t) * 0.35 * Double(Int16.max))
+            }
+            let dataSize = count * MemoryLayout<Int16>.size
+            var blockBuffer: CMBlockBuffer?
+            CMBlockBufferCreateWithMemoryBlock(
+                allocator: kCFAllocatorDefault, memoryBlock: nil, blockLength: dataSize,
+                blockAllocator: kCFAllocatorDefault, customBlockSource: nil, offsetToData: 0,
+                dataLength: dataSize, flags: 0, blockBufferOut: &blockBuffer
+            )
+            let block = blockBuffer!
+            _ = pcm.withUnsafeBytes { raw in
+                CMBlockBufferReplaceDataBytes(with: raw.baseAddress!, blockBuffer: block, offsetIntoDestination: 0, dataLength: dataSize)
+            }
+            var sb: CMSampleBuffer?
+            var timing = CMSampleTimingInfo(
+                duration: CMTime(value: 1, timescale: CMTimeScale(sampleRate)),
+                presentationTimeStamp: CMTime(value: CMTimeValue(startSample), timescale: CMTimeScale(sampleRate)),
+                decodeTimeStamp: .invalid
+            )
+            CMSampleBufferCreateReady(
+                allocator: kCFAllocatorDefault, dataBuffer: block, formatDescription: formatDesc,
+                sampleCount: count, sampleTimingEntryCount: 1, sampleTimingArray: &timing,
+                sampleSizeEntryCount: 0, sampleSizeArray: nil, sampleBufferOut: &sb
+            )
+            return sb!
+        }
+
+        let fps = 30
+        let totalFrames = max(1, Int((duration * Double(fps)).rounded()))
+        let totalSamples = Int((duration * sampleRate).rounded())
+        let chunkSamples = 4410
+        var f = 0, a1 = 0, a2 = 0
+        var vDone = false, a1Done = false, a2Done = false
+        let deadline = Date().addingTimeInterval(10)
+
+        while f < totalFrames || a1 < totalSamples || a2 < totalSamples {
+            if writer.status == .failed || writer.status == .cancelled {
+                throw writer.error ?? NSError(domain: "CheckR2Export", code: 30)
+            }
+            if Date() >= deadline {
+                throw NSError(domain: "CheckR2Export", code: 31, userInfo: [NSLocalizedDescriptionKey: "Timed out writing multi-audio movie"])
+            }
+            if f >= totalFrames && !vDone { videoInput.markAsFinished(); vDone = true }
+            if a1 >= totalSamples && !a1Done { audioInput1.markAsFinished(); a1Done = true }
+            if a2 >= totalSamples && !a2Done { audioInput2.markAsFinished(); a2Done = true }
+
+            let vReady = f < totalFrames && videoInput.isReadyForMoreMediaData
+            let a1Ready = a1 < totalSamples && audioInput1.isReadyForMoreMediaData
+            let a2Ready = a2 < totalSamples && audioInput2.isReadyForMoreMediaData
+            guard vReady || a1Ready || a2Ready else {
+                try await Task.sleep(for: .milliseconds(2))
+                continue
+            }
+            if a1Ready {
+                let n = min(chunkSamples, totalSamples - a1)
+                audioInput1.append(makeAudioSample(startSample: a1, count: n, toneHz: track1ToneHz))
+                a1 += n
+            } else if a2Ready {
+                let n = min(chunkSamples, totalSamples - a2)
+                audioInput2.append(makeAudioSample(startSample: a2, count: n, toneHz: track2ToneHz))
+                a2 += n
+            } else if vReady {
+                let w = Int(size.width), h = Int(size.height)
+                var pb: CVPixelBuffer?
+                CVPixelBufferCreate(kCFAllocatorDefault, w, h, kCVPixelFormatType_32BGRA, nil, &pb)
+                let buf = pb!
+                CVPixelBufferLockBaseAddress(buf, [])
+                let base = CVPixelBufferGetBaseAddress(buf)!
+                let bpr = CVPixelBufferGetBytesPerRow(buf)
+                for y in 0..<h {
+                    let row = base.advanced(by: y * bpr).assumingMemoryBound(to: UInt8.self)
+                    for x in 0..<w {
+                        let v: UInt8 = (((x / 4) + (y / 4)) % 2 == 0) ? 255 : 0
+                        row[x * 4] = v; row[x * 4 + 1] = v; row[x * 4 + 2] = v; row[x * 4 + 3] = 255
+                    }
+                }
+                CVPixelBufferUnlockBaseAddress(buf, [])
+                adaptor.append(buf, withPresentationTime: CMTime(value: CMTimeValue(f), timescale: CMTimeScale(fps)))
+                f += 1
+            }
+        }
+        if !vDone { videoInput.markAsFinished() }
+        if !a1Done { audioInput1.markAsFinished() }
+        if !a2Done { audioInput2.markAsFinished() }
+        await writer.finishWriting()
+        precondition(writer.status == .completed, "writeMultiAudioCheckerboardMovie failed: \(String(describing: writer.error))")
     }
 
     static func centerRGB(of image: CGImage) -> (UInt8, UInt8, UInt8) {
