@@ -14,6 +14,7 @@ nonisolated enum RecordingSidecarQuarantine {
         case unsafeSourceFile(String)
         case oversizedSourceFile(String)
         case preservationFailed(String, Int32)
+        case alteredCopy(String)
 
         var errorDescription: String? {
             switch self {
@@ -27,11 +28,18 @@ nonisolated enum RecordingSidecarQuarantine {
                 "The sidecar file \"\(name)\" exceeds the maximum quarantine size."
             case .preservationFailed(let name, let code):
                 "Could not preserve unreadable sidecar \"\(name)\" (errno \(code))."
+            case .alteredCopy(let name):
+                "The set-aside edit \"\(name)\" changed after it was set aside."
             }
         }
     }
 
     static let maxBytes = 64 * 1024 * 1024
+
+    /// The 12 hex digits a preserved copy's name ends with: the start of its bytes' SHA-256.
+    static func digest(of data: Data) -> String {
+        SHA256.hash(data: data).prefix(6).map { String(format: "%02x", $0) }.joined()
+    }
 
     /// Reads an existing regular file at `url` relative to a verified package directory
     /// descriptor, bounding the read to `maxBytes`. Throws `.missingSourceFile` on `ENOENT`.
@@ -132,8 +140,7 @@ nonisolated enum RecordingSidecarQuarantine {
 
     private static func preserve(data: Data, leaf: String, kind: String = "unreadable", inDirFD dirFD: Int32,
                                  directoryURL: URL) throws -> URL {
-        let hash = SHA256.hash(data: data).prefix(6).map { String(format: "%02x", $0) }.joined()
-        let destName = "\(leaf).\(kind)-\(hash)"
+        let destName = "\(leaf).\(kind)-\(digest(of: data))"
         let destination = directoryURL.appendingPathComponent(destName)
         let tempName = ".\(destName).\(UUID().uuidString).tmp"
         let tempFD = openat(dirFD, tempName, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)

@@ -2125,9 +2125,21 @@ struct RecordingExportRegressionChecks {
                 try check(clipExists(savedClip) && clipExists(draftClip),
                           "Closing Studio swept a clip of a set-aside edit that was \(readable ? "readable" : "unreadable")")
             }
+            // Valid JSON that no longer matches the digest in its name can't vouch for its clips.
+            let altered = Data(String(decoding: draftBytes, as: UTF8.self).replacingOccurrences(of: draftClip, with: "\(UUID()).mov").utf8)
+            let alteredDocument = try CaptureManifest.decoder.decode(RecordingEditDocument.self, from: altered)
+            try check(alteredDocument.clips?.contains { $0.mediaFileName == draftClip } == false, "Fixture did not change the clip reference")
+            try altered.write(to: draftArchive)
+            var refusedAltered = false
+            do { try session.removeUnreferencedMedia() }
+            catch RecordingSidecarQuarantine.QuarantineError.alteredCopy(let name) { refusedAltered = name == draftArchive.lastPathComponent }
+            try check(refusedAltered && clipExists(draftClip), "The sweep trusted a changed archive and dropped its clip")
+            try draftBytes.write(to: draftArchive)
+            try session.removeUnreferencedMedia()
+            try check(clipExists(savedClip) && clipExists(draftClip), "The restored archive no longer kept its clip")
             try check(try Data(contentsOf: draftArchive) == draftBytes, "The archive changed")
         }
-        print("PASS: Revert to Original sets a readable revision conflict aside with its clips, an unreadable archive stops the sweep, and unreadable or newer-format drafts still refuse")
+        print("PASS: Revert to Original sets a readable revision conflict aside with its clips, an unreadable or changed archive stops the sweep, and unreadable or newer-format drafts still refuse")
     }
 
     static func rolledBackRedactionBlocksDelivery(in directory: URL) async throws {

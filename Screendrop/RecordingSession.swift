@@ -398,6 +398,11 @@ nonisolated struct RecordingSession: Sendable, Equatable {
             .filter { name in prefixes.contains { name.hasPrefix($0) } }
             .map { name in
                 let data = try RecordingSidecarQuarantine.readBounded(at: directoryURL.appendingPathComponent(name))
+                // Its name holds the digest of the bytes set aside; a copy changed since can't vouch for its clips.
+                let digest = RecordingSidecarQuarantine.digest(of: data)
+                guard prefixes.contains(where: { name == $0 + digest }) else {
+                    throw RecordingSidecarQuarantine.QuarantineError.alteredCopy(name)
+                }
                 if let version = RecordingPackageMedia.readFormatVersion(from: data), version > RecordingEditDocument.currentFormatVersion {
                     throw RecordingPackageMedia.ValidationError.unsupportedFormatVersion(version)
                 }
