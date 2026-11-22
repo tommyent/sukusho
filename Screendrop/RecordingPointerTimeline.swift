@@ -41,7 +41,7 @@ nonisolated struct PointerTimeline: Sendable {
     private static let tiltGain = 0.03
     private static let tiltWeight = 0.5
 
-    private let frames: [PointerFrame]
+    private let frames: [PointerFrame?]
     private let duration: TimeInterval
     private let hardCuts: [TimeInterval]
     private let artworkByID: [String: PointerArtwork]
@@ -56,7 +56,7 @@ nonisolated struct PointerTimeline: Sendable {
     )
 
     private init(
-        frames: [PointerFrame],
+        frames: [PointerFrame?],
         duration: TimeInterval,
         hardCuts: [TimeInterval],
         artworkByID: [String: PointerArtwork],
@@ -71,7 +71,7 @@ nonisolated struct PointerTimeline: Sendable {
 
     func frame(at time: TimeInterval) -> PointerFrame? {
         guard !frames.isEmpty else { return nil }
-        guard frames.count > 1, duration > 0 else { return frames.first }
+        guard frames.count > 1, duration > 0 else { return frames.first ?? nil }
 
         let clamped = min(max(time, 0), duration)
         let position = clamped * Self.stepRate
@@ -86,9 +86,10 @@ nonisolated struct PointerTimeline: Sendable {
             return clamped >= cut ? frames[index + 1] : frames[index]
         }
 
+        guard let a = frames[index], let b = frames[index + 1] else {
+            return frames[index] ?? nil
+        }
         let fraction = position - Double(index)
-        let a = frames[index]
-        let b = frames[index + 1]
         return PointerFrame(
             location: CGPoint(
                 x: a.location.x + (b.location.x - a.location.x) * fraction,
@@ -168,11 +169,12 @@ nonisolated struct PointerTimeline: Sendable {
         var latestPressIndex = -1
         var pressIntervalIndex = 0
         var currentArtworkID = firstSample.artworkID
-        var frames: [PointerFrame] = []
+        var frames: [PointerFrame?] = []
         frames.reserveCapacity(frameCount)
 
         for frameIndex in 0..<frameCount {
             let time = min(Double(frameIndex) * dt, timelineDuration)
+            let isPrimary = clipTimeline?.isPrimaryRecording(at: time) ?? true
 
             while sampleIndex + 1 < samples.count,
                   samples[sampleIndex + 1].time <= time {
@@ -190,6 +192,12 @@ nonisolated struct PointerTimeline: Sendable {
                 let endsAtHardCut = hardCuts.contains { abs($0 - interval.end) < 0.000_001 }
                 guard endsAtHardCut ? interval.end <= time : interval.end < time else { break }
                 pressIntervalIndex += 1
+            }
+
+            if !isPrimary {
+                // Imported clips have no recorded pointer or click effects.
+                frames.append(nil)
+                continue
             }
 
             let latest = sampleIndex >= 0 ? samples[sampleIndex] : firstSample
@@ -260,10 +268,14 @@ nonisolated struct PointerTimeline: Sendable {
         var latestHardCut = 0
         for index in frames.indices {
             if hardCutFrames.contains(index) { latestHardCut = index }
-            let previous = frames[max(latestHardCut, index - tiltOffset)].location
-            let current = frames[index].location
-            let deltaInPoints = (current.x - previous.x) * recordingWidth
-            frames[index].tiltDegrees = min(max(
+            guard let currentFrame = frames[index] else {
+                latestHardCut = index + 1
+                continue
+            }
+            let previousIndex = max(latestHardCut, index - tiltOffset)
+            let previous = frames[previousIndex]?.location ?? currentFrame.location
+            let deltaInPoints = (currentFrame.location.x - previous.x) * recordingWidth
+            frames[index]?.tiltDegrees = min(max(
                 deltaInPoints * tiltGain * tiltWeight,
                 -20
             ), 20)
@@ -308,7 +320,8 @@ nonisolated struct PointerTimeline: Sendable {
 
         var editorStart: TimeInterval = 0
         for (index, segment) in clipTimeline.segments.enumerated() {
-            if var seed = sourceSample(at: segment.sourceStart, samples: sourceSamples) {
+            if segment.isPrimaryRecording,
+               var seed = sourceSample(at: segment.sourceStart, samples: sourceSamples) {
                 seed.time = editorStart
                 seed.kind = .travel
                 seed.button = nil
@@ -339,7 +352,8 @@ nonisolated struct PointerTimeline: Sendable {
     ) -> TimeInterval? {
         var editorStart: TimeInterval = 0
         for segment in clipTimeline.segments {
-            if sourceTime >= segment.sourceStart,
+            if segment.isPrimaryRecording,
+               sourceTime >= segment.sourceStart,
                sourceTime < segment.sourceEnd {
                 return editorStart
                     + (sourceTime - segment.sourceStart) / max(segment.speed, 1)

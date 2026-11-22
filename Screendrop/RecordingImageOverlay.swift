@@ -592,6 +592,18 @@ nonisolated enum RecordingOverlayMedia {
             try? FileManager.default.removeItem(at: fileURL)
         }
     }
+
+    static func cleanupUnreferencedVideos(in mediaDirectory: URL, referenced: Set<String>) {
+        // Verify the media root is a real package directory BEFORE enumerating it.
+        guard let realDirectory = resolveRealMediaDirectory(mediaDirectory) else { return }
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: realDirectory.path)) ?? []
+        for name in names where isOwnedImportFileName(name) && !referenced.contains(name) {
+            guard let fileURL = resolveRegularFile(named: name, in: realDirectory),
+                  let type = UTType(filenameExtension: fileURL.pathExtension),
+                  type.conforms(to: .movie) else { continue }
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+    }
 }
 
 /// Package-contained, regular-file resolver for every input a `.sukushorec`

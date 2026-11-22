@@ -10,13 +10,42 @@
 import CoreGraphics
 import Foundation
 
-/// A flag dropped on the timeline with M. It sits on the source clock, so
-/// it stays with its footage through cuts, and drops out of sight while
-/// that footage is cut away.
+/// A flag dropped on the timeline with M. It sits on the source clock of its
+/// clip (primary recording when `mediaFileName == nil`, or an imported video
+/// file name), so it stays with its footage through cuts and drops out of
+/// sight while that footage is cut away.
 nonisolated struct RecordingMarker: Identifiable, Codable, Equatable, Hashable, Sendable {
     var id = UUID()
     var sourceTime: TimeInterval
     var note: String?
+    var mediaFileName: String? = nil
+
+    init(id: UUID = UUID(), sourceTime: TimeInterval, note: String? = nil, mediaFileName: String? = nil) {
+        self.id = id
+        self.sourceTime = sourceTime
+        self.note = note
+        self.mediaFileName = mediaFileName
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, sourceTime, note, mediaFileName
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        sourceTime = try container.decode(TimeInterval.self, forKey: .sourceTime)
+        note = try container.decodeIfPresent(String.self, forKey: .note)
+        mediaFileName = try container.decodeIfPresent(String.self, forKey: .mediaFileName)
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(sourceTime, forKey: .sourceTime)
+        if let note { try container.encode(note, forKey: .note) }
+        if let mediaFileName { try container.encode(mediaFileName, forKey: .mediaFileName) }
+    }
 }
 
 /// Which end of the I/O range selection is being marked.
@@ -311,20 +340,27 @@ nonisolated enum StudioEditing {
         return "Duration \(studioClock(duration))"
     }
 
-    /// Source timestamp to record for a marker dropped at `editorTime`.
-    /// Uses the half-open footage owner at `editorTime`; at the timeline's
-    /// terminal frame, steps back inside the final clip so a reordered join
-    /// at that exact timestamp cannot claim the marker later.
+    /// Source timestamp and optional imported media file name to record for a
+    /// marker dropped at `editorTime`. Uses the half-open footage owner at
+    /// `editorTime`; at the timeline's terminal frame, steps back inside the
+    /// final clip so a reordered join at that exact timestamp cannot claim it.
+    static func markerAnchor(
+        at editorTime: TimeInterval,
+        in timeline: RecordingClipTimeline
+    ) -> (sourceTime: TimeInterval, mediaFileName: String?) {
+        guard let location = timeline.location(at: editorTime) else { return (0, nil) }
+        let segment = timeline.segments[location.segmentIndex]
+        let time = location.sourceTime >= segment.sourceEnd - 0.000_001
+            ? max(segment.sourceStart, segment.sourceEnd - 0.001)
+            : location.sourceTime
+        return (time, segment.mediaFileName)
+    }
+
     static func markerSourceTime(
         at editorTime: TimeInterval,
         in timeline: RecordingClipTimeline
     ) -> TimeInterval {
-        guard let location = timeline.location(at: editorTime) else { return 0 }
-        let segment = timeline.segments[location.segmentIndex]
-        if location.sourceTime >= segment.sourceEnd - 0.000_001 {
-            return max(segment.sourceStart, segment.sourceEnd - 0.001)
-        }
-        return location.sourceTime
+        markerAnchor(at: editorTime, in: timeline).sourceTime
     }
 
     /// Markers whose source moments still survive in `timeline`, mapped to
@@ -338,6 +374,7 @@ nonisolated enum StudioEditing {
                 guard marker.sourceTime.isFinite,
                       let time = timeline.editorTime(
                           forSourceEventTime: marker.sourceTime,
+                          mediaFileName: marker.mediaFileName,
                           includeTimelineEnd: true
                       ) else {
                     return nil
@@ -435,16 +472,23 @@ nonisolated enum StudioEditing {
         snapTarget(for: time, in: points, tolerance: tolerance) ?? time
     }
 
-    /// Source-time room a clip has to expand its leading or trailing edge
-    /// without overlapping any other clip, regardless of clip list order.
+    /// Source-time room a clip has to expand its leading or trailing edge.
+    /// Primary-recording clips stay non-overlapping with other primary clips;
+    /// imported clips clamp independently to `[0, clip.sourceDuration]` so
+    /// repeated imports never block each other.
     static func trimBounds(
         forClipID id: UUID,
         in timeline: RecordingClipTimeline,
         sourceDuration: TimeInterval
     ) -> (previousEnd: TimeInterval, nextStart: TimeInterval)? {
         guard let clip = timeline.segments.first(where: { $0.id == id }) else { return nil }
+        guard clip.isPrimaryRecording else {
+            let intrinsic = (clip.sourceDuration?.isFinite == true ? clip.sourceDuration! : 0)
+            let safeDuration = max(intrinsic, clip.sourceEnd)
+            return (0, safeDuration)
+        }
         let safeDuration = max(sourceDuration.isFinite ? sourceDuration : 0, clip.sourceEnd)
-        let others = timeline.segments.filter { $0.id != id }
+        let others = timeline.segments.filter { $0.id != id && $0.isPrimaryRecording }
         let previousEnd = others
             .map(\.sourceEnd)
             .filter { $0 <= clip.sourceStart + 0.000_5 }
@@ -454,6 +498,28 @@ nonisolated enum StudioEditing {
             .filter { $0 >= clip.sourceEnd - 0.000_5 }
             .min() ?? safeDuration
         return (previousEnd, nextStart)
+    }
+
+    /// Slot boundary index `0...segments.count` where a newly inserted video
+    /// clip lands from the `+` menu or `Clip › Insert Video Clip…`: right after
+    /// the selected clip when one is selected, at the nearest boundary when the
+    /// playhead sits inside a multi-clip cut, or at the end otherwise.
+    static func videoClipInsertionIndex(
+        selectedClipID: UUID?,
+        playheadTime: TimeInterval,
+        in timeline: RecordingClipTimeline
+    ) -> Int {
+        if let selectedClipID,
+           let index = timeline.segments.firstIndex(where: { $0.id == selectedClipID }) {
+            return index + 1
+        }
+        if timeline.segments.count > 1,
+           playheadTime.isFinite,
+           playheadTime > 0.05,
+           playheadTime < timeline.duration - 0.05 {
+            return reorderInsertionIndex(atEditorTime: playheadTime, in: timeline)
+        }
+        return timeline.segments.count
     }
 
     /// Picks whether live trim preview can seek the current cut composition or

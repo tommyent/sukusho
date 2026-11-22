@@ -252,6 +252,16 @@ nonisolated final class RecordingRedactionPreviewSource: @unchecked Sendable {
         }
     }
 
+    func activeRedactions(
+        atEditorTime editorTime: TimeInterval,
+        frameDuration: TimeInterval = 1.0 / 60
+    ) -> [RecordingRedaction] {
+        let (regions, map) = lock.withLock { (redactions, clipTimeline) }
+        return regions.filter {
+            $0.covers(editorTime: editorTime, frameDuration: frameDuration, timeline: map)
+        }
+    }
+
     func composition(asset: AVAsset) async throws -> AVVideoComposition {
         let snapshot = lock.withLock { (redactions, clipTimeline) }
         for region in snapshot.0 { try region.validate() }

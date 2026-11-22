@@ -9,6 +9,31 @@
 
 import Foundation
 
+/// How an imported video clip with a different aspect ratio fits inside the
+/// project's video card.
+nonisolated enum VideoClipContentMode: String, Codable, CaseIterable, Identifiable, Sendable {
+    /// Letterboxed/pillarboxed inside the card; nothing cropped.
+    case fit
+    /// Center-cropped to fill the card.
+    case fill
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .fit: "Fit"
+        case .fill: "Fill"
+        }
+    }
+
+    var help: String {
+        switch self {
+        case .fit: "Show the whole clip inside the frame"
+        case .fill: "Crop the clip to fill the frame"
+        }
+    }
+}
+
 nonisolated struct RecordingClipSegment: Identifiable, Codable, Equatable, Sendable {
     static let minimumDuration: TimeInterval = 0.12
     static let minimumSpeed: Double = 1
@@ -38,6 +63,24 @@ nonisolated struct RecordingClipSegment: Identifiable, Codable, Equatable, Senda
     var volume: Double = 1
     /// Silences this clip's own sound without touching its level.
     var isMuted = false
+    /// File name inside `session.mediaDirectoryURL` (`<session>.sukushorec/media/`);
+    /// `nil` means the project's primary `screen.mov`.
+    var mediaFileName: String? = nil
+    /// Original filename or recording title for badges, menus, and the inspector.
+    var displayName: String? = nil
+    /// Intrinsic duration of an imported clip so trim bounds compute synchronously.
+    var sourceDuration: TimeInterval? = nil
+    /// Per-clip Fit/Fill framing inside the card; `nil` defaults to `.fit`.
+    var contentMode: VideoClipContentMode? = nil
+
+    /// True when this segment plays the project's primary `screen.mov`.
+    var isPrimaryRecording: Bool { mediaFileName == nil }
+
+    /// Key identifying this segment's media source for caches (empty for primary).
+    var sourceKey: String { mediaFileName ?? "" }
+
+    /// Effective Fit/Fill framing inside the project's video card.
+    var effectiveContentMode: VideoClipContentMode { contentMode ?? .fit }
 
     init(
         id: UUID = UUID(),
@@ -45,7 +88,11 @@ nonisolated struct RecordingClipSegment: Identifiable, Codable, Equatable, Senda
         sourceEnd: TimeInterval,
         speed: Double = 1,
         volume: Double = 1,
-        isMuted: Bool = false
+        isMuted: Bool = false,
+        mediaFileName: String? = nil,
+        displayName: String? = nil,
+        sourceDuration: TimeInterval? = nil,
+        contentMode: VideoClipContentMode? = nil
     ) {
         self.id = id
         self.sourceStart = sourceStart
@@ -53,6 +100,10 @@ nonisolated struct RecordingClipSegment: Identifiable, Codable, Equatable, Senda
         self.speed = speed
         self.volume = volume
         self.isMuted = isMuted
+        self.mediaFileName = mediaFileName
+        self.displayName = displayName
+        self.sourceDuration = sourceDuration
+        self.contentMode = contentMode
     }
 
     /// This clip over another source range, keeping its speed and sound.
@@ -87,6 +138,10 @@ nonisolated struct RecordingClipSegment: Identifiable, Codable, Equatable, Senda
         case speed
         case volume
         case isMuted
+        case mediaFileName
+        case displayName
+        case sourceDuration
+        case contentMode
     }
 
     /// Accepted for migration from the first experimental split schema.
@@ -106,6 +161,10 @@ nonisolated struct RecordingClipSegment: Identifiable, Codable, Equatable, Senda
         speed = try container.decodeIfPresent(Double.self, forKey: .speed) ?? 1
         volume = try container.decodeIfPresent(Double.self, forKey: .volume) ?? 1
         isMuted = try container.decodeIfPresent(Bool.self, forKey: .isMuted) ?? false
+        mediaFileName = try container.decodeIfPresent(String.self, forKey: .mediaFileName)
+        displayName = try container.decodeIfPresent(String.self, forKey: .displayName)
+        sourceDuration = try container.decodeIfPresent(TimeInterval.self, forKey: .sourceDuration)
+        contentMode = try container.decodeIfPresent(VideoClipContentMode.self, forKey: .contentMode)
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -118,6 +177,10 @@ nonisolated struct RecordingClipSegment: Identifiable, Codable, Equatable, Senda
         // sound stay byte-identical on disk.
         if volume != 1 { try container.encode(volume, forKey: .volume) }
         if isMuted { try container.encode(isMuted, forKey: .isMuted) }
+        if let mediaFileName { try container.encode(mediaFileName, forKey: .mediaFileName) }
+        if let displayName { try container.encode(displayName, forKey: .displayName) }
+        if let sourceDuration { try container.encode(sourceDuration, forKey: .sourceDuration) }
+        if let contentMode { try container.encode(contentMode, forKey: .contentMode) }
     }
 }
 
@@ -197,6 +260,17 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
             && duration >= Self.minimumPlayableEditorDuration - RecordingClipSegment.minimumDurationRoundingTolerance
     }
 
+    /// True when the sequence contains at least one imported video clip.
+    var hasImportedClips: Bool {
+        segments.contains { !$0.isPrimaryRecording }
+    }
+
+    /// True when `editorTime` falls inside a primary-recording segment.
+    func isPrimaryRecording(at editorTime: TimeInterval) -> Bool {
+        guard let location = location(at: editorTime) else { return false }
+        return segments[location.segmentIndex].isPrimaryRecording
+    }
+
     func normalized(
         to sourceDuration: TimeInterval,
         fallbackToFull: Bool = true
@@ -204,8 +278,20 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
         let safeDuration = max(0, sourceDuration.isFinite ? sourceDuration : 0)
         var seenIDs = Set<UUID>()
         var normalized = segments.compactMap { segment -> RecordingClipSegment? in
-            let start = min(max(segment.sourceStart, 0), safeDuration)
-            let end = min(max(segment.sourceEnd, start), safeDuration)
+            let limit: TimeInterval
+            if segment.isPrimaryRecording {
+                limit = safeDuration
+            } else if let intrinsic = segment.sourceDuration, intrinsic.isFinite, intrinsic > 0 {
+                limit = intrinsic
+            } else if segment.sourceEnd.isFinite, segment.sourceEnd > 0 {
+                limit = segment.sourceEnd
+            } else {
+                return nil
+            }
+            let rawStart = segment.sourceStart.isFinite ? segment.sourceStart : 0
+            let rawEnd = segment.sourceEnd.isFinite ? segment.sourceEnd : limit
+            let start = min(max(rawStart, 0), limit)
+            let end = min(max(rawEnd, start), limit)
             guard RecordingClipSegment.isPlayableDuration(end - start) else { return nil }
             let id = seenIDs.insert(segment.id).inserted ? segment.id : UUID()
             let speed = min(
@@ -220,16 +306,23 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
             clip.speed = speed
             clip.volume = volume
             clip.isMuted = segment.isMuted
+            if !clip.isPrimaryRecording {
+                clip.sourceDuration = limit
+            }
             return clip
         }
 
-        // Clips can play in any order, but no moment of the recording plays
-        // twice: subtract the union of earlier coverage and emit every
-        // playable surviving piece in place, keeping the clip's identity on
-        // the first survivor and minting fresh IDs for split-off pieces.
+        // Primary-recording clips can play in any order, but no moment of the
+        // primary recording plays twice: subtract the union of earlier primary
+        // coverage and emit every playable surviving piece in place. Imported
+        // clips clamp independently and may repeat (e.g., intro/outro/B-roll).
         var taken: [ClosedRange<TimeInterval>] = []
         var deduplicated: [RecordingClipSegment] = []
         for segment in normalized {
+            guard segment.isPrimaryRecording else {
+                deduplicated.append(segment)
+                continue
+            }
             var pieces: [(start: TimeInterval, end: TimeInterval)] = []
             var cursor = segment.sourceStart
             for range in taken where range.upperBound > segment.sourceStart && range.lowerBound < segment.sourceEnd {
@@ -318,14 +411,20 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
     /// begins playing rather than the trailing edge of an earlier clip. When
     /// `includeTimelineEnd` is true, an exact hit on the final clip's end maps
     /// to `duration` if no other clip starts at that source moment.
+    ///
+    /// Pass `mediaFileName == nil` (default) to match only primary-recording
+    /// segments, or a specific imported file name to map markers/chapters
+    /// anchored on that imported clip.
     func editorTime(
         forSourceEventTime sourceTime: TimeInterval,
+        mediaFileName: String? = nil,
         includeTimelineEnd: Bool = false
     ) -> TimeInterval? {
         guard sourceTime.isFinite else { return nil }
         var editorStart: TimeInterval = 0
         for segment in segments {
-            if sourceTime >= segment.sourceStart,
+            if segment.mediaFileName == mediaFileName,
+               sourceTime >= segment.sourceStart,
                sourceTime < segment.sourceEnd {
                 return editorStart + (sourceTime - segment.sourceStart) / segment.speed
             }
@@ -333,6 +432,7 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
         }
         if includeTimelineEnd,
            let last = segments.last,
+           last.mediaFileName == mediaFileName,
            abs(sourceTime - last.sourceEnd) <= 0.000_001 {
             return duration
         }
@@ -345,7 +445,8 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
         }
         var editorStart: TimeInterval = 0
         for segment in segments {
-            if sourceTime >= segment.sourceStart - 0.000_001,
+            if segment.isPrimaryRecording,
+               sourceTime >= segment.sourceStart - 0.000_001,
                sourceTime <= segment.sourceEnd + 0.000_001 {
                 let sourceOffset = min(max(sourceTime - segment.sourceStart, 0), segment.duration)
                 return editorStart + sourceOffset / segment.speed
@@ -414,6 +515,12 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
 
         var next: [RecordingClipSegment] = []
         for segment in segments {
+            // Primary-source range cuts (transcript edits, filler/pause cleanup)
+            // apply only to primary-recording segments; imported clips stay intact.
+            guard segment.isPrimaryRecording else {
+                next.append(segment)
+                continue
+            }
             // Subtract every cut from this segment, keeping the surviving
             // sub-ranges in order. The leading survivor keeps the segment's
             // identity so selection and undo stay anchored.
@@ -467,18 +574,20 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
         var editorOffset: TimeInterval = 0
 
         for segment in segments {
-            let overlapStart = max(sourceStart, segment.sourceStart)
-            let overlapEnd = min(sourceEnd, segment.sourceEnd)
-            if overlapEnd > overlapStart {
-                let editorStart = editorOffset + (overlapStart - segment.sourceStart) / segment.speed
-                let editorEnd = editorOffset + (overlapEnd - segment.sourceStart) / segment.speed
-                result.append(Slice(
-                    segmentID: segment.id,
-                    sourceStart: overlapStart,
-                    sourceEnd: overlapEnd,
-                    editorStart: editorStart,
-                    editorEnd: editorEnd
-                ))
+            if segment.isPrimaryRecording {
+                let overlapStart = max(sourceStart, segment.sourceStart)
+                let overlapEnd = min(sourceEnd, segment.sourceEnd)
+                if overlapEnd > overlapStart {
+                    let editorStart = editorOffset + (overlapStart - segment.sourceStart) / segment.speed
+                    let editorEnd = editorOffset + (overlapEnd - segment.sourceStart) / segment.speed
+                    result.append(Slice(
+                        segmentID: segment.id,
+                        sourceStart: overlapStart,
+                        sourceEnd: overlapEnd,
+                        editorStart: editorStart,
+                        editorEnd: editorEnd
+                    ))
+                }
             }
             editorOffset += segment.editorDuration
         }
@@ -560,7 +669,10 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
 
         for index in segments.indices {
             let segment = segments[index]
-            if index > 0 && segment.sourceStart < segments[index - 1].sourceEnd - 0.000_5 {
+            if index > 0 && (
+                segment.mediaFileName != segments[index - 1].mediaFileName
+                    || segment.sourceStart < segments[index - 1].sourceEnd - 0.000_5
+            ) {
                 runs.append(MonotonicRun(
                     editorStart: runEditorStart,
                     editorEnd: cursor,
@@ -618,14 +730,15 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
     }
 
     /// Source-time range for inserting a block of `length` seconds at `editorTime`,
-    /// anchored to and clamped inside the monotonic source run under `editorTime`
-    /// even after clip reordering or at a tail-trimmed end.
+    /// anchored to and clamped inside the monotonic primary-source run under `editorTime`
+    /// even after clip reordering or at a tail-trimmed end. Returns nil on imported clips.
     func insertionSourceRange(
         atEditorTime editorTime: TimeInterval,
         length: TimeInterval,
         minimum: TimeInterval
     ) -> ClosedRange<TimeInterval>? {
-        guard let run = monotonicRun(atEditorTime: editorTime) else { return nil }
+        guard let run = monotonicRun(atEditorTime: editorTime),
+              segments[run.segmentIndices.lowerBound].isPrimaryRecording else { return nil }
         let sourceAtPlayhead = sourceTime(atEditorTime: editorTime, in: run, prefersLeadingAtCut: false)
         let keptStart = run.sourceStart
         let keptEnd = run.sourceEnd
@@ -639,14 +752,15 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
     }
 
     /// Source-time range for a block drawn on the timeline from `origin` to
-    /// `target`, anchored to and clamped inside the monotonic source run under
-    /// `origin`.
+    /// `target`, anchored to and clamped inside the monotonic primary-source run under
+    /// `origin`. Returns nil on imported clips.
     func drawnSourceRange(
         fromEditorTime origin: TimeInterval,
         toEditorTime target: TimeInterval,
         minimum: TimeInterval
     ) -> ClosedRange<TimeInterval>? {
-        guard let run = monotonicRun(atEditorTime: origin, toward: target) else { return nil }
+        guard let run = monotonicRun(atEditorTime: origin, toward: target),
+              segments[run.segmentIndices.lowerBound].isPrimaryRecording else { return nil }
         let clampedOrigin = min(max(origin.isFinite ? origin : run.editorStart, run.editorStart), run.editorEnd)
         let clampedTarget = min(max(target.isFinite ? target : clampedOrigin, run.editorStart), run.editorEnd)
         let editorLow = min(clampedOrigin, clampedTarget)
@@ -679,7 +793,8 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
 
     func isUnedited(sourceDuration: TimeInterval) -> Bool {
         guard segments.count == 1, let only = segments.first else { return false }
-        return abs(only.sourceStart) < 0.000_001
+        return only.isPrimaryRecording
+            && abs(only.sourceStart) < 0.000_001
             && abs(only.sourceEnd - sourceDuration) < 0.000_001
             && abs(only.speed - 1) < 0.000_001
             && only.volume == 1 && !only.isMuted
@@ -765,16 +880,18 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
         return next
     }
 
-    /// Editor times of cuts that jump back in the recording, where clips have
-    /// been put in a new order. Motion (zoom, the pointer) lands on these
-    /// instead of easing across from another moment. Ordinary forward cuts
-    /// keep their easing.
+    /// Editor times of cuts that change source file or jump back in the same
+    /// source. Motion (zoom, the pointer) lands on these instead of easing
+    /// across from another moment. Ordinary forward cuts in the primary
+    /// recording keep their easing.
     var hardCuts: [TimeInterval] {
         var cuts: [TimeInterval] = []
         var editorStart: TimeInterval = 0
         var previous: RecordingClipSegment?
         for segment in segments {
-            if let previous, segment.sourceStart < previous.sourceEnd - 0.000_5 {
+            if let previous,
+               previous.mediaFileName != segment.mediaFileName
+                   || segment.sourceStart < previous.sourceEnd - 0.000_5 {
                 cuts.append(editorStart)
             }
             editorStart += segment.editorDuration
@@ -783,8 +900,8 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
         return cuts
     }
 
-    /// Whether the clips play in recording order.
-    var isInRecordingOrder: Bool { hardCuts.isEmpty }
+    /// Whether the clips play in recording order without imported sources.
+    var isInRecordingOrder: Bool { hardCuts.isEmpty && !hasImportedClips }
 
     /// The cut with one clip moved to a new position in the list.
     func moving(segmentID: UUID, to destination: Int) -> RecordingClipTimeline? {

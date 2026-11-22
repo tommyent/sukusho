@@ -307,7 +307,18 @@ nonisolated struct ViewportTimeline: Sendable {
 
         for frameIndex in 0..<frameCount {
             let editorTime = min(Double(frameIndex) * dt, duration)
-            let time = clipTimeline.sourceTime(at: editorTime)
+            let location = clipTimeline.location(at: editorTime)
+            let isPrimary = location.map { clipTimeline.segments[$0.segmentIndex].isPrimaryRecording } ?? false
+            let time = location?.sourceTime ?? 0
+            if !isPrimary {
+                // Imported clips render at 1x without primary-recording zooms.
+                halfExtentSpring.snap(to: 0.5)
+                anchorXSpring.snap(to: 0.5)
+                anchorYSpring.snap(to: 0.5)
+                frames.append(.identity)
+                previousActive = nil
+                continue
+            }
             if hardCutFrames.contains(frameIndex) {
                 // Reordered clips jump backward in source time, so re-anchor
                 // the press cursor to the new source instant.
@@ -539,7 +550,7 @@ nonisolated struct ViewportTimeline: Sendable {
         in clipTimeline: RecordingClipTimeline
     ) -> Bool {
         clipTimeline.segments.contains {
-            time >= $0.sourceStart && time < $0.sourceEnd
+            $0.isPrimaryRecording && time >= $0.sourceStart && time < $0.sourceEnd
         }
     }
 

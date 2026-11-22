@@ -1,11 +1,50 @@
 import Foundation
 
-/// Chapter anchors stay on the original movie so cuts and speed changes are reversible.
+/// Chapter anchors stay on their source clip (primary recording when
+/// `mediaFileName == nil`, or an imported sequence clip) so cuts and speed
+/// changes are reversible.
 nonisolated struct RecordingChapter: Identifiable, Codable, Equatable, Sendable {
     var id = UUID()
     var title: String
     var start: TimeInterval
     var autoTitle: Bool? = nil
+    var mediaFileName: String? = nil
+
+    init(
+        id: UUID = UUID(),
+        title: String,
+        start: TimeInterval,
+        autoTitle: Bool? = nil,
+        mediaFileName: String? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.start = start
+        self.autoTitle = autoTitle
+        self.mediaFileName = mediaFileName
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, start, autoTitle, mediaFileName
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        title = try container.decode(String.self, forKey: .title)
+        start = try container.decode(TimeInterval.self, forKey: .start)
+        autoTitle = try container.decodeIfPresent(Bool.self, forKey: .autoTitle)
+        mediaFileName = try container.decodeIfPresent(String.self, forKey: .mediaFileName)
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encode(start, forKey: .start)
+        if let autoTitle { try container.encode(autoTitle, forKey: .autoTitle) }
+        if let mediaFileName { try container.encode(mediaFileName, forKey: .mediaFileName) }
+    }
 }
 
 nonisolated enum RecordingChapterPlanner {
@@ -41,7 +80,10 @@ nonisolated enum RecordingChapterPlanner {
         let candidates: [(chapter: RecordingChapter, time: TimeInterval)] = chapters
             .filter { $0.start.isFinite && $0.start >= 0 }
             .compactMap { chapter in
-                guard let time = timeline.editorTime(forSourceEventTime: chapter.start),
+                guard let time = timeline.editorTime(
+                    forSourceEventTime: chapter.start,
+                    mediaFileName: chapter.mediaFileName
+                ),
                       time < timeline.duration - 0.5 else { return nil }
                 return (chapter, time)
             }

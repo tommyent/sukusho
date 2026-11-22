@@ -422,6 +422,16 @@ func studioOccupiedLaneSpans(
     for cut in clipTimeline.hardCuts {
         spans.append(StudioLaneSpan(id: UUID(), editorStart: cut, editorEnd: cut))
     }
+    // Imported clip spans are non-zoomable barriers so zoom draw/move/trim
+    // stays strictly inside primary-recording clips.
+    var cursor: TimeInterval = 0
+    for segment in clipTimeline.segments {
+        let end = cursor + segment.editorDuration
+        if !segment.isPrimaryRecording {
+            spans.append(StudioLaneSpan(id: segment.id, editorStart: cursor, editorEnd: end))
+        }
+        cursor = end
+    }
     return spans
 }
 
@@ -454,6 +464,7 @@ func studioDrawnSourceSpan(
     let run = studioMonotonicRun(around: range.lowerBound, in: clipTimeline)
     let clampedLower = min(max(range.lowerBound, run.lowerBound), run.upperBound)
     let clampedUpper = min(max(range.upperBound, clampedLower), run.upperBound)
+    guard clipTimeline.isPrimaryRecording(at: (clampedLower + clampedUpper) / 2) else { return nil }
     var lower = min(max(0, studioSourceStart(atEditorTime: clampedLower, in: clipTimeline)), sourceDuration)
     let end = min(max(lower, studioSourceEnd(atEditorTime: clampedUpper, in: clipTimeline)), sourceDuration)
     while let covering = occupied.first(where: { $0.lowerBound <= lower && lower < $0.upperBound }) {
