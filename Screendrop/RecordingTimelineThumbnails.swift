@@ -12,6 +12,13 @@
 import AVFoundation
 import AppKit
 
+/// Only cancellation crosses executors. Configuration and image requests
+/// stay on the render task; AVFoundation owns cancellation of pending work.
+nonisolated struct ImageGenerationCancellation: @unchecked Sendable {
+    let generator: AVAssetImageGenerator
+    func cancel() { generator.cancelAllCGImageGeneration() }
+}
+
 @MainActor
 final class RecordingTimelineThumbnailStore {
     nonisolated static let primarySourceKey = ""
@@ -53,13 +60,6 @@ final class RecordingTimelineThumbnailStore {
         func matchesContent(url: URL, duration: TimeInterval, redactions: [RecordingRedaction]) -> Bool {
             self.url == url && self.duration == duration && self.redactions == redactions
         }
-    }
-
-    /// Only cancellation crosses executors. Configuration and image requests
-    /// stay on the render task; AVFoundation owns cancellation of pending work.
-    nonisolated private struct ImageGenerationCancellation: @unchecked Sendable {
-        let generator: AVAssetImageGenerator
-        func cancel() { generator.cancelAllCGImageGeneration() }
     }
 
     /// Tile layout for the lane: tiles cover `spacing` of source time each and

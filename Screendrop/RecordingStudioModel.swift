@@ -322,8 +322,7 @@ final class RecordingStudioModel {
     /// recording's own audio and the soundtrack replacing it under
     /// `recordingPeaksKey` and `soundtrackPeaksKey`.
     private(set) var audioPeaks: [String: RecordingAudioWaveform] = [:]
-    /// Keys currently being decoded so repeated lookups never spawn duplicate tasks.
-    private var loadingAudioPeaks: Set<String> = []
+    private var audioPeakTasks: [String: Task<Void, Never>] = [:]
     /// File names of audio clips whose files are missing or unreadable.
     private(set) var missingAudioClipFiles: Set<String> = []
     static let recordingPeaksKey = "\u{1}recording"
@@ -1009,7 +1008,9 @@ final class RecordingStudioModel {
                     }
                 }
             }
-            audioSources.recording = await StudioAudioSources.Track.loadAll(of: asset)
+            let recordingAudio = await StudioAudioSources.Track.loadAll(of: asset)
+            guard !isTornDown, !Task.isCancelled else { return }
+            audioSources.recording = recordingAudio
             hasRecordedAudio = !audioSources.recording.isEmpty
             microphoneTrackID = RecordingVoiceIsolation.microphoneTrack(in: tracks,
                 includesMicrophone: manifest?.includesMicrophone == true,
@@ -1274,7 +1275,7 @@ final class RecordingStudioModel {
             replacementAudio = nil
             audioSources.replacement = []
             audioPeaks[Self.soundtrackPeaksKey] = nil
-            loadingAudioPeaks.remove(Self.soundtrackPeaksKey)
+            audioPeakTasks.removeValue(forKey: Self.soundtrackPeaksKey)?.cancel()
         }
         audioClips = (document.audioClips ?? []).map { $0.sanitized() }
         hiddenLinkedAudio = (document.hiddenLinkedAudio ?? []).map { entry in
@@ -1376,11 +1377,13 @@ final class RecordingStudioModel {
         playerItemTask?.cancel()
         playerItemTask = nil
         redactionRefreshTask?.cancel()
+        redactionRefreshTask = nil
         pendingRedactionEdit.cancel()
         pendingTextEdit.cancel()
         pendingImageEdit.cancel()
         pendingVideoOverlayEdit.cancel()
         mediaLoadTask?.cancel()
+        mediaLoadTask = nil
         videoOverlayImportTask?.cancel()
         videoOverlayImportTask = nil
         videoOverlayImportID = nil
@@ -1407,6 +1410,7 @@ final class RecordingStudioModel {
         transcriptionTask?.cancel()
         projectSaveTask?.cancel()
         autosaveTask?.cancel()
+        autosaveTask = nil
         noticeTask?.cancel()
         noticeTask = nil
         notice = nil
@@ -1417,8 +1421,12 @@ final class RecordingStudioModel {
         transcriptionTask = nil
         projectSaveTask = nil
         timelineThumbnails.releaseResources()
+        stylePosterTask?.cancel()
+        stylePosterTask = nil
         stylePoster = nil
-        pause()
+        isPlaying = false
+        screenPlayer.pause()
+        cameraPlayer.pause()
         if let timeObserver {
             screenPlayer.removeTimeObserver(timeObserver)
         }
@@ -1427,6 +1435,9 @@ final class RecordingStudioModel {
             NotificationCenter.default.removeObserver(endObserver)
         }
         endObserver = nil
+        screenPlayer.currentItem?.cancelPendingSeeks()
+        cameraPlayer.currentItem?.cancelPendingSeeks()
+        videoOverlayPlayer.currentItem?.cancelPendingSeeks()
         screenPlayer.replaceCurrentItem(with: nil)
         cameraPlayer.replaceCurrentItem(with: nil)
         clearVideoOverlayPlayer()
@@ -1470,8 +1481,9 @@ final class RecordingStudioModel {
         soloAudioLane = nil
         selectedAudioClipID = nil
         selectedAudioClipIDs.removeAll()
+        for task in audioPeakTasks.values { task.cancel() }
+        audioPeakTasks.removeAll()
         audioPeaks.removeAll()
-        loadingAudioPeaks.removeAll()
         missingAudioClipFiles.removeAll()
         editUndoManager.removeAllActions()
         zoomEditSnapshot = nil
@@ -2988,9 +3000,12 @@ final class RecordingStudioModel {
 
     /// A small frame from early in the recording, for the Styles tiles.
     private(set) var stylePoster: CGImage?
+    private var stylePosterTask: Task<Void, Never>?
 
     /// Once the recording has loaded, so the file is known to be readable.
     private func loadStylePoster() {
+        stylePosterTask?.cancel()
+        stylePosterTask = nil
         guard !withholdsNewerFormatPreview else {
             stylePoster = nil
             return
@@ -2999,10 +3014,11 @@ final class RecordingStudioModel {
         let duration = sourceDuration
         let regions = redactions
         stylePoster = nil
-        Task { [weak self] in
+        stylePosterTask = Task { [weak self] in
             let poster = await Self.posterFrame(url: url, duration: duration, redactions: regions)
-            guard let self, !self.isTornDown, self.redactions == regions else { return }
-            self.stylePoster = poster
+            guard let self, !Task.isCancelled, !self.isTornDown else { return }
+            self.stylePosterTask = nil
+            if self.redactions == regions { self.stylePoster = poster }
         }
     }
 
@@ -3016,12 +3032,18 @@ final class RecordingStudioModel {
         }
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: 360, height: 360)
-        for seconds in [min(1, duration / 2), 0] where seconds.isFinite {
-            if let image = try? await generator.image(at: CMTime(seconds: seconds, preferredTimescale: 600)).image {
-                return image
+        let cancellation = ImageGenerationCancellation(generator: generator)
+        return await withTaskCancellationHandler {
+            for seconds in [min(1, duration / 2), 0] where seconds.isFinite {
+                guard !Task.isCancelled else { return nil }
+                if let image = try? await generator.image(at: CMTime(seconds: seconds, preferredTimescale: 600)).image {
+                    return image
+                }
             }
+            return nil
+        } onCancel: {
+            cancellation.cancel()
         }
-        return nil
     }
 
     private func loadTimelineThumbnails() {
@@ -6717,13 +6739,19 @@ final class RecordingStudioModel {
     }
 
     private func loadPeaks(for fileName: String, url: URL) {
-        guard audioPeaks[fileName] == nil, loadingAudioPeaks.insert(fileName).inserted else { return }
-        Task { [weak self] in
-            let waveform = await Task.detached(priority: .utility) {
-                await RecordingAudioPeaks.loadWaveform(url: url)
-            }.value
-            guard let self, !self.isTornDown else { return }
-            self.loadingAudioPeaks.remove(fileName)
+        guard audioPeaks[fileName] == nil, audioPeakTasks[fileName] == nil else { return }
+        audioPeakTasks[fileName] = Task { [weak self] in
+            let decode = Task.detached(priority: .utility) {
+                guard !Task.isCancelled else { return RecordingAudioWaveform.empty }
+                return await RecordingAudioPeaks.loadWaveform(url: url)
+            }
+            let waveform = await withTaskCancellationHandler {
+                await decode.value
+            } onCancel: {
+                decode.cancel()
+            }
+            guard let self, !Task.isCancelled, !self.isTornDown else { return }
+            self.audioPeakTasks[fileName] = nil
             // A soundtrack replaced while this one was being read must not
             // have its outline taken over by the old file's.
             if fileName == Self.soundtrackPeaksKey, self.replacementAudio?.url != url { return }
@@ -7327,7 +7355,7 @@ final class RecordingStudioModel {
     ) {
         replacementAudio = audio
         audioPeaks[Self.soundtrackPeaksKey] = nil
-        loadingAudioPeaks.remove(Self.soundtrackPeaksKey)
+        audioPeakTasks.removeValue(forKey: Self.soundtrackPeaksKey)?.cancel()
         if let audio {
             replacementAudioReference = nil
             replacementAudioError = nil

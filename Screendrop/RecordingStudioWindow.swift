@@ -19,10 +19,14 @@ struct RecordingStudioWindow: View {
     @Binding var url: URL?
 
     @State private var model: RecordingStudioModel?
+    @State private var studioWindow = WeakWindow()
+    @State private var isOpen = true
 
     var body: some View {
         Group {
-            if let model {
+            if !isOpen {
+                Color.clear
+            } else if let model {
                 RecordingStudioContent(model: model)
             } else {
                 ProgressView()
@@ -30,8 +34,8 @@ struct RecordingStudioWindow: View {
             }
         }
         .modifier(CaptureLibraryEditorRegistration(url: url))
-        .task(id: url) {
-            guard let url else { return }
+        .task(id: isOpen ? url : nil) {
+            guard isOpen, let url, !Task.isCancelled else { return }
             model?.teardown()
             let newModel = RecordingStudioModel(url: url)
             model = newModel
@@ -44,10 +48,19 @@ struct RecordingStudioWindow: View {
                 ScreenshotPreviewStack.shared.dismissVideo(for: newModel.sessionURL)
             }
         }
-        .onDisappear {
-            model?.teardown()
-            model = nil
+        .onAppear { isOpen = true }
+        .onWindowChange { studioWindow.window = $0 }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { notification in
+            guard let closing = notification.object as? NSWindow, closing === studioWindow.window else { return }
+            isOpen = false
+            releaseModel()
         }
+        .onDisappear { releaseModel() }
+    }
+
+    private func releaseModel() {
+        model?.teardown()
+        model = nil
     }
 }
 
@@ -59,7 +72,6 @@ private struct RecordingStudioContent: View {
     @State private var closeGuard = EditorCloseGuard()
     @State private var confirmsSharedLinkDeletion = false
     @FloatingGlassChrome private var floatingChrome
-    @State private var studioWindow: NSWindow?
     @State private var glassMetrics = GlassWindowButtonMetrics.fallback
 
     var body: some View {
@@ -209,8 +221,7 @@ private struct RecordingStudioContent: View {
             metrics: glassMetrics
         )
         .environment(\.backgroundDestination, .editors)
-            .glassWindowChrome(
-            window: studioWindow,
+        .glassWindowChrome(
             hasSidebar: false,
             sidebarVisible: false,
             inspectorVisible: isInspectorPresented,
@@ -219,7 +230,6 @@ private struct RecordingStudioContent: View {
         .navigationTitle(windowTitle)
         .navigationSubtitle(windowSubtitle)
         .onWindowChange { window in
-            studioWindow = window
             guard let window else {
                 closeGuard.detach()
                 return
@@ -236,7 +246,7 @@ private struct RecordingStudioContent: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
             model.autosave()
         }
-        .focusedSceneValue(\.recordingStudio, model)
+        .focusedSceneValue(\.recordingStudio, WeakReference(model))
         .background {
             StudioKeyCommands(model: model)
         }
@@ -549,7 +559,7 @@ private struct SharePill: View {
 
 extension FocusedValues {
     /// The key Studio window's model, for menu commands.
-    @Entry var recordingStudio: RecordingStudioModel?
+    @Entry var recordingStudio: WeakReference<RecordingStudioModel>?
 }
 
 /// File › Save for the key Studio window, disabled when clean. Only there
@@ -557,11 +567,11 @@ extension FocusedValues {
 /// editor's Save. It is also a new recording's first save; after that the
 /// project saves at a pause.
 struct RecordingStudioSaveCommand: View {
-    @FocusedValue(\.recordingStudio) private var studio
+    @FocusedValue(\.recordingStudio) private var studioReference
 
     var body: some View {
-        if let studio, studio.isProject {
-            Button("Save") { studio.saveProject() }
+        if let studioReference, let studio = studioReference.value, studio.isProject {
+            Button("Save") { studioReference.value?.saveProject() }
                 .keyboardShortcut("s", modifiers: .command)
                 .disabled(!studio.hasUnsavedChanges)
         }
@@ -569,14 +579,14 @@ struct RecordingStudioSaveCommand: View {
 }
 
 struct RecordingStudioAgentPromptCommand: View {
-    @FocusedValue(\.recordingStudio) private var studio
+    @FocusedValue(\.recordingStudio) private var studioReference
 
     var body: some View {
-        if let studio {
+        if let studioReference, let studio = studioReference.value {
             Group {
-                Button("Export Bug Report") { studio.exportAgentPrompt() }
+                Button("Export Bug Report") { studioReference.value?.exportAgentPrompt() }
                 if studio.session != nil {
-                    Button("Export How-To Guide") { studio.exportGuide() }
+                    Button("Export How-To Guide") { studioReference.value?.exportGuide() }
                 }
             }
             .disabled(!studio.isLoaded || studio.hasRunningWork || studio.hasUnreadableDraft || studio.isReadOnlyNewerFormat || studio.transcriptionState.isTranscribing)
@@ -587,12 +597,12 @@ struct RecordingStudioAgentPromptCommand: View {
 /// File › Revert To for the key Studio project. Each is one step Undo
 /// takes back; the project then saves as after any edit.
 struct RecordingStudioRevertCommand: View {
-    @FocusedValue(\.recordingStudio) private var studio
+    @FocusedValue(\.recordingStudio) private var studioReference
 
     var body: some View {
-        if let studio, studio.isProject {
+        if let studioReference, let studio = studioReference.value, studio.isProject {
             Menu("Revert To") {
-                RecordingStudioRevertItems(studio: studio)
+                RecordingStudioRevertItems(studioReference: studioReference)
             }
             .disabled(!studio.canRevert)
         }
@@ -1751,6 +1761,10 @@ private struct StudioPlayerLayerView: NSViewRepresentable {
         if nsView.playerLayer.backgroundColor != backgroundColor {
             nsView.playerLayer.backgroundColor = backgroundColor
         }
+    }
+
+    static func dismantleNSView(_ nsView: StudioPlayerContainerView, coordinator: ()) {
+        nsView.playerLayer.player = nil
     }
 }
 

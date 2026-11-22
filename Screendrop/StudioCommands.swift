@@ -12,42 +12,43 @@
 import SwiftUI
 
 struct StudioCommands: Commands {
-    @FocusedValue(\.recordingStudio) private var model
-
-    private var canControlPlayback: Bool {
-        guard let model else { return false }
-        return model.isLoaded && !model.isRestoringDocument && !model.isEditingSourceRegion
-    }
+    @FocusedValue(\.recordingStudio) private var modelReference
 
     var body: some Commands {
+        let modelReference = modelReference
+        let model = modelReference?.value
+        let canControlPlayback = model.map {
+            $0.isLoaded && !$0.isRestoringDocument && !$0.isEditingSourceRegion
+        } == true
+
         CommandMenu("Clip") {
             Group {
                 Button("Insert Video Clip…") {
-                    model?.presentInsertVideoClipPanel()
+                    modelReference?.value?.presentInsertVideoClipPanel()
                 }
                 .disabled(model?.canImportVideoClip != true)
                 Button("Split at Playhead") {
-                    guard let model else { return }
+                    guard let model = modelReference?.value else { return }
                     model.splitClip(at: model.currentTime)
                 }
                 .disabled(model?.clipTimeline.split(at: model?.currentTime ?? 0) == nil)
                 Divider()
-                Button("Mark In (I)") { model?.markRange(.start) }
-                Button("Mark Out (O)") { model?.markRange(.end) }
-                Button("Delete Marked Range") { model?.deleteRange() }
+                Button("Mark In (I)") { modelReference?.value?.markRange(.start) }
+                Button("Mark Out (O)") { modelReference?.value?.markRange(.end) }
+                Button("Delete Marked Range") { modelReference?.value?.deleteRange() }
                     .disabled(model?.rangeSelection == nil)
-                Button("Clear Marked Range") { model?.clearRange() }
+                Button("Clear Marked Range") { modelReference?.value?.clearRange() }
                     .keyboardShortcut("x", modifiers: .option)
                     .disabled(model?.rangeSelection == nil)
                 Divider()
-                Button("Move Clip Earlier") { model?.moveSelectedClip(by: -1) }
+                Button("Move Clip Earlier") { modelReference?.value?.moveSelectedClip(by: -1) }
                     .disabled(model?.canMoveSelectedClipEarlier != true)
-                Button("Move Clip Later") { model?.moveSelectedClip(by: 1) }
+                Button("Move Clip Later") { modelReference?.value?.moveSelectedClip(by: 1) }
                     .disabled(model?.canMoveSelectedClipLater != true)
                 Divider()
-                Button("Add or Remove Marker (M)") { model?.toggleMarker() }
+                Button("Add or Remove Marker (M)") { modelReference?.value?.toggleMarker() }
                 Button(model?.snapsEdits == true ? "Turn Snapping Off (N)" : "Turn Snapping On (N)") {
-                    model?.toggleSnapping()
+                    modelReference?.value?.toggleSnapping()
                 }
             }
             .disabled(!canControlPlayback)
@@ -56,24 +57,24 @@ struct StudioCommands: Commands {
         CommandMenu("Playback") {
             Group {
                 Button(model?.isPlaying == true ? "Pause (Space)" : "Play (Space)") {
-                    model?.togglePlayback()
+                    modelReference?.value?.togglePlayback()
                 }
                 Divider()
-                Button("Play Backward (J)") { model?.shuttle(forward: false) }
-                Button("Pause (K)") { model?.pause() }
-                Button("Play Forward (L)") { model?.shuttle(forward: true) }
+                Button("Play Backward (J)") { modelReference?.value?.shuttle(forward: false) }
+                Button("Pause (K)") { modelReference?.value?.pause() }
+                Button("Play Forward (L)") { modelReference?.value?.shuttle(forward: true) }
                 Divider()
-                Button("Previous Edit Point (↑)") { model?.seekToEditPoint(forward: false) }
-                Button("Next Edit Point (↓)") { model?.seekToEditPoint(forward: true) }
-                Button("Previous Frame (←)") { model?.stepFrames(-1) }
-                Button("Next Frame (→)") { model?.stepFrames(1) }
+                Button("Previous Edit Point (↑)") { modelReference?.value?.seekToEditPoint(forward: false) }
+                Button("Next Edit Point (↓)") { modelReference?.value?.seekToEditPoint(forward: true) }
+                Button("Previous Frame (←)") { modelReference?.value?.stepFrames(-1) }
+                Button("Next Frame (→)") { modelReference?.value?.stepFrames(1) }
                 Divider()
                 Button("Go to Start (Home)") {
-                    model?.pause()
-                    model?.seek(to: 0)
+                    modelReference?.value?.pause()
+                    modelReference?.value?.seek(to: 0)
                 }
                 Button("Go to End (End)") {
-                    guard let model else { return }
+                    guard let model = modelReference?.value else { return }
                     model.pause()
                     model.seek(to: model.duration)
                 }

@@ -1511,6 +1511,75 @@ struct RecordingExportRegressionChecks {
         print("PASS: held share cancel/retry retains busy state until exit; stale completion cannot clear retry; deletion shares the guard")
     }
 
+    static func studioTeardown(in directory: URL) async throws {
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("teardown.sukushorec"))
+        try FileManager.default.createDirectory(at: session.mediaDirectoryURL, withIntermediateDirectories: true)
+        try await movie(at: session.screenURL)
+        try FileManager.default.copyItem(at: session.screenURL, to: session.cameraURL)
+        let sequenceFile = "sequence.mov"
+        let overlayFile = "overlay.mov"
+        for fileName in [sequenceFile, overlayFile] {
+            try FileManager.default.copyItem(
+                at: session.screenURL, to: session.mediaDirectoryURL.appendingPathComponent(fileName)
+            )
+        }
+        let clips = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 2),
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 4, mediaFileName: sequenceFile, sourceDuration: 8),
+        ])
+        let overlay = RecordingVideoOverlay(fileName: overlayFile, displayName: "PiP", start: 0, fileDuration: 6)
+        try session.writeEditDocument(RecordingEditDocument(
+            style: RecordingStudioStyle(), zoomEnabled: false, zoomCues: [],
+            clipTimeline: clips, videoOverlays: [overlay]
+        ))
+
+        var focused: WeakReference<RecordingStudioModel>?
+        weak var screenPlayer: AVPlayer?
+        weak var cameraPlayer: AVPlayer?
+        weak var overlayPlayer: AVPlayer?
+        weak var thumbnails: RecordingTimelineThumbnailStore?
+        weak var images: RecordingOverlayImageStore?
+        do {
+            let model = RecordingStudioModel(url: session.directoryURL)
+            defer { model.teardown() }
+            await model.load()
+            try check(model.isLoaded && model.clipTimeline.segments.contains { $0.mediaFileName == sequenceFile },
+                      "Studio did not load the imported sequence clip: \(model.loadError ?? "")")
+            model.seek(to: 1)
+            try check(model.screenPlayer.currentItem?.asset is AVComposition, "Sequence composition never loaded")
+            try check(model.cameraPlayer.currentItem != nil && model.videoOverlayPlayer.currentItem != nil,
+                      "Camera and PiP players must have live items before close")
+
+            let store = model.timelineThumbnails
+            let primary = store.grid(forTargetSpan: 0.25)
+            let imported = store.grid(forTargetSpan: 0.25, sourceKey: sequenceFile)
+            try await until {
+                store.image(in: primary, tileIndex: 0) != nil
+                    && store.image(in: imported, tileIndex: 0, sourceKey: sequenceFile) != nil
+            }
+
+            focused = WeakReference(model)
+            screenPlayer = model.screenPlayer
+            cameraPlayer = model.cameraPlayer
+            overlayPlayer = model.videoOverlayPlayer
+            thumbnails = store
+            images = model.overlayImages
+
+            model.play()
+            try check(model.isPlaying, "Studio must be playing when teardown starts")
+            model.teardown()
+            try check(screenPlayer?.currentItem == nil && cameraPlayer?.currentItem == nil && overlayPlayer?.currentItem == nil,
+                      "Teardown left a player item or its composition attached")
+            try check(store.cachedTileCount == 0 && store.cachedBytes == 0, "Primary and imported tiles survived teardown")
+            try check(!StudioProjectRegistry.shared.hasLoadedEditor(for: session.directoryURL), "Studio remained registered")
+        }
+        try await until {
+            focused?.value == nil && screenPlayer == nil && cameraPlayer == nil && overlayPlayer == nil
+                && thumbnails == nil && images == nil
+        }
+        print("PASS: loaded sequence and PiP release the Studio model, three players, composition attachment, and both stores")
+    }
+
     static func main() async throws {
         setbuf(stdout, nil)
         guard let root = ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] else {
@@ -1520,10 +1589,15 @@ struct RecordingExportRegressionChecks {
         let home = URL(fileURLWithPath: NSHomeDirectory()).resolvingSymlinksInPath()
         let support = ScreendropStorage.applicationSupportDirectory.resolvingSymlinksInPath().path
         try check(home == directory && support.hasPrefix(directory.path + "/"), "Foundation storage escaped isolated home")
+        if ProcessInfo.processInfo.environment["SCREENDROP_CHECK_STUDIO_TEARDOWN_ONLY"] == "1" {
+            try await studioTeardown(in: directory)
+            return
+        }
         if ProcessInfo.processInfo.environment["SCREENDROP_CHECK_MUSIC_DELIVERY_ONLY"] == "1" {
             try await musicDelivery(in: directory)
             return
         }
+        try await studioTeardown(in: directory)
         try await chapterMarkerDrag(in: directory)
         try await chapterAtPlayhead(in: directory)
         try await chapterRenameUndo(in: directory)

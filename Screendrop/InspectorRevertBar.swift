@@ -103,15 +103,24 @@ extension AnnotationEditorRevertItems {
 /// File › Revert To's items for Studio, for the menu and the inspector's
 /// button alike. The whole menu is off while `canRevert` is false.
 struct RecordingStudioRevertItems: View {
-    let studio: RecordingStudioModel
+    let studioReference: WeakReference<RecordingStudioModel>
 
     var body: some View {
-        Button("Original") { studio.revertToOriginal() }
-        Button("Last Opened") { studio.revertToLastOpened() }
-            .disabled(!studio.hasEditsSinceOpening)
-        if !studio.previousSessionSnapshots.isEmpty { Divider() }
-        ForEach(studio.previousSessionSnapshots) { snapshot in
-            Button(snapshot.title) { studio.revertToSession(snapshot) }
+        let studioReference = studioReference
+        if let studio = studioReference.value {
+            Button("Original") { studioReference.value?.revertToOriginal() }
+            Button("Last Opened") { studioReference.value?.revertToLastOpened() }
+                .disabled(!studio.hasEditsSinceOpening)
+            if !studio.previousSessionSnapshots.isEmpty { Divider() }
+            ForEach(studio.previousSessionSnapshots) { snapshot in
+                Button(snapshot.title) { studioReference.value?.revertToSession(snapshot) }
+            }
         }
+    }
+}
+
+extension RecordingStudioRevertItems {
+    init(studio: RecordingStudioModel) {
+        self.init(studioReference: WeakReference(studio))
     }
 }
