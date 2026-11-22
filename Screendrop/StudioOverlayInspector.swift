@@ -714,6 +714,21 @@ struct StudioVideoOverlayInspectorControls: View {
                     InspectorHint("This video has no audio track.")
                 }
             }
+
+            VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
+                InspectorToggleRow(
+                    "Cut with the video",
+                    isOn: Binding(
+                        get: { overlay.isLinked },
+                        set: { model.setVideoOverlayLinked($0, id: overlay.id) }
+                    )
+                )
+                InspectorHint(
+                    overlay.isLinked
+                        ? "Linked: cutting, trimming or speeding up the video below does the same to this overlay."
+                        : "Not linked: stays whole when the video is cut, and follows the footage moment under its start."
+                )
+            }
         }
     }
 

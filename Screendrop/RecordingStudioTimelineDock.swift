@@ -2294,6 +2294,12 @@ private struct StudioVideoOverlayTrackLane: View {
                 )
             }
         }
+        Button(
+            overlay.isLinked ? "Unlink from Video" : "Link to Video",
+            systemImage: overlay.isLinked ? "link.badge.plus" : "link"
+        ) {
+            model.setVideoOverlayLinked(!overlay.isLinked, id: overlay.id)
+        }
         Divider()
         Button("Delete Video Overlay", systemImage: "trash", role: .destructive) {
             model.removeVideoOverlay(id: overlay.id)
@@ -2303,6 +2309,7 @@ private struct StudioVideoOverlayTrackLane: View {
     private func accessibility(for block: StudioLaneBlock<RecordingVideoOverlay>) -> StudioBlockAccessibility {
         let overlay = block.item
         var traits = [overlay.presentation.title]
+        if overlay.isLinked { traits.append("linked") }
         if overlay.isMuted { traits.append("muted") }
         if model.isVideoOverlayMissing(overlay) { traits.append("missing") }
         let range = "\(studioPreciseTimecode(block.editorStart)) to \(studioPreciseTimecode(block.editorEnd))"
@@ -2353,7 +2360,8 @@ private struct StudioVideoOverlayTrackLane: View {
             let trimmed = StudioVideoOverlayLane.trimmedTrailing(
                 base,
                 by: target - base.end,
-                among: model.videoOverlays
+                among: model.videoOverlays,
+                timelineDuration: model.duration
             )
             model.setVideoOverlay(trimmed)
         }

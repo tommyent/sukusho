@@ -200,6 +200,7 @@ final class RecordingStudioModel {
     private var loadedVideoOverlayFileName: String?
     private var loadedVideoOverlayID: UUID?
     private var videoOverlayImportTask: Task<Void, Never>?
+    private var videoOverlayImportID: UUID?
     private(set) var videoOverlayRenderProgress: Double?
     private(set) var pendingRecordingOverlayImport: PendingRecordingOverlayImport?
     /// The preview's copy of the reframe camera, kept current with every
@@ -1264,6 +1265,7 @@ final class RecordingStudioModel {
         mediaLoadTask?.cancel()
         videoOverlayImportTask?.cancel()
         videoOverlayImportTask = nil
+        videoOverlayImportID = nil
         videoOverlayRenderProgress = nil
         pendingRecordingOverlayImport = nil
         overlayImages.removeAll()
@@ -2447,8 +2449,9 @@ final class RecordingStudioModel {
             nextAudio = conformed.clips
             nextHidden = conformed.hidden
         }
-        let nextVideoOverlays = requestedVideoOverlays.map(StudioVideoOverlayLane.normalized)
-            ?? StudioVideoOverlayLane.conform(videoOverlays, from: clipTimeline, to: next)
+        let nextVideoOverlays = requestedVideoOverlays.map {
+            StudioVideoOverlayLane.normalized($0, timelineDuration: next.duration)
+        } ?? StudioVideoOverlayLane.conform(videoOverlays, from: clipTimeline, to: next)
         let nextSolo = StudioAudioLaneSolo.reconcile(clips: nextAudio, soloLane: requestedSolo ?? soloAudioLane)
         guard next != clipTimeline || nextAudio != audioClips || nextHidden != hiddenLinkedAudio || nextSolo != soloAudioLane || nextVideoOverlays != videoOverlays else { return }
 
@@ -4256,11 +4259,17 @@ final class RecordingStudioModel {
     func importMedia(_ urls: [URL], atEditorTime time: TimeInterval, audioLane: Int = 0) {
         guard let directory = mediaDirectoryURL else { return }
         mediaImportError = nil
+        let videoURLs = urls.filter { !RecordingOverlayImage.canImport($0) && RecordingVideoOverlay.canImport($0) }
+        let otherURLs = urls.filter { RecordingOverlayImage.canImport($0) || !RecordingVideoOverlay.canImport($0) }
+        if !videoURLs.isEmpty {
+            importVideoOverlays(videoURLs, atEditorTime: time)
+        }
+        guard !otherURLs.isEmpty else { return }
         Task { [weak self] in
             var imageTime = time
             var audioTime = time
             var rejected: [String] = []
-            for url in urls {
+            for url in otherURLs {
                 guard let self, !self.isTornDown else { return }
                 if RecordingOverlayImage.canImport(url) {
                     if let placed = await self.importImage(url, into: directory, atEditorTime: imageTime) {
@@ -4268,8 +4277,6 @@ final class RecordingStudioModel {
                     } else {
                         rejected.append(url.lastPathComponent)
                     }
-                } else if RecordingVideoOverlay.canImport(url) {
-                    self.importVideoOverlays([url], atEditorTime: time)
                 } else if let placed = await self.importAudioMedia(
                     url,
                     into: directory,
@@ -4514,7 +4521,8 @@ final class RecordingStudioModel {
         guard let index = videoOverlays.firstIndex(where: { $0.id == overlay.id }) else { return }
         var all = videoOverlays
         all[index] = overlay.sanitized()
-        replaceVideoOverlays(StudioVideoOverlayLane.normalized(all))
+        let limit = duration > 0 ? duration : nil
+        replaceVideoOverlays(StudioVideoOverlayLane.normalized(all, timelineDuration: limit))
         if pendingVideoOverlayEdit.isActive { undoRevision &+= 1 }
     }
 
@@ -4542,10 +4550,26 @@ final class RecordingStudioModel {
 
     func setVideoOverlaySpeed(_ speed: Double, id: UUID) {
         guard let overlay = videoOverlays.first(where: { $0.id == id }) else { return }
-        let updated = StudioVideoOverlayLane.withSpeed(overlay, speed: speed, among: videoOverlays)
+        let limit = duration > 0 ? duration : nil
+        let updated = StudioVideoOverlayLane.withSpeed(
+            overlay,
+            speed: speed,
+            among: videoOverlays,
+            timelineDuration: limit
+        )
         applyVideoOverlays(
             videoOverlays.map { $0.id == id ? updated : $0 },
             actionName: "Change Video Overlay Speed"
+        )
+    }
+
+    func setVideoOverlayLinked(_ linked: Bool, id: UUID) {
+        guard var overlay = videoOverlays.first(where: { $0.id == id }),
+              overlay.isLinked != linked else { return }
+        overlay.isLinked = linked
+        applyVideoOverlays(
+            videoOverlays.map { $0.id == id ? overlay : $0 },
+            actionName: linked ? "Link Video Overlay to Video" : "Unlink Video Overlay from Video"
         )
     }
 
@@ -4578,7 +4602,8 @@ final class RecordingStudioModel {
         if !editUndoManager.isUndoing && !editUndoManager.isRedoing {
             commitPendingOverlayEdits()
         }
-        let all = StudioVideoOverlayLane.normalized(requested)
+        let limit = duration > 0 ? duration : nil
+        let all = StudioVideoOverlayLane.normalized(requested, timelineDuration: limit)
         guard all != videoOverlays else { return }
         let previous = videoOverlays
         registerUndo(actionName) { target in
@@ -4591,28 +4616,71 @@ final class RecordingStudioModel {
     }
 
     /// Imports video files or Sukusho `.sukushorec` recordings onto the layered
-    /// video overlay lane. Plain movie files import right away; Sukusho
-    /// recordings prompt each time between Raw recording (default) and Finished movie.
+    /// video overlay lane. Refuses importing the currently open recording into
+    /// itself and validates `.sukushorec` packages before offering Raw vs Finished.
     func importVideoOverlays(_ urls: [URL], atEditorTime time: TimeInterval) {
         guard mediaDirectoryURL != nil, isLoaded, !urls.isEmpty else { return }
         mediaImportError = nil
-        let recordingURLs = urls.filter { RecordingSession.isSessionDirectory($0) }
+
+        var accepted: [URL] = []
+        var rejectedSelf = false
+        var rejectedPackages: [String] = []
+        for url in urls {
+            if RecordingSession.isSessionDirectory(url) {
+                if RecordingVideoOverlayMedia.isSelfRecording(url, openSessionURL: sessionURL) {
+                    rejectedSelf = true
+                    continue
+                }
+                guard RecordingVideoOverlayMedia.validateRecordingPackage(at: url) else {
+                    rejectedPackages.append(RecordingSession(directoryURL: url).displayName)
+                    continue
+                }
+            }
+            accepted.append(url)
+        }
+
+        if accepted.isEmpty {
+            if !rejectedPackages.isEmpty {
+                mediaImportError = "Couldn't add \(rejectedPackages.joined(separator: ", ")). Check that the recording package and its media files are readable."
+            } else if rejectedSelf {
+                mediaImportError = RecordingVideoOverlayMedia.selfImportErrorMessage
+            }
+            return
+        }
+
+        if rejectedSelf {
+            mediaImportError = RecordingVideoOverlayMedia.selfImportErrorMessage
+        } else if !rejectedPackages.isEmpty {
+            mediaImportError = "Couldn't add \(rejectedPackages.joined(separator: ", ")). Check that the recording package and its media files are readable."
+        }
+
+        let recordingURLs = accepted.filter { RecordingSession.isSessionDirectory($0) }
         if !recordingURLs.isEmpty {
             let names = recordingURLs.map { RecordingSession(directoryURL: $0).displayName }
             pendingRecordingOverlayImport = PendingRecordingOverlayImport(
-                urls: urls,
+                urls: accepted,
                 editorTime: time,
                 recordingNames: names
             )
             return
         }
-        runVideoOverlayImport(urls: urls, atEditorTime: time, recordingMode: .raw)
+        runVideoOverlayImport(
+            urls: accepted,
+            atEditorTime: time,
+            recordingMode: .raw,
+            initialError: mediaImportError
+        )
     }
 
     func resolvePendingRecordingImport(mode: RecordingOverlayImportMode) {
         guard let pending = pendingRecordingOverlayImport else { return }
         pendingRecordingOverlayImport = nil
-        runVideoOverlayImport(urls: pending.urls, atEditorTime: pending.editorTime, recordingMode: mode)
+        runVideoOverlayImport(
+            urls: pending.urls,
+            atEditorTime: pending.editorTime,
+            recordingMode: mode,
+            initialError: mediaImportError
+        )
     }
 
     func cancelPendingRecordingImport() {
@@ -4622,56 +4690,74 @@ final class RecordingStudioModel {
     func cancelVideoOverlayRender() {
         videoOverlayImportTask?.cancel()
         videoOverlayImportTask = nil
+        videoOverlayImportID = nil
         videoOverlayRenderProgress = nil
     }
 
     private func runVideoOverlayImport(
         urls: [URL],
         atEditorTime time: TimeInterval,
-        recordingMode: RecordingOverlayImportMode
+        recordingMode: RecordingOverlayImportMode,
+        initialError: String? = nil
     ) {
         guard let directory = mediaDirectoryURL else { return }
+        let importID = UUID()
         videoOverlayImportTask?.cancel()
+        videoOverlayImportID = importID
+        videoOverlayRenderProgress = nil
         videoOverlayImportTask = Task { [weak self] in
             defer {
-                self?.videoOverlayRenderProgress = nil
-                self?.videoOverlayImportTask = nil
+                if self?.videoOverlayImportID == importID {
+                    self?.videoOverlayRenderProgress = nil
+                    self?.videoOverlayImportTask = nil
+                    self?.videoOverlayImportID = nil
+                }
             }
             var cursor = time
             var rejected: [String] = []
+            var sawSelfImport = false
             for url in urls {
-                guard let self, !self.isTornDown, !Task.isCancelled else { return }
+                guard let self, !self.isTornDown, !Task.isCancelled,
+                      self.videoOverlayImportID == importID else { return }
                 let sourceURL: URL
                 let displayName: String
                 if RecordingSession.isSessionDirectory(url) {
+                    if RecordingVideoOverlayMedia.isSelfRecording(url, openSessionURL: self.sessionURL) {
+                        sawSelfImport = true
+                        continue
+                    }
                     let sourceSession = RecordingSession(directoryURL: url)
                     displayName = sourceSession.displayName
+                    guard RecordingVideoOverlayMedia.validateRecordingPackage(at: url) else {
+                        rejected.append(displayName)
+                        continue
+                    }
                     switch recordingMode {
                     case .raw:
                         sourceURL = sourceSession.screenURL
                     case .finished:
-                        if url.standardizedFileURL == self.sessionURL.standardizedFileURL {
-                            sourceURL = sourceSession.screenURL
-                        } else {
-                            self.videoOverlayRenderProgress = 0
-                            do {
-                                sourceURL = try await RecordingSessionRenderer.ensureDeliverable(for: sourceSession) { [weak self] progress in
-                                    Task { @MainActor [weak self] in
-                                        if self?.videoOverlayRenderProgress != nil {
-                                            self?.videoOverlayRenderProgress = progress
-                                        }
+                        self.videoOverlayRenderProgress = 0
+                        do {
+                            sourceURL = try await RecordingSessionRenderer.ensureDeliverable(for: sourceSession) { [weak self] progress in
+                                Task { @MainActor [weak self] in
+                                    if self?.videoOverlayImportID == importID, self?.videoOverlayRenderProgress != nil {
+                                        self?.videoOverlayRenderProgress = progress
                                     }
                                 }
-                                self.videoOverlayRenderProgress = nil
-                            } catch is CancellationError {
-                                return
-                            } catch RecordingStudioExporter.ExportError.cancelled {
-                                return
-                            } catch {
-                                self.videoOverlayRenderProgress = nil
-                                rejected.append(displayName)
-                                continue
                             }
+                            if self.videoOverlayImportID == importID {
+                                self.videoOverlayRenderProgress = nil
+                            }
+                        } catch is CancellationError {
+                            return
+                        } catch RecordingStudioExporter.ExportError.cancelled {
+                            return
+                        } catch {
+                            if self.videoOverlayImportID == importID {
+                                self.videoOverlayRenderProgress = nil
+                            }
+                            rejected.append(displayName)
+                            continue
                         }
                     }
                 } else if RecordingVideoOverlay.canImportVideoFile(url) {
@@ -4681,21 +4767,27 @@ final class RecordingStudioModel {
                     rejected.append(url.lastPathComponent)
                     continue
                 }
-                guard !self.isTornDown, !Task.isCancelled else { return }
+                guard !self.isTornDown, !Task.isCancelled, self.videoOverlayImportID == importID else { return }
                 if let placedEnd = await self.importVideoOverlayFile(
                     sourceURL,
                     displayName: displayName,
                     into: directory,
-                    atEditorTime: cursor
+                    atEditorTime: cursor,
+                    importID: importID
                 ) {
                     cursor = placedEnd
                 } else {
                     rejected.append(displayName)
                 }
             }
-            guard let self, !self.isTornDown, !Task.isCancelled else { return }
+            guard let self, !self.isTornDown, !Task.isCancelled,
+                  self.videoOverlayImportID == importID else { return }
             if !rejected.isEmpty {
                 self.mediaImportError = "Couldn't add \(rejected.joined(separator: ", ")). Check that the file is a readable video and there is open space on the video overlay lane."
+            } else if sawSelfImport {
+                self.mediaImportError = RecordingVideoOverlayMedia.selfImportErrorMessage
+            } else if let initialError {
+                self.mediaImportError = initialError
             }
         }
     }
@@ -4704,17 +4796,34 @@ final class RecordingStudioModel {
         _ url: URL,
         displayName: String,
         into directory: URL,
-        atEditorTime time: TimeInterval
+        atEditorTime time: TimeInterval,
+        importID: UUID? = nil
     ) async -> TimeInterval? {
         guard let fileName = copyMediaIntoProject(url, directory: directory),
               let storedURL = RecordingOverlayMedia.resolveRegularFile(named: fileName, in: directory) else {
             return nil
         }
+        var adopted = false
+        defer {
+            if !adopted {
+                try? FileManager.default.removeItem(at: storedURL)
+            }
+        }
         guard let probe = await RecordingVideoOverlayMedia.probe(url: storedURL),
-              !isTornDown, !Task.isCancelled else {
-            try? FileManager.default.removeItem(at: storedURL)
+              !isTornDown, !Task.isCancelled,
+              importID == nil || videoOverlayImportID == importID else {
             return nil
         }
+        var loadedTracks: [StudioAudioSources.Track] = []
+        if probe.hasAudio, audioSources.files[fileName] == nil {
+            loadedTracks = await StudioAudioSources.Track.loadAll(of: AVURLAsset(url: storedURL))
+            guard !isTornDown, !Task.isCancelled,
+                  importID == nil || videoOverlayImportID == importID else {
+                return nil
+            }
+        }
+        // Recheck placement after the final await so it always reflects the
+        // live lane occupancy and timeline duration.
         var candidate = RecordingVideoOverlay(
             fileName: fileName,
             displayName: displayName,
@@ -4732,18 +4841,14 @@ final class RecordingStudioModel {
             timelineDuration: duration,
             among: videoOverlays
         ) else {
-            try? FileManager.default.removeItem(at: storedURL)
             return nil
         }
-        if probe.hasAudio, audioSources.files[fileName] == nil {
-            let tracks = await StudioAudioSources.Track.loadAll(of: AVURLAsset(url: storedURL))
-            guard !isTornDown, !Task.isCancelled else { return nil }
-            if !tracks.isEmpty {
-                audioSources.files[fileName] = tracks
-            }
+        if !loadedTracks.isEmpty {
+            audioSources.files[fileName] = loadedTracks
         }
         missingVideoOverlayFiles.remove(fileName)
         undoReferencedFiles.insert(fileName)
+        adopted = true
         applyVideoOverlays(videoOverlays + [placed], actionName: "Add Video Overlay")
         selectVideoOverlay(id: placed.id)
         return placed.end
@@ -4775,6 +4880,12 @@ final class RecordingStudioModel {
     // MARK: Recycled video overlay player sync
 
     private func clearVideoOverlayPlayer() {
+        guard videoOverlayPlayer.currentItem != nil
+            || loadedVideoOverlayFileName != nil
+            || loadedVideoOverlayID != nil
+            || videoOverlaySeek.isSeeking
+            || videoOverlaySeek.pendingTarget != nil
+            || videoOverlayPlayer.rate != 0 else { return }
         videoOverlaySeek.invalidate()
         videoOverlayPlayer.pause()
         if videoOverlayPlayer.currentItem != nil {
@@ -4892,6 +5003,10 @@ final class RecordingStudioModel {
 
     private func correctVideoOverlayDriftIfNeeded() {
         guard isPlaying else { return }
+        if videoOverlays.isEmpty {
+            clearVideoOverlayPlayer()
+            return
+        }
         let plan = StudioVideoOverlayPlaybackPlan.resolve(
             at: currentTime,
             isPlaying: true,
