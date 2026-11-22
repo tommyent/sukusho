@@ -1790,7 +1790,11 @@ private struct StudioTextLane: View {
             selectedID: model.selectedTextID,
             scale: scale,
             height: StudioTrack.text.height,
-            empty: .create(tint: Palette.textCue, minimumLength: RecordingTextOverlay.minimumDuration) { range in
+            empty: .create(
+                tint: Palette.textCue,
+                minimumLength: RecordingTextOverlay.minimumDuration,
+                barriers: model.clipTimeline.hardCuts
+            ) { range in
                 model.addText(fromEditorTime: range.lowerBound, toEditorTime: range.upperBound)
             },
             onScrubbing: onScrubbing,

@@ -217,6 +217,7 @@ enum StudioLaneEmptyBehavior {
     case create(
         tint: Color,
         minimumLength: TimeInterval,
+        barriers: [TimeInterval] = [],
         commit: (ClosedRange<TimeInterval>) -> Void
     )
 }
@@ -720,7 +721,7 @@ where Item.ID == UUID {
             decoration()
                 .allowsHitTesting(false)
 
-            if let draft, case .create(let tint, _, _) = empty {
+            if let draft, case .create(let tint, _, _, _) = empty {
                 StudioDraftBlock(
                     frame: StudioBlockFrame(editorStart: draft.lowerBound, editorEnd: draft.upperBound, scale: scale),
                     height: blockHeight,
@@ -989,7 +990,7 @@ where Item.ID == UUID {
             model.isDraggingTimelineBlock = false
             actions.end(block.item, kind)
         case .creating:
-            if commitDraft, let pendingDraft, case .create(_, _, let commit) = empty {
+            if commitDraft, let pendingDraft, case .create(_, _, _, let commit) = empty {
                 commit(pendingDraft)
             }
         case .empty, .scrubbing:
@@ -1002,10 +1003,19 @@ where Item.ID == UUID {
     /// The block a drag from `start` to `current` would add, or nil when
     /// there's no room for one where the press landed.
     private func draftRange(from start: TimeInterval, to current: TimeInterval) -> ClosedRange<TimeInterval>? {
-        guard case .create(_, let minimumLength, _) = empty else { return nil }
+        guard case .create(_, let minimumLength, let barriers, _) = empty else { return nil }
         let gap: ClosedRange<TimeInterval>? = switch overlap {
-        case .allowed: 0...scale.duration
-        case .forbidden(let spans): studioGap(around: start, toward: current, spans: spans, duration: scale.duration)
+        case .allowed:
+            barriers.isEmpty
+                ? 0...scale.duration
+                : studioGap(
+                    around: start,
+                    toward: current,
+                    spans: barriers.map { StudioLaneSpan(id: UUID(), editorStart: $0, editorEnd: $0) },
+                    duration: scale.duration
+                )
+        case .forbidden(let spans):
+            studioGap(around: start, toward: current, spans: spans, duration: scale.duration)
         }
         guard let gap else { return nil }
         return studioDraftRange(anchor: start, pointer: current, gap: gap, minimumLength: minimumLength)

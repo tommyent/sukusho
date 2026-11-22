@@ -1079,6 +1079,128 @@ struct StudioTracksTests {
         #expect(multi.editorSpan(overlapping: imageRange.lowerBound, sourceEnd: imageRange.upperBound) != nil)
     }
 
+    @Test func insertingAndDrawingOnReorderedClipsAnchorToMonotonicRun() throws {
+        // Reordered clips: source 4...6 plays at editor 0...2, then source 0...2 plays at editor 2...4.
+        let reversed = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 4, sourceEnd: 6, speed: 1),
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 2, speed: 1)
+        ])
+        let frame = 1.0 / 30.0
+
+        // Playhead at editor 1.0 sees source 5.0 inside the first monotonic run (4...6).
+        // Pixelate/Text/Image at playhead must place at source 5.0...6.0 (editor 1.0...2.0),
+        // never clamping against the last clip's sourceEnd (2.0).
+        let atMidFirst = try #require(reversed.insertionSourceRange(
+            atEditorTime: 1.0,
+            length: RecordingRedaction.defaultDuration,
+            minimum: RecordingRedaction.minimumDuration
+        ))
+        #expect(abs(atMidFirst.lowerBound - 5.0) < 0.0001)
+        #expect(abs(atMidFirst.upperBound - 6.0) < 0.0001)
+        let mask = RecordingRedaction(start: atMidFirst.lowerBound, end: atMidFirst.upperBound)
+        #expect(mask.covers(editorTime: 1.0, frameDuration: frame, timeline: reversed))
+        #expect(mask.covers(editorTime: 1.5, frameDuration: frame, timeline: reversed))
+        #expect(!mask.covers(editorTime: 3.95, frameDuration: frame, timeline: reversed))
+
+        // Near the end of the first run (editor 1.98 -> source 5.98): clamps inside 4...6.
+        let nearEndFirst = try #require(reversed.insertionSourceRange(
+            atEditorTime: 1.98,
+            length: RecordingTextOverlay.defaultDuration,
+            minimum: RecordingTextOverlay.minimumDuration
+        ))
+        #expect(abs(nearEndFirst.lowerBound - 5.9) < 0.0001)
+        #expect(abs(nearEndFirst.upperBound - 6.0) < 0.0001)
+
+        // At the backward cut (editor 2.0): anchors to the second run (0...2).
+        let atSecondStart = try #require(reversed.insertionSourceRange(
+            atEditorTime: 2.0,
+            length: RecordingImageOverlay.defaultDuration,
+            minimum: RecordingImageOverlay.minimumDuration
+        ))
+        #expect(abs(atSecondStart.lowerBound - 0.0) < 0.0001)
+        #expect(abs(atSecondStart.upperBound - 2.0) < 0.0001)
+
+        // At the edited end (editor 4.0): clamps inside the second run (0...2).
+        let atEditedEnd = try #require(reversed.insertionSourceRange(
+            atEditorTime: reversed.duration,
+            length: RecordingTextOverlay.defaultDuration,
+            minimum: RecordingTextOverlay.minimumDuration
+        ))
+        #expect(abs(atEditedEnd.lowerBound - 1.9) < 0.0001)
+        #expect(abs(atEditedEnd.upperBound - 2.0) < 0.0001)
+
+        // Inspector's Add Redaction starts at source 5.0 and extends to sourceDuration 6.0.
+        let coverage = try #require(reversed.redactionCoverageSourceRange(
+            atEditorTime: 1.0,
+            sourceDuration: 6.0,
+            minimum: RecordingRedaction.minimumDuration
+        ))
+        #expect(abs(coverage.lowerBound - 5.0) < 0.0001)
+        #expect(abs(coverage.upperBound - 6.0) < 0.0001)
+
+        // Drawing a text block anchors to the draw origin's monotonic run and clamps inside it:
+        // - Inside first run (editor 0.5 -> 1.5 => source 4.5...5.5)
+        let drawnInsideFirst = try #require(reversed.drawnSourceRange(
+            fromEditorTime: 0.5,
+            toEditorTime: 1.5,
+            minimum: RecordingTextOverlay.minimumDuration
+        ))
+        #expect(abs(drawnInsideFirst.lowerBound - 4.5) < 0.0001)
+        #expect(abs(drawnInsideFirst.upperBound - 5.5) < 0.0001)
+
+        // - Dragging forward across the backward cut (editor 1.0 -> 3.0) clamps to first run (source 5.0...6.0)
+        let drawnCrossForward = try #require(reversed.drawnSourceRange(
+            fromEditorTime: 1.0,
+            toEditorTime: 3.0,
+            minimum: RecordingTextOverlay.minimumDuration
+        ))
+        #expect(abs(drawnCrossForward.lowerBound - 5.0) < 0.0001)
+        #expect(abs(drawnCrossForward.upperBound - 6.0) < 0.0001)
+
+        // - Dragging backward across the backward cut (editor 3.0 -> 1.0) anchors to second run (source 0.0...1.0)
+        let drawnCrossBackward = try #require(reversed.drawnSourceRange(
+            fromEditorTime: 3.0,
+            toEditorTime: 1.0,
+            minimum: RecordingTextOverlay.minimumDuration
+        ))
+        #expect(abs(drawnCrossBackward.lowerBound - 0.0) < 0.0001)
+        #expect(abs(drawnCrossBackward.upperBound - 1.0) < 0.0001)
+
+        // - Starting on the hard cut and dragging left (editor 2.0 -> 1.0) enters the first run (source 5.0...6.0)
+        let drawnLeftFromCut = try #require(reversed.drawnSourceRange(
+            fromEditorTime: 2.0,
+            toEditorTime: 1.0,
+            minimum: RecordingTextOverlay.minimumDuration
+        ))
+        #expect(abs(drawnLeftFromCut.lowerBound - 5.0) < 0.0001)
+        #expect(abs(drawnLeftFromCut.upperBound - 6.0) < 0.0001)
+
+        // - Near the end of the first run (editor 1.98 -> 2.5) preserves minimum inside first run (source 5.9...6.0)
+        let drawnShortAtRunEnd = try #require(reversed.drawnSourceRange(
+            fromEditorTime: 1.98,
+            toEditorTime: 2.5,
+            minimum: RecordingTextOverlay.minimumDuration
+        ))
+        #expect(abs(drawnShortAtRunEnd.lowerBound - 5.9) < 0.0001)
+        #expect(abs(drawnShortAtRunEnd.upperBound - 6.0) < 0.0001)
+
+        // Draft barriers at hardCuts keep the text lane's visual draft inside the draw origin's run.
+        let barrierSpans = reversed.hardCuts.map { StudioLaneSpan(id: UUID(), editorStart: $0, editorEnd: $0) }
+        let forwardGap = try #require(studioGap(around: 1.0, toward: 3.0, spans: barrierSpans, duration: reversed.duration))
+        let forwardDraft = try #require(studioDraftRange(
+            anchor: 1.0, pointer: 3.0, gap: forwardGap, minimumLength: RecordingTextOverlay.minimumDuration
+        ))
+        #expect(abs(forwardDraft.lowerBound - 1.0) < 0.0001)
+        #expect(abs(forwardDraft.upperBound - 2.0) < 0.0001)
+
+        let backwardGap = try #require(studioGap(around: 3.0, toward: 1.0, spans: barrierSpans, duration: reversed.duration))
+        let backwardDraft = try #require(studioDraftRange(
+            anchor: 3.0, pointer: 1.0, gap: backwardGap, minimumLength: RecordingTextOverlay.minimumDuration
+        ))
+        #expect(abs(backwardDraft.lowerBound - 2.0) < 0.0001)
+        #expect(abs(backwardDraft.upperBound - 3.0) < 0.0001)
+    }
+
     @Test func addRedactionKeepsOriginalSourceEndBeforeAndAfterRestoringCut() throws {
         let sourceDuration: TimeInterval = 10
         let trimmed = RecordingClipTimeline(segments: [

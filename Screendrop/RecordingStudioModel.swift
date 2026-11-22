@@ -3985,17 +3985,11 @@ final class RecordingStudioModel {
         minimum: TimeInterval
     ) -> ClosedRange<TimeInterval>? {
         guard sourceDuration >= minimum else { return nil }
-        let low = studioSourceStart(atEditorTime: min(editorStart, editorEnd), in: clipTimeline)
-        let high = studioSourceEnd(atEditorTime: max(editorStart, editorEnd), in: clipTimeline)
-        let keptEnd = clipTimeline.segments.last?.sourceEnd ?? sourceDuration
-        let keptStart = clipTimeline.segments.first?.sourceStart ?? 0
-        let upperLimit = min(sourceDuration, keptEnd)
-        let lowerLimit = max(0, keptStart)
-        let usableMinimum = min(minimum, max(0, upperLimit - lowerLimit))
-        guard usableMinimum > 0 else { return nil }
-        let lower = min(max(lowerLimit, low), max(lowerLimit, upperLimit - usableMinimum))
-        let upper = min(max(high, lower + usableMinimum), upperLimit)
-        return lower...max(lower, upper)
+        return clipTimeline.drawnSourceRange(
+            fromEditorTime: min(max(editorStart, 0), duration),
+            toEditorTime: min(max(editorEnd, 0), duration),
+            minimum: minimum
+        )
     }
 
     private func clampedSourceRange(start: TimeInterval, end: TimeInterval, minimum: TimeInterval) -> ClosedRange<TimeInterval> {
@@ -4199,7 +4193,8 @@ final class RecordingStudioModel {
         overlayImageRevision &+= 1
         applyImages(imageOverlays + [overlay], actionName: "Add Image")
         selectImage(id: overlay.id)
-        return clipTimeline.editorTime(forSourceTime: range.upperBound) ?? time + RecordingImageOverlay.defaultDuration
+        return clipTimeline.editorRuns(overlapping: range.lowerBound, sourceEnd: range.upperBound).first?.editorEnd
+            ?? time + RecordingImageOverlay.defaultDuration
     }
 
     private func loadOverlayMedia() {

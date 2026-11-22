@@ -532,23 +532,133 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
             .map { $0.editorStart..<$0.editorEnd }
     }
 
+    /// One maximal contiguous range of clips whose source times move forward
+    /// (separated from neighbouring runs by a backward jump in `hardCuts`).
+    struct MonotonicRun: Equatable, Sendable {
+        let editorStart: TimeInterval
+        let editorEnd: TimeInterval
+        let sourceStart: TimeInterval
+        let sourceEnd: TimeInterval
+        let segmentIndices: ClosedRange<Int>
+    }
+
+    /// The monotonic source run containing `editorTime`. When `editorTime` sits
+    /// on a backward cut between two runs and `toward < editorTime`, returns the
+    /// run ending at that cut so a drag going left stays in that run.
+    func monotonicRun(
+        atEditorTime editorTime: TimeInterval,
+        toward: TimeInterval? = nil
+    ) -> MonotonicRun? {
+        guard !segments.isEmpty, duration > 0 else { return nil }
+        let clamped = min(max(editorTime.isFinite ? editorTime : 0, 0), duration)
+        let prefersLeadingAtBoundary = toward.map { $0.isFinite && $0 < editorTime } ?? false
+
+        var runs: [MonotonicRun] = []
+        var runStartIndex = 0
+        var runEditorStart: TimeInterval = 0
+        var cursor: TimeInterval = 0
+
+        for index in segments.indices {
+            let segment = segments[index]
+            if index > 0 && segment.sourceStart < segments[index - 1].sourceEnd - 0.000_5 {
+                runs.append(MonotonicRun(
+                    editorStart: runEditorStart,
+                    editorEnd: cursor,
+                    sourceStart: segments[runStartIndex].sourceStart,
+                    sourceEnd: segments[index - 1].sourceEnd,
+                    segmentIndices: runStartIndex...(index - 1)
+                ))
+                runStartIndex = index
+                runEditorStart = cursor
+            }
+            cursor += segment.editorDuration
+        }
+        runs.append(MonotonicRun(
+            editorStart: runEditorStart,
+            editorEnd: cursor,
+            sourceStart: segments[runStartIndex].sourceStart,
+            sourceEnd: segments[segments.count - 1].sourceEnd,
+            segmentIndices: runStartIndex...(segments.count - 1)
+        ))
+
+        for (index, run) in runs.enumerated() {
+            let isLast = index == runs.count - 1
+            if prefersLeadingAtBoundary {
+                if clamped <= run.editorEnd + 0.000_001 || isLast {
+                    return run
+                }
+            } else if clamped < run.editorEnd || isLast {
+                return run
+            }
+        }
+        return runs.last
+    }
+
+    private func sourceTime(
+        atEditorTime editorTime: TimeInterval,
+        in run: MonotonicRun,
+        prefersLeadingAtCut: Bool
+    ) -> TimeInterval {
+        let clamped = min(max(editorTime, run.editorStart), run.editorEnd)
+        var cursor = run.editorStart
+        for index in run.segmentIndices {
+            let segment = segments[index]
+            let segmentEnd = cursor + segment.editorDuration
+            let isLast = index == run.segmentIndices.upperBound
+            let hit = prefersLeadingAtCut
+                ? (clamped <= segmentEnd + 0.000_000_1 || isLast)
+                : (clamped < segmentEnd || isLast)
+            if hit {
+                let offset = min(max(clamped - cursor, 0), segment.editorDuration)
+                return segment.sourceStart + min(offset * segment.speed, segment.duration)
+            }
+            cursor = segmentEnd
+        }
+        return run.sourceEnd
+    }
+
     /// Source-time range for inserting a block of `length` seconds at `editorTime`,
-    /// clamped into kept footage even when the playhead sits at a tail-trimmed end.
+    /// anchored to and clamped inside the monotonic source run under `editorTime`
+    /// even after clip reordering or at a tail-trimmed end.
     func insertionSourceRange(
         atEditorTime editorTime: TimeInterval,
         length: TimeInterval,
         minimum: TimeInterval
     ) -> ClosedRange<TimeInterval>? {
-        guard let location = location(at: editorTime), let last = segments.last else { return nil }
-        let segment = segments[location.segmentIndex]
-        let keptEnd = last.sourceEnd
-        let usableMinimum = min(minimum, last.duration)
+        guard let run = monotonicRun(atEditorTime: editorTime) else { return nil }
+        let sourceAtPlayhead = sourceTime(atEditorTime: editorTime, in: run, prefersLeadingAtCut: false)
+        let keptStart = run.sourceStart
+        let keptEnd = run.sourceEnd
+        let usableMinimum = min(minimum, keptEnd - keptStart)
         guard usableMinimum > 0 else { return nil }
-        let maxStart = max(last.sourceStart, keptEnd - usableMinimum)
-        let start = min(max(segment.sourceStart, location.sourceTime), maxStart)
+        let maxStart = max(keptStart, keptEnd - usableMinimum)
+        let start = min(max(keptStart, sourceAtPlayhead), maxStart)
         let end = min(keptEnd, max(start + usableMinimum, start + length))
         guard end > start else { return nil }
         return start...end
+    }
+
+    /// Source-time range for a block drawn on the timeline from `origin` to
+    /// `target`, anchored to and clamped inside the monotonic source run under
+    /// `origin`.
+    func drawnSourceRange(
+        fromEditorTime origin: TimeInterval,
+        toEditorTime target: TimeInterval,
+        minimum: TimeInterval
+    ) -> ClosedRange<TimeInterval>? {
+        guard let run = monotonicRun(atEditorTime: origin, toward: target) else { return nil }
+        let clampedOrigin = min(max(origin.isFinite ? origin : run.editorStart, run.editorStart), run.editorEnd)
+        let clampedTarget = min(max(target.isFinite ? target : clampedOrigin, run.editorStart), run.editorEnd)
+        let editorLow = min(clampedOrigin, clampedTarget)
+        let editorHigh = max(clampedOrigin, clampedTarget)
+        let low = sourceTime(atEditorTime: editorLow, in: run, prefersLeadingAtCut: false)
+        let high = sourceTime(atEditorTime: editorHigh, in: run, prefersLeadingAtCut: true)
+        let usableMinimum = min(minimum, run.sourceEnd - run.sourceStart)
+        guard usableMinimum > 0 else { return nil }
+        let lower = min(max(run.sourceStart, low), max(run.sourceStart, run.sourceEnd - usableMinimum))
+        let upper = min(max(high, lower + usableMinimum), run.sourceEnd)
+        guard upper > lower else { return nil }
+        return lower...upper
     }
 
     /// Source-time range for the inspector's Add Redaction command: uses the
