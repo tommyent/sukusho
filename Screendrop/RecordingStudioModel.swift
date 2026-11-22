@@ -5095,22 +5095,11 @@ final class RecordingStudioModel {
         return await importAudio(url, into: directory, atEditorTime: time)
     }
 
-    private func copyAudioIntoProject(_ url: URL, directory: URL) -> String? {
-        let fileName = UUID().uuidString + (url.pathExtension.isEmpty ? "" : ".\(url.pathExtension.lowercased())")
-        do {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let accessing = url.startAccessingSecurityScopedResource()
-            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-            try FileManager.default.copyItem(at: url, to: directory.appendingPathComponent(fileName))
-            return fileName
-        } catch {
+    private func importAudio(_ url: URL, into directory: URL, atEditorTime time: TimeInterval) async -> TimeInterval? {
+        guard let fileName = copyMediaIntoProject(url, directory: directory),
+              let storedURL = RecordingOverlayMedia.resolveRegularFile(named: fileName, in: directory) else {
             return nil
         }
-    }
-
-    private func importAudio(_ url: URL, into directory: URL, atEditorTime time: TimeInterval) async -> TimeInterval? {
-        guard let fileName = copyAudioIntoProject(url, directory: directory) else { return nil }
-        let storedURL = directory.appendingPathComponent(fileName)
         let asset = AVURLAsset(url: storedURL)
         let tracks = Array(await StudioAudioSources.Track.loadAll(of: asset).prefix(1))
         guard !tracks.isEmpty,
@@ -5165,20 +5154,14 @@ final class RecordingStudioModel {
         if !fileClips.isEmpty {
             if let directory = mediaDirectoryURL {
                 for name in Set(fileClips.map(\.fileName)) {
-                    guard RecordingAudioClip.isSafeFileName(name) else {
+                    guard let url = RecordingOverlayMedia.resolveRegularFile(named: name, in: directory) else {
                         missingAudioClipFiles.insert(name)
                         continue
                     }
                     undoReferencedFiles.insert(name)
-                    let url = directory.appendingPathComponent(name)
                     if audioSources.files[name] == nil {
-                        let tracks: [StudioAudioSources.Track]
-                        if FileManager.default.fileExists(atPath: url.path) {
-                            tracks = Array(await StudioAudioSources.Track.loadAll(of: AVURLAsset(url: url)).prefix(1))
-                            guard !Task.isCancelled, !isTornDown else { return }
-                        } else {
-                            tracks = []
-                        }
+                        let tracks = Array(await StudioAudioSources.Track.loadAll(of: AVURLAsset(url: url)).prefix(1))
+                        guard !Task.isCancelled, !isTornDown else { return }
                         if tracks.isEmpty {
                             missingAudioClipFiles.insert(name)
                             continue

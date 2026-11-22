@@ -1773,6 +1773,103 @@ struct StudioAudioTests {
         #expect(abs(afterMet.clips[0].end - 3.0) < 0.001)
     }
 
+    @Test func importedAudioRejectsSymlinkedFileAndMediaRootWhileLoadingRegularWAV() async throws {
+        let root = try makeDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let outside = root.appendingPathComponent("outside", isDirectory: true)
+        let package = root.appendingPathComponent("take.sukushorec", isDirectory: true)
+        let mediaDir = package.appendingPathComponent("media", isDirectory: true)
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: package, withIntermediateDirectories: true)
+
+        let screenURL = try makeTone(in: package, name: "screen.wav", frequency: 220, amplitude: 0.2, duration: 3)
+        let screenAsset = AVURLAsset(url: screenURL)
+        let timeline = RecordingClipTimeline.full(sourceDuration: 3)
+
+        let normalSource = try makeTone(in: outside, name: "normal.wav", frequency: 440, amplitude: 0.4, duration: 2)
+        let linkedSource = outside.appendingPathComponent("linked-source.wav")
+        try FileManager.default.createSymbolicLink(at: linkedSource, withDestinationURL: normalSource)
+
+        // 1. Picker / Finder copy path: normal WAV copies into a real package media root and loads cleanly.
+        let copiedName = try #require(RecordingOverlayMedia.copyRegularFile(from: normalSource, into: mediaDir))
+        #expect(RecordingOverlayMedia.resolveRegularFile(named: copiedName, in: mediaDir) != nil)
+        let normalClip = RecordingAudioClip(fileName: copiedName, displayName: "Normal WAV", start: 0, fileDuration: 2)
+        let loadedNormal = try await StudioAudioSources.load(
+            screenAsset: screenAsset,
+            replacementURL: nil,
+            clips: [normalClip],
+            mediaDirectory: mediaDir,
+            timeline: timeline,
+            strictMissingClips: true
+        )
+        #expect(!(loadedNormal.files[copiedName] ?? []).isEmpty)
+
+        // 2. Symlinked source WAV is rejected by the copier (never creates a link in media/).
+        #expect(RecordingOverlayMedia.copyRegularFile(from: linkedSource, into: mediaDir) == nil)
+
+        // 3. Symlinked WAV placed directly inside media/ is rejected by resolver and render source loader
+        //    with the named missingAudioClip failure for an audible clip.
+        let linkedInMedia = mediaDir.appendingPathComponent("escaped.wav")
+        try FileManager.default.createSymbolicLink(at: linkedInMedia, withDestinationURL: normalSource)
+        #expect(RecordingOverlayMedia.resolveRegularFile(named: "escaped.wav", in: mediaDir) == nil)
+        let linkedClip = RecordingAudioClip(fileName: "escaped.wav", displayName: "Escaped WAV", start: 0, fileDuration: 2)
+        let nonStrictLinked = try await StudioAudioSources.load(
+            screenAsset: screenAsset,
+            replacementURL: nil,
+            clips: [linkedClip],
+            mediaDirectory: mediaDir,
+            timeline: timeline,
+            strictMissingClips: false
+        )
+        #expect(nonStrictLinked.files["escaped.wav"] == nil)
+        do {
+            _ = try await StudioAudioSources.load(
+                screenAsset: screenAsset,
+                replacementURL: nil,
+                clips: [linkedClip],
+                mediaDirectory: mediaDir,
+                timeline: timeline,
+                strictMissingClips: true
+            )
+            Issue.record("Expected missingAudioClip for symlinked audio file inside media/")
+        } catch StudioAudioComposer.AudioError.missingAudioClip(let name) {
+            #expect(name == "Escaped WAV")
+        }
+
+        // 4. Symlinked media root directory is rejected by copier, resolver, and render source loader.
+        let linkedPackage = root.appendingPathComponent("linked-pkg.sukushorec", isDirectory: true)
+        try FileManager.default.createDirectory(at: linkedPackage, withIntermediateDirectories: true)
+        let linkedMediaDir = linkedPackage.appendingPathComponent("media", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: linkedMediaDir, withDestinationURL: outside)
+
+        #expect(RecordingOverlayMedia.copyRegularFile(from: normalSource, into: linkedMediaDir) == nil)
+        #expect(RecordingOverlayMedia.resolveRegularFile(named: "normal.wav", in: linkedMediaDir) == nil)
+        let linkedRootClip = RecordingAudioClip(fileName: "normal.wav", displayName: "Linked Root WAV", start: 0, fileDuration: 2)
+        let nonStrictRoot = try await StudioAudioSources.load(
+            screenAsset: screenAsset,
+            replacementURL: nil,
+            clips: [linkedRootClip],
+            mediaDirectory: linkedMediaDir,
+            timeline: timeline,
+            strictMissingClips: false
+        )
+        #expect(nonStrictRoot.files["normal.wav"] == nil)
+        do {
+            _ = try await StudioAudioSources.load(
+                screenAsset: screenAsset,
+                replacementURL: nil,
+                clips: [linkedRootClip],
+                mediaDirectory: linkedMediaDir,
+                timeline: timeline,
+                strictMissingClips: true
+            )
+            Issue.record("Expected missingAudioClip for symlinked media root directory")
+        } catch StudioAudioComposer.AudioError.missingAudioClip(let name) {
+            #expect(name == "Linked Root WAV")
+        }
+    }
+
     // MARK: - Helpers
 
     private func makeDirectory() throws -> URL {

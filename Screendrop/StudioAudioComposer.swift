@@ -126,7 +126,8 @@ nonisolated struct StudioAudioSources: @unchecked Sendable {
         for clip in clips where clip.source == .file {
             let isAudible = !clip.isMuted && clip.audibleVolume > 0
                 && min(clip.end, videoDuration) - max(clip.start, 0) >= RecordingAudioClip.minimumPlayableDuration
-            guard RecordingAudioClip.isSafeFileName(clip.fileName), let mediaDirectory else {
+            guard let mediaDirectory,
+                  let url = RecordingOverlayMedia.resolveRegularFile(named: clip.fileName, in: mediaDirectory) else {
                 if strictMissingClips && isAudible {
                     throw StudioAudioComposer.AudioError.missingAudioClip(clip.displayName)
                 }
@@ -138,14 +139,8 @@ nonisolated struct StudioAudioSources: @unchecked Sendable {
                 }
                 continue
             }
-            let url = mediaDirectory.appendingPathComponent(clip.fileName)
-            let tracks: [Track]
-            if FileManager.default.fileExists(atPath: url.path) {
-                let asset = AVURLAsset(url: url)
-                tracks = Array(await Track.loadAll(of: asset).prefix(1))
-            } else {
-                tracks = []
-            }
+            let asset = AVURLAsset(url: url)
+            let tracks = Array(await Track.loadAll(of: asset).prefix(1))
             if !tracks.isEmpty {
                 sources.files[clip.fileName] = tracks
             } else if strictMissingClips && isAudible {
