@@ -167,16 +167,16 @@ struct VideoRedactionChecks {
         }
         var document = RecordingEditDocument(style: .init(), zoomEnabled: false, zoomCues: [],
             clipTimeline: .full(sourceDuration: 3), exportSettings: .init())
-        session.writeRenderStamp(document)
+        try session.writeRenderStamp(document)
         let original = CloudSidecarUploader.chapterData(sessionDirectory: session.directoryURL, uploadedFileURL: session.finalURL)
         document.redactions = [.init(start: 0, end: 3, rect: CGRect(x: 0, y: 0, width: 0.5, height: 0.5))]
-        session.writeRenderStamp(document)
+        try session.writeRenderStamp(document)
         try check(CloudSidecarUploader.chapterData(sessionDirectory: session.directoryURL, uploadedFileURL: session.finalURL) == original,
                   "Redaction-only replacement changed chapters")
 
         let cut = RecordingClipTimeline(segments: [.init(sourceStart: 0, sourceEnd: 1, speed: 2), .init(sourceStart: 2, sourceEnd: 3)])
         document = RecordingEditDocument(style: .init(), zoomEnabled: false, zoomCues: [], clipTimeline: cut, exportSettings: .init())
-        session.writeRenderStamp(document)
+        try session.writeRenderStamp(document)
         try await movie(at: session.finalURL, duration: cut.duration)
         // A newer draft must not change the cut whose movie is being uploaded.
         try session.writeDraftDocument(RecordingEditDocument(style: .init(), zoomEnabled: false, zoomCues: [],
@@ -188,7 +188,7 @@ struct VideoRedactionChecks {
         try check(chapters.compactMap { $0["title"] as? String } == ["First", "Later"], "Cut chapter was retained")
         try check(abs((chapters.last?["start"] as? Double ?? -1) - 0.7) < 0.000_001, "Cut/speed chapter time was not remapped")
         try session.updateProjectMetadata { $0.chapters = [] }
-        session.writeRenderStamp(nil)
+        try session.writeRenderStamp(nil)
 
         try check(URLProtocol.registerClass(ChapterAssetProtocol.self), "Chapter transport fixture registration")
         defer { URLProtocol.unregisterClass(ChapterAssetProtocol.self) }

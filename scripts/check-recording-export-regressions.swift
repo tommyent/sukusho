@@ -122,7 +122,7 @@ struct RecordingExportRegressionChecks {
         try await movie(at: session.screenURL)
         func installStopRender() throws { // An unedited recording's render is stamped with no document.
             try Data("stop-time render".utf8).write(to: session.finalURL)
-            session.writeRenderStamp(nil)
+            try session.writeRenderStamp(nil)
         }
         try installStopRender()
 
@@ -194,7 +194,7 @@ struct RecordingExportRegressionChecks {
         manifest.duration = 8; manifest.pixelWidth = 320; manifest.pixelHeight = 180; manifest.pointerSynthesized = true
         try session.writeCaptureManifest(manifest)
         try FileManager.default.copyItem(at: session.screenURL, to: session.finalURL) // The after-capture Copy's render
-        session.writeRenderStamp(nil)
+        try session.writeRenderStamp(nil)
         func installed() -> Int? { try? FileManager.default.attributesOfItem(atPath: session.finalURL.path)[.systemFileNumber] as? Int }
         let stopRender = installed()
 
@@ -238,14 +238,14 @@ struct RecordingExportRegressionChecks {
         try check(shown(session.screenURL) == session.screenURL, "An unrendered recording waited for a render")
 
         try Data("render".utf8).write(to: session.finalURL)
-        session.writeRenderStamp(nil)
+        try session.writeRenderStamp(nil)
         try check(shown(session.screenURL) == session.finalURL, "A fresh render was not shown")
 
         let redactions = [RecordingRedaction(start: 0, end: 8, rect: CGRect(x: 0.1, y: 0.1, width: 0.3, height: 0.3), mode: .pixelate)]
         let document = RecordingEditDocument(style: RecordingStudioStyle(), zoomEnabled: false, zoomCues: [], redactions: redactions)
         try session.writeDraftDocument(document)
         try check(shown(session.finalURL) == nil, "A pending redaction previewed the master or a stale render")
-        session.writeRenderStamp(document)
+        try session.writeRenderStamp(document)
         try check(shown(session.screenURL) == session.finalURL, "A fresh redacted render was not shown")
 
         session.removeDraftDocument()
@@ -1610,6 +1610,28 @@ struct RecordingExportRegressionChecks {
         print("PASS: edit revisions order drafts and saves, decode legacy files, and withhold conflicting edits")
     }
 
+    static func renderStampInstallFailure(in directory: URL) throws {
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("stamp-failure.sukushorec"))
+        try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
+        let old = Data("old cached movie".utf8)
+        try old.write(to: session.finalURL)
+        try session.writeRenderStamp(nil)
+        try check(session.freshFinalURL(matching: nil) != nil, "Fixture cache was not fresh")
+        let pending = directory.appendingPathComponent("stamp-failure-pending.\(session.finalURL.pathExtension)")
+        let new = Data("new movie".utf8)
+        try new.write(to: pending)
+        var invalidDocument = RecordingEditDocument(style: .init(), zoomEnabled: false, zoomCues: [])
+        invalidDocument.audioVolume = .nan // Fail stamp encoding after movie replacement.
+        var failed = false
+        do { _ = try session.installFinalVideo(movingFrom: pending, renderedFrom: invalidDocument) }
+        catch is EncodingError { failed = true }
+        try check(failed && session.freshFinalURL(matching: nil) == nil
+                  && !FileManager.default.fileExists(atPath: session.renderStampURL.path),
+                  "A failed stamp left the new movie trusted under the old stamp")
+        try check(try Data(contentsOf: session.finalURL) == new, "The expected replacement did not take place")
+        print("PASS: a stamp failure propagates after replacement and leaves no stale stamp")
+    }
+
     static func main() async throws {
         setbuf(stdout, nil)
         guard let root = ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] else {
@@ -1629,6 +1651,7 @@ struct RecordingExportRegressionChecks {
         }
         try await studioTeardown(in: directory)
         try editRevisionOrdering(in: directory)
+        try renderStampInstallFailure(in: directory)
         try await chapterMarkerDrag(in: directory)
         try await chapterAtPlayhead(in: directory)
         try await chapterRenameUndo(in: directory)

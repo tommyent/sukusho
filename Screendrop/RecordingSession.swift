@@ -128,6 +128,11 @@ nonisolated struct RecordingSession: Sendable, Equatable {
         let container = VideoExportContainer(fileExtension: temporaryURL.pathExtension) ?? .default
         let destinationURL = finalURL(for: container)
 
+        if let stamp = try RecordingPackageMedia.resolveOptionalPackageFile(
+            named: Self.renderStampFileName, in: directoryURL
+        ) {
+            try FileManager.default.removeItem(at: stamp)
+        }
         if FileManager.default.fileExists(atPath: destinationURL.path) {
             _ = try FileManager.default.replaceItemAt(destinationURL, withItemAt: temporaryURL)
         } else {
@@ -137,7 +142,7 @@ nonisolated struct RecordingSession: Sendable, Equatable {
         for stale in VideoExportContainer.allCases where stale != container {
             try? FileManager.default.removeItem(at: finalURL(for: stale))
         }
-        writeRenderStamp(document)
+        try writeRenderStamp(document)
         return destinationURL
     }
 
@@ -426,9 +431,9 @@ nonisolated struct RecordingSession: Sendable, Equatable {
         return try? CaptureManifest.decoder.decode(RecordingEditDocument.self, from: data)
     }
 
-    func writeRenderStamp(_ document: RecordingEditDocument?) {
-        guard let data = try? CaptureManifest.encoder.encode(RenderStamp(document: document)) else { return }
-        try? data.write(to: renderStampURL, options: .atomic)
+    func writeRenderStamp(_ document: RecordingEditDocument?) throws {
+        let data = try CaptureManifest.encoder.encode(RenderStamp(document: document))
+        try data.write(to: renderStampURL, options: .atomic)
     }
 
     /// The movie deliverable only when it provably matches `document`.
