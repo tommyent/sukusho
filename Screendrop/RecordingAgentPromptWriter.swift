@@ -289,7 +289,9 @@ nonisolated enum RecordingAgentPromptWriter {
         func strip(for moment: RecordingAgentPromptPlan.Moment, plan: RecordingAgentPromptPlan) async throws
             -> (image: CGImage, span: ClosedRange<Double>)? {
             let times = plan.stripTimes(for: moment)
-            guard let first = times.first, let last = times.last else { return nil }
+            guard let first = times.first, let last = times.last,
+                  !plan.timeline.hasImportedClips || times.allSatisfy({ plan.timeline.isPrimaryRecording(at: $0) })
+            else { return nil }
             let cropSize = CGSize(width: min(size.width, 1440), height: min(size.height, 900))
             let focus = moment.focus ?? CGPoint(x: 0.5, y: 0.5)
             let crop = CGRect(x: min(max(focus.x * size.width - cropSize.width / 2, 0), size.width - cropSize.width),
@@ -345,6 +347,7 @@ nonisolated enum RecordingAgentPromptWriter {
 
         /// The whole frame at a moment, at most 1920 px on its long side, marked like a strip.
         func still(for moment: RecordingAgentPromptPlan.Moment, plan: RecordingAgentPromptPlan) async throws -> CGImage? {
+            guard !plan.timeline.hasImportedClips || plan.timeline.isPrimaryRecording(at: moment.time) else { return nil }
             let source = plan.timeline.sourceTime(at: moment.time)
             guard let extracted = try? await stillGenerator.image(at: CMTime(seconds: source, preferredTimescale: 60_000)) else { return nil }
             let frame = try redact(extracted.image, editorTime: moment.time, actualSourceTime: extracted.actualTime.seconds, timeline: plan.timeline)

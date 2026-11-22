@@ -264,7 +264,17 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
         self.pointer = pointer
         self.ink = ink
         // A moment with no position of its own looks where the pointer was.
-        moments = (grouped.isEmpty ? [Moment(time: 0, evidence: ["No timed narration or actions available."])] : grouped).map {
+        if timeline.hasImportedClips {
+            grouped.removeAll { !timeline.isPrimaryRecording(at: $0.time) }
+        }
+        if grouped.isEmpty {
+            let prefix = timeline.segments.prefix { !$0.isPrimaryRecording }
+            if prefix.count < timeline.segments.count || !timeline.hasImportedClips {
+                let firstPrimaryTime = prefix.reduce(0) { $0 + $1.editorDuration }
+                grouped = [Moment(time: firstPrimaryTime, evidence: ["No timed narration or actions available."])]
+            }
+        }
+        moments = grouped.map {
             var moment = $0
             moment.focus = moment.focus ?? Self.pointerPosition(in: pointer, at: timeline.sourceTime(at: moment.time))
             return moment
@@ -327,6 +337,7 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
         } else if hasStrips {
             text += "Each still shows the edited recording. Each strip shows \(stripSpan); \(marks).\n\n"
         }
+        if let importedClipNote { text += importedClipNote + "\n\n" }
         if !hasInput { text += "No input log is available for this recording.\n\n" }
         if excludesAppWindows {
             text += "Sukusho's own windows (Library, editor, Studio, preview cards, recording controls) were left out of this recording, so the frames show what was behind them.\n\n"
@@ -397,6 +408,10 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
                                     screen.width, screen.height, screen.scale, screen.scale))
         }
         return sentences.isEmpty ? nil : sentences.joined(separator: " ")
+    }
+
+    var importedClipNote: String? {
+        timeline.hasImportedClips ? "Imported clips are omitted from steps and stills." : nil
     }
 
     static func stillName(_ index: Int) -> String { String(format: "%04d.jpg", index + 1) }

@@ -34,6 +34,7 @@ nonisolated struct RecordingSteps: Sendable {
     let environment: [String]
     let logs: RecordingAppLogs?
     let timeline: RecordingClipTimeline
+    let importedClipNote: String?
     /// Leads both formats under "Summary" when set. Hook for an on-device summary
     /// (gallery-app is adding one to Studio); nil writes none.
     let summary: String?
@@ -70,6 +71,7 @@ nonisolated struct RecordingSteps: Sendable {
         self.environment = environment
         logs = plan.logs
         timeline = plan.timeline
+        importedClipNote = plan.importedClipNote
         self.summary = summary?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
     }
 
@@ -120,6 +122,7 @@ nonisolated struct RecordingSteps: Sendable {
         let steps = listed(format).map(\.step)
         var blocks: [Block] = []
         if let summary { blocks += [.heading("Summary"), .paragraph(summary)] }
+        if let importedClipNote { blocks.append(.paragraph(importedClipNote)) }
         switch format {
         case .guide:
             for (index, step) in steps.enumerated() {

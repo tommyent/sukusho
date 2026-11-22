@@ -1752,6 +1752,32 @@ struct RecordingExportRegressionChecks {
         print("PASS: registry aliases share one identity and a second Studio model cannot mutate the draft")
     }
 
+    static func importedEvidence(in directory: URL) async throws {
+        let master = directory.appendingPathComponent("evidence-master.mov")
+        try await movie(at: master)
+        var imported = RecordingClipSegment(sourceStart: 0, sourceEnd: 2)
+        imported.mediaFileName = "\(UUID()).mov"
+        imported.sourceDuration = 2
+        let mixed = RecordingClipTimeline(segments: [imported, .init(sourceStart: 0, sourceEnd: 4)])
+        let mixedPlan = RecordingAgentPromptPlan(title: "Mixed", timeline: mixed, cues: [], words: [], capture: nil)
+        try check(mixedPlan.moments.map(\.time) == [2], "Fallback moment used the leading imported clip")
+        let mixedRendered = await RecordingAgentPromptWriter.prerender(plan: mixedPlan, master: master)
+        try check(mixedRendered.count == 1 && mixedRendered.values.first?.strip == nil,
+                  "A strip crossing the imported clip sampled the screen master")
+        let onlyImported = RecordingClipTimeline(segments: [imported])
+        let plan = RecordingAgentPromptPlan(title: "Imported only", timeline: onlyImported, cues: [], words: [], capture: nil)
+        let stills = try await RecordingSteps.stills(plan: plan, master: master)
+        let steps = RecordingSteps(plan: plan, systemVersion: nil)
+        let note = "Imported clips are omitted from steps and stills."
+        try check(stills.isEmpty && steps.steps.isEmpty && steps.markdown(.guide).contains(note)
+                  && steps.markdown(.bugReport).contains(note), "Steps sampled the master for an imported segment")
+        let folder = try await RecordingAgentPromptWriter.write(movie: nil, plan: plan, to: directory, master: master)
+        let images = try FileManager.default.contentsOfDirectory(atPath: folder.appendingPathComponent("stills").path)
+        let prompt = try String(contentsOf: folder.appendingPathComponent("prompt.md"), encoding: .utf8)
+        try check(images.isEmpty && prompt.contains(note), "The prompt exported an unrelated imported-clip still")
+        print("PASS: Guide, Bug Report and Agent Prompt omit imported moments and strips crossing imported clips")
+    }
+
     static func main() async throws {
         setbuf(stdout, nil)
         guard let root = ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] else {
@@ -1776,6 +1802,7 @@ struct RecordingExportRegressionChecks {
         try await readOnlyDraftDelivery(in: directory)
         try await lateDraftDelivery(in: directory)
         try await canonicalStudioRegistry(in: directory)
+        try await importedEvidence(in: directory)
         try await chapterMarkerDrag(in: directory)
         try await chapterAtPlayhead(in: directory)
         try await chapterRenameUndo(in: directory)
