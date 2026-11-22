@@ -239,9 +239,13 @@ final class CaptureLibraryIndex {
             case .read(var entry):
                 // A capture deleted while it was read keeps no entry.
                 if latestItems?.contains(where: { $0.id == item.id }) == true {
-                    // An edit keeps the title the user has seen, and their dismissals.
-                    entry.insight = entries[item.id]?.insight
-                    entry.dismissedSuggestions = entries[item.id]?.dismissedSuggestions
+                    let previous = entries[item.id]
+                    // Routine edits keep the title the user has seen, unless redactions changed
+                    // (a prior insight could reflect redacted text or frames).
+                    let redactionsChanged = item.isVideo
+                        && CaptureTextIndexPlan.redactionTag(in: previous?.fingerprint) != CaptureTextIndexPlan.redactionTag(in: entry.fingerprint)
+                    entry.insight = redactionsChanged ? nil : previous?.insight
+                    entry.dismissedSuggestions = previous?.dismissedSuggestions
                     entries[item.id] = entry
                     foldedText[item.id] = Self.fold(entry)
                     CaptureLibraryModel.shared.textIndexDidChange()
@@ -353,14 +357,29 @@ final class CaptureLibraryIndex {
         await ImageTextWarmUp.shared.waitUntilReady()
         var frames: [[CaptureTextLine]?] = []
         if item.isVideo {
-            let generator = AVAssetImageGenerator(asset: AVURLAsset(url: item.fileURL))
+            let preview: RecordingPreviewSource
+            do { preview = try await RecordingPreviewSource(item.fileURL) }
+            catch { return .unreadable }
+            let asset = AVURLAsset(url: preview.url)
+            let generator = AVAssetImageGenerator(asset: asset)
+            if !preview.redactions.isEmpty {
+                do {
+                    generator.videoComposition = try await RecordingRedactionFilter.composition(
+                        asset: asset,
+                        redactions: preview.redactions
+                    )
+                } catch {
+                    return .unreadable
+                }
+            }
             generator.appliesPreferredTrackTransform = true
             let size = CaptureTextIndexPlan.readingSize(width: item.pixelWidth, height: item.pixelHeight)
             generator.maximumSize = CGSize(width: size, height: size)
             let tolerance = CMTime(seconds: 1, preferredTimescale: 600)
             generator.requestedTimeToleranceBefore = tolerance
             generator.requestedTimeToleranceAfter = tolerance
-            let duration = item.duration ?? 0
+            let assetDuration = (try? await asset.load(.duration).seconds).flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+            let duration = assetDuration ?? item.duration ?? 0
             // The first frame, the middle and near the end.
             for fraction in [0, 0.5, 0.9].prefix(duration > 2 ? 3 : 1) {
                 guard !(await shouldPause()) else { return .paused }
@@ -378,11 +397,25 @@ final class CaptureLibraryIndex {
             .map(ReadOutcome.read) ?? .unreadable
     }
 
-    /// What the model looks at: the screenshot, or a recording's first frame.
-    nonisolated private static func image(for item: CaptureLibraryItem) async -> CGImage? {
+    /// What the model looks at: the screenshot, or a recording's first frame (redacted).
+    nonisolated static func image(for item: CaptureLibraryItem) async -> CGImage? {
         let size = 1280
         guard item.isVideo else { return await decode(item.fileURL, maxSize: size) }
-        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: item.fileURL))
+        let preview: RecordingPreviewSource
+        do { preview = try await RecordingPreviewSource(item.fileURL) }
+        catch { return nil }
+        let asset = AVURLAsset(url: preview.url)
+        let generator = AVAssetImageGenerator(asset: asset)
+        if !preview.redactions.isEmpty {
+            do {
+                generator.videoComposition = try await RecordingRedactionFilter.composition(
+                    asset: asset,
+                    redactions: preview.redactions
+                )
+            } catch {
+                return nil
+            }
+        }
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: size, height: size)
         return try? await generator.image(at: .zero).image

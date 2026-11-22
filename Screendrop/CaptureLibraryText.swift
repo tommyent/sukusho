@@ -203,6 +203,12 @@ nonisolated enum CaptureTextIndexPlan {
         var createdAt: Date
     }
 
+    /// Extracts the trailing redaction tag (`:r=...`) from a capture fingerprint, if any.
+    static func redactionTag(in fingerprint: String?) -> String? {
+        guard let fingerprint, let range = fingerprint.range(of: ":r=", options: .backwards) else { return nil }
+        return String(fingerprint[range.lowerBound...])
+    }
+
     /// Captures with no current entry, newest first.
     static func stale(_ captures: [Capture], entries: [String: CaptureTextEntry], skipping: Set<String> = []) -> [Capture] {
         captures.filter { capture in

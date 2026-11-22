@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Observation
 
 nonisolated enum CaptureLibraryFilter: String, CaseIterable, Identifiable {
@@ -402,6 +403,19 @@ nonisolated enum CaptureLibraryScanner {
             let content = [edited, modificationDate(fileURL)].compactMap { $0 }.max()
             let modified = [content, modificationDate(session.projectMetadataURL)].compactMap { $0 }.max()
                 ?? row?.modifiedAt ?? createdAt
+            let redactionTag: String
+            do {
+                let redactions = try session.editDocumentForRendering()?.redactions ?? []
+                if redactions.isEmpty {
+                    redactionTag = ""
+                } else {
+                    let encoded = try CaptureManifest.encoder.encode(redactions)
+                    let digest = SHA256.hash(data: encoded).prefix(8).map { String(format: "%02x", $0) }.joined()
+                    redactionTag = ":r=\(digest)"
+                }
+            } catch {
+                redactionTag = ":r=unreadable"
+            }
             entries.append(CaptureLibraryItem(
                 id: "recording:\(path)", historyIDs: Set(rows.map(\.id)), name: session.displayName,
                 customName: storedName.isEmpty ? nil : storedName,
@@ -411,7 +425,7 @@ nonisolated enum CaptureLibraryScanner {
                 isVideo: true, hasEdits: session.hasSavedProject, hasDraft: session.hasUnsavedDraft,
                 cloudURL: rows.compactMap(\.cloudURL).first,
                 tags: metadata?.tags ?? [],
-                thumbnailKey: "\(fileURL.path):\((content ?? modified).timeIntervalSince1970)",
+                thumbnailKey: "\(fileURL.path):\((content ?? modified).timeIntervalSince1970)\(redactionTag)",
                 source: metadata?.source, editedAt: edited,
                 savedAt: metadata?.librarySavedAt ?? rows.compactMap(\.librarySavedAt).max()
             ))

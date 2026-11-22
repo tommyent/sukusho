@@ -70,7 +70,8 @@ struct LibraryTextIndexChecks {
     }
 
     /// Eight seconds of 1280×720: one line of text, then another from 3 s.
-    static func movie(at url: URL) async throws {
+    static func movie(at url: URL, firstLine: String = "Okavango delta itinerary",
+                      secondLine: String = "Masai Mara checklist") async throws {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 1280, AVVideoHeightKey: 720,
@@ -88,7 +89,7 @@ struct LibraryTextIndexChecks {
                         bitsPerComponent: 8, bytesPerRow: plane.properties.bytesPerRow,
                         space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue)
                 else { throw Failure(description: "Cannot create fixture pixels") }
-                draw([frame < 30 ? "Okavango delta itinerary" : "Masai Mara checklist"], in: context, width: 1280, height: 720)
+                draw([frame < 30 ? firstLine : secondLine], in: context, width: 1280, height: 720)
             }
             try await receiver.append(CVReadOnlyPixelBuffer(pixels), with: CMTime(value: Int64(frame), timescale: 10))
         }
@@ -252,6 +253,55 @@ struct LibraryTextIndexChecks {
         print("CHECK: delete, empty scan and partial scan")
 
         try await sourceChecks(scratch: scratch, recordingID: recordingID)
+        try await redactionChecks()
+    }
+
+    /// Redacted content must never enter OCR text or the frame sent to Apple Intelligence,
+    /// and adding a redaction to an already-indexed recording rebuilds its entry.
+    static func redactionChecks() async throws {
+        let history = ScreenshotHistoryStore.shared
+        let index = CaptureLibraryIndex.shared
+        let model = CaptureLibraryModel.shared
+
+        let session = try RecordingSessionStore.createSession()
+        try await movie(at: session.screenURL, firstLine: "SECRETKEY 99421", secondLine: "PASSCODE 88312")
+        var manifest = CaptureManifest()
+        manifest.duration = 8; manifest.pixelWidth = 1280; manifest.pixelHeight = 720
+        try session.writeCaptureManifest(manifest)
+        await history.importRecordingSession(session)
+        let id = "recording:\(session.directoryURL.standardizedFileURL.path)"
+
+        // First indexed before any redaction: OCR reads both lines.
+        try await waitUntil("unredacted recording read") { index.entries[id] != nil }
+        let before = try require(index.entries[id])
+        try check(before.paragraphs.joined(separator: " ").contains("SECRETKEY"), "Unredacted recording did not read SECRETKEY")
+        try check(before.paragraphs.joined(separator: " ").contains("PASSCODE"), "Unredacted recording did not read PASSCODE")
+        try await search("SECRETKEY", expect: [id])
+
+        // Add a full-frame redaction covering the text band for the whole recording.
+        var redactedDoc = RecordingEditDocument(style: RecordingStudioStyle(), zoomEnabled: false, zoomCues: [])
+        redactedDoc.redactions = [
+            RecordingRedaction(start: 0, end: 8, rect: CGRect(x: 0.0, y: 0.0, width: 1.0, height: 0.45), mode: .blur, strength: 1.0)
+        ]
+        try session.writeEditDocument(redactedDoc)
+        model.refresh()
+        try await waitUntil("redacted recording rebuilt") {
+            guard let entry = index.entries[id] else { return false }
+            return entry.fingerprint != before.fingerprint && CaptureTextIndexPlan.redactionTag(in: entry.fingerprint) != nil
+        }
+        let after = try require(index.entries[id])
+        let joined = after.paragraphs.joined(separator: " ")
+        try check(!joined.localizedCaseInsensitiveContains("SECRETKEY") && !joined.localizedCaseInsensitiveContains("PASSCODE")
+                  && !joined.contains("99421") && !joined.contains("88312"),
+                  "Redacted recording leaked secret into OCR index: \(after.paragraphs)")
+        try await search("SECRETKEY", expect: [])
+        try await search("PASSCODE", expect: [])
+        let item = try require(model.items.first { $0.id == id })
+        let insightImage = try require(await CaptureLibraryIndex.image(for: item), "Redacted insight image missing")
+        let insightText = try ImageTextRecognizer.recognizeLines(in: insightImage).map(\.text).joined(separator: " ")
+        try check(!insightText.localizedCaseInsensitiveContains("SECRETKEY") && !insightText.contains("99421"),
+                  "Redacted insight image leaked secret: \(insightText)")
+        print("CHECK: Library OCR and insight image hide redacted content and rebuild after adding a redaction")
     }
 
     /// The source app and window: History rows written before it decode, and

@@ -20,6 +20,18 @@ struct CaptureLibraryTextTests {
         #expect(!old.isCurrent(fingerprint: "/History/a.png:100.0"))
     }
 
+    @Test func addingOrChangingRedactionsInvalidatesIndexedEntry() {
+        let unredacted = "/Recordings/a.sukushorec/screen.mov:100.0"
+        let redacted = unredacted + ":r=0123456789abcdef"
+        let updated = unredacted + ":r=fedcba9876543210"
+        let entry = CaptureTextEntry(id: "recording:a", fingerprint: unredacted, paragraphs: ["Secret"])
+        #expect(entry.isCurrent(fingerprint: unredacted))
+        #expect(!entry.isCurrent(fingerprint: redacted))
+        #expect(CaptureTextIndexPlan.redactionTag(in: unredacted) == nil)
+        #expect(CaptureTextIndexPlan.redactionTag(in: redacted) == ":r=0123456789abcdef")
+        #expect(CaptureTextIndexPlan.redactionTag(in: redacted) != CaptureTextIndexPlan.redactionTag(in: updated))
+    }
+
     @Test func tallCapturesKeepAReadableShortSide() {
         #expect(CaptureTextIndexPlan.readingSize(width: 3420, height: 2214) == 3420)
         #expect(CaptureTextIndexPlan.readingSize(width: 5120, height: 2880) == 4096)
