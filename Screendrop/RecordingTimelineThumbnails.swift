@@ -128,22 +128,7 @@ final class RecordingTimelineThumbnailStore {
     /// Prepares the primary recording source, preserving any still-registered
     /// imported sources while refreshing primary tiles (e.g. after redaction edits).
     func prepare(url: URL, duration: TimeInterval, redactions: [RecordingRedaction] = []) {
-        let importedSources = sources.filter { $0.key != Self.primarySourceKey }
-        if importedSources.isEmpty {
-            cancel()
-            sources.removeAll()
-            images.removeAll()
-            imageBytes.removeAll()
-            cachedBytes = 0
-            insertionOrder.removeAll()
-            pending.removeAll()
-            retryCounts.removeAll()
-            queue.removeAll()
-            settledLevels.removeAll()
-            frozenLevels.removeAll()
-        } else {
-            evictSource(key: Self.primarySourceKey)
-        }
+        evictSource(key: Self.primarySourceKey)
         let safeDuration = max(0, duration.isFinite ? duration : 0)
         nextGeneration &+= 1
         sources[Self.primarySourceKey] = SourceEntry(
@@ -183,12 +168,12 @@ final class RecordingTimelineThumbnailStore {
 
     /// Immediately drops every cached tile, pending request, and metadata entry
     /// for a removed or refreshed source, cancelling an in-flight batch only if
-    /// it belongs to that source so unaffected imported tiles keep rendering.
+    /// it belongs to that source. Keeps the cancelled batch tracked in `task`
+    /// until it finishes draining so a replacement never starts a second
+    /// concurrent decoder; completion restarts `pump()` for remaining work.
     func evictSource(key: String) {
         if activeBatch?.sourceKey == key {
             task?.cancel()
-            task = nil
-            activeBatch = nil
         }
         sources.removeValue(forKey: key)
         settledLevels.removeValue(forKey: key)
@@ -429,14 +414,19 @@ final class RecordingTimelineThumbnailStore {
                 self.task = nil
                 self.activeBatch = nil
             }
-            guard !Task.isCancelled else { return }
-            self.absorb(
-                samples,
-                completedKeys: batch,
-                sourceKey: targetSourceKey,
-                generation: batchGeneration
-            )
-            self.pump()
+            if !Task.isCancelled {
+                self.absorb(
+                    samples,
+                    completedKeys: batch,
+                    sourceKey: targetSourceKey,
+                    generation: batchGeneration
+                )
+            }
+            // Restart queued work for surviving sources even when this batch
+            // was cancelled or discarded.
+            if !self.sources.isEmpty {
+                self.pump()
+            }
         }
     }
 

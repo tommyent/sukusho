@@ -653,7 +653,7 @@ struct StudioVideoSequenceTests {
         #expect(abs(interval.end - (2.0 + 2.0 / 60.0)) < 0.001)
     }
 
-    @Test func lateUnredactedThumbnailBatchIsDiscardedAfterRedactionRefreshWhileKeepingImportedTiles() async {
+    @Test func lateUnredactedThumbnailBatchIsDiscardedAfterRedactionRefreshWhileKeepingImportedTiles() async throws {
         let store = RecordingTimelineThumbnailStore()
         let primaryURL = URL(fileURLWithPath: "/tmp/thumb-primary.mov")
         let importedURL = URL(fileURLWithPath: "/tmp/thumb-import.mov")
@@ -693,14 +693,17 @@ struct StudioVideoSequenceTests {
                 }
             }
 
-            func waitUntilStarted() async {
-                await withCheckedContinuation { cont in
-                    let alreadyStarted: Bool = lock.withLock {
-                        if didStart { return true }
-                        startedContinuation = cont
-                        return false
+            func waitUntilStarted(timeout: Duration = .seconds(5)) async throws {
+                let deadline = ContinuousClock.now.advanced(by: timeout)
+                while !lock.withLock({ didStart }) {
+                    if ContinuousClock.now >= deadline {
+                        throw NSError(
+                            domain: "StudioVideoSequenceTests",
+                            code: 96,
+                            userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for primary thumbnail batch to start"]
+                        )
                     }
-                    if alreadyStarted { cont.resume() }
+                    try await Task.sleep(for: .milliseconds(5))
                 }
             }
 
@@ -749,7 +752,7 @@ struct StudioVideoSequenceTests {
 
         // 2. Prepare unredacted primary; wait until batch 1 is suspended inside renderBatch.
         store.prepare(url: primaryURL, duration: 4.0, redactions: [])
-        await gate.waitUntilStarted()
+        try await gate.waitUntilStarted()
 
         // 3. Install a redaction on primary while the unredacted batch is in flight.
         let mask = RecordingRedaction(start: 0, end: 4, rect: CGRect(x: 0, y: 0, width: 1, height: 1), mode: .pixelate)
@@ -875,6 +878,545 @@ struct StudioVideoSequenceTests {
         #expect(decodedMarker.clipOccurrenceID == secondOccurrence.id)
     }
 
+    // MARK: - Round 3 Regressions (Findings 9, 10)
+
+    @Test func primaryShortPictureTrackDoesNotStretchAndMasksPreviewWithoutLeak() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StudioVideoSeqShortPic-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let url = tempDir.appendingPathComponent("short-primary.mov")
+        // 2.00 s video track inside a 2.98 s movie: checkerboard + 880 Hz tone ONLY during 0.50..<0.75 s.
+        try await Self.writeTimedCheckerboardMovie(
+            to: url,
+            size: CGSize(width: 160, height: 120),
+            videoDuration: 2.0,
+            audioDuration: 2.98,
+            checkerWindow: 0.50..<0.75,
+            backgroundColor: (r: 128, g: 128, b: 128),
+            toneWindow: 0.50..<0.75,
+            toneHz: 880
+        )
+
+        let asset = AVURLAsset(url: url)
+        let assetDuration = try await asset.load(.duration).seconds
+        let videoTrack = try #require(try await asset.loadTracks(withMediaType: .video).first)
+        let videoTrackDuration = try await videoTrack.load(.timeRange).duration.seconds
+        #expect(assetDuration > 2.90)
+        #expect(videoTrackDuration > 1.95 && videoTrackDuration < 2.05)
+
+        let timeline = RecordingClipTimeline.full(sourceDuration: assetDuration)
+        let (composition, timeMap) = try RecordingCompositionBuilder.makeVideoCompositionWithTimeMap(
+            videoTrack: videoTrack,
+            timeline: timeline
+        )
+
+        // Composition time map must preserve unstretched 2.00 s video + explicit empty tail.
+        #expect(timeMap.entries.count == 2)
+        #expect(timeMap.entries[0].hasVideo == true)
+        #expect(abs(timeMap.entries[0].editorRange.duration.seconds - videoTrackDuration) < 0.02)
+        #expect(abs(timeMap.entries[0].sourceRange.duration.seconds - videoTrackDuration) < 0.02)
+        #expect(timeMap.entries[1].hasVideo == false)
+        #expect(abs(timeMap.entries[1].editorRange.end.seconds - assetDuration) < 0.02)
+
+        // Without mask, checkerboard must stay at 0.55 s and NEVER stretch to 0.90 s.
+        let unmaskedGen = AVAssetImageGenerator(asset: composition)
+        unmaskedGen.requestedTimeToleranceBefore = .zero
+        unmaskedGen.requestedTimeToleranceAfter = .zero
+        let unmaskedMid = try await unmaskedGen.image(at: CMTime(seconds: 0.55, preferredTimescale: 600)).image
+        let unmaskedLate = try await unmaskedGen.image(at: CMTime(seconds: 0.90, preferredTimescale: 600)).image
+        #expect(Self.detailScore(of: unmaskedMid) > 50)
+        #expect(Self.detailScore(of: unmaskedLate) < 5.0)
+
+        // With full-frame redaction on 0.50..<0.75, single-source preview sharing timeMap must show 0 detail leak.
+        let mask = RecordingRedaction(
+            start: 0.50,
+            end: 0.75,
+            rect: CGRect(x: 0, y: 0, width: 1, height: 1),
+            mode: .pixelate,
+            strength: 1.0
+        )
+        let previewSource = RecordingRedactionPreviewSource()
+        previewSource.update(redactions: [mask], clipTimeline: timeline, timeMap: timeMap)
+        let previewVideoComp = try await previewSource.composition(asset: composition)
+
+        let previewGen = AVAssetImageGenerator(asset: composition)
+        previewGen.videoComposition = previewVideoComp
+        previewGen.requestedTimeToleranceBefore = .zero
+        previewGen.requestedTimeToleranceAfter = .zero
+        for t in [0.55, 0.75, 0.90] {
+            let img = try await previewGen.image(at: CMTime(seconds: t, preferredTimescale: 600)).image
+            let detail = Self.detailScore(of: img)
+            #expect(detail < 5.0, "Single-source short-picture preview leaked detail (\(detail)) at t=\(t)")
+        }
+    }
+
+    @Test func multiSourceImportedShortPictureTrackDoesNotStretchAndRendersBlackTail() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StudioVideoSeqMultiShort-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let primaryURL = tempDir.appendingPathComponent("primary.mov")
+        let importURL = tempDir.appendingPathComponent("short-import.mov")
+        try await Self.writeSyntheticMovie(
+            to: primaryURL,
+            size: CGSize(width: 160, height: 120),
+            duration: 1.0,
+            color: (r: 220, g: 30, b: 30),
+            preferredTransform: .identity,
+            toneHz: 440
+        )
+        // Imported clip: 1.00 s video (checkerboard only at 0.25..<0.50, green elsewhere) + 2.00 s audio.
+        try await Self.writeTimedCheckerboardMovie(
+            to: importURL,
+            size: CGSize(width: 160, height: 120),
+            videoDuration: 1.0,
+            audioDuration: 2.0,
+            checkerWindow: 0.25..<0.50,
+            backgroundColor: (r: 30, g: 200, b: 60),
+            toneWindow: 0.25..<0.50,
+            toneHz: 880
+        )
+
+        let primarySource = try await StudioVideoSource.load(url: primaryURL)
+        let importSource = try await StudioVideoSource.load(url: importURL)
+        #expect(importSource.duration > 1.95)
+
+        let timeline = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 1.0),
+            RecordingClipSegment(
+                sourceStart: 0,
+                sourceEnd: importSource.duration,
+                mediaFileName: "short-import.mov",
+                displayName: "Short Import",
+                sourceDuration: importSource.duration
+            )
+        ])
+
+        let redactionSource = RecordingRedactionPreviewSource()
+        redactionSource.update(redactions: [], clipTimeline: timeline)
+
+        for useRedactionCompositor in [false, true] {
+            let (composition, videoComposition, timeMap) = try RecordingCompositionBuilder.makeMultiSourceVideoComposition(
+                primarySource: primarySource,
+                importedSources: ["short-import.mov": importSource],
+                timeline: timeline,
+                renderSize: primarySource.displaySize,
+                redactionSource: useRedactionCompositor ? redactionSource : nil
+            )
+
+            #expect(timeMap.entries.count == 3)
+            #expect(timeMap.entries[0].isPrimaryRecording == true && timeMap.entries[0].hasVideo == true)
+            #expect(timeMap.entries[1].isPrimaryRecording == false && timeMap.entries[1].hasVideo == true)
+            #expect(abs(timeMap.entries[1].editorRange.duration.seconds - 1.0) < 0.03)
+            #expect(timeMap.entries[2].isPrimaryRecording == false && timeMap.entries[2].hasVideo == false)
+
+            let gen = AVAssetImageGenerator(asset: composition)
+            gen.videoComposition = videoComposition
+            gen.requestedTimeToleranceBefore = .zero
+            gen.requestedTimeToleranceAfter = .zero
+
+            // 1.35 s = imported source 0.35 s -> unstretched checkerboard
+            let checkerImg = try await gen.image(at: CMTime(seconds: 1.35, preferredTimescale: 600)).image
+            #expect(Self.detailScore(of: checkerImg) > 50)
+
+            // 1.75 s = imported source 0.75 s -> flat green (checkerboard NOT stretched here)
+            let greenImg = try await gen.image(at: CMTime(seconds: 1.75, preferredTimescale: 600)).image
+            #expect(Self.detailScore(of: greenImg) < 5.0)
+            let greenPx = Self.rgbPixel(in: greenImg, x: 80, y: 60)
+            #expect(greenPx.g > 150 && greenPx.r < 90)
+
+            // 2.50 s = empty video tail -> clean solid black
+            let tailImg = try await gen.image(at: CMTime(seconds: 2.50, preferredTimescale: 600)).image
+            #expect(Self.detailScore(of: tailImg) < 5.0)
+            let blackPx = Self.rgbPixel(in: tailImg, x: 80, y: 60)
+            #expect(blackPx.r < 15 && blackPx.g < 15 && blackPx.b < 15)
+
+            // Reader must complete across timeMap.timeRange without -11841.
+            let reader = try AVAssetReader(asset: composition)
+            let tracks = try await composition.loadTracks(withMediaType: .video)
+            let output = AVAssetReaderVideoCompositionOutput(
+                videoTracks: tracks,
+                videoSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+            )
+            output.videoComposition = videoComposition
+            reader.add(output)
+            reader.timeRange = timeMap.timeRange
+            #expect(reader.startReading())
+            var count = 0
+            while output.copyNextSampleBuffer() != nil { count += 1 }
+            #expect(reader.status == .completed, "Reader failed with \(String(describing: reader.error))")
+            #expect(count > 0)
+        }
+    }
+
+    @Test func thumbnailQueuePumpsSurvivingSourceWithoutConcurrentDecodersAfterDeletingActiveSource() async throws {
+        let store = RecordingTimelineThumbnailStore()
+        let urlA = URL(fileURLWithPath: "/tmp/thumb-delete-A.mov")
+        let urlB = URL(fileURLWithPath: "/tmp/thumb-keep-B.mov")
+        let tileA = Self.solidNSImage(r: 230, g: 30, b: 30)
+        let tileB = Self.solidNSImage(r: 30, g: 210, b: 60)
+
+        nonisolated final class GateAndTracker: @unchecked Sendable {
+            private let lock = NSLock()
+            private var startedContinuation: CheckedContinuation<Void, Never>?
+            private var releaseContinuation: CheckedContinuation<Void, Never>?
+            private var didStartA = false
+            private var didReleaseA = false
+            private var inFlight = 0
+            private var peakConcurrent = 0
+            private var startsByURL: [URL: Int] = [:]
+
+            func enter(url: URL) {
+                lock.withLock {
+                    inFlight += 1
+                    peakConcurrent = max(peakConcurrent, inFlight)
+                    startsByURL[url, default: 0] += 1
+                }
+            }
+
+            func leave() {
+                lock.withLock {
+                    inFlight = max(0, inFlight - 1)
+                }
+            }
+
+            func startedCount(for url: URL) -> Int {
+                lock.withLock { startsByURL[url, default: 0] }
+            }
+
+            var maxConcurrent: Int {
+                lock.withLock { peakConcurrent }
+            }
+
+            func suspendA() async {
+                await withCheckedContinuation { cont in
+                    let resumeNow: Bool = lock.withLock {
+                        didStartA = true
+                        if let waiting = startedContinuation {
+                            startedContinuation = nil
+                            waiting.resume()
+                        }
+                        if didReleaseA { return true }
+                        releaseContinuation = cont
+                        return false
+                    }
+                    if resumeNow { cont.resume() }
+                }
+            }
+
+            func waitUntilAStarted(timeout: Duration = .seconds(5)) async throws {
+                let deadline = ContinuousClock.now.advanced(by: timeout)
+                while !lock.withLock({ didStartA }) {
+                    if ContinuousClock.now >= deadline {
+                        throw NSError(
+                            domain: "StudioVideoSequenceTests",
+                            code: 97,
+                            userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for thumbnail batch A to start"]
+                        )
+                    }
+                    try await Task.sleep(for: .milliseconds(5))
+                }
+            }
+
+            func releaseA() {
+                let cont: CheckedContinuation<Void, Never>? = lock.withLock {
+                    didReleaseA = true
+                    let c = releaseContinuation
+                    releaseContinuation = nil
+                    return c
+                }
+                cont?.resume()
+            }
+        }
+
+        let tracker = GateAndTracker()
+        store.renderBatch = { url, requests, _ in
+            tracker.enter(url: url)
+            defer { tracker.leave() }
+            if url == urlA {
+                await tracker.suspendA()
+                return requests.map { RecordingTimelineThumbnailStore.Sample(key: $0.key, image: tileA) }
+            } else {
+                await Task.yield()
+                return requests.map { RecordingTimelineThumbnailStore.Sample(key: $0.key, image: tileB) }
+            }
+        }
+
+        // 1. Register A so its batch starts and suspends inside renderBatch.
+        store.registerSource(key: "A", url: urlA, duration: 4.0)
+        try await tracker.waitUntilAStarted(timeout: .seconds(5))
+
+        // 2. Queue B while A is still in flight.
+        store.registerSource(key: "B", url: urlB, duration: 4.0)
+
+        // 3. Delete A while A's batch is still running, then re-register B (early no-op).
+        store.syncImportedSources(keeping: ["B"])
+        store.registerSource(key: "B", url: urlB, duration: 4.0)
+
+        // 4. While A is still draining, NO second concurrent decoder may start for B.
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(tracker.startedCount(for: urlB) == 0)
+        #expect(tracker.maxConcurrent == 1)
+
+        // 5. Release A; completion must restart pump() for B and populate B's tiles.
+        tracker.releaseA()
+        let gridB = store.grid(forTargetSpan: 1.0, sourceKey: "B")
+        for _ in 0..<100 {
+            if store.image(in: gridB, tileIndex: 0, sourceKey: "B") != nil { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+
+        let tileB0 = store.image(in: gridB, tileIndex: 0, sourceKey: "B")
+        #expect(tileB0 != nil, "Surviving source B stalled with blank thumbnails after deleting active source A")
+        if let cg = tileB0?.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+            let px = Self.rgbPixel(in: cg, x: 4, y: 4)
+            #expect(px.g > 150 && px.r < 80)
+        }
+        #expect(tracker.startedCount(for: urlB) > 0)
+        #expect(tracker.maxConcurrent == 1)
+    }
+
+    private static func waitUntilReady(
+        _ input: AVAssetWriterInput,
+        writer: AVAssetWriter,
+        timeoutSeconds: TimeInterval = 10
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while !input.isReadyForMoreMediaData {
+            if writer.status == .failed || writer.status == .cancelled {
+                throw writer.error ?? NSError(domain: "StudioVideoSequenceTests", code: 98)
+            }
+            if Date() >= deadline {
+                throw NSError(
+                    domain: "StudioVideoSequenceTests",
+                    code: 99,
+                    userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for AVAssetWriterInput(\(input.mediaType.rawValue))"]
+                )
+            }
+            try await Task.sleep(for: .milliseconds(2))
+        }
+    }
+
+    private static func writeTimedCheckerboardMovie(
+        to url: URL,
+        size: CGSize,
+        videoDuration: TimeInterval,
+        audioDuration: TimeInterval,
+        checkerWindow: Range<TimeInterval>,
+        backgroundColor: (r: UInt8, g: UInt8, b: UInt8),
+        toneWindow: Range<TimeInterval>,
+        toneHz: Double
+    ) async throws {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: Int(size.width),
+            AVVideoHeightKey: Int(size.height)
+        ])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: videoInput,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: Int(size.width),
+                kCVPixelBufferHeightKey as String: Int(size.height)
+            ]
+        )
+        writer.add(videoInput)
+
+        let sampleRate: Double = 44100
+        let audioInput = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: false
+        ])
+        writer.add(audioInput)
+
+        guard writer.startWriting() else {
+            throw writer.error ?? NSError(domain: "StudioVideoSequenceTests", code: 20)
+        }
+        writer.startSession(atSourceTime: .zero)
+
+        var asbd = AudioStreamBasicDescription(
+            mSampleRate: sampleRate,
+            mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked,
+            mBytesPerPacket: 2,
+            mFramesPerPacket: 1,
+            mBytesPerFrame: 2,
+            mChannelsPerFrame: 1,
+            mBitsPerChannel: 16,
+            mReserved: 0
+        )
+        var formatDesc: CMAudioFormatDescription?
+        CMAudioFormatDescriptionCreate(
+            allocator: kCFAllocatorDefault,
+            asbd: &asbd,
+            layoutSize: 0,
+            layout: nil,
+            magicCookieSize: 0,
+            magicCookie: nil,
+            extensions: nil,
+            formatDescriptionOut: &formatDesc
+        )
+
+        let fps = 60
+        let totalFrames = max(1, Int((videoDuration * Double(fps)).rounded()))
+        let totalSamples = Int((audioDuration * sampleRate).rounded())
+        let audioChunkSamples = 4410 // 0.1 s chunks, interleaved with video so AVAssetWriter never stalls
+
+        func appendAudioChunk(startSample: Int, count: Int) async throws {
+            var pcm = [Int16](repeating: 0, count: count)
+            for i in 0..<count {
+                let sampleIdx = startSample + i
+                let t = Double(sampleIdx) / sampleRate
+                if toneWindow.contains(t) {
+                    let value = sin(2.0 * .pi * toneHz * t) * 0.4
+                    pcm[i] = Int16(value * Double(Int16.max))
+                }
+            }
+            let dataSize = pcm.count * MemoryLayout<Int16>.size
+            var blockBuffer: CMBlockBuffer?
+            CMBlockBufferCreateWithMemoryBlock(
+                allocator: kCFAllocatorDefault,
+                memoryBlock: nil,
+                blockLength: dataSize,
+                blockAllocator: kCFAllocatorDefault,
+                customBlockSource: nil,
+                offsetToData: 0,
+                dataLength: dataSize,
+                flags: 0,
+                blockBufferOut: &blockBuffer
+            )
+            let block = try #require(blockBuffer)
+            pcm.withUnsafeBytes { raw in
+                if let base = raw.baseAddress {
+                    CMBlockBufferReplaceDataBytes(
+                        with: base,
+                        blockBuffer: block,
+                        offsetIntoDestination: 0,
+                        dataLength: dataSize
+                    )
+                }
+            }
+            var sampleBuffer: CMSampleBuffer?
+            var timing = CMSampleTimingInfo(
+                duration: CMTime(value: 1, timescale: CMTimeScale(sampleRate)),
+                presentationTimeStamp: CMTime(value: CMTimeValue(startSample), timescale: CMTimeScale(sampleRate)),
+                decodeTimeStamp: .invalid
+            )
+            CMSampleBufferCreateReady(
+                allocator: kCFAllocatorDefault,
+                dataBuffer: block,
+                formatDescription: formatDesc,
+                sampleCount: count,
+                sampleTimingEntryCount: 1,
+                sampleTimingArray: &timing,
+                sampleSizeEntryCount: 0,
+                sampleSizeArray: nil,
+                sampleBufferOut: &sampleBuffer
+            )
+            let sb = try #require(sampleBuffer)
+            try await Self.waitUntilReady(audioInput, writer: writer)
+            audioInput.append(sb)
+        }
+
+        // Feed whichever input AVAssetWriter is ready to accept so the muxer's
+        // interleaving buffer can never deadlock waiting on the other track.
+        var frame = 0
+        var audioCursor = 0
+        var videoMarkedFinished = false
+        var audioMarkedFinished = false
+        let writeDeadline = Date().addingTimeInterval(10)
+
+        while frame < totalFrames || audioCursor < totalSamples {
+            if writer.status == .failed || writer.status == .cancelled {
+                throw writer.error ?? NSError(domain: "StudioVideoSequenceTests", code: 22)
+            }
+            if Date() >= writeDeadline {
+                throw NSError(
+                    domain: "StudioVideoSequenceTests",
+                    code: 99,
+                    userInfo: [NSLocalizedDescriptionKey: "Timed out writing timed movie (frame=\(frame)/\(totalFrames), audio=\(audioCursor)/\(totalSamples))"]
+                )
+            }
+            if frame >= totalFrames && !videoMarkedFinished {
+                videoInput.markAsFinished()
+                videoMarkedFinished = true
+            }
+            if audioCursor >= totalSamples && !audioMarkedFinished {
+                audioInput.markAsFinished()
+                audioMarkedFinished = true
+            }
+
+            let videoReady = frame < totalFrames && videoInput.isReadyForMoreMediaData
+            let audioReady = audioCursor < totalSamples && audioInput.isReadyForMoreMediaData
+            guard videoReady || audioReady else {
+                try await Task.sleep(for: .milliseconds(2))
+                continue
+            }
+
+            let videoTime = frame < totalFrames ? Double(frame) / Double(fps) : Double.infinity
+            let audioTime = audioCursor < totalSamples ? Double(audioCursor) / sampleRate : Double.infinity
+
+            if audioReady && (!videoReady || audioTime <= videoTime) {
+                let count = min(audioChunkSamples, totalSamples - audioCursor)
+                try await appendAudioChunk(startSample: audioCursor, count: count)
+                audioCursor += count
+            } else if videoReady {
+                let isChecker = checkerWindow.contains(videoTime)
+                var buffer: CVPixelBuffer?
+                CVPixelBufferCreate(
+                    kCFAllocatorDefault,
+                    Int(size.width),
+                    Int(size.height),
+                    kCVPixelFormatType_32BGRA,
+                    nil,
+                    &buffer
+                )
+                let pixelBuffer = try #require(buffer)
+                CVPixelBufferLockBaseAddress(pixelBuffer, [])
+                if let base = CVPixelBufferGetBaseAddress(pixelBuffer) {
+                    let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+                    let height = CVPixelBufferGetHeight(pixelBuffer)
+                    let width = CVPixelBufferGetWidth(pixelBuffer)
+                    for y in 0..<height {
+                        let row = base.advanced(by: y * bytesPerRow).assumingMemoryBound(to: UInt8.self)
+                        for x in 0..<width {
+                            if isChecker {
+                                let v: UInt8 = ((x / 4) + (y / 4)) % 2 == 0 ? 255 : 0
+                                row[x * 4 + 0] = v
+                                row[x * 4 + 1] = v
+                                row[x * 4 + 2] = v
+                            } else {
+                                row[x * 4 + 0] = backgroundColor.b
+                                row[x * 4 + 1] = backgroundColor.g
+                                row[x * 4 + 2] = backgroundColor.r
+                            }
+                            row[x * 4 + 3] = 255
+                        }
+                    }
+                }
+                CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
+                adaptor.append(pixelBuffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: CMTimeScale(fps)))
+                frame += 1
+            }
+        }
+        if !videoMarkedFinished { videoInput.markAsFinished() }
+        if !audioMarkedFinished { audioInput.markAsFinished() }
+
+        await writer.finishWriting()
+        if writer.status != .completed {
+            throw writer.error ?? NSError(domain: "StudioVideoSequenceTests", code: 21)
+        }
+    }
+
     private static func writeCheckerboardMovie(
         to url: URL,
         size: CGSize,
@@ -903,9 +1445,7 @@ struct StudioVideoSequenceTests {
         let fps = 60
         let totalFrames = max(1, Int((duration * Double(fps)).rounded()))
         for frame in 0..<totalFrames {
-            while !videoInput.isReadyForMoreMediaData {
-                try await Task.sleep(for: .milliseconds(2))
-            }
+            try await Self.waitUntilReady(videoInput, writer: writer)
             var buffer: CVPixelBuffer?
             CVPixelBufferCreate(
                 kCFAllocatorDefault,
@@ -1068,9 +1608,7 @@ struct StudioVideoSequenceTests {
         let fps = 30
         let totalFrames = max(1, Int((duration * Double(fps)).rounded()))
         for frame in 0..<totalFrames {
-            while !videoInput.isReadyForMoreMediaData {
-                try await Task.sleep(for: .milliseconds(2))
-            }
+            try await Self.waitUntilReady(videoInput, writer: writer)
             var buffer: CVPixelBuffer?
             CVPixelBufferCreate(
                 kCFAllocatorDefault,
