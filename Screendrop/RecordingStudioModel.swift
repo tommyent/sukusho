@@ -4164,8 +4164,9 @@ final class RecordingStudioModel {
     var canImportMedia: Bool { mediaDirectoryURL != nil && isLoaded }
 
     /// Copies picked images and GIFs into the project's `media` folder and places
-    /// them from `time`. Audio routing hooks in right beside image import.
-    func importMedia(_ urls: [URL], atEditorTime time: TimeInterval) {
+    /// them from `time`. Audio files target `audioLane` (the highlighted lane on
+    /// a Finder drop, or lane 0 from the picker).
+    func importMedia(_ urls: [URL], atEditorTime time: TimeInterval, audioLane: Int = 0) {
         guard let directory = mediaDirectoryURL else { return }
         mediaImportError = nil
         Task { [weak self] in
@@ -4180,7 +4181,12 @@ final class RecordingStudioModel {
                     } else {
                         rejected.append(url.lastPathComponent)
                     }
-                } else if let placed = await self.importAudioMedia(url, into: directory, atEditorTime: audioTime) {
+                } else if let placed = await self.importAudioMedia(
+                    url,
+                    into: directory,
+                    atEditorTime: audioTime,
+                    preferredLane: audioLane
+                ) {
                     audioTime = placed
                 } else {
                     rejected.append(url.lastPathComponent)
@@ -4193,18 +4199,23 @@ final class RecordingStudioModel {
     }
 
     /// One file, awaited. False when the file isn't supported media.
-    func importMediaFile(_ url: URL, atEditorTime time: TimeInterval) async -> Bool {
+    func importMediaFile(_ url: URL, atEditorTime time: TimeInterval, audioLane: Int = 0) async -> Bool {
         guard let directory = mediaDirectoryURL, !isTornDown else { return false }
         if RecordingOverlayImage.canImport(url) {
             return await importImage(url, into: directory, atEditorTime: time) != nil
         }
-        return await importAudioMedia(url, into: directory, atEditorTime: time) != nil
+        return await importAudioMedia(url, into: directory, atEditorTime: time, preferredLane: audioLane) != nil
     }
 
     /// Routes dropped or picked audio files into the project's audio lanes.
-    func importAudioMedia(_ url: URL, into directory: URL, atEditorTime time: TimeInterval) async -> TimeInterval? {
+    func importAudioMedia(
+        _ url: URL,
+        into directory: URL,
+        atEditorTime time: TimeInterval,
+        preferredLane: Int = 0
+    ) async -> TimeInterval? {
         guard RecordingAudioClip.canImport(url) else { return nil }
-        return await importAudio(url, into: directory, atEditorTime: time)
+        return await importAudio(url, into: directory, atEditorTime: time, preferredLane: preferredLane)
     }
 
     func copyMediaIntoProject(_ url: URL, directory: URL) -> String? {
@@ -5067,8 +5078,8 @@ final class RecordingStudioModel {
     var canImportAudioMedia: Bool { mediaDirectoryURL != nil && isLoaded }
 
     /// Copies picked audio files into the project's media folder and places
-    /// them sequentially from `time`.
-    func importAudioFiles(_ urls: [URL], atEditorTime time: TimeInterval) {
+    /// them sequentially from `time` on `preferredLane`.
+    func importAudioFiles(_ urls: [URL], atEditorTime time: TimeInterval, preferredLane: Int = 0) {
         guard let directory = mediaDirectoryURL else { return }
         mediaImportError = nil
         Task { [weak self] in
@@ -5077,7 +5088,7 @@ final class RecordingStudioModel {
             for url in urls {
                 guard let self, !self.isTornDown else { return }
                 if RecordingAudioClip.canImport(url),
-                   let placed = await self.importAudio(url, into: directory, atEditorTime: audioTime) {
+                   let placed = await self.importAudio(url, into: directory, atEditorTime: audioTime, preferredLane: preferredLane) {
                     audioTime = placed
                 } else {
                     rejected.append(url.lastPathComponent)
@@ -5090,12 +5101,17 @@ final class RecordingStudioModel {
     }
 
     /// Adds one audio file into the project's media folder at `time`.
-    func importAudioFile(_ url: URL, atEditorTime time: TimeInterval) async -> TimeInterval? {
+    func importAudioFile(_ url: URL, atEditorTime time: TimeInterval, preferredLane: Int = 0) async -> TimeInterval? {
         guard let directory = mediaDirectoryURL, !isTornDown, RecordingAudioClip.canImport(url) else { return nil }
-        return await importAudio(url, into: directory, atEditorTime: time)
+        return await importAudio(url, into: directory, atEditorTime: time, preferredLane: preferredLane)
     }
 
-    private func importAudio(_ url: URL, into directory: URL, atEditorTime time: TimeInterval) async -> TimeInterval? {
+    private func importAudio(
+        _ url: URL,
+        into directory: URL,
+        atEditorTime time: TimeInterval,
+        preferredLane: Int = 0
+    ) async -> TimeInterval? {
         guard let fileName = copyMediaIntoProject(url, directory: directory),
               let storedURL = RecordingOverlayMedia.resolveRegularFile(named: fileName, in: directory) else {
             return nil
@@ -5123,7 +5139,9 @@ final class RecordingStudioModel {
             fileDuration: fileDuration
         )
         clip.trimEnd = min(fileDuration, max(RecordingAudioClip.minimumDuration, duration - start))
-        applyAudioClips(audioClips + [clip], actionName: "Add Audio")
+        flushPendingAudioEdits()
+        let nextClips = StudioAudioConform.inserting(clip, into: audioClips, preferredLane: preferredLane)
+        applyAudioClips(nextClips, actionName: "Add Audio")
         selectAudioClip(id: clip.id)
         return clip.end
     }

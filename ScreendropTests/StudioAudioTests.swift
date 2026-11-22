@@ -1870,6 +1870,36 @@ struct StudioAudioTests {
         }
     }
 
+    @Test func finderAudioDropTargetsHighlightedLowerLaneAndKeepsCollisionPolicy() throws {
+        // Both Audio 1 (lane 0) and Audio 2 (lane 1) exist and are free at t = 2...4.
+        var lane0Clip = RecordingAudioClip(fileName: "a.wav", displayName: "A", start: 0, fileDuration: 1)
+        lane0Clip.lane = 0
+        var lane1Clip = RecordingAudioClip(fileName: "b.wav", displayName: "B", start: 0, fileDuration: 1)
+        lane1Clip.lane = 1
+        let existing = [lane0Clip, lane1Clip]
+
+        // Dropping onto Audio 2 (preferredLane = 1) lands on lane 1 even though lane 0 is free at 2...4.
+        let droppedOnLower = RecordingAudioClip(fileName: "c.wav", displayName: "C", start: 2, fileDuration: 2)
+        let afterLowerDrop = StudioAudioConform.inserting(droppedOnLower, into: existing, preferredLane: 1)
+        let placedC = try #require(afterLowerDrop.first { $0.id == droppedOnLower.id })
+        #expect(placedC.lane == 1)
+        #expect(afterLowerDrop.first { $0.id == lane0Clip.id }?.lane == 0)
+        #expect(afterLowerDrop.first { $0.id == lane1Clip.id }?.lane == 1)
+
+        // A second clip dropped sequentially onto Audio 2 at 4...5 also lands on lane 1.
+        let secondDropped = RecordingAudioClip(fileName: "d.wav", displayName: "D", start: 4, fileDuration: 1)
+        let afterSecond = StudioAudioConform.inserting(secondDropped, into: afterLowerDrop, preferredLane: 1)
+        #expect(afterSecond.first { $0.id == secondDropped.id }?.lane == 1)
+
+        // Collision policy: dropping an overlapping clip onto occupied Audio 2 (0.5...2.5)
+        // keeps existing Audio 2 clips on lane 1 and moves the newly dropped clip down to lane 2.
+        let overlapping = RecordingAudioClip(fileName: "e.wav", displayName: "E", start: 0.5, fileDuration: 2)
+        let afterCollision = StudioAudioConform.inserting(overlapping, into: afterSecond, preferredLane: 1)
+        #expect(afterCollision.first { $0.id == lane1Clip.id }?.lane == 1)
+        #expect(afterCollision.first { $0.id == droppedOnLower.id }?.lane == 1)
+        #expect(afterCollision.first { $0.id == overlapping.id }?.lane == 2)
+    }
+
     // MARK: - Helpers
 
     private func makeDirectory() throws -> URL {

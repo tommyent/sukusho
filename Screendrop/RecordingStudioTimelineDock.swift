@@ -299,8 +299,8 @@ struct StudioTimelineEditor: View {
                 onPreview: { preview in
                     if preview != mediaDrop { mediaDrop = preview }
                 },
-                onDrop: { urls, time in
-                    model.importMedia(urls, atEditorTime: time)
+                onDrop: { urls, time, audioLane in
+                    model.importMedia(urls, atEditorTime: time, audioLane: audioLane)
                 }
             ))
         }
@@ -1091,7 +1091,14 @@ private struct StudioMediaDropDelegate: DropDelegate {
     let time: (CGPoint) -> TimeInterval
     let trackAtLocation: (CGPoint) -> StudioTrack?
     let onPreview: (StudioMediaDrop?) -> Void
-    let onDrop: ([URL], TimeInterval) -> Void
+    let onDrop: ([URL], TimeInterval, Int) -> Void
+
+    private func audioLane(at location: CGPoint) -> Int {
+        if case .audio(let lane) = trackAtLocation(location) {
+            return lane
+        }
+        return 0
+    }
 
     func validateDrop(info: DropInfo) -> Bool {
         canDrop && info.hasItemsConforming(to: [.fileURL])
@@ -1102,11 +1109,7 @@ private struct StudioMediaDropDelegate: DropDelegate {
             onPreview(nil)
             return DropProposal(operation: .forbidden)
         }
-        let targetAudioTrack: StudioTrack = if case .audio(let lane) = trackAtLocation(info.location) {
-            .audio(lane)
-        } else {
-            .audio(0)
-        }
+        let targetAudioTrack = StudioTrack.audio(audioLane(at: info.location))
         var tracks: Set<StudioTrack> = []
         if info.hasItemsConforming(to: [.image]) { tracks.insert(.overlay) }
         if info.hasItemsConforming(to: [.audio]) { tracks.insert(targetAudioTrack) }
@@ -1123,9 +1126,10 @@ private struct StudioMediaDropDelegate: DropDelegate {
         onPreview(nil)
         guard canDrop else { return false }
         let at = time(info.location)
+        let lane = audioLane(at: info.location)
         let providers = info.itemProviders(for: [.fileURL])
         return StudioMediaDropLoader.loadFileURLs(from: providers) { urls in
-            if !urls.isEmpty { onDrop(urls, at) }
+            if !urls.isEmpty { onDrop(urls, at, lane) }
         }
     }
 }

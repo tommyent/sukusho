@@ -844,6 +844,19 @@ nonisolated enum StudioAudioConform {
         return compactingLanes(result)
     }
 
+    /// Inserts a newly imported audio clip targeting `preferredLane`, keeping it
+    /// on that lane when free and giving way via the lane collision policy when
+    /// another clip already occupies that time on that lane.
+    static func inserting(
+        _ clip: RecordingAudioClip,
+        into existing: [RecordingAudioClip],
+        preferredLane: Int = 0
+    ) -> [RecordingAudioClip] {
+        var placed = clip
+        placed.lane = min(max(0, preferredLane), maximumLanes - 1)
+        return resolvingLanes(existing + [placed], last: placed.id)
+    }
+
     /// Closes up lanes nothing sits on, so there is never an empty lane
     /// between two used ones.
     private static func compactingLanes(_ clips: [RecordingAudioClip]) -> [RecordingAudioClip] {
