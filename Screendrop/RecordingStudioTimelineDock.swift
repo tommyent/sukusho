@@ -318,7 +318,7 @@ struct StudioTimelineEditor: View {
                         case .videoOverlay:
                             model.importVideoOverlays(videos, atEditorTime: time)
                         default:
-                            break
+                            model.mediaImportError = "Drop videos onto the Clips lane to insert in sequence, or onto the Video Overlay lane to add a PiP or cutaway."
                         }
                     }
                     if !others.isEmpty {
@@ -1279,7 +1279,11 @@ private struct StudioMediaDropDelegate: DropDelegate {
             if let videoDest {
                 tracks.insert(videoDest)
             } else if canDrop {
-                tracks.formUnion([.overlay, targetAudioTrack])
+                // Generic `.fileURL` providers don't disclose file types until drop;
+                // stay neutral off the video lanes rather than promising Images/Audio
+                // for a video drag that won't land there.
+                onPreview(nil)
+                return DropProposal(operation: .copy)
             }
         }
         guard !tracks.isEmpty else {

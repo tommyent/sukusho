@@ -698,7 +698,6 @@ nonisolated enum StudioVideoOverlayLane {
             }
         }
 
-        let oldSegmentIDs = Set(old.segments.map(\.id))
         var oldEditorStart: TimeInterval = 0
         for segment in old.segments {
             let oldEditorEnd = oldEditorStart + segment.editorDuration
@@ -719,9 +718,7 @@ nonisolated enum StudioVideoOverlayLane {
                     matchesSource = newSeg.isPrimaryRecording
                 } else {
                     matchesSource = newSeg.mediaFileName == segment.mediaFileName
-                        && (newSeg.id == segment.id
-                            || newSeg.effectiveOccurrenceID == segment.effectiveOccurrenceID
-                            || !oldSegmentIDs.contains(newSeg.id))
+                        && newSeg.effectiveOccurrenceID == segment.effectiveOccurrenceID
                 }
                 guard matchesSource else { continue }
                 let sliceLow = max(sourceLow, newSeg.sourceStart)
