@@ -899,7 +899,7 @@ final class RecordingStudioModel {
         let holds = holdsUnsavedRedactions()
         guard holds != reportedRedactionHold else { return }
         reportedRedactionHold = holds
-        CaptureLibraryIndex.shared.editorHoldsDidChange()
+        CaptureLibraryIndex.shared.editorHoldsDidChange(for: sessionURL)
     }
     private var rejectedRedactionDraftError: Error?
     /// Set while a stored document is being applied to the model, so the
@@ -1458,7 +1458,7 @@ final class RecordingStudioModel {
             try? session.removeUnreferencedMedia()
         }
         // The Library index may be holding this recording back.
-        CaptureLibraryIndex.shared.editorHoldsDidChange()
+        CaptureLibraryIndex.shared.editorHoldsDidChange(for: sessionURL)
         exportTask = nil
         audioExportTask = nil
         replacementAudioTask = nil

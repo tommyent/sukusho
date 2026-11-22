@@ -109,6 +109,12 @@ struct LibraryTextIndexChecks {
 
     static func main() async {
         do {
+            if CommandLine.arguments.contains("--startup") {
+                try await startupChecks()
+                print("PASS: Library index startup")
+                return
+            }
+            try startupChecksInFreshProcess()
             try await run()
             print("PASS: Library text index")
         } catch {
@@ -395,7 +401,7 @@ struct LibraryTextIndexChecks {
         plainStudio.beginRedaction()
         plainStudio.workingVideoCropRect = mask.rect
         plainStudio.addRedaction()
-        try check(try plain.loadDraftDocument()?.redactions.first?.rect == mask.rect && !plainStudio.holdsUnsavedRedactions(),
+        try check(plain.loadDraftDocument()?.redactions.first?.rect == mask.rect && !plainStudio.holdsUnsavedRedactions(),
                   "Add Redaction did not write its mask")
         let exposedAfterAdd = await queuedAfterAdd.value
         try check(exposedAfterAdd.isEmpty, "A read queued during Add Redaction found the old \(exposedAfterAdd.joined(separator: ", "))")
@@ -407,6 +413,121 @@ struct LibraryTextIndexChecks {
         try check(!plainText.contains("LEDGERCODE") && !plainText.contains("66218"), "The re-read kept unmasked text: \(plainText)")
         try await search("LEDGERCODE", expect: [])
         print("CHECK: an indexed recording masked only in Studio hides its text, search, title and agent copies at once, until the mask is written; a written mask drops the old entry at once")
+    }
+
+    /// The index loads its store once per process, so startup runs in a child with its own home inside this one.
+    static func startupChecksInFreshProcess() throws {
+        let home = URL(fileURLWithPath: try require(ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"], "No temporary home"))
+            .appendingPathComponent("startup", isDirectory: true)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: false)
+        let child = Process()
+        child.executableURL = try require(Bundle.main.executableURL, "No executable")
+        child.arguments = ["--startup"]
+        child.environment = ProcessInfo.processInfo.environment.merging(["CFFIXED_USER_HOME": home.path]) { $1 }
+        try child.run()
+        child.waitUntilExit()
+        try check(child.terminationStatus == 0, "Library index startup checks failed")
+    }
+
+    /// Studio changes a hold while the store loads. A live mask keeps the stored entry out of sight and
+    /// gives it back on an unchanged disk; a mask Add Redaction saved drops the old entry before it can show.
+    static func startupChecks() async throws {
+        let support = ScreendropStorage.applicationSupportDirectory
+        try check(support.path.contains("/tmp/screendrop-idle-save-") && support.path.contains("/startup/"),
+                  "Storage is outside the startup home: \(support.path)")
+        let history = ScreenshotHistoryStore.shared
+        let index = CaptureLibraryIndex.shared
+        let library = CaptureLibraryModel.shared
+        let store = CaptureTextIndexStore(directory: support.appendingPathComponent("Library Index", isDirectory: true))
+        UserDefaults.standard.set(true, forKey: ScreendropPreferences.libraryReadsTextKey)
+        UserDefaults.standard.set(true, forKey: ScreendropPreferences.libraryUsesIntelligenceKey)
+        UserDefaults.standard.set(true, forKey: ScreendropPreferences.libraryInsightsIncludeExistingKey)
+        index.modelAvailability = { true }
+        index.describer = { _, _, _ in .insight(CaptureInsight(title: nil)) }
+        var manifest = CaptureManifest()
+        manifest.duration = 8; manifest.pixelWidth = 1280; manifest.pixelHeight = 720
+        let held = try RecordingSessionStore.createSession()
+        let saved = try RecordingSessionStore.createSession()
+        // Not open in Studio: its entry shows once the store publishes.
+        let other = try RecordingSessionStore.createSession()
+        for (session, code) in [(held, "HOLDCODE 27182"), (saved, "SAVEDCODE 16180"), (other, "OTHERCODE 14142")] {
+            try await movie(at: session.screenURL, firstLine: code, secondLine: code)
+            try session.writeCaptureManifest(manifest)
+            await history.importRecordingSession(session)
+        }
+        let heldID = "recording:\(held.directoryURL.standardizedFileURL.path)"
+        let savedID = "recording:\(saved.directoryURL.standardizedFileURL.path)"
+        let control = "recording:\(other.directoryURL.standardizedFileURL.path)"
+
+        // The last scan before startup has no mask, and the stored entries were read from it.
+        library.refresh()
+        try await waitUntil("the scan before startup", timeout: .seconds(20)) {
+            !library.isLoading && [heldID, savedID, control].allSatisfy { id in library.items.contains { $0.id == id } }
+        }
+        var scanned: [String: String] = [:]
+        for (id, code) in [(heldID, "HOLDCODE"), (savedID, "SAVEDCODE"), (control, "OTHERCODE")] {
+            let item = try require(library.items.first { $0.id == id })
+            try check(CaptureTextIndexPlan.redactionTag(in: item.thumbnailKey) == nil, "The fixture scan already has a mask")
+            scanned[id] = item.thumbnailKey
+            try store.save(CaptureTextEntry(id: id, fingerprint: item.thumbnailKey, paragraphs: [code], insight: .init(title: code)))
+        }
+
+        let mask = RecordingRedaction(start: 0, end: 8, rect: CGRect(x: 0, y: 0, width: 1, height: 1), mode: .blur, strength: 1)
+        let snapshot = try CaptureSessionSnapshots(directory: held.sessionSnapshotsURL).keep(
+            document: CaptureSessionSnapshots.encode(RecordingEditDocument(style: .init(), zoomEnabled: false, zoomCues: [], redactions: [mask])),
+            openedAt: Date())[0]
+        let heldStudio = RecordingStudioModel(url: held.directoryURL)
+        let savedStudio = RecordingStudioModel(url: saved.directoryURL)
+        await heldStudio.load()
+        await savedStudio.load()
+        defer {
+            _ = chmod(held.directoryURL.path, 0o755)
+            heldStudio.teardown()
+            savedStudio.teardown()
+        }
+        try check(heldStudio.isLoaded && savedStudio.isLoaded, "Studio did not open the startup fixtures")
+        // The live mask stays only in Studio: the package is read-only.
+        try check(chmod(held.directoryURL.path, 0o555) == 0, "Could not make the held recording read-only")
+        heldStudio.revertToSession(snapshot)
+        try check(heldStudio.holdsUnsavedRedactions(), "The held fixture has no live mask")
+
+        // The store starts loading, and Add Redaction saves a mask before it can publish.
+        index.start()
+        savedStudio.beginRedaction()
+        savedStudio.workingVideoCropRect = mask.rect
+        savedStudio.addRedaction()
+        try check(saved.loadDraftDocument()?.redactions.first?.rect == mask.rect && !savedStudio.holdsUnsavedRedactions(),
+                  "Add Redaction did not save its mask")
+        try check(index.entries[control] == nil, "The store published before the mask was saved")
+        let deadline = ContinuousClock.now + .seconds(10)
+        while index.entries[control] == nil {
+            try check(ContinuousClock.now < deadline, "The store did not load")
+            try await Task.sleep(for: .milliseconds(2))
+        }
+        try check(library.items.first { $0.id == savedID }?.thumbnailKey == scanned[savedID], "A new scan ran before the check")
+        let exposedHeld = exposedCopies(of: heldID), exposedSaved = exposedCopies(of: savedID)
+        try check(exposedHeld.isEmpty, "Startup showed the held recording's \(exposedHeld.joined(separator: ", "))")
+        try check(exposedSaved.isEmpty, "Startup showed the saved-mask recording's old \(exposedSaved.joined(separator: ", "))")
+        let stored = store.loadAll()
+        try check(stored[heldID]?.paragraphs == ["HOLDCODE"] && stored[savedID] == nil,
+                  "Startup dropped the held entry from disk or kept the stale one")
+        try await search("SAVEDCODE", expect: [])
+        try await search("HOLDCODE", expect: [])
+
+        // Closed with its disk unchanged, the held recording gets its entry back.
+        try await waitUntil("the held restore settled", timeout: .seconds(10)) { !heldStudio.hasRunningWork }
+        heldStudio.teardown()
+        try check(index.entries[heldID]?.paragraphs == ["HOLDCODE"], "The held entry did not come back on an unchanged disk")
+        try await search("HOLDCODE", expect: [heldID])
+        // The saved mask is read again.
+        library.refresh()
+        try await waitUntil("the saved-mask recording read again with its mask") {
+            guard let entry = index.entries[savedID] else { return false }
+            return CaptureTextIndexPlan.redactionTag(in: entry.fingerprint) != nil
+        }
+        let text = try require(index.entries[savedID]).paragraphs.joined(separator: " ")
+        try check(!text.contains("SAVEDCODE") && !text.contains("16180"), "The re-read kept unmasked text: \(text)")
+        print("CHECK: hold changes made while the store loads apply when it publishes: a live mask hides its entry and returns it on an unchanged disk; a saved mask drops the old one")
     }
 
     /// Which of an indexed recording's copies the Library or an agent could still read.

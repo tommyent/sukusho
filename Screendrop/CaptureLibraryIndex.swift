@@ -48,6 +48,8 @@ final class CaptureLibraryIndex {
     @ObservationIgnored private var isLoaded = false
     /// Entries of recordings Studio holds (see `isHeldByEditor`), kept out of `entries` and `foldedText`.
     @ObservationIgnored private var heldEntries: [String: CaptureTextEntry] = [:]
+    /// Packages, canonical, whose Studio hold changed before the store loaded; their stored entries are checked before showing.
+    @ObservationIgnored private var holdChangesWhileLoading: Set<URL> = []
     @ObservationIgnored private var started = false
     @ObservationIgnored private var latestItems: [CaptureLibraryItem]?
     @ObservationIgnored private var latestIsComplete = false
@@ -83,7 +85,18 @@ final class CaptureLibraryIndex {
         observeHistory()
         let store = store
         Task {
-            let loaded = await Task.detached(priority: .utility) { store.loadAll() }.value
+            var loaded = await Task.detached(priority: .utility) { store.loadAll() }.value
+            // Studio may have written a mask while the store loaded, after the last scan.
+            let stale = loaded.filter { id, entry in
+                guard let package = Self.recordingPackage(id),
+                      holdChangesWhileLoading.contains(ScreendropApp.canonicalEditorURL(package)) else { return false }
+                return !Self.matchesRedactionsOnDisk(entry, in: package)
+            }.map(\.key)
+            holdChangesWhileLoading = []
+            if !stale.isEmpty {
+                for id in stale { loaded[id] = nil }
+                writeFence.purgeNow(ids: stale, in: store)
+            }
             entries = loaded
             foldedText = loaded.mapValues(Self.fold)
             isLoaded = true
@@ -197,9 +210,7 @@ final class CaptureLibraryIndex {
         for (id, entry) in heldEntries where !Self.isHeld(id, in: holding) {
             heldEntries[id] = nil
             guard entries[id] == nil, let package = Self.recordingPackage(id) else { continue }
-            let tag = CaptureLibraryScanner.redactionTag(for: RecordingSession(directoryURL: package))
-            if tag != CaptureTextIndexPlan.unreadableRedactionTag,
-               CaptureTextIndexPlan.redactionTag(in: entry.fingerprint) == (tag.isEmpty ? nil : tag) {
+            if Self.matchesRedactionsOnDisk(entry, in: package) {
                 entries[id] = entry
                 foldedText[id] = Self.fold(entry)
             } else {
@@ -219,9 +230,19 @@ final class CaptureLibraryIndex {
         return holding
     }
 
-    /// Studio began or stopped holding redactions its files lack.
-    func editorHoldsDidChange() {
-        guard isLoaded else { return }
+    /// Whether a recording's entry was read with the redactions its package holds now.
+    private static func matchesRedactionsOnDisk(_ entry: CaptureTextEntry, in package: URL) -> Bool {
+        let tag = CaptureLibraryScanner.redactionTag(for: RecordingSession(directoryURL: package))
+        return tag != CaptureTextIndexPlan.unreadableRedactionTag
+            && CaptureTextIndexPlan.redactionTag(in: entry.fingerprint) == (tag.isEmpty ? nil : tag)
+    }
+
+    /// Studio began or stopped holding redactions its files lack, in `package`.
+    func editorHoldsDidChange(for package: URL) {
+        guard isLoaded else {
+            holdChangesWhileLoading.insert(ScreendropApp.canonicalEditorURL(package))
+            return
+        }
         applyEditorHolds()
         settingsDidChange()
     }
