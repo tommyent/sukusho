@@ -718,7 +718,7 @@ final class RecordingStudioModel {
     var isolateVoice: Bool {
         get { voiceIsolationEnabled }
         set {
-            guard newValue != voiceIsolationEnabled, !newValue || canIsolateVoice else { return }
+            guard !isReadOnlyNewerFormat, newValue != voiceIsolationEnabled, !newValue || canIsolateVoice else { return }
             pause()
             cancelVoiceIsolation()
             voiceIsolationError = nil
@@ -761,6 +761,23 @@ final class RecordingStudioModel {
     private func resolveVoiceIsolation() async {
         guard voiceIsolationEnabled, let session else { return }
         let requestID = voiceIsolationRequestID
+        if isReadOnlyNewerFormat {
+            // Read-only newer projects must never write into the package: load
+            // an existing valid cache file only and leave missing caches absent.
+            guard let existingURL = RecordingPackageMedia.resolvePackageFile(
+                named: RecordingVoiceIsolation.fileName,
+                in: session.directoryURL
+            ) else {
+                isolatedMicrophone = nil
+                voiceIsolationProgress = nil
+                return
+            }
+            let loaded = await RecordingReplacementAudio.load(url: existingURL, displayName: "Isolated voice")
+            guard !Task.isCancelled, voiceIsolationRequestID == requestID, !isTornDown else { return }
+            isolatedMicrophone = loaded
+            voiceIsolationProgress = nil
+            return
+        }
         voiceIsolationProgress = 0
         do {
             guard let microphoneTrackID else { throw RecordingVoiceIsolation.IsolationError.missingMicrophone }
@@ -811,6 +828,10 @@ final class RecordingStudioModel {
     private(set) var isReadOnlyNewerFormat = false
     /// Highest unsupported format version seen in `edit.json` or `edit.draft.json`.
     private var newerFormatVersion: Int?
+    /// True when the active newer-format edit could not be decoded and validated,
+    /// so playback, posters, and the filmstrip stay withheld rather than showing
+    /// the unredacted master.
+    private(set) var withholdsNewerFormatPreview = false
     private var sessionOpenedAt = Date()
     private var keptOpeningSession = false
     private(set) var sessionSnapshots: [CaptureSessionSnapshot] = []
@@ -1055,8 +1076,18 @@ final class RecordingStudioModel {
         if isReadOnlyNewerFormat {
             // Newer-format documents may carry unknown enum cases or schema
             // additions that this build cannot decode. Open read-only without
-            // classifying a newer draft as corrupt or enabling Discard.
-            document = try? read(ignoringDraft: false)
+            // classifying a newer draft as corrupt or enabling Discard; if the
+            // effective edit cannot be decoded and validated, withhold playback,
+            // posters, and the filmstrip instead of showing the unredacted master.
+            do {
+                document = try read(ignoringDraft: false)
+            } catch {
+                document = nil
+                withholdsNewerFormatPreview = true
+                cutRedactionPreviewError = RecordingEditDocument.newerFormatNotice
+                cameraPlayer.replaceCurrentItem(with: nil)
+                style.camera.isVisible = false
+            }
             hasUnreadableDraft = false
         } else {
             do {
@@ -1153,24 +1184,32 @@ final class RecordingStudioModel {
         await resolveVideoOverlaySources()
         guard !isTornDown, !Task.isCancelled else { return }
 
-        await resolveBackgroundMusic()
-        await resolveVoiceIsolation()
-        guard !isTornDown, !Task.isCancelled else { return }
-        do {
-            try rebuildScreenPlayerItem(preserving: 0)
-        } catch {
-            loadError = "Could not prepare the recording timeline: \(error.localizedDescription)"
-            return
+        if withholdsNewerFormatPreview {
+            replaceScreenPlayerItem(nil, observeRedactionFailure: false)
+            cameraPlayer.replaceCurrentItem(with: nil)
+            videoOverlayPlayer.replaceCurrentItem(with: nil)
+            stylePoster = nil
+            isLoaded = true
+        } else {
+            await resolveBackgroundMusic()
+            await resolveVoiceIsolation()
+            guard !isTornDown, !Task.isCancelled else { return }
+            do {
+                try rebuildScreenPlayerItem(preserving: 0)
+            } catch {
+                loadError = "Could not prepare the recording timeline: \(error.localizedDescription)"
+                return
+            }
+            rebuildPointerTimeline()
+            rebuildViewportTimeline()
+            installObservers()
+            isLoaded = true
+            rebuildPreviewReframe()
+            loadTimelineThumbnails()
+            syncImportedThumbnails()
+            loadStylePoster()
+            loadOverlayMedia()
         }
-        rebuildPointerTimeline()
-        rebuildViewportTimeline()
-        installObservers()
-        isLoaded = true
-        rebuildPreviewReframe()
-        loadTimelineThumbnails()
-        syncImportedThumbnails()
-        loadStylePoster()
-        loadOverlayMedia()
 
         if let session {
             openedOnDraft = session.hasUnsavedDraft
@@ -2778,6 +2817,10 @@ final class RecordingStudioModel {
     }
 
     private func rebuildScreenPlayerItem(preserving editorTime: TimeInterval) throws {
+        guard !withholdsNewerFormatPreview else {
+            replaceScreenPlayerItem(nil, observeRedactionFailure: false)
+            return
+        }
         guard let screenAsset else { return }
         audioPlaybackRebuildTask?.cancel()
         audioPlaybackRebuildTask = nil
@@ -2948,6 +2991,10 @@ final class RecordingStudioModel {
 
     /// Once the recording has loaded, so the file is known to be readable.
     private func loadStylePoster() {
+        guard !withholdsNewerFormatPreview else {
+            stylePoster = nil
+            return
+        }
         let url = screenURL
         let duration = sourceDuration
         let regions = redactions
@@ -2978,6 +3025,7 @@ final class RecordingStudioModel {
     }
 
     private func loadTimelineThumbnails() {
+        guard !withholdsNewerFormatPreview else { return }
         timelineThumbnails.prepare(url: screenURL, duration: sourceDuration, redactions: redactions)
     }
 
@@ -4593,12 +4641,51 @@ final class RecordingStudioModel {
 
     var canImportMedia: Bool { mediaDirectoryURL != nil && isLoaded && !isReadOnlyNewerFormat }
 
+    /// Routes a timeline Finder drop across video clips, video overlays, and
+    /// image/audio media while preserving any rejected-destination warning
+    /// alongside valid sibling files in a mixed drop.
+    func handleTimelineMediaDrop(
+        urls: [URL],
+        atEditorTime time: TimeInterval,
+        audioLane: Int,
+        insertionIndex: Int,
+        targetLane: StudioMovieDropLane?
+    ) {
+        let videos = urls.filter { StudioVideoClipImport.canImport($0) || RecordingVideoOverlay.canImport($0) }
+        let others = urls.filter { !StudioVideoClipImport.canImport($0) && !RecordingVideoOverlay.canImport($0) }
+        var videoLaneError: String?
+        if !videos.isEmpty {
+            switch StudioMediaDropRouting.videoDestination(
+                for: targetLane,
+                canDropClip: canImportVideoClip,
+                canDropOverlay: canImportMedia
+            ) {
+            case .clips:
+                requestImportVideoClips(videos, insertionIndex: insertionIndex)
+            case .videoOverlay:
+                importVideoOverlays(videos, atEditorTime: time)
+            default:
+                videoLaneError = "Drop videos onto the Clips lane to insert in sequence, or onto the Video Overlay lane to add a PiP or cutaway."
+            }
+        }
+        if !others.isEmpty {
+            importMedia(others, atEditorTime: time, audioLane: audioLane, priorError: videoLaneError)
+        } else if let videoLaneError {
+            mediaImportError = videoLaneError
+        }
+    }
+
     /// Copies picked images and GIFs into the project's `media` folder and places
     /// them from `time`. Audio files target `audioLane` (the highlighted lane on
     /// a Finder drop, or lane 0 from the picker).
-    func importMedia(_ urls: [URL], atEditorTime time: TimeInterval, audioLane: Int = 0) {
-        guard let directory = mediaDirectoryURL else { return }
-        mediaImportError = nil
+    func importMedia(
+        _ urls: [URL],
+        atEditorTime time: TimeInterval,
+        audioLane: Int = 0,
+        priorError: String? = nil
+    ) {
+        guard !isReadOnlyNewerFormat, let directory = mediaDirectoryURL else { return }
+        mediaImportError = priorError
         let videoURLs = urls.filter { !RecordingOverlayImage.canImport($0) && RecordingVideoOverlay.canImport($0) }
         let otherURLs = urls.filter { RecordingOverlayImage.canImport($0) || !RecordingVideoOverlay.canImport($0) }
         if !videoURLs.isEmpty {
@@ -4629,7 +4716,8 @@ final class RecordingStudioModel {
                 }
             }
             if !rejected.isEmpty {
-                self?.mediaImportError = "Couldn't add \(rejected.joined(separator: ", ")). Images, animated GIF/APNG/WebP/HEIC, video, and audio files can be added."
+                let otherError = "Couldn't add \(rejected.joined(separator: ", ")). Images, animated GIF/APNG/WebP/HEIC, video, and audio files can be added."
+                self?.mediaImportError = [priorError, otherError].compactMap { $0 }.joined(separator: " ")
             }
         }
     }

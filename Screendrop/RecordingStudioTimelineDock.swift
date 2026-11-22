@@ -305,25 +305,13 @@ struct StudioTimelineEditor: View {
                     if preview != mediaDrop { mediaDrop = preview }
                 },
                 onDrop: { urls, time, audioLane, insertionIndex, targetTrack in
-                    let videos = urls.filter { StudioVideoClipImport.canImport($0) || RecordingVideoOverlay.canImport($0) }
-                    let others = urls.filter { !StudioVideoClipImport.canImport($0) && !RecordingVideoOverlay.canImport($0) }
-                    if !videos.isEmpty {
-                        switch StudioMediaDropRouting.videoDestination(
-                            for: targetTrack?.movieDropLane,
-                            canDropClip: model.canImportVideoClip,
-                            canDropOverlay: model.canImportMedia
-                        ) {
-                        case .clips:
-                            model.requestImportVideoClips(videos, insertionIndex: insertionIndex)
-                        case .videoOverlay:
-                            model.importVideoOverlays(videos, atEditorTime: time)
-                        default:
-                            model.mediaImportError = "Drop videos onto the Clips lane to insert in sequence, or onto the Video Overlay lane to add a PiP or cutaway."
-                        }
-                    }
-                    if !others.isEmpty {
-                        model.importMedia(others, atEditorTime: time, audioLane: audioLane)
-                    }
+                    model.handleTimelineMediaDrop(
+                        urls: urls,
+                        atEditorTime: time,
+                        audioLane: audioLane,
+                        insertionIndex: insertionIndex,
+                        targetLane: targetTrack?.movieDropLane
+                    )
                 }
             ))
         }
@@ -1276,15 +1264,11 @@ private struct StudioMediaDropDelegate: DropDelegate {
         if canDrop, hasAudio { tracks.insert(targetAudioTrack) }
         if hasMovie, let videoDest { tracks.insert(videoDest) }
         if !hasImage && !hasAudio && !hasMovie {
-            if let videoDest {
-                tracks.insert(videoDest)
-            } else if canDrop {
-                // Generic `.fileURL` providers don't disclose file types until drop;
-                // stay neutral off the video lanes rather than promising Images/Audio
-                // for a video drag that won't land there.
-                onPreview(nil)
-                return DropProposal(operation: .copy)
-            }
+            // Unclassified `.fileURL` providers don't disclose their file types
+            // until drop: keep hover neutral on every lane rather than promising
+            // a destination that a different media type won't land on.
+            onPreview(nil)
+            return DropProposal(operation: .copy)
         }
         guard !tracks.isEmpty else {
             onPreview(nil)
