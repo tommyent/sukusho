@@ -237,14 +237,13 @@ final class CaptureLibraryIndex {
             && CaptureTextIndexPlan.redactionTag(in: entry.fingerprint) == (tag.isEmpty ? nil : tag)
     }
 
-    /// Studio began or stopped holding redactions its files lack, in `package`.
+    /// Studio began or stopped holding redactions its files lack, in `package`. `sync` applies holds first, in this turn.
     func editorHoldsDidChange(for package: URL) {
         guard isLoaded else {
             holdChangesWhileLoading.insert(ScreendropApp.canonicalEditorURL(package))
             return
         }
-        applyEditorHolds()
-        settingsDidChange()
+        if let latestItems { sync(latestItems, isComplete: latestIsComplete) } else { applyEditorHolds() }
     }
 
     private func purgeStaleRedaction(for item: CaptureLibraryItem) {
