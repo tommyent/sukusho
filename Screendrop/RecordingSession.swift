@@ -307,8 +307,13 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     }
 
     private func writeNextRevision(of document: RecordingEditDocument, to url: URL) throws -> Data {
-        try validateEditVersionsForRendering()
-        let newest = max(document.revision, loadEditDocument()?.revision ?? 0, loadDraftDocument()?.revision ?? 0)
+        let (draftURL, editURL) = try validateEditVersionsForRendering()
+        struct Header: Decodable { var revision: Int? }
+        // Only the revisions are needed; an unreadable sidecar counts as revision 0, as before.
+        let revisions = [draftURL, editURL].compactMap { $0 }.map { url in
+            (try? JSONDecoder().decode(Header.self, from: Data(contentsOf: url)))?.revision ?? 0
+        }
+        let newest = max(document.revision, revisions.max() ?? 0)
         guard newest < Int.max else { throw CocoaError(.fileWriteUnknown) }
         var next = document
         next.revision = newest + 1
@@ -337,6 +342,14 @@ nonisolated struct RecordingSession: Sendable, Equatable {
         let versions = try validateEditVersionsForRendering()
         return EditSidecars(saved: try versions.editURL.map { try Data(contentsOf: $0) },
                             draft: try versions.draftURL.map { try Data(contentsOf: $0) })
+    }
+
+    /// The sidecars' bytes, without following links and without checking their format versions.
+    func readEditSidecarBytes() throws -> EditSidecars {
+        func read(_ name: String) throws -> Data? {
+            try RecordingPackageMedia.resolveOptionalPackageFile(named: name, in: directoryURL).map { try Data(contentsOf: $0) }
+        }
+        return EditSidecars(saved: try read(Self.editDocumentFileName), draft: try read(Self.draftDocumentFileName))
     }
 
     /// Revert to Original: the project's saved edits, its draft and any
@@ -453,12 +466,22 @@ nonisolated struct RecordingSession: Sendable, Equatable {
                 throw error
             }
         }
-        let saved = try editURL.map(read)
-        guard let draft = try draftURL.map(read) else { return saved }
+        return try Self.effectiveEdit(saved: editURL.map(read), draft: draftURL.map(read))
+    }
+
+    /// The edit with the higher revision; equal revisions must hold the same edit.
+    static func effectiveEdit(saved: RecordingEditDocument?, draft: RecordingEditDocument?) throws -> RecordingEditDocument? {
+        guard let draft else { return saved }
         guard let saved else { return draft }
         return try RecordingPackageMedia.activeEditIsDraft(
             draftRevision: draft.revision, savedRevision: saved.revision, sameEdit: draft == saved
         ) ? draft : saved
+    }
+
+    /// `editDocumentForRendering` for sidecar bytes already read and checked.
+    static func effectiveEdit(in sidecars: EditSidecars) throws -> RecordingEditDocument? {
+        let decode = { try CaptureManifest.decoder.decode(RecordingEditDocument.self, from: $0) }
+        return try effectiveEdit(saved: sidecars.saved.map(decode), draft: sidecars.draft.map(decode))
     }
 
     /// True when unsaved edits are sitting in the draft. A draft identical to

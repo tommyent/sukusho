@@ -871,7 +871,11 @@ final class RecordingStudioModel {
     /// The document as of the last save. Everything the user does after
     /// that lives in memory and in the draft until the next save.
     private var lastSavedDocument: RecordingEditDocument?
-    private var observedEditSidecars: RecordingSession.EditSidecars?
+    private var observedEditSidecars: RecordingSession.EditSidecars? {
+        didSet { observedEdit = nil }
+    }
+    /// The effective edit in `observedEditSidecars`, without its revision, once decoded or written.
+    private var observedEdit: RecordingEditDocument??
     private var rejectedRedactionDraftError: Error?
     /// Set while a stored document is being applied to the model, so the
     /// resulting property writes don't register as user edits.
@@ -3605,7 +3609,8 @@ final class RecordingStudioModel {
         }
         do {
             let sidecars = try checkedEditSidecars(in: session)
-            let diskDocument = try session.editDocumentForRendering()?.withoutRevision
+            let diskDocument = try observedEdit ?? RecordingSession.effectiveEdit(in: sidecars)?.withoutRevision
+            observedEdit = diskDocument
             if changed && (document == diskDocument || (!hasEditsSinceOpening && document == openedDocument))
                 || !changed && (sidecars.draft == nil || !hasEditsSinceOpening) {
                 hasUnsavedChanges = changed
@@ -3626,6 +3631,8 @@ final class RecordingStudioModel {
                 updated.draft = nil
             }
             observedEditSidecars = updated
+            // The draft just written holds the highest revision, so it is the effective edit.
+            if changed { observedEdit = document }
             hasUnsavedChanges = changed
             dropStaleRender(in: session)
         } catch {
@@ -3639,8 +3646,10 @@ final class RecordingStudioModel {
         if let editor = try StudioProjectRegistry.shared.uniqueEditor(for: session.directoryURL), editor !== self {
             throw CocoaError(.fileWriteUnknown)
         }
-        let current = try session.readEditSidecars()
+        // Only bytes that passed the version checks are ever observed, so equal bytes need no second parse.
+        let current = try session.readEditSidecarBytes()
         guard current == observedEditSidecars else {
+            _ = try session.readEditSidecars() // A newer-format edit reports as such.
             throw CocoaError(.fileReadCorruptFile, userInfo: [NSLocalizedDescriptionKey:
                 "The recording edits changed on disk while Studio was open. Reopen the recording before saving or exporting."])
         }
@@ -3653,10 +3662,11 @@ final class RecordingStudioModel {
     /// not the in-memory baseline: an unedited recording's baseline is a
     /// full default document, but the render made at Stop is stamped with none.
     private func dropStaleRender(in session: RecordingSession) {
+        // Checked first: while editing there is usually no render, and the package check parses every sidecar.
+        guard session.existingFinalURL != nil else { return }
         guard (try? RecordingPackageMedia.validateRenderInputs(in: session.directoryURL)) != nil else {
             return
         }
-        guard session.existingFinalURL != nil else { return }
         do {
             if session.freshFinalURL(matching: try session.editDocumentForRendering()) != nil { return }
         } catch {
