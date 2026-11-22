@@ -40,10 +40,19 @@ final class RecordingTimelineThumbnailStore {
         var image: NSImage
     }
 
-    private struct SourceEntry: Equatable {
+    private struct SourceEntry {
         var url: URL
         var duration: TimeInterval
         var redactions: [RecordingRedaction]
+        /// Monotonic per-registration token so a late batch from an evicted or
+        /// superseded registration (e.g. unredacted primary frames finishing
+        /// after a mask was added) can never overwrite cache or retire newer
+        /// pending requests.
+        var generation: UInt64
+
+        func matchesContent(url: URL, duration: TimeInterval, redactions: [RecordingRedaction]) -> Bool {
+            self.url == url && self.duration == duration && self.redactions == redactions
+        }
     }
 
     /// Only cancellation crosses executors. Configuration and image requests
@@ -87,6 +96,8 @@ final class RecordingTimelineThumbnailStore {
     var renderBatch: @Sendable (URL, [Request], [RecordingRedaction]) async -> [Sample] = RecordingTimelineThumbnailStore.render
 
     private var sources: [String: SourceEntry] = [:]
+    private var nextGeneration: UInt64 = 0
+    private var activeBatch: (sourceKey: String, generation: UInt64)?
     private var images: [Key: NSImage] = [:]
     private var imageBytes: [Key: Int] = [:]
     private(set) var cachedBytes = 0
@@ -134,7 +145,13 @@ final class RecordingTimelineThumbnailStore {
             evictSource(key: Self.primarySourceKey)
         }
         let safeDuration = max(0, duration.isFinite ? duration : 0)
-        sources[Self.primarySourceKey] = SourceEntry(url: url, duration: safeDuration, redactions: redactions)
+        nextGeneration &+= 1
+        sources[Self.primarySourceKey] = SourceEntry(
+            url: url,
+            duration: safeDuration,
+            redactions: redactions,
+            generation: nextGeneration
+        )
         onChange?()
         guard safeDuration > 0 else { return }
         for index in 0..<Self.baseTileCount {
@@ -146,10 +163,17 @@ final class RecordingTimelineThumbnailStore {
     /// Registers an imported video source under the same shared cache budget.
     func registerSource(key: String, url: URL, duration: TimeInterval, redactions: [RecordingRedaction] = []) {
         let safeDuration = max(0, duration.isFinite ? duration : 0)
-        let entry = SourceEntry(url: url, duration: safeDuration, redactions: redactions)
-        if sources[key] == entry { return }
+        if let existing = sources[key], existing.matchesContent(url: url, duration: safeDuration, redactions: redactions) {
+            return
+        }
         evictSource(key: key)
-        sources[key] = entry
+        nextGeneration &+= 1
+        sources[key] = SourceEntry(
+            url: url,
+            duration: safeDuration,
+            redactions: redactions,
+            generation: nextGeneration
+        )
         guard safeDuration > 0 else { return }
         for index in 0..<Self.baseTileCount {
             enqueue(Key(sourceKey: key, level: 0, index: index), shouldPump: false)
@@ -158,8 +182,14 @@ final class RecordingTimelineThumbnailStore {
     }
 
     /// Immediately drops every cached tile, pending request, and metadata entry
-    /// for a removed source.
+    /// for a removed or refreshed source, cancelling an in-flight batch only if
+    /// it belongs to that source so unaffected imported tiles keep rendering.
     func evictSource(key: String) {
+        if activeBatch?.sourceKey == key {
+            task?.cancel()
+            task = nil
+            activeBatch = nil
+        }
         sources.removeValue(forKey: key)
         settledLevels.removeValue(forKey: key)
         frozenLevels.removeValue(forKey: key)
@@ -187,6 +217,7 @@ final class RecordingTimelineThumbnailStore {
     func cancel() {
         task?.cancel()
         task = nil
+        activeBatch = nil
         thawTask?.cancel()
         thawTask = nil
         frozenLevels.removeAll()
@@ -380,7 +411,9 @@ final class RecordingTimelineThumbnailStore {
         let requests = batch.map { request(for: $0, duration: source.duration) }
         let url = source.url
         let regions = source.redactions
+        let batchGeneration = source.generation
         let renderer = renderBatch
+        activeBatch = (sourceKey: targetSourceKey, generation: batchGeneration)
 
         task = Task { [weak self] in
             let renderTask = Task.detached(priority: .userInitiated) {
@@ -391,22 +424,40 @@ final class RecordingTimelineThumbnailStore {
             } onCancel: {
                 renderTask.cancel()
             }
-            guard let self, !Task.isCancelled else { return }
-            self.task = nil
-            self.absorb(samples, completedKeys: batch)
+            guard let self else { return }
+            if self.activeBatch?.sourceKey == targetSourceKey && self.activeBatch?.generation == batchGeneration {
+                self.task = nil
+                self.activeBatch = nil
+            }
+            guard !Task.isCancelled else { return }
+            self.absorb(
+                samples,
+                completedKeys: batch,
+                sourceKey: targetSourceKey,
+                generation: batchGeneration
+            )
             self.pump()
         }
     }
 
-    private func absorb(_ samples: [Sample], completedKeys: [Key]) {
-        // Always retire every completed batch key so misses never stay wedged
-        // in `pending` forever.
+    private func absorb(
+        _ samples: [Sample],
+        completedKeys: [Key],
+        sourceKey: String,
+        generation: UInt64
+    ) {
+        // Ignore stale batches from an evicted or superseded source registration
+        // without touching the current generation's pending keys or cache.
+        guard sources[sourceKey]?.generation == generation else { return }
+        // Always retire every completed batch key for this generation so misses
+        // never stay wedged in `pending` forever.
         for key in completedKeys {
             pending.remove(key)
         }
         var addedAny = false
         for sample in samples {
-            guard sources[sample.key.sourceKey] != nil else { continue }
+            guard sample.key.sourceKey == sourceKey,
+                  sources[sourceKey]?.generation == generation else { continue }
             retryCounts.removeValue(forKey: sample.key)
             let cost = Self.byteCost(of: sample.image)
             let hadPrevious = images.updateValue(sample.image, forKey: sample.key) != nil
@@ -420,7 +471,7 @@ final class RecordingTimelineThumbnailStore {
             }
             addedAny = true
         }
-        for key in completedKeys where images[key] == nil && sources[key.sourceKey] != nil {
+        for key in completedKeys where images[key] == nil && sources[sourceKey]?.generation == generation {
             let nextAttempt = (retryCounts[key] ?? 0) + 1
             retryCounts[key] = nextAttempt
             if nextAttempt <= Self.maxRetries {
