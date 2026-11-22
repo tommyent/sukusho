@@ -164,10 +164,11 @@ final class StudioProjectRegistry {
     }
 
     private func loadedEditors(for url: URL) -> [RecordingStudioModel] {
+        let loaded = models.values.compactMap(\.model).filter(\.isLoaded)
+        // The Library index asks for every recording; with nothing open, no paths need resolving.
+        guard !loaded.isEmpty else { return [] }
         let package = ScreendropApp.canonicalEditorURL(url)
-        return models.values.compactMap(\.model).filter {
-            $0.isLoaded && ScreendropApp.canonicalEditorURL($0.sessionURL) == package
-        }
+        return loaded.filter { ScreendropApp.canonicalEditorURL($0.sessionURL) == package }
     }
 
     func hasLoadedEditor(for url: URL) -> Bool {

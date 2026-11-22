@@ -167,6 +167,13 @@ final class CaptureLibraryIndex {
         return CaptureTextIndexPlan.redactionTag(in: item.thumbnailKey) == expected
     }
 
+    /// A recording open in Studio can hold edits its files don't have yet, such as a new mask, so its
+    /// frames aren't read until the editor closes.
+    private func isHeldByEditor(_ item: CaptureLibraryItem) -> Bool {
+        guard item.isVideo, let session = item.session ?? RecordingDeliverable.session(for: item.fileURL) else { return false }
+        return StudioProjectRegistry.shared.hasLoadedEditor(for: session.directoryURL)
+    }
+
     private func purgeStaleRedaction(for item: CaptureLibraryItem) {
         let hadEntry = entries[item.id] != nil || foldedText[item.id] != nil
         lastModelFailure[item.id] = nil
@@ -208,7 +215,8 @@ final class CaptureLibraryIndex {
             }
         }
         scheduleRetries()
-        planInsights(items)
+        let held = Set(items.filter(isHeldByEditor).map(\.thumbnailKey))
+        planInsights(items, skipping: held)
         guard ScreendropPreferences.libraryReadsText else {
             queue = []
             updatePending()
@@ -217,7 +225,7 @@ final class CaptureLibraryIndex {
         let byID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let stale = CaptureTextIndexPlan.stale(
             items.filter { $0.id != inFlight?.id }.map { .init(id: $0.id, fingerprint: $0.thumbnailKey, createdAt: $0.createdAt) },
-            entries: entries, skipping: Set(unreadable.keys)
+            entries: entries, skipping: Set(unreadable.keys).union(held)
         )
         queue = stale.compactMap { byID[$0.id] }
         updatePending()
@@ -225,7 +233,7 @@ final class CaptureLibraryIndex {
     }
 
     /// Queues captures the model hasn't seen, when it may run.
-    private func planInsights(_ items: [CaptureLibraryItem]) {
+    private func planInsights(_ items: [CaptureLibraryItem], skipping held: Set<String>) {
         let available = modelAvailability(), enabled = ScreendropPreferences.libraryUsesIntelligence
         if available != modelAvailable { modelAvailable = available }
         if enabled != usesIntelligence {
@@ -239,7 +247,7 @@ final class CaptureLibraryIndex {
                 items.filter { $0.id != describing?.id }.map { .init(id: $0.id, fingerprint: $0.thumbnailKey, createdAt: $0.createdAt) },
                 entries: entries, since: ScreendropPreferences.libraryInsightsSince,
                 includesExisting: ScreendropPreferences.libraryInsightsIncludeExisting,
-                lastFailure: lastModelFailure, skipping: Set(unavailableInsightFrames.keys))
+                lastFailure: lastModelFailure, skipping: Set(unavailableInsightFrames.keys).union(held))
             let byID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             insightQueue = plan.due.compactMap { byID[$0.id] }
             older = plan.older
@@ -284,6 +292,11 @@ final class CaptureLibraryIndex {
                 return
             }
             let item = queue.removeFirst()
+            // Opened in Studio since it was queued; closing the editor plans it again.
+            guard !isHeldByEditor(item) else {
+                updatePending()
+                continue
+            }
             inFlight = item
             updatePending()
             let outcome = await Self.read(item)
@@ -303,7 +316,7 @@ final class CaptureLibraryIndex {
                 }) == true
                 let isUnreadableRedaction = item.isVideo
                     && CaptureTextIndexPlan.redactionTag(in: item.thumbnailKey) == CaptureTextIndexPlan.unreadableRedactionTag
-                if isStillCurrent && !isUnreadableRedaction {
+                if isStillCurrent && !isUnreadableRedaction && !isHeldByEditor(item) {
                     if !matchesCurrentDiskRedactions(item) {
                         purgeStaleRedaction(for: item)
                     } else {
@@ -337,7 +350,7 @@ final class CaptureLibraryIndex {
         var nextCandidate: (item: CaptureLibraryItem, entry: CaptureTextEntry)?
         while !insightQueue.isEmpty {
             let candidate = insightQueue.removeFirst()
-            guard let candidateEntry = entries[candidate.id] else { continue }
+            guard let candidateEntry = entries[candidate.id], !isHeldByEditor(candidate) else { continue }
             if !matchesCurrentDiskRedactions(candidate) {
                 purgeStaleRedaction(for: candidate)
                 continue
@@ -362,7 +375,8 @@ final class CaptureLibraryIndex {
             let isStillCurrent = latestItems?.contains(where: {
                 $0.id == item.id && $0.thumbnailKey == item.thumbnailKey
             }) == true && entries[item.id]?.isCurrent(fingerprint: item.thumbnailKey) == true
-            guard isStillCurrent else {
+            // The frame is never shown to the model while Studio may hold edits it lacks.
+            guard isStillCurrent, !isHeldByEditor(item) else {
                 insightDeadline?.cancel()
                 insightDeadline = nil
                 describing = nil
@@ -395,7 +409,8 @@ final class CaptureLibraryIndex {
                 modelCooldown.reset()
                 lastModelFailure[item.id] = nil
                 guard latestItems?.contains(where: { $0.id == item.id && $0.thumbnailKey == item.thumbnailKey }) == true,
-                      var current = entries[item.id], current.isCurrent(fingerprint: item.thumbnailKey) else { return }
+                      var current = entries[item.id], current.isCurrent(fingerprint: item.thumbnailKey),
+                      !isHeldByEditor(item) else { return }
                 guard matchesCurrentDiskRedactions(item) else {
                     purgeStaleRedaction(for: item)
                     return

@@ -254,6 +254,60 @@ struct LibraryTextIndexChecks {
 
         try await sourceChecks(scratch: scratch, recordingID: recordingID)
         try await redactionChecks()
+        try await openEditorChecks()
+    }
+
+    /// A recording open in Studio isn't read while the editor may hold a mask its files lack, and is
+    /// read with that mask once the editor closes.
+    static func openEditorChecks() async throws {
+        let history = ScreenshotHistoryStore.shared
+        let index = CaptureLibraryIndex.shared
+        let model = CaptureLibraryModel.shared
+        var manifest = CaptureManifest()
+        manifest.duration = 8; manifest.pixelWidth = 1280; manifest.pixelHeight = 720
+        let open = try RecordingSessionStore.createSession()
+        let closed = try RecordingSessionStore.createSession()
+        for session in [open, closed] {
+            try await movie(at: session.screenURL, firstLine: "VAULTCODE 55107", secondLine: "VAULTCODE 55107")
+            try session.writeCaptureManifest(manifest)
+        }
+        let openID = "recording:\(open.directoryURL.standardizedFileURL.path)"
+        let closedID = "recording:\(closed.directoryURL.standardizedFileURL.path)"
+
+        // The mask lives only in Studio: the package is read-only, so its draft can't be written.
+        let mask = RecordingRedaction(start: 0, end: 8, rect: CGRect(x: 0, y: 0, width: 1, height: 1), mode: .blur, strength: 1)
+        let snapshot = try CaptureSessionSnapshots(directory: open.sessionSnapshotsURL).keep(
+            document: CaptureSessionSnapshots.encode(RecordingEditDocument(style: .init(), zoomEnabled: false, zoomCues: [], redactions: [mask])),
+            openedAt: Date())[0]
+        let studio = RecordingStudioModel(url: open.directoryURL)
+        await studio.load()
+        try check(studio.isLoaded, "Studio did not open the fixture: \(studio.loadError ?? "")")
+        try check(chmod(open.directoryURL.path, 0o555) == 0, "Could not make the recording read-only")
+        studio.revertToSession(snapshot)
+        try await waitUntil("mask restored in Studio", timeout: .seconds(10)) { !studio.hasRunningWork }
+        try check(studio.redactions == [mask] && !FileManager.default.fileExists(atPath: open.draftDocumentURL.path),
+                  "Fixture did not leave the mask only in Studio")
+
+        await history.importRecordingSession(open)
+        await history.importRecordingSession(closed)
+        try await waitUntil("the recording without an editor read") {
+            index.entries[closedID]?.paragraphs.joined(separator: " ").contains("VAULTCODE") == true
+        }
+        try check(index.entries[openID] == nil && !index.pendingIDs.contains(openID),
+                  "The index read a recording open in Studio: \(index.entries[openID]?.paragraphs ?? [])")
+
+        _ = chmod(open.directoryURL.path, 0o755)
+        studio.teardown()
+        try check(open.loadDraftDocument()?.redactions == [mask], "Closing Studio did not keep the mask")
+        model.refresh()
+        try await waitUntil("the closed recording read with its mask") {
+            guard let entry = index.entries[openID] else { return false }
+            return CaptureTextIndexPlan.redactionTag(in: entry.fingerprint) != nil
+        }
+        let text = try require(index.entries[openID]).paragraphs.joined(separator: " ")
+        try check(!text.localizedCaseInsensitiveContains("VAULTCODE") && !text.contains("55107"),
+                  "The recording closed in Studio was read without its mask: \(text)")
+        print("CHECK: a recording open in Studio waits, then is read with Studio's mask")
     }
 
     /// Redacted content must never enter OCR text or the frame sent to Apple Intelligence,

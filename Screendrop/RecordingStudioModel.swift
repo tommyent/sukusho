@@ -1429,6 +1429,8 @@ final class RecordingStudioModel {
         if didPersistDraft, let session, !StudioProjectRegistry.shared.hasLoadedEditor(for: sessionURL) {
             try? session.removeUnreferencedMedia()
         }
+        // The Library index waits on recordings open in Studio.
+        CaptureLibraryIndex.shared.settingsDidChange()
         exportTask = nil
         audioExportTask = nil
         replacementAudioTask = nil
