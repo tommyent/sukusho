@@ -362,9 +362,7 @@ struct StudioEditingTests {
         #expect(abs(movedZoom.start - 10.0) < 0.0001 && abs(movedZoom.end - 12.0) < 0.0001)
 
         // Cue covering source 0..4 over touching reversed clips [2..4, 0..2]:
-        // editorSpan breaks at the backward join so the block displays one monotonic piece (0..2 = source 2..4),
-        // and trimming is disabled for multi-run cues in both hit-testing and trim resolution so the other
-        // surviving clip (0..2) never loses its zoom.
+        // The zoom block spans both touching clips. Its two source runs still disable trimming.
         let touchingReversed = RecordingClipTimeline(segments: [
             RecordingClipSegment(sourceStart: 2, sourceEnd: 4),
             RecordingClipSegment(sourceStart: 0, sourceEnd: 2),
@@ -373,7 +371,7 @@ struct StudioEditingTests {
         let spanningRuns = touchingReversed.editorRuns(overlapping: spanningCue.start, sourceEnd: spanningCue.end)
         #expect(spanningRuns.count == 2)
         let displayedSpan = try #require(touchingReversed.editorSpan(overlapping: spanningCue.start, sourceEnd: spanningCue.end))
-        #expect(abs(displayedSpan.lowerBound - 0.0) < 0.0001 && abs(displayedSpan.upperBound - 2.0) < 0.0001)
+        #expect(abs(displayedSpan.lowerBound - 0.0) < 0.0001 && abs(displayedSpan.upperBound - 4.0) < 0.0001)
         let displayedBlock = StudioLaneBlock(
             item: spanningCue,
             editorStart: displayedSpan.lowerBound,

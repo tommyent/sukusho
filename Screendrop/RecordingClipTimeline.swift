@@ -658,9 +658,15 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
     /// the time between them), so this is first to last. Once clips are
     /// reordered they may not, and the longest run that touches stands for it.
     func editorSpan(overlapping sourceStart: TimeInterval, sourceEnd: TimeInterval) -> Range<TimeInterval>? {
-        editorRuns(overlapping: sourceStart, sourceEnd: sourceEnd)
-            .max(by: { $0.editorDuration < $1.editorDuration })
-            .map { $0.editorStart..<$0.editorEnd }
+        var spans: [Range<TimeInterval>] = []
+        for slice in slices(overlapping: sourceStart, sourceEnd: sourceEnd) {
+            if let last = spans.last, abs(last.upperBound - slice.editorStart) < 0.000_5 {
+                spans[spans.count - 1] = last.lowerBound..<slice.editorEnd
+            } else {
+                spans.append(slice.editorStart..<slice.editorEnd)
+            }
+        }
+        return spans.max { $0.upperBound - $0.lowerBound < $1.upperBound - $1.lowerBound }
     }
 
     /// One maximal contiguous range of clips whose source times move forward
