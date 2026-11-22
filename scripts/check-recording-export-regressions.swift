@@ -2088,6 +2088,40 @@ struct RecordingExportRegressionChecks {
         print("PASS: Revert to Original resets a readable revision conflict and still refuses unreadable or newer-format drafts")
     }
 
+    static func rolledBackRedactionBlocksDelivery(in directory: URL) async throws {
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("rolled-back-mask.sukushorec"))
+        try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
+        try await movie(at: session.screenURL)
+        let model = RecordingStudioModel(url: session.directoryURL)
+        await model.load()
+        defer { model.teardown() }
+        try check(model.isLoaded, "Rolled-back mask fixture did not load")
+        var alerts: [String] = []
+        let presenter = FailureAlert.presenter
+        FailureAlert.presenter = { message, _, _ in alerts.append(message) }
+        defer { FailureAlert.presenter = presenter }
+        try check(chmod(session.directoryURL.path, 0o555) == 0, "Could not make the recording read-only")
+        defer { _ = chmod(session.directoryURL.path, 0o755) }
+        model.addRedaction(atEditorTime: 1)
+        try check(model.redactions.isEmpty && alerts == ["The video redaction could not be saved"],
+                  "The rejected mask was not rolled back with an alert: \(alerts)")
+        model.export()
+        model.shareToCloud(options: CloudUploadOptions(title: "", socialEnabled: false))
+        guard case .failed = model.exportState, case .failed = model.shareState else {
+            throw Failure(description: "Studio Export or Share ran after a mask was rolled back")
+        }
+        var refused = 0
+        do { _ = try RecordingSessionRenderer.documentForDelivery(for: session) } catch { refused += 1 }
+        if (try? await CaptureDragExport(url: session.screenURL, isVideo: true).exported(as: .movie)) == nil { refused += 1 }
+        do { _ = try await RecordingSessionRenderer.prepareRawImport(for: session.directoryURL) } catch { refused += 1 }
+        try check(refused == 3 && !model.hasRunningWork, "Delivery went ahead after a mask was rolled back (\(refused)/3 refused)")
+        _ = chmod(session.directoryURL.path, 0o755)
+        try check(model.saveProject(reportingFailure: false), "Studio could not save once the package was writable")
+        try check(try RecordingSessionRenderer.documentForDelivery(for: session)?.redactions.isEmpty == true,
+                  "Delivery did not resume after the save, or kept the rejected mask")
+        print("PASS: a mask rolled back by a failed draft write keeps Studio and Library delivery closed until a save")
+    }
+
     static func main() async throws {
         setbuf(stdout, nil)
         guard let root = ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] else {
@@ -2116,6 +2150,7 @@ struct RecordingExportRegressionChecks {
         try await handOutNames(in: directory)
         try await backslashPackageName(in: directory)
         try await revertResolvesReadableConflict(in: directory)
+        try await rolledBackRedactionBlocksDelivery(in: directory)
         try await canonicalStudioRegistry(in: directory)
         try await importedEvidence(in: directory)
         try await packageWallpaper(in: directory)
