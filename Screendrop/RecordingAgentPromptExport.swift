@@ -40,10 +40,14 @@ enum RecordingAgentPromptExport {
         let hidden = Set(document?.hiddenInkStrokeIDs ?? [])
         capture?.ink.removeAll { document?.showsInk == false || hidden.contains($0.id) }
         let input = FileManager.default.fileExists(atPath: session.pointerCaptureURL.path) ? session.pointerCaptureURL : nil
+        let screenFile: URL? = (document?.redactions.isEmpty ?? true) ? session.screenURL : nil
+        let files: RecordingAgentPromptPlan.SourceFiles? = (screenFile != nil || input != nil)
+            ? .init(screen: screenFile, input: input)
+            : nil
         let manifest = session.loadCaptureManifest()
         return RecordingAgentPromptPlan(title: title(for: session), timeline: timeline, cues: transcript.cues, words: transcript.words,
                                         capture: capture, cursorNames: PointerArtworkCapture.names(for: capture?.artwork ?? []),
-                                        files: .init(screen: session.screenURL, input: input),
+                                        files: files,
                                         excludesAppWindows: manifest?.includesAppWindows == false,
                                         source: session.loadProjectMetadata()?.source, transcriptionFailure: transcriptionFailure,
                                         screen: manifest.flatMap { $0.pixelWidth > 0 ? .init(width: $0.pixelWidth, height: $0.pixelHeight, scale: $0.pixelScale) : nil },

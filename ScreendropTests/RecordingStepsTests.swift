@@ -262,11 +262,16 @@ struct RecordingStepsTests {
         try await makeSecretMovie(at: movie)
         let secretPlan = RecordingAgentPromptPlan(
             title: "Secret", timeline: .full(sourceDuration: 2), cues: [], words: [],
-            capture: PointerCaptureFile(presses: [.init(time: 0.5, x: 0.1, y: 0.1, button: 0, phase: .down)])
+            capture: PointerCaptureFile(presses: [.init(time: 0.5, x: 0.1, y: 0.1, button: 0, phase: .down)]),
+            files: .init(screen: movie, input: nil)
         )
         let redaction = RecordingRedaction(
             start: 0, end: 2, rect: CGRect(x: 0.1, y: 0.1, width: 0.8, height: 0.8), mode: .blur, strength: 1.0
         )
+
+        // Baseline: unredacted prompt lists raw screen.mov; redacted prompt omits it from Source files.
+        #expect(secretPlan.markdown(frameTimes: [0.5], sourceStills: true).contains(movie.path))
+        #expect(!secretPlan.markdown(frameTimes: [0.5], sourceStills: true, hasRedactions: true).contains(movie.path))
 
         // Baseline: without redaction the secret block at (82, 120) is bright red.
         let unredactedStill = try #require(try await RecordingSteps.stills(plan: secretPlan, master: movie).first ?? nil)
@@ -298,6 +303,9 @@ struct RecordingStepsTests {
         )
         let promptStill = try Data(contentsOf: promptFolder.appendingPathComponent("stills/0001.jpg"))
         #expect(promptStill == (try Data(contentsOf: freshPromptFolder.appendingPathComponent("stills/0001.jpg"))))
+        let promptText = try String(contentsOf: promptFolder.appendingPathComponent("prompt.md"), encoding: .utf8)
+        #expect(!promptText.contains(movie.path))
+        #expect(!promptText.contains("## Source files"))
         let promptStrip = try Data(contentsOf: promptFolder.appendingPathComponent("strips/0001.jpg"))
         #expect(promptStrip == (try Data(contentsOf: freshPromptFolder.appendingPathComponent("strips/0001.jpg"))))
         let stripPixel = try pixel(try decodeJPEG(promptStrip), x: 82, y: 120)

@@ -155,6 +155,7 @@ nonisolated enum RecordingAgentPromptWriter {
             progress(Double(index + 1) / Double(plan.moments.count))
         }
         try plan.markdown(frameTimes: frameTimes, strips: stripSpans, sourceStills: edited == nil,
+                          hasRedactions: !redactions.isEmpty,
                           omittedForRedaction: omittedForRedaction, stripsOmittedForRedaction: stripsOmittedForRedaction)
             .write(to: staging.appendingPathComponent("prompt.md"), atomically: true, encoding: .utf8)
         if let logs = plan.logs {

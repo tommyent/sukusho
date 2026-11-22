@@ -45,7 +45,7 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
     let files: SourceFiles?
 
     struct SourceFiles: Sendable {
-        var screen: URL
+        var screen: URL?
         var input: URL?
     }
 
@@ -308,7 +308,7 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
     /// `strips` holds each moment's strip span, nil where none was written.
     /// `sourceStills`: the stills came from the screen recording, not the edited movie.
     func markdown(frameTimes: [TimeInterval?], strips: [ClosedRange<TimeInterval>?] = [], sourceStills: Bool = false,
-                  omittedForRedaction: Set<Int> = [], stripsOmittedForRedaction: Set<Int> = []) -> String {
+                  hasRedactions: Bool = false, omittedForRedaction: Set<Int> = [], stripsOmittedForRedaction: Set<Int> = []) -> String {
         var text = "# \(Self.escape(title.split(whereSeparator: \.isWhitespace).joined(separator: " ")))\n\n"
         text += "Use this recorded walkthrough and its evidence as task context.\n\n"
         if let recorded = recordedLine { text += recorded + "\n\n" }
@@ -332,13 +332,18 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
             text += "Sukusho's own windows (Library, editor, Studio, preview cards, recording controls) were left out of this recording, so the frames show what was behind them.\n\n"
         }
         if let files {
-            func code(_ url: URL) -> String { "`" + url.path.replacingOccurrences(of: "`", with: "'") + "`" }
-            text += "## Source files\n\n"
-            text += "- Screen recording: \(code(files.screen)): the unedited screen at full resolution, with no zoom, crop or style, and no pointer. It runs on the recording's own clock; cuts and speed changes in the edited recording shift the times above.\n"
-            if let input = files.input {
-                text += "- Input log: \(code(input)): JSON on the screen recording's clock, with pointer moves and drags (travel), clicks (presses), shortcuts (keystrokes), scrolls (scrolls), pen strokes drawn on screen (ink) and cursor images (artwork, base-64 PNG). Positions are normalized 0–1 from the top left.\n"
+            let screen = hasRedactions ? nil : files.screen
+            if screen != nil || files.input != nil {
+                func code(_ url: URL) -> String { "`" + url.path.replacingOccurrences(of: "`", with: "'") + "`" }
+                text += "## Source files\n\n"
+                if let screen {
+                    text += "- Screen recording: \(code(screen)): the unedited screen at full resolution, with no zoom, crop or style, and no pointer. It runs on the recording's own clock; cuts and speed changes in the edited recording shift the times above.\n"
+                }
+                if let input = files.input {
+                    text += "- Input log: \(code(input)): JSON on the screen recording's clock, with pointer moves and drags (travel), clicks (presses), shortcuts (keystrokes), scrolls (scrolls), pen strokes drawn on screen (ink) and cursor images (artwork, base-64 PNG). Positions are normalized 0–1 from the top left.\n"
+                }
+                text += "\n"
             }
-            text += "\n"
         }
         if let logs {
             let summary = logs.summary(timeline: timeline)
