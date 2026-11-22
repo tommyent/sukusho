@@ -208,4 +208,14 @@ final class StudioProjectRegistry {
             model.flushDraft()
         }
     }
+
+    /// Flushes only the open editor matching `url` so callers can validate
+    /// that specific package before flushing without touching other open editors.
+    func flushDraft(for url: URL) {
+        let path = url.resolvingSymlinksInPath().standardizedFileURL.path
+        for model in models.values.compactMap(\.model)
+            where model.sessionURL.resolvingSymlinksInPath().standardizedFileURL.path == path {
+            model.flushDraft()
+        }
+    }
 }

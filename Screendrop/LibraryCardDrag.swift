@@ -7,7 +7,8 @@ extension LibrarySavedCard {
         case .capture(let item):
             var file = item.fileURL
             if item.isVideo, let session = item.session ?? RecordingDeliverable.session(for: file) {
-                StudioProjectRegistry.shared.flushDrafts()
+                try RecordingPackageMedia.validateRenderInputs(in: session.directoryURL)
+                StudioProjectRegistry.shared.flushDraft(for: session.directoryURL)
                 try RecordingPackageMedia.validateRenderInputs(in: session.directoryURL)
                 let edits = try session.editDocumentForRendering()
                 guard let ready = RecordingSessionRenderer.readyDeliverable(for: session, editDocument: edits) else {

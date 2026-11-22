@@ -301,14 +301,16 @@ nonisolated struct RecordingSession: Sendable, Equatable {
         let document = forLocalExport ? document : document?.forVideoRendering
         // Older renders could include cut caption wording or omit replacement audio.
         guard let existing = existingFinalURL,
-              let data = try? Data(contentsOf: renderStampURL),
+              let safeFinal = RecordingPackageMedia.resolvePackageFile(named: existing.lastPathComponent, in: directoryURL),
+              let safeStamp = try? RecordingPackageMedia.resolveOptionalPackageFile(named: Self.renderStampFileName, in: directoryURL),
+              let data = try? Data(contentsOf: safeStamp),
               let renderStamp = try? CaptureManifest.decoder.decode(RenderStamp.self, from: data),
               renderStamp.layoutVersion == RenderStamp.currentLayoutVersion else { return nil }
         let stamp = renderStamp.document
-        if stamp == document { return existing }
+        if stamp == document { return safeFinal }
         // Swapping only the container leaves every encoded sample intact, so
         // the render survives and export converts it on the way out.
-        if let document, Self.differsOnlyByExportContainer(document, stamp) { return existing }
+        if let document, Self.differsOnlyByExportContainer(document, stamp) { return safeFinal }
         return nil
     }
 }

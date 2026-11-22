@@ -843,12 +843,28 @@ struct StudioVideoOverlayTests {
             try RecordingPackageMedia.validateRenderInputs(in: symEdit)
         }
 
-        // Symlinked render-cache stamp (`render.json`) and cached deliverable (`<name>.mov`) rejected.
+        // Symlinked render-cache stamp (`render.json`), dangling `render.json` with cached movie,
+        // and cached deliverable (`<name>.mov`) rejected without disturbing the cache entries.
         let symStamp = try makeValidPackage("SymStamp.sukushorec")
         try FileManager.default.createSymbolicLink(at: symStamp.appendingPathComponent("render.json"), withDestinationURL: outsideFile)
         #expect(throws: RecordingPackageMedia.ValidationError.unsafeFile("render.json")) {
             try RecordingPackageMedia.validateRenderInputs(in: symStamp)
         }
+
+        let danglingStamp = try makeValidPackage("DanglingStamp.sukushorec")
+        let cachedMovieURL = danglingStamp.appendingPathComponent("DanglingStamp.mov")
+        let danglingStampURL = danglingStamp.appendingPathComponent("render.json")
+        try Data("cached".utf8).write(to: cachedMovieURL)
+        try FileManager.default.createSymbolicLink(
+            at: danglingStampURL,
+            withDestinationURL: dir.appendingPathComponent("missing-render.json")
+        )
+        #expect(throws: RecordingPackageMedia.ValidationError.unsafeFile("render.json")) {
+            try RecordingPackageMedia.validateRenderInputs(in: danglingStamp)
+        }
+        var stampStat = stat()
+        #expect(lstat(danglingStampURL.path, &stampStat) == 0)
+        #expect(FileManager.default.fileExists(atPath: cachedMovieURL.path))
 
         let symCached = try makeValidPackage("SymCached.sukushorec")
         try FileManager.default.createSymbolicLink(at: symCached.appendingPathComponent("SymCached.mov"), withDestinationURL: outsideFile)

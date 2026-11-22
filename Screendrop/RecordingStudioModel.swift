@@ -3193,6 +3193,9 @@ final class RecordingStudioModel {
     /// not the in-memory baseline: an unedited recording's baseline is a
     /// full default document, but the render made at Stop is stamped with none.
     private func dropStaleRender(in session: RecordingSession) {
+        guard (try? RecordingPackageMedia.validateRenderInputs(in: session.directoryURL)) != nil else {
+            return
+        }
         guard session.existingFinalURL != nil else { return }
         do {
             if session.freshFinalURL(matching: try session.editDocumentForRendering()) != nil { return }
