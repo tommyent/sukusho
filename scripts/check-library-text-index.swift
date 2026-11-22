@@ -452,7 +452,37 @@ struct LibraryTextIndexChecks {
         try await waitUntil("healthy recording described despite broken newer preview", timeout: .seconds(8)) {
             describedHealthy
         }
-        print("CHECK: Library OCR and insight image hide redacted content, rebuild on change, purge when OCR is off, fail closed on dangling edits, fence pre-scan model/live export, and defer unavailable previews")
+
+        // 4. Mixed-version package (format-99 saved edit under format-7 draft) must fail closed
+        // across editDocumentForRendering, Guide preparation, Library OCR/insight, without writes.
+        let mixedSession = try RecordingSessionStore.createSession()
+        try await movie(at: mixedSession.screenURL, firstLine: "MIXEDSECRET 55123", secondLine: "MIXEDSECRET 55123")
+        try mixedSession.writeCaptureManifest(manifest)
+        var futureEdit = redactedDoc
+        futureEdit.formatVersion = 99
+        let futureBytes = try CaptureManifest.encoder.encode(futureEdit)
+        try futureBytes.write(to: mixedSession.editDocumentURL, options: .atomic)
+        try mixedSession.writeDraftDocument(RecordingEditDocument(style: RecordingStudioStyle(), zoomEnabled: false, zoomCues: []))
+        let mixedBefore = try Set(FileManager.default.contentsOfDirectory(atPath: mixedSession.directoryURL.path))
+        var rejectedMixed = false
+        do {
+            _ = try mixedSession.editDocumentForRendering()
+        } catch RecordingPackageMedia.ValidationError.unsupportedFormatVersion(99) {
+            rejectedMixed = true
+        }
+        try check(rejectedMixed, "Mixed-version editDocumentForRendering did not throw unsupportedFormatVersion(99)")
+        let mixedScanned = CaptureLibraryScanner.scan(
+            history: [], historyDirectory: ScreendropStorage.applicationSupportDirectory, excludingSessionPath: nil
+        ).items
+        let mixedID = "recording:\(mixedSession.directoryURL.standardizedFileURL.path)"
+        let mixedItem = try require(mixedScanned.first { $0.id == mixedID })
+        try check(mixedItem.thumbnailKey.hasSuffix(CaptureTextIndexPlan.unreadableRedactionTag),
+                  "Mixed-version scanner did not mark redactions unreadable")
+        try check(await CaptureLibraryIndex.image(for: mixedItem) == nil,
+                  "Mixed-version package leaked an insight frame")
+        let mixedAfter = try Set(FileManager.default.contentsOfDirectory(atPath: mixedSession.directoryURL.path))
+        try check(mixedAfter == mixedBefore, "Mixed-version scan wrote into the package: \(mixedAfter.subtracting(mixedBefore))")
+        print("CHECK: Library OCR and insight image hide redacted content, rebuild on change, purge when OCR is off, fail closed on dangling/mixed-version edits, fence pre-scan model/live export, and defer unavailable previews")
     }
 
     /// The source app and window: History rows written before it decode, and
