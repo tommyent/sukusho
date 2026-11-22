@@ -9,23 +9,26 @@ nonisolated struct RecordingChapter: Identifiable, Codable, Equatable, Sendable 
     var start: TimeInterval
     var autoTitle: Bool? = nil
     var mediaFileName: String? = nil
+    var clipOccurrenceID: UUID? = nil
 
     init(
         id: UUID = UUID(),
         title: String,
         start: TimeInterval,
         autoTitle: Bool? = nil,
-        mediaFileName: String? = nil
+        mediaFileName: String? = nil,
+        clipOccurrenceID: UUID? = nil
     ) {
         self.id = id
         self.title = title
         self.start = start
         self.autoTitle = autoTitle
         self.mediaFileName = mediaFileName
+        self.clipOccurrenceID = clipOccurrenceID
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, start, autoTitle, mediaFileName
+        case id, title, start, autoTitle, mediaFileName, clipOccurrenceID
     }
 
     init(from decoder: any Decoder) throws {
@@ -35,6 +38,7 @@ nonisolated struct RecordingChapter: Identifiable, Codable, Equatable, Sendable 
         start = try container.decode(TimeInterval.self, forKey: .start)
         autoTitle = try container.decodeIfPresent(Bool.self, forKey: .autoTitle)
         mediaFileName = try container.decodeIfPresent(String.self, forKey: .mediaFileName)
+        clipOccurrenceID = try container.decodeIfPresent(UUID.self, forKey: .clipOccurrenceID)
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -44,6 +48,7 @@ nonisolated struct RecordingChapter: Identifiable, Codable, Equatable, Sendable 
         try container.encode(start, forKey: .start)
         if let autoTitle { try container.encode(autoTitle, forKey: .autoTitle) }
         if let mediaFileName { try container.encode(mediaFileName, forKey: .mediaFileName) }
+        if let clipOccurrenceID { try container.encode(clipOccurrenceID, forKey: .clipOccurrenceID) }
     }
 }
 
@@ -82,7 +87,8 @@ nonisolated enum RecordingChapterPlanner {
             .compactMap { chapter in
                 guard let time = timeline.editorTime(
                     forSourceEventTime: chapter.start,
-                    mediaFileName: chapter.mediaFileName
+                    mediaFileName: chapter.mediaFileName,
+                    occurrenceID: chapter.clipOccurrenceID
                 ),
                       time < timeline.duration - 0.5 else { return nil }
                 return (chapter, time)

@@ -72,12 +72,20 @@ nonisolated struct RecordingClipSegment: Identifiable, Codable, Equatable, Senda
     var sourceDuration: TimeInterval? = nil
     /// Per-clip Fit/Fill framing inside the card; `nil` defaults to `.fit`.
     var contentMode: VideoClipContentMode? = nil
+    /// Lineage ID shared by pieces split from the same inserted clip occurrence,
+    /// so markers and chapters on a repeated imported file stay attached to
+    /// their own occurrence across splits and reorders. `nil` for primary clips
+    /// and unsplit imported clips (whose `effectiveOccurrenceID` is `id`).
+    var occurrenceID: UUID? = nil
 
     /// True when this segment plays the project's primary `screen.mov`.
     var isPrimaryRecording: Bool { mediaFileName == nil }
 
     /// Key identifying this segment's media source for caches (empty for primary).
     var sourceKey: String { mediaFileName ?? "" }
+
+    /// Stable occurrence lineage identifier across splits of this clip.
+    var effectiveOccurrenceID: UUID { occurrenceID ?? id }
 
     /// Effective Fit/Fill framing inside the project's video card.
     var effectiveContentMode: VideoClipContentMode { contentMode ?? .fit }
@@ -92,7 +100,8 @@ nonisolated struct RecordingClipSegment: Identifiable, Codable, Equatable, Senda
         mediaFileName: String? = nil,
         displayName: String? = nil,
         sourceDuration: TimeInterval? = nil,
-        contentMode: VideoClipContentMode? = nil
+        contentMode: VideoClipContentMode? = nil,
+        occurrenceID: UUID? = nil
     ) {
         self.id = id
         self.sourceStart = sourceStart
@@ -104,11 +113,16 @@ nonisolated struct RecordingClipSegment: Identifiable, Codable, Equatable, Senda
         self.displayName = displayName
         self.sourceDuration = sourceDuration
         self.contentMode = contentMode
+        self.occurrenceID = occurrenceID
     }
 
-    /// This clip over another source range, keeping its speed and sound.
+    /// This clip over another source range, keeping its speed, sound, and
+    /// (when splitting an imported clip with a new `id`) its occurrence lineage.
     func covering(_ start: TimeInterval, _ end: TimeInterval, id: UUID? = nil) -> RecordingClipSegment {
         var copy = self
+        if let id, id != self.id, !self.isPrimaryRecording, copy.occurrenceID == nil {
+            copy.occurrenceID = self.id
+        }
         copy.id = id ?? self.id
         copy.sourceStart = start
         copy.sourceEnd = end
@@ -142,6 +156,7 @@ nonisolated struct RecordingClipSegment: Identifiable, Codable, Equatable, Senda
         case displayName
         case sourceDuration
         case contentMode
+        case occurrenceID
     }
 
     /// Accepted for migration from the first experimental split schema.
@@ -165,6 +180,7 @@ nonisolated struct RecordingClipSegment: Identifiable, Codable, Equatable, Senda
         displayName = try container.decodeIfPresent(String.self, forKey: .displayName)
         sourceDuration = try container.decodeIfPresent(TimeInterval.self, forKey: .sourceDuration)
         contentMode = try container.decodeIfPresent(VideoClipContentMode.self, forKey: .contentMode)
+        occurrenceID = try container.decodeIfPresent(UUID.self, forKey: .occurrenceID)
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -181,6 +197,7 @@ nonisolated struct RecordingClipSegment: Identifiable, Codable, Equatable, Senda
         if let displayName { try container.encode(displayName, forKey: .displayName) }
         if let sourceDuration { try container.encode(sourceDuration, forKey: .sourceDuration) }
         if let contentMode { try container.encode(contentMode, forKey: .contentMode) }
+        if let occurrenceID { try container.encode(occurrenceID, forKey: .occurrenceID) }
     }
 }
 
@@ -303,6 +320,7 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
                 RecordingClipSegment.volumeRange.upperBound
             )
             var clip = segment.covering(start, end, id: id)
+            clip.occurrenceID = segment.occurrenceID
             clip.speed = speed
             clip.volume = volume
             clip.isMuted = segment.isMuted
@@ -418,12 +436,15 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
     func editorTime(
         forSourceEventTime sourceTime: TimeInterval,
         mediaFileName: String? = nil,
+        occurrenceID: UUID? = nil,
         includeTimelineEnd: Bool = false
     ) -> TimeInterval? {
         guard sourceTime.isFinite else { return nil }
         var editorStart: TimeInterval = 0
         for segment in segments {
+            let matchesOccurrence = occurrenceID == nil || segment.effectiveOccurrenceID == occurrenceID
             if segment.mediaFileName == mediaFileName,
+               matchesOccurrence,
                sourceTime >= segment.sourceStart,
                sourceTime < segment.sourceEnd {
                 return editorStart + (sourceTime - segment.sourceStart) / segment.speed
@@ -433,6 +454,7 @@ nonisolated struct RecordingClipTimeline: Codable, Equatable, Sendable {
         if includeTimelineEnd,
            let last = segments.last,
            last.mediaFileName == mediaFileName,
+           (occurrenceID == nil || last.effectiveOccurrenceID == occurrenceID),
            abs(sourceTime - last.sourceEnd) <= 0.000_001 {
             return duration
         }

@@ -391,6 +391,7 @@ final class RecordingStudioModel {
     /// source-asset trim previews.
     @ObservationIgnored private var playerItemGate = StudioPlayerItemGate()
     @ObservationIgnored private var readyCutPlayerItem: AVPlayerItem?
+    @ObservationIgnored private var compositionTimeMap: StudioCompositionTimeMap?
     var exportState: RecordingStudioExportState = .idle
     /// The running export is the Bug Report's (its Agent Prompt), so its button shows the progress.
     private(set) var isExportingAgentPrompt = false
@@ -1421,6 +1422,7 @@ final class RecordingStudioModel {
         subtitleTimeline = .empty
         karaokeTimeline = .empty
         clipTimeline = RecordingClipTimeline(segments: [])
+        compositionTimeMap = nil
         wallpaperCacheLease = nil
     }
 
@@ -2032,7 +2034,8 @@ final class RecordingStudioModel {
             let anchor = StudioEditing.markerAnchor(at: currentTime, in: clipTimeline)
             let marker = RecordingMarker(
                 sourceTime: anchor.sourceTime,
-                mediaFileName: anchor.mediaFileName
+                mediaFileName: anchor.mediaFileName,
+                clipOccurrenceID: anchor.clipOccurrenceID
             )
             applyMarkers(markers + [marker], actionName: "Add Marker")
             showNotice("Marker")
@@ -2753,7 +2756,7 @@ final class RecordingStudioModel {
                 for region in redactions { try region.validate(sourceDuration: sourceDuration) }
             }
             redactionPreview.update(redactions: redactions, clipTimeline: clipTimeline)
-            let (composition, videoComposition) = try RecordingCompositionBuilder.makeMultiSourceVideoComposition(
+            let (composition, videoComposition, builtTimeMap) = try RecordingCompositionBuilder.makeMultiSourceVideoComposition(
                 primarySource: primarySource,
                 importedSources: importedVideoSources,
                 timeline: clipTimeline,
@@ -2761,6 +2764,7 @@ final class RecordingStudioModel {
                 targetRect: multiSourceTargetRect,
                 redactionSource: redactions.isEmpty ? nil : redactionPreview
             )
+            compositionTimeMap = builtTimeMap
             let plan = audioPlan
             playbackAudioLayout = StudioAudioComposer.add(plan, sources: activeAudioSources, to: composition)
             playbackAudioPlacement = plan.placement
@@ -2775,10 +2779,11 @@ final class RecordingStudioModel {
             playbackAsset = composition
             multiSourceVideoComposition = videoComposition
         } else if let screenVideoTrack {
-            let composition = try RecordingCompositionBuilder.makeVideoComposition(
+            let (composition, builtTimeMap) = try RecordingCompositionBuilder.makeVideoCompositionWithTimeMap(
                 videoTrack: screenVideoTrack,
                 timeline: clipTimeline
             )
+            compositionTimeMap = builtTimeMap
             let plan = audioPlan
             playbackAudioLayout = StudioAudioComposer.add(plan, sources: activeAudioSources, to: composition)
             playbackAudioPlacement = plan.placement
@@ -3679,9 +3684,14 @@ final class RecordingStudioModel {
         }
     }
 
-    /// True when `time` falls inside a primary-recording clip (not an imported clip).
+    /// True when `time` falls inside a primary-recording clip (not an imported
+    /// clip), following the active composition's quantized 600ths boundaries so
+    /// preview overlays stay in lockstep with the player.
     func isPrimaryRecording(at time: TimeInterval) -> Bool {
-        clipTimeline.isPrimaryRecording(at: time)
+        if let entry = compositionTimeMap?.entry(at: time) {
+            return entry.isPrimaryRecording
+        }
+        return clipTimeline.isPrimaryRecording(at: time)
     }
 
     /// Viewport frame to render at a given time, honoring the zoom toggle.
@@ -3892,7 +3902,8 @@ final class RecordingStudioModel {
             title: "Chapter \(chapters.count + 1)",
             start: location.sourceTime,
             autoTitle: segment.isPrimaryRecording,
-            mediaFileName: segment.mediaFileName
+            mediaFileName: segment.mediaFileName,
+            clipOccurrenceID: segment.isPrimaryRecording ? nil : segment.effectiveOccurrenceID
         )
         if segment.isPrimaryRecording {
             chapter.title = RecordingChapterPlanner.mapped(
@@ -3940,6 +3951,7 @@ final class RecordingStudioModel {
         var next = chapters
         next[index].start = location.sourceTime
         next[index].mediaFileName = segment.mediaFileName
+        next[index].clipOccurrenceID = segment.isPrimaryRecording ? nil : segment.effectiveOccurrenceID
         applyChapters(next, actionName: "Move Chapter")
     }
 
@@ -5541,7 +5553,7 @@ final class RecordingStudioModel {
             if self.clipTimeline.hasImportedClips {
                 if let primarySource = self.primaryVideoSource {
                     do {
-                        let (_, videoComposition) = try RecordingCompositionBuilder.makeMultiSourceVideoComposition(
+                        let (_, videoComposition, builtTimeMap) = try RecordingCompositionBuilder.makeMultiSourceVideoComposition(
                             primarySource: primarySource,
                             importedSources: self.importedVideoSources,
                             timeline: self.clipTimeline,
@@ -5549,6 +5561,7 @@ final class RecordingStudioModel {
                             targetRect: self.multiSourceTargetRect,
                             redactionSource: self.redactions.isEmpty ? nil : self.redactionPreview
                         )
+                        self.compositionTimeMap = builtTimeMap
                         item.videoComposition = videoComposition
                     } catch {
                         self.cutRedactionPreviewError = error.localizedDescription

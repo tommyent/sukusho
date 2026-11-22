@@ -415,7 +415,7 @@ struct StudioVideoSequenceTests {
             contentMode: .fit
         )
         let fitTimeline = RecordingClipTimeline(segments: [primarySeg, portraitFitSeg])
-        let (fitComposition, fitVideoComp) = try RecordingCompositionBuilder.makeMultiSourceVideoComposition(
+        let (fitComposition, fitVideoComp, fitTimeMap) = try RecordingCompositionBuilder.makeMultiSourceVideoComposition(
             primarySource: primarySource,
             importedSources: ["phone-portrait.mov": portraitSource],
             timeline: fitTimeline,
@@ -423,6 +423,7 @@ struct StudioVideoSequenceTests {
         )
         #expect(abs(fitVideoComp.renderSize.width - 320) < 1)
         #expect(abs(fitVideoComp.renderSize.height - 180) < 1)
+        #expect(fitTimeMap.entries.count == 2)
 
         // Render frame at t=0.5s (primary blue) and t=1.5s (portrait green letterboxed).
         let fitGen = AVAssetImageGenerator(asset: fitComposition)
@@ -445,7 +446,7 @@ struct StudioVideoSequenceTests {
         var portraitFillSeg = portraitFitSeg
         portraitFillSeg.contentMode = .fill
         let fillTimeline = RecordingClipTimeline(segments: [primarySeg, portraitFillSeg])
-        let (fillComposition, fillVideoComp) = try RecordingCompositionBuilder.makeMultiSourceVideoComposition(
+        let (fillComposition, fillVideoComp, _) = try RecordingCompositionBuilder.makeMultiSourceVideoComposition(
             primarySource: primarySource,
             importedSources: ["phone-portrait.mov": portraitSource],
             timeline: fillTimeline,
@@ -482,6 +483,539 @@ struct StudioVideoSequenceTests {
         let layout = try StudioAudioComposer.addStrict(audioPlan, sources: sources, to: fitComposition)
         #expect(layout.placements.count == 2)
         #expect(!fitComposition.tracks(withMediaType: .audio).isEmpty)
+    }
+
+    // MARK: - Round 2 Regressions (Findings 1, 3, 6)
+
+    @Test func fractionalCutPreviewAndCompositionReaderMaskPrimaryWithZeroDetailLeak() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StudioVideoSeqPrivacy-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let primaryURL = tempDir.appendingPathComponent("primary-checker.mov")
+        let importURL = tempDir.appendingPathComponent("flat-import.mov")
+
+        // High-contrast 4x4 checkerboard primary (raw detail ~120+, masked ~0).
+        try await Self.writeCheckerboardMovie(
+            to: primaryURL,
+            size: CGSize(width: 160, height: 120),
+            duration: 2.0
+        )
+        // Flat solid-blue import (detail ~0).
+        try await Self.writeSyntheticMovie(
+            to: importURL,
+            size: CGSize(width: 160, height: 120),
+            duration: 1.0,
+            color: (r: 30, g: 110, b: 220),
+            preferredTransform: .identity,
+            toneHz: 440
+        )
+
+        let primarySource = try await StudioVideoSource.load(url: primaryURL)
+        let importSource = try await StudioVideoSource.load(url: importURL)
+
+        // Confirm raw primary has high checkerboard detail before masking.
+        let rawGen = AVAssetImageGenerator(asset: primarySource.asset)
+        rawGen.requestedTimeToleranceBefore = .zero
+        rawGen.requestedTimeToleranceAfter = .zero
+        let rawImg = try await rawGen.image(at: CMTime(seconds: 0.55, preferredTimescale: 600)).image
+        let rawDetail = Self.detailScore(of: rawImg)
+        #expect(rawDetail > 50)
+
+        let fullMask = RecordingRedaction(
+            start: 0.50,
+            end: 0.75,
+            rect: CGRect(x: 0, y: 0, width: 1, height: 1),
+            mode: .pixelate,
+            strength: 1.0
+        )
+
+        func makeImport(_ duration: TimeInterval) -> RecordingClipSegment {
+            RecordingClipSegment(
+                sourceStart: 0,
+                sourceEnd: duration,
+                mediaFileName: "flat-import.mov",
+                displayName: "Flat",
+                sourceDuration: 1.0
+            )
+        }
+
+        // Fixture 1: 3 x 0.2505s + 0.25s imports, masked primary 0.50..<0.75, trailing import.
+        let fixture1 = RecordingClipTimeline(segments: [
+            makeImport(0.2505),
+            makeImport(0.2505),
+            makeImport(0.2505),
+            makeImport(0.25),
+            RecordingClipSegment(sourceStart: 0.50, sourceEnd: 0.75),
+            makeImport(0.25)
+        ])
+
+        // Fixture 2: 16 x 0.2511s imports, masked primary 0.50..<0.75, trailing import.
+        let fixture2 = RecordingClipTimeline(
+            segments: (0..<16).map { _ in makeImport(0.2511) } + [
+                RecordingClipSegment(sourceStart: 0.50, sourceEnd: 0.75),
+                makeImport(0.25)
+            ]
+        )
+
+        // Fixture 3: split primary + split/reordered fractional imports producing the same cut edges.
+        let baseImport = makeImport(0.7515)
+        let baseTimeline = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 0.50, sourceEnd: 0.75),
+            baseImport,
+            makeImport(0.25)
+        ])
+        let split1 = try #require(baseTimeline.split(at: 0.25 + 0.2505)).timeline
+        let split2 = try #require(split1.split(at: 0.25 + 0.5010)).timeline
+        // Move the primary clip (index 0) after the four fractional import pieces (index 4).
+        let fixture3 = try #require(split2.moving(segmentID: split2.segments[0].id, to: 4))
+
+        for timeline in [fixture1, fixture2, fixture3] {
+            let redactionSource = RecordingRedactionPreviewSource()
+            redactionSource.update(redactions: [fullMask], clipTimeline: timeline)
+
+            let (composition, videoComposition, timeMap) = try RecordingCompositionBuilder.makeMultiSourceVideoComposition(
+                primarySource: primarySource,
+                importedSources: ["flat-import.mov": importSource],
+                timeline: timeline,
+                renderSize: primarySource.displaySize,
+                redactionSource: redactionSource
+            )
+            let primaryEntry = try #require(timeMap.entries.first { $0.isPrimaryRecording })
+
+            // Preview compositor: check first cut frame, next frame, mid frame, and last frame of primary.
+            let previewGen = AVAssetImageGenerator(asset: composition)
+            previewGen.videoComposition = videoComposition
+            previewGen.requestedTimeToleranceBefore = .zero
+            previewGen.requestedTimeToleranceAfter = .zero
+
+            let frameStep = CMTime(value: 1, timescale: 60)
+            let checkTimes = [
+                primaryEntry.editorRange.start,
+                primaryEntry.editorRange.start + frameStep,
+                primaryEntry.editorRange.start + CMTime(seconds: primaryEntry.editorRange.duration.seconds / 2, preferredTimescale: 600),
+                primaryEntry.editorRange.end - frameStep
+            ]
+            for time in checkTimes {
+                let image = try await previewGen.image(at: time).image
+                let detail = Self.detailScore(of: image)
+                #expect(detail < 5.0, "Preview leaked checkerboard detail (\(detail)) at t=\(time.seconds)")
+            }
+
+            // Reader with `timeMap.timeRange` must NEVER fail with AVErrorInvalidVideoComposition (-11841),
+            // and every sample inside `primaryEntry` must be masked.
+            let reader = try AVAssetReader(asset: composition)
+            let tracks = try await composition.loadTracks(withMediaType: .video)
+            let output = AVAssetReaderVideoCompositionOutput(
+                videoTracks: tracks,
+                videoSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+            )
+            output.videoComposition = videoComposition
+            reader.add(output)
+            reader.timeRange = timeMap.timeRange
+            #expect(reader.startReading())
+
+            var primarySamplesChecked = 0
+            while let sample = output.copyNextSampleBuffer() {
+                let pts = CMSampleBufferGetPresentationTimeStamp(sample)
+                guard let entry = timeMap.entry(at: pts),
+                      entry.isPrimaryRecording,
+                      let buffer = CMSampleBufferGetImageBuffer(sample) else { continue }
+                primarySamplesChecked += 1
+                let detail = Self.detailScore(of: buffer)
+                #expect(detail < 5.0, "Reader sample leaked detail (\(detail)) at t=\(pts.seconds)")
+            }
+            #expect(reader.status == .completed, "Reader failed with \(String(describing: reader.error))")
+            #expect(primarySamplesChecked > 0)
+        }
+
+        // Verify scaled/intersected sourceInterval math covers the exact 2x source span per output frame.
+        let scaledEntry = StudioCompositionTimeMap.Entry(
+            segmentIndex: 0,
+            segmentID: UUID(),
+            isPrimaryRecording: true,
+            mediaFileName: nil,
+            editorRange: CMTimeRange(
+                start: CMTime(seconds: 1.0, preferredTimescale: 600),
+                duration: CMTime(seconds: 0.5, preferredTimescale: 600)
+            ),
+            sourceRange: CMTimeRange(
+                start: CMTime(seconds: 2.0, preferredTimescale: 600),
+                duration: CMTime(seconds: 1.0, preferredTimescale: 600)
+            )
+        )
+        let interval = scaledEntry.sourceInterval(
+            at: CMTime(seconds: 1.0, preferredTimescale: 600),
+            frameDuration: 1.0 / 60.0
+        )
+        #expect(abs(interval.start - 2.0) < 0.0005)
+        #expect(abs(interval.end - (2.0 + 2.0 / 60.0)) < 0.001)
+    }
+
+    @Test func lateUnredactedThumbnailBatchIsDiscardedAfterRedactionRefreshWhileKeepingImportedTiles() async {
+        let store = RecordingTimelineThumbnailStore()
+        let primaryURL = URL(fileURLWithPath: "/tmp/thumb-primary.mov")
+        let importedURL = URL(fileURLWithPath: "/tmp/thumb-import.mov")
+
+        nonisolated final class Gate: @unchecked Sendable {
+            private let lock = NSLock()
+            private var startedContinuation: CheckedContinuation<Void, Never>?
+            private var releaseContinuation: CheckedContinuation<Void, Never>?
+            private var didStart = false
+            private var didRelease = false
+            private var primaryCalls = 0
+
+            func nextPrimaryCallIndex() -> Int {
+                lock.withLock {
+                    primaryCalls += 1
+                    return primaryCalls
+                }
+            }
+
+            func signalStartedAndWait() async {
+                await withCheckedContinuation { cont in
+                    let shouldResumeImmediately: Bool = lock.withLock {
+                        didStart = true
+                        if let waiting = startedContinuation {
+                            startedContinuation = nil
+                            waiting.resume()
+                        }
+                        if didRelease {
+                            return true
+                        }
+                        releaseContinuation = cont
+                        return false
+                    }
+                    if shouldResumeImmediately {
+                        cont.resume()
+                    }
+                }
+            }
+
+            func waitUntilStarted() async {
+                await withCheckedContinuation { cont in
+                    let alreadyStarted: Bool = lock.withLock {
+                        if didStart { return true }
+                        startedContinuation = cont
+                        return false
+                    }
+                    if alreadyStarted { cont.resume() }
+                }
+            }
+
+            func release() {
+                let cont: CheckedContinuation<Void, Never>? = lock.withLock {
+                    didRelease = true
+                    let c = releaseContinuation
+                    releaseContinuation = nil
+                    return c
+                }
+                cont?.resume()
+            }
+        }
+
+        let gate = Gate()
+        let redTile = Self.solidNSImage(r: 230, g: 20, b: 20)
+        let greenTile = Self.solidNSImage(r: 20, g: 210, b: 40)
+        let blueTile = Self.solidNSImage(r: 30, g: 80, b: 230)
+
+        store.renderBatch = { url, requests, redactions in
+            if url == importedURL {
+                return requests.map { RecordingTimelineThumbnailStore.Sample(key: $0.key, image: blueTile) }
+            }
+            if redactions.isEmpty {
+                let call = gate.nextPrimaryCallIndex()
+                if call == 1 {
+                    // Suspend unredacted batch even if cancelled, simulating a slow decoder finishing late.
+                    await gate.signalStartedAndWait()
+                }
+                return requests.map { RecordingTimelineThumbnailStore.Sample(key: $0.key, image: redTile) }
+            } else {
+                return requests.map { RecordingTimelineThumbnailStore.Sample(key: $0.key, image: greenTile) }
+            }
+        }
+
+        // 1. Register imported source first and let its blue tiles settle in cache.
+        store.registerSource(key: "imp.mov", url: importedURL, duration: 4.0)
+        for _ in 0..<50 {
+            if store.image(in: store.grid(forTargetSpan: 1.0, sourceKey: "imp.mov"), tileIndex: 0, sourceKey: "imp.mov") != nil {
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        let importedBefore = store.image(in: store.grid(forTargetSpan: 1.0, sourceKey: "imp.mov"), tileIndex: 0, sourceKey: "imp.mov")
+        #expect(importedBefore != nil)
+
+        // 2. Prepare unredacted primary; wait until batch 1 is suspended inside renderBatch.
+        store.prepare(url: primaryURL, duration: 4.0, redactions: [])
+        await gate.waitUntilStarted()
+
+        // 3. Install a redaction on primary while the unredacted batch is in flight.
+        let mask = RecordingRedaction(start: 0, end: 4, rect: CGRect(x: 0, y: 0, width: 1, height: 1), mode: .pixelate)
+        store.prepare(url: primaryURL, duration: 4.0, redactions: [mask])
+
+        // 4. Release the stale unredacted batch and let the new redacted batches finish.
+        gate.release()
+        let primaryGrid = store.grid(forTargetSpan: 1.0, sourceKey: "")
+        for _ in 0..<80 {
+            if store.cachedTileCount >= 64 { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+
+        // Imported blue tile must still be cached and untouched.
+        let importedAfter = store.image(in: store.grid(forTargetSpan: 1.0, sourceKey: "imp.mov"), tileIndex: 0, sourceKey: "imp.mov")
+        #expect(importedAfter != nil)
+        if let cg = importedAfter?.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+            let px = Self.rgbPixel(in: cg, x: 4, y: 4)
+            #expect(px.b > 180 && px.r < 80)
+        }
+
+        // Every cached primary tile must be green (redacted), NEVER red (unredacted).
+        var checkedPrimaryTiles = 0
+        for idx in 0..<8 {
+            if let img = store.image(in: primaryGrid, tileIndex: idx, sourceKey: ""),
+               let cg = img.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+                checkedPrimaryTiles += 1
+                let px = Self.rgbPixel(in: cg, x: 4, y: 4)
+                #expect(px.g > 150 && px.r < 80, "Stale unredacted tile leaked into cache at tile \(idx)")
+            }
+        }
+        #expect(checkedPrimaryTiles > 0)
+    }
+
+    @Test func markersAndChaptersStayOnRepeatedClipOccurrenceAcrossSplitsReordersAndLegacyFallback() throws {
+        let firstOccurrence = RecordingClipSegment(
+            sourceStart: 0,
+            sourceEnd: 2,
+            mediaFileName: "clip.mov",
+            displayName: "Clip",
+            sourceDuration: 2
+        )
+        let secondOccurrence = RecordingClipSegment(
+            sourceStart: 0,
+            sourceEnd: 2,
+            mediaFileName: "clip.mov",
+            displayName: "Clip",
+            sourceDuration: 2
+        )
+        let timeline = RecordingClipTimeline(segments: [firstOccurrence, secondOccurrence])
+
+        // Drop marker and chapter on the SECOND occurrence at editor time 3.0 (source 1.0).
+        let anchor = StudioEditing.markerAnchor(at: 3.0, in: timeline)
+        #expect(anchor.mediaFileName == "clip.mov")
+        #expect(anchor.clipOccurrenceID == secondOccurrence.effectiveOccurrenceID)
+        #expect(abs(anchor.sourceTime - 1.0) < 0.0001)
+
+        let marker = RecordingMarker(
+            sourceTime: anchor.sourceTime,
+            mediaFileName: anchor.mediaFileName,
+            clipOccurrenceID: anchor.clipOccurrenceID
+        )
+        let chapter = RecordingChapter(
+            title: "Second take",
+            start: 1.0,
+            mediaFileName: "clip.mov",
+            clipOccurrenceID: secondOccurrence.effectiveOccurrenceID
+        )
+
+        // Both must resolve to editor time 3.0 (second occurrence), NOT 1.0 (first occurrence).
+        let mappedMarkers = StudioEditing.markerEditorTimes([marker], in: timeline)
+        #expect(mappedMarkers.count == 1)
+        #expect(abs(mappedMarkers[0].time - 3.0) < 0.0001)
+
+        let mappedChapters = RecordingChapterPlanner.mapped([chapter], through: timeline)
+        #expect(mappedChapters.count == 1)
+        #expect(abs(mappedChapters[0].start - 3.0) < 0.0001)
+
+        // Split the second occurrence at editor time 2.5 (source 0.5): trailing half inherits occurrenceID.
+        let splitTimeline = try #require(timeline.split(at: 2.5)).timeline
+        #expect(splitTimeline.segments.count == 3)
+        #expect(splitTimeline.segments[2].effectiveOccurrenceID == secondOccurrence.effectiveOccurrenceID)
+
+        let afterSplitMarkers = StudioEditing.markerEditorTimes([marker], in: splitTimeline)
+        #expect(afterSplitMarkers.count == 1)
+        #expect(abs(afterSplitMarkers[0].time - 3.0) < 0.0001)
+
+        let afterSplitChapters = RecordingChapterPlanner.mapped([chapter], through: splitTimeline)
+        #expect(afterSplitChapters.count == 1)
+        #expect(abs(afterSplitChapters[0].start - 3.0) < 0.0001)
+
+        // Move the second occurrence's trailing half (0.5..<2.0) to index 0: marker & chapter move to 0.5!
+        let reordered = try #require(splitTimeline.moving(segmentID: splitTimeline.segments[2].id, to: 0))
+        let afterReorderMarkers = StudioEditing.markerEditorTimes([marker], in: reordered)
+        #expect(afterReorderMarkers.count == 1)
+        #expect(abs(afterReorderMarkers[0].time - 0.5) < 0.0001)
+
+        let afterReorderChapters = RecordingChapterPlanner.mapped([chapter], through: reordered)
+        #expect(afterReorderChapters.count == 1)
+        #expect(abs(afterReorderChapters[0].start - 0.5) < 0.0001)
+
+        // Deleting occurrence 2 removes its marker & chapter rather than jumping onto occurrence 1.
+        let onlyFirst = RecordingClipTimeline(segments: [firstOccurrence])
+        #expect(StudioEditing.markerEditorTimes([marker], in: onlyFirst).isEmpty)
+        #expect(RecordingChapterPlanner.mapped([chapter], through: onlyFirst).isEmpty)
+
+        // Older projects without clipOccurrenceID still fall back to filename + sourceTime lookup.
+        let legacyMarker = RecordingMarker(sourceTime: 1.0, mediaFileName: "clip.mov", clipOccurrenceID: nil)
+        let legacyChapter = RecordingChapter(title: "Legacy", start: 1.0, mediaFileName: "clip.mov", clipOccurrenceID: nil)
+        let legacyMappedMarkers = StudioEditing.markerEditorTimes([legacyMarker], in: timeline)
+        #expect(legacyMappedMarkers.count == 1)
+        #expect(abs(legacyMappedMarkers[0].time - 1.0) < 0.0001)
+        let legacyMappedChapters = RecordingChapterPlanner.mapped([legacyChapter], through: timeline)
+        #expect(legacyMappedChapters.count == 1)
+        #expect(abs(legacyMappedChapters[0].start - 1.0) < 0.0001)
+
+        // Codable round-trip preserves clipOccurrenceID and segment occurrenceID.
+        let encodedSeg = try JSONEncoder().encode(splitTimeline.segments[2])
+        let decodedSeg = try JSONDecoder().decode(RecordingClipSegment.self, from: encodedSeg)
+        #expect(decodedSeg.occurrenceID == secondOccurrence.id)
+        let encodedMarker = try JSONEncoder().encode(marker)
+        let decodedMarker = try JSONDecoder().decode(RecordingMarker.self, from: encodedMarker)
+        #expect(decodedMarker.clipOccurrenceID == secondOccurrence.id)
+    }
+
+    private static func writeCheckerboardMovie(
+        to url: URL,
+        size: CGSize,
+        duration: TimeInterval
+    ) async throws {
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let videoSettings: [String: Any] = [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: Int(size.width),
+            AVVideoHeightKey: Int(size.height)
+        ]
+        let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+            assetWriterInput: videoInput,
+            sourcePixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: Int(size.width),
+                kCVPixelBufferHeightKey as String: Int(size.height)
+            ]
+        )
+        writer.add(videoInput)
+        guard writer.startWriting() else {
+            throw writer.error ?? NSError(domain: "StudioVideoSequenceTests", code: 10)
+        }
+        writer.startSession(atSourceTime: .zero)
+        let fps = 60
+        let totalFrames = max(1, Int((duration * Double(fps)).rounded()))
+        for frame in 0..<totalFrames {
+            while !videoInput.isReadyForMoreMediaData {
+                try await Task.sleep(for: .milliseconds(2))
+            }
+            var buffer: CVPixelBuffer?
+            CVPixelBufferCreate(
+                kCFAllocatorDefault,
+                Int(size.width),
+                Int(size.height),
+                kCVPixelFormatType_32BGRA,
+                nil,
+                &buffer
+            )
+            let pixelBuffer = try #require(buffer)
+            CVPixelBufferLockBaseAddress(pixelBuffer, [])
+            if let base = CVPixelBufferGetBaseAddress(pixelBuffer) {
+                let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+                let height = CVPixelBufferGetHeight(pixelBuffer)
+                let width = CVPixelBufferGetWidth(pixelBuffer)
+                for y in 0..<height {
+                    let row = base.advanced(by: y * bytesPerRow).assumingMemoryBound(to: UInt8.self)
+                    for x in 0..<width {
+                        let isWhite = ((x / 4) + (y / 4)) % 2 == 0
+                        let v: UInt8 = isWhite ? 255 : 0
+                        row[x * 4 + 0] = v
+                        row[x * 4 + 1] = v
+                        row[x * 4 + 2] = v
+                        row[x * 4 + 3] = 255
+                    }
+                }
+            }
+            CVPixelBufferUnlockBaseAddress(pixelBuffer, [])
+            adaptor.append(pixelBuffer, withPresentationTime: CMTime(value: CMTimeValue(frame), timescale: CMTimeScale(fps)))
+        }
+        videoInput.markAsFinished()
+        await writer.finishWriting()
+        if writer.status != .completed {
+            throw writer.error ?? NSError(domain: "StudioVideoSequenceTests", code: 11)
+        }
+    }
+
+    /// Mean absolute horizontal + vertical neighbor luma difference across the
+    /// interior of a frame (high for raw checkerboard, ~0 for fully masked or
+    /// flat color frames).
+    private static func detailScore(of image: CGImage) -> Double {
+        let width = image.width
+        let height = image.height
+        guard width > 4, height > 4 else { return 0 }
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(
+            data: &bytes,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return 0 }
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return lumaGradientScore(rgba: bytes, width: width, height: height, bytesPerRow: width * 4, isBGRA: false)
+    }
+
+    private static func detailScore(of buffer: CVPixelBuffer) -> Double {
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(buffer) else { return 0 }
+        let width = CVPixelBufferGetWidth(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+        let raw = UnsafeBufferPointer(start: base.assumingMemoryBound(to: UInt8.self), count: height * bytesPerRow)
+        return lumaGradientScore(rgba: Array(raw), width: width, height: height, bytesPerRow: bytesPerRow, isBGRA: true)
+    }
+
+    private static func lumaGradientScore(rgba: [UInt8], width: Int, height: Int, bytesPerRow: Int, isBGRA: Bool) -> Double {
+        func luma(_ x: Int, _ y: Int) -> Double {
+            let offset = y * bytesPerRow + x * 4
+            let r = Double(rgba[offset + (isBGRA ? 2 : 0)])
+            let g = Double(rgba[offset + 1])
+            let b = Double(rgba[offset + (isBGRA ? 0 : 2)])
+            return 0.299 * r + 0.587 * g + 0.114 * b
+        }
+        var sum = 0.0
+        var count = 0
+        for y in 2..<(height - 2) {
+            for x in 2..<(width - 2) {
+                let c = luma(x, y)
+                sum += abs(c - luma(x + 1, y)) + abs(c - luma(x, y + 1))
+                count += 2
+            }
+        }
+        return count > 0 ? sum / Double(count) : 0
+    }
+
+    private static func solidNSImage(r: UInt8, g: UInt8, b: UInt8) -> NSImage {
+        let width = 16, height = 16
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        for i in 0..<(width * height) {
+            bytes[i * 4 + 0] = r
+            bytes[i * 4 + 1] = g
+            bytes[i * 4 + 2] = b
+            bytes[i * 4 + 3] = 255
+        }
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let ctx = CGContext(
+            data: &bytes,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        return NSImage(cgImage: ctx.makeImage()!, size: NSSize(width: width, height: height))
     }
 
     // MARK: - Synthetic Movie Helper

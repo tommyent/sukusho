@@ -19,16 +19,24 @@ nonisolated struct RecordingMarker: Identifiable, Codable, Equatable, Hashable, 
     var sourceTime: TimeInterval
     var note: String?
     var mediaFileName: String? = nil
+    var clipOccurrenceID: UUID? = nil
 
-    init(id: UUID = UUID(), sourceTime: TimeInterval, note: String? = nil, mediaFileName: String? = nil) {
+    init(
+        id: UUID = UUID(),
+        sourceTime: TimeInterval,
+        note: String? = nil,
+        mediaFileName: String? = nil,
+        clipOccurrenceID: UUID? = nil
+    ) {
         self.id = id
         self.sourceTime = sourceTime
         self.note = note
         self.mediaFileName = mediaFileName
+        self.clipOccurrenceID = clipOccurrenceID
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, sourceTime, note, mediaFileName
+        case id, sourceTime, note, mediaFileName, clipOccurrenceID
     }
 
     init(from decoder: any Decoder) throws {
@@ -37,6 +45,7 @@ nonisolated struct RecordingMarker: Identifiable, Codable, Equatable, Hashable, 
         sourceTime = try container.decode(TimeInterval.self, forKey: .sourceTime)
         note = try container.decodeIfPresent(String.self, forKey: .note)
         mediaFileName = try container.decodeIfPresent(String.self, forKey: .mediaFileName)
+        clipOccurrenceID = try container.decodeIfPresent(UUID.self, forKey: .clipOccurrenceID)
     }
 
     func encode(to encoder: any Encoder) throws {
@@ -45,6 +54,7 @@ nonisolated struct RecordingMarker: Identifiable, Codable, Equatable, Hashable, 
         try container.encode(sourceTime, forKey: .sourceTime)
         if let note { try container.encode(note, forKey: .note) }
         if let mediaFileName { try container.encode(mediaFileName, forKey: .mediaFileName) }
+        if let clipOccurrenceID { try container.encode(clipOccurrenceID, forKey: .clipOccurrenceID) }
     }
 }
 
@@ -347,13 +357,13 @@ nonisolated enum StudioEditing {
     static func markerAnchor(
         at editorTime: TimeInterval,
         in timeline: RecordingClipTimeline
-    ) -> (sourceTime: TimeInterval, mediaFileName: String?) {
-        guard let location = timeline.location(at: editorTime) else { return (0, nil) }
+    ) -> (sourceTime: TimeInterval, mediaFileName: String?, clipOccurrenceID: UUID?) {
+        guard let location = timeline.location(at: editorTime) else { return (0, nil, nil) }
         let segment = timeline.segments[location.segmentIndex]
         let time = location.sourceTime >= segment.sourceEnd - 0.000_001
             ? max(segment.sourceStart, segment.sourceEnd - 0.001)
             : location.sourceTime
-        return (time, segment.mediaFileName)
+        return (time, segment.mediaFileName, segment.isPrimaryRecording ? nil : segment.effectiveOccurrenceID)
     }
 
     static func markerSourceTime(
@@ -375,6 +385,7 @@ nonisolated enum StudioEditing {
                       let time = timeline.editorTime(
                           forSourceEventTime: marker.sourceTime,
                           mediaFileName: marker.mediaFileName,
+                          occurrenceID: marker.clipOccurrenceID,
                           includeTimelineEnd: true
                       ) else {
                     return nil
