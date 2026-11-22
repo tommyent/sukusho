@@ -39,7 +39,9 @@ extension CaptureLibraryModel {
                 if videos.contains(url) { return .original(try await RecordingDeliverable.resolve(for: url)) }
                 return optimize ? try await ScreenshotFileActions.optimizedForCopy(url) : .original(url)
             }, write: { files, publish in
-                try ClipboardFiles.withClipboardSnapshots(of: files, name: { VideoFileActions.handOutFileName(for: $0) }) { snapshots in
+                // The files come in the captures' order, as the payload below relies on.
+                let names = Dictionary(zip(files, captures).map { ($0, $1.copiedFileName(for: $0)) }, uniquingKeysWith: { first, _ in first })
+                try ClipboardFiles.withClipboardSnapshots(of: files, name: { names[$0] ?? $0.lastPathComponent }) { snapshots in
                     var files = snapshots.makeIterator()
                     var payload: [NSPasteboardWriting] = []
                     for card in cards {
@@ -70,5 +72,12 @@ extension CaptureLibraryModel {
             }
             self.actionFeedback.show(cards.count == 1 ? "Copied" : "\(cards.count) Items Copied")
         }
+    }
+}
+
+extension CaptureLibraryItem {
+    /// Library Copy names a recording after its card, as the Library drag does; a screenshot keeps its file's name.
+    func copiedFileName(for file: URL) -> String {
+        isVideo ? CaptureLibraryFiles.fileName(name, ext: file.pathExtension) : file.lastPathComponent
     }
 }

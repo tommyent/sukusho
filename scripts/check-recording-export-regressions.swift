@@ -2016,12 +2016,23 @@ struct RecordingExportRegressionChecks {
                   && VideoFileActions.handOutFileName(for: session.screenURL) == expected
                   && VideoFileActions.handOutFileName(for: outside) == outside.lastPathComponent,
                   "Copy and upload would not name the recording after its export")
+        func card(_ file: URL, isVideo: Bool) -> CaptureLibraryItem {
+            CaptureLibraryItem(
+                id: file.path, historyIDs: [], name: "Checkout bug", customName: "Checkout bug", fileURL: file,
+                session: isVideo ? session : nil, createdAt: Date(), modifiedAt: Date(), pixelWidth: 320, pixelHeight: 180,
+                duration: isVideo ? 8 : nil, isVideo: isVideo, hasEdits: isVideo, hasDraft: false, cloudURL: nil, tags: [],
+                thumbnailKey: "k", source: nil)
+        }
+        let screenshot = directory.appendingPathComponent("Screenshot 1.png")
+        try check(card(render, isVideo: true).copiedFileName(for: render) == "Checkout bug.mov"
+                  && card(screenshot, isVideo: false).copiedFileName(for: screenshot) == screenshot.lastPathComponent,
+                  "Library Copy did not name the recording after its card, or renamed a screenshot")
         let dragged = try await CaptureDragExport.handOutFile(for: session.screenURL)
         try check(dragged.lastPathComponent == expected && dragged.deletingLastPathComponent() != session.directoryURL
                   && (try Data(contentsOf: dragged)) == (try Data(contentsOf: render))
                   && FileManager.default.fileExists(atPath: render.path),
                   "The preview drag did not send the cached render under its export name: \(dragged.lastPathComponent)")
-        print("PASS: preview drag, Copy and upload name a recording's render and master after its export, not render.mov")
+        print("PASS: preview drag, preview Copy and upload use a recording's export name and Library Copy its card's, never render.mov")
     }
 
     static func backslashPackageName(in directory: URL) async throws {
