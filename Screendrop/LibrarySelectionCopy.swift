@@ -39,7 +39,7 @@ extension CaptureLibraryModel {
                 if videos.contains(url) { return .original(try await RecordingDeliverable.resolve(for: url)) }
                 return optimize ? try await ScreenshotFileActions.optimizedForCopy(url) : .original(url)
             }, write: { files, publish in
-                try ClipboardFiles.withClipboardSnapshots(of: files) { snapshots in
+                try ClipboardFiles.withClipboardSnapshots(of: files, name: { VideoFileActions.handOutFileName(for: $0) }) { snapshots in
                     var files = snapshots.makeIterator()
                     var payload: [NSPasteboardWriting] = []
                     for card in cards {

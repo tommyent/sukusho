@@ -113,7 +113,7 @@ final class CloudUploader: NSObject {
             if let optimized { fileURL = optimized.url }
             try Task.checkCancellation()
 
-            let fileName = fileURL.lastPathComponent
+            let fileName = VideoFileActions.handOutFileName(for: fileURL)
             let mimeType = self.mimeTypeForFile(fileURL)
             let isVideo = mimeType.hasPrefix("video/")
             let transcriptData = isVideo && RecordingSession.isSessionDirectory(sessionDirectory)
@@ -173,7 +173,7 @@ final class CloudUploader: NSObject {
                 // Recordings stay plaintext: their poster, storyboard and seeking need the clear file.
                 guard replacingUploadID == nil, asFile || !isVideo else { throw CloudUploadError.encryptionUnavailable }
                 let result = try await Self.sealedUpload(
-                    fileURL: fileURL, contentType: mimeType, mediaType: asFile ? "file" : "image", title: title,
+                    fileURL: fileURL, filename: fileName, contentType: mimeType, mediaType: asFile ? "file" : "image", title: title,
                     socialEnabled: socialEnabled, expiresAt: expiresAt, allowAnonymousComments: allowAnonymousComments,
                     password: password, creds: creds, progress: progress
                 )
@@ -601,16 +601,16 @@ final class CloudUploader: NSObject {
     /// gets the name for the owner's list, never the type or dimensions; the key stays in
     /// the result for the Keychain.
     nonisolated static func sealedUpload(
-        fileURL: URL, contentType: String, mediaType: String, title: String?, socialEnabled: Bool,
+        fileURL: URL, filename: String, contentType: String, mediaType: String, title: String?, socialEnabled: Bool,
         expiresAt: Date?, allowAnonymousComments: Bool, password: String?, creds: CloudCredentials,
         progress: (@Sendable (Double) -> Void)?
     ) async throws -> CloudUploadResult {
         let size = try fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         guard size <= CloudShareSeal.maxFileBytes else { throw CloudUploadError.encryptedTooLarge }
         let sealed = try CloudShareSeal.seal(Data(contentsOf: fileURL, options: .mappedIfSafe),
-                                             filename: fileURL.lastPathComponent, contentType: contentType)
+                                             filename: filename, contentType: contentType)
         let metadata = UploadMetadata(
-            filename: fileURL.lastPathComponent, contentType: "application/octet-stream", mediaType: mediaType,
+            filename: filename, contentType: "application/octet-stream", mediaType: mediaType,
             width: nil, height: nil, duration: nil, title: title, socialEnabled: socialEnabled,
             expiresAt: expiresAt, allowAnonymousComments: allowAnonymousComments, password: password, encrypted: true
         )

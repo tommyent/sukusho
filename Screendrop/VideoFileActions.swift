@@ -90,11 +90,26 @@ enum VideoFileActions {
 
     static func copyFilesToClipboard(from urls: [URL]) throws {
         guard !urls.isEmpty else { return }
-        try ClipboardFiles.withClipboardSnapshots(of: urls) { snapshots in
+        try ClipboardFiles.withClipboardSnapshots(of: urls, name: { handOutFileName(for: $0) }) { snapshots in
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
             guard pasteboard.writeObjects(snapshots as [NSURL]) else { throw CocoaError(.fileWriteUnknown) }
         }
+    }
+
+    /// A recording's file leaves under its export name: inside its package the
+    /// cached render is `render.mov` and the master `screen.mov`. Other files keep theirs.
+    static func handOutFileName(for url: URL) -> String {
+        guard RecordingSession.isSessionDirectory(url.deletingLastPathComponent()),
+              let container = VideoExportContainer(fileExtension: url.pathExtension) else { return url.lastPathComponent }
+        return exportFileName(for: url, container: container)
+    }
+
+    /// A clone of `url` under its hand-out name, for transfers that send the file itself.
+    static func handOutCopy(of url: URL) throws -> URL {
+        let name = handOutFileName(for: url)
+        guard name != url.lastPathComponent else { return url }
+        return try ClipboardFiles.withClipboardSnapshots(of: [url], name: { _ in name }) { $0[0] }
     }
 
 

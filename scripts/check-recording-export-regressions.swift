@@ -2000,6 +2000,30 @@ struct RecordingExportRegressionChecks {
         print("PASS: wallpaper changes leave newer-format packages alone and applied presets use a package-relative copy")
     }
 
+    static func handOutNames(in directory: URL) async throws {
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("hand-out.sukushorec"))
+        try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
+        try await movie(at: session.screenURL)
+        try session.writeEditDocument(RecordingEditDocument(style: .init(), zoomEnabled: false, zoomCues: []))
+        let pending = directory.appendingPathComponent("hand-out-pending.mov")
+        try FileManager.default.copyItem(at: session.screenURL, to: pending)
+        let render = try session.installFinalVideo(movingFrom: pending,
+                                                   renderedFrom: session.editDocumentForRendering()?.forVideoRendering)
+        let expected = VideoFileActions.exportFileName(for: render, container: .mov)
+        try check(render.lastPathComponent == "render.mov" && expected != render.lastPathComponent, "Fixture render is misnamed")
+        let outside = directory.appendingPathComponent("bare movie.mov")
+        try check(VideoFileActions.handOutFileName(for: render) == expected
+                  && VideoFileActions.handOutFileName(for: session.screenURL) == expected
+                  && VideoFileActions.handOutFileName(for: outside) == outside.lastPathComponent,
+                  "Copy and upload would not name the recording after its export")
+        let dragged = try await CaptureDragExport.handOutFile(for: session.screenURL)
+        try check(dragged.lastPathComponent == expected && dragged.deletingLastPathComponent() != session.directoryURL
+                  && (try Data(contentsOf: dragged)) == (try Data(contentsOf: render))
+                  && FileManager.default.fileExists(atPath: render.path),
+                  "The preview drag did not send the cached render under its export name: \(dragged.lastPathComponent)")
+        print("PASS: preview drag, Copy and upload name a recording's render and master after its export, not render.mov")
+    }
+
     static func main() async throws {
         setbuf(stdout, nil)
         guard let root = ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] else {
@@ -2025,6 +2049,7 @@ struct RecordingExportRegressionChecks {
         try await lateDraftDelivery(in: directory)
         try await revisionConflictsAndFormatting(in: directory)
         try await wallpaperPresetSafety(in: directory)
+        try await handOutNames(in: directory)
         try await canonicalStudioRegistry(in: directory)
         try await importedEvidence(in: directory)
         try await packageWallpaper(in: directory)
