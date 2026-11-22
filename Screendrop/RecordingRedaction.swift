@@ -3,6 +3,7 @@ import CoreGraphics
 import CoreImage
 import CoreImage.CIFilterBuiltins
 import CoreVideo
+import CryptoKit
 import Foundation
 
 /// Fixed, top-left normalized bounds in the original screen movie, on its source clock.
@@ -83,6 +84,26 @@ nonisolated struct RecordingRedaction: Codable, Equatable, Hashable, Identifiabl
     /// Legacy links have no snapshot and must be treated as unredacted.
     static func needsSharedReplacement(_ current: [Self], shared: [Self]?) -> Bool {
         !current.isEmpty && current != (shared ?? [])
+    }
+
+    /// Stable hash of only the persisted fields that affect output pixels (excluding `id`,
+    /// which legacy redactions regenerate randomly on each decode).
+    static func contentFingerprint(_ redactions: [Self]) throws -> String {
+        guard !redactions.isEmpty else { return "" }
+        struct VisualKey: Encodable {
+            var start: TimeInterval
+            var end: TimeInterval
+            var rect: CGRect
+            var mode: Mode
+            var strength: Double
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let keys = redactions.map {
+            VisualKey(start: $0.start, end: $0.end, rect: $0.rect, mode: $0.mode, strength: $0.strength)
+        }
+        let encoded = try encoder.encode(keys)
+        return SHA256.hash(data: encoded).prefix(8).map { String(format: "%02x", $0) }.joined()
     }
 
     func validate(sourceDuration: TimeInterval? = nil) throws {

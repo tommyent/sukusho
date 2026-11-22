@@ -301,7 +301,33 @@ struct LibraryTextIndexChecks {
         let insightText = try ImageTextRecognizer.recognizeLines(in: insightImage).map(\.text).joined(separator: " ")
         try check(!insightText.localizedCaseInsensitiveContains("SECRETKEY") && !insightText.contains("99421"),
                   "Redacted insight image leaked secret: \(insightText)")
-        print("CHECK: Library OCR and insight image hide redacted content and rebuild after adding a redaction")
+
+        // With OCR switched off, adding a new draft redaction purges old OCR & insights from memory and disk.
+        let second = try RecordingSessionStore.createSession()
+        try await movie(at: second.screenURL, firstLine: "SECRETKEY 99421", secondLine: "PASSCODE 88312")
+        try second.writeCaptureManifest(manifest)
+        await history.importRecordingSession(second)
+        let secondID = "recording:\(second.directoryURL.standardizedFileURL.path)"
+        try await waitUntil("second unredacted recording read") {
+            index.entries[secondID]?.paragraphs.joined(separator: " ").contains("SECRETKEY") == true
+        }
+        UserDefaults.standard.set(false, forKey: ScreendropPreferences.libraryReadsTextKey)
+        index.settingsDidChange()
+        try second.writeDraftDocument(redactedDoc)
+        // Before refresh even runs, export title must not reuse an insight from a stale redaction state.
+        try check(index.visibleInsight(for: second) == nil, "Stale insight leaked for newly redacted session before scan")
+        model.refresh()
+        try await waitUntil("draft redaction fingerprint scanned", timeout: .seconds(10)) {
+            model.items.first(where: { $0.id == secondID })?.thumbnailKey.contains(":r=") == true
+        }
+        let diskStore = CaptureTextIndexStore(directory: ScreendropStorage.applicationSupportDirectory.appendingPathComponent("Library Index", isDirectory: true))
+        try check(index.entries[secondID] == nil && index.foldedText[secondID] == nil,
+                  "Stale OCR entry remained in memory after redaction change with OCR off")
+        try check(diskStore.loadAll()[secondID] == nil,
+                  "Stale OCR entry remained on disk after redaction change with OCR off")
+        UserDefaults.standard.set(true, forKey: ScreendropPreferences.libraryReadsTextKey)
+        index.settingsDidChange()
+        print("CHECK: Library OCR and insight image hide redacted content, rebuild on change, and purge immediately when OCR is off")
     }
 
     /// The source app and window: History rows written before it decode, and

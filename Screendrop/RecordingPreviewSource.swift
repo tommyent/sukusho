@@ -16,6 +16,6 @@ nonisolated struct RecordingPreviewSource: Sendable {
             url = mediaURL
             redactions = []
         }
-        revision = try JSONEncoder().encode(redactions).base64EncodedString()
+        revision = try RecordingRedaction.contentFingerprint(redactions)
     }
 }

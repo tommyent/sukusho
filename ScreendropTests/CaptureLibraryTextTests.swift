@@ -20,16 +20,43 @@ struct CaptureLibraryTextTests {
         #expect(!old.isCurrent(fingerprint: "/History/a.png:100.0"))
     }
 
-    @Test func addingOrChangingRedactionsInvalidatesIndexedEntry() {
+    @Test func addingOrChangingRedactionsInvalidatesIndexedEntry() throws {
         let unredacted = "/Recordings/a.sukushorec/screen.mov:100.0"
         let redacted = unredacted + ":r=0123456789abcdef"
         let updated = unredacted + ":r=fedcba9876543210"
+        let unreadable = unredacted + ":r=unreadable"
         let entry = CaptureTextEntry(id: "recording:a", fingerprint: unredacted, paragraphs: ["Secret"])
         #expect(entry.isCurrent(fingerprint: unredacted))
         #expect(!entry.isCurrent(fingerprint: redacted))
         #expect(CaptureTextIndexPlan.redactionTag(in: unredacted) == nil)
         #expect(CaptureTextIndexPlan.redactionTag(in: redacted) == ":r=0123456789abcdef")
         #expect(CaptureTextIndexPlan.redactionTag(in: redacted) != CaptureTextIndexPlan.redactionTag(in: updated))
+
+        // Immediate invalidation detects redaction changes and unreadable edits even with OCR off.
+        let now = Date()
+        #expect(CaptureTextIndexPlan.redactionInvalidated(
+            [.init(id: "recording:a", fingerprint: unredacted, createdAt: now)],
+            entries: ["recording:a": entry]
+        ).isEmpty)
+        #expect(CaptureTextIndexPlan.redactionInvalidated(
+            [.init(id: "recording:a", fingerprint: redacted, createdAt: now)],
+            entries: ["recording:a": entry]
+        ) == ["recording:a"])
+        #expect(CaptureTextIndexPlan.redactionInvalidated(
+            [.init(id: "recording:a", fingerprint: unreadable, createdAt: now)],
+            entries: ["recording:a": CaptureTextEntry(id: "recording:a", fingerprint: unreadable, paragraphs: ["Old"])]
+        ) == ["recording:a"])
+
+        // Legacy redactions without an explicit UUID get a fresh UUID on each decode,
+        // but their content fingerprint stays identical across decodes.
+        let legacyJSON = Data(#"[{"start":0,"end":4,"rect":[[0.1,0.2],[0.3,0.4]],"style":"blur","amount":0.9}]"#.utf8)
+        let firstDecode = try JSONDecoder().decode([RecordingRedaction].self, from: legacyJSON)
+        let secondDecode = try JSONDecoder().decode([RecordingRedaction].self, from: legacyJSON)
+        #expect(firstDecode[0].id != secondDecode[0].id)
+        #expect(try RecordingRedaction.contentFingerprint(firstDecode) == RecordingRedaction.contentFingerprint(secondDecode))
+        var modified = secondDecode
+        modified[0].strength = 0.5
+        #expect(try RecordingRedaction.contentFingerprint(firstDecode) != RecordingRedaction.contentFingerprint(modified))
     }
 
     @Test func tallCapturesKeepAReadableShortSide() {

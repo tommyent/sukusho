@@ -103,6 +103,17 @@ final class CaptureLibraryIndex {
         CaptureInsightRules.visible(entries[id]?.insight, enabled: usesIntelligence)
     }
 
+    /// What the model wrote about a recording session, only when the stored entry still matches
+    /// the session's current on-disk redaction state (guards exports before the next Library scan).
+    func visibleInsight(for session: RecordingSession) -> CaptureInsight? {
+        let id = "recording:" + session.directoryURL.standardizedFileURL.path
+        let currentTag = CaptureLibraryScanner.redactionTag(for: session)
+        guard currentTag != CaptureTextIndexPlan.unreadableRedactionTag else { return nil }
+        let expected: String? = currentTag.isEmpty ? nil : currentTag
+        guard CaptureTextIndexPlan.redactionTag(in: entries[id]?.fingerprint) == expected else { return nil }
+        return visibleInsight(id)
+    }
+
     func suggestedTags(for item: CaptureLibraryItem, libraryTags: [String]) -> [String] {
         CaptureInsightRules.suggestions(appName: item.source?.appName, insight: visibleInsight(item.id), tags: item.tags,
                                         libraryTags: libraryTags, dismissed: entries[item.id]?.dismissedSuggestions ?? [])
@@ -142,13 +153,25 @@ final class CaptureLibraryIndex {
         latestIsComplete = isComplete
         guard isLoaded else { return }
         let gone = CaptureTextIndexPlan.removed(entryIDs: entries.keys, liveIDs: Set(items.map(\.id)), isComplete: isComplete)
-        if !gone.isEmpty {
-            for id in gone {
+        let redactionPurged = CaptureTextIndexPlan.redactionInvalidated(
+            items.map { .init(id: $0.id, fingerprint: $0.thumbnailKey, createdAt: $0.createdAt) },
+            entries: entries
+        )
+        let removedIDs = Array(Set(gone + redactionPurged))
+        if !removedIDs.isEmpty {
+            for id in removedIDs {
                 lastModelFailure[id] = nil
                 entries[id] = nil
                 foldedText[id] = nil
             }
-            write { $0.remove(ids: gone) }
+            if !redactionPurged.isEmpty {
+                // Purge from disk immediately as well as after any in-flight write, so callers
+                // inspecting disk right after a scan never observe stale pre-redaction OCR/insights.
+                store.remove(ids: redactionPurged)
+                CaptureLibraryModel.shared.textIndexDidChange()
+                CaptureLibraryModel.shared.insightsDidChange()
+            }
+            write { $0.remove(ids: removedIDs) }
         }
         planInsights(items)
         scheduleRetries()
@@ -237,8 +260,14 @@ final class CaptureLibraryIndex {
             case .unreadable:
                 unreadable[item.thumbnailKey] = Date().addingTimeInterval(retryDelay)
             case .read(var entry):
-                // A capture deleted while it was read keeps no entry.
-                if latestItems?.contains(where: { $0.id == item.id }) == true {
+                // Fence publication by the current fingerprint so an in-flight OCR read
+                // started before a redaction change (or deletion) can never publish stale text.
+                let isStillCurrent = latestItems?.contains(where: {
+                    $0.id == item.id && $0.thumbnailKey == item.thumbnailKey
+                }) == true
+                let isUnreadableRedaction = item.isVideo
+                    && CaptureTextIndexPlan.redactionTag(in: item.thumbnailKey) == CaptureTextIndexPlan.unreadableRedactionTag
+                if isStillCurrent && !isUnreadableRedaction {
                     let previous = entries[item.id]
                     // Routine edits keep the title the user has seen, unless redactions changed
                     // (a prior insight could reflect redacted text or frames).
@@ -277,6 +306,15 @@ final class CaptureLibraryIndex {
             }
             let image = await Self.image(for: item)
             guard !Task.isCancelled else { return }
+            let isStillCurrent = latestItems?.contains(where: {
+                $0.id == item.id && $0.thumbnailKey == item.thumbnailKey
+            }) == true && entries[item.id]?.isCurrent(fingerprint: item.thumbnailKey) == true
+            guard isStillCurrent, !item.isVideo || image != nil else {
+                insightDeadline?.cancel()
+                insightDeadline = nil
+                describing = nil
+                return
+            }
             let outcome = Self.shouldPause() ? nil : await describer(item, entry, image)
             // A timed-out answer must never replace a retry's answer or clear its deadline.
             guard !Task.isCancelled else { return }

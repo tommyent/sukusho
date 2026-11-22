@@ -25,7 +25,7 @@ enum RecordingAgentPromptExport {
     /// The name the Library card shows (the user's, a model's, else the date), never the package name.
     static func title(for session: RecordingSession) -> String {
         guard let created = session.loadCaptureManifest()?.createdAt else { return session.displayName }
-        let modelTitle = CaptureLibraryIndex.shared.visibleInsight("recording:" + session.directoryURL.standardizedFileURL.path)?.title
+        let modelTitle = CaptureLibraryIndex.shared.visibleInsight(for: session)?.title
         let source = session.loadProjectMetadata()?.source
         return CaptureInsightRules.title(customName: session.customName, modelTitle: modelTitle,
                                          sourceTitle: CaptureInsightRules.sourceTitle(appName: source?.appName, windowTitle: source?.windowTitle),

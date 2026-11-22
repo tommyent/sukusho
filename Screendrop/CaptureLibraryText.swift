@@ -209,6 +209,22 @@ nonisolated enum CaptureTextIndexPlan {
         return String(fingerprint[range.lowerBound...])
     }
 
+    static let unreadableRedactionTag = ":r=unreadable"
+
+    /// Live captures whose stored OCR/insight entry no longer matches the current
+    /// redaction state (or whose redaction state is unreadable) and must be purged
+    /// immediately from memory and disk, even when Library text reading is off.
+    static func redactionInvalidated(_ captures: [Capture], entries: [String: CaptureTextEntry]) -> [String] {
+        captures.compactMap { capture in
+            guard let entry = entries[capture.id] else { return nil }
+            let currentTag = redactionTag(in: capture.fingerprint)
+            if currentTag == unreadableRedactionTag || redactionTag(in: entry.fingerprint) != currentTag {
+                return capture.id
+            }
+            return nil
+        }
+    }
+
     /// Captures with no current entry, newest first.
     static func stale(_ captures: [Capture], entries: [String: CaptureTextEntry], skipping: Set<String> = []) -> [Capture] {
         captures.filter { capture in

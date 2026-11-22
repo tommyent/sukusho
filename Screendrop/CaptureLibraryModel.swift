@@ -1,5 +1,4 @@
 import AppKit
-import CryptoKit
 import Observation
 
 nonisolated enum CaptureLibraryFilter: String, CaseIterable, Identifiable {
@@ -369,6 +368,18 @@ final class CaptureLibraryModel {
 }
 
 nonisolated enum CaptureLibraryScanner {
+    /// Trailing redaction fingerprint tag for a recording session (`""`, `":r=<16hex>"`, or `":r=unreadable"`).
+    static func redactionTag(for session: RecordingSession) -> String {
+        do {
+            let redactions = try session.editDocumentForRendering()?.redactions ?? []
+            for redaction in redactions { try redaction.validate() }
+            let digest = try RecordingRedaction.contentFingerprint(redactions)
+            return digest.isEmpty ? "" : ":r=\(digest)"
+        } catch {
+            return ":r=unreadable"
+        }
+    }
+
     /// The captures, and whether every recording package could be listed.
     static func scan(history: [CaptureLibraryHistorySnapshot], historyDirectory: URL,
                      excludingSessionPath: String?) -> (items: [CaptureLibraryItem], recordingsListed: Bool) {
@@ -403,19 +414,7 @@ nonisolated enum CaptureLibraryScanner {
             let content = [edited, modificationDate(fileURL)].compactMap { $0 }.max()
             let modified = [content, modificationDate(session.projectMetadataURL)].compactMap { $0 }.max()
                 ?? row?.modifiedAt ?? createdAt
-            let redactionTag: String
-            do {
-                let redactions = try session.editDocumentForRendering()?.redactions ?? []
-                if redactions.isEmpty {
-                    redactionTag = ""
-                } else {
-                    let encoded = try CaptureManifest.encoder.encode(redactions)
-                    let digest = SHA256.hash(data: encoded).prefix(8).map { String(format: "%02x", $0) }.joined()
-                    redactionTag = ":r=\(digest)"
-                }
-            } catch {
-                redactionTag = ":r=unreadable"
-            }
+            let redactionTag = Self.redactionTag(for: session)
             entries.append(CaptureLibraryItem(
                 id: "recording:\(path)", historyIDs: Set(rows.map(\.id)), name: session.displayName,
                 customName: storedName.isEmpty ? nil : storedName,
