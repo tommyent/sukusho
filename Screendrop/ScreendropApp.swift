@@ -100,6 +100,14 @@ struct ScreendropApp: App {
         }
     }
 
+    /// Validates a recording package opened from Finder (inside Recordings or elsewhere).
+    /// Returns the resolved package URL when valid, `nil` for non-recording URLs, or throws
+    /// when a `.sukushorec` / `.screendroprec` fails package safety checks.
+    nonisolated static func validatedRecordingPackage(at url: URL) throws -> URL? {
+        guard SukushoFileNames.isRecordingExtension(url.pathExtension.lowercased()) else { return nil }
+        return try RecordingPackageMedia.validateRenderInputs(in: url).packageDirectory
+    }
+
     @MainActor
     private func configurePreviewPresentation() {
         CaptureLibraryModel.shared.installOpener { [openWindow] in
@@ -140,9 +148,20 @@ struct ScreendropApp: App {
         }
 
         appDelegate.onOpenFiles = { [openWindow] urls in
-            for url in urls where UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true {
-                let historyURL = ScreenshotHistoryStore.shared.importScreenshot(from: url, title: url.deletingPathExtension().lastPathComponent)
-                openWindow(id: "ANNOTATION_EDITOR", value: historyURL)
+            for url in urls {
+                do {
+                    if let packageURL = try Self.validatedRecordingPackage(at: url) {
+                        openVideoEditor(packageURL)
+                        continue
+                    }
+                } catch {
+                    FailureAlert.present(message: "Couldn't open recording", error: error)
+                    continue
+                }
+                if UTType(filenameExtension: url.pathExtension)?.conforms(to: .image) == true {
+                    let historyURL = ScreenshotHistoryStore.shared.importScreenshot(from: url, title: url.deletingPathExtension().lastPathComponent)
+                    openWindow(id: "ANNOTATION_EDITOR", value: historyURL)
+                }
             }
         }
 

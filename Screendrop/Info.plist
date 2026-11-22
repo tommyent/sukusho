@@ -6,6 +6,21 @@
 	<array>
 		<dict>
 			<key>CFBundleTypeName</key>
+			<string>Sukusho Recording</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.tommyent.sukusho.recording</string>
+				<string>com.fayazahmed.screendrop.recording</string>
+			</array>
+			<key>LSTypeIsPackage</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
 			<string>Image</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
@@ -38,6 +53,23 @@
 		<dict>
 			<key>UTTypeConformsTo</key>
 			<array>
+				<string>com.apple.package</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Sukusho Recording</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.tommyent.sukusho.recording</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>sukushorec</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
 				<string>public.json</string>
 			</array>
 			<key>UTTypeDescription</key>
@@ -57,6 +89,23 @@
 	</array>
 	<key>UTImportedTypeDeclarations</key>
 	<array>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.apple.package</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>Screendrop Recording</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.fayazahmed.screendrop.recording</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>screendroprec</string>
+				</array>
+			</dict>
+		</dict>
 		<dict>
 			<key>UTTypeConformsTo</key>
 			<array>
