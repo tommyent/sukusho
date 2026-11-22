@@ -22,7 +22,13 @@ struct RecordingCameraBubbleSettings: Equatable {
 }
 
 struct RecordingEditDocument: Codable, Equatable {
-    var formatVersion = 6
+    nonisolated static let currentFormatVersion = RecordingPackageMedia.currentFormatVersion
+    nonisolated static let newerFormatNotice = RecordingPackageMedia.newerFormatNotice
+
+    var formatVersion = RecordingEditDocument.currentFormatVersion
+    nonisolated var isUnsupportedFutureVersion: Bool {
+        formatVersion > Self.currentFormatVersion
+    }
     var style: StoredRecordingStudioStyle
     var zoomEnabled: Bool
     var zoomCues: [ZoomCue]

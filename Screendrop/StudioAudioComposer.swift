@@ -129,8 +129,8 @@ nonisolated struct StudioAudioSources: @unchecked Sendable {
         if let timeline, let mediaDirectory {
             for segment in timeline.segments {
                 guard let fileName = segment.mediaFileName,
-                      seenFiles.insert(fileName).inserted,
-                      let url = RecordingOverlayMedia.resolveRegularFile(named: fileName, in: mediaDirectory) else {
+                      let url = RecordingOverlayMedia.resolveRegularFile(named: fileName, in: mediaDirectory),
+                      seenFiles.insert(fileName).inserted else {
                     continue
                 }
                 let asset = AVURLAsset(url: url)

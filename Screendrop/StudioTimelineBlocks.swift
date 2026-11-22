@@ -514,6 +514,32 @@ nonisolated enum StudioAddToolsLayout: Equatable, Sendable {
     }
 }
 
+/// Timeline lane classification for Finder movie drop routing.
+nonisolated enum StudioMovieDropLane: Equatable, Sendable {
+    case clips
+    case videoOverlay
+    case other
+}
+
+/// Shared lane-routing rule for Finder movie drops, used by both drag-hover
+/// preview highlighting and drop commit so the two can never disagree.
+nonisolated enum StudioMediaDropRouting {
+    static func videoDestination(
+        for hoveredLane: StudioMovieDropLane?,
+        canDropClip: Bool,
+        canDropOverlay: Bool
+    ) -> StudioMovieDropLane? {
+        switch hoveredLane {
+        case .clips where canDropClip:
+            .clips
+        case .videoOverlay where canDropOverlay:
+            .videoOverlay
+        default:
+            nil
+        }
+    }
+}
+
 /// How a track turns block edits into model changes.
 struct StudioBlockLaneActions<Item: Identifiable> where Item.ID == UUID {
     let select: (Item) -> Void

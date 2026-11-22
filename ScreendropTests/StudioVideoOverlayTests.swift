@@ -504,7 +504,7 @@ struct StudioVideoOverlayTests {
         let nonOwned = mediaDir.appendingPathComponent("custom.mov")
         try FileManager.default.copyItem(at: outside, to: nonOwned)
 
-        RecordingVideoOverlayMedia.cleanupUnreferencedVideos(in: mediaDir, referenced: [keptName])
+        RecordingOverlayMedia.cleanupUnreferencedMedia(in: mediaDir, referenced: [keptName])
         #expect(FileManager.default.fileExists(atPath: mediaDir.appendingPathComponent(keptName).path))
         #expect(!FileManager.default.fileExists(atPath: mediaDir.appendingPathComponent(orphanName).path))
         #expect(FileManager.default.fileExists(atPath: nonOwned.path))

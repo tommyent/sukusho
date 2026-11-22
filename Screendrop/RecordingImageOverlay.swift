@@ -604,6 +604,21 @@ nonisolated enum RecordingOverlayMedia {
             try? FileManager.default.removeItem(at: fileURL)
         }
     }
+
+    /// Single owned-media sweep removing unreferenced UUID-named images and
+    /// movies from `mediaDirectory` without following symlinks or touching
+    /// audio or non-UUID files.
+    static func cleanupUnreferencedMedia(in mediaDirectory: URL, referenced: Set<String>) {
+        guard let realDirectory = resolveRealMediaDirectory(mediaDirectory) else { return }
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: realDirectory.path)) ?? []
+        for name in names where isOwnedImportFileName(name) && !referenced.contains(name) {
+            guard let fileURL = resolveRegularFile(named: name, in: realDirectory) else { continue }
+            let isImage = RecordingOverlayImage.canImport(fileURL)
+            let isMovie = UTType(filenameExtension: fileURL.pathExtension)?.conforms(to: .movie) == true
+            guard isImage || isMovie else { continue }
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+    }
 }
 
 /// Package-contained, regular-file resolver for every input a `.sukushorec`
@@ -613,9 +628,14 @@ nonisolated enum RecordingOverlayMedia {
 /// background music, and `media/` assets. Rejects symlinks and `..` traversal
 /// before anything reads or renders from the package.
 nonisolated enum RecordingPackageMedia {
+    static let currentFormatVersion = 7
+    static let newerFormatNotice =
+        "This project was saved by a newer version of Sukusho. Update Sukusho to edit it."
+
     enum ValidationError: LocalizedError, Equatable {
         case invalidPackage(String)
         case unsafeFile(String)
+        case unsupportedFormatVersion(Int)
 
         var errorDescription: String? {
             switch self {
@@ -623,8 +643,16 @@ nonisolated enum RecordingPackageMedia {
                 "The recording package \"\(name)\" is invalid or unreadable."
             case .unsafeFile(let name):
                 "The recording file \"\(name)\" cannot be opened because it is missing or links outside the package."
+            case .unsupportedFormatVersion:
+                RecordingPackageMedia.newerFormatNotice
             }
         }
+    }
+
+    struct ResolvedRawImport: Equatable, Sendable {
+        let screenURL: URL
+        let activeEditURL: URL?
+        let redactions: [RecordingRedaction]
     }
 
     struct ResolvedRenderInputs: Equatable, Sendable {
@@ -711,6 +739,46 @@ nonisolated enum RecordingPackageMedia {
         return screenURL
     }
 
+    /// Validates a `.sukushorec` package for Raw recording import: verifies
+    /// `screen.mov` via `validateRawScreenInput`, checks optional edit/draft
+    /// sidecars without following symlinks, and decodes any source redactions
+    /// from the effective edit (`edit.draft.json` over `edit.json`). Refuses
+    /// unreadable or unsupported-future edits rather than copying raw unmasked.
+    static func validateRawImportInputs(in packageDirectory: URL) throws -> ResolvedRawImport {
+        let screenURL = try validateRawScreenInput(in: packageDirectory)
+        guard let realPackage = resolveRealPackageDirectory(packageDirectory) else {
+            throw ValidationError.invalidPackage(packageDirectory.lastPathComponent)
+        }
+        let draftURL = try resolveOptionalPackageFile(named: draftFileName, in: realPackage)
+        let editURL = try resolveOptionalPackageFile(named: editFileName, in: realPackage)
+        guard let activeEditURL = draftURL ?? editURL else {
+            return ResolvedRawImport(screenURL: screenURL, activeEditURL: nil, redactions: [])
+        }
+        guard let data = try? Data(contentsOf: activeEditURL) else {
+            throw ValidationError.invalidPackage(realPackage.lastPathComponent)
+        }
+        struct RawEditHeader: Decodable {
+            var formatVersion: Int?
+            var redactions: [RecordingRedaction]?
+        }
+        guard let header = try? JSONDecoder().decode(RawEditHeader.self, from: data) else {
+            throw ValidationError.invalidPackage(realPackage.lastPathComponent)
+        }
+        let version = header.formatVersion ?? 1
+        if version > Self.currentFormatVersion {
+            throw ValidationError.unsupportedFormatVersion(version)
+        }
+        let redactions = header.redactions ?? []
+        for region in redactions {
+            do {
+                try region.validate()
+            } catch {
+                throw ValidationError.invalidPackage(realPackage.lastPathComponent)
+            }
+        }
+        return ResolvedRawImport(screenURL: screenURL, activeEditURL: activeEditURL, redactions: redactions)
+    }
+
     /// Checks an optional file inside `mediaDirectory`: returns `nil` when absent
     /// (`ENOENT`), returns the resolved URL when it is a regular non-symlink file
     /// inside `mediaDirectory`, or throws `ValidationError.unsafeFile` for `..`
@@ -794,7 +862,7 @@ nonisolated enum RecordingPackageMedia {
             }
             struct PackageEditRefs: Decodable {
                 struct ClipRef: Decodable {
-                    var sourceFileName: String?
+                    var mediaFileName: String?
                 }
                 struct AudioClipRef: Decodable {
                     var source: String?
@@ -806,6 +874,7 @@ nonisolated enum RecordingPackageMedia {
                 struct BackgroundMusicRef: Decodable {
                     var fileName: String?
                 }
+                var formatVersion: Int?
                 var replacementAudioFileName: String?
                 var backgroundMusic: BackgroundMusicRef?
                 var clips: [ClipRef]?
@@ -816,6 +885,10 @@ nonisolated enum RecordingPackageMedia {
 
             guard let refs = try? JSONDecoder().decode(PackageEditRefs.self, from: data) else {
                 throw ValidationError.invalidPackage(realPackage.lastPathComponent)
+            }
+            let version = refs.formatVersion ?? 1
+            if version > Self.currentFormatVersion {
+                throw ValidationError.unsupportedFormatVersion(version)
             }
 
             if let replacement = refs.replacementAudioFileName, !replacement.isEmpty {
@@ -829,7 +902,7 @@ nonisolated enum RecordingPackageMedia {
             var detachedReplacements: [String] = []
             var mediaFiles: [String] = []
             for clip in refs.clips ?? [] {
-                if let name = clip.sourceFileName, !name.isEmpty { mediaFiles.append(name) }
+                if let name = clip.mediaFileName, !name.isEmpty { mediaFiles.append(name) }
             }
             for clip in refs.audioClips ?? [] {
                 guard let name = clip.fileName, !name.isEmpty else { continue }

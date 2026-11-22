@@ -698,6 +698,7 @@ nonisolated enum StudioVideoOverlayLane {
             }
         }
 
+        let oldSegmentIDs = Set(old.segments.map(\.id))
         var oldEditorStart: TimeInterval = 0
         for segment in old.segments {
             let oldEditorEnd = oldEditorStart + segment.editorDuration
@@ -713,6 +714,16 @@ nonisolated enum StudioVideoOverlayLane {
             var newEditorStart: TimeInterval = 0
             for newSeg in new.segments {
                 defer { newEditorStart += newSeg.editorDuration }
+                let matchesSource: Bool
+                if segment.isPrimaryRecording {
+                    matchesSource = newSeg.isPrimaryRecording
+                } else {
+                    matchesSource = newSeg.mediaFileName == segment.mediaFileName
+                        && (newSeg.id == segment.id
+                            || newSeg.effectiveOccurrenceID == segment.effectiveOccurrenceID
+                            || !oldSegmentIDs.contains(newSeg.id))
+                }
+                guard matchesSource else { continue }
                 let sliceLow = max(sourceLow, newSeg.sourceStart)
                 let sliceHigh = min(sourceHigh, newSeg.sourceEnd)
                 guard sliceHigh - sliceLow > epsilon else { continue }
@@ -873,18 +884,6 @@ nonisolated enum RecordingVideoOverlayMedia {
                   RecordingOverlayMedia.resolveRegularFile(named: overlay.fileName, in: mediaDirectory) != nil else {
                 throw ResolutionError.missingOrInvalid(label)
             }
-        }
-    }
-
-    /// Removes unreferenced owned video files from `mediaDirectory` without
-    /// following symlinks or touching images/audio/non-UUID files.
-    static func cleanupUnreferencedVideos(in mediaDirectory: URL, referenced: Set<String>) {
-        guard let realDirectory = RecordingOverlayMedia.resolveRealMediaDirectory(mediaDirectory) else { return }
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: realDirectory.path)) ?? []
-        for name in names where RecordingOverlayMedia.isOwnedImportFileName(name) && !referenced.contains(name) {
-            guard let fileURL = RecordingOverlayMedia.resolveRegularFile(named: name, in: realDirectory),
-                  RecordingVideoOverlay.canImportVideoFile(fileURL) else { continue }
-            try? FileManager.default.removeItem(at: fileURL)
         }
     }
 }
