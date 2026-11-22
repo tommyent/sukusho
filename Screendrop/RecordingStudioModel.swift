@@ -2755,7 +2755,7 @@ final class RecordingStudioModel {
             if !redactions.isEmpty {
                 for region in redactions { try region.validate(sourceDuration: sourceDuration) }
             }
-            redactionPreview.update(redactions: redactions, clipTimeline: clipTimeline)
+            redactionPreview.update(redactions: redactions, clipTimeline: clipTimeline, timeMap: nil)
             let (composition, videoComposition, builtTimeMap) = try RecordingCompositionBuilder.makeMultiSourceVideoComposition(
                 primarySource: primarySource,
                 importedSources: importedVideoSources,
@@ -2765,6 +2765,7 @@ final class RecordingStudioModel {
                 redactionSource: redactions.isEmpty ? nil : redactionPreview
             )
             compositionTimeMap = builtTimeMap
+            redactionPreview.update(redactions: redactions, clipTimeline: clipTimeline, timeMap: builtTimeMap)
             let plan = audioPlan
             playbackAudioLayout = StudioAudioComposer.add(plan, sources: activeAudioSources, to: composition)
             playbackAudioPlacement = plan.placement
@@ -2820,7 +2821,7 @@ final class RecordingStudioModel {
         trimSourcePreviewError = nil
         readyCutPlayerItem = nil
         cutRedactionPreviewError = nil
-        redactionPreview.update(redactions: redactions, clipTimeline: clipTimeline)
+        redactionPreview.update(redactions: redactions, clipTimeline: clipTimeline, timeMap: compositionTimeMap)
         let needsAsyncSingleSourceRedactions = !usesMultiSource && !redactions.isEmpty
         let generation = playerItemGate.beginCutBuild(isAsync: needsAsyncSingleSourceRedactions)
         let item = AVPlayerItem(asset: playbackAsset)
@@ -5562,6 +5563,11 @@ final class RecordingStudioModel {
                             redactionSource: self.redactions.isEmpty ? nil : self.redactionPreview
                         )
                         self.compositionTimeMap = builtTimeMap
+                        self.redactionPreview.update(
+                            redactions: self.redactions,
+                            clipTimeline: self.clipTimeline,
+                            timeMap: builtTimeMap
+                        )
                         item.videoComposition = videoComposition
                     } catch {
                         self.cutRedactionPreviewError = error.localizedDescription

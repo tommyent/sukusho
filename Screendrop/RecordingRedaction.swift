@@ -254,11 +254,24 @@ nonisolated final class RecordingRedactionPreviewSource: @unchecked Sendable {
     private let lock = NSLock()
     private var redactions: [RecordingRedaction] = []
     private var clipTimeline = RecordingClipTimeline(segments: [])
+    private var timeMap: StudioCompositionTimeMap?
 
     func update(redactions: [RecordingRedaction], clipTimeline: RecordingClipTimeline) {
         lock.withLock {
             self.redactions = redactions
             self.clipTimeline = clipTimeline
+        }
+    }
+
+    func update(
+        redactions: [RecordingRedaction],
+        clipTimeline: RecordingClipTimeline,
+        timeMap: StudioCompositionTimeMap?
+    ) {
+        lock.withLock {
+            self.redactions = redactions
+            self.clipTimeline = clipTimeline
+            self.timeMap = timeMap
         }
     }
 
@@ -270,21 +283,34 @@ nonisolated final class RecordingRedactionPreviewSource: @unchecked Sendable {
         atEditorTime editorTime: TimeInterval,
         frameDuration: TimeInterval = 1.0 / 60
     ) -> [RecordingRedaction] {
-        let (regions, map) = lock.withLock { (redactions, clipTimeline) }
+        let (regions, timeline, compositionMap) = lock.withLock { (redactions, clipTimeline, timeMap) }
+        if let compositionMap {
+            let cmTime = CMTime(seconds: max(0, editorTime.isFinite ? editorTime : 0), preferredTimescale: 600)
+            return compositionMap.activeRedactions(regions, at: cmTime, frameDuration: frameDuration)
+        }
         return regions.filter {
-            $0.covers(editorTime: editorTime, frameDuration: frameDuration, timeline: map)
+            $0.covers(editorTime: editorTime, frameDuration: frameDuration, timeline: timeline)
         }
     }
 
     func composition(asset: AVAsset) async throws -> AVVideoComposition {
-        let snapshot = lock.withLock { (redactions, clipTimeline) }
-        for region in snapshot.0 { try region.validate() }
+        let snapshot = lock.withLock { redactions }
+        for region in snapshot { try region.validate() }
         let interval = 1.0 / 60
         let context = CIContext(options: [.cacheIntermediates: false])
         let composition = try await AVVideoComposition(applyingFiltersTo: asset) { [self] parameters in
-            let (regions, map) = lock.withLock { (redactions, clipTimeline) }
-            let active = regions.filter {
-                $0.covers(editorTime: parameters.compositionTime.seconds, frameDuration: interval, timeline: map)
+            let (regions, timeline, compositionMap) = lock.withLock { (redactions, clipTimeline, timeMap) }
+            let active: [RecordingRedaction]
+            if let compositionMap {
+                active = compositionMap.activeRedactions(
+                    regions,
+                    at: parameters.compositionTime,
+                    frameDuration: interval
+                )
+            } else {
+                active = regions.filter {
+                    $0.covers(editorTime: parameters.compositionTime.seconds, frameDuration: interval, timeline: timeline)
+                }
             }
             guard !active.isEmpty else {
                 return AVCIImageFilteringResult(resultImage: parameters.sourceImage, ciContext: context)

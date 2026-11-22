@@ -689,16 +689,26 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             }
 
             let provenance = selectedSample.entry
-            let sourceTime = provenance.sourceTime(at: editorCMTime)
-            let tickSourceInterval = provenance.sourceInterval(
-                at: editorCMTime,
+            let sourceTime = tickEntry.sourceTime(at: editorCMTime)
+            let sampleSourceInterval = provenance.sourceInterval(
+                at: selectedSample.pts,
                 frameDuration: timing.frameInterval
             )
-            let sampleSourceTime = provenance.sourceTime(at: selectedSample.pts)
-            let redactionInterval = (
-                start: min(tickSourceInterval.start, sampleSourceTime),
-                end: max(tickSourceInterval.end, sampleSourceTime)
-            )
+            let redactionInterval: (start: TimeInterval, end: TimeInterval)
+            if tickEntry.hasVideo && provenance.editorRange == tickEntry.editorRange {
+                let tickSourceInterval = tickEntry.sourceInterval(
+                    at: editorCMTime,
+                    frameDuration: timing.frameInterval
+                )
+                redactionInterval = (
+                    start: min(tickSourceInterval.start, sampleSourceInterval.start),
+                    end: max(tickSourceInterval.end, sampleSourceInterval.end)
+                )
+            } else {
+                // Held frame during an uncovered empty video gap: mask based on
+                // the actual source moment of the pixels being displayed.
+                redactionInterval = sampleSourceInterval
+            }
 
             if cachedPool == nil { cachedPool = adaptor.pixelBufferPool }
             guard let pool = cachedPool else {

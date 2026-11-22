@@ -317,39 +317,158 @@ nonisolated enum RecordingCompositionBuilder {
 
         // The same ranges the sound is laid on, so both share every cut.
         let ranges = StudioAudioComposer.editorRanges(for: timeline)
-        let trackRange = videoTrack.timeRange
         var entries: [StudioCompositionTimeMap.Entry] = []
         entries.reserveCapacity(timeline.segments.count)
 
         for (index, (clip, editorRange)) in zip(timeline.segments, ranges).enumerated() {
-            let requested = CMTimeRange(
-                start: CMTime(seconds: max(0, clip.sourceStart), preferredTimescale: 600),
-                duration: CMTime(seconds: max(0, clip.duration), preferredTimescale: 600)
+            let inserted = try insertVideoSegment(
+                clip: clip,
+                segmentIndex: index,
+                editorRange: editorRange,
+                sourceTrack: videoTrack,
+                into: video
             )
-            let available: CMTimeRange
-            if trackRange.duration > .zero {
-                let intersected = CMTimeRangeGetIntersection(requested, otherRange: trackRange)
-                available = intersected.duration > .zero ? intersected : requested
-            } else {
-                available = requested
-            }
-            try video.insertTimeRange(available, of: videoTrack, at: editorRange.start)
-            if abs(clip.speed - 1) > 0.000_001 || abs(available.duration.seconds - editorRange.duration.seconds) > 0.000_5 {
-                video.scaleTimeRange(
-                    CMTimeRange(start: editorRange.start, duration: available.duration),
+            entries.append(contentsOf: inserted)
+        }
+        return (composition, StudioCompositionTimeMap(entries: entries))
+    }
+
+    /// Inserts one clip segment onto `destinationTrack` at `editorRange`
+    /// without ever stretching a shorter video track across missing leading or
+    /// trailing time: covered video stays at its true source-clock rate
+    /// (`clip.speed`), and any uncovered portion is filled with an explicit
+    /// empty range so picture stays locked to audio and redactions stay exact.
+    private static func insertVideoSegment(
+        clip: RecordingClipSegment,
+        segmentIndex: Int,
+        editorRange: CMTimeRange,
+        sourceTrack: AVAssetTrack,
+        into destinationTrack: AVMutableCompositionTrack
+    ) throws -> [StudioCompositionTimeMap.Entry] {
+        let requested = CMTimeRange(
+            start: CMTime(seconds: max(0, clip.sourceStart), preferredTimescale: 600),
+            duration: CMTime(seconds: max(0, clip.duration), preferredTimescale: 600)
+        )
+        let speed = max(clip.speed, RecordingClipSegment.minimumSpeed)
+        let isSpedUp = abs(speed - 1) > 0.000_001
+        let trackRange = sourceTrack.timeRange
+        let hasValidTrackRange = trackRange.duration > .zero
+        let covered = hasValidTrackRange
+            ? CMTimeRangeGetIntersection(requested, otherRange: trackRange)
+            : requested
+        let subTick = CMTime(value: 1, timescale: 600)
+        let leadingSourceDur = hasValidTrackRange
+            ? max(CMTime.zero, covered.start - requested.start)
+            : .zero
+        let trailingSourceDur = hasValidTrackRange
+            ? max(CMTime.zero, requested.end - covered.end)
+            : .zero
+
+        // Normal full coverage (within 1/600s muxer rounding): identical to
+        // `main`'s insertion and speed scaling.
+        if !hasValidTrackRange
+            || CMTimeRangeEqual(covered, requested)
+            || (covered.duration > .zero && leadingSourceDur < subTick && trailingSourceDur < subTick) {
+            try destinationTrack.insertTimeRange(requested, of: sourceTrack, at: editorRange.start)
+            if isSpedUp {
+                destinationTrack.scaleTimeRange(
+                    CMTimeRange(start: editorRange.start, duration: requested.duration),
                     toDuration: editorRange.duration
                 )
             }
-            entries.append(StudioCompositionTimeMap.Entry(
-                segmentIndex: index,
+            return [
+                StudioCompositionTimeMap.Entry(
+                    segmentIndex: segmentIndex,
+                    segmentID: clip.id,
+                    isPrimaryRecording: clip.isPrimaryRecording,
+                    mediaFileName: clip.mediaFileName,
+                    editorRange: editorRange,
+                    sourceRange: requested,
+                    hasVideo: true
+                )
+            ]
+        }
+
+        // Completely outside the video track (e.g. audio-only tail): keep empty.
+        if covered.duration <= .zero {
+            destinationTrack.insertEmptyTimeRange(editorRange)
+            return [
+                StudioCompositionTimeMap.Entry(
+                    segmentIndex: segmentIndex,
+                    segmentID: clip.id,
+                    isPrimaryRecording: clip.isPrimaryRecording,
+                    mediaFileName: clip.mediaFileName,
+                    editorRange: editorRange,
+                    sourceRange: requested,
+                    hasVideo: false
+                )
+            ]
+        }
+
+        // Partial video coverage: keep video at its exact source-clock placement
+        // (scaled only by `clip.speed`, never stretched across uncovered time).
+        let rawLeadingEd = isSpedUp
+            ? CMTime(seconds: leadingSourceDur.seconds / speed, preferredTimescale: 600)
+            : leadingSourceDur
+        let leadingEditorDur = min(rawLeadingEd, editorRange.duration)
+        let remainingAfterLeading = editorRange.duration - leadingEditorDur
+        let rawCoveredEd = isSpedUp
+            ? CMTime(seconds: covered.duration.seconds / speed, preferredTimescale: 600)
+            : covered.duration
+        let coveredEditorDur = min(rawCoveredEd, remainingAfterLeading)
+        let trailingEditorDur = remainingAfterLeading - coveredEditorDur
+
+        var result: [StudioCompositionTimeMap.Entry] = []
+        if leadingEditorDur > .zero {
+            let leadEd = CMTimeRange(start: editorRange.start, duration: leadingEditorDur)
+            destinationTrack.insertEmptyTimeRange(leadEd)
+            result.append(StudioCompositionTimeMap.Entry(
+                segmentIndex: segmentIndex,
                 segmentID: clip.id,
                 isPrimaryRecording: clip.isPrimaryRecording,
                 mediaFileName: clip.mediaFileName,
-                editorRange: editorRange,
-                sourceRange: available
+                editorRange: leadEd,
+                sourceRange: CMTimeRange(start: requested.start, duration: leadingSourceDur),
+                hasVideo: false
             ))
         }
-        return (composition, StudioCompositionTimeMap(entries: entries))
+        if coveredEditorDur > .zero {
+            let covStart = editorRange.start + leadingEditorDur
+            let covEd = CMTimeRange(start: covStart, duration: coveredEditorDur)
+            try destinationTrack.insertTimeRange(covered, of: sourceTrack, at: covStart)
+            if isSpedUp {
+                destinationTrack.scaleTimeRange(
+                    CMTimeRange(start: covStart, duration: covered.duration),
+                    toDuration: coveredEditorDur
+                )
+            }
+            result.append(StudioCompositionTimeMap.Entry(
+                segmentIndex: segmentIndex,
+                segmentID: clip.id,
+                isPrimaryRecording: clip.isPrimaryRecording,
+                mediaFileName: clip.mediaFileName,
+                editorRange: covEd,
+                sourceRange: covered,
+                hasVideo: true
+            ))
+        }
+        if trailingEditorDur > .zero {
+            let trailStart = editorRange.start + leadingEditorDur + coveredEditorDur
+            let trailEd = CMTimeRange(start: trailStart, duration: trailingEditorDur)
+            destinationTrack.insertEmptyTimeRange(trailEd)
+            let trailSrcStart = covered.end
+            let trailSrcDur = max(CMTime.zero, requested.end - trailSrcStart)
+            result.append(StudioCompositionTimeMap.Entry(
+                segmentIndex: segmentIndex,
+                segmentID: clip.id,
+                isPrimaryRecording: clip.isPrimaryRecording,
+                mediaFileName: clip.mediaFileName,
+                editorRange: trailEd,
+                sourceRange: CMTimeRange(start: trailSrcStart, duration: trailSrcDur),
+                hasVideo: false
+            ))
+        }
+        return result
     }
 
     /// Multi-source video composition: inserts segments across alternating
@@ -417,37 +536,14 @@ nonisolated enum RecordingCompositionBuilder {
             }
 
             let track = videoTracks[index % videoTracks.count]
-            let requested = CMTimeRange(
-                start: CMTime(seconds: max(0, clip.sourceStart), preferredTimescale: 600),
-                duration: CMTime(seconds: max(0, clip.duration), preferredTimescale: 600)
-            )
-            // Clamp to the source track's actual timeRange so tiny container
-            // duration differences never fail `insertTimeRange`.
-            let trackRange = source.videoTrack.timeRange
-            let available: CMTimeRange
-            if trackRange.duration > .zero {
-                let intersected = CMTimeRangeGetIntersection(requested, otherRange: trackRange)
-                available = intersected.duration > .zero ? intersected : requested
-            } else {
-                available = requested
-            }
-            try track.insertTimeRange(available, of: source.videoTrack, at: editorRange.start)
-            if abs(clip.speed - 1) > 0.000_001 || abs(available.duration.seconds - editorRange.duration.seconds) > 0.000_5 {
-                track.scaleTimeRange(
-                    CMTimeRange(start: editorRange.start, duration: available.duration),
-                    toDuration: editorRange.duration
-                )
-            }
-
-            let entry = StudioCompositionTimeMap.Entry(
+            let insertedEntries = try insertVideoSegment(
+                clip: clip,
                 segmentIndex: index,
-                segmentID: clip.id,
-                isPrimaryRecording: clip.isPrimaryRecording,
-                mediaFileName: clip.mediaFileName,
                 editorRange: editorRange,
-                sourceRange: available
+                sourceTrack: source.videoTrack,
+                into: track
             )
-            entries.append(entry)
+            entries.append(contentsOf: insertedEntries)
 
             let transform = placementTransform(
                 naturalSize: source.naturalSize,
@@ -456,23 +552,30 @@ nonisolated enum RecordingCompositionBuilder {
                 contentMode: clip.isPrimaryRecording ? .fit : clip.effectiveContentMode
             )
 
-            if let redactionSource {
-                instructions.append(StudioMultiSourceRedactionInstruction(
-                    entry: entry,
-                    frameDuration: frameDuration.seconds,
-                    trackID: track.trackID,
-                    transform: transform,
-                    redactionSource: redactionSource,
-                    renderSize: safeRenderSize
-                ))
-            } else {
-                let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
-                layerInstruction.setTransform(transform, at: editorRange.start)
-                let instruction = AVMutableVideoCompositionInstruction()
-                instruction.timeRange = editorRange
-                instruction.backgroundColor = CGColor(gray: 0, alpha: 1)
-                instruction.layerInstructions = [layerInstruction]
-                instructions.append(instruction)
+            for entry in insertedEntries {
+                let effectiveTrackID = entry.hasVideo ? track.trackID : kCMPersistentTrackID_Invalid
+                if let redactionSource {
+                    instructions.append(StudioMultiSourceRedactionInstruction(
+                        entry: entry,
+                        frameDuration: frameDuration.seconds,
+                        trackID: effectiveTrackID,
+                        transform: transform,
+                        redactionSource: redactionSource,
+                        renderSize: safeRenderSize
+                    ))
+                } else {
+                    let instruction = AVMutableVideoCompositionInstruction()
+                    instruction.timeRange = entry.editorRange
+                    instruction.backgroundColor = CGColor(gray: 0, alpha: 1)
+                    if entry.hasVideo {
+                        let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
+                        layerInstruction.setTransform(transform, at: entry.editorRange.start)
+                        instruction.layerInstructions = [layerInstruction]
+                    } else {
+                        instruction.layerInstructions = []
+                    }
+                    instructions.append(instruction)
+                }
             }
         }
 
@@ -547,6 +650,9 @@ nonisolated struct StudioCompositionTimeMap: Equatable, Sendable {
         let mediaFileName: String?
         let editorRange: CMTimeRange
         let sourceRange: CMTimeRange
+        /// False when this span is an explicit empty range where the video
+        /// track had no frames (e.g., audio-only tail of a shorter picture track).
+        var hasVideo: Bool = true
 
         /// Maps a composition timestamp (clamped to `editorRange`) to the
         /// corresponding timestamp inside the inserted `sourceRange`.
@@ -612,6 +718,39 @@ nonisolated struct StudioCompositionTimeMap: Equatable, Sendable {
         let safe = seconds.isFinite ? max(0, seconds) : 0
         return entry(at: CMTime(seconds: safe, preferredTimescale: 600))
     }
+
+    /// Active primary redactions at `editorTime` on the composition clock.
+    /// If `editorTime` lands in a trailing empty span of a primary segment
+    /// whose video ended early, also checks the preceding video span's terminal
+    /// source interval so a held last frame stays masked.
+    func activeRedactions(
+        _ redactions: [RecordingRedaction],
+        at editorTime: CMTime,
+        frameDuration: TimeInterval
+    ) -> [RecordingRedaction] {
+        guard !redactions.isEmpty, let entry = entry(at: editorTime), entry.isPrimaryRecording else {
+            return []
+        }
+        if entry.hasVideo {
+            let interval = entry.sourceInterval(at: editorTime, frameDuration: frameDuration)
+            return redactions.filter { $0.covers(sourceStart: interval.start, sourceEnd: interval.end) }
+        }
+        // Empty primary span: check both the span's own source interval and any
+        // held terminal frame from an earlier video span of the same segment.
+        let emptyInterval = entry.sourceInterval(at: editorTime, frameDuration: frameDuration)
+        let heldInterval: (start: TimeInterval, end: TimeInterval)? = entries
+            .last { $0.segmentID == entry.segmentID && $0.hasVideo && CMTimeCompare($0.editorRange.end, entry.editorRange.start) <= 0 }
+            .map { $0.sourceInterval(at: $0.editorRange.end, frameDuration: frameDuration) }
+        return redactions.filter { region in
+            if region.covers(sourceStart: emptyInterval.start, sourceEnd: emptyInterval.end) {
+                return true
+            }
+            if let heldInterval, region.covers(sourceStart: heldInterval.start, sourceEnd: heldInterval.end) {
+                return true
+            }
+            return false
+        }
+    }
 }
 
 /// Custom video composition instruction carrying one segment's source track,
@@ -644,7 +783,7 @@ nonisolated final class StudioMultiSourceRedactionInstruction: NSObject, AVVideo
         self.timeRange = entry.editorRange
         self.entry = entry
         self.frameDuration = frameDuration
-        self.requiredSourceTrackIDs = [NSNumber(value: trackID)]
+        self.requiredSourceTrackIDs = trackID == kCMPersistentTrackID_Invalid ? [] : [NSNumber(value: trackID)]
         self.trackID = trackID
         self.transform = transform
         self.redactionSource = redactionSource
@@ -673,19 +812,27 @@ nonisolated final class StudioMultiSourceRedactionCompositor: NSObject, AVVideoC
 
     func startRequest(_ request: AVAsynchronousVideoCompositionRequest) {
         guard let instruction = request.videoCompositionInstruction as? StudioMultiSourceRedactionInstruction,
-              let sourceBuffer = request.sourceFrame(byTrackID: instruction.trackID),
               let outputBuffer = request.renderContext.newPixelBuffer() else {
             request.finish(with: RecordingRedactionError.filterFailed)
             return
         }
         let renderExtent = CGRect(origin: .zero, size: instruction.renderSize)
+        let black = CIImage(color: .black).cropped(to: renderExtent)
+        if instruction.trackID == kCMPersistentTrackID_Invalid || !instruction.entry.hasVideo {
+            ciContext.render(black, to: outputBuffer, bounds: renderExtent, colorSpace: colorSpace)
+            request.finish(withComposedVideoFrame: outputBuffer)
+            return
+        }
+        guard let sourceBuffer = request.sourceFrame(byTrackID: instruction.trackID) else {
+            request.finish(with: RecordingRedactionError.filterFailed)
+            return
+        }
         let sourceHeight = CGFloat(CVPixelBufferGetHeight(sourceBuffer))
         let flipSource = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: sourceHeight)
         let flipDest = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: instruction.renderSize.height)
         let ciTransform = flipSource.concatenating(instruction.transform).concatenating(flipDest)
 
         let sourceImage = CIImage(cvPixelBuffer: sourceBuffer).transformed(by: ciTransform)
-        let black = CIImage(color: .black).cropped(to: renderExtent)
         var composed = sourceImage.composited(over: black).cropped(to: renderExtent)
 
         if instruction.entry.isPrimaryRecording {
