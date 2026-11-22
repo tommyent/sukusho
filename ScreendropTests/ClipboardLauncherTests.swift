@@ -299,6 +299,114 @@ struct ClipboardLauncherSearchTests {
         #expect(LauncherAppScanner.symlinkStaysInside("/Applications/Safari.app", allowedRoots: systemAllowed))
     }
 
+    @Test func scannerFindsNestedContentsApplicationsAndKeepsGuards() throws {
+        let fm = FileManager.default
+        let root = fm.temporaryDirectory.appendingPathComponent("sukusho-launcher-nested-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: root) }
+
+        func bundle(_ rel: String, version: String? = nil) throws {
+            let path = root.appendingPathComponent(rel).path
+            try fm.createDirectory(atPath: path + "/Contents", withIntermediateDirectories: true)
+            var info: [String: Any] = ["CFBundleName": (path as NSString).lastPathComponent]
+            if let version { info["CFBundleShortVersionString"] = version }
+            (info as NSDictionary).write(toFile: path + "/Contents/Info.plist", atomically: true)
+        }
+
+        // Top-level bundle with Contents/Applications and Contents/Developer/Applications,
+        // plus a depth-1 bundle with Contents/Applications.
+        try bundle("Apps/Xcode.app", version: "27.2")
+        try bundle("Apps/Xcode.app/Contents/Applications/Icon Composer.app", version: "1.0")
+        try bundle("Apps/Xcode.app/Contents/Applications/Instruments.app", version: "27.2")
+        try bundle("Apps/Xcode.app/Contents/Developer/Applications/Simulator.app", version: "27.2")
+        try bundle("Apps/Xcode.app/Contents/Frameworks/Helper.app", version: "1.0")
+        try bundle("Apps/Xcode.app/Contents/Applications/.Hidden.app", version: "1.0")
+        try bundle("Apps/Xcode.app/Contents/Applications/Sub/SubApp.app", version: "1.0")
+        try bundle("Apps/Xcode.app/Contents/Applications/Icon Composer.app/Contents/Applications/TooDeep.app", version: "1.0")
+        fm.createFile(atPath: root.path + "/Apps/Xcode.app/Contents/Applications/NotABundle.app", contents: Data())
+        try bundle("Apps/Vendor/Xcode-beta.app", version: "27.3")
+        try bundle("Apps/Vendor/Xcode-beta.app/Contents/Applications/FileMerge.app", version: "2.15")
+
+        // Alias sorting before Xcode.app must not stop Xcode.app's own embedded folders from being scanned.
+        try fm.createSymbolicLink(atPath: root.path + "/Apps/A_AliasXcode.app", withDestinationPath: root.path + "/Apps/Xcode.app")
+        // In-root symlink inside Contents/Applications deduplicates cleanly.
+        try fm.createSymbolicLink(
+            atPath: root.path + "/Apps/Xcode.app/Contents/Applications/InstrumentsAlias.app",
+            withDestinationPath: root.path + "/Apps/Xcode.app/Contents/Applications/Instruments.app"
+        )
+        // Loop guard: an embedded app symlink pointing back to its own host must not recurse or duplicate.
+        try bundle("Apps/LoopHost.app", version: "1.0")
+        try fm.createDirectory(atPath: root.path + "/Apps/LoopHost.app/Contents/Applications", withIntermediateDirectories: true)
+        try fm.createSymbolicLink(
+            atPath: root.path + "/Apps/LoopHost.app/Contents/Applications/Back.app",
+            withDestinationPath: root.path + "/Apps/LoopHost.app"
+        )
+
+        // Escaping symlinks at every level (host, Contents, Developer, Applications, and embedded leaf) must be rejected.
+        try bundle("Outside/Sneaky.app", version: "9.0")
+        try bundle("Outside/Sneaky.app/Contents/Applications/InsideSneaky.app", version: "9.0")
+        try fm.createSymbolicLink(
+            atPath: root.path + "/Apps/EscapingHost.app",
+            withDestinationPath: root.path + "/Outside/Sneaky.app"
+        )
+        try fm.createSymbolicLink(
+            atPath: root.path + "/Apps/Xcode.app/Contents/Applications/Escaping.app",
+            withDestinationPath: root.path + "/Outside/Sneaky.app"
+        )
+        try bundle("OutsideContents/Applications/LeakedViaContents.app", version: "9.1")
+        try fm.createDirectory(atPath: root.path + "/Apps/LinkedContents.app", withIntermediateDirectories: true)
+        try fm.createSymbolicLink(
+            atPath: root.path + "/Apps/LinkedContents.app/Contents",
+            withDestinationPath: root.path + "/OutsideContents"
+        )
+        try bundle("OutsideAppsDir/LeakedViaAppsDir.app", version: "9.2")
+        try fm.createDirectory(atPath: root.path + "/Apps/LinkedAppsDir.app/Contents", withIntermediateDirectories: true)
+        try fm.createSymbolicLink(
+            atPath: root.path + "/Apps/LinkedAppsDir.app/Contents/Applications",
+            withDestinationPath: root.path + "/OutsideAppsDir"
+        )
+        try bundle("OutsideDevDir/Applications/LeakedViaDevDir.app", version: "9.3")
+        try fm.createDirectory(atPath: root.path + "/Apps/LinkedDevDir.app/Contents", withIntermediateDirectories: true)
+        try fm.createSymbolicLink(
+            atPath: root.path + "/Apps/LinkedDevDir.app/Contents/Developer",
+            withDestinationPath: root.path + "/OutsideDevDir"
+        )
+
+        let scanned = LauncherAppScanner.scan([.init(root.path + "/Apps", depth: 1)], extras: [])
+        let byName = Dictionary(scanned.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
+
+        #expect(byName["Icon Composer"]?.path == root.path + "/Apps/Xcode.app/Contents/Applications/Icon Composer.app")
+        #expect(byName["Icon Composer"]?.version == "1.0")
+        #expect(byName["Instruments"] != nil || byName["InstrumentsAlias"] != nil)
+        #expect(byName["Simulator"]?.path == root.path + "/Apps/Xcode.app/Contents/Developer/Applications/Simulator.app")
+        #expect(byName["Simulator"]?.version == "27.2")
+        #expect(byName["FileMerge"]?.path == root.path + "/Apps/Vendor/Xcode-beta.app/Contents/Applications/FileMerge.app")
+        #expect(byName["FileMerge"]?.version == "2.15")
+        #expect(byName["LoopHost"]?.path == root.path + "/Apps/LoopHost.app")
+
+        // Rejected / skipped entries.
+        #expect(byName["Helper"] == nil)
+        #expect(byName[".Hidden"] == nil && byName["Hidden"] == nil)
+        #expect(byName["SubApp"] == nil)
+        #expect(byName["TooDeep"] == nil)
+        #expect(byName["NotABundle"] == nil)
+        #expect(byName["Back"] == nil)
+        #expect(byName["Sneaky"] == nil && byName["Escaping"] == nil && byName["EscapingHost"] == nil && byName["InsideSneaky"] == nil)
+        #expect(byName["LeakedViaContents"] == nil)
+        #expect(byName["LeakedViaAppsDir"] == nil)
+        #expect(byName["LeakedViaDevDir"] == nil)
+        // Expected entries: Xcode (or A_AliasXcode), Icon Composer, Instruments (or alias), Simulator,
+        // Xcode-beta, FileMerge, LoopHost, LinkedContents, LinkedAppsDir, LinkedDevDir = 10 unique apps.
+        #expect(scanned.count == 10)
+
+        // z's .app filtering still excludes paths inside .app bundles (including embedded app folders).
+        #expect(Zoxide.entries([
+            Zoxide.Folder(path: "/Applications/Xcode.app/Contents/Applications", score: 10),
+            Zoxide.Folder(path: "/Applications/Xcode.app/Contents/Applications/Icon Composer.app", score: 9),
+            Zoxide.Folder(path: "/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app", score: 8),
+            Zoxide.Folder(path: "/Users/me/Projects", score: 5),
+        ]).map(\.path) == ["/Users/me/Projects"])
+    }
+
     @Test func importsUnleashFavoritesOnFirstUseLeavingOriginalInPlace() throws {
         let fm = FileManager.default
         let root = fm.temporaryDirectory.appendingPathComponent("sukusho-launcher-import-\(UUID().uuidString)")
@@ -358,6 +466,10 @@ struct ClipboardLauncherSearchTests {
         #expect(paths.contains("/System/Applications/Calculator.app"))
         #expect(paths.contains("/System/Applications/Utilities/Terminal.app"))
         #expect(paths.contains("/Applications/Safari.app"))
+        let iconComposer = "/Applications/Xcode.app/Contents/Applications/Icon Composer.app"
+        if FileManager.default.fileExists(atPath: iconComposer) {
+            #expect(paths.contains(iconComposer))
+        }
         #expect(!real.contains { $0.name.hasSuffix(".app") })
         #expect(paths.count == real.count)
     }

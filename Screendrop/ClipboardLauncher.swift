@@ -577,7 +577,16 @@ nonisolated enum LauncherAppScanner {
     private static let safariCryptexAliasPath = "/System/Cryptexes/App/System/Applications/Safari.app"
     private static let safariCryptexResolvedPath = "/System/Volumes/Preboot/Cryptexes/App/System/Applications/Safari.app"
 
-    /// Every `.app` under the roots, plus `extras`, each once (a symlinked app counts once).
+    /// Where an `.app` bundle ships its own user-facing apps (Xcode keeps Icon Composer,
+    /// Instruments, FileMerge, and Simulator in these folders).
+    private static let embeddedAppFolders = [
+        ["Contents", "Applications"],
+        ["Contents", "Developer", "Applications"],
+    ]
+
+    /// Every `.app` under the roots, plus `extras`, each once (a symlinked app counts once),
+    /// including apps one level deep in each found app's `Contents/Applications` and
+    /// `Contents/Developer/Applications`.
     /// Stays strictly inside non-symlink configured roots: symlinked roots are rejected before
     /// resolving or trusting them, directory symlinks are never descended into, and `.app` symlinks
     /// are validated component-by-component without trusting `/System` broadly.
@@ -609,7 +618,19 @@ nonisolated enum LauncherAppScanner {
             out.append(entry)
         }
 
-        func walk(_ dir: String, _ depth: Int) {
+        func walkEmbeddedApps(in appPath: String) {
+            folders: for components in embeddedAppFolders {
+                if isCancelled() { return }
+                var dir = appPath
+                for component in components {
+                    dir += "/" + component
+                    guard fileType(at: dir) == S_IFDIR else { continue folders }
+                }
+                walk(dir, 0, includeNested: false)
+            }
+        }
+
+        func walk(_ dir: String, _ depth: Int, includeNested: Bool = true) {
             guard !isCancelled(),
                   fileType(at: dir) == S_IFDIR,
                   let names = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return }
@@ -620,11 +641,14 @@ nonisolated enum LauncherAppScanner {
                 if name.hasSuffix(".app") {
                     if kind == S_IFDIR {
                         add(path)
+                        if includeNested {
+                            walkEmbeddedApps(in: path)
+                        }
                     } else if kind == S_IFLNK, symlinkStaysInside(path, allowedRoots: allowedRoots) {
                         add(path)
                     }
                 } else if depth > 0, kind == S_IFDIR {
-                    walk(path, depth - 1)
+                    walk(path, depth - 1, includeNested: includeNested)
                 }
             }
         }
