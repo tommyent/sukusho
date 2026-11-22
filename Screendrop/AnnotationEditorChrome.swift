@@ -483,6 +483,7 @@ private struct GlassWindowChromeModifier: ViewModifier {
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { note in
                 if let window = host.window, note.object as? NSWindow === window {
                     LibraryWindowButtonCapsule.detach(window)
+                    restoreTitlebar(on: window)
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.willEnterFullScreenNotification)) { note in
@@ -508,10 +509,8 @@ private struct GlassWindowChromeModifier: ViewModifier {
                         }
                         window.titlebarAppearsTransparent = true
                         window.titlebarSeparatorStyle = .none
-                    } else if let previous = titlebarBeforeGlass {
-                        window.titlebarAppearsTransparent = previous.transparent
-                        window.titlebarSeparatorStyle = previous.separator
-                        titlebarBeforeGlass = nil
+                    } else {
+                        restoreTitlebar(on: window)
                     }
                 }
                 let metricsBinding = $metrics
@@ -537,6 +536,13 @@ private struct GlassWindowChromeModifier: ViewModifier {
                     if Task.isCancelled { break }
                 }
             }
+    }
+
+    private func restoreTitlebar(on window: NSWindow) {
+        guard #available(macOS 27, *), let previous = titlebarBeforeGlass else { return }
+        window.titlebarAppearsTransparent = previous.transparent
+        window.titlebarSeparatorStyle = previous.separator
+        titlebarBeforeGlass = nil
     }
 }
 
