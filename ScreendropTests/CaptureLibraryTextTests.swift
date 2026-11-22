@@ -82,6 +82,30 @@ struct CaptureLibraryTextTests {
         #expect(store.loadAll()[rebuilt.id] == rebuilt)
     }
 
+    @Test func deferredUnavailableInsightFrameSkipsFingerprintSoLaterItemsContinue() {
+        let now = Date()
+        let broken = CaptureTextIndexPlan.Capture(id: "recording:broken", fingerprint: "broken:1", createdAt: now)
+        let healthy = CaptureTextIndexPlan.Capture(id: "recording:healthy", fingerprint: "healthy:1", createdAt: now.addingTimeInterval(-60))
+        let entries: [String: CaptureTextEntry] = [
+            broken.id: CaptureTextEntry(id: broken.id, fingerprint: broken.fingerprint, paragraphs: ["One"]),
+            healthy.id: CaptureTextEntry(id: healthy.id, fingerprint: healthy.fingerprint, paragraphs: ["Two"]),
+        ]
+        var waiting = [broken.fingerprint: now.addingTimeInterval(CaptureTextIndexPlan.retryDelay)]
+        let plan = CaptureTextIndexPlan.dueForInsight(
+            [broken, healthy], entries: entries, since: .distantPast, includesExisting: true,
+            skipping: Set(CaptureTextIndexPlan.waiting(retryAt: waiting, now: now).keys)
+        )
+        #expect(plan.due.map(\.id) == [healthy.id])
+
+        // Once the bounded retry window expires, the deferred fingerprint becomes eligible again.
+        waiting = CaptureTextIndexPlan.waiting(retryAt: waiting, now: now.addingTimeInterval(CaptureTextIndexPlan.retryDelay))
+        let retried = CaptureTextIndexPlan.dueForInsight(
+            [broken, healthy], entries: entries, since: .distantPast, includesExisting: true,
+            skipping: Set(waiting.keys)
+        )
+        #expect(retried.due.map(\.id) == [broken.id, healthy.id])
+    }
+
     @Test func tallCapturesKeepAReadableShortSide() {
         #expect(CaptureTextIndexPlan.readingSize(width: 3420, height: 2214) == 3420)
         #expect(CaptureTextIndexPlan.readingSize(width: 5120, height: 2880) == 4096)

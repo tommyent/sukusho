@@ -355,7 +355,104 @@ struct LibraryTextIndexChecks {
             let frame = await CaptureLibraryIndex.image(for: danglingItem)
             try check(frame == nil, "\(label): insight image returned raw frame")
         }
-        print("CHECK: Library OCR and insight image hide redacted content, rebuild on change, purge when OCR is off, and fail closed on dangling edits")
+
+        // Round 3 checks: model submission fence before rescan, live edit title resolution,
+        // and bounded deferral of unavailable video preview frames.
+        let prevDescriber = index.describer
+        let prevAvailability = index.modelAvailability
+        let prevUsesIntelligence = UserDefaults.standard.bool(forKey: ScreendropPreferences.libraryUsesIntelligenceKey)
+        let prevIncludeExisting = UserDefaults.standard.bool(forKey: ScreendropPreferences.libraryInsightsIncludeExistingKey)
+        defer {
+            index.describer = prevDescriber
+            index.modelAvailability = prevAvailability
+            UserDefaults.standard.set(prevUsesIntelligence, forKey: ScreendropPreferences.libraryUsesIntelligenceKey)
+            UserDefaults.standard.set(prevIncludeExisting, forKey: ScreendropPreferences.libraryInsightsIncludeExistingKey)
+            index.settingsDidChange()
+        }
+        UserDefaults.standard.set(true, forKey: ScreendropPreferences.libraryUsesIntelligenceKey)
+        UserDefaults.standard.set(true, forKey: ScreendropPreferences.libraryInsightsIncludeExistingKey)
+
+        // 1. Model submission checks current on-disk redactions even before the Library rescans.
+        let preScan = try RecordingSessionStore.createSession()
+        try await movie(at: preScan.screenURL, firstLine: "SECRETKEY 99421", secondLine: "PASSCODE 88312")
+        try preScan.writeCaptureManifest(manifest)
+        await history.importRecordingSession(preScan)
+        let preScanID = "recording:\(preScan.directoryURL.standardizedFileURL.path)"
+        try await waitUntil("pre-scan recording indexed") {
+            index.entries[preScanID]?.paragraphs.joined().contains("SECRETKEY") == true
+        }
+        let staleItem = try require(model.items.first { $0.id == preScanID })
+        var leakedPreRedactionOCR = false
+        index.describer = { supplied, entry, _ in
+            if supplied.id == preScanID && entry.paragraphs.joined().contains("SECRETKEY") {
+                leakedPreRedactionOCR = true
+            }
+            return .insight(CaptureInsight(title: nil))
+        }
+        try preScan.writeDraftDocument(redactedDoc)
+        index.modelAvailability = { true }
+        index.sync([staleItem], isComplete: false)
+        try await waitUntil("stale pre-scan entry purged", timeout: .seconds(5)) {
+            index.entries[preScanID]?.paragraphs.joined().contains("SECRETKEY") != true
+        }
+        try check(!leakedPreRedactionOCR, "Model boundary received stale pre-redaction OCR before rescan")
+
+        // 2. Live edit document overrides cached pre-redaction model title even before saving to disk.
+        index.modelAvailability = { false }
+        index.settingsDidChange()
+        let liveSession = try RecordingSessionStore.createSession()
+        try await movie(at: liveSession.screenURL, firstLine: "SECRETKEY 99421", secondLine: "PASSCODE 88312")
+        try liveSession.writeCaptureManifest(manifest)
+        await history.importRecordingSession(liveSession)
+        let liveID = "recording:\(liveSession.directoryURL.standardizedFileURL.path)"
+        try await waitUntil("live recording indexed") {
+            index.entries[liveID]?.paragraphs.joined().contains("SECRETKEY") == true
+        }
+        let liveItem = try require(model.items.first { $0.id == liveID })
+        let privateTitle = "Private Synthetic Phrase 99421"
+        index.describer = { supplied, _, _ in
+            .insight(CaptureInsight(title: supplied.id == liveID ? privateTitle : nil))
+        }
+        index.modelAvailability = { true }
+        index.sync([liveItem], isComplete: false)
+        try await waitUntil("live model title stored", timeout: .seconds(8)) {
+            index.visibleInsight(for: liveSession)?.title == privateTitle
+        }
+        let liveTitle = RecordingAgentPromptExport.title(for: liveSession, document: redactedDoc)
+        try check(!liveTitle.contains(privateTitle), "Live redacted export reused stale pre-redaction title: \(liveTitle)")
+
+        // 3. Unavailable preview frame on a newer recording is deferred so an older healthy recording proceeds.
+        index.modelAvailability = { false }
+        index.settingsDidChange()
+        let healthySession = try RecordingSessionStore.createSession()
+        try await movie(at: healthySession.screenURL, firstLine: "Healthy clip alpha", secondLine: "Healthy clip beta")
+        try healthySession.writeCaptureManifest(manifest)
+        await history.importRecordingSession(healthySession)
+        let healthyID = "recording:\(healthySession.directoryURL.standardizedFileURL.path)"
+        let brokenSession = try RecordingSessionStore.createSession()
+        try await movie(at: brokenSession.screenURL, firstLine: "Broken clip alpha", secondLine: "Broken clip beta")
+        var newerManifest = manifest
+        newerManifest.createdAt = Date().addingTimeInterval(120)
+        try brokenSession.writeCaptureManifest(newerManifest)
+        await history.importRecordingSession(brokenSession)
+        let brokenID = "recording:\(brokenSession.directoryURL.standardizedFileURL.path)"
+        try await waitUntil("healthy and broken recordings indexed") {
+            index.entries[healthyID] != nil && index.entries[brokenID] != nil
+        }
+        let healthyItem = try require(model.items.first { $0.id == healthyID })
+        let brokenItem = try require(model.items.first { $0.id == brokenID })
+        try Data("unavailable synthetic frame".utf8).write(to: brokenSession.screenURL, options: .atomic)
+        var describedHealthy = false
+        index.describer = { supplied, _, _ in
+            if supplied.id == healthyID { describedHealthy = true }
+            return .insight(CaptureInsight(title: nil))
+        }
+        index.modelAvailability = { true }
+        index.sync([brokenItem, healthyItem], isComplete: false)
+        try await waitUntil("healthy recording described despite broken newer preview", timeout: .seconds(8)) {
+            describedHealthy
+        }
+        print("CHECK: Library OCR and insight image hide redacted content, rebuild on change, purge when OCR is off, fail closed on dangling edits, fence pre-scan model/live export, and defer unavailable previews")
     }
 
     /// The source app and window: History rows written before it decode, and

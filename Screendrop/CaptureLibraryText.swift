@@ -247,10 +247,12 @@ nonisolated enum CaptureTextIndexPlan {
     /// first: those taken since `since`, or all of them once the user asks
     /// for existing captures. `older` counts the ones still waiting for that.
     static func dueForInsight(_ captures: [Capture], entries: [String: CaptureTextEntry], since: Date,
-                              includesExisting: Bool, lastFailure: [String: Date] = [:]) -> (due: [Capture], older: Int) {
+                              includesExisting: Bool, lastFailure: [String: Date] = [:],
+                              skipping: Set<String> = []) -> (due: [Capture], older: Int) {
         var due: [Capture] = [], older = 0
         for capture in captures {
-            guard let entry = entries[capture.id], entry.isCurrent(fingerprint: capture.fingerprint),
+            guard !skipping.contains(capture.fingerprint),
+                  let entry = entries[capture.id], entry.isCurrent(fingerprint: capture.fingerprint),
                   entry.insight?.isCurrent != true else { continue }
             if includesExisting || capture.createdAt >= since { due.append(capture) } else { older += 1 }
         }

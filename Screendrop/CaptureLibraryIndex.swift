@@ -62,6 +62,8 @@ final class CaptureLibraryIndex {
     @ObservationIgnored private var lastModelFailure: [String: Date] = [:]
     /// The earliest retry for each unreadable fingerprint.
     @ObservationIgnored private var unreadable: [String: Date] = [:]
+    /// The earliest retry for each insight fingerprint whose preview frame could not be produced.
+    @ObservationIgnored private var unavailableInsightFrames: [String: Date] = [:]
     /// Plans again once failed reads may be retried, should nothing else
     /// change in the Library before then.
     @ObservationIgnored private var retry: Task<Void, Never>?
@@ -205,8 +207,8 @@ final class CaptureLibraryIndex {
                 CaptureLibraryModel.shared.insightsDidChange()
             }
         }
-        planInsights(items)
         scheduleRetries()
+        planInsights(items)
         guard ScreendropPreferences.libraryReadsText else {
             queue = []
             updatePending()
@@ -236,7 +238,8 @@ final class CaptureLibraryIndex {
             let plan = CaptureTextIndexPlan.dueForInsight(
                 items.filter { $0.id != describing?.id }.map { .init(id: $0.id, fingerprint: $0.thumbnailKey, createdAt: $0.createdAt) },
                 entries: entries, since: ScreendropPreferences.libraryInsightsSince,
-                includesExisting: ScreendropPreferences.libraryInsightsIncludeExisting, lastFailure: lastModelFailure)
+                includesExisting: ScreendropPreferences.libraryInsightsIncludeExisting,
+                lastFailure: lastModelFailure, skipping: Set(unavailableInsightFrames.keys))
             let byID = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             insightQueue = plan.due.compactMap { byID[$0.id] }
             older = plan.older
@@ -254,8 +257,9 @@ final class CaptureLibraryIndex {
     private func scheduleRetries() {
         let now = Date()
         unreadable = CaptureTextIndexPlan.waiting(retryAt: unreadable, now: now)
+        unavailableInsightFrames = CaptureTextIndexPlan.waiting(retryAt: unavailableInsightFrames, now: now)
         modelCooldown.expire(at: now)
-        let next = [unreadable.values.min(), modelCooldown.retryAt].compactMap { $0 }.min()
+        let next = [unreadable.values.min(), unavailableInsightFrames.values.min(), modelCooldown.retryAt].compactMap { $0 }.min()
         guard next != retryAt else { return }
         retry?.cancel()
         retryAt = next
@@ -375,6 +379,7 @@ final class CaptureLibraryIndex {
                 insightDeadline?.cancel()
                 insightDeadline = nil
                 describing = nil
+                unavailableInsightFrames[item.thumbnailKey] = Date().addingTimeInterval(retryDelay)
                 return
             }
             let outcome = Self.shouldPause() ? nil : await describer(item, entry, image)
