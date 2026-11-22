@@ -510,6 +510,333 @@ struct StudioVideoOverlayTests {
         #expect(FileManager.default.fileExists(atPath: nonOwned.path))
     }
 
+    // MARK: - Round 2 regressions (self-import, fades/shadow, conform/linking, package validation)
+
+    @Test func selfImportDetectionCatchesDirectStandardizedAndSymlinkedPaths() throws {
+        let dir = try makeTempDir("StudioVideoOverlaySelfImport")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let openPackage = dir.appendingPathComponent("Open.sukushorec", isDirectory: true)
+        let otherPackage = dir.appendingPathComponent("Other.sukushorec", isDirectory: true)
+        try FileManager.default.createDirectory(at: openPackage, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: otherPackage, withIntermediateDirectories: true)
+
+        let unstandardized = openPackage.appendingPathComponent("../Open.sukushorec", isDirectory: true)
+        let symlinkAlias = dir.appendingPathComponent("Alias.sukushorec", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: symlinkAlias, withDestinationURL: openPackage)
+
+        #expect(RecordingVideoOverlayMedia.isSelfRecording(openPackage, openSessionURL: openPackage))
+        #expect(RecordingVideoOverlayMedia.isSelfRecording(unstandardized, openSessionURL: openPackage))
+        #expect(RecordingVideoOverlayMedia.isSelfRecording(symlinkAlias, openSessionURL: openPackage))
+        #expect(!RecordingVideoOverlayMedia.isSelfRecording(otherPackage, openSessionURL: openPackage))
+    }
+
+    @Test func cutawayFadeMatchesSingleDissolveAndPiPShadowDoesNotDarkenInterior() throws {
+        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+        let canvasSize = CGSize(width: 200, height: 120)
+        let cardRect = CGRect(x: 20, y: 20, width: 160, height: 80)
+
+        let solidRed = CGColor(colorSpace: colorSpace, components: [1, 0, 0, 1])!
+        let solidBlue = CGColor(colorSpace: colorSpace, components: [0, 0, 1, 1])!
+        let solidBlack = CGColor(colorSpace: colorSpace, components: [0, 0, 0, 1])!
+
+        // Pure blue source images: 2:1 landscape (for Fill & PiP) and 1:2 portrait (for Fit letterbox).
+        let blueLandscape = try renderCanvas(size: CGSize(width: 80, height: 40), colorSpace: colorSpace) { ctx in
+            ctx.setFillColor(solidBlue)
+            ctx.fill(CGRect(x: 0, y: 0, width: 80, height: 40))
+        }
+        let bluePortrait = try renderCanvas(size: CGSize(width: 40, height: 80), colorSpace: colorSpace) { ctx in
+            ctx.setFillColor(solidBlue)
+            ctx.fill(CGRect(x: 0, y: 0, width: 40, height: 80))
+        }
+
+        // Single-layer reference: 50% blue over red, and 50% black over red.
+        let refBlueOverRedImage = try renderCanvas(size: canvasSize, colorSpace: colorSpace) { ctx in
+            ctx.setFillColor(solidRed)
+            ctx.fill(CGRect(origin: .zero, size: canvasSize))
+            ctx.setAlpha(0.5)
+            ctx.setFillColor(solidBlue)
+            ctx.fill(cardRect)
+        }
+        let refBlueOverRed = pixelRGB(in: refBlueOverRedImage, x: 100, y: 60)
+
+        let refBlackOverRedImage = try renderCanvas(size: canvasSize, colorSpace: colorSpace) { ctx in
+            ctx.setFillColor(solidRed)
+            ctx.fill(CGRect(origin: .zero, size: canvasSize))
+            ctx.setAlpha(0.5)
+            ctx.setFillColor(solidBlack)
+            ctx.fill(cardRect)
+        }
+        let refBlackOverRed = pixelRGB(in: refBlackOverRedImage, x: 100, y: 60)
+
+        // 1. Cutaway Fill at 50% crossfade matches single-layer dissolve (no double-fade darkening).
+        var fillCutaway = RecordingVideoOverlay(
+            fileName: "b.mov",
+            displayName: "Blue",
+            start: 0,
+            fileDuration: 4,
+            presentation: .cutaway
+        )
+        fillCutaway.fadeIn = 2.0
+        fillCutaway.fadeOut = 0
+        fillCutaway.cutawayContentMode = .fill
+        let fillRendered = try renderCanvas(size: canvasSize, colorSpace: colorSpace) { ctx in
+            ctx.setFillColor(solidRed)
+            ctx.fill(CGRect(origin: .zero, size: canvasSize))
+            RecordingVideoOverlayRenderer.draw(
+                fillCutaway,
+                frame: blueLandscape,
+                atEditorTime: 1.0,
+                canvasSize: canvasSize,
+                cardRect: cardRect,
+                cardCornerRadius: 0,
+                in: ctx
+            )
+        }
+        let fillMid = pixelRGB(in: fillRendered, x: 100, y: 60)
+        #expect(abs(Int(fillMid.r) - Int(refBlueOverRed.r)) <= 2)
+        #expect(abs(Int(fillMid.g) - Int(refBlueOverRed.g)) <= 2)
+        #expect(abs(Int(fillMid.b) - Int(refBlueOverRed.b)) <= 2)
+
+        // 2. Cutaway Fit at 50% crossfade: video center matches single dissolve blue/red,
+        // and letterbox pillar matches single dissolve black/red.
+        var fitCutaway = fillCutaway
+        fitCutaway.cutawayContentMode = .fit
+        let fitRendered = try renderCanvas(size: canvasSize, colorSpace: colorSpace) { ctx in
+            ctx.setFillColor(solidRed)
+            ctx.fill(CGRect(origin: .zero, size: canvasSize))
+            RecordingVideoOverlayRenderer.draw(
+                fitCutaway,
+                frame: bluePortrait,
+                atEditorTime: 1.0,
+                canvasSize: canvasSize,
+                cardRect: cardRect,
+                cardCornerRadius: 0,
+                in: ctx
+            )
+        }
+        let fitVideoCenter = pixelRGB(in: fitRendered, x: 100, y: 60)
+        #expect(abs(Int(fitVideoCenter.r) - Int(refBlueOverRed.r)) <= 2)
+        #expect(abs(Int(fitVideoCenter.g) - Int(refBlueOverRed.g)) <= 2)
+        #expect(abs(Int(fitVideoCenter.b) - Int(refBlueOverRed.b)) <= 2)
+        let fitLetterbox = pixelRGB(in: fitRendered, x: 35, y: 60)
+        #expect(abs(Int(fitLetterbox.r) - Int(refBlackOverRed.r)) <= 2)
+        #expect(abs(Int(fitLetterbox.g) - Int(refBlackOverRed.g)) <= 2)
+        #expect(abs(Int(fitLetterbox.b) - Int(refBlackOverRed.b)) <= 2)
+
+        // 3. Rounded PiP with strong drop shadow at 50% opacity: interior matches single dissolve
+        // (zero darkening from shadow) while exterior below PiP receives the shadow.
+        var pip = RecordingVideoOverlay(
+            fileName: "p.mov",
+            displayName: "PiP",
+            start: 0,
+            fileDuration: 4,
+            presentation: .pip
+        )
+        pip.center = CGPoint(x: 0.5, y: 0.45)
+        pip.width = 0.4 // 80 x 40 centered at (100, 54) -> y in [34, 74]
+        pip.aspect = 2.0
+        pip.opacity = 0.5
+        pip.cornerRadius = 40
+        pip.shadow = 0.9
+        let pipRendered = try renderCanvas(size: canvasSize, colorSpace: colorSpace) { ctx in
+            ctx.setFillColor(solidRed)
+            ctx.fill(CGRect(origin: .zero, size: canvasSize))
+            RecordingVideoOverlayRenderer.draw(
+                pip,
+                frame: blueLandscape,
+                atEditorTime: 2.0,
+                canvasSize: canvasSize,
+                cardRect: cardRect,
+                cardCornerRadius: 0,
+                in: ctx
+            )
+        }
+        let pipInterior = pixelRGB(in: pipRendered, x: 100, y: 54)
+        #expect(abs(Int(pipInterior.r) - Int(refBlueOverRed.r)) <= 2)
+        #expect(abs(Int(pipInterior.g) - Int(refBlueOverRed.g)) <= 2)
+        #expect(abs(Int(pipInterior.b) - Int(refBlueOverRed.b)) <= 2)
+        let pipShadowOutside = pixelRGB(in: pipRendered, x: 100, y: 75)
+        #expect(pipShadowOutside.r < 245) // shadow darkened exterior red right below PiP bottom edge
+
+        // 4. Switching a 30%-opacity PiP to Cutaway yields a 100% opaque cutaway mid-span,
+        // while keeping the saved PiP opacity intact for switching back.
+        pip.opacity = 0.3
+        let switched = pip.switchingPresentation(to: .cutaway)
+        #expect(abs(switched.opacity - 0.3) < 0.001)
+        #expect(abs(switched.effectiveOpacity(atEditorTime: 2.0) - 1.0) < 0.001)
+        #expect(abs(StudioVideoOverlayLane.cutawayCoverage(in: [switched], atEditorTime: 2.0) - 1.0) < 0.001)
+        let opaqueCutaway = try renderCanvas(size: canvasSize, colorSpace: colorSpace) { ctx in
+            ctx.setFillColor(solidRed)
+            ctx.fill(CGRect(origin: .zero, size: canvasSize))
+            RecordingVideoOverlayRenderer.draw(
+                switched,
+                frame: blueLandscape,
+                atEditorTime: 2.0,
+                canvasSize: canvasSize,
+                cardRect: cardRect,
+                cardCornerRadius: 0,
+                in: ctx
+            )
+        }
+        let opaqueMid = pixelRGB(in: opaqueCutaway, x: 100, y: 60)
+        #expect(opaqueMid.r <= 2 && opaqueMid.b >= 253)
+        let backToPiP = switched.switchingPresentation(to: .pip)
+        #expect(abs(backToPiP.effectiveOpacity(atEditorTime: 2.0) - 0.3) < 0.001)
+    }
+
+    @Test func conformBoundsToTimelineEndPreservesTieOrderAndSupportsLinkedVsUnlinked() throws {
+        // Default isLinked is true; legacy JSON without isLinked decodes linked; false round-trips.
+        let defaultOverlay = RecordingVideoOverlay(fileName: "a.mov", displayName: "A", start: 0, fileDuration: 2)
+        #expect(defaultOverlay.isLinked)
+        let legacyJSON = #"{"fileName":"a.mov","start":0,"trimEnd":2}"#
+        let legacyDecoded = try JSONDecoder().decode(RecordingVideoOverlay.self, from: Data(legacyJSON.utf8))
+        #expect(legacyDecoded.isLinked)
+        var unlinked = defaultOverlay
+        unlinked.isLinked = false
+        let unlinkedDecoded = try JSONDecoder().decode(RecordingVideoOverlay.self, from: try JSONEncoder().encode(unlinked))
+        #expect(!unlinkedDecoded.isLinked)
+
+        // Shortening 10s -> 5s drops overlays pushed past the end (never stranding them at 5...7).
+        let old10 = RecordingClipTimeline.full(sourceDuration: 10)
+        let short5 = RecordingClipTimeline(segments: [RecordingClipSegment(sourceStart: 0, sourceEnd: 5)])
+        var unlinkedPastEnd = RecordingVideoOverlay(fileName: "u.mov", displayName: "U", start: 6, fileDuration: 2, isLinked: false)
+        unlinkedPastEnd.trimEnd = 2
+        let linkedPastEnd = RecordingVideoOverlay(fileName: "l.mov", displayName: "L", start: 6, fileDuration: 2, isLinked: true)
+        #expect(StudioVideoOverlayLane.conform([unlinkedPastEnd], from: old10, to: short5).isEmpty)
+        #expect(StudioVideoOverlayLane.conform([linkedPastEnd], from: old10, to: short5).isEmpty)
+
+        // An overlay straddling the shortened tail (4...6 -> 4...5) clamps cleanly to timeline end.
+        let straddling = RecordingVideoOverlay(fileName: "s.mov", displayName: "S", start: 4, fileDuration: 2, isLinked: false)
+        let clampedTail = StudioVideoOverlayLane.conform([straddling], from: old10, to: short5)
+        #expect(clampedTail.count == 1)
+        #expect(abs(clampedTail[0].start - 4) < 0.001)
+        #expect(abs(clampedTail[0].end - 5) < 0.001)
+
+        // Lane edits (trimmedTrailing and withSpeed) bound to timelineDuration (5s).
+        var atTail = RecordingVideoOverlay(fileName: "t.mov", displayName: "T", start: 3, fileDuration: 8)
+        atTail.trimEnd = 5 // 3...5 (2s)
+        let extended = StudioVideoOverlayLane.trimmedTrailing(atTail, by: 3, among: [atTail], timelineDuration: 5)
+        #expect(extended.end <= 5.0 + 0.001)
+        let slowed = StudioVideoOverlayLane.withSpeed(atTail, speed: 0.5, among: [atTail], timelineDuration: 5)
+        #expect(slowed.end <= 5.0 + 0.001)
+
+        // Tie-order preservation: two unlinked overlays whose starts map to the same point keep original order
+        // even when the earlier one has a lexicographically larger UUID.
+        var first = RecordingVideoOverlay(fileName: "first.mov", displayName: "First", start: 2.5, fileDuration: 1, isLinked: false)
+        first.id = UUID(uuidString: "FFFFFFFF-FFFF-FFFF-FFFF-FFFFFFFFFFFF")!
+        var second = RecordingVideoOverlay(fileName: "second.mov", displayName: "Second", start: 3.5, fileDuration: 1, isLinked: false)
+        second.id = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        let cutMiddle = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 2),
+            RecordingClipSegment(sourceStart: 4, sourceEnd: 10)
+        ])
+        let tied = StudioVideoOverlayLane.conform([first, second], from: old10, to: cutMiddle)
+        #expect(tied.count == 2)
+        #expect(tied[0].displayName == "First")
+        #expect(tied[1].displayName == "Second")
+        #expect(abs(tied[0].start - 2) < 0.001)
+        #expect(abs(tied[1].start - 3) < 0.001)
+
+        // Linked overlay cuts and speeds with the main video; unlinked stays whole.
+        var linkedSpan = RecordingVideoOverlay(fileName: "span.mov", displayName: "Span", start: 1, fileDuration: 6, isLinked: true)
+        linkedSpan.fadeIn = 0.5
+        linkedSpan.fadeOut = 0.5
+        let cut3To5 = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 3),
+            RecordingClipSegment(sourceStart: 5, sourceEnd: 10)
+        ])
+        let splitLinked = StudioVideoOverlayLane.conform([linkedSpan], from: old10, to: cut3To5)
+        #expect(splitLinked.count == 2)
+        #expect(abs(splitLinked[0].start - 1) < 0.001 && abs(splitLinked[0].end - 3) < 0.001)
+        #expect(abs(splitLinked[1].start - 3) < 0.001 && abs(splitLinked[1].end - 5) < 0.001)
+        #expect(splitLinked[0].fadeIn == 0.5 && splitLinked[0].fadeOut == 0)
+        #expect(splitLinked[1].fadeIn == 0 && splitLinked[1].fadeOut == 0.5)
+
+        var unlinkedSpan = linkedSpan
+        unlinkedSpan.isLinked = false
+        let wholeUnlinked = StudioVideoOverlayLane.conform([unlinkedSpan], from: old10, to: cut3To5)
+        #expect(wholeUnlinked.count == 1)
+        #expect(abs(wholeUnlinked[0].start - 1) < 0.001 && abs(wholeUnlinked[0].end - 7) < 0.001)
+
+        // Speeding up the main video 2x speeds a linked overlay to 2x as well.
+        let fastTimeline = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 10, speed: 2)
+        ])
+        let fastLinked = StudioVideoOverlayLane.conform([linkedSpan], from: old10, to: fastTimeline)
+        #expect(fastLinked.count == 1)
+        #expect(abs(fastLinked[0].speed - 2.0) < 0.001)
+        #expect(abs(fastLinked[0].start - 0.5) < 0.001)
+        #expect(abs(fastLinked[0].duration - 3.0) < 0.001)
+    }
+
+    @Test func validateRecordingPackageRejectsSymlinkedMastersMediaAndReferences() throws {
+        let dir = try makeTempDir("StudioVideoOverlayPackageValidation")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let outsideFile = dir.appendingPathComponent("secret.mov")
+        try Data("secret".utf8).write(to: outsideFile)
+
+        func makeValidPackage(_ name: String) throws -> URL {
+            let pkg = dir.appendingPathComponent(name, isDirectory: true)
+            let media = pkg.appendingPathComponent("media", isDirectory: true)
+            try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
+            try Data("screen".utf8).write(to: pkg.appendingPathComponent("screen.mov"))
+            try Data("camera".utf8).write(to: pkg.appendingPathComponent("camera.mov"))
+            try Data("audio".utf8).write(to: pkg.appendingPathComponent("replacement.m4a"))
+            try Data("overlay".utf8).write(to: media.appendingPathComponent("11111111-1111-1111-1111-111111111111.mov"))
+            let editJSON = """
+            {
+                "replacementAudioFileName": "replacement.m4a",
+                "videoOverlays": [{ "fileName": "11111111-1111-1111-1111-111111111111.mov" }]
+            }
+            """
+            try Data(editJSON.utf8).write(to: pkg.appendingPathComponent("edit.json"))
+            return pkg
+        }
+
+        let valid = try makeValidPackage("Valid.sukushorec")
+        #expect(RecordingVideoOverlayMedia.validateRecordingPackage(at: valid))
+
+        // Symlinked package directory rejected.
+        let symPkg = dir.appendingPathComponent("SymPkg.sukushorec")
+        try FileManager.default.createSymbolicLink(at: symPkg, withDestinationURL: valid)
+        #expect(!RecordingVideoOverlayMedia.validateRecordingPackage(at: symPkg))
+
+        // Symlinked screen.mov rejected.
+        let symScreen = try makeValidPackage("SymScreen.sukushorec")
+        try FileManager.default.removeItem(at: symScreen.appendingPathComponent("screen.mov"))
+        try FileManager.default.createSymbolicLink(at: symScreen.appendingPathComponent("screen.mov"), withDestinationURL: outsideFile)
+        #expect(!RecordingVideoOverlayMedia.validateRecordingPackage(at: symScreen))
+
+        // Symlinked camera.mov rejected.
+        let symCam = try makeValidPackage("SymCam.sukushorec")
+        try FileManager.default.removeItem(at: symCam.appendingPathComponent("camera.mov"))
+        try FileManager.default.createSymbolicLink(at: symCam.appendingPathComponent("camera.mov"), withDestinationURL: outsideFile)
+        #expect(!RecordingVideoOverlayMedia.validateRecordingPackage(at: symCam))
+
+        // Symlinked replacement audio rejected.
+        let symAudio = try makeValidPackage("SymAudio.sukushorec")
+        try FileManager.default.removeItem(at: symAudio.appendingPathComponent("replacement.m4a"))
+        try FileManager.default.createSymbolicLink(at: symAudio.appendingPathComponent("replacement.m4a"), withDestinationURL: outsideFile)
+        #expect(!RecordingVideoOverlayMedia.validateRecordingPackage(at: symAudio))
+
+        // Symlinked media directory rejected.
+        let symMedia = try makeValidPackage("SymMedia.sukushorec")
+        let outsideDir = dir.appendingPathComponent("outside-media", isDirectory: true)
+        try FileManager.default.createDirectory(at: outsideDir, withIntermediateDirectories: true)
+        try FileManager.default.removeItem(at: symMedia.appendingPathComponent("media"))
+        try FileManager.default.createSymbolicLink(at: symMedia.appendingPathComponent("media"), withDestinationURL: outsideDir)
+        #expect(!RecordingVideoOverlayMedia.validateRecordingPackage(at: symMedia))
+
+        // Symlinked referenced overlay inside media rejected.
+        let symOverlay = try makeValidPackage("SymOverlay.sukushorec")
+        let overlayPath = symOverlay.appendingPathComponent("media/11111111-1111-1111-1111-111111111111.mov")
+        try FileManager.default.removeItem(at: overlayPath)
+        try FileManager.default.createSymbolicLink(at: overlayPath, withDestinationURL: outsideFile)
+        #expect(!RecordingVideoOverlayMedia.validateRecordingPackage(at: symOverlay))
+    }
+
     // MARK: - Helpers
 
     private func makeTempDir(_ prefix: String) throws -> URL {

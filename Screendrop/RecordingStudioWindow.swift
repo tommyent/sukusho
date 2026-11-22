@@ -1679,15 +1679,14 @@ private struct StudioVideoOverlayCanvasView: View {
                 let gravity: AVLayerVideoGravity = overlay.cutawayContentMode == .fill
                     ? .resizeAspectFill
                     : .resizeAspect
-                ZStack {
-                    Color.black
-                    StudioPlayerLayerView(player: player, gravity: gravity)
-                }
-                .frame(width: layout.cardRect.width, height: layout.cardRect.height)
-                .clipShape(RoundedRectangle(cornerRadius: layout.cardCornerRadius, style: .continuous))
-                .opacity(alpha)
-                .position(x: layout.cardRect.midX, y: layout.cardRect.midY)
-                .allowsHitTesting(false)
+                // Paint letterbox backing on the single AVPlayerLayer so `.opacity(alpha)`
+                // dissolves the cutaway and backing once instead of double-fading.
+                StudioPlayerLayerView(player: player, gravity: gravity, backgroundColor: .black)
+                    .frame(width: layout.cardRect.width, height: layout.cardRect.height)
+                    .clipShape(RoundedRectangle(cornerRadius: layout.cardCornerRadius, style: .continuous))
+                    .opacity(alpha)
+                    .position(x: layout.cardRect.midX, y: layout.cardRect.midY)
+                    .allowsHitTesting(false)
             }
         }
     }
@@ -1697,11 +1696,13 @@ private struct StudioVideoOverlayCanvasView: View {
 private struct StudioPlayerLayerView: NSViewRepresentable {
     let player: AVPlayer
     let gravity: AVLayerVideoGravity
+    var backgroundColor: CGColor? = nil
 
     func makeNSView(context: Context) -> StudioPlayerContainerView {
         let view = StudioPlayerContainerView()
         view.playerLayer.player = player
         view.playerLayer.videoGravity = gravity
+        view.playerLayer.backgroundColor = backgroundColor
         return view
     }
 
@@ -1710,6 +1711,9 @@ private struct StudioPlayerLayerView: NSViewRepresentable {
             nsView.playerLayer.player = player
         }
         nsView.playerLayer.videoGravity = gravity
+        if nsView.playerLayer.backgroundColor != backgroundColor {
+            nsView.playerLayer.backgroundColor = backgroundColor
+        }
     }
 }
 
@@ -1719,9 +1723,11 @@ final class StudioPlayerContainerView: NSView {
     init() {
         super.init(frame: .zero)
         wantsLayer = true
-        layer = CALayer()
+        let rootLayer = CALayer()
+        rootLayer.allowsGroupOpacity = true
+        layer = rootLayer
         playerLayer.frame = bounds
-        layer?.addSublayer(playerLayer)
+        rootLayer.addSublayer(playerLayer)
     }
 
     required init?(coder: NSCoder) {

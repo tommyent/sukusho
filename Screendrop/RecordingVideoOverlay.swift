@@ -125,6 +125,9 @@ nonisolated struct RecordingVideoOverlay: Identifiable, Codable, Equatable, Hash
     var audioFadeOut: TimeInterval = 0
     /// Whether the source movie carries an audio track.
     var hasAudio: Bool = true
+    /// Linked overlays cut, trim, and retime with the main video beneath them;
+    /// unlinked overlays stay whole and follow the footage moment under their start.
+    var isLinked: Bool = true
 
     var fileSpan: TimeInterval { max(0, trimEnd - trimStart) }
     var duration: TimeInterval { fileSpan / max(speed, 0.01) }
@@ -138,7 +141,8 @@ nonisolated struct RecordingVideoOverlay: Identifiable, Codable, Equatable, Hash
         displayName: String,
         start: TimeInterval,
         fileDuration: TimeInterval,
-        presentation: Presentation = .pip
+        presentation: Presentation = .pip,
+        isLinked: Bool = true
     ) {
         self.fileName = fileName
         self.displayName = displayName
@@ -146,6 +150,7 @@ nonisolated struct RecordingVideoOverlay: Identifiable, Codable, Equatable, Hash
         self.fileDuration = fileDuration
         self.trimEnd = fileDuration
         self.presentation = presentation
+        self.isLinked = isLinked
         self.isMuted = presentation == .cutaway
         if presentation == .cutaway {
             let fade = min(Self.defaultCutawayFade, max(0, fileDuration / 2))
@@ -159,7 +164,7 @@ nonisolated struct RecordingVideoOverlay: Identifiable, Codable, Equatable, Hash
         case start, trimStart, trimEnd, fileDuration, speed
         case presentation, center, width, aspect, rotation, opacity, cornerRadius, shadow
         case fadeIn, fadeOut, cutawayContentMode
-        case volume, isMuted, audioFadeIn, audioFadeOut, hasAudio
+        case volume, isMuted, audioFadeIn, audioFadeOut, hasAudio, isLinked
     }
 
     init(from decoder: any Decoder) throws {
@@ -195,6 +200,7 @@ nonisolated struct RecordingVideoOverlay: Identifiable, Codable, Equatable, Hash
         audioFadeIn = try container.decodeIfPresent(TimeInterval.self, forKey: .audioFadeIn) ?? 0
         audioFadeOut = try container.decodeIfPresent(TimeInterval.self, forKey: .audioFadeOut) ?? 0
         hasAudio = try container.decodeIfPresent(Bool.self, forKey: .hasAudio) ?? true
+        isLinked = try container.decodeIfPresent(Bool.self, forKey: .isLinked) ?? true
     }
 
     func sanitized() -> RecordingVideoOverlay {
@@ -265,7 +271,15 @@ nonisolated struct RecordingVideoOverlay: Identifiable, Codable, Equatable, Hash
     }
 
     func effectiveOpacity(atEditorTime time: TimeInterval) -> Double {
-        min(max(opacity, 0), 1) * fade(atEditorTime: time)
+        let envelope = fade(atEditorTime: time)
+        switch presentation {
+        case .pip:
+            return min(max(opacity, 0), 1) * envelope
+        case .cutaway:
+            // Cutaway coverage depends only on its crossfade envelope; saved PiP
+            // opacity stays separate so switching modes never leaves a cutaway translucent.
+            return envelope
+        }
     }
 
     /// PiP frame on the canvas before rotation (top-left origin).
@@ -400,7 +414,12 @@ nonisolated struct RecordingVideoOverlay: Identifiable, Codable, Equatable, Hash
 /// timeline conform rules for `RecordingVideoOverlay`. Overlaps are never
 /// permitted on the single v1 layered video lane.
 nonisolated enum StudioVideoOverlayLane {
-    static func normalized(_ overlays: [RecordingVideoOverlay]) -> [RecordingVideoOverlay] {
+    private static let epsilon: TimeInterval = 0.000_5
+
+    static func normalized(
+        _ overlays: [RecordingVideoOverlay],
+        timelineDuration: TimeInterval? = nil
+    ) -> [RecordingVideoOverlay] {
         var seen = Set<UUID>()
         let sorted = overlays
             .map { raw -> RecordingVideoOverlay in
@@ -410,19 +429,40 @@ nonisolated enum StudioVideoOverlayLane {
                 }
                 return item
             }
+            .enumerated()
             .sorted {
-                if abs($0.start - $1.start) > 0.000_001 {
-                    return $0.start < $1.start
+                if abs($0.element.start - $1.element.start) > 0.000_001 {
+                    return $0.element.start < $1.element.start
                 }
-                return $0.id.uuidString < $1.id.uuidString
+                return $0.offset < $1.offset
             }
+            .map(\.element)
 
+        let limit: TimeInterval? = timelineDuration.flatMap { $0.isFinite ? max(0, $0) : nil }
         var result: [RecordingVideoOverlay] = []
         result.reserveCapacity(sorted.count)
         var cursor: TimeInterval = 0
         for var item in sorted {
             if item.start < cursor {
                 item.start = cursor
+            }
+            if let limit {
+                let remaining = limit - item.start
+                guard remaining >= RecordingVideoOverlay.minimumDuration - epsilon else {
+                    continue
+                }
+                if item.end > limit {
+                    let speed = max(item.speed, 0.01)
+                    let clampedTrimEnd = min(item.fileDuration, item.trimStart + remaining * speed)
+                    guard clampedTrimEnd - item.trimStart >= RecordingVideoOverlay.minimumFileSpan else {
+                        continue
+                    }
+                    item.trimEnd = clampedTrimEnd
+                    item = item.sanitized()
+                    guard item.duration >= RecordingVideoOverlay.minimumDuration - epsilon else {
+                        continue
+                    }
+                }
             }
             cursor = item.end
             result.append(item)
@@ -445,19 +485,27 @@ nonisolated enum StudioVideoOverlayLane {
     ) -> Double {
         guard let active = activeOverlay(in: overlays, atEditorTime: time),
               active.presentation == .cutaway else { return 0 }
-        return active.effectiveOpacity(atEditorTime: time)
+        return active.fade(atEditorTime: time)
     }
 
     static func neighborBounds(
         for id: UUID,
-        in overlays: [RecordingVideoOverlay]
+        in overlays: [RecordingVideoOverlay],
+        timelineDuration: TimeInterval? = nil
     ) -> (lower: TimeInterval, upper: TimeInterval) {
-        let sorted = overlays.sorted { $0.start < $1.start }
+        let sorted = overlays.enumerated().sorted {
+            if abs($0.element.start - $1.element.start) > 0.000_001 {
+                return $0.element.start < $1.element.start
+            }
+            return $0.offset < $1.offset
+        }.map(\.element)
+        let limit = timelineDuration.flatMap { $0.isFinite ? max(0, $0) : nil } ?? .infinity
         guard let index = sorted.firstIndex(where: { $0.id == id }) else {
-            return (0, .infinity)
+            return (0, limit)
         }
         let lower = index > 0 ? max(0, sorted[index - 1].end) : 0
-        let upper = index + 1 < sorted.count ? max(lower, sorted[index + 1].start) : .infinity
+        let neighborUpper = index + 1 < sorted.count ? max(lower, sorted[index + 1].start) : .infinity
+        let upper = max(lower, min(neighborUpper, limit))
         return (lower, upper)
     }
 
@@ -525,9 +573,8 @@ nonisolated enum StudioVideoOverlayLane {
         among all: [RecordingVideoOverlay],
         timelineDuration: TimeInterval
     ) -> RecordingVideoOverlay {
-        let bounds = neighborBounds(for: base.id, in: all)
-        let upper = min(bounds.upper, max(timelineDuration, base.end))
-        let maxStart = max(bounds.lower, upper - base.duration)
+        let bounds = neighborBounds(for: base.id, in: all, timelineDuration: timelineDuration)
+        let maxStart = max(bounds.lower, bounds.upper - base.duration)
         var edited = base
         edited.start = min(max(base.start + delta, bounds.lower), maxStart)
         return edited.sanitized()
@@ -553,9 +600,10 @@ nonisolated enum StudioVideoOverlayLane {
     static func trimmedTrailing(
         _ base: RecordingVideoOverlay,
         by delta: TimeInterval,
-        among all: [RecordingVideoOverlay]
+        among all: [RecordingVideoOverlay],
+        timelineDuration: TimeInterval? = nil
     ) -> RecordingVideoOverlay {
-        let bounds = neighborBounds(for: base.id, in: all)
+        let bounds = neighborBounds(for: base.id, in: all, timelineDuration: timelineDuration)
         let speed = max(base.speed, 0.01)
         let maxEndByFile = base.start + (base.fileDuration - base.trimStart) / speed
         let maxEnd = min(bounds.upper, maxEndByFile)
@@ -572,18 +620,19 @@ nonisolated enum StudioVideoOverlayLane {
     static func withSpeed(
         _ base: RecordingVideoOverlay,
         speed requestedSpeed: Double,
-        among all: [RecordingVideoOverlay]
+        among all: [RecordingVideoOverlay],
+        timelineDuration: TimeInterval? = nil
     ) -> RecordingVideoOverlay {
         let clampedSpeed = min(
             max(requestedSpeed.isFinite ? requestedSpeed : 1, RecordingVideoOverlay.speedRange.lowerBound),
             RecordingVideoOverlay.speedRange.upperBound
         )
-        let bounds = neighborBounds(for: base.id, in: all)
+        let bounds = neighborBounds(for: base.id, in: all, timelineDuration: timelineDuration)
         var edited = base
         edited.speed = clampedSpeed
         if edited.end > bounds.upper {
             let availableDuration = bounds.upper - edited.start
-            guard availableDuration >= RecordingVideoOverlay.minimumDuration - 0.000_5 else {
+            guard availableDuration >= RecordingVideoOverlay.minimumDuration - epsilon else {
                 return base
             }
             edited.trimEnd = min(
@@ -594,20 +643,105 @@ nonisolated enum StudioVideoOverlayLane {
         return edited.sanitized()
     }
 
-    /// Maps video overlays across video clip edits (like unlinked audio clips)
-    /// while preserving the single-lane no-overlap invariant.
+    /// Maps video overlays across main-track clip edits while preserving order,
+    /// the single-lane no-overlap invariant, and `[0, new.duration]` bounds.
+    /// Linked overlays split, trim, and retime with the video beneath them;
+    /// unlinked overlays stay whole and follow the footage moment under their
+    /// start. Overlays pushed past the surviving timeline end are dropped
+    /// (and restored cleanly by Undo via `applyClipTimeline`).
     static func conform(
         _ overlays: [RecordingVideoOverlay],
         from old: RecordingClipTimeline,
         to new: RecordingClipTimeline
     ) -> [RecordingVideoOverlay] {
         guard old != new, !overlays.isEmpty else { return overlays }
-        let mapped = overlays.map { overlay -> RecordingVideoOverlay in
-            var copy = overlay
-            copy.start = max(0, StudioAudioConform.mapPoint(overlay.start, from: old, to: new))
-            return copy
+        var mapped: [RecordingVideoOverlay] = []
+        mapped.reserveCapacity(overlays.count)
+        for overlay in overlays {
+            if overlay.isLinked {
+                mapped.append(contentsOf: conformLinked(overlay, from: old, to: new))
+            } else {
+                var copy = overlay
+                copy.start = max(0, StudioAudioConform.mapPoint(overlay.start, from: old, to: new))
+                mapped.append(copy)
+            }
         }
-        return normalized(mapped)
+        return normalized(mapped, timelineDuration: new.duration)
+    }
+
+    private static func conformLinked(
+        _ overlay: RecordingVideoOverlay,
+        from old: RecordingClipTimeline,
+        to new: RecordingClipTimeline
+    ) -> [RecordingVideoOverlay] {
+        let overlaySpeed = max(overlay.speed, 0.01)
+        var pieces: [RecordingVideoOverlay] = []
+
+        func append(start: TimeInterval, fileStart: TimeInterval, fileEnd: TimeInterval, speed: Double) {
+            guard fileEnd - fileStart > epsilon, speed > 0 else { return }
+            var piece = overlay
+            piece.start = start
+            piece.trimStart = fileStart
+            piece.trimEnd = fileEnd
+            piece.speed = speed
+            if var last = pieces.last,
+               abs(last.end - piece.start) < 0.002,
+               abs(last.trimEnd - piece.trimStart) < 0.002,
+               abs(last.speed - piece.speed) < 0.000_1 {
+                last.trimEnd = piece.trimEnd
+                pieces[pieces.count - 1] = last
+            } else {
+                pieces.append(piece)
+            }
+        }
+
+        var oldEditorStart: TimeInterval = 0
+        for segment in old.segments {
+            let oldEditorEnd = oldEditorStart + segment.editorDuration
+            defer { oldEditorStart = oldEditorEnd }
+            let low = max(overlay.start, oldEditorStart)
+            let high = min(overlay.end, oldEditorEnd)
+            guard high - low > epsilon else { continue }
+            let sourceLow = segment.sourceStart + (low - oldEditorStart) * segment.speed
+            let sourceHigh = segment.sourceStart + (high - oldEditorStart) * segment.speed
+            let fileLow = overlay.trimStart + (low - overlay.start) * overlaySpeed
+            let filePerSource = overlaySpeed / segment.speed
+
+            var newEditorStart: TimeInterval = 0
+            for newSeg in new.segments {
+                defer { newEditorStart += newSeg.editorDuration }
+                let sliceLow = max(sourceLow, newSeg.sourceStart)
+                let sliceHigh = min(sourceHigh, newSeg.sourceEnd)
+                guard sliceHigh - sliceLow > epsilon else { continue }
+                let sliceEditorStart = newEditorStart + (sliceLow - newSeg.sourceStart) / newSeg.speed
+                let fileStart = fileLow + (sliceLow - sourceLow) * filePerSource
+                let fileEnd = min(overlay.trimEnd, fileLow + (sliceHigh - sourceLow) * filePerSource)
+                let derivedSpeed = min(
+                    max(filePerSource * newSeg.speed, RecordingVideoOverlay.speedRange.lowerBound),
+                    RecordingVideoOverlay.speedRange.upperBound
+                )
+                append(start: sliceEditorStart, fileStart: fileStart, fileEnd: fileEnd, speed: derivedSpeed)
+            }
+        }
+
+        pieces = pieces.filter {
+            $0.duration >= RecordingVideoOverlay.minimumDuration - epsilon
+                && $0.fileSpan >= RecordingVideoOverlay.minimumFileSpan
+        }
+        for index in pieces.indices {
+            if index > 0 {
+                pieces[index].id = UUID()
+            }
+            if abs(pieces[index].trimStart - overlay.trimStart) > 0.002 {
+                pieces[index].fadeIn = 0
+                pieces[index].audioFadeIn = 0
+            }
+            if abs(pieces[index].trimEnd - overlay.trimEnd) > 0.002 {
+                pieces[index].fadeOut = 0
+                pieces[index].audioFadeOut = 0
+            }
+        }
+        return pieces
     }
 }
 
@@ -704,6 +838,108 @@ nonisolated enum RecordingVideoOverlayMedia {
             hasAudio: !audioTracks.isEmpty,
             naturalSize: displaySize
         )
+    }
+
+    /// True when `candidateURL` refers to the same recording package as `openSessionURL`
+    /// (resolving symlinks and path standardization so `/var` vs `/private/var` match).
+    static func isSelfRecording(_ candidateURL: URL, openSessionURL: URL) -> Bool {
+        let candidate = candidateURL.resolvingSymlinksInPath().standardizedFileURL.path
+        let open = openSessionURL.resolvingSymlinksInPath().standardizedFileURL.path
+        return candidate == open
+    }
+
+    static let selfImportErrorMessage =
+        "This recording is already open. Add a different recording or a movie."
+
+    /// Validates a `.sukushorec` package and its render inputs with no-follow
+    /// checks before offering or starting a Raw or Finished overlay import.
+    static func validateRecordingPackage(at packageURL: URL) -> Bool {
+        guard RecordingOverlayMedia.isRealDirectoryNoFollow(at: packageURL) else { return false }
+        let realPackage = packageURL.resolvingSymlinksInPath().standardizedFileURL
+
+        func isValidPackageFile(named name: String, required: Bool) -> Bool {
+            guard RecordingOverlayMedia.isSimpleFileName(name) else { return false }
+            let candidate = realPackage.appendingPathComponent(name, isDirectory: false)
+            var info = stat()
+            guard lstat(candidate.path, &info) == 0 else { return !required }
+            guard (info.st_mode & S_IFMT) == S_IFREG else { return false }
+            let resolved = candidate.resolvingSymlinksInPath().standardizedFileURL
+            return resolved.deletingLastPathComponent().path == realPackage.path
+        }
+
+        // Required primary recording master.
+        guard isValidPackageFile(named: "screen.mov", required: true) else { return false }
+
+        // Optional top-level render inputs and metadata files must never be symlinks.
+        for optionalFile in ["camera.mov", "final.mov", "edit.json", "draft.json", "capture.json", "input.json", "project.json"] {
+            guard isValidPackageFile(named: optionalFile, required: false) else { return false }
+        }
+
+        // Optional `media` folder must be a real directory inside the package.
+        let mediaDirectory = realPackage.appendingPathComponent("media", isDirectory: true)
+        var mediaInfo = stat()
+        let hasMediaDirectory: Bool
+        if lstat(mediaDirectory.path, &mediaInfo) == 0 {
+            guard RecordingOverlayMedia.resolveRealMediaDirectory(mediaDirectory) != nil else {
+                return false
+            }
+            hasMediaDirectory = true
+        } else {
+            hasMediaDirectory = false
+        }
+
+        // Inspect active edit document (draft takes precedence over edit, matching RecordingSessionRenderer).
+        let documentURL: URL? = {
+            for name in ["draft.json", "edit.json"] {
+                let candidate = realPackage.appendingPathComponent(name, isDirectory: false)
+                if RecordingOverlayMedia.isRegularFileNoFollow(at: candidate) {
+                    return candidate
+                }
+            }
+            return nil
+        }()
+
+        if let documentURL, let data = try? Data(contentsOf: documentURL) {
+            struct PackageEditRefs: Decodable {
+                struct AudioClipRef: Decodable {
+                    var source: String?
+                    var fileName: String?
+                }
+                struct FileRef: Decodable {
+                    var fileName: String?
+                }
+                var replacementAudioFileName: String?
+                var audioClips: [AudioClipRef]?
+                var imageOverlays: [FileRef]?
+                var videoOverlays: [FileRef]?
+            }
+
+            guard let refs = try? JSONDecoder().decode(PackageEditRefs.self, from: data) else {
+                return false
+            }
+            if let replacement = refs.replacementAudioFileName, !replacement.isEmpty {
+                guard isValidPackageFile(named: replacement, required: true) else { return false }
+            }
+            var mediaFiles: [String] = []
+            for clip in refs.audioClips ?? [] where clip.source == "file" {
+                if let name = clip.fileName, !name.isEmpty { mediaFiles.append(name) }
+            }
+            for image in refs.imageOverlays ?? [] {
+                if let name = image.fileName, !name.isEmpty { mediaFiles.append(name) }
+            }
+            for video in refs.videoOverlays ?? [] {
+                if let name = video.fileName, !name.isEmpty { mediaFiles.append(name) }
+            }
+            if !mediaFiles.isEmpty {
+                guard hasMediaDirectory else { return false }
+                for name in Set(mediaFiles) {
+                    guard RecordingOverlayMedia.resolveRegularFile(named: name, in: mediaDirectory) != nil else {
+                        return false
+                    }
+                }
+            }
+        }
+        return true
     }
 
     /// Validates that every overlay visible inside `[0, duration)` resolves to a
@@ -843,35 +1079,49 @@ nonisolated enum RecordingVideoOverlayRenderer {
         let radius = min(CGFloat(overlay.cornerRadius) * unit, rect.width / 2, rect.height / 2)
         let strength = CGFloat(min(max(overlay.shadow, 0), 1))
 
-        let shadowOffset = context.convertToDeviceSpace(CGSize(width: 0, height: 12 * unit * strength))
-        let shadowBlurVector = context.convertToDeviceSpace(CGSize(width: 40 * unit * strength, height: 0))
-        let shadowBlur = hypot(shadowBlurVector.width, shadowBlurVector.height)
+        // Shadows are specified in Core Graphics base space (+y up, -y down), so
+        // a negative height casts the shadow downward matching SwiftUI's `+y` offset.
+        let scaleVector = context.convertToDeviceSpace(CGSize(width: 1, height: 0))
+        let deviceScale = max(hypot(scaleVector.width, scaleVector.height), 0.001)
+        let shadowOffset = CGSize(width: 0, height: -12 * unit * strength * deviceScale)
+        let shadowBlur = 40 * unit * strength * deviceScale
 
         context.saveGState()
         defer { context.restoreGState() }
-        context.setAlpha(CGFloat(alpha))
         context.interpolationQuality = .high
         context.translateBy(x: rect.midX, y: rect.midY)
         context.rotate(by: CGFloat(overlay.rotation) * .pi / 180)
         context.translateBy(x: -rect.midX, y: -rect.midY)
 
-        func castShadow() {
+        // Cast the drop shadow into a transparency layer and punch out the PiP
+        // interior with `.clear` so the shadow radiates strictly outside the
+        // rounded silhouette and never darkens the video interior at any alpha.
+        if strength > 0 {
+            let shadowMargin = shadowBlur * 2 + max(abs(shadowOffset.width), abs(shadowOffset.height)) + 4
+            let outerBounds = rect.insetBy(dx: -shadowMargin, dy: -shadowMargin)
+            let shapePath = radius > 0
+                ? CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
+                : CGPath(rect: rect, transform: nil)
+            context.saveGState()
+            context.setAlpha(CGFloat(alpha))
+            context.beginTransparencyLayer(in: outerBounds, auxiliaryInfo: nil)
+            context.saveGState()
             context.setShadow(offset: shadowOffset, blur: shadowBlur, color: CGColor(gray: 0, alpha: 0.5 * strength))
+            context.addPath(shapePath)
+            context.setFillColor(CGColor(gray: 0, alpha: 1))
+            context.fillPath()
+            context.restoreGState()
+            context.setBlendMode(.clear)
+            context.addPath(shapePath)
+            context.fillPath()
+            context.endTransparencyLayer()
+            context.restoreGState()
         }
 
+        context.setAlpha(CGFloat(alpha))
         if radius > 0 {
-            if strength > 0 {
-                context.saveGState()
-                castShadow()
-                context.addPath(CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil))
-                context.setFillColor(CGColor(gray: 0, alpha: 1))
-                context.fillPath()
-                context.restoreGState()
-            }
             context.addPath(CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil))
             context.clip()
-        } else if strength > 0 {
-            castShadow()
         }
 
         context.translateBy(x: rect.minX, y: rect.maxY)
@@ -894,7 +1144,6 @@ nonisolated enum RecordingVideoOverlayRenderer {
 
         context.saveGState()
         defer { context.restoreGState() }
-        context.setAlpha(CGFloat(alpha))
         context.interpolationQuality = .high
 
         if radius > 0.5 {
@@ -904,8 +1153,13 @@ nonisolated enum RecordingVideoOverlayRenderer {
         }
         context.clip()
 
-        // Opaque backing covers the main video card (and letterbox bars in Fit
-        // mode) smoothly at the cutaway's crossfade alpha.
+        // Composite the opaque letterbox backing and cutaway frame inside one
+        // transparency layer so `alpha` dissolves the combined cutaway ONCE
+        // over the underlying video instead of double-fading through black.
+        context.setAlpha(CGFloat(alpha))
+        context.beginTransparencyLayer(in: cardRect, auxiliaryInfo: nil)
+        defer { context.endTransparencyLayer() }
+
         context.setFillColor(CGColor(gray: 0, alpha: 1))
         context.fill(cardRect)
 
