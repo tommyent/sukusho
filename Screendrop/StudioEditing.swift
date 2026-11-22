@@ -35,6 +35,29 @@ nonisolated struct StudioKeyModifiers: OptionSet, Equatable, Sendable {
     static let control = StudioKeyModifiers(rawValue: 1 << 3)
 }
 
+/// Mutually exclusive timeline selection state shared by the Studio model,
+/// keyboard delete, and toolbar delete so structural clip edits and selection
+/// deletion follow one rule.
+nonisolated enum StudioTimelineSelection: Equatable, Sendable {
+    case text(UUID)
+    case image(UUID)
+    case redaction(UUID)
+    case audioClip(UUID)
+    case zoomCue(UUID)
+    case clip(UUID)
+}
+
+/// What the shared timeline Delete action (keyboard ⌫/⌦ and toolbar trash) removes.
+nonisolated enum StudioDeleteTarget: Equatable, Sendable {
+    case text(UUID)
+    case image(UUID)
+    case redaction(UUID)
+    case audioClip(UUID)
+    case zoomCue(UUID)
+    case clip(UUID)
+    case range
+}
+
 /// Window-level editing shortcuts handled alongside `StudioPlaybackKeyAction`.
 nonisolated enum StudioEditingKeyAction: Equatable, Sendable {
     case splitAtPlayhead
@@ -200,6 +223,52 @@ nonisolated enum StudioEditing {
         default:
             return nil
         }
+    }
+
+    /// Resolves which timeline item stays selected after a structural clip edit
+    /// (`split`, `trim`, `move`, `delete`, `reset`, `deleteRange`). Whenever the
+    /// edit selects a surviving clip, any prior overlay or cue selection clears
+    /// so a subsequent Delete acts on the newly selected clip instead of a stale mask.
+    static func selectionAfterClipEdit(
+        current: StudioTimelineSelection?,
+        nextTimeline: RecordingClipTimeline,
+        requestedClipID: UUID?,
+        selectsClip: Bool,
+        playheadTime: TimeInterval
+    ) -> StudioTimelineSelection? {
+        let hadClipSelection: Bool = if case .clip = current { true } else { false }
+        var nextClipID: UUID?
+        if selectsClip {
+            let clamped = min(max(playheadTime, 0), nextTimeline.duration)
+            nextClipID = requestedClipID.flatMap { id in
+                nextTimeline.segments.contains(where: { $0.id == id }) ? id : nil
+            } ?? (hadClipSelection ? nextTimeline.location(at: clamped)?.segmentID : nil)
+        }
+        if let nextClipID {
+            return .clip(nextClipID)
+        }
+        return hadClipSelection ? nil : current
+    }
+
+    /// Resolves what the shared Delete action (keyboard ⌫/⌦ and toolbar trash
+    /// button) removes.
+    static func deleteTarget(
+        selection: StudioTimelineSelection?,
+        canDeleteClip: Bool,
+        hasRangeSelection: Bool
+    ) -> StudioDeleteTarget? {
+        switch selection {
+        case .text(let id): return .text(id)
+        case .image(let id): return .image(id)
+        case .redaction(let id): return .redaction(id)
+        case .audioClip(let id): return .audioClip(id)
+        case .zoomCue(let id): return .zoomCue(id)
+        case .clip(let id):
+            if canDeleteClip { return .clip(id) }
+        case nil:
+            break
+        }
+        return hasRangeSelection ? .range : nil
     }
 
     /// Updates an editor-time range selection when marking In (`.start`) or

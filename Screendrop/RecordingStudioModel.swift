@@ -1728,13 +1728,56 @@ final class RecordingStudioModel {
         selectedClipID != nil && clipTimeline.segments.count > 1
     }
 
+    private var activeTimelineSelection: StudioTimelineSelection? {
+        if let selectedTextID { return .text(selectedTextID) }
+        if let selectedImageID { return .image(selectedImageID) }
+        if let selectedRedactionID { return .redaction(selectedRedactionID) }
+        if let selectedAudioClipID { return .audioClip(selectedAudioClipID) }
+        if let selectedCueID { return .zoomCue(selectedCueID) }
+        if let selectedClipID { return .clip(selectedClipID) }
+        return nil
+    }
+
     var hasDeletableTimelineSelection: Bool {
-        selectedTextID != nil
-            || selectedImageID != nil
-            || selectedRedactionID != nil
-            || selectedAudioClipID != nil
-            || selectedCueID != nil
-            || canDeleteSelectedClip
+        StudioEditing.deleteTarget(
+            selection: activeTimelineSelection,
+            canDeleteClip: canDeleteSelectedClip,
+            hasRangeSelection: false
+        ) != nil
+    }
+
+    var canDeleteSelection: Bool {
+        StudioEditing.deleteTarget(
+            selection: activeTimelineSelection,
+            canDeleteClip: canDeleteSelectedClip,
+            hasRangeSelection: rangeSelection != nil
+        ) != nil
+    }
+
+    /// Shared Delete action used by both keyboard shortcuts (⌫/⌦) and the
+    /// timeline toolbar trash button.
+    func deleteSelection() {
+        guard let target = StudioEditing.deleteTarget(
+            selection: activeTimelineSelection,
+            canDeleteClip: canDeleteSelectedClip,
+            hasRangeSelection: rangeSelection != nil
+        ) else { return }
+        switch target {
+        case .text(let id):
+            removeText(id: id)
+        case .image(let id):
+            removeImage(id: id)
+        case .redaction(let id):
+            removeRedaction(id: id)
+        case .audioClip(let id):
+            removeAudioClip(id: id)
+        case .zoomCue(let id):
+            removeZoomCue(id: id)
+        case .clip:
+            deleteSelectedClip()
+        case .range:
+            deleteRange()
+        }
     }
 
     var canMoveSelectedClipEarlier: Bool {
@@ -2371,14 +2414,16 @@ final class RecordingStudioModel {
         selectedAudioClipIDs = selectedAudioClipIDs.filter { id in
             nextAudio.contains(where: { $0.id == id })
         }
-        if selectsClip {
-            // Keep the requested clip when it survived; otherwise fall back to
-            // whatever sits under the new playhead only if a clip was already
-            // selected — never jump selection back to the first clip.
-            let clamped = min(max(playheadTime, 0), next.duration)
-            selectedClipID = selectedID.flatMap { id in
-                next.segments.contains(where: { $0.id == id }) ? id : nil
-            } ?? (hadSelection ? next.location(at: clamped)?.segmentID : nil)
+        let nextSelection = StudioEditing.selectionAfterClipEdit(
+            current: activeTimelineSelection,
+            nextTimeline: next,
+            requestedClipID: selectedID,
+            selectsClip: selectsClip,
+            playheadTime: playheadTime
+        )
+        if case .clip(let nextClipID) = nextSelection {
+            clearTimelineSelection()
+            selectedClipID = nextClipID
         } else {
             selectedClipID = nil
         }

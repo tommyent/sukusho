@@ -195,26 +195,12 @@ struct StudioKeyCommands: NSViewRepresentable {
                 if let hover = model.hoverPreviewTime {
                     model.splitClip(at: hover)
                 }
-            case .deleteSelection:
-                if let selectedTextID = model.selectedTextID {
-                    model.removeText(id: selectedTextID)
-                } else if let selectedImageID = model.selectedImageID {
-                    model.removeImage(id: selectedImageID)
-                } else if let selectedRedactionID = model.selectedRedactionID {
-                    model.removeRedaction(id: selectedRedactionID)
-                } else if let audioID = model.selectedAudioClipID {
-                    model.removeAudioClip(id: audioID)
-                } else if let selectedCueID = model.selectedCueID {
-                    model.removeZoomCue(id: selectedCueID)
-                } else if model.canDeleteSelectedClip {
-                    model.deleteSelectedClip()
-                }
+            case .deleteSelection, .deleteRange:
+                model.deleteSelection()
             case .markRange(let edge):
                 model.markRange(edge)
             case .clearRange:
                 model.clearRange()
-            case .deleteRange:
-                model.deleteRange()
             case .toggleMarker:
                 model.toggleMarker()
             case .toggleSnapping:

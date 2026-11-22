@@ -463,7 +463,7 @@ struct StudioTimelineEditor: View {
                 model.hoverPreviewTime = time
             },
             onSplit: { model.splitClip(at: $0) },
-            onDelete: { deleteSelection() },
+            onDelete: { model.deleteSelection() },
             onTrim: { model.trimClip($0) },
             onZoom: { factor, anchorTime in
                 applyZoom(factor: factor, anchorTime: anchorTime)
@@ -631,9 +631,9 @@ struct StudioTimelineEditor: View {
                         .disabled(!model.isLoaded)
 
                         timelineButton("Delete Selection", systemImage: "trash") {
-                            deleteSelection()
+                            model.deleteSelection()
                         }
-                        .disabled(!canDeleteSelection)
+                        .disabled(!model.canDeleteSelection)
 
                         timelineButton("Reset All Clip Edits…", systemImage: "arrow.counterclockwise") {
                             isResetClipsConfirmationPresented = true
@@ -873,34 +873,6 @@ struct StudioTimelineEditor: View {
                     .background(Capsule().fill(Color.primary.opacity(0.08)))
                     .fixedSize()
             }
-        }
-    }
-
-    private var canDeleteSelection: Bool {
-        model.selectedTextID != nil
-            || model.selectedImageID != nil
-            || model.selectedRedactionID != nil
-            || model.selectedAudioClipID != nil
-            || model.selectedCueID != nil
-            || model.canDeleteSelectedClip
-            || model.rangeSelection != nil
-    }
-
-    private func deleteSelection() {
-        if let textID = model.selectedTextID {
-            model.removeText(id: textID)
-        } else if let imageID = model.selectedImageID {
-            model.removeImage(id: imageID)
-        } else if let redactionID = model.selectedRedactionID {
-            model.removeRedaction(id: redactionID)
-        } else if let audioID = model.selectedAudioClipID {
-            model.removeAudioClip(id: audioID)
-        } else if let cueID = model.selectedCueID {
-            model.removeZoomCue(id: cueID)
-        } else if model.canDeleteSelectedClip {
-            model.deleteSelectedClip()
-        } else if model.rangeSelection != nil {
-            model.deleteRange()
         }
     }
 

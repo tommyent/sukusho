@@ -1331,6 +1331,87 @@ struct StudioTracksTests {
         #expect(current.covers(editorTime: 7.0, frameDuration: frame, timeline: reordered))
     }
 
+    @Test func splitWithSelectedRedactionSelectsNewClipAndDeletesClipNotRedaction() throws {
+        // Start on a 10s recording with a privacy redaction already selected.
+        let initial = RecordingClipTimeline.full(sourceDuration: 10)
+        let redaction = RecordingRedaction(start: 1.0, end: 6.0)
+        var redactions = [redaction]
+        var selection: StudioTimelineSelection? = .redaction(redaction.id)
+
+        // Split at editor 4.0 selects the new trailing clip and must clear the prior redaction selection.
+        let split = try #require(initial.split(at: 4.0))
+        selection = StudioEditing.selectionAfterClipEdit(
+            current: selection,
+            nextTimeline: split.timeline,
+            requestedClipID: split.selectedID,
+            selectsClip: true,
+            playheadTime: 4.0
+        )
+        #expect(selection == .clip(split.selectedID))
+
+        // Keyboard ⌫ and the toolbar trash button share one selection-delete target: the newly split clip.
+        let canDeleteClip = split.timeline.segments.count > 1
+        let keyAction = StudioEditing.keyAction(
+            keyCode: 51,
+            characters: "\u{7f}",
+            modifiers: [],
+            isARepeat: false,
+            hasRangeSelection: false,
+            hasDeletableSelection: StudioEditing.deleteTarget(
+                selection: selection,
+                canDeleteClip: canDeleteClip,
+                hasRangeSelection: false
+            ) != nil
+        )
+        #expect(keyAction == .deleteSelection)
+
+        let deleteTarget = StudioEditing.deleteTarget(
+            selection: selection,
+            canDeleteClip: canDeleteClip,
+            hasRangeSelection: false
+        )
+        #expect(deleteTarget == .clip(split.selectedID))
+
+        // Executing that target deletes the trailing video clip and leaves the redaction intact.
+        var timeline = split.timeline
+        if case .clip(let clipID) = deleteTarget {
+            timeline = try #require(timeline.deleting(segmentID: clipID))
+        } else if case .redaction(let redID) = deleteTarget {
+            redactions.removeAll { $0.id == redID }
+        }
+        #expect(timeline.segments.count == 1)
+        #expect(abs(timeline.segments[0].sourceEnd - 4.0) < 0.0001)
+        #expect(redactions == [redaction])
+
+        // A structural edit that does NOT select a clip (e.g. resetClips with no clip selected)
+        // preserves an unrelated overlay selection, while clearing a stale clip selection.
+        #expect(StudioEditing.selectionAfterClipEdit(
+            current: .redaction(redaction.id),
+            nextTimeline: initial,
+            requestedClipID: nil,
+            selectsClip: false,
+            playheadTime: 0
+        ) == .redaction(redaction.id))
+        #expect(StudioEditing.selectionAfterClipEdit(
+            current: .clip(split.selectedID),
+            nextTimeline: initial,
+            requestedClipID: nil,
+            selectsClip: false,
+            playheadTime: 0
+        ) == nil)
+        // When only a single clip is selected, Delete falls back to any marked range or becomes disabled.
+        #expect(StudioEditing.deleteTarget(
+            selection: .clip(initial.segments[0].id),
+            canDeleteClip: false,
+            hasRangeSelection: true
+        ) == .range)
+        #expect(StudioEditing.deleteTarget(
+            selection: .clip(initial.segments[0].id),
+            canDeleteClip: false,
+            hasRangeSelection: false
+        ) == nil)
+    }
+
     @Test func addRedactionKeepsOriginalSourceEndBeforeAndAfterRestoringCut() throws {
         let sourceDuration: TimeInterval = 10
         let trimmed = RecordingClipTimeline(segments: [
