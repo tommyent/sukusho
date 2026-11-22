@@ -82,6 +82,22 @@ struct RecordingAgentPromptTests {
         #expect(markdown.contains("Marker 1") && markdown.contains("hidden at 00:01.500 (undo or Clear marks)"))
     }
 
+    @Test func importedDurationDoesNotTurnTheStopClickIntoEvidence() {
+        let timeline = RecordingClipTimeline(segments: [
+            .init(sourceStart: 0, sourceEnd: 4),
+            .init(sourceStart: 0, sourceEnd: 12, mediaFileName: "import.mov", sourceDuration: 12),
+        ])
+        let capture = PointerCaptureFile(presses: [
+            .init(time: 1, x: 0.2, y: 0.4, button: 0, phase: .down),
+            .init(time: 1.1, x: 0.2, y: 0.4, button: 0, phase: .up),
+            .init(time: 3.8, x: 0.5, y: 0.5, button: 0, phase: .down),
+            .init(time: 3.9, x: 0.5, y: 0.5, button: 0, phase: .up),
+        ])
+        let plan = RecordingAgentPromptPlan(title: "Take", timeline: timeline, cues: [], words: [], capture: capture)
+        #expect(plan.moments.map(\.time) == [1])
+        #expect(plan.moments.first?.parts == [.did("Click")])
+    }
+
     @Test func sourceStillsDescribeCaptureScope() {
         for (mode, expected): (RecordingCaptureMode?, String) in [
             (.window, "the recorded window “Preferences”"), (.area, "the recorded area"),

@@ -149,7 +149,7 @@ nonisolated struct RecordingAgentPromptPlan: Sendable {
                           image.referenceSize.width, image.referenceSize.height, image.anchorPoint.x, image.anchorPoint.y)
         }
         let presses = capture?.presses ?? []
-        let sourceEnd = timeline.segments.map(\.sourceEnd).max() ?? 0
+        let sourceEnd = timeline.segments.filter(\.isPrimaryRecording).map(\.sourceEnd).max() ?? 0
         // Clicks on Sukusho's recording bar aren't steps. Older takes didn't mark them, so the
         // last click also counts when its release came within 0.25 s of the end: Stop, released.
         let lastDown = presses.lastIndex { $0.phase == .down }
