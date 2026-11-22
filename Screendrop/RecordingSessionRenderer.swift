@@ -44,12 +44,16 @@ enum RecordingSessionRenderer {
         for session: RecordingSession,
         onProgress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> URL {
-        try await ensureDeliverable(for: session, editDocument: session.editDocumentForRendering(), onProgress: onProgress)
+        try RecordingPackageMedia.validateRenderInputs(in: session.directoryURL)
+        return try await ensureDeliverable(for: session, editDocument: session.editDocumentForRendering(), onProgress: onProgress)
     }
 
     static func readyDeliverable(for session: RecordingSession, editDocument: RecordingEditDocument?) -> URL? {
-        guard session.hasCamera || session.loadCaptureManifest()?.pointerSynthesized == true || editDocument != nil else {
-            return session.screenURL
+        guard let resolved = try? RecordingPackageMedia.validateRenderInputs(in: session.directoryURL) else {
+            return nil
+        }
+        guard resolved.cameraURL != nil || session.loadCaptureManifest()?.pointerSynthesized == true || editDocument != nil else {
+            return resolved.screenURL
         }
         return session.freshFinalURL(matching: editDocument)
     }
@@ -60,6 +64,7 @@ enum RecordingSessionRenderer {
         editDocument: RecordingEditDocument?,
         onProgress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> URL {
+        try RecordingPackageMedia.validateRenderInputs(in: session.directoryURL)
         let editDocument = editDocument?.forVideoRendering
         if let ready = readyDeliverable(for: session, editDocument: editDocument) { return ready }
 
@@ -85,13 +90,15 @@ enum RecordingSessionRenderer {
     static func makeConfiguration(
         for session: RecordingSession
     ) async throws -> RecordingStudioExporter.Configuration {
-        try await makeConfiguration(for: session, editDocument: session.editDocumentForRendering())
+        try RecordingPackageMedia.validateRenderInputs(in: session.directoryURL)
+        return try await makeConfiguration(for: session, editDocument: session.editDocumentForRendering())
     }
 
     private static func makeConfiguration(
         for session: RecordingSession,
         editDocument: RecordingEditDocument?
     ) async throws -> RecordingStudioExporter.Configuration {
+        let resolvedInputs = try RecordingPackageMedia.validateRenderInputs(in: session.directoryURL)
         let manifest = session.loadCaptureManifest()
         let pointerSynthesized = manifest?.pointerSynthesized == true
         // No saved choice: the one Studio would open the recording with, as a share.
@@ -101,24 +108,27 @@ enum RecordingSessionRenderer {
         let audioClips = editDocument?.audioClips ?? []
         let usesUnpinnedReplacementClip = audioClips.contains { $0.source == .replacement && $0.fileName.isEmpty }
         let usesRecordingClip = audioClips.contains { $0.source == .recording }
-        let audioReplacementURL = !exportSettings.removeAudio && (audioVolume > 0 || usesUnpinnedReplacementClip)
-            ? editDocument?.replacementAudioFileName.map {
-                session.directoryURL.appendingPathComponent($0)
-            }
-            : nil
-        if let audioReplacementURL {
-            guard FileManager.default.fileExists(atPath: audioReplacementURL.path) else {
+        let audioReplacementURL: URL?
+        if !exportSettings.removeAudio && (audioVolume > 0 || usesUnpinnedReplacementClip),
+           let replacementName = editDocument?.replacementAudioFileName, !replacementName.isEmpty {
+            guard let resolvedAudio = RecordingPackageMedia.resolvePackageFile(
+                named: replacementName,
+                in: resolvedInputs.packageDirectory
+            ) else {
                 throw RenderError.missingReplacementAudio
             }
+            audioReplacementURL = resolvedAudio
+        } else {
+            audioReplacementURL = nil
         }
-        let asset = AVURLAsset(url: session.screenURL)
+        let asset = AVURLAsset(url: resolvedInputs.screenURL)
         let duration = try await asset.load(.duration).seconds
         guard duration.isFinite, duration > 0 else {
             throw RecordingStudioExporter.ExportError.noVideoTrack
         }
 
-        if session.hasCamera {
-            let cameraAsset = AVURLAsset(url: session.cameraURL)
+        if let cameraURL = resolvedInputs.cameraURL {
+            let cameraAsset = AVURLAsset(url: cameraURL)
             guard try await !cameraAsset.loadTracks(withMediaType: .video).isEmpty else {
                 throw RenderError.missingCameraTrack
             }
@@ -139,8 +149,12 @@ enum RecordingSessionRenderer {
                 includesSystemAudio: manifest?.includesSystemAudio == true) else {
                 throw RecordingVoiceIsolation.IsolationError.missingMicrophone
             }
-            let url = session.directoryURL.appendingPathComponent(RecordingVoiceIsolation.fileName)
-            try await RecordingVoiceIsolation.render(sourceURL: session.screenURL,
+            _ = try RecordingPackageMedia.resolveOptionalPackageFile(
+                named: RecordingVoiceIsolation.fileName,
+                in: resolvedInputs.packageDirectory
+            )
+            let url = resolvedInputs.packageDirectory.appendingPathComponent(RecordingVoiceIsolation.fileName)
+            try await RecordingVoiceIsolation.render(sourceURL: resolvedInputs.screenURL,
                 microphoneTrackID: microphone.trackID, destinationURL: url, progress: { _ in })
             isolatedMicrophoneURL = url
         }
@@ -161,7 +175,7 @@ enum RecordingSessionRenderer {
         var style = document?.style.value ?? RecordingStudioStyle()
         // Selecting a camera means the default delivered recording includes
         // it; a saved Studio project that explicitly hid the bubble wins.
-        style.camera.isVisible = session.hasCamera && (document?.style.value.camera.isVisible ?? true)
+        style.camera.isVisible = resolvedInputs.cameraURL != nil && (document?.style.value.camera.isVisible ?? true)
         let zoomEnabled = document?.zoomEnabled ?? true
         let zoomCues = document?.zoomCues
             ?? ZoomCueSynthesizer.cues(from: capture, duration: duration)
@@ -219,9 +233,23 @@ enum RecordingSessionRenderer {
                 ? canvasSize.width / canvasSize.height
                 : nil
 
+        let backgroundMusic: RecordingBackgroundMusicMixer.Configuration?
+        if !exportSettings.removeAudio && !exportSettings.effectiveExportsGIF,
+           let music = document?.backgroundMusic {
+            guard let musicURL = RecordingPackageMedia.resolvePackageFile(
+                named: music.fileName,
+                in: resolvedInputs.packageDirectory
+            ) else {
+                throw RecordingPackageMedia.ValidationError.unsafeFile(music.fileName)
+            }
+            backgroundMusic = .init(url: musicURL, settings: music)
+        } else {
+            backgroundMusic = nil
+        }
+
         return RecordingStudioExporter.Configuration(
-            screenURL: session.screenURL,
-            cameraURL: session.hasCamera ? session.cameraURL : nil,
+            screenURL: resolvedInputs.screenURL,
+            cameraURL: resolvedInputs.cameraURL,
             cameraOffset: manifest?.cameraLeadIn ?? 0,
             style: style,
             viewportTimeline: viewportTimeline,
@@ -254,11 +282,9 @@ enum RecordingSessionRenderer {
             audioVolume: audioVolume,
             isolatedMicrophoneURL: isolatedMicrophoneURL,
             microphoneTrackID: microphoneTrackID,
-            backgroundMusic: !exportSettings.removeAudio && !exportSettings.effectiveExportsGIF ? document?.backgroundMusic.map {
-                .init(url: session.directoryURL.appendingPathComponent($0.fileName), settings: $0)
-            } : nil,
+            backgroundMusic: backgroundMusic,
             audioClips: audioClips,
-            mediaDirectory: session.mediaDirectoryURL,
+            mediaDirectory: resolvedInputs.mediaDirectory ?? session.mediaDirectoryURL,
             reframe: reframe,
             fitContentAspect: fitContentAspect,
             usesUniformPadding: aspect == .original,

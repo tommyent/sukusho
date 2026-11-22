@@ -594,6 +594,232 @@ nonisolated enum RecordingOverlayMedia {
     }
 }
 
+/// Package-contained, regular-file resolver for every input a `.sukushorec`
+/// Finished render can read: `screen.mov`, `camera.mov`, edit/draft/capture/
+/// pointer/project/render-stamp sidecars, cached finished deliverables
+/// (`<packageName>.mov`/`.mp4`), replacement audio, isolated microphone audio,
+/// background music, and `media/` assets. Rejects symlinks and `..` traversal
+/// before anything reads or renders from the package.
+nonisolated enum RecordingPackageMedia {
+    enum ValidationError: LocalizedError, Equatable {
+        case invalidPackage(String)
+        case unsafeFile(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .invalidPackage(let name):
+                "The recording package \"\(name)\" is invalid or unreadable."
+            case .unsafeFile(let name):
+                "The recording file \"\(name)\" cannot be opened because it is missing or links outside the package."
+            }
+        }
+    }
+
+    struct ResolvedRenderInputs: Equatable, Sendable {
+        let packageDirectory: URL
+        let screenURL: URL
+        let cameraURL: URL?
+        let activeEditURL: URL?
+        let replacementAudioURL: URL?
+        let isolatedMicrophoneURL: URL?
+        let backgroundMusicURL: URL?
+        let mediaDirectory: URL?
+    }
+
+    private static let screenFileName = "screen.mov"
+    private static let cameraFileName = "camera.mov"
+    private static let editFileName = "edit.json"
+    private static let draftFileName = "edit.draft.json"
+    private static let renderStampFileName = "render.json"
+    private static let isolatedAudioFileName = "mic-isolated-v2.m4a"
+    private static let optionalSidecars = [
+        "capture.json",
+        "input.json",
+        "project.json",
+        renderStampFileName
+    ]
+    private static let deliverableExtensions = ["mov", "mp4"]
+
+    /// Resolves `packageDirectory` only when it is a real directory (not a symlink).
+    static func resolveRealPackageDirectory(_ packageDirectory: URL) -> URL? {
+        guard RecordingOverlayMedia.isRealDirectoryNoFollow(at: packageDirectory) else { return nil }
+        return packageDirectory.resolvingSymlinksInPath().standardizedFileURL
+    }
+
+    /// Resolves a single top-level file `fileName` inside `packageDirectory`,
+    /// rejecting empty names, path separators, `..`, symlinks, and non-regular files.
+    static func resolvePackageFile(named fileName: String, in packageDirectory: URL) -> URL? {
+        guard RecordingOverlayMedia.isSimpleFileName(fileName),
+              let realPackage = resolveRealPackageDirectory(packageDirectory) else { return nil }
+        let candidate = realPackage.appendingPathComponent(fileName, isDirectory: false)
+        guard RecordingOverlayMedia.isRegularFileNoFollow(at: candidate) else { return nil }
+        let resolved = candidate.resolvingSymlinksInPath().standardizedFileURL
+        guard resolved.deletingLastPathComponent().path == realPackage.path else { return nil }
+        return resolved
+    }
+
+    /// Checks an optional top-level package file: returns `nil` when absent,
+    /// returns the resolved URL when it is a regular non-symlink file inside the
+    /// package, or throws `ValidationError.unsafeFile` when it exists as a
+    /// symlink, directory, or escaping path.
+    static func resolveOptionalPackageFile(named fileName: String, in packageDirectory: URL) throws -> URL? {
+        guard RecordingOverlayMedia.isSimpleFileName(fileName) else {
+            throw ValidationError.unsafeFile(fileName)
+        }
+        guard let realPackage = resolveRealPackageDirectory(packageDirectory) else {
+            throw ValidationError.invalidPackage(packageDirectory.lastPathComponent)
+        }
+        let candidate = realPackage.appendingPathComponent(fileName, isDirectory: false)
+        var info = stat()
+        guard lstat(candidate.path, &info) == 0 else {
+            if errno == ENOENT { return nil }
+            throw ValidationError.unsafeFile(fileName)
+        }
+        guard (info.st_mode & S_IFMT) == S_IFREG else {
+            throw ValidationError.unsafeFile(fileName)
+        }
+        let resolved = candidate.resolvingSymlinksInPath().standardizedFileURL
+        guard resolved.deletingLastPathComponent().path == realPackage.path else {
+            throw ValidationError.unsafeFile(fileName)
+        }
+        return resolved
+    }
+
+    /// Validates a `.sukushorec` package and every input a Finished render can
+    /// read (masters, sidecars, render cache, replacement/isolated/music audio,
+    /// and `media/` assets). Call before offering Finished movie and again before
+    /// starting the render.
+    @discardableResult
+    static func validateRenderInputs(in packageDirectory: URL) throws -> ResolvedRenderInputs {
+        guard let realPackage = resolveRealPackageDirectory(packageDirectory) else {
+            throw ValidationError.invalidPackage(packageDirectory.lastPathComponent)
+        }
+        guard let screenURL = resolvePackageFile(named: screenFileName, in: realPackage) else {
+            throw ValidationError.unsafeFile(screenFileName)
+        }
+        let cameraURL = try resolveOptionalPackageFile(named: cameraFileName, in: realPackage)
+        let draftURL = try resolveOptionalPackageFile(named: draftFileName, in: realPackage)
+        let editURL = try resolveOptionalPackageFile(named: editFileName, in: realPackage)
+        for sidecar in optionalSidecars {
+            _ = try resolveOptionalPackageFile(named: sidecar, in: realPackage)
+        }
+
+        // Cached finished deliverables (`<packageName>.mov` / `.mp4`) read by the render cache.
+        let packageStem = realPackage.deletingPathExtension().lastPathComponent
+        if RecordingOverlayMedia.isSimpleFileName(packageStem) {
+            for ext in deliverableExtensions {
+                _ = try resolveOptionalPackageFile(named: "\(packageStem).\(ext)", in: realPackage)
+            }
+        }
+
+        let isolatedMicrophoneURL = try resolveOptionalPackageFile(named: isolatedAudioFileName, in: realPackage)
+
+        // Optional `media/` directory must be a real directory inside the package.
+        let mediaCandidate = realPackage.appendingPathComponent("media", isDirectory: true)
+        var mediaInfo = stat()
+        let mediaDirectory: URL?
+        if lstat(mediaCandidate.path, &mediaInfo) == 0 {
+            guard let realMedia = RecordingOverlayMedia.resolveRealMediaDirectory(mediaCandidate) else {
+                throw ValidationError.unsafeFile("media")
+            }
+            mediaDirectory = realMedia
+        } else if errno == ENOENT {
+            mediaDirectory = nil
+        } else {
+            throw ValidationError.unsafeFile("media")
+        }
+
+        // Inspect active edit document (`edit.draft.json` wins over `edit.json`,
+        // matching `RecordingSession.editDocumentForRendering`).
+        let activeEditURL = draftURL ?? editURL
+        var replacementAudioURL: URL?
+        var backgroundMusicURL: URL?
+
+        if let activeEditURL {
+            guard let data = try? Data(contentsOf: activeEditURL) else {
+                throw ValidationError.invalidPackage(realPackage.lastPathComponent)
+            }
+            struct PackageEditRefs: Decodable {
+                struct ClipRef: Decodable {
+                    var sourceFileName: String?
+                }
+                struct AudioClipRef: Decodable {
+                    var source: String?
+                    var fileName: String?
+                }
+                struct FileRef: Decodable {
+                    var fileName: String?
+                }
+                struct BackgroundMusicRef: Decodable {
+                    var fileName: String?
+                }
+                var replacementAudioFileName: String?
+                var backgroundMusic: BackgroundMusicRef?
+                var clips: [ClipRef]?
+                var audioClips: [AudioClipRef]?
+                var imageOverlays: [FileRef]?
+                var videoOverlays: [FileRef]?
+            }
+
+            guard let refs = try? JSONDecoder().decode(PackageEditRefs.self, from: data) else {
+                throw ValidationError.invalidPackage(realPackage.lastPathComponent)
+            }
+
+            if let replacement = refs.replacementAudioFileName, !replacement.isEmpty {
+                guard let resolved = resolvePackageFile(named: replacement, in: realPackage) else {
+                    throw ValidationError.unsafeFile(replacement)
+                }
+                replacementAudioURL = resolved
+            }
+
+            if let musicFile = refs.backgroundMusic?.fileName, !musicFile.isEmpty {
+                guard let resolved = resolvePackageFile(named: musicFile, in: realPackage) else {
+                    throw ValidationError.unsafeFile(musicFile)
+                }
+                backgroundMusicURL = resolved
+            }
+
+            var mediaFiles: [String] = []
+            for clip in refs.clips ?? [] {
+                if let name = clip.sourceFileName, !name.isEmpty { mediaFiles.append(name) }
+            }
+            for clip in refs.audioClips ?? [] {
+                if let name = clip.fileName, !name.isEmpty, clip.source == "file" || clip.source == nil {
+                    mediaFiles.append(name)
+                }
+            }
+            for image in refs.imageOverlays ?? [] {
+                if let name = image.fileName, !name.isEmpty { mediaFiles.append(name) }
+            }
+            for video in refs.videoOverlays ?? [] {
+                if let name = video.fileName, !name.isEmpty { mediaFiles.append(name) }
+            }
+
+            if !mediaFiles.isEmpty {
+                guard let mediaDirectory else {
+                    throw ValidationError.unsafeFile(mediaFiles[0])
+                }
+                for name in Set(mediaFiles) {
+                    guard RecordingOverlayMedia.resolveRegularFile(named: name, in: mediaDirectory) != nil else {
+                        throw ValidationError.unsafeFile(name)
+                    }
+                }
+            }
+        }
+
+        return ResolvedRenderInputs(
+            packageDirectory: realPackage,
+            screenURL: screenURL,
+            cameraURL: cameraURL,
+            activeEditURL: activeEditURL,
+            replacementAudioURL: replacementAudioURL,
+            isolatedMicrophoneURL: isolatedMicrophoneURL,
+            backgroundMusicURL: backgroundMusicURL,
+            mediaDirectory: mediaDirectory
+        )
+    }
+}
+
 /// Starts every Finder drop provider request synchronously inside `performDrop`
 /// so the drop session's file-access window is still open, then delivers the
 /// loaded URLs in their original drop order on the main actor.

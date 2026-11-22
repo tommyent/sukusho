@@ -851,95 +851,10 @@ nonisolated enum RecordingVideoOverlayMedia {
     static let selfImportErrorMessage =
         "This recording is already open. Add a different recording or a movie."
 
-    /// Validates a `.sukushorec` package and its render inputs with no-follow
-    /// checks before offering or starting a Raw or Finished overlay import.
+    /// Validates a `.sukushorec` package and its render inputs via the shared
+    /// `RecordingPackageMedia` no-follow resolver before offering or starting import.
     static func validateRecordingPackage(at packageURL: URL) -> Bool {
-        guard RecordingOverlayMedia.isRealDirectoryNoFollow(at: packageURL) else { return false }
-        let realPackage = packageURL.resolvingSymlinksInPath().standardizedFileURL
-
-        func isValidPackageFile(named name: String, required: Bool) -> Bool {
-            guard RecordingOverlayMedia.isSimpleFileName(name) else { return false }
-            let candidate = realPackage.appendingPathComponent(name, isDirectory: false)
-            var info = stat()
-            guard lstat(candidate.path, &info) == 0 else { return !required }
-            guard (info.st_mode & S_IFMT) == S_IFREG else { return false }
-            let resolved = candidate.resolvingSymlinksInPath().standardizedFileURL
-            return resolved.deletingLastPathComponent().path == realPackage.path
-        }
-
-        // Required primary recording master.
-        guard isValidPackageFile(named: "screen.mov", required: true) else { return false }
-
-        // Optional top-level render inputs and metadata files must never be symlinks.
-        for optionalFile in ["camera.mov", "final.mov", "edit.json", "draft.json", "capture.json", "input.json", "project.json"] {
-            guard isValidPackageFile(named: optionalFile, required: false) else { return false }
-        }
-
-        // Optional `media` folder must be a real directory inside the package.
-        let mediaDirectory = realPackage.appendingPathComponent("media", isDirectory: true)
-        var mediaInfo = stat()
-        let hasMediaDirectory: Bool
-        if lstat(mediaDirectory.path, &mediaInfo) == 0 {
-            guard RecordingOverlayMedia.resolveRealMediaDirectory(mediaDirectory) != nil else {
-                return false
-            }
-            hasMediaDirectory = true
-        } else {
-            hasMediaDirectory = false
-        }
-
-        // Inspect active edit document (draft takes precedence over edit, matching RecordingSessionRenderer).
-        let documentURL: URL? = {
-            for name in ["draft.json", "edit.json"] {
-                let candidate = realPackage.appendingPathComponent(name, isDirectory: false)
-                if RecordingOverlayMedia.isRegularFileNoFollow(at: candidate) {
-                    return candidate
-                }
-            }
-            return nil
-        }()
-
-        if let documentURL, let data = try? Data(contentsOf: documentURL) {
-            struct PackageEditRefs: Decodable {
-                struct AudioClipRef: Decodable {
-                    var source: String?
-                    var fileName: String?
-                }
-                struct FileRef: Decodable {
-                    var fileName: String?
-                }
-                var replacementAudioFileName: String?
-                var audioClips: [AudioClipRef]?
-                var imageOverlays: [FileRef]?
-                var videoOverlays: [FileRef]?
-            }
-
-            guard let refs = try? JSONDecoder().decode(PackageEditRefs.self, from: data) else {
-                return false
-            }
-            if let replacement = refs.replacementAudioFileName, !replacement.isEmpty {
-                guard isValidPackageFile(named: replacement, required: true) else { return false }
-            }
-            var mediaFiles: [String] = []
-            for clip in refs.audioClips ?? [] where clip.source == "file" {
-                if let name = clip.fileName, !name.isEmpty { mediaFiles.append(name) }
-            }
-            for image in refs.imageOverlays ?? [] {
-                if let name = image.fileName, !name.isEmpty { mediaFiles.append(name) }
-            }
-            for video in refs.videoOverlays ?? [] {
-                if let name = video.fileName, !name.isEmpty { mediaFiles.append(name) }
-            }
-            if !mediaFiles.isEmpty {
-                guard hasMediaDirectory else { return false }
-                for name in Set(mediaFiles) {
-                    guard RecordingOverlayMedia.resolveRegularFile(named: name, in: mediaDirectory) != nil else {
-                        return false
-                    }
-                }
-            }
-        }
-        return true
+        (try? RecordingPackageMedia.validateRenderInputs(in: packageURL)) != nil
     }
 
     /// Validates that every overlay visible inside `[0, duration)` resolves to a

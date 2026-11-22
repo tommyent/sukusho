@@ -784,10 +784,12 @@ struct StudioVideoOverlayTests {
             try Data("screen".utf8).write(to: pkg.appendingPathComponent("screen.mov"))
             try Data("camera".utf8).write(to: pkg.appendingPathComponent("camera.mov"))
             try Data("audio".utf8).write(to: pkg.appendingPathComponent("replacement.m4a"))
+            try Data("music".utf8).write(to: pkg.appendingPathComponent("background-music.m4a"))
             try Data("overlay".utf8).write(to: media.appendingPathComponent("11111111-1111-1111-1111-111111111111.mov"))
             let editJSON = """
             {
                 "replacementAudioFileName": "replacement.m4a",
+                "backgroundMusic": { "fileName": "background-music.m4a" },
                 "videoOverlays": [{ "fileName": "11111111-1111-1111-1111-111111111111.mov" }]
             }
             """
@@ -796,30 +798,93 @@ struct StudioVideoOverlayTests {
         }
 
         let valid = try makeValidPackage("Valid.sukushorec")
+        let resolved = try RecordingPackageMedia.validateRenderInputs(in: valid)
+        #expect(resolved.screenURL.lastPathComponent == "screen.mov")
+        #expect(resolved.cameraURL?.lastPathComponent == "camera.mov")
+        #expect(resolved.replacementAudioURL?.lastPathComponent == "replacement.m4a")
+        #expect(resolved.backgroundMusicURL?.lastPathComponent == "background-music.m4a")
         #expect(RecordingVideoOverlayMedia.validateRecordingPackage(at: valid))
 
         // Symlinked package directory rejected.
         let symPkg = dir.appendingPathComponent("SymPkg.sukushorec")
         try FileManager.default.createSymbolicLink(at: symPkg, withDestinationURL: valid)
-        #expect(!RecordingVideoOverlayMedia.validateRecordingPackage(at: symPkg))
+        #expect(throws: RecordingPackageMedia.ValidationError.invalidPackage("SymPkg.sukushorec")) {
+            try RecordingPackageMedia.validateRenderInputs(in: symPkg)
+        }
 
         // Symlinked screen.mov rejected.
         let symScreen = try makeValidPackage("SymScreen.sukushorec")
         try FileManager.default.removeItem(at: symScreen.appendingPathComponent("screen.mov"))
         try FileManager.default.createSymbolicLink(at: symScreen.appendingPathComponent("screen.mov"), withDestinationURL: outsideFile)
-        #expect(!RecordingVideoOverlayMedia.validateRecordingPackage(at: symScreen))
+        #expect(throws: RecordingPackageMedia.ValidationError.unsafeFile("screen.mov")) {
+            try RecordingPackageMedia.validateRenderInputs(in: symScreen)
+        }
 
-        // Symlinked camera.mov rejected.
+        // Normal screen.mov + symlinked camera.mov rejected (exact Finished-render repro).
         let symCam = try makeValidPackage("SymCam.sukushorec")
         try FileManager.default.removeItem(at: symCam.appendingPathComponent("camera.mov"))
         try FileManager.default.createSymbolicLink(at: symCam.appendingPathComponent("camera.mov"), withDestinationURL: outsideFile)
+        #expect(throws: RecordingPackageMedia.ValidationError.unsafeFile("camera.mov")) {
+            try RecordingPackageMedia.validateRenderInputs(in: symCam)
+        }
         #expect(!RecordingVideoOverlayMedia.validateRecordingPackage(at: symCam))
+
+        // Symlinked edit.draft.json and edit.json sidecars rejected.
+        let symDraft = try makeValidPackage("SymDraft.sukushorec")
+        try FileManager.default.createSymbolicLink(at: symDraft.appendingPathComponent("edit.draft.json"), withDestinationURL: outsideFile)
+        #expect(throws: RecordingPackageMedia.ValidationError.unsafeFile("edit.draft.json")) {
+            try RecordingPackageMedia.validateRenderInputs(in: symDraft)
+        }
+
+        let symEdit = try makeValidPackage("SymEdit.sukushorec")
+        try FileManager.default.removeItem(at: symEdit.appendingPathComponent("edit.json"))
+        try FileManager.default.createSymbolicLink(at: symEdit.appendingPathComponent("edit.json"), withDestinationURL: outsideFile)
+        #expect(throws: RecordingPackageMedia.ValidationError.unsafeFile("edit.json")) {
+            try RecordingPackageMedia.validateRenderInputs(in: symEdit)
+        }
+
+        // Symlinked render-cache stamp (`render.json`) and cached deliverable (`<name>.mov`) rejected.
+        let symStamp = try makeValidPackage("SymStamp.sukushorec")
+        try FileManager.default.createSymbolicLink(at: symStamp.appendingPathComponent("render.json"), withDestinationURL: outsideFile)
+        #expect(throws: RecordingPackageMedia.ValidationError.unsafeFile("render.json")) {
+            try RecordingPackageMedia.validateRenderInputs(in: symStamp)
+        }
+
+        let symCached = try makeValidPackage("SymCached.sukushorec")
+        try FileManager.default.createSymbolicLink(at: symCached.appendingPathComponent("SymCached.mov"), withDestinationURL: outsideFile)
+        #expect(throws: RecordingPackageMedia.ValidationError.unsafeFile("SymCached.mov")) {
+            try RecordingPackageMedia.validateRenderInputs(in: symCached)
+        }
+
+        // Symlinked isolated microphone audio rejected.
+        let symIsolated = try makeValidPackage("SymIsolated.sukushorec")
+        try FileManager.default.createSymbolicLink(at: symIsolated.appendingPathComponent("mic-isolated-v2.m4a"), withDestinationURL: outsideFile)
+        #expect(throws: RecordingPackageMedia.ValidationError.unsafeFile("mic-isolated-v2.m4a")) {
+            try RecordingPackageMedia.validateRenderInputs(in: symIsolated)
+        }
+
+        // `..` traversal in replacementAudioFileName and backgroundMusic.fileName rejected.
+        let traverseAudio = try makeValidPackage("TraverseAudio.sukushorec")
+        try Data(#"{"replacementAudioFileName":"../secret.mov"}"#.utf8)
+            .write(to: traverseAudio.appendingPathComponent("edit.json"))
+        #expect(throws: RecordingPackageMedia.ValidationError.unsafeFile("../secret.mov")) {
+            try RecordingPackageMedia.validateRenderInputs(in: traverseAudio)
+        }
+
+        let traverseMusic = try makeValidPackage("TraverseMusic.sukushorec")
+        try Data(#"{"backgroundMusic":{"fileName":"../secret.mov"}}"#.utf8)
+            .write(to: traverseMusic.appendingPathComponent("edit.json"))
+        #expect(throws: RecordingPackageMedia.ValidationError.unsafeFile("../secret.mov")) {
+            try RecordingPackageMedia.validateRenderInputs(in: traverseMusic)
+        }
 
         // Symlinked replacement audio rejected.
         let symAudio = try makeValidPackage("SymAudio.sukushorec")
         try FileManager.default.removeItem(at: symAudio.appendingPathComponent("replacement.m4a"))
         try FileManager.default.createSymbolicLink(at: symAudio.appendingPathComponent("replacement.m4a"), withDestinationURL: outsideFile)
-        #expect(!RecordingVideoOverlayMedia.validateRecordingPackage(at: symAudio))
+        #expect(throws: RecordingPackageMedia.ValidationError.unsafeFile("replacement.m4a")) {
+            try RecordingPackageMedia.validateRenderInputs(in: symAudio)
+        }
 
         // Symlinked media directory rejected.
         let symMedia = try makeValidPackage("SymMedia.sukushorec")
@@ -827,14 +892,18 @@ struct StudioVideoOverlayTests {
         try FileManager.default.createDirectory(at: outsideDir, withIntermediateDirectories: true)
         try FileManager.default.removeItem(at: symMedia.appendingPathComponent("media"))
         try FileManager.default.createSymbolicLink(at: symMedia.appendingPathComponent("media"), withDestinationURL: outsideDir)
-        #expect(!RecordingVideoOverlayMedia.validateRecordingPackage(at: symMedia))
+        #expect(throws: RecordingPackageMedia.ValidationError.unsafeFile("media")) {
+            try RecordingPackageMedia.validateRenderInputs(in: symMedia)
+        }
 
         // Symlinked referenced overlay inside media rejected.
         let symOverlay = try makeValidPackage("SymOverlay.sukushorec")
         let overlayPath = symOverlay.appendingPathComponent("media/11111111-1111-1111-1111-111111111111.mov")
         try FileManager.default.removeItem(at: overlayPath)
         try FileManager.default.createSymbolicLink(at: overlayPath, withDestinationURL: outsideFile)
-        #expect(!RecordingVideoOverlayMedia.validateRecordingPackage(at: symOverlay))
+        #expect(throws: RecordingPackageMedia.ValidationError.unsafeFile("11111111-1111-1111-1111-111111111111.mov")) {
+            try RecordingPackageMedia.validateRenderInputs(in: symOverlay)
+        }
     }
 
     // MARK: - Helpers
