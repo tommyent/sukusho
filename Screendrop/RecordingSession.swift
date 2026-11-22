@@ -367,11 +367,17 @@ nonisolated struct RecordingSession: Sendable, Equatable {
             : try RecordingPackageMedia.activeEditSidecar(draftURL: versions.draftURL, editURL: versions.editURL)
         let sidecars = [versions.editURL, versions.draftURL].compactMap { $0 }
         // Neither edit of a conflict is known to be the stale one, so both stay aside, with their clips.
-        if isConflict { for sidecar in sidecars { try RecordingSidecarQuarantine.preserve(at: sidecar) } }
+        if isConflict {
+            for sidecar in sidecars {
+                try RecordingSidecarQuarantine.preserve(at: sidecar, as: RecordingSidecarQuarantine.conflictArchiveKind)
+            }
+        }
+        // Read before anything is removed: an archive that can't be read stops the Revert.
+        let archives = try conflictArchiveEdits()
         // Keep the active edit in place until any lower revision is gone.
         try ScreenshotEditFileTransaction.apply(replacements: [], removing: sidecars.filter { $0 != active } + [active].compactMap { $0 })
         removeFinalVideos()
-        try removeUnreferencedMedia(keeping: snapshots + setAsideEdits())
+        try removeUnreferencedMedia(keeping: snapshots + archives)
     }
 
     func removeUnreferencedMedia() throws {
@@ -379,16 +385,24 @@ nonisolated struct RecordingSession: Sendable, Equatable {
         let edits = try [sidecars.saved, sidecars.draft].compactMap { data in
             try data.map { try CaptureManifest.decoder.decode(RecordingEditDocument.self, from: $0) }
         }
-        try removeUnreferencedMedia(keeping: edits + snapshotDocumentsForCleanup() + setAsideEdits())
+        try removeUnreferencedMedia(keeping: edits + snapshotDocumentsForCleanup() + conflictArchiveEdits())
     }
 
-    /// Edits copied aside (`<sidecar>.unreadable-<hash>`) that still decode keep their clips, so a copy can be restored.
-    private func setAsideEdits() -> [RecordingEditDocument] {
-        let prefixes = [Self.editDocumentFileName, Self.draftDocumentFileName].map { $0 + ".unreadable-" }
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: directoryURL.path)) ?? []
-        return names.filter { name in prefixes.contains { name.hasPrefix($0) } }
-            .compactMap { RecordingPackageMedia.resolvePackageFile(named: $0, in: directoryURL) }
-            .compactMap { try? CaptureManifest.decoder.decode(RecordingEditDocument.self, from: Data(contentsOf: $0)) }
+    /// The edits Revert set aside from a conflict (`<sidecar>.conflict-<hash>`), so their clips stay restorable.
+    /// One that can't be read, decoded or understood throws, and no media is removed; quarantined
+    /// unreadable sidecars (`.unreadable-`) never held a readable edit and don't count.
+    private func conflictArchiveEdits() throws -> [RecordingEditDocument] {
+        let prefixes = [Self.editDocumentFileName, Self.draftDocumentFileName]
+            .map { "\($0).\(RecordingSidecarQuarantine.conflictArchiveKind)-" }
+        return try FileManager.default.contentsOfDirectory(atPath: directoryURL.path)
+            .filter { name in prefixes.contains { name.hasPrefix($0) } }
+            .map { name in
+                let data = try RecordingSidecarQuarantine.readBounded(at: directoryURL.appendingPathComponent(name))
+                if let version = RecordingPackageMedia.readFormatVersion(from: data), version > RecordingEditDocument.currentFormatVersion {
+                    throw RecordingPackageMedia.ValidationError.unsupportedFormatVersion(version)
+                }
+                return try CaptureManifest.decoder.decode(RecordingEditDocument.self, from: data)
+            }
     }
 
     private func snapshotDocumentsForCleanup() throws -> [RecordingEditDocument] {

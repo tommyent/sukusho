@@ -43,18 +43,22 @@ nonisolated enum RecordingSidecarQuarantine {
         return try readBounded(fd: sourceFD, name: leaf, limit: maxBytes)
     }
 
-    /// Preserves the regular file at `url` to `<name>.unreadable-<12hex>`.
+    /// Preserves the regular file at `url` to `<name>.<kind>-<12hex>`: `unreadable` for a sidecar that failed
+    /// to decode, `conflict` for a readable edit set aside on purpose (see `conflictArchiveKind`).
     /// Throws if the package directory or file is unsafe, missing, oversized, or
     /// preservation cannot be verified (including a mismatched existing copy).
     @discardableResult
-    static func preserve(at url: URL) throws -> URL {
+    static func preserve(at url: URL, as kind: String = "unreadable") throws -> URL {
         let (dirFD, leaf) = try openVerifiedParent(for: url)
         defer { close(dirFD) }
         let sourceFD = try openSource(leaf: leaf, inDirFD: dirFD)
         defer { close(sourceFD) }
         let data = try readBounded(fd: sourceFD, name: leaf, limit: maxBytes)
-        return try preserve(data: data, leaf: leaf, inDirFD: dirFD, directoryURL: url.deletingLastPathComponent())
+        return try preserve(data: data, leaf: leaf, kind: kind, inDirFD: dirFD, directoryURL: url.deletingLastPathComponent())
     }
+
+    /// Readable edits Revert sets aside from a conflict; the media sweep counts what they reference.
+    static let conflictArchiveKind = "conflict"
 
     /// Reads `url` once relative to a verified package directory descriptor.
     /// Returns immediately if `url` is absent (`ENOENT`) or passes `validate`.
@@ -126,9 +130,10 @@ nonisolated enum RecordingSidecarQuarantine {
         return data
     }
 
-    private static func preserve(data: Data, leaf: String, inDirFD dirFD: Int32, directoryURL: URL) throws -> URL {
+    private static func preserve(data: Data, leaf: String, kind: String = "unreadable", inDirFD dirFD: Int32,
+                                 directoryURL: URL) throws -> URL {
         let hash = SHA256.hash(data: data).prefix(6).map { String(format: "%02x", $0) }.joined()
-        let destName = "\(leaf).unreadable-\(hash)"
+        let destName = "\(leaf).\(kind)-\(hash)"
         let destination = directoryURL.appendingPathComponent(destName)
         let tempName = ".\(destName).\(UUID().uuidString).tmp"
         let tempFD = openat(dirFD, tempName, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)

@@ -2103,20 +2103,31 @@ struct RecordingExportRegressionChecks {
             try check(!FileManager.default.fileExists(atPath: session.editDocumentURL.path)
                       && !FileManager.default.fileExists(atPath: session.draftDocumentURL.path),
                       "Revert to Original left a conflicting sidecar")
-            let copies = try FileManager.default.contentsOfDirectory(atPath: session.directoryURL.path)
-                .filter { $0.contains(".unreadable-") }
-                .map { try Data(contentsOf: session.directoryURL.appendingPathComponent($0)) }
+            let names = try FileManager.default.contentsOfDirectory(atPath: session.directoryURL.path)
+            let archives = names.filter { $0.contains(".conflict-") }.map { session.directoryURL.appendingPathComponent($0) }
+            let copies = try archives.map { try Data(contentsOf: $0) }
             try check(copies.contains(savedBytes) && copies.contains(draftBytes), "Revert to Original kept no copy of a conflicting edit")
+            // The unreadable draft refused above left an ordinary quarantine; it must not stop the sweep.
+            try check(names.contains { $0.hasPrefix("edit.draft.json.unreadable-") }, "Fixture lacks an unreadable quarantine")
             try check(clipExists(savedClip) && clipExists(draftClip) && !clipExists(orphan),
                       "Revert dropped a set-aside edit's clip or kept an unreferenced one")
-            let model = RecordingStudioModel(url: session.directoryURL)
-            await model.load()
-            defer { model.teardown() }
-            try check(model.isLoaded && model.redactions.isEmpty, "The reverted recording did not open in Studio")
-            model.teardown()
-            try check(clipExists(savedClip) && clipExists(draftClip), "Closing Studio swept a set-aside edit's clip")
+            guard let draftArchive = archives.first(where: { (try? Data(contentsOf: $0)) == draftBytes }) else {
+                throw Failure(description: "The draft's archive is missing")
+            }
+            for readable in [true, false] {
+                if !readable { try check(chmod(draftArchive.path, 0) == 0, "Could not make the archive unreadable") }
+                defer { if !readable { _ = chmod(draftArchive.path, 0o600) } }
+                let model = RecordingStudioModel(url: session.directoryURL)
+                await model.load()
+                defer { model.teardown() }
+                try check(model.isLoaded && model.redactions.isEmpty, "The reverted recording did not open in Studio")
+                model.teardown()
+                try check(clipExists(savedClip) && clipExists(draftClip),
+                          "Closing Studio swept a clip of a set-aside edit that was \(readable ? "readable" : "unreadable")")
+            }
+            try check(try Data(contentsOf: draftArchive) == draftBytes, "The archive changed")
         }
-        print("PASS: Revert to Original sets a readable revision conflict aside with its clips and still refuses unreadable or newer-format drafts")
+        print("PASS: Revert to Original sets a readable revision conflict aside with its clips, an unreadable archive stops the sweep, and unreadable or newer-format drafts still refuse")
     }
 
     static func rolledBackRedactionBlocksDelivery(in directory: URL) async throws {
