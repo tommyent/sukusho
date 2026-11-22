@@ -2041,6 +2041,53 @@ struct RecordingExportRegressionChecks {
         print("PASS: a package renamed with a backslash opens and delivers its render")
     }
 
+    static func revertResolvesReadableConflict(in directory: URL) async throws {
+        let mask = RecordingRedaction(start: 1, end: 3, rect: CGRect(x: 0, y: 0, width: 1, height: 1))
+        for revision in [0, 8] {
+            let session = RecordingSession(directoryURL: directory.appendingPathComponent("conflict-revert-\(revision).sukushorec"))
+            try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
+            try await movie(at: session.screenURL)
+            var saved = RecordingEditDocument(style: .init(), zoomEnabled: false, zoomCues: [])
+            saved.revision = revision
+            var draft = saved
+            draft.redactions = [mask]
+            func bytes(_ document: RecordingEditDocument) throws -> Data {
+                var json = try JSONSerialization.jsonObject(with: CaptureManifest.encoder.encode(document)) as! [String: Any]
+                if revision == 0 { json.removeValue(forKey: "revision") }
+                return try JSONSerialization.data(withJSONObject: json, options: [.sortedKeys])
+            }
+            let savedBytes = try bytes(saved), draftBytes = try bytes(draft)
+            let refusals: [(unreadable: Data?, label: String)] = [(Data("{".utf8), "an unreadable draft"), (nil, "a newer-format draft")]
+            for (unreadable, label) in refusals {
+                try savedBytes.write(to: session.editDocumentURL)
+                if let unreadable { try unreadable.write(to: session.draftDocumentURL) } else {
+                    var future = draft
+                    future.formatVersion = 99
+                    try bytes(future).write(to: session.draftDocumentURL)
+                }
+                let draftBefore = try Data(contentsOf: session.draftDocumentURL)
+                var refused = false
+                do { try session.removeEdits() } catch { refused = true }
+                try check(refused && (try Data(contentsOf: session.editDocumentURL)) == savedBytes
+                          && (try Data(contentsOf: session.draftDocumentURL)) == draftBefore,
+                          "Revert to Original went past \(label)")
+            }
+            try draftBytes.write(to: session.draftDocumentURL)
+            var refusedConflict = false
+            do { _ = try session.editDocumentForRendering() } catch { refusedConflict = true }
+            try check(refusedConflict, "Fixture is not a conflict")
+            try session.removeEdits()
+            try check(!FileManager.default.fileExists(atPath: session.editDocumentURL.path)
+                      && !FileManager.default.fileExists(atPath: session.draftDocumentURL.path),
+                      "Revert to Original left a conflicting sidecar")
+            let model = RecordingStudioModel(url: session.directoryURL)
+            await model.load()
+            defer { model.teardown() }
+            try check(model.isLoaded && model.redactions.isEmpty, "The reverted recording did not open in Studio")
+        }
+        print("PASS: Revert to Original resets a readable revision conflict and still refuses unreadable or newer-format drafts")
+    }
+
     static func main() async throws {
         setbuf(stdout, nil)
         guard let root = ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] else {
@@ -2068,6 +2115,7 @@ struct RecordingExportRegressionChecks {
         try await wallpaperPresetSafety(in: directory)
         try await handOutNames(in: directory)
         try await backslashPackageName(in: directory)
+        try await revertResolvesReadableConflict(in: directory)
         try await canonicalStudioRegistry(in: directory)
         try await importedEvidence(in: directory)
         try await packageWallpaper(in: directory)

@@ -344,9 +344,14 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     /// tags stay.
     func removeEdits() throws {
         let versions = try validateEditVersionsForRendering()
-        _ = try editDocumentForRendering()
+        // Both sidecars must decode. Equal revisions with different edits open nowhere else,
+        // so this confirmed reset is their way out.
+        var isConflict = false
+        do { _ = try editDocumentForRendering() }
+        catch RecordingPackageMedia.ValidationError.conflictingEditRevisions { isConflict = true }
         let snapshots = try snapshotDocumentsForCleanup()
-        let active = try RecordingPackageMedia.activeEditSidecar(draftURL: versions.draftURL, editURL: versions.editURL)
+        let active = isConflict ? versions.editURL
+            : try RecordingPackageMedia.activeEditSidecar(draftURL: versions.draftURL, editURL: versions.editURL)
         let sidecars = [versions.editURL, versions.draftURL].compactMap { $0 }
         // Keep the active edit in place until any lower revision is gone.
         try ScreenshotEditFileTransaction.apply(replacements: [], removing: sidecars.filter { $0 != active } + [active].compactMap { $0 })

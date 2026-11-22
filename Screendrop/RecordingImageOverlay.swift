@@ -645,7 +645,7 @@ nonisolated enum RecordingPackageMedia {
             case .unsupportedFormatVersion:
                 RecordingPackageMedia.newerFormatNotice
             case .conflictingEditRevisions:
-                "The saved edit and draft have the same revision but contain different edits."
+                "The saved edit and draft have the same revision but contain different edits. Revert to Original in the Library resets the recording."
             }
         }
     }
