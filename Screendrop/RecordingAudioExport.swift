@@ -88,6 +88,8 @@ nonisolated final class RecordingAudioExporter: @unchecked Sendable {
         var replacementSync: RecordingAudioSync? = nil
         /// Audio clips under the video, mixed in as the video export does.
         var audioClips: [RecordingAudioClip] = []
+        /// Layered video overlays whose audible sound joins the shared mix.
+        var videoOverlays: [RecordingVideoOverlay] = []
         var mediaDirectory: URL? = nil
         /// External replacement file URLs pinned by detached clips in standalone movies.
         var externalReplacementURLs: [String: URL] = [:]
@@ -140,6 +142,7 @@ nonisolated final class RecordingAudioExporter: @unchecked Sendable {
             replacementURL: configuration.replacementURL,
             replacementSync: configuration.replacementSync,
             clips: configuration.audioClips,
+            videoOverlays: configuration.videoOverlays,
             mediaDirectory: configuration.mediaDirectory,
             externalReplacementURLs: configuration.externalReplacementURLs,
             volume: configuration.volume,

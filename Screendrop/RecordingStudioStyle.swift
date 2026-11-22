@@ -75,9 +75,11 @@ struct RecordingEditDocument: Codable, Equatable {
     var isolateVoice = false
     var backgroundMusic: RecordingBackgroundMusic?
     var redactions: [RecordingRedaction] = []
-    /// Optional so older projects without text or image overlays decode cleanly.
+    /// Optional so older projects without text, image, or video overlays decode cleanly.
     var textOverlays: [RecordingTextOverlay]?
     var imageOverlays: [RecordingImageOverlay]?
+    /// Layered video overlays (PiP / cutaway) on the edited timeline clock.
+    var videoOverlays: [RecordingVideoOverlay]?
     /// Nil shows the pen strokes drawn during the take; saved only when off,
     /// so older renders still match their documents.
     var showsInk: Bool?
@@ -120,6 +122,7 @@ struct RecordingEditDocument: Codable, Equatable {
         case redactions
         case textOverlays
         case imageOverlays
+        case videoOverlays
         case showsInk
         case hiddenInkStrokeIDs
         case markers
@@ -153,6 +156,7 @@ struct RecordingEditDocument: Codable, Equatable {
         redactions: [RecordingRedaction] = [],
         textOverlays: [RecordingTextOverlay]? = nil,
         imageOverlays: [RecordingImageOverlay]? = nil,
+        videoOverlays: [RecordingVideoOverlay]? = nil,
         showsInk: Bool? = nil,
         hiddenInkStrokeIDs: [UUID]? = nil,
         markers: [RecordingMarker]? = nil
@@ -191,6 +195,7 @@ struct RecordingEditDocument: Codable, Equatable {
         self.redactions = redactions
         self.textOverlays = textOverlays?.isEmpty == true ? nil : textOverlays
         self.imageOverlays = imageOverlays?.isEmpty == true ? nil : imageOverlays
+        self.videoOverlays = videoOverlays?.isEmpty == true ? nil : videoOverlays
         self.showsInk = showsInk
         self.hiddenInkStrokeIDs = hiddenInkStrokeIDs
         self.markers = markers
@@ -312,6 +317,7 @@ struct RecordingEditDocument: Codable, Equatable {
         for region in redactions { try region.validate() }
         textOverlays = try container.decodeIfPresent([RecordingTextOverlay].self, forKey: .textOverlays)
         imageOverlays = try container.decodeIfPresent([RecordingImageOverlay].self, forKey: .imageOverlays)
+        videoOverlays = try container.decodeIfPresent([RecordingVideoOverlay].self, forKey: .videoOverlays)
         showsInk = try container.decodeIfPresent(Bool.self, forKey: .showsInk)
         hiddenInkStrokeIDs = try container.decodeIfPresent([UUID].self, forKey: .hiddenInkStrokeIDs)
         markers = try container.decodeIfPresent([RecordingMarker].self, forKey: .markers)

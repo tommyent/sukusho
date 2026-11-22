@@ -81,6 +81,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
         let redactions: [RecordingRedaction]
         let textOverlays: [RecordingTextOverlay]
         let imageOverlays: [RecordingImageOverlay]
+        let videoOverlays: [RecordingVideoOverlay]
         /// Pen strokes drawn during the take; nil when hidden or none.
         let ink: RecordingInkTimeline?
 
@@ -116,6 +117,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             redactions: [RecordingRedaction] = [],
             textOverlays: [RecordingTextOverlay] = [],
             imageOverlays: [RecordingImageOverlay] = [],
+            videoOverlays: [RecordingVideoOverlay] = [],
             ink: RecordingInkTimeline? = nil
         ) {
             self.screenURL = screenURL
@@ -149,6 +151,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             self.redactions = redactions
             self.textOverlays = textOverlays
             self.imageOverlays = imageOverlays
+            self.videoOverlays = videoOverlays
             self.ink = ink
         }
     }
@@ -158,6 +161,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
         case readerFailed(Error?)
         case writerFailed(Error?)
         case missingOverlayAsset(String)
+        case missingVideoOverlayAsset(String)
         case cancelled
 
         var errorDescription: String? {
@@ -170,6 +174,8 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
                 error?.localizedDescription ?? "Writing the exported video failed."
             case .missingOverlayAsset(let name):
                 "The overlay image \"\(name)\" is missing or unreadable."
+            case .missingVideoOverlayAsset(let name):
+                "The video overlay \"\(name)\" is missing or unreadable."
             case .cancelled:
                 "Export canceled."
             }
@@ -230,8 +236,15 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
                 clipTimeline: clipTimeline,
                 store: overlayImages
             )
+            try RecordingVideoOverlayMedia.validateOverlays(
+                configuration.videoOverlays,
+                in: configuration.mediaDirectory,
+                duration: clipTimeline.duration
+            )
         } catch RecordingOverlayMedia.ResolutionError.missingOrInvalid(let name) {
             throw ExportError.missingOverlayAsset(name)
+        } catch RecordingVideoOverlayMedia.ResolutionError.missingOrInvalid(let name) {
+            throw ExportError.missingVideoOverlayAsset(name)
         }
         guard let sourceVideo = try await sourceAsset.loadTracks(withMediaType: .video).first else {
             throw ExportError.noVideoTrack
@@ -282,6 +295,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
                 replacementURL: configuration.audioReplacementURL,
                 replacementSync: configuration.audioReplacementSync,
                 clips: configuration.audioClips,
+                videoOverlays: configuration.videoOverlays,
                 mediaDirectory: configuration.mediaDirectory,
                 externalReplacementURLs: configuration.externalReplacementURLs,
                 volume: configuration.audioVolume,
@@ -307,6 +321,12 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             url: configuration.cameraURL,
             offset: configuration.cameraOffset
         )
+        let videoOverlayFeed = configuration.videoOverlays.isEmpty
+            ? nil
+            : VideoOverlayFrameFeed(
+                overlays: configuration.videoOverlays,
+                mediaDirectory: configuration.mediaDirectory
+            )
 
         // Writer
         let container = configuration.exportSettings.effectiveContainer
@@ -402,6 +422,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             redactions: configuration.redactions,
             textOverlays: configuration.textOverlays,
             imageOverlays: configuration.imageOverlays,
+            videoOverlays: configuration.videoOverlays,
             mediaDirectory: configuration.mediaDirectory,
             overlayImages: overlayImages,
             ink: configuration.ink,
@@ -419,6 +440,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
                 adaptor: adaptor,
                 compositor: compositor,
                 cameraFeed: cameraFeed,
+                videoOverlayFeed: videoOverlayFeed,
                 clipTimeline: clipTimeline,
                 timing: timing,
                 cancelFlag: cancelFlag,
@@ -441,17 +463,22 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             if let cameraFailure = cameraFeed?.failureError {
                 throw ExportError.readerFailed(cameraFailure)
             }
+            if let videoOverlayFailure = videoOverlayFeed?.failureError {
+                throw ExportError.readerFailed(videoOverlayFailure)
+            }
             guard renderedFrames > 0 else { throw ExportError.readerFailed(nil) }
         } catch {
             screenReader.cancelReading()
             audioReader?.cancelReading()
             cameraFeed?.cancel()
+            videoOverlayFeed?.cancel()
             writer.cancelWriting()
             try? FileManager.default.removeItem(at: outputURL)
             throw error
         }
 
         cameraFeed?.cancel()
+        videoOverlayFeed?.cancel()
         withExtendedLifetime(preparedAudio) {}
 
         writer.endSession(atSourceTime: exportTimeRange.end)
@@ -475,6 +502,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
         adaptor: AVAssetWriterInputPixelBufferAdaptor,
         compositor: StudioFrameCompositor,
         cameraFeed: RecordingCameraFrameFeed?,
+        videoOverlayFeed: VideoOverlayFrameFeed?,
         clipTimeline: RecordingClipTimeline,
         timing: RecordingExportTiming,
         cancelFlag: CancelFlag,
@@ -578,6 +606,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             }
 
             let cameraBuffer = try cameraFeed?.latestFrame(at: sourceTime)
+            let videoOverlayFrame = try await videoOverlayFeed?.frame(at: editorTime)
             let nextTime = timing.time(forFrame: frame + 1)
             let sourceRepeats = (pending == nil || pending!.time > nextTime)
                 && clipTimeline.location(at: nextTime)?.segmentID == location.segmentID
@@ -585,6 +614,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             let begun = try compositor.begin(
                 screenFrame: sourceBuffer,
                 cameraFrame: cameraBuffer,
+                videoOverlayFrame: videoOverlayFrame,
                 editorTime: editorTime,
                 sourceTime: sourceTime,
                 sourceRepeatsOnNextFrame: sourceRepeats,
@@ -699,6 +729,7 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
     private let redactions: [RecordingRedaction]
     private let textOverlays: [RecordingTextOverlay]
     private let imageOverlays: [RecordingImageOverlay]
+    private let videoOverlays: [RecordingVideoOverlay]
     private let mediaDirectory: URL?
     private let overlayImages: RecordingOverlayImageStore
     private let ink: RecordingInkTimeline?
@@ -716,6 +747,8 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
     /// Retained so pixel-buffer pool reuse can't produce a false cache hit.
     private var bubbleContentSource: CVPixelBuffer?
     private var bubbleContentImage: CGImage?
+    private var videoOverlayContentSource: CVPixelBuffer?
+    private var videoOverlayContentImage: CGImage?
     private(set) var reusedScreenFrameCount = 0
     private let bypassScreenCache = ProcessInfo.processInfo.environment["SCREENDROP_EXPORT_BYPASS_SCREEN_CACHE"] == "1"
     // Developer comparison switch; export settings and saved projects do not change.
@@ -741,6 +774,7 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
         redactions: [RecordingRedaction] = [],
         textOverlays: [RecordingTextOverlay] = [],
         imageOverlays: [RecordingImageOverlay] = [],
+        videoOverlays: [RecordingVideoOverlay] = [],
         mediaDirectory: URL? = nil,
         overlayImages: RecordingOverlayImageStore = RecordingOverlayImageStore(),
         ink: RecordingInkTimeline? = nil,
@@ -770,6 +804,7 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
         self.redactions = redactions
         self.textOverlays = textOverlays
         self.imageOverlays = imageOverlays
+        self.videoOverlays = videoOverlays
         self.mediaDirectory = mediaDirectory
         self.overlayImages = overlayImages
         self.ink = ink
@@ -795,6 +830,7 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
     struct PendingFrame {
         fileprivate let screenFrame: CVPixelBuffer
         fileprivate let cameraFrame: CVPixelBuffer?
+        fileprivate let videoOverlayFrame: VideoOverlayFrameFeed.Frame?
         fileprivate let editorTime: TimeInterval
         fileprivate let sourceTime: TimeInterval
         fileprivate let sampleRects: [CGRect]
@@ -812,6 +848,7 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
     func begin(
         screenFrame: CVPixelBuffer,
         cameraFrame: CVPixelBuffer?,
+        videoOverlayFrame: VideoOverlayFrameFeed.Frame? = nil,
         editorTime: TimeInterval,
         sourceTime: TimeInterval,
         sourceRepeatsOnNextFrame: Bool,
@@ -853,6 +890,7 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
         return PendingFrame(
             screenFrame: screenFrame,
             cameraFrame: cameraFrame,
+            videoOverlayFrame: videoOverlayFrame,
             editorTime: editorTime,
             sourceTime: sourceTime,
             sampleRects: sampleRects,
@@ -958,9 +996,19 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
         // unaffected by the zoom transform, like a broadcast lower third.
         drawKeystrokeCaption(at: sourceTime, in: context)
 
-        if let cameraFrame, layout.bubbleRect.width > 0 {
+        let cutawayCoverage = StudioVideoOverlayLane.cutawayCoverage(in: videoOverlays, atEditorTime: editorTime)
+        if let cameraFrame, layout.bubbleRect.width > 0, cutawayCoverage < 0.999 {
+            context.saveGState()
+            if cutawayCoverage > 0.001 {
+                context.setAlpha(CGFloat(1 - cutawayCoverage))
+            }
             drawCameraBubble(cameraFrame, in: context)
+            context.restoreGState()
         }
+
+        // Layered video overlay (PiP or cutaway) sits above card and camera,
+        // and under images, text, and subtitles.
+        drawVideoOverlay(frame.videoOverlayFrame, atEditorTime: editorTime, in: context)
 
         // Images, then text, sit on the canvas above the camera and under
         // the subtitles.
@@ -970,6 +1018,40 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
         // The subtitle bar lives in canvas space - over the background too,
         // not just the card - and above everything else, camera included.
         drawSubtitleBar(at: sourceTime, in: context)
+    }
+
+    private func drawVideoOverlay(
+        _ frame: VideoOverlayFrameFeed.Frame?,
+        atEditorTime editorTime: TimeInterval,
+        in context: CGContext
+    ) {
+        guard let frame else {
+            videoOverlayContentSource = nil
+            videoOverlayContentImage = nil
+            return
+        }
+        if videoOverlayContentSource !== frame.pixelBuffer {
+            videoOverlayContentImage = RecordingVideoOverlayRenderer.makeOrientedImage(
+                from: frame.pixelBuffer,
+                preferredTransform: frame.preferredTransform,
+                colorSpace: colorSpace
+            )
+            videoOverlayContentSource = videoOverlayContentImage == nil ? nil : frame.pixelBuffer
+        }
+        guard let image = videoOverlayContentImage else { return }
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.translateBy(x: 0, y: canvasSize.height)
+        context.scaleBy(x: 1, y: -1)
+        RecordingVideoOverlayRenderer.draw(
+            frame.overlay,
+            frame: image,
+            atEditorTime: editorTime,
+            canvasSize: canvasSize,
+            cardRect: layout.cardRect,
+            cardCornerRadius: layout.cardCornerRadius,
+            in: context
+        )
     }
 
     private func drawImageOverlays(at sourceTime: TimeInterval, in context: CGContext) throws {

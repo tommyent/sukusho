@@ -265,6 +265,7 @@ enum RecordingSessionRenderer {
             redactions: document?.redactions ?? [],
             textOverlays: document?.textOverlays ?? [],
             imageOverlays: document?.imageOverlays ?? [],
+            videoOverlays: document?.videoOverlays ?? [],
             ink: document?.showsInk ?? true
                 ? RecordingInkTimeline(strokes: capture.ink, hiding: Set(document?.hiddenInkStrokeIDs ?? []))
                 : nil

@@ -209,6 +209,7 @@
 		ED4E00000000000000000005 /* Screendrop/RecordingOverlayEffects.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED4E00000000000000000006 /* Screendrop/RecordingOverlayEffects.swift */; };
 		ED3A00000000000000000001 /* Screendrop/RecordingTextOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED3A00000000000000000002 /* Screendrop/RecordingTextOverlay.swift */; };
 		ED3A00000000000000000003 /* Screendrop/RecordingImageOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED3A00000000000000000004 /* Screendrop/RecordingImageOverlay.swift */; };
+		ED3A00000000000000000005 /* Screendrop/RecordingVideoOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED3A00000000000000000006 /* Screendrop/RecordingVideoOverlay.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -442,6 +443,7 @@
 		ED4E00000000000000000006 /* Screendrop/RecordingOverlayEffects.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingOverlayEffects.swift; sourceTree = SOURCE_ROOT; };
 		ED3A00000000000000000002 /* Screendrop/RecordingTextOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingTextOverlay.swift; sourceTree = SOURCE_ROOT; };
 		ED3A00000000000000000004 /* Screendrop/RecordingImageOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingImageOverlay.swift; sourceTree = SOURCE_ROOT; };
+		ED3A00000000000000000006 /* Screendrop/RecordingVideoOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingVideoOverlay.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -719,6 +721,7 @@
 				ED4E00000000000000000006 /* Screendrop/RecordingOverlayEffects.swift */,
 				ED3A00000000000000000002 /* Screendrop/RecordingTextOverlay.swift */,
 				ED3A00000000000000000004 /* Screendrop/RecordingImageOverlay.swift */,
+				ED3A00000000000000000006 /* Screendrop/RecordingVideoOverlay.swift */,
 			);
 			name = "Tested logic";
 			sourceTree = "<group>";
@@ -1048,6 +1051,7 @@
 				ED4E00000000000000000005 /* Screendrop/RecordingOverlayEffects.swift in Sources */,
 				ED3A00000000000000000001 /* Screendrop/RecordingTextOverlay.swift in Sources */,
 				ED3A00000000000000000003 /* Screendrop/RecordingImageOverlay.swift in Sources */,
+				ED3A00000000000000000005 /* Screendrop/RecordingVideoOverlay.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

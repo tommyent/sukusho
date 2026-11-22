@@ -85,6 +85,7 @@ nonisolated struct StudioAudioSources: @unchecked Sendable {
         screenAsset: AVAsset,
         replacementURL: URL?,
         clips: [RecordingAudioClip],
+        videoOverlays: [RecordingVideoOverlay] = [],
         mediaDirectory: URL?,
         externalReplacementURLs: [String: URL] = [:],
         microphoneTrackID: CMPersistentTrackID? = nil,
@@ -147,6 +148,25 @@ nonisolated struct StudioAudioSources: @unchecked Sendable {
                 throw StudioAudioComposer.AudioError.missingAudioClip(clip.displayName)
             }
         }
+        for overlay in videoOverlays {
+            let isAudible = !overlay.isMuted && overlay.audibleVolume > 0
+                && min(overlay.end, videoDuration) - max(overlay.start, 0) >= RecordingAudioClip.minimumPlayableDuration
+            guard let mediaDirectory,
+                  let url = RecordingOverlayMedia.resolveRegularFile(named: overlay.fileName, in: mediaDirectory) else {
+                if strictMissingClips && isAudible {
+                    throw StudioAudioComposer.AudioError.missingAudioClip(overlay.displayName)
+                }
+                continue
+            }
+            if !seenFiles.insert(overlay.fileName).inserted {
+                continue
+            }
+            let asset = AVURLAsset(url: url)
+            let tracks = await Track.loadAll(of: asset)
+            if !tracks.isEmpty {
+                sources.files[overlay.fileName] = tracks
+            }
+        }
         var seenPinned: Set<String> = []
         for clip in clips where clip.source == .replacement && !clip.fileName.isEmpty {
             let isAudible = !clip.isMuted && clip.audibleVolume > 0
@@ -201,6 +221,8 @@ nonisolated struct StudioAudioPlan: Equatable, Sendable {
     /// Optional live-monitoring solo lane; applied at mix time without mutating
     /// any clip's stored `isMuted` flag. Always nil for exports.
     var soloLane: Int? = nil
+    /// Layered video overlays whose sound joins the shared project mix.
+    var videoOverlays: [RecordingVideoOverlay] = []
 
     /// The plan with everything that only changes loudness set aside. Two
     /// plans that agree here need the same composition.
@@ -223,6 +245,19 @@ nonisolated struct StudioAudioPlan: Equatable, Sendable {
             clip.displayName = ""
             return clip
         }
+        plan.videoOverlays = plan.videoOverlays.map {
+            var overlay = RecordingVideoOverlay(
+                fileName: $0.fileName,
+                displayName: "",
+                start: $0.start,
+                fileDuration: $0.fileDuration
+            )
+            overlay.id = $0.id
+            overlay.trimStart = $0.trimStart
+            overlay.trimEnd = $0.trimEnd
+            overlay.speed = $0.speed
+            return overlay
+        }
         return plan
     }
 }
@@ -232,6 +267,7 @@ nonisolated struct StudioAudioLayout: Sendable {
     enum Owner: Equatable, Sendable {
         case segment(UUID)
         case clip(UUID)
+        case videoOverlay(UUID)
     }
 
     struct Placement: Sendable {
@@ -293,6 +329,7 @@ nonisolated enum StudioAudioComposer {
         replacementURL: URL?,
         replacementSync: RecordingAudioSync?,
         clips: [RecordingAudioClip],
+        videoOverlays: [RecordingVideoOverlay] = [],
         mediaDirectory: URL?,
         externalReplacementURLs: [String: URL] = [:],
         volume: Double,
@@ -304,6 +341,7 @@ nonisolated enum StudioAudioComposer {
             screenAsset: screenAsset,
             replacementURL: replacementURL,
             clips: clips,
+            videoOverlays: videoOverlays,
             mediaDirectory: mediaDirectory,
             externalReplacementURLs: externalReplacementURLs,
             microphoneTrackID: microphoneTrackID,
@@ -315,7 +353,8 @@ nonisolated enum StudioAudioComposer {
             timeline: timeline,
             sync: sources.replacement.isEmpty ? nil : replacementSync ?? .legacyFlat(over: timeline),
             clips: clips,
-            volume: volume
+            volume: volume,
+            videoOverlays: videoOverlays
         )
         let (composition, layout) = try makeExportComposition(plan: plan, sources: sources)
         let baseMix = mix(for: layout, plan: plan)
@@ -649,6 +688,25 @@ nonisolated enum StudioAudioComposer {
                 owner: .clip(clip.id)
             )
         }
+
+        // Layered video overlays on the single video overlay lane.
+        for overlay in plan.videoOverlays.sorted(by: { $0.start < $1.start }) {
+            let visibleStart = max(overlay.start, 0)
+            let visibleEnd = min(overlay.end, videoDuration)
+            guard visibleEnd - visibleStart >= RecordingAudioClip.minimumPlayableDuration else { continue }
+            let tracks = sources.files[overlay.fileName] ?? []
+            guard !tracks.isEmpty else { continue }
+            let speed = max(overlay.speed, 0.01)
+            try builder.insert(
+                tracks,
+                group: "videoOverlay",
+                mediaStart: overlay.trimStart + (visibleStart - overlay.start) * speed,
+                mediaEnd: overlay.trimStart + (visibleEnd - overlay.start) * speed,
+                editorStart: visibleStart,
+                editorEnd: visibleEnd,
+                owner: .videoOverlay(overlay.id)
+            )
+        }
         return builder.layout
     }
 
@@ -781,6 +839,7 @@ nonisolated enum StudioAudioComposer {
     ) -> [CMPersistentTrackID: [RecordingAudioGain.EnvelopeSpan]] {
         let segments = Dictionary(plan.timeline.segments.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let clips = Dictionary(plan.clips.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let videoOverlays = Dictionary(plan.videoOverlays.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let projectVolume = RecordingAudioGain.normalized(plan.volume)
         let videoEnd = editorRanges(for: plan.timeline).last?.end.seconds ?? 0
 
@@ -804,6 +863,15 @@ nonisolated enum StudioAudioComposer {
                 gain.fadeOut = max(0, placement.end - max(clip.end - fadeOut, placement.start))
                 if clip.start + fadeIn <= placement.start { gain.fadeIn = 0 }
                 if clip.end - fadeOut >= placement.end { gain.fadeOut = 0 }
+            case .videoOverlay(let id):
+                guard let overlay = videoOverlays[id] else { continue }
+                gain.level = plan.soloLane != nil ? 0 : overlay.audibleVolume
+                let fadeIn = min(overlay.audioFadeIn, overlay.duration / 2)
+                let fadeOut = min(overlay.audioFadeOut, overlay.duration / 2)
+                gain.fadeIn = max(0, min(overlay.start + fadeIn, placement.end) - placement.start)
+                gain.fadeOut = max(0, placement.end - max(overlay.end - fadeOut, placement.start))
+                if overlay.start + fadeIn <= placement.start { gain.fadeIn = 0 }
+                if overlay.end - fadeOut >= placement.end { gain.fadeOut = 0 }
             }
             gains[placement.trackID, default: []].append(gain)
         }
