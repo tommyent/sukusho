@@ -327,7 +327,34 @@ struct LibraryTextIndexChecks {
                   "Stale OCR entry remained on disk after redaction change with OCR off")
         UserDefaults.standard.set(true, forKey: ScreendropPreferences.libraryReadsTextKey)
         index.settingsDidChange()
-        print("CHECK: Library OCR and insight image hide redacted content, rebuild on change, and purge immediately when OCR is off")
+
+        // Dangling edit.json and dangling edit.draft.json must fail closed (no Guide still, no insight image).
+        for (label, createDangling) in [
+            ("dangling edit.json", { (s: RecordingSession) throws in
+                try FileManager.default.createSymbolicLink(at: s.editDocumentURL, withDestinationURL: s.directoryURL.appendingPathComponent("Missing.json"))
+            }),
+            ("dangling edit.draft.json", { (s: RecordingSession) throws in
+                try s.writeEditDocument(RecordingEditDocument(style: RecordingStudioStyle(), zoomEnabled: false, zoomCues: []))
+                try FileManager.default.createSymbolicLink(at: s.draftDocumentURL, withDestinationURL: s.directoryURL.appendingPathComponent("MissingDraft.json"))
+            }),
+        ] {
+            let danglingSession = try RecordingSessionStore.createSession()
+            try await movie(at: danglingSession.screenURL, firstLine: "SECRETKEY 99421", secondLine: "PASSCODE 88312")
+            try danglingSession.writeCaptureManifest(manifest)
+            try createDangling(danglingSession)
+            var threw = false
+            do { _ = try danglingSession.editDocumentForRendering() } catch { threw = true }
+            try check(threw, "\(label): editDocumentForRendering did not throw")
+            try check(CaptureLibraryScanner.redactionTag(for: danglingSession) == CaptureTextIndexPlan.unreadableRedactionTag,
+                      "\(label): scanner did not mark redactions unreadable")
+            let scanned = CaptureLibraryScanner.scan(
+                history: [], historyDirectory: ScreendropStorage.applicationSupportDirectory, excludingSessionPath: nil
+            ).items
+            let danglingItem = try require(scanned.first { $0.session == danglingSession })
+            let frame = await CaptureLibraryIndex.image(for: danglingItem)
+            try check(frame == nil, "\(label): insight image returned raw frame")
+        }
+        print("CHECK: Library OCR and insight image hide redacted content, rebuild on change, purge when OCR is off, and fail closed on dangling edits")
     }
 
     /// The source app and window: History rows written before it decode, and
