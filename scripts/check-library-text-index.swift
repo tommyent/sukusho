@@ -350,7 +350,8 @@ struct LibraryTextIndexChecks {
             let scanned = CaptureLibraryScanner.scan(
                 history: [], historyDirectory: ScreendropStorage.applicationSupportDirectory, excludingSessionPath: nil
             ).items
-            let danglingItem = try require(scanned.first { $0.session == danglingSession })
+            let danglingID = "recording:\(danglingSession.directoryURL.standardizedFileURL.path)"
+            let danglingItem = try require(scanned.first { $0.id == danglingID })
             let frame = await CaptureLibraryIndex.image(for: danglingItem)
             try check(frame == nil, "\(label): insight image returned raw frame")
         }
