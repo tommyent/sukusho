@@ -175,6 +175,12 @@ final class StudioProjectRegistry {
         !loadedEditors(for: url).isEmpty
     }
 
+    /// Packages, canonical, whose open editor holds redactions their files lack.
+    func packagesHoldingUnsavedRedactions() -> Set<URL> {
+        Set(models.values.compactMap(\.model).filter { $0.isLoaded && $0.holdsUnsavedRedactions() }
+            .map { ScreendropApp.canonicalEditorURL($0.sessionURL) })
+    }
+
     func document(for url: URL) -> RecordingEditDocument? {
         guard let model = try? uniqueEditor(for: url),
               !model.hasUnreadableDraft, !model.isReadOnlyNewerFormat,

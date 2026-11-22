@@ -172,7 +172,9 @@ final class RecordingStudioModel {
     private(set) var isCroppingVideo = false
     var workingVideoCropRect = CropRectEditor.unit
     var videoCropAspect: CropAspectRatio = .freeform
-    private(set) var redactions: [RecordingRedaction] = []
+    private(set) var redactions: [RecordingRedaction] = [] {
+        didSet { if redactions != oldValue { scheduleRedactionHoldReport() } }
+    }
     var selectedRedactionID: UUID?
     private(set) var isSelectingRedaction = false
     private(set) var isPreparingRedactionPreview = false
@@ -872,10 +874,38 @@ final class RecordingStudioModel {
     /// that lives in memory and in the draft until the next save.
     private var lastSavedDocument: RecordingEditDocument?
     private var observedEditSidecars: RecordingSession.EditSidecars? {
-        didSet { observedEdit = nil }
+        didSet {
+            observedEdit = nil
+            scheduleRedactionHoldReport()
+        }
     }
     /// The effective edit in `observedEditSidecars`, without its revision, once decoded or written.
     private var observedEdit: RecordingEditDocument??
+    @ObservationIgnored private var reportedRedactionHold = false
+    @ObservationIgnored private var redactionHoldReport: Task<Void, Never>?
+
+    /// Redactions shown here that the files don't hold yet: a restore not yet written, or a draft that couldn't be.
+    /// The Library index hides the recording's stored text and titles meanwhile.
+    func holdsUnsavedRedactions() -> Bool {
+        guard isLoaded, session != nil else { return false }
+        if observedEdit == nil, let sidecars = observedEditSidecars {
+            do { observedEdit = .some(try RecordingSession.effectiveEdit(in: sidecars)?.withoutRevision) } catch {}
+        }
+        guard let onDisk = observedEdit else { return true }
+        return redactions != (onDisk?.redactions ?? [])
+    }
+
+    /// Tells the Library index once the change settles, so a redaction written at once never flickers it.
+    private func scheduleRedactionHoldReport() {
+        redactionHoldReport?.cancel()
+        redactionHoldReport = Task { [weak self] in
+            guard let self, !Task.isCancelled, !self.isTornDown else { return }
+            let holds = self.holdsUnsavedRedactions()
+            guard holds != self.reportedRedactionHold else { return }
+            self.reportedRedactionHold = holds
+            CaptureLibraryIndex.shared.editorHoldsDidChange()
+        }
+    }
     private var rejectedRedactionDraftError: Error?
     /// Set while a stored document is being applied to the model, so the
     /// resulting property writes don't register as user edits.
@@ -1263,6 +1293,7 @@ final class RecordingStudioModel {
         }
         openedStylePresetID = appliedStylePresetID
         StudioProjectRegistry.shared.register(self)
+        scheduleRedactionHoldReport()
     }
 
     /// Copies a stored project onto the model. Shared by the initial load and
@@ -1429,8 +1460,9 @@ final class RecordingStudioModel {
         if didPersistDraft, let session, !StudioProjectRegistry.shared.hasLoadedEditor(for: sessionURL) {
             try? session.removeUnreferencedMedia()
         }
-        // The Library index waits on recordings open in Studio.
-        CaptureLibraryIndex.shared.settingsDidChange()
+        // The Library index may be holding this recording back.
+        redactionHoldReport?.cancel()
+        CaptureLibraryIndex.shared.editorHoldsDidChange()
         exportTask = nil
         audioExportTask = nil
         replacementAudioTask = nil

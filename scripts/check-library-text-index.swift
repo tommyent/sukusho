@@ -255,6 +255,7 @@ struct LibraryTextIndexChecks {
         try await sourceChecks(scratch: scratch, recordingID: recordingID)
         try await redactionChecks()
         try await openEditorChecks()
+        try await heldEntryChecks()
     }
 
     /// A recording open in Studio isn't read while the editor may hold a mask its files lack, and is
@@ -308,6 +309,81 @@ struct LibraryTextIndexChecks {
         try check(!text.localizedCaseInsensitiveContains("VAULTCODE") && !text.contains("55107"),
                   "The recording closed in Studio was read without its mask: \(text)")
         print("CHECK: a recording open in Studio waits, then is read with Studio's mask")
+    }
+
+    /// A recording indexed and titled before Studio masked it: while the mask lives only in Studio, its text,
+    /// search, title and the agent tools' copies are out of sight. A recording open with no such mask stays searchable.
+    static func heldEntryChecks() async throws {
+        let history = ScreenshotHistoryStore.shared
+        let index = CaptureLibraryIndex.shared
+        let model = CaptureLibraryModel.shared
+        // A stand-in model titles each capture with the code it read.
+        UserDefaults.standard.set(true, forKey: ScreendropPreferences.libraryUsesIntelligenceKey)
+        UserDefaults.standard.set(true, forKey: ScreendropPreferences.libraryInsightsIncludeExistingKey)
+        index.modelAvailability = { true }
+        index.describer = { _, entry, _ in
+            let text = entry.paragraphs.joined(separator: " ")
+            return .insight(CaptureInsight(title: ["SIGNALCODE", "LEDGERCODE"].first { text.contains($0) }))
+        }
+        var manifest = CaptureManifest()
+        manifest.duration = 8; manifest.pixelWidth = 1280; manifest.pixelHeight = 720
+        let masked = try RecordingSessionStore.createSession()
+        let plain = try RecordingSessionStore.createSession()
+        for (session, code) in [(masked, "SIGNALCODE 31415"), (plain, "LEDGERCODE 66218")] {
+            try await movie(at: session.screenURL, firstLine: code, secondLine: code)
+            try session.writeCaptureManifest(manifest)
+            await history.importRecordingSession(session)
+        }
+        let maskedID = "recording:\(masked.directoryURL.standardizedFileURL.path)"
+        let plainID = "recording:\(plain.directoryURL.standardizedFileURL.path)"
+        index.settingsDidChange()
+        try await waitUntil("both recordings read and titled") {
+            index.visibleInsight(maskedID)?.title == "SIGNALCODE" && index.visibleInsight(plainID)?.title == "LEDGERCODE"
+        }
+        try await search("SIGNALCODE", expect: [maskedID])
+
+        let plainStudio = RecordingStudioModel(url: plain.directoryURL)
+        await plainStudio.load()
+        defer { plainStudio.teardown() }
+        // The mask lives only in Studio: the package is read-only, so its draft can't be written.
+        let mask = RecordingRedaction(start: 0, end: 8, rect: CGRect(x: 0, y: 0, width: 1, height: 1), mode: .blur, strength: 1)
+        let snapshot = try CaptureSessionSnapshots(directory: masked.sessionSnapshotsURL).keep(
+            document: CaptureSessionSnapshots.encode(RecordingEditDocument(style: .init(), zoomEnabled: false, zoomCues: [], redactions: [mask])),
+            openedAt: Date())[0]
+        let studio = RecordingStudioModel(url: masked.directoryURL)
+        await studio.load()
+        defer {
+            _ = chmod(masked.directoryURL.path, 0o755)
+            studio.teardown()
+        }
+        try check(plainStudio.isLoaded && studio.isLoaded, "Studio did not open the fixtures")
+        try check(chmod(masked.directoryURL.path, 0o555) == 0, "Could not make the recording read-only")
+        studio.revertToSession(snapshot)
+        try await waitUntil("mask restored in Studio", timeout: .seconds(10)) { studio.redactions == [mask] && !studio.hasRunningWork }
+        try check(!FileManager.default.fileExists(atPath: masked.draftDocumentURL.path), "Fixture wrote the mask to disk")
+        try await waitUntil("the held entry out of sight", timeout: .seconds(5)) { index.entries[maskedID] == nil }
+        let item = try require(model.items.first { $0.id == maskedID })
+        let agent = AgentLiveBackend.item(item)
+        try check(index.foldedText[maskedID] == nil && index.visibleInsight(maskedID) == nil && item.modelTitle == nil
+                  && AgentLiveBackend().text(of: agent) == nil && agent.foldedText == nil && agent.modelTitle == nil,
+                  "A held recording's text, title or agent copy stayed visible")
+        try await search("SIGNALCODE", expect: [])
+        try check(index.entries[plainID] != nil && index.visibleInsight(plainID)?.title == "LEDGERCODE",
+                  "A recording open with no unsaved mask lost its text or title")
+        try await search("LEDGERCODE", expect: [plainID])
+
+        // Closing writes the mask: the old entry is purged, not restored, and read again with the mask.
+        try check(chmod(masked.directoryURL.path, 0o755) == 0, "Could not make the recording writable")
+        studio.teardown()
+        model.refresh()
+        try await waitUntil("the masked recording read again with its mask") {
+            guard let entry = index.entries[maskedID] else { return false }
+            return CaptureTextIndexPlan.redactionTag(in: entry.fingerprint) != nil
+        }
+        let text = try require(index.entries[maskedID]).paragraphs.joined(separator: " ")
+        try check(!text.contains("SIGNALCODE") && !text.contains("31415"), "The released entry kept unmasked text: \(text)")
+        try await search("SIGNALCODE", expect: [])
+        print("CHECK: an indexed recording masked only in Studio hides its text, search, title and agent copies until the mask is written")
     }
 
     /// Redacted content must never enter OCR text or the frame sent to Apple Intelligence,

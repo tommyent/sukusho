@@ -46,6 +46,8 @@ final class CaptureLibraryIndex {
         directory: ScreendropStorage.applicationSupportDirectory.appendingPathComponent("Library Index", isDirectory: true)
     )
     @ObservationIgnored private var isLoaded = false
+    /// Entries of recordings Studio holds (see `isHeldByEditor`), kept out of `entries` and `foldedText`.
+    @ObservationIgnored private var heldEntries: [String: CaptureTextEntry] = [:]
     @ObservationIgnored private var started = false
     @ObservationIgnored private var latestItems: [CaptureLibraryItem]?
     @ObservationIgnored private var latestIsComplete = false
@@ -85,6 +87,7 @@ final class CaptureLibraryIndex {
             entries = loaded
             foldedText = loaded.mapValues(Self.fold)
             isLoaded = true
+            applyEditorHolds()
             CaptureLibraryModel.shared.textIndexDidChange()
             if let latestItems { sync(latestItems, isComplete: latestIsComplete) } else { CaptureLibraryModel.shared.refresh() }
         }
@@ -167,11 +170,60 @@ final class CaptureLibraryIndex {
         return CaptureTextIndexPlan.redactionTag(in: item.thumbnailKey) == expected
     }
 
-    /// A recording open in Studio can hold edits its files don't have yet, such as a new mask, so its
-    /// frames aren't read until the editor closes.
+    /// Studio can show a mask its files don't hold yet (a restore not yet written, or a draft that couldn't be).
+    /// Until it writes it or closes, the recording isn't read and its stored entry is out of sight
+    /// (`heldEntries`), since text, titles and search read before the mask may show what it hides.
     private func isHeldByEditor(_ item: CaptureLibraryItem) -> Bool {
-        guard item.isVideo, let session = item.session ?? RecordingDeliverable.session(for: item.fileURL) else { return false }
-        return StudioProjectRegistry.shared.hasLoadedEditor(for: session.directoryURL)
+        Self.isHeld(item.id, in: StudioProjectRegistry.shared.packagesHoldingUnsavedRedactions())
+    }
+
+    private static func isHeld(_ id: String, in holding: Set<URL>) -> Bool {
+        guard !holding.isEmpty, let package = recordingPackage(id) else { return false }
+        return holding.contains(ScreendropApp.canonicalEditorURL(package))
+    }
+
+    private static func recordingPackage(_ id: String) -> URL? {
+        let prefix = "recording:"
+        guard id.hasPrefix(prefix) else { return nil }
+        return URL(fileURLWithPath: String(id.dropFirst(prefix.count)), isDirectory: true)
+    }
+
+    /// Moves held recordings' entries out of sight, and back once released while they still match the
+    /// redactions on disk; one that no longer does is purged and read again.
+    @discardableResult
+    private func applyEditorHolds() -> Set<URL> {
+        let holding = StudioProjectRegistry.shared.packagesHoldingUnsavedRedactions()
+        var changed = false
+        for (id, entry) in heldEntries where !Self.isHeld(id, in: holding) {
+            heldEntries[id] = nil
+            guard entries[id] == nil, let package = Self.recordingPackage(id) else { continue }
+            let tag = CaptureLibraryScanner.redactionTag(for: RecordingSession(directoryURL: package))
+            if tag != CaptureTextIndexPlan.unreadableRedactionTag,
+               CaptureTextIndexPlan.redactionTag(in: entry.fingerprint) == (tag.isEmpty ? nil : tag) {
+                entries[id] = entry
+                foldedText[id] = Self.fold(entry)
+            } else {
+                writeFence.purgeNow(ids: [id], in: store)
+            }
+            changed = true
+        }
+        for id in Array(entries.keys) where Self.isHeld(id, in: holding) {
+            heldEntries[id] = entries.removeValue(forKey: id)
+            foldedText[id] = nil
+            changed = true
+        }
+        if changed {
+            CaptureLibraryModel.shared.textIndexDidChange()
+            CaptureLibraryModel.shared.insightsDidChange()
+        }
+        return holding
+    }
+
+    /// Studio began or stopped holding redactions its files lack.
+    func editorHoldsDidChange() {
+        guard isLoaded else { return }
+        applyEditorHolds()
+        settingsDidChange()
     }
 
     private func purgeStaleRedaction(for item: CaptureLibraryItem) {
@@ -194,6 +246,7 @@ final class CaptureLibraryIndex {
         latestItems = items
         latestIsComplete = isComplete
         guard isLoaded else { return }
+        let holding = applyEditorHolds()
         let gone = CaptureTextIndexPlan.removed(entryIDs: entries.keys, liveIDs: Set(items.map(\.id)), isComplete: isComplete)
         let redactionPurged = CaptureTextIndexPlan.redactionInvalidated(
             items.map { .init(id: $0.id, fingerprint: $0.thumbnailKey, createdAt: $0.createdAt) },
@@ -215,7 +268,7 @@ final class CaptureLibraryIndex {
             }
         }
         scheduleRetries()
-        let held = Set(items.filter(isHeldByEditor).map(\.thumbnailKey))
+        let held = Set(items.filter { Self.isHeld($0.id, in: holding) }.map(\.thumbnailKey))
         planInsights(items, skipping: held)
         guard ScreendropPreferences.libraryReadsText else {
             queue = []
