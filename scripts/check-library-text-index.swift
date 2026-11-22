@@ -482,7 +482,30 @@ struct LibraryTextIndexChecks {
         try check(mixedFrame == nil, "Mixed-version package leaked an insight frame")
         let mixedAfter = try Set(FileManager.default.contentsOfDirectory(atPath: mixedSession.directoryURL.path))
         try check(mixedAfter == mixedBefore, "Mixed-version scan wrote into the package: \(mixedAfter.subtracting(mixedBefore))")
-        print("CHECK: Library OCR and insight image hide redacted content, rebuild on change, purge when OCR is off, fail closed on dangling/mixed-version edits, fence pre-scan model/live export, and defer unavailable previews")
+
+        // 5. Open read-only Studio editor must not bypass the two-sidecar version check for Guide/Agent Prompt.
+        let roStudio = RecordingStudioModel(url: mixedSession.directoryURL)
+        let registry = StudioProjectRegistry.shared
+        await roStudio.load()
+        defer {
+            registry.unregister(roStudio)
+            roStudio.teardown()
+        }
+        try check(roStudio.isLoaded && roStudio.isReadOnlyNewerFormat && roStudio.withholdsNewerFormatPreview,
+                  "Read-only Studio fixture did not withhold newer-format preview")
+        registry.register(roStudio)
+        try check(registry.document(for: mixedSession.directoryURL) == nil,
+                  "Read-only newer-format Studio supplied a deliverable document via StudioProjectRegistry")
+        let liveV7 = RecordingEditDocument(style: RecordingStudioStyle(), zoomEnabled: false, zoomCues: [])
+        var guideThrew = false
+        do { _ = try await RecordingStepsExport.prepare(session: mixedSession, document: liveV7) { _ in } }
+        catch RecordingPackageMedia.ValidationError.unsupportedFormatVersion(99) { guideThrew = true }
+        var promptThrew = false
+        do { _ = try await RecordingAgentPromptExport.write(session: mixedSession, document: liveV7, to: mixedSession.directoryURL) }
+        catch RecordingPackageMedia.ValidationError.unsupportedFormatVersion(99) { promptThrew = true }
+        try check(guideThrew && promptThrew,
+                  "Evidence entry points did not enforce two-sidecar version guard for live documents")
+        print("CHECK: Library OCR and insight image hide redacted content, rebuild on change, purge when OCR is off, fail closed on dangling/mixed-version/read-only-Studio edits, fence pre-scan model/live export, and defer unavailable previews")
     }
 
     /// The source app and window: History rows written before it decode, and

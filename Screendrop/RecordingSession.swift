@@ -327,9 +327,10 @@ nonisolated struct RecordingSession: Sendable, Equatable {
         loadDraftDocument() ?? loadEditDocument()
     }
 
-    /// Missing legacy edits are fine; existing unreadable, symlinked, dangling, or
-    /// newer-format edits (across both draft and saved files) must never expose the master.
-    func editDocumentForRendering(ignoringDraft: Bool = false) throws -> RecordingEditDocument? {
+    /// Verifies neither `edit.draft.json` (unless `ignoringDraft`) nor `edit.json` is an
+    /// unsafe symlink or was written by a newer format version than this build supports.
+    @discardableResult
+    func validateEditVersionsForRendering(ignoringDraft: Bool = false) throws -> (draftURL: URL?, editURL: URL?) {
         let draftURL = ignoringDraft
             ? nil
             : try RecordingPackageMedia.resolveOptionalPackageFile(named: Self.draftDocumentFileName, in: directoryURL)
@@ -339,6 +340,13 @@ nonisolated struct RecordingSession: Sendable, Equatable {
             editURL: editURL,
             packageName: directoryURL.lastPathComponent
         )
+        return (draftURL, editURL)
+    }
+
+    /// Missing legacy edits are fine; existing unreadable, symlinked, dangling, or
+    /// newer-format edits (across both draft and saved files) must never expose the master.
+    func editDocumentForRendering(ignoringDraft: Bool = false) throws -> RecordingEditDocument? {
+        let (draftURL, editURL) = try validateEditVersionsForRendering(ignoringDraft: ignoringDraft)
         guard let url = draftURL ?? editURL else { return nil }
         do {
             return try CaptureManifest.decoder.decode(RecordingEditDocument.self, from: Data(contentsOf: url))

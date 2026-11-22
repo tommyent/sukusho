@@ -69,6 +69,10 @@ enum RecordingAgentPromptExport {
 
     static func write(session: RecordingSession, document: RecordingEditDocument?, to directory: URL,
                       progress: @escaping @Sendable (Double) -> Void = { _ in }) async throws -> URL {
+        if let document, document.isUnsupportedFutureVersion {
+            throw RecordingPackageMedia.ValidationError.unsupportedFormatVersion(document.formatVersion)
+        }
+        try session.validateEditVersionsForRendering()
         let timeline = try await Self.timeline(session: session, document: document)
         let cues = document?.subtitleCues ?? [], words = document?.subtitleWords ?? []
         let canTranscribe = session.loadCaptureManifest()?.includesMicrophone == true

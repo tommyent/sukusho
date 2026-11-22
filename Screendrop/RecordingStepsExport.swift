@@ -12,6 +12,10 @@ enum RecordingStepsExport {
     /// Narration (transcribed on-device when the edit has none), the moments and their stills.
     static func prepare(session: RecordingSession, document: RecordingEditDocument?,
                         progress: @escaping @Sendable (Double) -> Void) async throws -> (steps: RecordingSteps, stills: [Data?]) {
+        if let document, document.isUnsupportedFutureVersion {
+            throw RecordingPackageMedia.ValidationError.unsupportedFormatVersion(document.formatVersion)
+        }
+        try session.validateEditVersionsForRendering()
         let timeline = try await RecordingAgentPromptExport.timeline(session: session, document: document)
         let narration = try await RecordingAgentPromptExport.transcript(
             cues: document?.subtitleCues ?? [], words: document?.subtitleWords ?? [], screenURL: session.screenURL,
