@@ -947,6 +947,14 @@ nonisolated enum RecordingPackageMedia {
                 struct BackgroundMusicRef: Decodable {
                     var fileName: String?
                 }
+                struct StyleRef: Decodable {
+                    struct Background: Decodable {
+                        struct Wallpaper: Decodable { let path: String }
+                        let customWallpaper: Wallpaper?
+                    }
+                    let background: Background?
+                }
+                var style: StyleRef?
                 var formatVersion: Int?
                 var replacementAudioFileName: String?
                 var backgroundMusic: BackgroundMusicRef?
@@ -974,6 +982,9 @@ nonisolated enum RecordingPackageMedia {
 
             var detachedReplacements: [String] = []
             var mediaFiles: [String] = []
+            if let path = refs.style?.background?.customWallpaper?.path, path.hasPrefix("media/") {
+                mediaFiles.append(String(path.dropFirst("media/".count)))
+            }
             for clip in refs.clips ?? [] {
                 if let name = clip.mediaFileName, !name.isEmpty { mediaFiles.append(name) }
             }

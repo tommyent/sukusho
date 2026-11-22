@@ -386,7 +386,14 @@ struct StoredRecordingStudioStyle: Codable, Equatable {
         cameraRoundness = Double(style.camera.roundness)
     }
 
-    var value: RecordingStudioStyle {
+    var wallpaperMediaName: String? {
+        guard case .customWallpaper(let path) = background, path.hasPrefix("media/") else { return nil }
+        return String(path.dropFirst("media/".count))
+    }
+
+    var value: RecordingStudioStyle { value(in: nil) }
+
+    func value(in mediaDirectory: URL?) -> RecordingStudioStyle {
         let backgroundValue: AnnotationBackgroundStyle
         switch background {
         case .none:
@@ -396,7 +403,13 @@ struct StoredRecordingStudioStyle: Codable, Equatable {
         case .gradient(let gradient):
             backgroundValue = .gradient(gradient.backgroundGradient)
         case .customWallpaper(let path):
-            backgroundValue = .customWallpaper(AnnotationCustomWallpaper(url: URL(fileURLWithPath: path)))
+            let url: URL?
+            if let name = wallpaperMediaName {
+                url = mediaDirectory.flatMap { RecordingOverlayMedia.resolveRegularFile(named: name, in: $0) }
+            } else {
+                url = path.hasPrefix("/") ? URL(fileURLWithPath: ScreendropStorage.remapLegacyPath(path)) : nil
+            }
+            backgroundValue = url.map { .customWallpaper(AnnotationCustomWallpaper(url: $0)) } ?? .none
         }
 
         return RecordingStudioStyle(

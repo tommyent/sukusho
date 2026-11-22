@@ -357,10 +357,10 @@ enum RecordingSessionRenderer {
             )
         ).sanitizedCapture
         let document = editDocument
-        var style = document?.style.value ?? RecordingStudioStyle()
+        var style = document?.style.value(in: resolvedInputs.mediaDirectory) ?? RecordingStudioStyle()
         // Selecting a camera means the default delivered recording includes
         // it; a saved Studio project that explicitly hid the bubble wins.
-        style.camera.isVisible = resolvedInputs.cameraURL != nil && (document?.style.value.camera.isVisible ?? true)
+        style.camera.isVisible = resolvedInputs.cameraURL != nil && style.camera.isVisible
         let zoomEnabled = document?.zoomEnabled ?? true
         let zoomCues = document?.zoomCues
             ?? ZoomCueSynthesizer.cues(from: capture, duration: duration)

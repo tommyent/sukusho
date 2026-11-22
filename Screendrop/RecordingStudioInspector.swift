@@ -559,7 +559,7 @@ struct StudioInspector: View {
     private var backgroundControls: some View {
         VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
             InspectorBackgroundRow(
-                style: $model.style.background,
+                style: Binding(get: { model.style.background }, set: { model.setBackground($0) }),
                 wallpaperStore: wallpaperStore,
                 onPickWallpaper: pickWallpaper,
                 onPreview: { model.previewBackground($0, isHovering: $1) },
@@ -653,7 +653,7 @@ struct StudioInspector: View {
                     wallpaperStore.addRecentWallpaper(url)
                     file = url
                 }
-                model.style.background = .customWallpaper(AnnotationCustomWallpaper(url: file))
+                model.setBackground(.customWallpaper(AnnotationCustomWallpaper(url: file)))
             }
         }
     }

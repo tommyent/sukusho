@@ -95,7 +95,8 @@ final class RecordingStudioModel {
 
     var style = RecordingStudioStyle(background: RecordingStudioDefaults.background) {
         didSet {
-            if isLoaded, oldValue.background != style.background {
+            if isLoaded, oldValue.background != style.background,
+               packageWallpaperName(for: style.background) == nil {
                 RecordingStudioDefaults.background = style.background
             }
             scheduleProjectSave()
@@ -1291,7 +1292,7 @@ final class RecordingStudioModel {
         selectedAudioClipIDs = selectedAudioClipIDs.filter { id in
             audioClips.contains(where: { $0.id == id })
         }
-        style = document.style.value
+        style = document.style.value(in: session?.mediaDirectoryURL)
         zoomEnabled = document.zoomEnabled
         zoomCues = studioNormalizedZoomCues(document.zoomCues, sourceDuration: sourceDuration)
         if let selectedCueID, !zoomCues.contains(where: { $0.id == selectedCueID }) {
@@ -3479,9 +3480,35 @@ final class RecordingStudioModel {
         hasUnsavedChanges || session?.hasSavedProject == true ? currentDocument() : nil
     }
 
+    private func packageWallpaperName(for background: AnnotationBackgroundStyle) -> String? {
+        guard let session, case .customWallpaper(let wallpaper) = background,
+              wallpaper.url.deletingLastPathComponent().resolvingSymlinksInPath().path
+                == session.mediaDirectoryURL.resolvingSymlinksInPath().path else { return nil }
+        return wallpaper.url.lastPathComponent
+    }
+
+    func setBackground(_ background: AnnotationBackgroundStyle) {
+        do {
+            style.background = try packageBackground(background)
+            RecordingStudioDefaults.background = background
+        } catch {
+            FailureAlert.present(message: "The recording wallpaper could not be copied", error: error)
+        }
+    }
+
+    private func packageBackground(_ background: AnnotationBackgroundStyle) throws -> AnnotationBackgroundStyle {
+        guard let session, case .customWallpaper(let wallpaper) = background,
+              packageWallpaperName(for: background) == nil else { return background }
+        guard let name = RecordingOverlayMedia.copyRegularFile(from: wallpaper.url, into: session.mediaDirectoryURL),
+              let url = RecordingOverlayMedia.resolveRegularFile(named: name, in: session.mediaDirectoryURL) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        return .customWallpaper(AnnotationCustomWallpaper(url: url))
+    }
+
     /// Every edit in the editor, as a storable document.
     func currentDocument() -> RecordingEditDocument {
-        RecordingEditDocument(
+        var document = RecordingEditDocument(
             style: style,
             zoomEnabled: zoomEnabled,
             zoomCues: zoomCues.filter { !$0.isImplicit },
@@ -3515,6 +3542,10 @@ final class RecordingStudioModel {
                 ? nil : hiddenInkStrokeIDs.sorted { $0.uuidString < $1.uuidString },
             markers: markers.isEmpty ? nil : markers
         )
+        if let name = packageWallpaperName(for: style.background) {
+            document.style.background = .customWallpaper(path: "media/\(name)")
+        }
+        return document
     }
 
     /// Persists the working copy. Cheap, debounced, and never touches the
@@ -3626,9 +3657,18 @@ final class RecordingStudioModel {
         guard isLoaded, !isRestoringDocument, !hasUnreadableDraft, !isReadOnlyNewerFormat, let session else { return false }
         projectSaveTask?.cancel()
         autosaveTask?.cancel()
-        let document = currentDocument()
         do {
             _ = try checkedEditSidecars(in: session)
+            if case .customWallpaper(let wallpaper) = style.background,
+               FileManager.default.fileExists(atPath: wallpaper.url.path) {
+                let packaged = try packageBackground(style.background)
+                if packaged != style.background {
+                    isApplyingDocument = true
+                    style.background = packaged
+                    isApplyingDocument = false
+                }
+            }
+            let document = currentDocument()
             if document != openedDocument { try keepOpeningSession() }
             var updated = try checkedEditSidecars(in: session)
             updated.saved = try session.writeEditDocument(document)
@@ -7606,6 +7646,7 @@ final class RecordingStudioModel {
         let mediaDirectory = session.mediaDirectoryURL
         var referencedMedia = Set<String>(undoReferencedFiles)
         for document in allDocuments {
+            if let name = document.style.wallpaperMediaName { referencedMedia.insert(name) }
             referencedMedia.formUnion((document.clips ?? []).compactMap(\.mediaFileName))
             referencedMedia.formUnion((document.videoOverlays ?? []).map(\.fileName))
             referencedMedia.formUnion((document.imageOverlays ?? []).map(\.fileName))

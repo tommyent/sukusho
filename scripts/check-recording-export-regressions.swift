@@ -1778,6 +1778,36 @@ struct RecordingExportRegressionChecks {
         print("PASS: Guide, Bug Report and Agent Prompt omit imported moments and strips crossing imported clips")
     }
 
+    static func packageWallpaper(in directory: URL) async throws {
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("wallpaper.sukushorec"))
+        try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
+        try await movie(at: session.screenURL)
+        let legacy = directory.appendingPathComponent("original-wallpaper.png")
+        let image = Data("wallpaper fixture".utf8)
+        try image.write(to: legacy)
+        var style = RecordingStudioStyle()
+        style.background = .customWallpaper(AnnotationCustomWallpaper(url: legacy))
+        try session.writeEditDocument(RecordingEditDocument(style: style, zoomEnabled: false, zoomCues: []))
+        let model = RecordingStudioModel(url: session.directoryURL)
+        await model.load()
+        try check(model.isLoaded && model.style.background == style.background, "Studio could not load an absolute wallpaper")
+        try check(model.saveProject(reportingFailure: false), "Saving an older project did not migrate the wallpaper")
+        let migrated = try session.editDocumentForRendering()
+        guard let name = migrated?.style.wallpaperMediaName else { throw Failure(description: "Wallpaper is still absolute") }
+        let installed = session.mediaDirectoryURL.appendingPathComponent(name)
+        try check(try Data(contentsOf: installed) == image, "Package wallpaper bytes differ from the source")
+        model.teardown()
+        let moved = RecordingSession(directoryURL: directory.appendingPathComponent("wallpaper-moved.sukushorec"))
+        try FileManager.default.moveItem(at: session.directoryURL, to: moved.directoryURL)
+        let configuration = try await RecordingSessionRenderer.makeConfiguration(for: moved)
+        guard case .customWallpaper(let wallpaper) = configuration.style.background else {
+            throw Failure(description: "Moved package did not resolve its wallpaper")
+        }
+        try check(wallpaper.url == moved.mediaDirectoryURL.appendingPathComponent(name)
+                  && (try Data(contentsOf: wallpaper.url)) == image, "Moved project depended on the external wallpaper")
+        print("PASS: legacy recording wallpaper moves into the package on save, survives cleanup and resolves after rename")
+    }
+
     static func main() async throws {
         setbuf(stdout, nil)
         guard let root = ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] else {
@@ -1803,6 +1833,7 @@ struct RecordingExportRegressionChecks {
         try await lateDraftDelivery(in: directory)
         try await canonicalStudioRegistry(in: directory)
         try await importedEvidence(in: directory)
+        try await packageWallpaper(in: directory)
         try await chapterMarkerDrag(in: directory)
         try await chapterAtPlayhead(in: directory)
         try await chapterRenameUndo(in: directory)
