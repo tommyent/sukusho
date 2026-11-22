@@ -739,6 +739,26 @@ nonisolated enum RecordingPackageMedia {
         return screenURL
     }
 
+    /// Reads only `formatVersion` from an edit JSON document without decoding
+    /// its full body, so documents saved by a newer app version (even with new
+    /// enum cases or schema changes) are recognized as newer-format rather than
+    /// treated as corrupt/unreadable drafts. Returns `1` for valid JSON with no
+    /// `formatVersion` key (legacy v1), or `nil` when unreadable/non-JSON.
+    static func readFormatVersion(from data: Data) -> Int? {
+        struct VersionHeader: Decodable {
+            var formatVersion: Int?
+        }
+        guard let header = try? JSONDecoder().decode(VersionHeader.self, from: data) else {
+            return nil
+        }
+        return header.formatVersion ?? 1
+    }
+
+    static func readFormatVersion(at url: URL) -> Int? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return readFormatVersion(from: data)
+    }
+
     /// Validates a `.sukushorec` package for Raw recording import: verifies
     /// `screen.mov` via `validateRawScreenInput`, checks optional edit/draft
     /// sidecars without following symlinks, and decodes any source redactions
@@ -756,6 +776,9 @@ nonisolated enum RecordingPackageMedia {
         }
         guard let data = try? Data(contentsOf: activeEditURL) else {
             throw ValidationError.invalidPackage(realPackage.lastPathComponent)
+        }
+        if let version = readFormatVersion(from: data), version > Self.currentFormatVersion {
+            throw ValidationError.unsupportedFormatVersion(version)
         }
         struct RawEditHeader: Decodable {
             var formatVersion: Int?
@@ -859,6 +882,9 @@ nonisolated enum RecordingPackageMedia {
         if let activeEditURL {
             guard let data = try? Data(contentsOf: activeEditURL) else {
                 throw ValidationError.invalidPackage(realPackage.lastPathComponent)
+            }
+            if let version = readFormatVersion(from: data), version > Self.currentFormatVersion {
+                throw ValidationError.unsupportedFormatVersion(version)
             }
             struct PackageEditRefs: Decodable {
                 struct ClipRef: Decodable {

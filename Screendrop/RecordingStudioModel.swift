@@ -809,6 +809,8 @@ final class RecordingStudioModel {
     /// Opened a project saved by a newer format version; strictly read-only so
     /// neither `edit.json`, the draft, snapshots, nor media are ever modified.
     private(set) var isReadOnlyNewerFormat = false
+    /// Highest unsupported format version seen in `edit.json` or `edit.draft.json`.
+    private var newerFormatVersion: Int?
     private var sessionOpenedAt = Date()
     private var keptOpeningSession = false
     private(set) var sessionSnapshots: [CaptureSessionSnapshot] = []
@@ -936,7 +938,7 @@ final class RecordingStudioModel {
     /// Renames the project as the Library does; an empty name restores the
     /// default one.
     func rename(to name: String) {
-        guard let session else { return }
+        guard !isReadOnlyNewerFormat, let session else { return }
         RecordingProjectStore.shared.rename(session, to: name)
         nameRevision += 1
     }
@@ -1029,6 +1031,16 @@ final class RecordingStudioModel {
             style.camera.isVisible = false
         }
 
+        let draftVersion = session.flatMap { RecordingPackageMedia.readFormatVersion(at: $0.draftDocumentURL) }
+        let savedVersion = session.flatMap { RecordingPackageMedia.readFormatVersion(at: $0.editDocumentURL) }
+        if let detectedNewer = [draftVersion, savedVersion]
+            .compactMap({ $0 })
+            .filter({ $0 > RecordingEditDocument.currentFormatVersion })
+            .max() {
+            isReadOnlyNewerFormat = true
+            newerFormatVersion = detectedNewer
+        }
+
         lastSavedDocument = session?.loadEditDocument()
         // A draft that outlived its editor means the last session ended
         // without a save - a crash, a force quit, or a Studio window that is
@@ -1040,16 +1052,24 @@ final class RecordingStudioModel {
             return document
         }
         let document: RecordingEditDocument?
-        do {
-            do { document = try read(ignoringDraft: false) }
-            catch where FileManager.default.fileExists(atPath: session?.draftDocumentURL.path ?? "") {
-                // An unreadable draft: open on the last save and leave the draft alone until Discard.
-                document = try read(ignoringDraft: true)
-                hasUnreadableDraft = true
+        if isReadOnlyNewerFormat {
+            // Newer-format documents may carry unknown enum cases or schema
+            // additions that this build cannot decode. Open read-only without
+            // classifying a newer draft as corrupt or enabling Discard.
+            document = try? read(ignoringDraft: false)
+            hasUnreadableDraft = false
+        } else {
+            do {
+                do { document = try read(ignoringDraft: false) }
+                catch where FileManager.default.fileExists(atPath: session?.draftDocumentURL.path ?? "") {
+                    // An unreadable draft: open on the last save and leave the draft alone until Discard.
+                    document = try read(ignoringDraft: true)
+                    hasUnreadableDraft = true
+                }
+            } catch {
+                loadError = "Could not read the recording edits: \(error.localizedDescription)"
+                return
             }
-        } catch {
-            loadError = "Could not read the recording edits: \(error.localizedDescription)"
-            return
         }
         // Sessions recorded before the toggle moved into Studio stored the
         // choice in the manifest; honor it as the default.
@@ -1060,6 +1080,10 @@ final class RecordingStudioModel {
         if let document {
             if document.isUnsupportedFutureVersion || lastSavedDocument?.isUnsupportedFutureVersion == true {
                 isReadOnlyNewerFormat = true
+                newerFormatVersion = max(
+                    newerFormatVersion ?? 0,
+                    max(document.formatVersion, lastSavedDocument?.formatVersion ?? 0)
+                )
             }
             applyDocumentSettings(document)
         } else if session == nil {
@@ -1073,7 +1097,7 @@ final class RecordingStudioModel {
                 camera: RecordingCameraBubbleSettings(isVisible: false)
             )
             zoomEnabled = false
-        } else {
+        } else if !isReadOnlyNewerFormat {
             zoomCues = ZoomCueSynthesizer.cues(from: pointerCapture, duration: sourceDuration)
             if let defaultPreset = RecordingStudioStylePresetStore.shared.activePreset {
                 style = defaultPreset.value
@@ -1150,7 +1174,10 @@ final class RecordingStudioModel {
 
         if let session {
             openedOnDraft = session.hasUnsavedDraft
-            if openedOnDraft {
+            if isReadOnlyNewerFormat {
+                hasUnsavedChanges = false
+                lastSavedDocument = currentDocument()
+            } else if openedOnDraft {
                 // Reopened on a draft that outlived its editor.
                 hasUnsavedChanges = true
             } else {
@@ -1169,7 +1196,9 @@ final class RecordingStudioModel {
                     scheduleProjectSave()
                 }
             }
-            try? session.updateProjectMetadata { $0.lastOpenedAt = Date() }
+            if !isReadOnlyNewerFormat {
+                try? session.updateProjectMetadata { $0.lastOpenedAt = Date() }
+            }
         } else {
             // A bare movie has nowhere to save its edits; this baseline only
             // tells the close prompt whether there are any to lose.
@@ -3610,7 +3639,7 @@ final class RecordingStudioModel {
     }
 
     private func keepOpeningSession() throws {
-        guard !keptOpeningSession, let session, let openedDocument,
+        guard !isReadOnlyNewerFormat, !keptOpeningSession, let session, let openedDocument,
               currentDocument() != openedDocument else { return }
         sessionSnapshots = try CaptureSessionSnapshots(directory: session.sessionSnapshotsURL).keep(
             document: CaptureSessionSnapshots.encode(openedDocument), openedAt: sessionOpenedAt
@@ -3618,11 +3647,23 @@ final class RecordingStudioModel {
         keptOpeningSession = true
     }
 
+    static func decodeRestorableSnapshot(_ data: Data) throws -> RecordingEditDocument {
+        if let version = RecordingPackageMedia.readFormatVersion(from: data),
+           version > RecordingEditDocument.currentFormatVersion {
+            throw RecordingPackageMedia.ValidationError.unsupportedFormatVersion(version)
+        }
+        let document = try CaptureManifest.decoder.decode(RecordingEditDocument.self, from: data)
+        if document.isUnsupportedFutureVersion {
+            throw RecordingPackageMedia.ValidationError.unsupportedFormatVersion(document.formatVersion)
+        }
+        return document
+    }
+
     func revertToSession(_ snapshot: CaptureSessionSnapshot) {
         guard canRevert, let session else { return }
         do {
             let stored = try CaptureSessionSnapshots(directory: session.sessionSnapshotsURL).read(snapshot)
-            let document = try CaptureManifest.decoder.decode(RecordingEditDocument.self, from: stored.document)
+            let document = try Self.decodeRestorableSnapshot(stored.document)
             revert(to: document, stylePresetID: nil, actionName: "Revert to Session")
         } catch {
             FailureAlert.present(message: "The session could not be restored", error: error)
@@ -3969,7 +4010,7 @@ final class RecordingStudioModel {
     }
 
     private func applyChapters(_ next: [RecordingChapter], actionName: String, registersUndo: Bool = true) {
-        guard let session, next != chapters else { return }
+        guard !isReadOnlyNewerFormat, let session, next != chapters else { return }
         do {
             try session.updateProjectMetadata { $0.chapters = next }
             let previous = chapters
@@ -4024,7 +4065,7 @@ final class RecordingStudioModel {
 
     /// Saves the summary as edited; empty removes it.
     func setSummary(_ text: String?) {
-        guard let session else { return }
+        guard !isReadOnlyNewerFormat, let session else { return }
         let trimmed = CloudShareText.trimmedSummary(text)
         let next = trimmed.isEmpty ? nil : trimmed
         guard next != summary else { return }
@@ -4133,7 +4174,7 @@ final class RecordingStudioModel {
     }
 
     private func saveCaptionTracks(_ tracks: [RecordingCaptionTrack]) {
-        guard let session else { return }
+        guard !isReadOnlyNewerFormat, let session else { return }
         do {
             try session.updateProjectMetadata { $0.captionTracks = tracks.isEmpty ? nil : tracks }
             captionTracks = tracks
@@ -5789,6 +5830,11 @@ final class RecordingStudioModel {
     }
 
     func makeExportConfiguration(settings: VideoCompressionSettings? = nil) throws -> RecordingStudioExporter.Configuration {
+        if isReadOnlyNewerFormat {
+            throw RecordingPackageMedia.ValidationError.unsupportedFormatVersion(
+                newerFormatVersion ?? (RecordingEditDocument.currentFormatVersion + 1)
+            )
+        }
         let settings = settings ?? exportSettings
         let audioReplacementURL = try replacementAudioURLForExport(includeAudio: !settings.removeAudio)
         let reframe = makeReframeTrack()
@@ -5973,6 +6019,7 @@ final class RecordingStudioModel {
     /// the project dirty and drops the cached render, so an unchanged
     /// confirmation must not touch them.
     func export(settings: VideoCompressionSettings) {
+        guard !isReadOnlyNewerFormat else { return }
         if settings != exportSettings {
             exportSettings = settings
         }
@@ -5982,14 +6029,19 @@ final class RecordingStudioModel {
     /// The prompt's movie for a bare movie, rendered like a share (H.264).
     /// Sessions use their shared deliverable instead, so they need none.
     func makeAgentPromptConfiguration() throws -> RecordingStudioExporter.Configuration? {
-        session == nil ? try makeExportConfiguration(settings: currentDocument().forVideoRendering.exportSettings) : nil
+        if isReadOnlyNewerFormat {
+            throw RecordingPackageMedia.ValidationError.unsupportedFormatVersion(
+                newerFormatVersion ?? (RecordingEditDocument.currentFormatVersion + 1)
+            )
+        }
+        return session == nil ? try makeExportConfiguration(settings: currentDocument().forVideoRendering.exportSettings) : nil
     }
 
     /// The How-To Guide, with the edits as they stand: saved to the export location, its
     /// Markdown copied, and shown in Finder.
     func exportGuide() {
         guard let session, isLoaded, !isExportingGuide, !hasRunningWork, !hasUnreadableDraft,
-              !transcriptionState.isTranscribing else { return }
+              !isReadOnlyNewerFormat, !transcriptionState.isTranscribing else { return }
         pause()
         flushDraft()
         isExportingGuide = true
@@ -6002,7 +6054,8 @@ final class RecordingStudioModel {
     }
 
     func exportAgentPrompt() {
-        guard isLoaded, !hasRunningWork, !hasUnreadableDraft, !transcriptionState.isTranscribing else { return }
+        guard isLoaded, !hasRunningWork, !hasUnreadableDraft, !isReadOnlyNewerFormat,
+              !transcriptionState.isTranscribing else { return }
         pause()
         flushDraft()
         let document = currentDocument()
@@ -6052,7 +6105,7 @@ final class RecordingStudioModel {
     func export() {
         // One render at a time: the share pipeline uses the same exporter,
         // so a second encode would just fight it for the media engine.
-        guard !hasRunningWork, isLoaded, !hasUnreadableDraft else { return }
+        guard !hasRunningWork, isLoaded, !hasUnreadableDraft, !isReadOnlyNewerFormat else { return }
         pause()
         let previewURL = sessionURL
 
@@ -7040,7 +7093,7 @@ final class RecordingStudioModel {
     /// Writes the edited soundtrack on its own, for cleanup in a tool that
     /// has no API - the outbound half of the replace-audio round trip.
     func exportAudio() {
-        guard !hasRunningWork, isLoaded, hasAudio, !hasUnreadableDraft else { return }
+        guard !hasRunningWork, isLoaded, hasAudio, !hasUnreadableDraft, !isReadOnlyNewerFormat else { return }
         pause()
 
         audioExportState = .exporting(progress: 0)
@@ -7113,7 +7166,7 @@ final class RecordingStudioModel {
     /// playing after the original is moved, and playback switches to it
     /// immediately rather than only revealing itself at export.
     func replaceAudio(with pickedURL: URL) {
-        guard isLoaded else { return }
+        guard isLoaded, !isReadOnlyNewerFormat else { return }
         pause()
         replacementAudioTask?.cancel()
 
@@ -7323,6 +7376,14 @@ final class RecordingStudioModel {
     /// working draft may still need different soundtracks.
     private func removeUnusedReplacementAudio(in session: RecordingSession) {
         guard !isReadOnlyNewerFormat else { return }
+        if let savedVersion = RecordingPackageMedia.readFormatVersion(at: session.editDocumentURL),
+           savedVersion > RecordingEditDocument.currentFormatVersion {
+            return
+        }
+        if let draftVersion = RecordingPackageMedia.readFormatVersion(at: session.draftDocumentURL),
+           draftVersion > RecordingEditDocument.currentFormatVersion {
+            return
+        }
         let savedDocument = session.loadEditDocument()
         let draftDocument = session.loadDraftDocument()
         // A document that exists but cannot be read is not evidence that its
@@ -7333,10 +7394,21 @@ final class RecordingStudioModel {
         let store = CaptureSessionSnapshots(directory: session.sessionSnapshotsURL)
         let keptDocuments: [RecordingEditDocument]
         do {
-            keptDocuments = try store.strictEntries().map {
-                try CaptureManifest.decoder.decode(RecordingEditDocument.self, from: store.read($0).document)
+            keptDocuments = try store.strictEntries().map { entry in
+                let raw = try store.read(entry).document
+                guard let version = RecordingPackageMedia.readFormatVersion(from: raw),
+                      version <= RecordingEditDocument.currentFormatVersion else {
+                    throw RecordingPackageMedia.ValidationError.unsupportedFormatVersion(
+                        RecordingPackageMedia.readFormatVersion(from: raw) ?? (RecordingEditDocument.currentFormatVersion + 1)
+                    )
+                }
+                let decoded = try CaptureManifest.decoder.decode(RecordingEditDocument.self, from: raw)
+                if decoded.isUnsupportedFutureVersion {
+                    throw RecordingPackageMedia.ValidationError.unsupportedFormatVersion(decoded.formatVersion)
+                }
+                return decoded
             }
-        } catch { return } // An unreadable snapshot may still need an imported soundtrack.
+        } catch { return } // An unreadable or newer-format snapshot may still reference media in unknown fields.
         let referencedMusic = Set([savedDocument?.backgroundMusic?.fileName, draftDocument?.backgroundMusic?.fileName, lastSavedDocument?.backgroundMusic?.fileName, backgroundMusicSettings?.fileName].compactMap { $0 } + keptDocuments.compactMap { $0.backgroundMusic?.fileName })
         let allDocuments = [savedDocument, draftDocument, lastSavedDocument].compactMap { $0 } + keptDocuments
         var pinnedClipFiles: [String] = []
@@ -7408,7 +7480,7 @@ final class RecordingStudioModel {
         CloudUploadList.replacementID(of: sharedHistoryItem?.cloudURL, workerBase: CloudUploader.shared.workerBase)
     }
 
-    var canManageSharedVideo: Bool { canShareToCloud && sharedUploadID != nil && !hasRunningWork }
+    var canManageSharedVideo: Bool { canShareToCloud && sharedUploadID != nil && !hasRunningWork && !isReadOnlyNewerFormat }
 
     func replaceSharedVideo() {
         guard canManageSharedVideo, let id = sharedUploadID else { return }
@@ -7436,7 +7508,7 @@ final class RecordingStudioModel {
     /// session's flattened deliverable, upload it, and copy the share
     /// link - without leaving the Studio or touching a save panel.
     func shareToCloud(options: CloudUploadOptions, replacingUploadID: String? = nil) {
-        guard !hasRunningWork, isLoaded, !hasUnreadableDraft,
+        guard !hasRunningWork, isLoaded, !hasUnreadableDraft, !isReadOnlyNewerFormat,
               canShareToCloud else {
             return
         }

@@ -164,7 +164,7 @@ private struct RecordingStudioContent: View {
                     customName: model.customName,
                     defaultName: model.modelTitle ?? model.defaultName,
                     // A bare movie has no project to keep a name in.
-                    onRename: model.isProject ? { model.rename(to: $0) } : nil
+                    onRename: model.isProject && !model.isReadOnlyNewerFormat ? { model.rename(to: $0) } : nil
                 )
                 .id(model.sessionURL)
             }
@@ -377,7 +377,7 @@ private struct RecordingStudioContent: View {
                 Label("Upload", systemImage: "icloud.and.arrow.up")
                     .labelStyle(.titleAndIcon)
             }
-            .disabled(!model.isLoaded || model.hasRunningWork || model.needsSharedVideoReplacement || model.hasUnreadableDraft)
+            .disabled(!model.isLoaded || model.hasRunningWork || model.needsSharedVideoReplacement || model.hasUnreadableDraft || model.isReadOnlyNewerFormat)
             .help("Upload this recording and copy the share link")
         case .rendering(let progress):
             SharePill(stage: "Rendering", progress: progress) {
@@ -413,7 +413,7 @@ private struct RecordingStudioContent: View {
                                   messageSource: shareMessageSource, onUpload: { model.shareToCloud(options: $0) }) {
                     Text("Retry")
                 }
-                .disabled(model.hasRunningWork || model.needsSharedVideoReplacement)
+                .disabled(model.hasRunningWork || model.needsSharedVideoReplacement || model.isReadOnlyNewerFormat)
             }
         }
     }
@@ -430,7 +430,7 @@ private struct RecordingStudioContent: View {
                 Label("Export", systemImage: "arrow.down.circle")
                     .labelStyle(.titleAndIcon)
             }
-            .disabled(!model.isLoaded || model.shareState.isBusy || model.isIsolatingVoice || model.isImportingVideoClip || model.hasUnreadableDraft)
+            .disabled(!model.isLoaded || model.shareState.isBusy || model.isIsolatingVoice || model.isImportingVideoClip || model.hasUnreadableDraft || model.isReadOnlyNewerFormat)
         case .exporting(let progress):
             SharePill(stage: "Exporting", progress: progress, cancelLabel: "Cancel Export",
                       tint: model.isExportingAgentPrompt ? CardMark.green : .accentColor) {
@@ -579,7 +579,7 @@ struct RecordingStudioAgentPromptCommand: View {
                     Button("Export How-To Guide") { studio.exportGuide() }
                 }
             }
-            .disabled(!studio.isLoaded || studio.hasRunningWork || studio.hasUnreadableDraft || studio.transcriptionState.isTranscribing)
+            .disabled(!studio.isLoaded || studio.hasRunningWork || studio.hasUnreadableDraft || studio.isReadOnlyNewerFormat || studio.transcriptionState.isTranscribing)
         }
     }
 }
