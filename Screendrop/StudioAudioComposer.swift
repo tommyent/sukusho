@@ -124,6 +124,22 @@ nonisolated struct StudioAudioSources: @unchecked Sendable {
         let sessionDirectory = mediaDirectory?.deletingLastPathComponent()
             ?? replacementURL?.deletingLastPathComponent()
         var seenFiles: Set<String> = []
+        // Load all audio tracks for imported in-sequence video clips (silent
+        // clips are valid and leave `sources.files[name]` unset).
+        if let timeline, let mediaDirectory {
+            for segment in timeline.segments {
+                guard let fileName = segment.mediaFileName,
+                      seenFiles.insert(fileName).inserted,
+                      let url = RecordingOverlayMedia.resolveRegularFile(named: fileName, in: mediaDirectory) else {
+                    continue
+                }
+                let asset = AVURLAsset(url: url)
+                let tracks = await Track.loadAll(of: asset)
+                if !tracks.isEmpty {
+                    sources.files[fileName] = tracks
+                }
+            }
+        }
         for clip in clips where clip.source == .file {
             let isAudible = !clip.isMuted && clip.audibleVolume > 0
                 && min(clip.end, videoDuration) - max(clip.start, 0) >= RecordingAudioClip.minimumPlayableDuration
@@ -141,7 +157,7 @@ nonisolated struct StudioAudioSources: @unchecked Sendable {
                 continue
             }
             let asset = AVURLAsset(url: url)
-            let tracks = Array(await Track.loadAll(of: asset).prefix(1))
+            let tracks = await Track.loadAll(of: asset)
             if !tracks.isEmpty {
                 sources.files[clip.fileName] = tracks
             } else if strictMissingClips && isAudible {
@@ -234,6 +250,8 @@ nonisolated struct StudioAudioPlan: Equatable, Sendable {
             var segment = $0
             segment.volume = 1
             segment.isMuted = false
+            segment.displayName = nil
+            segment.contentMode = nil
             return segment
         }
         plan.clips = plan.clips.map {
@@ -448,6 +466,7 @@ nonisolated enum StudioAudioComposer {
         enum Kind: Equatable, Sendable {
             case recording
             case replacement
+            case imported(String)
         }
 
         var kind: Kind
@@ -468,7 +487,8 @@ nonisolated enum StudioAudioComposer {
         sync: RecordingAudioSync?,
         hasReplacement: Bool,
         replacementDuration: TimeInterval,
-        hasRecording: Bool
+        hasRecording: Bool,
+        hasImportedAudio: Bool = false
     ) -> [SegmentSlice] {
         let speed = max(segment.speed, RecordingClipSegment.minimumSpeed)
         var result: [SegmentSlice] = []
@@ -493,6 +513,19 @@ nonisolated enum StudioAudioComposer {
                 editorStart: start,
                 editorEnd: end
             ))
+        }
+
+        if let fileName = segment.mediaFileName {
+            if hasImportedAudio {
+                appendSlice(
+                    .imported(fileName),
+                    sourceStart: segment.sourceStart,
+                    sourceEnd: segment.sourceEnd,
+                    mediaStart: segment.sourceStart,
+                    mediaEnd: segment.sourceEnd
+                )
+            }
+            return result
         }
 
         guard hasReplacement, let sync else {
@@ -562,6 +595,7 @@ nonisolated enum StudioAudioComposer {
         recordingDisplayName: String,
         sourceDuration: TimeInterval,
         hasRecording: Bool,
+        hasImportedAudio: Bool = false,
         lane: Int
     ) -> [RecordingAudioClip]? {
         let hasReplacement = replacementDisplayName != nil && sync != nil && replacementDuration >= RecordingAudioClip.minimumFileSpan
@@ -572,7 +606,8 @@ nonisolated enum StudioAudioComposer {
             sync: sync,
             hasReplacement: hasReplacement,
             replacementDuration: replacementDuration,
-            hasRecording: hasRecording
+            hasRecording: hasRecording,
+            hasImportedAudio: hasImportedAudio
         )
         guard !slices.isEmpty else { return nil }
         let effectiveVolume = segment.audibleVolume * RecordingAudioGain.normalized(projectVolume)
@@ -600,6 +635,12 @@ nonisolated enum StudioAudioComposer {
                 fileName = replacementFileName ?? ""
                 displayName = replacementDisplayName ?? recordingDisplayName
                 fileDuration = max(replacementDuration, slice.mediaEnd)
+            case .imported(let importedFileName):
+                source = .file
+                fileName = importedFileName
+                let baseName = segment.displayName?.isEmpty == false ? segment.displayName! : importedFileName
+                displayName = "\(baseName) audio"
+                fileDuration = max(segment.sourceDuration ?? slice.mediaEnd, slice.mediaEnd)
             }
             var clip = RecordingAudioClip(
                 fileName: fileName,
@@ -632,6 +673,7 @@ nonisolated enum StudioAudioComposer {
 
         for (segment, range) in zip(plan.timeline.segments, ranges) {
             let owner = StudioAudioLayout.Owner.segment(segment.id)
+            let hasImportedAudio = segment.mediaFileName.map { !(sources.files[$0]?.isEmpty ?? true) } ?? false
             let slices = segmentSlices(
                 for: segment,
                 editorStart: range.start.seconds,
@@ -639,7 +681,8 @@ nonisolated enum StudioAudioComposer {
                 sync: plan.sync,
                 hasReplacement: hasSoundtrack,
                 replacementDuration: sources.replacementDuration,
-                hasRecording: hasRecording
+                hasRecording: hasRecording,
+                hasImportedAudio: hasImportedAudio
             )
             for slice in slices {
                 switch slice.kind {
@@ -657,6 +700,16 @@ nonisolated enum StudioAudioComposer {
                     try builder.insert(
                         sources.replacement,
                         group: "soundtrack",
+                        mediaStart: slice.mediaStart,
+                        mediaEnd: slice.mediaEnd,
+                        editorStart: slice.editorStart,
+                        editorEnd: slice.editorEnd,
+                        owner: owner
+                    )
+                case .imported(let fileName):
+                    try builder.insert(
+                        sources.files[fileName] ?? [],
+                        group: "imported-\(fileName)",
                         mediaStart: slice.mediaStart,
                         mediaEnd: slice.mediaEnd,
                         editorStart: slice.editorStart,

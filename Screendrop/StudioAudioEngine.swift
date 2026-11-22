@@ -114,17 +114,21 @@ nonisolated struct RecordingAudioSync: Codable, Equatable, Sendable {
     }
 
     /// The soundtrack laid flat over a cut from its first frame, which is
-    /// what an export of that cut's audio lines up with.
+    /// what an export of that cut's audio lines up with. Replacement audio
+    /// applies only to primary-recording segments; imported clips keep their
+    /// own audio tracks.
     static func flat(over timeline: RecordingClipTimeline) -> RecordingAudioSync {
         var spans: [Span] = []
         var editorStart: TimeInterval = 0
         for segment in timeline.segments {
-            spans.append(Span(
-                sourceStart: segment.sourceStart,
-                sourceEnd: segment.sourceEnd,
-                fileStart: editorStart,
-                rate: max(segment.speed, RecordingClipSegment.minimumSpeed)
-            ))
+            if segment.isPrimaryRecording {
+                spans.append(Span(
+                    sourceStart: segment.sourceStart,
+                    sourceEnd: segment.sourceEnd,
+                    fileStart: editorStart,
+                    rate: max(segment.speed, RecordingClipSegment.minimumSpeed)
+                ))
+            }
             editorStart += segment.editorDuration
         }
         return RecordingAudioSync(spans: spans)
@@ -233,13 +237,17 @@ nonisolated enum StudioAudioConform {
     ) -> (clips: [RecordingAudioClip], hidden: [HiddenLinkedRange]) {
         guard old != new else { return (clips, hidden) }
         let oldSegmentsByID = Dictionary(old.segments.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let oldSegmentIDs = Set(oldSegmentsByID.keys)
         let newSegmentsByID = Dictionary(new.segments.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        // Source ranges still visible in `new` (for example the trailing half of
-        // a split or ripple delete) are not hidden and must not be stored on the
-        // leading survivor segment.
-        let coveredInNew = RecordingClipTimeline.mergedRanges(
-            new.segments.map { $0.sourceStart...$0.sourceEnd }
-        )
+        func matchingNewSegments(for oldSeg: RecordingClipSegment) -> [RecordingClipSegment] {
+            if oldSeg.isPrimaryRecording {
+                return new.segments.filter(\.isPrimaryRecording)
+            }
+            return new.segments.filter { candidate in
+                candidate.mediaFileName == oldSeg.mediaFileName
+                    && (candidate.id == oldSeg.id || !oldSegmentIDs.contains(candidate.id))
+            }
+        }
 
         // Retain hidden intervals while at least one eligible flanking segment survives.
         var capturedHidden: [HiddenLinkedRange] = hidden.compactMap { entry in
@@ -266,6 +274,10 @@ nonisolated enum StudioAudioConform {
                 let sourceHigh = oldSeg.sourceStart + (high - oldEditorStart) * oldSeg.speed
                 let fileLow = clip.trimStart + (low - clip.start) * clipSpeed
                 let filePerSource = clipSpeed / oldSeg.speed
+                // Source ranges still visible in `new` for this source are not hidden.
+                let coveredInNew = RecordingClipTimeline.mergedRanges(
+                    matchingNewSegments(for: oldSeg).map { $0.sourceStart...$0.sourceEnd }
+                )
 
                 func storeHidden(from rawStart: TimeInterval, to rawEnd: TimeInterval) {
                     guard rawEnd - rawStart > epsilon else { return }
@@ -303,6 +315,7 @@ nonisolated enum StudioAudioConform {
                             secondaryID = new.segments
                                 .filter { other in
                                     other.id != newSeg.id
+                                        && other.mediaFileName == newSeg.mediaFileName
                                         && other.sourceStart >= s1 - epsilon
                                         && (oldSegmentsByID[other.id].map { other.sourceStart > $0.sourceStart + epsilon } ?? true)
                                 }
@@ -311,6 +324,7 @@ nonisolated enum StudioAudioConform {
                             secondaryID = new.segments
                                 .filter { other in
                                     other.id != newSeg.id
+                                        && other.mediaFileName == newSeg.mediaFileName
                                         && other.sourceEnd <= s0 + epsilon
                                         && (oldSegmentsByID[other.id].map { other.sourceEnd < $0.sourceEnd - epsilon } ?? true)
                                 }
@@ -341,7 +355,7 @@ nonisolated enum StudioAudioConform {
         var result: [RecordingAudioClip] = []
         for clip in clips {
             if clip.isLinked {
-                result.append(contentsOf: conformLinked(clip, from: old, to: new))
+                result.append(contentsOf: conformLinked(clip, from: old, to: new, oldSegmentIDs: oldSegmentIDs))
             } else {
                 var moved = clip
                 moved.start = max(0, mapPoint(clip.start, from: old, to: new))
@@ -637,15 +651,23 @@ nonisolated enum StudioAudioConform {
         guard time < oldDuration - epsilon, let location = old.location(at: time) else {
             return new.duration + max(0, time - oldDuration)
         }
+        let oldSeg = old.segments[location.segmentIndex]
         let source = location.sourceTime
-        if let mapped = editorTime(forSourceTime: source, preferring: location.segmentID, in: new) {
+        if let mapped = editorTime(
+            forSourceTime: source,
+            mediaFileName: oldSeg.mediaFileName,
+            preferring: location.segmentID,
+            in: new
+        ) {
             return mapped
         }
-        // Removed: the next video that survives starts where it was.
+        // Removed: the next video from the same source that survives starts where it was.
         var editorStart: TimeInterval = 0
         var best: (source: TimeInterval, editor: TimeInterval)?
         for segment in new.segments {
-            if segment.sourceStart >= source - epsilon, best == nil || segment.sourceStart < best!.source {
+            if segment.mediaFileName == oldSeg.mediaFileName,
+               segment.sourceStart >= source - epsilon,
+               best == nil || segment.sourceStart < best!.source {
                 best = (segment.sourceStart, editorStart)
             }
             editorStart += segment.editorDuration
@@ -655,13 +677,16 @@ nonisolated enum StudioAudioConform {
 
     private static func editorTime(
         forSourceTime source: TimeInterval,
+        mediaFileName: String?,
         preferring id: UUID,
         in timeline: RecordingClipTimeline
     ) -> TimeInterval? {
         var editorStart: TimeInterval = 0
         var fallback: TimeInterval?
         for segment in timeline.segments {
-            if source >= segment.sourceStart - epsilon, source <= segment.sourceEnd + epsilon {
+            if segment.mediaFileName == mediaFileName,
+               source >= segment.sourceStart - epsilon,
+               source <= segment.sourceEnd + epsilon {
                 let offset = min(max(source - segment.sourceStart, 0), segment.duration) / segment.speed
                 if segment.id == id { return editorStart + offset }
                 if fallback == nil { fallback = editorStart + offset }
@@ -674,7 +699,8 @@ nonisolated enum StudioAudioConform {
     private static func conformLinked(
         _ clip: RecordingAudioClip,
         from old: RecordingClipTimeline,
-        to new: RecordingClipTimeline
+        to new: RecordingClipTimeline,
+        oldSegmentIDs: Set<UUID>
     ) -> [RecordingAudioClip] {
         let clipSpeed = max(clip.speed, 0.01)
         var pieces: [RecordingAudioClip] = []
@@ -699,7 +725,7 @@ nonisolated enum StudioAudioConform {
             }
         }
 
-        // Under the video: each stretch follows the recording it sat over.
+        // Under the video: each stretch follows the clip/source it sat over.
         var oldEditorStart: TimeInterval = 0
         for segment in old.segments {
             let oldEditorEnd = oldEditorStart + segment.editorDuration
@@ -710,10 +736,16 @@ nonisolated enum StudioAudioConform {
             let sourceLow = segment.sourceStart + (low - oldEditorStart) * segment.speed
             let sourceHigh = segment.sourceStart + (high - oldEditorStart) * segment.speed
             let fileLow = clip.trimStart + (low - clip.start) * clipSpeed
-            // File seconds per recording second, which no retiming changes.
+            // File seconds per source second, which no retiming changes.
             let filePerSource = clipSpeed / segment.speed
 
-            for slice in slices(of: new, overlapping: sourceLow, sourceHigh, preferring: segment.id) {
+            for slice in slices(
+                of: new,
+                overlapping: sourceLow,
+                sourceHigh,
+                matching: segment,
+                oldSegmentIDs: oldSegmentIDs
+            ) {
                 let fileStart = fileLow + (slice.sourceStart - sourceLow) * filePerSource
                 let fileEnd = fileLow + (slice.sourceEnd - sourceLow) * filePerSource
                 let derivedSpeed = min(
@@ -770,25 +802,38 @@ nonisolated enum StudioAudioConform {
         var speed: Double
     }
 
-    /// Where a range of the recording plays in a cut, in playing order.
+    /// Where a range of `oldSegment`'s source plays in `timeline`, in playing
+    /// order. Primary segments match any primary segment; imported segments
+    /// match only the same segment ID or newly split pieces of the same file
+    /// so repeated imports never duplicate each other's linked audio.
     private static func slices(
         of timeline: RecordingClipTimeline,
         overlapping sourceStart: TimeInterval,
         _ sourceEnd: TimeInterval,
-        preferring id: UUID
+        matching oldSegment: RecordingClipSegment,
+        oldSegmentIDs: Set<UUID>
     ) -> [Slice] {
         var result: [Slice] = []
         var editorStart: TimeInterval = 0
         for segment in timeline.segments {
-            let low = max(sourceStart, segment.sourceStart)
-            let high = min(sourceEnd, segment.sourceEnd)
-            if high - low > epsilon {
-                result.append(Slice(
-                    sourceStart: low,
-                    sourceEnd: high,
-                    editorStart: editorStart + (low - segment.sourceStart) / segment.speed,
-                    speed: segment.speed
-                ))
+            let matchesSource: Bool
+            if oldSegment.isPrimaryRecording {
+                matchesSource = segment.isPrimaryRecording
+            } else {
+                matchesSource = segment.mediaFileName == oldSegment.mediaFileName
+                    && (segment.id == oldSegment.id || !oldSegmentIDs.contains(segment.id))
+            }
+            if matchesSource {
+                let low = max(sourceStart, segment.sourceStart)
+                let high = min(sourceEnd, segment.sourceEnd)
+                if high - low > epsilon {
+                    result.append(Slice(
+                        sourceStart: low,
+                        sourceEnd: high,
+                        editorStart: editorStart + (low - segment.sourceStart) / segment.speed,
+                        speed: segment.speed
+                    ))
+                }
             }
             editorStart += segment.editorDuration
         }

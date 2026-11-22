@@ -162,6 +162,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
         case writerFailed(Error?)
         case missingOverlayAsset(String)
         case missingVideoOverlayAsset(String)
+        case missingVideoClip(String)
         case cancelled
 
         var errorDescription: String? {
@@ -176,6 +177,8 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
                 "The overlay image \"\(name)\" is missing or unreadable."
             case .missingVideoOverlayAsset(let name):
                 "The video overlay \"\(name)\" is missing or unreadable."
+            case .missingVideoClip(let name):
+                "The video clip \"\(name)\" is missing or unreadable."
             case .cancelled:
                 "Export canceled."
             }
@@ -249,18 +252,6 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
         guard let sourceVideo = try await sourceAsset.loadTracks(withMediaType: .video).first else {
             throw ExportError.noVideoTrack
         }
-        let videoComposition = try RecordingCompositionBuilder.makeVideoComposition(
-            videoTrack: sourceVideo,
-            timeline: clipTimeline
-        )
-        guard let videoTrack = try await videoComposition.loadTracks(withMediaType: .video).first else {
-            throw ExportError.noVideoTrack
-        }
-        let exportStartTime = CMTime.zero
-        let exportTimeRange = CMTimeRange(
-            start: exportStartTime,
-            duration: CMTime(seconds: clipTimeline.duration, preferredTimescale: 600)
-        )
 
         let outputSize = Self.outputSize(
             source: configuration.canvasSize,
@@ -270,18 +261,97 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
         let canvasHeight = max(2, Int(outputSize.height.rounded()) & ~1)
         let canvasSize = CGSize(width: canvasWidth, height: canvasHeight)
 
-        // Readers
-        let screenReader = try AVAssetReader(asset: videoComposition)
-        let videoOutput = AVAssetReaderTrackOutput(
-            track: videoTrack,
-            outputSettings: [
-                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-                kCVPixelBufferMetalCompatibilityKey as String: true,
-                kCVPixelBufferIOSurfacePropertiesKey as String: [:]
-            ]
+        let exportStartTime = CMTime.zero
+        let exportTimeRange = CMTimeRange(
+            start: exportStartTime,
+            duration: CMTime(seconds: clipTimeline.duration, preferredTimescale: 600)
         )
-        videoOutput.alwaysCopiesSampleData = false
-        screenReader.add(videoOutput)
+
+        let readerOutputSettings: [String: Any] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferMetalCompatibilityKey as String: true,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [:]
+        ]
+
+        // Readers: single-source primary timelines keep today's fast
+        // AVAssetReaderTrackOutput path; multi-source sequences use one
+        // composition with per-segment orientation/Fit/Fill transforms.
+        let screenReader: AVAssetReader
+        let videoOutput: AVAssetReaderOutput
+        var retainedImportedSources: [String: StudioVideoSource] = [:]
+        if clipTimeline.hasImportedClips {
+            let (naturalSize, preferredTransform) = try await sourceVideo.load(.naturalSize, .preferredTransform)
+            let primarySource = StudioVideoSource(
+                asset: sourceAsset,
+                videoTrack: sourceVideo,
+                naturalSize: naturalSize,
+                preferredTransform: preferredTransform,
+                duration: sourceDuration
+            )
+            for segment in clipTimeline.segments where !segment.isPrimaryRecording {
+                guard let fileName = segment.mediaFileName else { continue }
+                if retainedImportedSources[fileName] != nil { continue }
+                let label = segment.displayName?.isEmpty == false ? segment.displayName! : fileName
+                guard let mediaDirectory = configuration.mediaDirectory,
+                      let url = RecordingOverlayMedia.resolveRegularFile(named: fileName, in: mediaDirectory) else {
+                    throw ExportError.missingVideoClip(label)
+                }
+                do {
+                    retainedImportedSources[fileName] = try await StudioVideoSource.load(url: url)
+                } catch {
+                    throw ExportError.missingVideoClip(label)
+                }
+            }
+            let primaryDisplaySize = primarySource.displaySize
+            let layoutForTarget = RecordingStudioLayout.make(
+                canvasSize: canvasSize,
+                style: configuration.style,
+                includeBubble: false,
+                usesUniformPadding: configuration.usesUniformPadding,
+                contentAspect: configuration.reframe?.sourceAspect ?? configuration.fitContentAspect,
+                contentMode: configuration.fitContentAspect != nil && configuration.reframe == nil ? .fit : .fill,
+                contentCropRect: configuration.videoCropRect
+            )
+            let targetRect = RecordingCompositionBuilder.visibleCardRect(
+                renderSize: primaryDisplaySize,
+                cardSize: layoutForTarget.cardRect.size,
+                contentFillSize: layoutForTarget.contentFillSize
+            )
+            let (composedAsset, avVideoComposition) = try RecordingCompositionBuilder.makeMultiSourceVideoComposition(
+                primarySource: primarySource,
+                importedSources: retainedImportedSources,
+                timeline: clipTimeline,
+                renderSize: primaryDisplaySize,
+                targetRect: targetRect
+            )
+            let tracks = try await composedAsset.loadTracks(withMediaType: .video)
+            guard !tracks.isEmpty else { throw ExportError.noVideoTrack }
+            screenReader = try AVAssetReader(asset: composedAsset)
+            let composedOutput = AVAssetReaderVideoCompositionOutput(
+                videoTracks: tracks,
+                videoSettings: readerOutputSettings
+            )
+            composedOutput.videoComposition = avVideoComposition
+            composedOutput.alwaysCopiesSampleData = false
+            screenReader.add(composedOutput)
+            videoOutput = composedOutput
+        } else {
+            let videoComposition = try RecordingCompositionBuilder.makeVideoComposition(
+                videoTrack: sourceVideo,
+                timeline: clipTimeline
+            )
+            guard let videoTrack = try await videoComposition.loadTracks(withMediaType: .video).first else {
+                throw ExportError.noVideoTrack
+            }
+            screenReader = try AVAssetReader(asset: videoComposition)
+            let trackOutput = AVAssetReaderTrackOutput(
+                track: videoTrack,
+                outputSettings: readerOutputSettings
+            )
+            trackOutput.alwaysCopiesSampleData = false
+            screenReader.add(trackOutput)
+            videoOutput = trackOutput
+        }
         screenReader.timeRange = exportTimeRange
 
         var audioOutput: AVAssetReaderAudioMixOutput?
@@ -479,7 +549,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
 
         cameraFeed?.cancel()
         videoOverlayFeed?.cancel()
-        withExtendedLifetime(preparedAudio) {}
+        withExtendedLifetime((preparedAudio, retainedImportedSources)) {}
 
         writer.endSession(atSourceTime: exportTimeRange.end)
         await withCheckedContinuation { continuation in
@@ -496,7 +566,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
     }
 
     private func pumpVideo(
-        output: AVAssetReaderTrackOutput,
+        output: AVAssetReaderOutput,
         input: AVAssetWriterInput,
         writer: AVAssetWriter,
         adaptor: AVAssetWriterInputPixelBufferAdaptor,
@@ -605,7 +675,8 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
                 throw ExportError.writerFailed(writer.error)
             }
 
-            let cameraBuffer = try cameraFeed?.latestFrame(at: sourceTime)
+            let isPrimary = clipTimeline.segments[location.segmentIndex].isPrimaryRecording
+            let cameraBuffer = isPrimary ? try cameraFeed?.latestFrame(at: sourceTime) : nil
             let videoOverlayFrame = try await videoOverlayFeed?.frame(at: editorTime)
             let nextTime = timing.time(forFrame: frame + 1)
             let sourceRepeats = (pending == nil || pending!.time > nextTime)
@@ -617,6 +688,7 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
                 videoOverlayFrame: videoOverlayFrame,
                 editorTime: editorTime,
                 sourceTime: sourceTime,
+                isPrimaryRecording: isPrimary,
                 sourceRepeatsOnNextFrame: sourceRepeats,
                 into: destinationBuffer
             )
@@ -819,9 +891,13 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
         )
     }
 
-    /// The virtual camera for a frame: the reframe crop-and-follow track
-    /// when exporting into a different aspect, the zoom viewport otherwise.
+    /// The virtual camera for a frame: identity on imported clips (zooms,
+    /// reframe, and primary video crop apply only to primary-recording clips);
+    /// reframe crop-and-follow or zoom viewport on primary segments.
     private func viewportFrame(at editorTime: TimeInterval) -> ViewportFrame {
+        guard clipTimeline.isPrimaryRecording(at: editorTime) else {
+            return .identity
+        }
         let base = reframe?.frame(at: editorTime) ?? viewportTimeline.frame(at: editorTime)
         return RecordingVideoCropGeometry.viewport(base, crop: videoCropRect)
     }
@@ -833,6 +909,7 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
         fileprivate let videoOverlayFrame: VideoOverlayFrameFeed.Frame?
         fileprivate let editorTime: TimeInterval
         fileprivate let sourceTime: TimeInterval
+        fileprivate let isPrimaryRecording: Bool
         fileprivate let sampleRects: [CGRect]
         fileprivate let shouldCacheScreen: Bool
         /// Set when the previous frame leaves this exact screen layer in the
@@ -851,12 +928,15 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
         videoOverlayFrame: VideoOverlayFrameFeed.Frame? = nil,
         editorTime: TimeInterval,
         sourceTime: TimeInterval,
+        isPrimaryRecording: Bool,
         sourceRepeatsOnNextFrame: Bool,
         into destination: CVPixelBuffer
     ) throws -> PendingFrame {
-        let active = redactions.filter {
-            $0.covers(editorTime: editorTime, frameDuration: timing.frameInterval, timeline: clipTimeline)
-        }
+        let active = isPrimaryRecording
+            ? redactions.filter {
+                $0.covers(editorTime: editorTime, frameDuration: timing.frameInterval, timeline: clipTimeline)
+            }
+            : []
         let screenFrame = try RecordingRedactionFilter.buffer(
             from: screenFrame,
             redactions: active,
@@ -864,9 +944,11 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
         )
         // shortcut: active masks bypass settled reuse; cache filtered sources if export cost warrants it.
         let bypassScreenCache = bypassScreenCache || !active.isEmpty
-        let sampleRects = timing.screenSampleRects(at: editorTime) { time in
-            layout.frameRect(for: viewportFrame(at: time))
-        }
+        let sampleRects = isPrimaryRecording
+            ? timing.screenSampleRects(at: editorTime) { time in
+                layout.frameRect(for: viewportFrame(at: time))
+            }
+            : [layout.frameRect(for: .identity)]
         let sampleCount = sampleRects.count
         let plansRestore = !bypassScreenCache && sampleCount == 1
             && plannedCacheKey.map { $0.source === screenFrame && $0.rect == sampleRects[0] } == true
@@ -893,6 +975,7 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
             videoOverlayFrame: videoOverlayFrame,
             editorTime: editorTime,
             sourceTime: sourceTime,
+            isPrimaryRecording: isPrimaryRecording,
             sampleRects: sampleRects,
             shouldCacheScreen: shouldCacheScreen,
             plansRestore: plansRestore,
@@ -981,43 +1064,51 @@ nonisolated private final class StudioFrameCompositor: @unchecked Sendable {
         }
         if !shouldCacheScreen { screenLayerCache.invalidate() }
 
-        // Ink goes after the cache capture, so a held screen layer never
-        // keeps a half-drawn stroke, and under the pointer drawing it.
-        drawInk(sourceTime: sourceTime, editorTime: editorTime, in: context)
+        // Primary-recording-bound features (ink, pointer/clicks, keystrokes,
+        // webcam bubble, source-clock overlays, subtitles) apply only on
+        // primary-recording segments and stay absent on imported clips.
+        if frame.isPrimaryRecording {
+            // Ink goes after the cache capture, so a held screen layer never
+            // keeps a half-drawn stroke, and under the pointer drawing it.
+            drawInk(sourceTime: sourceTime, editorTime: editorTime, in: context)
 
-        // Pointer motion is resolved independently from viewport shutter
-        // blur. Its interaction magnification and tilt stay anchored at the
-        // recorded artwork anchor point, while the final point still passes
-        // through the same viewport transform and rounded-card clip as the
-        // source pixels.
-        drawPointer(editorTime: editorTime, in: context)
+            // Pointer motion is resolved independently from viewport shutter
+            // blur. Its interaction magnification and tilt stay anchored at the
+            // recorded artwork anchor point, while the final point still passes
+            // through the same viewport transform and rounded-card clip as the
+            // source pixels.
+            drawPointer(editorTime: editorTime, in: context)
 
-        // The keystroke caption stays in card space - pinned to its edge and
-        // unaffected by the zoom transform, like a broadcast lower third.
-        drawKeystrokeCaption(at: sourceTime, in: context)
+            // The keystroke caption stays in card space - pinned to its edge and
+            // unaffected by the zoom transform, like a broadcast lower third.
+            drawKeystrokeCaption(at: sourceTime, in: context)
 
-        let cutawayCoverage = StudioVideoOverlayLane.cutawayCoverage(in: videoOverlays, atEditorTime: editorTime)
-        if let cameraFrame, layout.bubbleRect.width > 0, cutawayCoverage < 0.999 {
-            context.saveGState()
-            if cutawayCoverage > 0.001 {
-                context.setAlpha(CGFloat(1 - cutawayCoverage))
+            let cutawayCoverage = StudioVideoOverlayLane.cutawayCoverage(in: videoOverlays, atEditorTime: editorTime)
+            if let cameraFrame, layout.bubbleRect.width > 0, cutawayCoverage < 0.999 {
+                context.saveGState()
+                if cutawayCoverage > 0.001 {
+                    context.setAlpha(CGFloat(1 - cutawayCoverage))
+                }
+                drawCameraBubble(cameraFrame, in: context)
+                context.restoreGState()
             }
-            drawCameraBubble(cameraFrame, in: context)
-            context.restoreGState()
         }
 
-        // Layered video overlay (PiP or cutaway) sits above card and camera,
-        // and under images, text, and subtitles.
+        // Layered video overlay (PiP or cutaway) stays on the edited clock
+        // across primary and imported clips, above card/camera and under
+        // primary images, text, and subtitles.
         drawVideoOverlay(frame.videoOverlayFrame, atEditorTime: editorTime, in: context)
 
-        // Images, then text, sit on the canvas above the camera and under
-        // the subtitles.
-        try drawImageOverlays(at: sourceTime, in: context)
-        drawTextOverlays(at: sourceTime, in: context)
+        if frame.isPrimaryRecording {
+            // Images, then text, sit on the canvas above the camera and under
+            // the subtitles.
+            try drawImageOverlays(at: sourceTime, in: context)
+            drawTextOverlays(at: sourceTime, in: context)
 
-        // The subtitle bar lives in canvas space - over the background too,
-        // not just the card - and above everything else, camera included.
-        drawSubtitleBar(at: sourceTime, in: context)
+            // The subtitle bar lives in canvas space - over the background too,
+            // not just the card - and above everything else, camera included.
+            drawSubtitleBar(at: sourceTime, in: context)
+        }
     }
 
     private func drawVideoOverlay(

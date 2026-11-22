@@ -14,12 +14,17 @@ import AppKit
 
 @MainActor
 final class RecordingTimelineThumbnailStore {
-    /// A tile of the recording: level 0 splits the whole movie into
+    nonisolated static let primarySourceKey = ""
+    /// Shared decoded-bitmap byte cap across primary and all imported video sources.
+    nonisolated static let defaultByteLimit = 48 * 1024 * 1024
+
+    /// A tile of one video source: level 0 splits the whole movie into
     /// `baseTileCount` tiles and every level after it halves the spacing, so a
     /// tile at level *n* always sits inside tile `index / 2` of level *n - 1*.
     /// That nesting is what lets a missing dense tile fall back to the coarse
     /// image covering the same moment.
     nonisolated struct Key: Hashable, Sendable {
+        var sourceKey: String = ""
         var level: Int
         var index: Int
     }
@@ -33,6 +38,12 @@ final class RecordingTimelineThumbnailStore {
     nonisolated struct Sample: @unchecked Sendable {
         var key: Key
         var image: NSImage
+    }
+
+    private struct SourceEntry: Equatable {
+        var url: URL
+        var duration: TimeInterval
+        var redactions: [RecordingRedaction]
     }
 
     /// Only cancellation crosses executors. Configuration and image requests
@@ -52,8 +63,8 @@ final class RecordingTimelineThumbnailStore {
         var spacing: TimeInterval
     }
 
-    /// Tiles across the whole recording at the coarsest level - the overview
-    /// strip a fitted timeline shows.
+    /// Tiles across one source at the coarsest level - the overview strip a
+    /// fitted timeline shows.
     private static let baseTileCount = 32
     /// Finest spacing worth sampling; below this neighboring tiles would be
     /// the same displayed frame anyway.
@@ -65,47 +76,112 @@ final class RecordingTimelineThumbnailStore {
     /// Requests still waiting when this many pile up are already scrolled
     /// past, so the oldest are dropped rather than rendered.
     private static let queueLimit = 240
-    /// Roughly a few screenfuls of dense tiles. The coarse level is never
-    /// evicted, so the overview survives.
+    /// Shared tile count ceiling across all sources in addition to `byteLimit`.
     private static let cacheLimit = 700
 
+    let byteLimit: Int
     /// Invoked on the main actor when new tiles land, so the AppKit lane can
     /// redraw itself without pushing a SwiftUI update per batch.
     var onChange: (() -> Void)?
     /// Renderer hook (defaults to AVAssetImageGenerator; overridable in tests).
     var renderBatch: @Sendable (URL, [Request], [RecordingRedaction]) async -> [Sample] = RecordingTimelineThumbnailStore.render
 
-    private var url: URL?
-    private var redactions: [RecordingRedaction] = []
-    private var duration: TimeInterval = 0
+    private var sources: [String: SourceEntry] = [:]
     private var images: [Key: NSImage] = [:]
+    private var imageBytes: [Key: Int] = [:]
+    private(set) var cachedBytes = 0
     private var insertionOrder: [Key] = []
     private var pending: Set<Key> = []
     private var retryCounts: [Key: Int] = [:]
     private var queue: [Key] = []
     private var task: Task<Void, Never>?
-    private var settledLevel: Int?
-    private var frozenLevel: Int?
+    private var settledLevels: [String: Int] = [:]
+    private var frozenLevels: [String: Int] = [:]
     private var thawTask: Task<Void, Never>?
 
+    init(byteLimit: Int = RecordingTimelineThumbnailStore.defaultByteLimit) {
+        self.byteLimit = max(0, byteLimit)
+    }
+
+    var cachedTileCount: Int { images.count }
+
+    static func byteCost(of image: NSImage) -> Int {
+        if let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+            return max(cgImage.bytesPerRow * cgImage.height, cgImage.width * cgImage.height * 4)
+        }
+        let width = max(1, Int(image.size.width.rounded()))
+        let height = max(1, Int(image.size.height.rounded()))
+        return width * height * 4
+    }
+
+    /// Prepares the primary recording source, preserving any still-registered
+    /// imported sources while refreshing primary tiles (e.g. after redaction edits).
     func prepare(url: URL, duration: TimeInterval, redactions: [RecordingRedaction] = []) {
-        cancel()
-        self.url = url
-        self.redactions = redactions
-        self.duration = max(0, duration.isFinite ? duration : 0)
-        images.removeAll()
-        insertionOrder.removeAll()
-        pending.removeAll()
-        retryCounts.removeAll()
-        queue.removeAll()
-        settledLevel = nil
-        frozenLevel = nil
+        let importedSources = sources.filter { $0.key != Self.primarySourceKey }
+        if importedSources.isEmpty {
+            cancel()
+            sources.removeAll()
+            images.removeAll()
+            imageBytes.removeAll()
+            cachedBytes = 0
+            insertionOrder.removeAll()
+            pending.removeAll()
+            retryCounts.removeAll()
+            queue.removeAll()
+            settledLevels.removeAll()
+            frozenLevels.removeAll()
+        } else {
+            evictSource(key: Self.primarySourceKey)
+        }
+        let safeDuration = max(0, duration.isFinite ? duration : 0)
+        sources[Self.primarySourceKey] = SourceEntry(url: url, duration: safeDuration, redactions: redactions)
         onChange?()
-        guard self.duration > 0 else { return }
+        guard safeDuration > 0 else { return }
         for index in 0..<Self.baseTileCount {
-            enqueue(Key(level: 0, index: index), shouldPump: false)
+            enqueue(Key(sourceKey: Self.primarySourceKey, level: 0, index: index), shouldPump: false)
         }
         pump()
+    }
+
+    /// Registers an imported video source under the same shared cache budget.
+    func registerSource(key: String, url: URL, duration: TimeInterval, redactions: [RecordingRedaction] = []) {
+        let safeDuration = max(0, duration.isFinite ? duration : 0)
+        let entry = SourceEntry(url: url, duration: safeDuration, redactions: redactions)
+        if sources[key] == entry { return }
+        evictSource(key: key)
+        sources[key] = entry
+        guard safeDuration > 0 else { return }
+        for index in 0..<Self.baseTileCount {
+            enqueue(Key(sourceKey: key, level: 0, index: index), shouldPump: false)
+        }
+        pump()
+    }
+
+    /// Immediately drops every cached tile, pending request, and metadata entry
+    /// for a removed source.
+    func evictSource(key: String) {
+        sources.removeValue(forKey: key)
+        settledLevels.removeValue(forKey: key)
+        frozenLevels.removeValue(forKey: key)
+        for existingKey in Array(images.keys) where existingKey.sourceKey == key {
+            images.removeValue(forKey: existingKey)
+            if let cost = imageBytes.removeValue(forKey: existingKey) {
+                cachedBytes = max(0, cachedBytes - cost)
+            }
+        }
+        insertionOrder.removeAll { $0.sourceKey == key }
+        pending = pending.filter { $0.sourceKey != key }
+        retryCounts = retryCounts.filter { $0.key.sourceKey != key }
+        queue.removeAll { $0.sourceKey == key }
+    }
+
+    /// Evicts any imported sources no longer referenced by `activeKeys`, always
+    /// keeping the primary source intact.
+    func syncImportedSources(keeping activeKeys: Set<String>) {
+        let stale = sources.keys.filter { $0 != Self.primarySourceKey && !activeKeys.contains($0) }
+        for key in stale {
+            evictSource(key: key)
+        }
     }
 
     func cancel() {
@@ -113,36 +189,39 @@ final class RecordingTimelineThumbnailStore {
         task = nil
         thawTask?.cancel()
         thawTask = nil
-        frozenLevel = nil
+        frozenLevels.removeAll()
     }
 
     func releaseResources() {
         cancel()
         images.removeAll()
+        imageBytes.removeAll()
+        cachedBytes = 0
         insertionOrder.removeAll()
         pending.removeAll()
         retryCounts.removeAll()
         queue.removeAll()
-        url = nil
-        duration = 0
-        settledLevel = nil
+        sources.removeAll()
+        settledLevels.removeAll()
         onChange = nil
     }
 
     /// Tile grid for tiles that should each cover at least `targetSpan` of
     /// source time - normally "one thumbnail's width of the lane".
-    func grid(forTargetSpan targetSpan: TimeInterval) -> Grid {
-        guard duration > 0, targetSpan > 0, baseSpacing > 0 else {
-            return Grid(level: 0, spacing: max(baseSpacing, 0))
+    func grid(forTargetSpan targetSpan: TimeInterval, sourceKey: String = RecordingTimelineThumbnailStore.primarySourceKey) -> Grid {
+        let duration = sources[sourceKey]?.duration ?? 0
+        let base = baseSpacing(forDuration: duration)
+        guard duration > 0, targetSpan > 0, base > 0 else {
+            return Grid(level: 0, spacing: max(base, 0))
         }
-        let level = frozenLevel ?? self.level(forSpacing: targetSpan)
-        if frozenLevel == nil {
-            settledLevel = level
+        let level = frozenLevels[sourceKey] ?? self.level(forSpacing: targetSpan, duration: duration)
+        if frozenLevels[sourceKey] == nil {
+            settledLevels[sourceKey] = level
         }
         // The coarsest level can still be finer than a tile wants at fitted
         // zoom; grouping whole powers of two keeps tiles aligned with the
         // level grid, so zooming subdivides tiles instead of reshuffling them.
-        var spacing = spacing(forLevel: level)
+        var spacing = spacing(forLevel: level, duration: duration)
         while spacing > 0, spacing < targetSpan {
             spacing *= 2
         }
@@ -152,24 +231,24 @@ final class RecordingTimelineThumbnailStore {
     /// Best available image for one tile of `grid`. When the tile hasn't been
     /// sampled yet it is queued and the coarser frame covering the same moment
     /// stands in, so the strip never shows holes.
-    func image(in grid: Grid, tileIndex: Int) -> NSImage? {
-        guard duration > 0, grid.spacing > 0 else { return nil }
+    func image(in grid: Grid, tileIndex: Int, sourceKey: String = RecordingTimelineThumbnailStore.primarySourceKey) -> NSImage? {
+        guard let duration = sources[sourceKey]?.duration, duration > 0, grid.spacing > 0 else { return nil }
         let center = (Double(tileIndex) + 0.5) * grid.spacing
-        let index = index(forSourceTime: center, level: grid.level)
-        let key = Key(level: grid.level, index: index)
+        let index = index(forSourceTime: center, level: grid.level, duration: duration)
+        let key = Key(sourceKey: sourceKey, level: grid.level, index: index)
         if let image = images[key] {
             return image
         }
         // Chasing every intermediate scale of a pinch would queue a screenful
         // of tiles per frame, none of which survive long enough to be drawn.
-        if frozenLevel == nil {
+        if frozenLevels[sourceKey] == nil {
             enqueue(key)
         }
 
         var fallbackLevel = grid.level - 1
         var fallbackIndex = index / 2
         while fallbackLevel >= 0 {
-            if let image = images[Key(level: fallbackLevel, index: fallbackIndex)] {
+            if let image = images[Key(sourceKey: sourceKey, level: fallbackLevel, index: fallbackIndex)] {
                 return image
             }
             fallbackLevel -= 1
@@ -182,14 +261,16 @@ final class RecordingTimelineThumbnailStore {
     /// resamples once it settles. Without this the strip re-tiles on every
     /// gesture frame and thrashes the decoder for frames nobody sees.
     func deferSampling(for interval: TimeInterval = 0.22) {
-        frozenLevel = frozenLevel ?? settledLevel
+        for (sourceKey, level) in settledLevels where frozenLevels[sourceKey] == nil {
+            frozenLevels[sourceKey] = level
+        }
         thawTask?.cancel()
         thawTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(interval))
             guard !Task.isCancelled, let self else { return }
             self.thawTask = nil
-            guard self.frozenLevel != nil else { return }
-            self.frozenLevel = nil
+            guard !self.frozenLevels.isEmpty else { return }
+            self.frozenLevels.removeAll()
             // Redraw at the settled scale, which is what queues the tiles the
             // lane now actually needs.
             self.onChange?()
@@ -198,37 +279,39 @@ final class RecordingTimelineThumbnailStore {
 
     // MARK: - Levels
 
-    private var baseSpacing: TimeInterval {
+    private func baseSpacing(forDuration duration: TimeInterval) -> TimeInterval {
         duration > 0 ? duration / Double(Self.baseTileCount) : 0
     }
 
-    private var maxLevel: Int {
-        guard baseSpacing > Self.finestSpacing else { return 0 }
-        return max(0, Int(log2(baseSpacing / Self.finestSpacing).rounded(.down)))
+    private func maxLevel(forDuration duration: TimeInterval) -> Int {
+        let base = baseSpacing(forDuration: duration)
+        guard base > Self.finestSpacing else { return 0 }
+        return max(0, Int(log2(base / Self.finestSpacing).rounded(.down)))
     }
 
-    private func spacing(forLevel level: Int) -> TimeInterval {
-        baseSpacing / pow(2, Double(level))
+    private func spacing(forLevel level: Int, duration: TimeInterval) -> TimeInterval {
+        baseSpacing(forDuration: duration) / pow(2, Double(level))
     }
 
     /// Coarsest level whose tiles are still wide enough to hold a thumbnail -
     /// its spacing lands in `[targetSpan, 2 * targetSpan)`. Tiles are one level
     /// tile each, so every tile is a distinct frame without oversampling.
-    private func level(forSpacing targetSpan: TimeInterval) -> Int {
-        guard baseSpacing > 0, targetSpan > 0 else { return 0 }
-        let steps = log2(baseSpacing / max(targetSpan, Self.finestSpacing))
-        return min(max(Int(steps.rounded(.down)), 0), maxLevel)
+    private func level(forSpacing targetSpan: TimeInterval, duration: TimeInterval) -> Int {
+        let base = baseSpacing(forDuration: duration)
+        guard base > 0, targetSpan > 0 else { return 0 }
+        let steps = log2(base / max(targetSpan, Self.finestSpacing))
+        return min(max(Int(steps.rounded(.down)), 0), maxLevel(forDuration: duration))
     }
 
-    private func index(forSourceTime sourceTime: TimeInterval, level: Int) -> Int {
-        let spacing = spacing(forLevel: level)
+    private func index(forSourceTime sourceTime: TimeInterval, level: Int, duration: TimeInterval) -> Int {
+        let spacing = spacing(forLevel: level, duration: duration)
         guard spacing > 0 else { return 0 }
         let clamped = min(max(sourceTime, 0), max(0, duration - 0.000_1))
         return max(0, Int(clamped / spacing))
     }
 
-    private func request(for key: Key) -> Request {
-        let spacing = spacing(forLevel: key.level)
+    private func request(for key: Key, duration: TimeInterval) -> Request {
+        let spacing = spacing(forLevel: key.level, duration: duration)
         let center = (Double(key.index) + 0.5) * spacing
         let attempt = retryCounts[key] ?? 0
         // Initial sampling stays inside the tile so neighboring tiles pick
@@ -249,7 +332,8 @@ final class RecordingTimelineThumbnailStore {
     // MARK: - Sampling
 
     private func enqueue(_ key: Key, atFront: Bool = false, shouldPump: Bool = true) {
-        guard images[key] == nil,
+        guard sources[key.sourceKey] != nil,
+              images[key] == nil,
               !pending.contains(key),
               (retryCounts[key] ?? 0) <= Self.maxRetries else { return }
         pending.insert(key)
@@ -271,14 +355,31 @@ final class RecordingTimelineThumbnailStore {
     }
 
     private func pump() {
-        guard task == nil, let url, duration > 0, !queue.isEmpty else { return }
+        guard task == nil else { return }
+        // Drop queued items for evicted sources before pulling a batch.
+        while let last = queue.last, sources[last.sourceKey] == nil {
+            pending.remove(last)
+            queue.removeLast()
+        }
+        guard let targetSourceKey = queue.last?.sourceKey,
+              let source = sources[targetSourceKey],
+              source.duration > 0 else { return }
 
-        // Newest requests first: they are the tiles under the pointer right
-        // now, while anything older has usually been scrolled away from.
-        let batch = Array(queue.suffix(Self.batchSize))
-        queue.removeLast(batch.count)
-        let requests = batch.map { request(for: $0) }
-        let regions = redactions
+        // Pull up to `batchSize` newest requests belonging to `targetSourceKey`
+        // so one AVAssetImageGenerator services one file at a time.
+        var batch: [Key] = []
+        batch.reserveCapacity(Self.batchSize)
+        var scanIndex = queue.count - 1
+        while scanIndex >= 0, batch.count < Self.batchSize {
+            if queue[scanIndex].sourceKey == targetSourceKey {
+                batch.append(queue.remove(at: scanIndex))
+            }
+            scanIndex -= 1
+        }
+        guard !batch.isEmpty else { return }
+        let requests = batch.map { request(for: $0, duration: source.duration) }
+        let url = source.url
+        let regions = source.redactions
         let renderer = renderBatch
 
         task = Task { [weak self] in
@@ -303,12 +404,23 @@ final class RecordingTimelineThumbnailStore {
         for key in completedKeys {
             pending.remove(key)
         }
+        var addedAny = false
         for sample in samples {
+            guard sources[sample.key.sourceKey] != nil else { continue }
             retryCounts.removeValue(forKey: sample.key)
-            guard images.updateValue(sample.image, forKey: sample.key) == nil else { continue }
-            insertionOrder.append(sample.key)
+            let cost = Self.byteCost(of: sample.image)
+            let hadPrevious = images.updateValue(sample.image, forKey: sample.key) != nil
+            if let oldCost = imageBytes.updateValue(cost, forKey: sample.key) {
+                cachedBytes = max(0, cachedBytes - oldCost) + cost
+            } else {
+                cachedBytes += cost
+            }
+            if !hadPrevious {
+                insertionOrder.append(sample.key)
+            }
+            addedAny = true
         }
-        for key in completedKeys where images[key] == nil {
+        for key in completedKeys where images[key] == nil && sources[key.sourceKey] != nil {
             let nextAttempt = (retryCounts[key] ?? 0) + 1
             retryCounts[key] = nextAttempt
             if nextAttempt <= Self.maxRetries {
@@ -316,25 +428,49 @@ final class RecordingTimelineThumbnailStore {
             }
         }
         evictIfNeeded()
-        if !samples.isEmpty {
+        if addedAny {
             onChange?()
         }
     }
 
     private func evictIfNeeded() {
-        guard images.count > Self.cacheLimit else { return }
-        var remaining = images.count - Self.cacheLimit
+        func overBudget() -> Bool {
+            images.count > Self.cacheLimit || cachedBytes > byteLimit
+        }
+        guard overBudget() else { return }
+
+        // Pass 1: evict dense detail tiles (level > 0) first so coarse overviews survive.
         var survivors: [Key] = []
         survivors.reserveCapacity(insertionOrder.count)
         for key in insertionOrder {
-            if remaining > 0, key.level > 0 {
+            if overBudget(), key.level > 0 {
                 images.removeValue(forKey: key)
-                remaining -= 1
+                if let cost = imageBytes.removeValue(forKey: key) {
+                    cachedBytes = max(0, cachedBytes - cost)
+                }
             } else {
                 survivors.append(key)
             }
         }
         insertionOrder = survivors
+
+        // Pass 2: if many imported sources still push level-0 overviews above the
+        // shared byte cap, evict oldest level-0 tiles so the cap is never exceeded.
+        if overBudget() {
+            var remaining: [Key] = []
+            remaining.reserveCapacity(insertionOrder.count)
+            for key in insertionOrder {
+                if overBudget() {
+                    images.removeValue(forKey: key)
+                    if let cost = imageBytes.removeValue(forKey: key) {
+                        cachedBytes = max(0, cachedBytes - cost)
+                    }
+                } else {
+                    remaining.append(key)
+                }
+            }
+            insertionOrder = remaining
+        }
     }
 
     nonisolated private static func render(url: URL, requests: [Request], redactions: [RecordingRedaction]) async -> [Sample] {
