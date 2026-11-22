@@ -71,9 +71,9 @@ struct StudioAudioLane: View {
             onScrubbing: onScrubbing,
             actions: StudioBlockLaneActions(
                 select: select,
-                begin: { _ in model.beginAudioClipEdit() },
+                begin: { _, _ in model.beginAudioClipEdit() },
                 edit: apply,
-                end: { kind in
+                end: { _, kind in
                     onSnapGuide(nil)
                     model.endAudioClipEdit(actionName: kind == .move ? "Move Audio" : "Trim Audio")
                 }

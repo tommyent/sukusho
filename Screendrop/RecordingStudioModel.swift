@@ -293,8 +293,6 @@ final class RecordingStudioModel {
     private(set) var missingAudioClipFiles: Set<String> = []
     static let recordingPeaksKey = "\u{1}recording"
     static let soundtrackPeaksKey = "\u{1}soundtrack"
-    /// Why the last media import was turned down, if it was.
-    var mediaImportError: String?
     /// A block is being dragged on the timeline. The preview stays on the
     /// playhead meanwhile instead of chasing the pointer, and audio lanes
     /// keep a spare row to drag into.
@@ -4189,7 +4187,7 @@ final class RecordingStudioModel {
                 }
             }
             if !rejected.isEmpty {
-                self?.mediaImportError = "Couldn't add \(rejected.joined(separator: ", ")). Images and animated GIF, APNG, WebP, or HEIC files can be added."
+                self?.mediaImportError = "Couldn't add \(rejected.joined(separator: ", ")). Images, animated GIF/APNG/WebP/HEIC, and audio files can be added."
             }
         }
     }
@@ -4203,10 +4201,10 @@ final class RecordingStudioModel {
         return await importAudioMedia(url, into: directory, atEditorTime: time) != nil
     }
 
-    /// Seam for audio clip import (`neon-studio-audio` replaces this stub).
+    /// Routes dropped or picked audio files into the project's audio lanes.
     func importAudioMedia(_ url: URL, into directory: URL, atEditorTime time: TimeInterval) async -> TimeInterval? {
-        _ = (url, directory, time)
-        return nil
+        guard RecordingAudioClip.canImport(url) else { return nil }
+        return await importAudio(url, into: directory, atEditorTime: time)
     }
 
     func copyMediaIntoProject(_ url: URL, directory: URL) -> String? {
@@ -4746,7 +4744,6 @@ final class RecordingStudioModel {
             redactions: redactions,
             textOverlays: textOverlays,
             imageOverlays: imageOverlays,
-            mediaDirectory: mediaDirectoryURL,
             ink: showsInk && !inkTimeline.isEmpty ? inkTimeline : nil
         )
     }
@@ -5066,12 +5063,6 @@ final class RecordingStudioModel {
     }
 
     // MARK: - Audio clips
-
-    /// Where imported audio clips are copied; nil for a bare movie,
-    /// which has no project folder to keep them in.
-    var mediaDirectoryURL: URL? {
-        session?.directoryURL.appendingPathComponent("media", isDirectory: true)
-    }
 
     var canImportAudioMedia: Bool { mediaDirectoryURL != nil && isLoaded }
 

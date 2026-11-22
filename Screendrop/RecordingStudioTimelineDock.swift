@@ -295,6 +295,7 @@ struct StudioTimelineEditor: View {
             .onDrop(of: [.fileURL], delegate: StudioMediaDropDelegate(
                 canDrop: model.canImportMedia,
                 time: { scale.time(forX: $0.x + scrollX) },
+                trackAtLocation: { track(atY: $0.y) },
                 onPreview: { preview in
                     if preview != mediaDrop { mediaDrop = preview }
                 },
@@ -420,7 +421,7 @@ struct StudioTimelineEditor: View {
     private func dropHint(for track: StudioTrack) -> String? {
         switch track {
         case .overlay: "Drop to add over the video"
-        case .audio(0): "Drop to add audio"
+        case .audio: "Drop to add audio"
         default: nil
         }
     }
@@ -676,15 +677,15 @@ struct StudioTimelineEditor: View {
         }
     }
 
-    /// One + button that opens into Text, Pixelate/Blur, and Media, then folds
-    /// back once one is picked. Uses a popover when the toolbar is too narrow
-    /// for inline expansion to clear the centered timecode.
+    /// One + button that opens into Text, Pixelate/Blur, Audio, and Media, then
+    /// folds back once one is picked. Uses a popover when the toolbar is too
+    /// narrow for inline expansion to clear the centered timecode.
     @ViewBuilder
     private var addTools: some View {
         let usesPopover = addToolsLayout == .popover
         GlassIconButton(
             systemImage: isAddOpen ? "xmark" : "plus",
-            help: isAddOpen ? "Close" : "Add Text, Pixelate or Media"
+            help: isAddOpen ? "Close" : "Add Text, Pixelate, Audio or Media"
         ) {
             withAnimation(.morphIfAllowed) { isAddOpen.toggle() }
         }
@@ -724,11 +725,24 @@ struct StudioTimelineEditor: View {
         .glassEffectID("pixelate", in: glass)
 
         addTool(
+            "Audio",
+            systemImage: "waveform.badge.plus",
+            help: model.mediaDirectoryURL == nil
+                ? "Save this recording as a project to add audio clips"
+                : "Add Audio at Playhead",
+            labeled: labeled
+        ) {
+            pickAudioFiles()
+        }
+        .disabled(!model.canImportAudioMedia)
+        .glassEffectID("audio", in: glass)
+
+        addTool(
             "Media",
             systemImage: "photo.badge.plus",
             help: model.mediaDirectoryURL == nil
-                ? "Save this recording as a project to add images and GIFs"
-                : "Add Images or Animated GIFs at Playhead",
+                ? "Save this recording as a project to add images, GIFs, or audio"
+                : "Add Images, Animated GIFs, or Audio at Playhead",
             labeled: labeled
         ) {
             pickMedia()
@@ -765,10 +779,9 @@ struct StudioTimelineEditor: View {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
-        // neon-studio-audio adds `.audio` to allowedContentTypes when audio clips land.
-        panel.allowedContentTypes = [.image]
+        panel.allowedContentTypes = [.image] + RecordingAudioFormat.importContentTypes
         panel.prompt = "Add"
-        panel.message = "Images and animated GIF, APNG, WebP, or HEIC files go over the video."
+        panel.message = "Images and animated GIF, APNG, WebP, or HEIC files go over the video; audio files go on the audio lanes."
         let time = model.currentTime
         guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
         model.importMedia(panel.urls, atEditorTime: time)
@@ -1072,11 +1085,11 @@ private struct StudioMediaDrop: Equatable {
 }
 
 /// Takes files from Finder. Images and animated GIF/APNG/WebP/HEIC land on
-/// the Images & Effects track. `neon-studio-audio` extends `dropUpdated` to
-/// also route `.audio` items to its audio track.
+/// the Images & Effects track; audio files land on the audio lanes.
 private struct StudioMediaDropDelegate: DropDelegate {
     let canDrop: Bool
     let time: (CGPoint) -> TimeInterval
+    let trackAtLocation: (CGPoint) -> StudioTrack?
     let onPreview: (StudioMediaDrop?) -> Void
     let onDrop: ([URL], TimeInterval) -> Void
 
@@ -1089,10 +1102,15 @@ private struct StudioMediaDropDelegate: DropDelegate {
             onPreview(nil)
             return DropProposal(operation: .forbidden)
         }
+        let targetAudioTrack: StudioTrack = if case .audio(let lane) = trackAtLocation(info.location) {
+            .audio(lane)
+        } else {
+            .audio(0)
+        }
         var tracks: Set<StudioTrack> = []
         if info.hasItemsConforming(to: [.image]) { tracks.insert(.overlay) }
-        // neon-studio-audio adds `.audio(0)` here when `info.hasItemsConforming(to: [.audio])`.
-        if tracks.isEmpty { tracks = [.overlay] }
+        if info.hasItemsConforming(to: [.audio]) { tracks.insert(targetAudioTrack) }
+        if tracks.isEmpty { tracks = [.overlay, targetAudioTrack] }
         onPreview(StudioMediaDrop(tracks: tracks, time: time(info.location)))
         return DropProposal(operation: .copy)
     }

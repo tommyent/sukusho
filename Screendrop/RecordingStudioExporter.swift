@@ -81,7 +81,6 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
         let redactions: [RecordingRedaction]
         let textOverlays: [RecordingTextOverlay]
         let imageOverlays: [RecordingImageOverlay]
-        let mediaDirectory: URL?
         /// Pen strokes drawn during the take; nil when hidden or none.
         let ink: RecordingInkTimeline?
 
@@ -117,7 +116,6 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             redactions: [RecordingRedaction] = [],
             textOverlays: [RecordingTextOverlay] = [],
             imageOverlays: [RecordingImageOverlay] = [],
-            mediaDirectory: URL? = nil,
             ink: RecordingInkTimeline? = nil
         ) {
             self.screenURL = screenURL
@@ -151,7 +149,6 @@ nonisolated final class RecordingStudioExporter: @unchecked Sendable {
             self.redactions = redactions
             self.textOverlays = textOverlays
             self.imageOverlays = imageOverlays
-            self.mediaDirectory = mediaDirectory
             self.ink = ink
         }
     }

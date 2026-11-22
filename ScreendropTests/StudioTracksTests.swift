@@ -977,19 +977,19 @@ struct StudioTracksTests {
             rowWidth: 0, centeredTransportWidth: 220, leadingToolsWidth: 154
         ) == .popover)
 
-        // At an 890 pt dock (858 pt row inside padding):
+        // At a 960 pt dock (928 pt row inside padding):
         // - Short recording (~220 pt centered transport) fits inline icons beside 154 pt leading tools.
         #expect(StudioAddToolsLayout.forAvailableWidth(
-            rowWidth: 858, centeredTransportWidth: 220, leadingToolsWidth: 154
+            rowWidth: 928, centeredTransportWidth: 220, leadingToolsWidth: 154
         ) == .inlineIcons)
-        // - Hour-long timecode + shuttle badge (~296 pt centered transport) at the exact same 890 pt dock
+        // - Hour-long timecode + shuttle badge (~296 pt centered transport) at the exact same dock width
         //   does not have room for inline expansion, so it stays in a popover instead of colliding.
         #expect(StudioAddToolsLayout.forAvailableWidth(
-            rowWidth: 858, centeredTransportWidth: 296, leadingToolsWidth: 154
+            rowWidth: 928, centeredTransportWidth: 296, leadingToolsWidth: 154
         ) == .popover)
-        // - Wider leading tool cluster (with Snapping/Marker pill) also stays in a popover at 890 pt.
+        // - Wider leading tool cluster also stays in a popover at 928 pt.
         #expect(StudioAddToolsLayout.forAvailableWidth(
-            rowWidth: 858, centeredTransportWidth: 220, leadingToolsWidth: 220
+            rowWidth: 928, centeredTransportWidth: 220, leadingToolsWidth: 220
         ) == .popover)
 
         // Wide enough for inline icons or inline labels even with an hour-long shuttling transport.
@@ -997,7 +997,7 @@ struct StudioTracksTests {
             rowWidth: 1100, centeredTransportWidth: 296, leadingToolsWidth: 154
         ) == .inlineIcons)
         #expect(StudioAddToolsLayout.forAvailableWidth(
-            rowWidth: 1320, centeredTransportWidth: 296, leadingToolsWidth: 154
+            rowWidth: 1460, centeredTransportWidth: 296, leadingToolsWidth: 154
         ) == .inlineLabels)
     }
 
@@ -1410,6 +1410,20 @@ struct StudioTracksTests {
             canDeleteClip: false,
             hasRangeSelection: false
         ) == nil)
+        // Audio clip selection participates in the same selection-clear and shared delete target.
+        let audioID = UUID()
+        #expect(StudioEditing.deleteTarget(
+            selection: .audioClip(audioID),
+            canDeleteClip: false,
+            hasRangeSelection: false
+        ) == .audioClip(audioID))
+        #expect(StudioEditing.selectionAfterClipEdit(
+            current: .audioClip(audioID),
+            nextTimeline: split.timeline,
+            requestedClipID: split.selectedID,
+            selectsClip: true,
+            playheadTime: 4.0
+        ) == .clip(split.selectedID))
     }
 
     @Test func addRedactionKeepsOriginalSourceEndBeforeAndAfterRestoringCut() throws {

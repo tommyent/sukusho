@@ -475,10 +475,10 @@ nonisolated enum StudioAddToolsLayout: Equatable, Sendable {
     case inlineIcons
     case inlineLabels
 
-    /// Width needed for `+` plus the three icon-only add pills and gaps.
-    static let inlineIconsWidth: CGFloat = 148
-    /// Width needed for `+` plus the three labeled add pills and gaps.
-    static let inlineLabelsWidth: CGFloat = 324
+    /// Width needed for `+` plus the four icon-only add pills and gaps.
+    static let inlineIconsWidth: CGFloat = 184
+    /// Width needed for `+` plus the four labeled add pills and gaps.
+    static let inlineLabelsWidth: CGFloat = 408
     /// Minimum breathing room between the rightmost expanded pill and the centered transport.
     static let transportClearance: CGFloat = 12
 

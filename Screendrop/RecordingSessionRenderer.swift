@@ -258,14 +258,13 @@ enum RecordingSessionRenderer {
                 .init(url: session.directoryURL.appendingPathComponent($0.fileName), settings: $0)
             } : nil,
             audioClips: audioClips,
-            mediaDirectory: session.directoryURL.appendingPathComponent("media", isDirectory: true),
+            mediaDirectory: session.mediaDirectoryURL,
             reframe: reframe,
             fitContentAspect: fitContentAspect,
             usesUniformPadding: aspect == .original,
             redactions: document?.redactions ?? [],
             textOverlays: document?.textOverlays ?? [],
             imageOverlays: document?.imageOverlays ?? [],
-            mediaDirectory: session.mediaDirectoryURL,
             ink: document?.showsInk ?? true
                 ? RecordingInkTimeline(strokes: capture.ink, hiding: Set(document?.hiddenInkStrokeIDs ?? []))
                 : nil
