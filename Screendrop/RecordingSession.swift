@@ -186,17 +186,19 @@ nonisolated struct RecordingSession: Sendable, Equatable {
         do {
             return try CaptureManifest.decoder.decode(type, from: data)
         } catch {
-            RecordingSidecarQuarantine.preserve(at: url)
+            _ = try? RecordingSidecarQuarantine.preserve(at: url)
             return nil
         }
     }
 
-    private func quarantineIfUnreadable<T: Decodable>(_ type: T.Type, at url: URL) {
-        var info = stat()
-        guard lstat(url.path, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG,
-              let data = try? Data(contentsOf: url) else { return }
-        if (try? CaptureManifest.decoder.decode(type, from: data)) == nil {
-            RecordingSidecarQuarantine.preserve(at: url)
+    private func quarantineIfUnreadable<T: Decodable>(
+        _ type: T.Type,
+        at url: URL,
+        validate: ((T) throws -> Void)? = nil
+    ) throws {
+        try RecordingSidecarQuarantine.preserveIfInvalid(at: url) { data in
+            let decoded = try CaptureManifest.decoder.decode(type, from: data)
+            try validate?(decoded)
         }
     }
 
@@ -210,7 +212,7 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     }
 
     func writeCaptureManifest(_ manifest: CaptureManifest) throws {
-        quarantineIfUnreadable(CaptureManifest.self, at: captureManifestURL)
+        try quarantineIfUnreadable(CaptureManifest.self, at: captureManifestURL)
         let data = try CaptureManifest.encoder.encode(manifest)
         try data.write(to: captureManifestURL, options: .atomic)
     }
@@ -225,7 +227,9 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     }
 
     func writeEditDocument(_ document: RecordingEditDocument) throws {
-        quarantineIfUnreadable(RecordingEditDocument.self, at: editDocumentURL)
+        try quarantineIfUnreadable(RecordingEditDocument.self, at: editDocumentURL) {
+            for redaction in $0.redactions { try redaction.validate() }
+        }
         let data = try CaptureManifest.encoder.encode(document)
         try data.write(to: editDocumentURL, options: .atomic)
     }
@@ -237,7 +241,9 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     }
 
     func writeDraftDocument(_ document: RecordingEditDocument) throws {
-        quarantineIfUnreadable(RecordingEditDocument.self, at: draftDocumentURL)
+        try quarantineIfUnreadable(RecordingEditDocument.self, at: draftDocumentURL) {
+            for redaction in $0.redactions { try redaction.validate() }
+        }
         let data = try CaptureManifest.encoder.encode(document)
         try data.write(to: draftDocumentURL, options: .atomic)
     }
@@ -280,7 +286,7 @@ nonisolated struct RecordingSession: Sendable, Equatable {
         do {
             return try CaptureManifest.decoder.decode(RecordingEditDocument.self, from: Data(contentsOf: url))
         } catch {
-            RecordingSidecarQuarantine.preserve(at: url)
+            _ = try? RecordingSidecarQuarantine.preserve(at: url)
             throw error
         }
     }
@@ -299,7 +305,7 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     }
 
     func writeProjectMetadata(_ metadata: RecordingProjectMetadata) throws {
-        quarantineIfUnreadable(RecordingProjectMetadata.self, at: projectMetadataURL)
+        try quarantineIfUnreadable(RecordingProjectMetadata.self, at: projectMetadataURL)
         let data = try CaptureManifest.encoder.encode(metadata)
         try data.write(to: projectMetadataURL, options: .atomic)
     }
@@ -307,11 +313,11 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     /// Read-modify-write so touching one field never drops the others.
     func updateProjectMetadata(_ mutate: (inout RecordingProjectMetadata) -> Void) throws {
         var metadata = RecordingProjectMetadata()
-        if FileManager.default.fileExists(atPath: projectMetadataURL.path) {
+        if let resolved = try RecordingPackageMedia.resolveOptionalPackageFile(named: Self.projectMetadataFileName, in: directoryURL) {
             do {
-                metadata = try CaptureManifest.decoder.decode(RecordingProjectMetadata.self, from: Data(contentsOf: projectMetadataURL))
+                metadata = try CaptureManifest.decoder.decode(RecordingProjectMetadata.self, from: Data(contentsOf: resolved))
             } catch {
-                RecordingSidecarQuarantine.preserve(at: projectMetadataURL)
+                _ = try? RecordingSidecarQuarantine.preserve(at: resolved)
                 throw error
             }
         }

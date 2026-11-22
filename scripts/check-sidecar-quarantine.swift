@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 // Run with check-editor-idle-save.py against the actual app sources and an isolated home.
@@ -84,6 +85,37 @@ struct SidecarQuarantineChecks {
         let afterValidSave = try Set(FileManager.default.contentsOfDirectory(atPath: session.directoryURL.path))
         try check(beforeValidSave == afterValidSave, "Valid overwrites created spurious quarantine files")
 
-        print("CHECK: unreadable edit.json, edit.draft.json, capture.json, and project.json are quarantined without clobbering")
+        // 5. Saving over an oversized (> 64 MiB) invalid edit.json aborts without overwriting it.
+        let oversizedSession = try RecordingSessionStore.createSession()
+        try Data("{".utf8).write(to: oversizedSession.editDocumentURL)
+        let handle = try FileHandle(forWritingTo: oversizedSession.editDocumentURL)
+        try handle.truncate(atOffset: UInt64(RecordingSidecarQuarantine.maxBytes + 1))
+        try handle.close()
+        var savedOversized = false
+        do { try oversizedSession.writeEditDocument(replacement); savedOversized = true } catch {}
+        try check(!savedOversized, "Save over oversized invalid edit.json should abort")
+
+        // 6. Pre-existing truncated/mismatched quarantine copy aborts overwrite and preserves original.
+        let mismatchSession = try RecordingSessionStore.createSession()
+        let badBytes = Data("{invalid".utf8)
+        try badBytes.write(to: mismatchSession.editDocumentURL)
+        let backupPath = try RecordingSidecarQuarantine.preserve(at: mismatchSession.editDocumentURL)
+        try Data("partial".utf8).write(to: backupPath)
+        var savedMismatch = false
+        do { try mismatchSession.writeEditDocument(replacement); savedMismatch = true } catch {}
+        try check(!savedMismatch && (try Data(contentsOf: mismatchSession.editDocumentURL) == badBytes),
+                  "Mismatched quarantine copy allowed original edit.json to be overwritten")
+
+        // 7. Decoded but semantically invalid edit (bad redaction rect) is quarantined before overwrite.
+        let invalidMaskSession = try RecordingSessionStore.createSession()
+        var invalidDoc = replacement
+        invalidDoc.redactions = [RecordingRedaction(start: 0, end: 2, rect: CGRect(x: -0.1, y: 0, width: 0.5, height: 0.5))]
+        try invalidMaskSession.writeEditDocument(invalidDoc)
+        try invalidMaskSession.writeEditDocument(replacement)
+        let maskBackups = try FileManager.default.contentsOfDirectory(atPath: invalidMaskSession.directoryURL.path)
+            .filter { $0.hasPrefix("edit.json.unreadable-") }
+        try check(maskBackups.count == 1, "Semantically invalid edit.json was not quarantined before overwrite")
+
+        print("CHECK: unreadable, oversized, mismatched, and semantically invalid sidecars are protected before overwrite")
     }
 }

@@ -140,26 +140,41 @@ enum RecordingLibraryMark {
     static func change(at url: URL, from expected: Date?, to newDate: Date?, removeWhenEmpty: Bool = false) throws -> Bool {
         var project: [String: Any]
         var original: stat?
+        var originalData: Data?
         do {
-            let data = try Data(contentsOf: url)
+            let data = try RecordingSidecarQuarantine.readBounded(at: url)
+            originalData = data
             guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                _ = try? RecordingSidecarQuarantine.preserve(at: url)
                 throw CocoaError(.fileReadCorruptFile)
             }
             project = object
             var attributes = stat()
-            guard stat(url.path, &attributes) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
+            guard lstat(url.path, &attributes) == 0 else { throw POSIXError(.init(rawValue: errno) ?? .EIO) }
             original = attributes
-        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+        } catch RecordingSidecarQuarantine.QuarantineError.missingSourceFile {
             guard newDate != nil else { return false }
             project = [:]
         }
         let formatter = ISO8601DateFormatter()
         // Studio writes whole seconds. An explicitly different project mark belongs to another save.
         if let value = project["librarySavedAt"] {
-            guard let stamp = value as? String else { throw CocoaError(.fileReadCorruptFile) }
+            guard let stamp = value as? String else {
+                _ = try? RecordingSidecarQuarantine.preserve(at: url)
+                throw CocoaError(.fileReadCorruptFile)
+            }
             guard let expected, stamp == formatter.string(from: expected) else { return false }
         } else if expected != nil { return false }
         project["librarySavedAt"] = newDate.map { formatter.string(from: $0) }
+        // Quarantine before modifying if the typed RecordingProjectMetadata decoder rejects the file;
+        // abort the write if preservation cannot be verified.
+        if originalData != nil {
+            try RecordingSidecarQuarantine.preserveIfInvalid(at: url) { data in
+                let decoder = JSONDecoder()
+                decoder.dateDecodingStrategy = .iso8601
+                _ = try decoder.decode(RecordingProjectMetadata.self, from: data)
+            }
+        }
         if removeWhenEmpty && project.isEmpty {
             try FileManager.default.removeItem(at: url)
             return true
