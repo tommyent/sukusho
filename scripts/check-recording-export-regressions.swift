@@ -2047,10 +2047,22 @@ struct RecordingExportRegressionChecks {
             let session = RecordingSession(directoryURL: directory.appendingPathComponent("conflict-revert-\(revision).sukushorec"))
             try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
             try await movie(at: session.screenURL)
-            var saved = RecordingEditDocument(style: .init(), zoomEnabled: false, zoomCues: [])
+            try FileManager.default.createDirectory(at: session.mediaDirectoryURL, withIntermediateDirectories: false)
+            let savedClip = "\(UUID()).mov", draftClip = "\(UUID()).mov", orphan = "\(UUID()).mov"
+            for name in [savedClip, draftClip, orphan] {
+                try FileManager.default.copyItem(at: session.screenURL, to: session.mediaDirectoryURL.appendingPathComponent(name))
+            }
+            func clipExists(_ name: String) -> Bool {
+                FileManager.default.fileExists(atPath: session.mediaDirectoryURL.appendingPathComponent(name).path)
+            }
+            var saved = RecordingEditDocument(style: .init(), zoomEnabled: false, zoomCues: [], videoOverlays: [
+                RecordingVideoOverlay(fileName: savedClip, displayName: "PiP", start: 0, fileDuration: 2)
+            ])
             saved.revision = revision
             var draft = saved
             draft.redactions = [mask]
+            draft.clips = [RecordingClipSegment(sourceStart: 0, sourceEnd: 2),
+                           RecordingClipSegment(sourceStart: 0, sourceEnd: 2, mediaFileName: draftClip, sourceDuration: 2)]
             func bytes(_ document: RecordingEditDocument) throws -> Data {
                 var json = try JSONSerialization.jsonObject(with: CaptureManifest.encoder.encode(document)) as! [String: Any]
                 if revision == 0 { json.removeValue(forKey: "revision") }
@@ -2080,12 +2092,20 @@ struct RecordingExportRegressionChecks {
             try check(!FileManager.default.fileExists(atPath: session.editDocumentURL.path)
                       && !FileManager.default.fileExists(atPath: session.draftDocumentURL.path),
                       "Revert to Original left a conflicting sidecar")
+            let copies = try FileManager.default.contentsOfDirectory(atPath: session.directoryURL.path)
+                .filter { $0.contains(".unreadable-") }
+                .map { try Data(contentsOf: session.directoryURL.appendingPathComponent($0)) }
+            try check(copies.contains(savedBytes) && copies.contains(draftBytes), "Revert to Original kept no copy of a conflicting edit")
+            try check(clipExists(savedClip) && clipExists(draftClip) && !clipExists(orphan),
+                      "Revert dropped a set-aside edit's clip or kept an unreferenced one")
             let model = RecordingStudioModel(url: session.directoryURL)
             await model.load()
             defer { model.teardown() }
             try check(model.isLoaded && model.redactions.isEmpty, "The reverted recording did not open in Studio")
+            model.teardown()
+            try check(clipExists(savedClip) && clipExists(draftClip), "Closing Studio swept a set-aside edit's clip")
         }
-        print("PASS: Revert to Original resets a readable revision conflict and still refuses unreadable or newer-format drafts")
+        print("PASS: Revert to Original sets a readable revision conflict aside with its clips and still refuses unreadable or newer-format drafts")
     }
 
     static func rolledBackRedactionBlocksDelivery(in directory: URL) async throws {

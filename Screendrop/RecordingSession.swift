@@ -366,10 +366,12 @@ nonisolated struct RecordingSession: Sendable, Equatable {
         let active = isConflict ? versions.editURL
             : try RecordingPackageMedia.activeEditSidecar(draftURL: versions.draftURL, editURL: versions.editURL)
         let sidecars = [versions.editURL, versions.draftURL].compactMap { $0 }
+        // Neither edit of a conflict is known to be the stale one, so both stay aside, with their clips.
+        if isConflict { for sidecar in sidecars { try RecordingSidecarQuarantine.preserve(at: sidecar) } }
         // Keep the active edit in place until any lower revision is gone.
         try ScreenshotEditFileTransaction.apply(replacements: [], removing: sidecars.filter { $0 != active } + [active].compactMap { $0 })
         removeFinalVideos()
-        try removeUnreferencedMedia(keeping: snapshots)
+        try removeUnreferencedMedia(keeping: snapshots + setAsideEdits())
     }
 
     func removeUnreferencedMedia() throws {
@@ -377,7 +379,16 @@ nonisolated struct RecordingSession: Sendable, Equatable {
         let edits = try [sidecars.saved, sidecars.draft].compactMap { data in
             try data.map { try CaptureManifest.decoder.decode(RecordingEditDocument.self, from: $0) }
         }
-        try removeUnreferencedMedia(keeping: edits + snapshotDocumentsForCleanup())
+        try removeUnreferencedMedia(keeping: edits + snapshotDocumentsForCleanup() + setAsideEdits())
+    }
+
+    /// Edits copied aside (`<sidecar>.unreadable-<hash>`) that still decode keep their clips, so a copy can be restored.
+    private func setAsideEdits() -> [RecordingEditDocument] {
+        let prefixes = [Self.editDocumentFileName, Self.draftDocumentFileName].map { $0 + ".unreadable-" }
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: directoryURL.path)) ?? []
+        return names.filter { name in prefixes.contains { name.hasPrefix($0) } }
+            .compactMap { RecordingPackageMedia.resolvePackageFile(named: $0, in: directoryURL) }
+            .compactMap { try? CaptureManifest.decoder.decode(RecordingEditDocument.self, from: Data(contentsOf: $0)) }
     }
 
     private func snapshotDocumentsForCleanup() throws -> [RecordingEditDocument] {
