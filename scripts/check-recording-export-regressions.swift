@@ -1808,6 +1808,71 @@ struct RecordingExportRegressionChecks {
         print("PASS: legacy recording wallpaper moves into the package on save, survives cleanup and resolves after rename")
     }
 
+    static func revertMediaCleanup(in directory: URL) throws {
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("revert-media.sukushorec"))
+        try FileManager.default.createDirectory(at: session.mediaDirectoryURL, withIntermediateDirectories: true)
+        let bytes = Data("test media".utf8)
+        let isolated = session.directoryURL.appendingPathComponent(RecordingVoiceIsolation.fileName)
+        let clip = session.mediaDirectoryURL.appendingPathComponent("\(UUID()).mov")
+        let audio = session.mediaDirectoryURL.appendingPathComponent("\(UUID()).wav")
+        let kept = session.mediaDirectoryURL.appendingPathComponent("\(UUID()).png")
+        for url in [isolated, clip, audio, session.screenURL] { try bytes.write(to: url) }
+        var imported = RecordingClipSegment(sourceStart: 0, sourceEnd: 2)
+        imported.mediaFileName = clip.lastPathComponent
+        imported.sourceDuration = 2
+        var saved = RecordingEditDocument(style: .init(), zoomEnabled: false, zoomCues: [],
+                                          clipTimeline: RecordingClipTimeline(segments: [imported]), isolateVoice: true)
+        try session.writeEditDocument(saved)
+        try session.removeUnreferencedMedia()
+        try check(FileManager.default.fileExists(atPath: isolated.path) && !FileManager.default.fileExists(atPath: audio.path),
+                  "The sweep dropped referenced isolation or kept an orphaned audio file")
+        try audioTone(at: audio, frequency: 400)
+        try bytes.write(to: kept)
+        let store = CaptureSessionSnapshots(directory: session.sessionSnapshotsURL)
+        saved.clips = nil
+        saved.isolateVoice = false
+        saved.style.background = .customWallpaper(path: "media/" + kept.lastPathComponent)
+        var future = saved
+        future.formatVersion = 99
+        let entry = try store.keep(document: CaptureSessionSnapshots.encode(future), openedAt: Date())[0]
+        var refused = false
+        do { try session.removeEdits() } catch { refused = true }
+        try check(refused && session.hasSavedProject && FileManager.default.fileExists(atPath: clip.path),
+                  "Revert deleted assets or edits despite an unknown snapshot")
+        let snapshotURL = session.sessionSnapshotsURL.appendingPathComponent(entry.id.uuidString).appendingPathComponent("document.json")
+        try CaptureSessionSnapshots.encode(saved).write(to: snapshotURL, options: .atomic)
+        try session.removeEdits()
+        let leftovers = [session.editDocumentURL, clip, audio, isolated].filter {
+            FileManager.default.fileExists(atPath: $0.path)
+        }.map(\.lastPathComponent)
+        let missing = [kept, session.screenURL, snapshotURL].filter {
+            !FileManager.default.fileExists(atPath: $0.path)
+        }.map(\.lastPathComponent)
+        try check(leftovers.isEmpty && missing.isEmpty, "Revert leftovers: \(leftovers), missing preserved files: \(missing)")
+        print("PASS: Revert sweeps unused imports and isolated mic, preserves snapshot assets, and stops on unknown snapshots")
+    }
+
+    static func teardownReleasesUndoMedia(in directory: URL) async throws {
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("undo-media.sukushorec"))
+        try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
+        try await movie(at: session.screenURL)
+        let source = directory.appendingPathComponent("undo-source.wav")
+        try audioTone(at: source, frequency: 440)
+        let model = RecordingStudioModel(url: session.directoryURL)
+        await model.load()
+        defer { model.teardown() }
+        _ = await model.importAudioFile(source, atEditorTime: 0)
+        guard let clip = model.audioClips.first else { throw Failure(description: "Audio fixture did not import") }
+        let imported = session.mediaDirectoryURL.appendingPathComponent(clip.fileName)
+        model.removeAudioClip(id: clip.id)
+        try check(model.audioClips.isEmpty && FileManager.default.fileExists(atPath: imported.path),
+                  "Audio removed during Studio should remain available for undo")
+        model.teardown()
+        try check(!FileManager.default.fileExists(atPath: imported.path) && FileManager.default.fileExists(atPath: source.path),
+                  "Studio teardown retained the undo-only import or changed its external source")
+        print("PASS: Studio teardown releases undo-only recording media")
+    }
+
     static func main() async throws {
         setbuf(stdout, nil)
         guard let root = ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] else {
@@ -1834,6 +1899,8 @@ struct RecordingExportRegressionChecks {
         try await canonicalStudioRegistry(in: directory)
         try await importedEvidence(in: directory)
         try await packageWallpaper(in: directory)
+        try revertMediaCleanup(in: directory)
+        try await teardownReleasesUndoMedia(in: directory)
         try await chapterMarkerDrag(in: directory)
         try await chapterAtPlayhead(in: directory)
         try await chapterRenameUndo(in: directory)

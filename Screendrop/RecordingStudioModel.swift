@@ -1367,7 +1367,7 @@ final class RecordingStudioModel {
         documentRestoreTask = nil
         documentRestoreID = nil
         // Persist only a fully loaded document, before releasing its data.
-        if isLoaded { writeDraftNow() }
+        let didPersistDraft = isLoaded && writeDraftNow()
         isLoaded = false
         StudioProjectRegistry.shared.unregister(self)
         exportTask?.cancel()
@@ -1416,7 +1416,10 @@ final class RecordingStudioModel {
         noticeTask?.cancel()
         noticeTask = nil
         notice = nil
-        if let session, !StudioProjectRegistry.shared.hasLoadedEditor(for: sessionURL) { removeUnusedReplacementAudio(in: session) }
+        undoReferencedFiles.removeAll()
+        if didPersistDraft, let session, !StudioProjectRegistry.shared.hasLoadedEditor(for: sessionURL) {
+            try? session.removeUnreferencedMedia()
+        }
         exportTask = nil
         audioExportTask = nil
         replacementAudioTask = nil
@@ -1463,7 +1466,6 @@ final class RecordingStudioModel {
         replacementAudioSync = nil
         replacementAudioReference = nil
         externalPinnedReplacementURLs.removeAll()
-        undoReferencedFiles.removeAll()
         soundtrackOffsetTask?.cancel()
         soundtrackOffsetTask = nil
         soundtrackOffsetSnapshot = nil
@@ -1497,6 +1499,8 @@ final class RecordingStudioModel {
         rangeSelection = nil
         markers.removeAll()
         lastSavedDocument = nil
+        observedEditSidecars = nil
+        rejectedRedactionDraftError = nil
         pointerCapture = PointerCaptureFile()
         pointerTimeline = .empty
         keystrokeTimeline = .empty
@@ -7581,84 +7585,6 @@ final class RecordingStudioModel {
             loadError = "Could not update the recording timeline: \(error.localizedDescription)"
         }
         scheduleProjectSave()
-    }
-
-    /// Wait until close to collect old imports; the saved project and its
-    /// working draft may still need different soundtracks.
-    private func removeUnusedReplacementAudio(in session: RecordingSession) {
-        guard !isReadOnlyNewerFormat else { return }
-        if let savedVersion = RecordingPackageMedia.readFormatVersion(at: session.editDocumentURL),
-           savedVersion > RecordingEditDocument.currentFormatVersion {
-            return
-        }
-        if let draftVersion = RecordingPackageMedia.readFormatVersion(at: session.draftDocumentURL),
-           draftVersion > RecordingEditDocument.currentFormatVersion {
-            return
-        }
-        let savedDocument = session.loadEditDocument()
-        let draftDocument = session.loadDraftDocument()
-        // A document that exists but cannot be read is not evidence that its
-        // soundtrack is unused. Leave the files alone in that case.
-        guard !session.hasSavedProject || savedDocument != nil,
-              !FileManager.default.fileExists(atPath: session.draftDocumentURL.path)
-                || draftDocument != nil else { return }
-        let store = CaptureSessionSnapshots(directory: session.sessionSnapshotsURL)
-        let keptDocuments: [RecordingEditDocument]
-        do {
-            keptDocuments = try store.strictEntries().map { entry in
-                try RecordingSession.decodeRestorableSnapshot(store.read(entry).document)
-            }
-        } catch { return } // An unreadable or newer-format snapshot may still reference media in unknown fields.
-        let referencedMusic = Set([savedDocument?.backgroundMusic?.fileName, draftDocument?.backgroundMusic?.fileName, lastSavedDocument?.backgroundMusic?.fileName, backgroundMusicSettings?.fileName].compactMap { $0 } + keptDocuments.compactMap { $0.backgroundMusic?.fileName })
-        let allDocuments = [savedDocument, draftDocument, lastSavedDocument].compactMap { $0 } + keptDocuments
-        var pinnedClipFiles: [String] = []
-        for document in allDocuments {
-            for clip in document.audioClips ?? [] where clip.source == .replacement && !clip.fileName.isEmpty {
-                pinnedClipFiles.append(clip.fileName)
-            }
-            for hidden in document.hiddenLinkedAudio ?? [] where hidden.clip.source == .replacement && !hidden.clip.fileName.isEmpty {
-                pinnedClipFiles.append(hidden.clip.fileName)
-            }
-        }
-        for clip in audioClips where clip.source == .replacement && !clip.fileName.isEmpty {
-            pinnedClipFiles.append(clip.fileName)
-        }
-        for hidden in hiddenLinkedAudio where hidden.clip.source == .replacement && !hidden.clip.fileName.isEmpty {
-            pinnedClipFiles.append(hidden.clip.fileName)
-        }
-        let referencedNames = Set([
-            savedDocument?.replacementAudioFileName,
-            draftDocument?.replacementAudioFileName,
-            lastSavedDocument?.replacementAudioFileName,
-            replacementAudio?.url.lastPathComponent,
-            replacementAudioReference?.fileName
-        ].compactMap { $0 } + keptDocuments.compactMap(\.replacementAudioFileName) + pinnedClipFiles + Array(undoReferencedFiles))
-        let names = (try? FileManager.default.contentsOfDirectory(
-            atPath: session.directoryURL.path
-        )) ?? []
-        for name in names
-        where (name.hasPrefix("\(RecordingSession.replacementAudioBaseName).") && !referencedNames.contains(name))
-            || (name.hasPrefix("\(RecordingBackgroundMusic.baseName).") && !referencedMusic.contains(name)) {
-            try? FileManager.default.removeItem(
-                at: session.directoryURL.appendingPathComponent(name)
-            )
-        }
-        let mediaDirectory = session.mediaDirectoryURL
-        var referencedMedia = Set<String>(undoReferencedFiles)
-        for document in allDocuments {
-            if let name = document.style.wallpaperMediaName { referencedMedia.insert(name) }
-            referencedMedia.formUnion((document.clips ?? []).compactMap(\.mediaFileName))
-            referencedMedia.formUnion((document.videoOverlays ?? []).map(\.fileName))
-            referencedMedia.formUnion((document.imageOverlays ?? []).map(\.fileName))
-            referencedMedia.formUnion((document.audioClips ?? []).filter { $0.source == .file }.map(\.fileName))
-            referencedMedia.formUnion((document.hiddenLinkedAudio ?? []).filter { $0.clip.source == .file }.map(\.clip.fileName))
-        }
-        referencedMedia.formUnion(clipTimeline.segments.compactMap(\.mediaFileName))
-        referencedMedia.formUnion(videoOverlays.map(\.fileName))
-        referencedMedia.formUnion(imageOverlays.map(\.fileName))
-        referencedMedia.formUnion(audioClips.filter { $0.source == .file }.map(\.fileName))
-        referencedMedia.formUnion(hiddenLinkedAudio.filter { $0.clip.source == .file }.map(\.clip.fileName))
-        RecordingOverlayMedia.cleanupUnreferencedMedia(in: mediaDirectory, referenced: referencedMedia)
     }
 
     // MARK: - Share to cloud

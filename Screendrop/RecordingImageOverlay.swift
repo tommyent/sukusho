@@ -605,17 +605,15 @@ nonisolated enum RecordingOverlayMedia {
         }
     }
 
-    /// Single owned-media sweep removing unreferenced UUID-named images and
-    /// movies from `mediaDirectory` without following symlinks or touching
-    /// audio or non-UUID files.
+    /// Collects unreferenced recording imports without following symlinks or touching non-UUID files.
     static func cleanupUnreferencedMedia(in mediaDirectory: URL, referenced: Set<String>) {
         guard let realDirectory = resolveRealMediaDirectory(mediaDirectory) else { return }
         let names = (try? FileManager.default.contentsOfDirectory(atPath: realDirectory.path)) ?? []
         for name in names where isOwnedImportFileName(name) && !referenced.contains(name) {
             guard let fileURL = resolveRegularFile(named: name, in: realDirectory) else { continue }
             let isImage = RecordingOverlayImage.canImport(fileURL)
-            let isMovie = UTType(filenameExtension: fileURL.pathExtension)?.conforms(to: .movie) == true
-            guard isImage || isMovie else { continue }
+            let type = UTType(filenameExtension: fileURL.pathExtension)
+            guard isImage || type?.conforms(to: .movie) == true || type?.conforms(to: .audio) == true else { continue }
             try? FileManager.default.removeItem(at: fileURL)
         }
     }

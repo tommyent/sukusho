@@ -230,7 +230,10 @@ extension CaptureLibraryModel {
         guard let item = pendingRevert else { return }
         pendingRevert = nil
         run("Reverting…") {
-            guard !CaptureLibraryOpenEditors.isEditing(item.ownedURL) else {
+            let recordingIsOpen = item.session.map {
+                StudioProjectRegistry.shared.hasLoadedEditor(for: $0.directoryURL)
+            } ?? false
+            guard !recordingIsOpen, !CaptureLibraryOpenEditors.isEditing(item.ownedURL) else {
                 throw CocoaError(.fileWriteNoPermission, userInfo: [
                     NSLocalizedDescriptionKey: "Close the capture's editor before reverting it."
                 ])

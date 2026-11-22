@@ -343,11 +343,73 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     /// render of them, so it opens as a new recording does. The name and
     /// tags stay.
     func removeEdits() throws {
-        if FileManager.default.fileExists(atPath: editDocumentURL.path) {
-            try FileManager.default.removeItem(at: editDocumentURL)
-        }
-        removeDraftDocument()
+        let versions = try validateEditVersionsForRendering()
+        _ = try editDocumentForRendering()
+        let snapshots = try snapshotDocumentsForCleanup()
+        let active = try RecordingPackageMedia.activeEditSidecar(draftURL: versions.draftURL, editURL: versions.editURL)
+        let sidecars = [versions.editURL, versions.draftURL].compactMap { $0 }
+        // Keep the active edit in place until any lower revision is gone.
+        try ScreenshotEditFileTransaction.apply(replacements: [], removing: sidecars.filter { $0 != active } + [active].compactMap { $0 })
         removeFinalVideos()
+        try removeUnreferencedMedia(keeping: snapshots)
+    }
+
+    func removeUnreferencedMedia() throws {
+        let sidecars = try readEditSidecars()
+        let edits = try [sidecars.saved, sidecars.draft].compactMap { data in
+            try data.map { try CaptureManifest.decoder.decode(RecordingEditDocument.self, from: $0) }
+        }
+        try removeUnreferencedMedia(keeping: edits + snapshotDocumentsForCleanup())
+    }
+
+    private func snapshotDocumentsForCleanup() throws -> [RecordingEditDocument] {
+        var info = stat()
+        guard lstat(sessionSnapshotsURL.path, &info) == 0 else {
+            if errno == ENOENT { return [] }
+            throw CocoaError(.fileReadUnknown)
+        }
+        guard (info.st_mode & S_IFMT) == S_IFDIR else {
+            throw RecordingPackageMedia.ValidationError.unsafeFile("sessions")
+        }
+        let store = CaptureSessionSnapshots(directory: sessionSnapshotsURL)
+        return try store.strictEntries().map { entry in
+            let folder = sessionSnapshotsURL.appendingPathComponent(entry.id.uuidString, isDirectory: true)
+            guard RecordingOverlayMedia.isRealDirectoryNoFollow(at: folder),
+                  RecordingOverlayMedia.isRegularFileNoFollow(at: folder.appendingPathComponent("session.json")),
+                  RecordingOverlayMedia.isRegularFileNoFollow(at: folder.appendingPathComponent("document.json")) else {
+                throw RecordingPackageMedia.ValidationError.unsafeFile("sessions/\(entry.id)")
+            }
+            return try Self.decodeRestorableSnapshot(store.read(entry).document)
+        }
+    }
+
+    private func removeUnreferencedMedia(keeping documents: [RecordingEditDocument]) throws {
+        let manager = FileManager.default
+        var pinnedRootNames = Set(documents.compactMap(\.replacementAudioFileName)
+                                + documents.compactMap { $0.backgroundMusic?.fileName })
+        var pinnedMediaNames = Set<String>()
+        for document in documents {
+            let audio = (document.audioClips ?? []) + (document.hiddenLinkedAudio ?? []).map(\.clip)
+            pinnedRootNames.formUnion(audio.filter { $0.source == .replacement }.map(\.fileName))
+            pinnedMediaNames.formUnion(audio.filter { $0.source == .file }.map(\.fileName))
+            pinnedMediaNames.formUnion((document.clips ?? []).compactMap(\.mediaFileName))
+            pinnedMediaNames.formUnion((document.videoOverlays ?? []).map(\.fileName))
+            pinnedMediaNames.formUnion((document.imageOverlays ?? []).map(\.fileName))
+            if let name = document.style.wallpaperMediaName { pinnedMediaNames.insert(name) }
+        }
+        if documents.contains(where: \.isolateVoice) {
+            pinnedRootNames.insert(RecordingVoiceIsolation.fileName)
+        }
+        let names = try manager.contentsOfDirectory(atPath: directoryURL.path)
+        for name in names where !pinnedRootNames.contains(name) {
+            if name.hasPrefix("\(Self.replacementAudioBaseName).")
+                || name.hasPrefix("\(RecordingBackgroundMusic.baseName).")
+                || name == RecordingVoiceIsolation.fileName,
+               let file = RecordingPackageMedia.resolvePackageFile(named: name, in: directoryURL) {
+                try? manager.removeItem(at: file)
+            }
+        }
+        RecordingOverlayMedia.cleanupUnreferencedMedia(in: mediaDirectoryURL, referenced: pinnedMediaNames)
     }
 
     /// What the editor should actually open: the autosaved draft when one
