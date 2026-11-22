@@ -317,20 +317,26 @@ struct StudioTimelineEditor: View {
                 set: { if !$0 { model.cancelPendingRecordingImport() } }
             ),
             presenting: model.pendingRecordingOverlayImport
-        ) { _ in
+        ) { pending in
             Button("Raw Recording") {
                 model.resolvePendingRecordingImport(mode: .raw)
             }
             .keyboardShortcut(.defaultAction)
-            Button("Finished Movie") {
-                model.resolvePendingRecordingImport(mode: .finished)
+            if pending.canImportFinished {
+                Button("Finished Movie") {
+                    model.resolvePendingRecordingImport(mode: .finished)
+                }
             }
             Button("Cancel", role: .cancel) {
                 model.cancelPendingRecordingImport()
             }
         } message: { pending in
             let names = pending.recordingNames.joined(separator: ", ")
-            Text("Raw recording adds only the screen video of \(names) in this project's framing. Finished movie renders its zooms, camera, and overlays first.")
+            if pending.canImportFinished {
+                Text("Raw recording adds only the screen video of \(names) in this project's framing. Finished movie renders its zooms, camera, and overlays first.")
+            } else {
+                Text("Raw recording adds only the screen video of \(names) in this project's framing. Finished movie isn't available because one of the package's render inputs couldn't be verified.")
+            }
         }
         .alert(
             "Some files weren't added",

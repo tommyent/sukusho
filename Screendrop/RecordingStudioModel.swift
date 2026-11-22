@@ -66,6 +66,7 @@ struct PendingRecordingOverlayImport: Identifiable, Equatable {
     let urls: [URL]
     let editorTime: TimeInterval
     let recordingNames: [String]
+    let canImportFinished: Bool
 }
 
 @MainActor
@@ -4617,7 +4618,8 @@ final class RecordingStudioModel {
 
     /// Imports video files or Sukusho `.sukushorec` recordings onto the layered
     /// video overlay lane. Refuses importing the currently open recording into
-    /// itself and validates `.sukushorec` packages before offering Raw vs Finished.
+    /// itself, validates `.sukushorec` packages before offering Raw vs Finished,
+    /// and never reads `project.json` from unvalidated or rejected packages.
     func importVideoOverlays(_ urls: [URL], atEditorTime time: TimeInterval) {
         guard mediaDirectoryURL != nil, isLoaded, !urls.isEmpty else { return }
         mediaImportError = nil
@@ -4625,16 +4627,34 @@ final class RecordingStudioModel {
         var accepted: [URL] = []
         var rejectedSelf = false
         var rejectedPackages: [String] = []
+        var recordingNames: [String] = []
+        var allFinishedValid = true
         for url in urls {
             if RecordingSession.isSessionDirectory(url) {
                 if RecordingVideoOverlayMedia.isSelfRecording(url, openSessionURL: sessionURL) {
                     rejectedSelf = true
                     continue
                 }
-                guard RecordingVideoOverlayMedia.validateRecordingPackage(at: url) else {
-                    rejectedPackages.append(RecordingSession(directoryURL: url).displayName)
+                let fallbackName = url.deletingPathExtension().lastPathComponent
+                guard (try? RecordingPackageMedia.validateRawScreenInput(in: url)) != nil else {
+                    rejectedPackages.append(fallbackName)
                     continue
                 }
+                let finishedValid = (try? RecordingPackageMedia.validateRenderInputs(in: url)) != nil
+                if !finishedValid {
+                    allFinishedValid = false
+                }
+                let safeDisplayName: String
+                if finishedValid
+                    || (try? RecordingPackageMedia.resolveOptionalPackageFile(
+                        named: RecordingSession.projectMetadataFileName,
+                        in: url
+                    )) != nil {
+                    safeDisplayName = RecordingSession(directoryURL: url).displayName
+                } else {
+                    safeDisplayName = fallbackName
+                }
+                recordingNames.append(safeDisplayName)
             }
             accepted.append(url)
         }
@@ -4654,13 +4674,12 @@ final class RecordingStudioModel {
             mediaImportError = "Couldn't add \(rejectedPackages.joined(separator: ", ")). Check that the recording package and its media files are readable."
         }
 
-        let recordingURLs = accepted.filter { RecordingSession.isSessionDirectory($0) }
-        if !recordingURLs.isEmpty {
-            let names = recordingURLs.map { RecordingSession(directoryURL: $0).displayName }
+        if !recordingNames.isEmpty {
             pendingRecordingOverlayImport = PendingRecordingOverlayImport(
                 urls: accepted,
                 editorTime: time,
-                recordingNames: names
+                recordingNames: recordingNames,
+                canImportFinished: allFinishedValid
             )
             return
         }
@@ -4726,16 +4745,29 @@ final class RecordingStudioModel {
                         sawSelfImport = true
                         continue
                     }
+                    let fallbackName = url.deletingPathExtension().lastPathComponent
                     let sourceSession = RecordingSession(directoryURL: url)
-                    displayName = sourceSession.displayName
-                    guard RecordingVideoOverlayMedia.validateRecordingPackage(at: url) else {
-                        rejected.append(displayName)
-                        continue
-                    }
                     switch recordingMode {
                     case .raw:
-                        sourceURL = sourceSession.screenURL
+                        guard let rawScreenURL = try? RecordingPackageMedia.validateRawScreenInput(in: url) else {
+                            rejected.append(fallbackName)
+                            continue
+                        }
+                        if (try? RecordingPackageMedia.resolveOptionalPackageFile(
+                            named: RecordingSession.projectMetadataFileName,
+                            in: url
+                        )) != nil {
+                            displayName = sourceSession.displayName
+                        } else {
+                            displayName = fallbackName
+                        }
+                        sourceURL = rawScreenURL
                     case .finished:
+                        guard (try? RecordingPackageMedia.validateRenderInputs(in: url)) != nil else {
+                            rejected.append(fallbackName)
+                            continue
+                        }
+                        displayName = sourceSession.displayName
                         self.videoOverlayRenderProgress = 0
                         do {
                             sourceURL = try await RecordingSessionRenderer.ensureDeliverable(for: sourceSession) { [weak self] progress in

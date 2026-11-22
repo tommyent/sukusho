@@ -26,7 +26,13 @@ enum RecordingDeliverable {
     /// instead of appearing to hang.
     static func needsRender(for mediaURL: URL) -> Bool {
         guard let session = session(for: mediaURL) else { return false }
-        return session.freshFinalURL(matching: session.effectiveEditDocument()) == nil
+        guard (try? RecordingPackageMedia.validateRenderInputs(in: session.directoryURL)) != nil else {
+            return true
+        }
+        return RecordingSessionRenderer.readyDeliverable(
+            for: session,
+            editDocument: session.effectiveEditDocument()
+        ) == nil
     }
 
     /// The file to actually give the user. Renders the flattened deliverable

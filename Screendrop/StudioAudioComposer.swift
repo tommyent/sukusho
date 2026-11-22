@@ -174,8 +174,8 @@ nonisolated struct StudioAudioSources: @unchecked Sendable {
             let resolvedURL: URL?
             if let externalURL = externalReplacementURLs[clip.fileName] {
                 resolvedURL = externalURL
-            } else if RecordingAudioClip.isSafeFileName(clip.fileName), let sessionDirectory {
-                resolvedURL = sessionDirectory.appendingPathComponent(clip.fileName)
+            } else if let sessionDirectory {
+                resolvedURL = RecordingPackageMedia.resolvePackageFile(named: clip.fileName, in: sessionDirectory)
             } else {
                 resolvedURL = nil
             }

@@ -685,10 +685,51 @@ nonisolated enum RecordingPackageMedia {
         return resolved
     }
 
+    /// Validates that `packageDirectory` is a real directory containing a regular
+    /// non-symlink `screen.mov`, without requiring Finished-only sidecars or
+    /// optional assets. Used to gate the Raw recording import choice.
+    @discardableResult
+    static func validateRawScreenInput(in packageDirectory: URL) throws -> URL {
+        guard let realPackage = resolveRealPackageDirectory(packageDirectory) else {
+            throw ValidationError.invalidPackage(packageDirectory.lastPathComponent)
+        }
+        guard let screenURL = resolvePackageFile(named: screenFileName, in: realPackage) else {
+            throw ValidationError.unsafeFile(screenFileName)
+        }
+        return screenURL
+    }
+
+    /// Checks an optional file inside `mediaDirectory`: returns `nil` when absent
+    /// (`ENOENT`), returns the resolved URL when it is a regular non-symlink file
+    /// inside `mediaDirectory`, or throws `ValidationError.unsafeFile` for `..`
+    /// traversal, symlinks (including dangling symlinks), or non-regular entries.
+    static func resolveOptionalMediaFile(named fileName: String, in mediaDirectory: URL?) throws -> URL? {
+        guard RecordingOverlayMedia.isSimpleFileName(fileName) else {
+            throw ValidationError.unsafeFile(fileName)
+        }
+        guard let mediaDirectory else { return nil }
+        let candidate = mediaDirectory.appendingPathComponent(fileName, isDirectory: false)
+        var info = stat()
+        guard lstat(candidate.path, &info) == 0 else {
+            if errno == ENOENT { return nil }
+            throw ValidationError.unsafeFile(fileName)
+        }
+        guard (info.st_mode & S_IFMT) == S_IFREG else {
+            throw ValidationError.unsafeFile(fileName)
+        }
+        let resolved = candidate.resolvingSymlinksInPath().standardizedFileURL
+        guard resolved.deletingLastPathComponent().path == mediaDirectory.path else {
+            throw ValidationError.unsafeFile(fileName)
+        }
+        return resolved
+    }
+
     /// Validates a `.sukushorec` package and every input a Finished render can
     /// read (masters, sidecars, render cache, replacement/isolated/music audio,
-    /// and `media/` assets). Call before offering Finished movie and again before
-    /// starting the render.
+    /// detached replacement audio, and `media/` assets). Rejects unsafe entries
+    /// (including `..` traversal and dangling symlinks) while leaving truly
+    /// absent optional references to the renderer's audibility/visibility rules.
+    /// Call before offering Finished movie and again before starting the render.
     @discardableResult
     static func validateRenderInputs(in packageDirectory: URL) throws -> ResolvedRenderInputs {
         guard let realPackage = resolveRealPackageDirectory(packageDirectory) else {
@@ -766,25 +807,23 @@ nonisolated enum RecordingPackageMedia {
             }
 
             if let replacement = refs.replacementAudioFileName, !replacement.isEmpty {
-                guard let resolved = resolvePackageFile(named: replacement, in: realPackage) else {
-                    throw ValidationError.unsafeFile(replacement)
-                }
-                replacementAudioURL = resolved
+                replacementAudioURL = try resolveOptionalPackageFile(named: replacement, in: realPackage)
             }
 
             if let musicFile = refs.backgroundMusic?.fileName, !musicFile.isEmpty {
-                guard let resolved = resolvePackageFile(named: musicFile, in: realPackage) else {
-                    throw ValidationError.unsafeFile(musicFile)
-                }
-                backgroundMusicURL = resolved
+                backgroundMusicURL = try resolveOptionalPackageFile(named: musicFile, in: realPackage)
             }
 
+            var detachedReplacements: [String] = []
             var mediaFiles: [String] = []
             for clip in refs.clips ?? [] {
                 if let name = clip.sourceFileName, !name.isEmpty { mediaFiles.append(name) }
             }
             for clip in refs.audioClips ?? [] {
-                if let name = clip.fileName, !name.isEmpty, clip.source == "file" || clip.source == nil {
+                guard let name = clip.fileName, !name.isEmpty else { continue }
+                if clip.source == "replacement" {
+                    detachedReplacements.append(name)
+                } else if clip.source == "file" || clip.source == nil {
                     mediaFiles.append(name)
                 }
             }
@@ -795,15 +834,11 @@ nonisolated enum RecordingPackageMedia {
                 if let name = video.fileName, !name.isEmpty { mediaFiles.append(name) }
             }
 
-            if !mediaFiles.isEmpty {
-                guard let mediaDirectory else {
-                    throw ValidationError.unsafeFile(mediaFiles[0])
-                }
-                for name in Set(mediaFiles) {
-                    guard RecordingOverlayMedia.resolveRegularFile(named: name, in: mediaDirectory) != nil else {
-                        throw ValidationError.unsafeFile(name)
-                    }
-                }
+            for name in Set(detachedReplacements) {
+                _ = try resolveOptionalPackageFile(named: name, in: realPackage)
+            }
+            for name in Set(mediaFiles) {
+                _ = try resolveOptionalMediaFile(named: name, in: mediaDirectory)
             }
         }
 
