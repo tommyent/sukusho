@@ -1179,6 +1179,162 @@ struct StudioVideoSequenceTests {
         #expect(tracker.maxConcurrent == 1)
     }
 
+    // MARK: - Round 4 Integration Regressions (Format 7, Cleanup, Conform, Drop Routing, Package Resolver)
+
+    @Test func packageResolverValidatesSequenceMediaFileNameAndRawEditRedactions() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StudioVideoSeqPkgR4-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let outside = dir.appendingPathComponent("outside.mov")
+        try Data("outside".utf8).write(to: outside)
+
+        func makePkg(_ name: String) throws -> URL {
+            let pkg = dir.appendingPathComponent(name, isDirectory: true)
+            let media = pkg.appendingPathComponent("media", isDirectory: true)
+            try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
+            try Data("screen".utf8).write(to: pkg.appendingPathComponent("screen.mov"))
+            return pkg
+        }
+
+        // 1. Sequence clip `mediaFileName` symlink inside `media/` must be rejected by Finished preflight.
+        let symClipPkg = try makePkg("SymClip.sukushorec")
+        let symName = "\(UUID().uuidString).mov"
+        try FileManager.default.createSymbolicLink(
+            at: symClipPkg.appendingPathComponent("media/\(symName)"),
+            withDestinationURL: outside
+        )
+        let clipEditJSON = """
+        {
+            "formatVersion": 7,
+            "clips": [
+                { "sourceStart": 0, "sourceEnd": 1, "mediaFileName": "\(symName)" }
+            ]
+        }
+        """
+        try Data(clipEditJSON.utf8).write(to: symClipPkg.appendingPathComponent("edit.json"))
+        #expect(throws: RecordingPackageMedia.ValidationError.unsafeFile(symName)) {
+            try RecordingPackageMedia.validateRenderInputs(in: symClipPkg)
+        }
+
+        // 2. Raw preflight returns draft redactions over saved edit, empty when no edit, and refuses corrupt edit.
+        let cleanPkg = try makePkg("Clean.sukushorec")
+        let cleanRaw = try RecordingPackageMedia.validateRawImportInputs(in: cleanPkg)
+        #expect(cleanRaw.redactions.isEmpty)
+
+        let draftMaskPkg = try makePkg("DraftMask.sukushorec")
+        let savedNoMaskJSON = """
+        { "formatVersion": 7, "redactions": [] }
+        """
+        let draftMask = RecordingRedaction(start: 0.2, end: 0.8, rect: CGRect(x: 0, y: 0, width: 0.5, height: 1), mode: .pixelate)
+        struct MinimalEdit: Encodable {
+            let formatVersion: Int
+            let redactions: [RecordingRedaction]
+        }
+        try Data(savedNoMaskJSON.utf8).write(to: draftMaskPkg.appendingPathComponent("edit.json"))
+        try JSONEncoder().encode(MinimalEdit(formatVersion: 7, redactions: [draftMask]))
+            .write(to: draftMaskPkg.appendingPathComponent("edit.draft.json"))
+        let draftRaw = try RecordingPackageMedia.validateRawImportInputs(in: draftMaskPkg)
+        #expect(draftRaw.redactions.count == 1)
+        #expect(draftRaw.redactions[0].mode == .pixelate)
+
+        let corruptPkg = try makePkg("Corrupt.sukushorec")
+        try Data("{ not valid json".utf8).write(to: corruptPkg.appendingPathComponent("edit.json"))
+        #expect(throws: RecordingPackageMedia.ValidationError.invalidPackage("Corrupt.sukushorec")) {
+            try RecordingPackageMedia.validateRawImportInputs(in: corruptPkg)
+        }
+
+        // 3. Format version 7 is current; v6 passes; v99 is refused for renders and raw imports.
+        #expect(RecordingPackageMedia.currentFormatVersion == 7)
+        let v6Pkg = try makePkg("V6.sukushorec")
+        try Data("{ \"formatVersion\": 6 }".utf8).write(to: v6Pkg.appendingPathComponent("edit.json"))
+        _ = try RecordingPackageMedia.validateRenderInputs(in: v6Pkg)
+        _ = try RecordingPackageMedia.validateRawImportInputs(in: v6Pkg)
+
+        let futurePkg = try makePkg("Future.sukushorec")
+        try Data("{ \"formatVersion\": 99 }".utf8).write(to: futurePkg.appendingPathComponent("edit.json"))
+        #expect(throws: RecordingPackageMedia.ValidationError.unsupportedFormatVersion(99)) {
+            try RecordingPackageMedia.validateRenderInputs(in: futurePkg)
+        }
+        #expect(throws: RecordingPackageMedia.ValidationError.unsupportedFormatVersion(99)) {
+            try RecordingPackageMedia.validateRawImportInputs(in: futurePkg)
+        }
+    }
+
+    @Test func unifiedMediaCleanupKeepsAllReferencedTypesAndRemovesOnlyUnreferencedOwnedFiles() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StudioVideoSeqCleanupR4-\(UUID().uuidString)", isDirectory: true)
+        let pkg = dir.appendingPathComponent("Proj.sukushorec", isDirectory: true)
+        let media = pkg.appendingPathComponent("media", isDirectory: true)
+        try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let seqClip = "\(UUID().uuidString).mov"
+        let overlayClip = "\(UUID().uuidString).mov"
+        let imageFile = "\(UUID().uuidString).png"
+        let audioFile = "\(UUID().uuidString).wav"
+        let orphanMov = "\(UUID().uuidString).mov"
+        let orphanPng = "\(UUID().uuidString).png"
+        let nonOwnedMov = "manual.mov"
+
+        for name in [seqClip, overlayClip, imageFile, audioFile, orphanMov, orphanPng, nonOwnedMov] {
+            try Data("payload".utf8).write(to: media.appendingPathComponent(name))
+        }
+
+        let referenced: Set<String> = [seqClip, overlayClip, imageFile, audioFile]
+        RecordingOverlayMedia.cleanupUnreferencedMedia(in: media, referenced: referenced)
+
+        for kept in [seqClip, overlayClip, imageFile, audioFile, nonOwnedMov] {
+            #expect(FileManager.default.fileExists(atPath: media.appendingPathComponent(kept).path), "Expected \(kept) to survive")
+        }
+        for removed in [orphanMov, orphanPng] {
+            #expect(!FileManager.default.fileExists(atPath: media.appendingPathComponent(removed).path), "Expected \(removed) to be removed")
+        }
+    }
+
+    @Test func linkedVideoOverlayConformGatesBySourceIdentityAcrossPrimaryAndImportedClips() {
+        let primary = RecordingClipSegment(sourceStart: 0, sourceEnd: 4)
+        let imported = RecordingClipSegment(
+            sourceStart: 0,
+            sourceEnd: 4,
+            mediaFileName: "broll.mov",
+            displayName: "B-Roll",
+            sourceDuration: 4
+        )
+        let old = RecordingClipTimeline(segments: [primary, imported])
+        // Overlay sits strictly on the imported clip's 1..<3 s (editor 5..<7 s).
+        let overlay = RecordingVideoOverlay(
+            fileName: "pip.mov",
+            displayName: "PiP",
+            start: 5,
+            fileDuration: 2,
+            isLinked: true
+        )
+
+        // Delete the imported clip, leaving only primary 0..<4 (which ALSO has source times 1..<3!).
+        // Source-identity gating must prevent the overlay from attaching to primary's 1..<3.
+        let withoutImported = RecordingClipTimeline(segments: [primary])
+        let conformedAfterDelete = StudioVideoOverlayLane.conform([overlay], from: old, to: withoutImported)
+        #expect(conformedAfterDelete.isEmpty)
+
+        // Reorder imported before primary: overlay must move with imported to editor 1..<3, NOT duplicate onto primary.
+        let reordered = RecordingClipTimeline(segments: [imported, primary])
+        let conformedAfterReorder = StudioVideoOverlayLane.conform([overlay], from: old, to: reordered)
+        #expect(conformedAfterReorder.count == 1)
+        #expect(abs(conformedAfterReorder[0].start - 1.0) < 0.001)
+        #expect(abs(conformedAfterReorder[0].end - 3.0) < 0.001)
+    }
+
+    @Test func finderMovieDropRoutingFollowsHoveredLaneWithoutStealingToOverlay() {
+        #expect(StudioMediaDropRouting.videoDestination(for: .clips, canDropClip: true, canDropOverlay: true) == .clips)
+        #expect(StudioMediaDropRouting.videoDestination(for: .videoOverlay, canDropClip: true, canDropOverlay: true) == .videoOverlay)
+        #expect(StudioMediaDropRouting.videoDestination(for: .other, canDropClip: true, canDropOverlay: true) == nil)
+        #expect(StudioMediaDropRouting.videoDestination(for: nil, canDropClip: true, canDropOverlay: true) == nil)
+        #expect(StudioMediaDropRouting.videoDestination(for: .clips, canDropClip: false, canDropOverlay: true) == nil)
+        #expect(StudioMediaDropRouting.videoDestination(for: .videoOverlay, canDropClip: true, canDropOverlay: false) == nil)
+    }
+
     private static func waitUntilReady(
         _ input: AVAssetWriterInput,
         writer: AVAssetWriter,

@@ -3,6 +3,7 @@ import CoreGraphics
 import CoreMedia
 import CoreVideo
 import Foundation
+import ImageIO
 
 @main
 struct CheckR2Export {
@@ -314,7 +315,376 @@ struct CheckR2Export {
         precondition(msToneRMS > 0.08, "Expected imported 880Hz tone at 1.30..1.45s, got \(msToneRMS)")
         precondition(msTailRMS < 0.01, "Expected silence during imported tail, got \(msTailRMS)")
 
+        // Round 4 — Test R4-1: PiP overlay spanning a cut between primary recording and an imported clip.
+        let r4PrimaryURL = tempDir.appendingPathComponent("r4-pip-primary.mov")
+        let r4ImportURL = tempDir.appendingPathComponent("r4-pip-import.mov")
+        let r4PiPURL = tempDir.appendingPathComponent("r4-pip-overlay.mov")
+        try await writeTimedMovie(
+            to: r4PrimaryURL, size: CGSize(width: 160, height: 120),
+            videoDuration: 1.0, audioDuration: 1.0,
+            checkerWindow: 0.0..<0.0, backgroundColor: (220, 30, 30),
+            toneWindow: 0.0..<0.0, toneHz: 440
+        )
+        try await writeTimedMovie(
+            to: r4ImportURL, size: CGSize(width: 160, height: 120),
+            videoDuration: 1.0, audioDuration: 1.0,
+            checkerWindow: 0.0..<0.0, backgroundColor: (30, 200, 50),
+            toneWindow: 0.0..<0.0, toneHz: 440
+        )
+        try await writeTimedMovie(
+            to: r4PiPURL, size: CGSize(width: 160, height: 120),
+            videoDuration: 1.0, audioDuration: 1.0,
+            checkerWindow: 0.0..<0.0, backgroundColor: (30, 60, 230),
+            toneWindow: 0.0..<1.0, toneHz: 880
+        )
+        var pipOverlay = RecordingVideoOverlay(
+            fileName: "r4-pip-overlay.mov",
+            displayName: "Blue PiP",
+            start: 0.5,
+            fileDuration: 1.0,
+            presentation: .pip,
+            isLinked: false
+        )
+        pipOverlay.center = CGPoint(x: 0.75, y: 0.75)
+        pipOverlay.width = 0.40
+        pipOverlay.aspect = 160.0 / 120.0
+        pipOverlay.cornerRadius = 0
+        pipOverlay.shadow = 0
+        pipOverlay.isMuted = false
+        pipOverlay.volume = 1.0
+
+        let r4Timeline = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 1.0),
+            RecordingClipSegment(
+                sourceStart: 0, sourceEnd: 1.0,
+                mediaFileName: "r4-pip-import.mov", displayName: "Green Import", sourceDuration: 1.0
+            )
+        ])
+        let r4Config = RecordingStudioExporter.Configuration(
+            screenURL: r4PrimaryURL,
+            cameraURL: nil,
+            cameraOffset: 0,
+            style: style,
+            viewportTimeline: .identity,
+            pointerTimeline: nil,
+            showsPressEffects: false,
+            keystrokeTimeline: nil,
+            keystrokePlacement: .bottomCenter,
+            subtitleTimeline: nil,
+            subtitleStyle: SubtitleBarStyle(),
+            canvasSize: CGSize(width: 160, height: 120),
+            clipTimeline: r4Timeline,
+            exportSettings: audioExportSettings,
+            mediaDirectory: tempDir,
+            videoOverlays: [pipOverlay]
+        )
+        let r4ExportedURL = try await RecordingStudioExporter().export(r4Config) { _ in }
+        defer { try? FileManager.default.removeItem(at: r4ExportedURL) }
+        let r4Asset = AVURLAsset(url: r4ExportedURL)
+        let r4Gen = AVAssetImageGenerator(asset: r4Asset)
+        r4Gen.requestedTimeToleranceBefore = .zero
+        r4Gen.requestedTimeToleranceAfter = .zero
+        let beforeCutImg = try await r4Gen.image(at: CMTime(seconds: 0.75, preferredTimescale: 600)).image
+        let afterCutImg = try await r4Gen.image(at: CMTime(seconds: 1.25, preferredTimescale: 600)).image
+        let bgBefore = pixelRGB(of: beforeCutImg, x: 20, y: 20)
+        let pipBefore = pixelRGB(of: beforeCutImg, x: 120, y: 90)
+        let bgAfter = pixelRGB(of: afterCutImg, x: 20, y: 20)
+        let pipAfter = pixelRGB(of: afterCutImg, x: 120, y: 90)
+        let pipAudioBefore = try await audioRMS(asset: r4Asset, window: 0.60..<0.90)
+        let pipAudioAfter = try await audioRMS(asset: r4Asset, window: 1.10..<1.40)
+        print(String(format: "r4_pip_across_cut beforeBG=(%d,%d,%d) beforePiP=(%d,%d,%d) afterBG=(%d,%d,%d) afterPiP=(%d,%d,%d) audioBefore=%.4f audioAfter=%.4f",
+                     bgBefore.0, bgBefore.1, bgBefore.2, pipBefore.0, pipBefore.1, pipBefore.2,
+                     bgAfter.0, bgAfter.1, bgAfter.2, pipAfter.0, pipAfter.1, pipAfter.2,
+                     pipAudioBefore, pipAudioAfter))
+        precondition(bgBefore.0 > 150 && bgBefore.2 < 120, "Expected red primary background before cut")
+        precondition(pipBefore.2 > 150 && pipBefore.0 < 120, "Expected blue PiP over primary before cut")
+        precondition(bgAfter.1 > 150 && bgAfter.0 < 120, "Expected green imported background after cut")
+        precondition(pipAfter.2 > 150 && pipAfter.0 < 120, "Expected blue PiP over imported clip after cut")
+        precondition(pipAudioBefore > 0.08 && pipAudioAfter > 0.08, "Expected PiP audio across cut")
+
+        // Round 4 — Test R4-2: Close & reopen keeps one file of every media type, deletes orphans.
+        let r4CleanupPkg = tempDir.appendingPathComponent("R4Cleanup.sukushorec", isDirectory: true)
+        let r4CleanupMedia = r4CleanupPkg.appendingPathComponent("media", isDirectory: true)
+        try FileManager.default.createDirectory(at: r4CleanupMedia, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: r4PrimaryURL, to: r4CleanupPkg.appendingPathComponent("screen.mov"))
+        let keptSeqName = "\(UUID().uuidString).mov"
+        let keptOverlayName = "\(UUID().uuidString).mov"
+        let keptImageName = "\(UUID().uuidString).png"
+        let keptAudioName = "\(UUID().uuidString).mov"
+        let orphanMovName = "\(UUID().uuidString).mov"
+        let orphanPngName = "\(UUID().uuidString).png"
+        try FileManager.default.copyItem(at: r4ImportURL, to: r4CleanupMedia.appendingPathComponent(keptSeqName))
+        try FileManager.default.copyItem(at: r4PiPURL, to: r4CleanupMedia.appendingPathComponent(keptOverlayName))
+        try FileManager.default.copyItem(at: r4PiPURL, to: r4CleanupMedia.appendingPathComponent(keptAudioName))
+        try FileManager.default.copyItem(at: r4ImportURL, to: r4CleanupMedia.appendingPathComponent(orphanMovName))
+        try writeSmallPNG(to: r4CleanupMedia.appendingPathComponent(keptImageName))
+        try writeSmallPNG(to: r4CleanupMedia.appendingPathComponent(orphanPngName))
+
+        let cleanupDoc = RecordingEditDocument(
+            style: RecordingStudioStyle(),
+            zoomEnabled: false,
+            zoomCues: [],
+            clipTimeline: RecordingClipTimeline(segments: [
+                RecordingClipSegment(sourceStart: 0, sourceEnd: 1.0),
+                RecordingClipSegment(sourceStart: 0, sourceEnd: 1.0, mediaFileName: keptSeqName, displayName: "Seq", sourceDuration: 1.0)
+            ]),
+            audioClips: [RecordingAudioClip(fileName: keptAudioName, displayName: "Audio", start: 0, fileDuration: 1.0)],
+            imageOverlays: [RecordingImageOverlay(fileName: keptImageName, displayName: "Img", start: 0, end: 1.0)],
+            videoOverlays: [RecordingVideoOverlay(fileName: keptOverlayName, displayName: "Ov", start: 0, fileDuration: 1.0)]
+        )
+        try RecordingSession(directoryURL: r4CleanupPkg).writeEditDocument(cleanupDoc)
+
+        let cleanupModel1 = await MainActor.run { RecordingStudioModel(url: r4CleanupPkg) }
+        await cleanupModel1.load()
+        await MainActor.run { cleanupModel1.teardown() }
+
+        for kept in [keptSeqName, keptOverlayName, keptImageName, keptAudioName] {
+            precondition(FileManager.default.fileExists(atPath: r4CleanupMedia.appendingPathComponent(kept).path),
+                         "Unified cleanup deleted still-referenced media \(kept)")
+        }
+        precondition(!FileManager.default.fileExists(atPath: r4CleanupMedia.appendingPathComponent(orphanMovName).path),
+                     "Unified cleanup missed orphan movie")
+        precondition(!FileManager.default.fileExists(atPath: r4CleanupMedia.appendingPathComponent(orphanPngName).path),
+                     "Unified cleanup missed orphan image")
+
+        let cleanupModel2 = await MainActor.run { RecordingStudioModel(url: r4CleanupPkg) }
+        await cleanupModel2.load()
+        let reopenCounts = await MainActor.run {
+            (cleanupModel2.clipTimeline.segments.count, cleanupModel2.videoOverlays.count,
+             cleanupModel2.imageOverlays.count, cleanupModel2.audioClips.count)
+        }
+        await MainActor.run { cleanupModel2.teardown() }
+        precondition(reopenCounts == (2, 1, 1, 1), "Reopen lost references: \(reopenCounts)")
+        print("r4_unified_cleanup_close_reopen PASSED counts=\(reopenCounts)")
+
+        // Round 4 — Test R4-3: Raw recording keeps redactions in BOTH sequence and layered lanes.
+        let pkgA = tempDir.appendingPathComponent("R4HostA.sukushorec", isDirectory: true)
+        try FileManager.default.createDirectory(at: pkgA, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: r4PrimaryURL, to: pkgA.appendingPathComponent("screen.mov"))
+
+        // B1: full checkerboard + 880 Hz tone, left-half redaction mask saved in edit.json
+        let pkgB1 = tempDir.appendingPathComponent("R4RedactedB1.sukushorec", isDirectory: true)
+        try FileManager.default.createDirectory(at: pkgB1, withIntermediateDirectories: true)
+        try await writeTimedMovie(
+            to: pkgB1.appendingPathComponent("screen.mov"),
+            size: CGSize(width: 160, height: 120),
+            videoDuration: 1.0, audioDuration: 1.0,
+            checkerWindow: 0.0..<1.0, backgroundColor: (128, 128, 128),
+            toneWindow: 0.2..<0.8, toneHz: 880
+        )
+        let leftHalfMask = RecordingRedaction(
+            start: 0.0, end: 1.0,
+            rect: CGRect(x: 0, y: 0, width: 0.5, height: 1.0),
+            mode: .pixelate, strength: 1.0
+        )
+        let b1Doc = RecordingEditDocument(
+            style: RecordingStudioStyle(background: .none, padding: 80, cornerRadius: 24, shadow: 1),
+            zoomEnabled: true,
+            zoomCues: [ZoomCue(start: 0, end: 1, zoom: 2.5)],
+            redactions: [leftHalfMask]
+        )
+        try RecordingSession(directoryURL: pkgB1).writeEditDocument(b1Doc)
+
+        // B2: unredacted recording (must copy screen.mov byte-for-byte)
+        let pkgB2 = tempDir.appendingPathComponent("R4PlainB2.sukushorec", isDirectory: true)
+        try FileManager.default.createDirectory(at: pkgB2, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: r4ImportURL, to: pkgB2.appendingPathComponent("screen.mov"))
+        let b2OriginalBytes = try Data(contentsOf: pkgB2.appendingPathComponent("screen.mov"))
+
+        // B3: unreadable edit.json (must be refused in both lanes)
+        let pkgB3 = tempDir.appendingPathComponent("R4CorruptB3.sukushorec", isDirectory: true)
+        try FileManager.default.createDirectory(at: pkgB3, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: r4ImportURL, to: pkgB3.appendingPathComponent("screen.mov"))
+        try Data("{ corrupt json".utf8).write(to: pkgB3.appendingPathComponent("edit.json"))
+
+        let hostModel = await MainActor.run { RecordingStudioModel(url: pkgA) }
+        await hostModel.load()
+
+        // Sequence lane — B1 (redacted raw), B2 (byte-identical raw), B3 (refused)
+        await MainActor.run {
+            hostModel.requestImportVideoClips([pkgB1], insertionIndex: 1)
+            precondition(hostModel.pendingRecordingImport != nil, "Expected sequence prompt for B1")
+            hostModel.confirmPendingRecordingImport(mode: .rawRecording)
+        }
+        try await waitUntil(timeoutSeconds: 20) {
+            await MainActor.run { !hostModel.isImportingVideoClip && hostModel.clipTimeline.segments.count == 2 }
+        }
+        let seqB1File = await MainActor.run { hostModel.clipTimeline.segments[1].mediaFileName! }
+        let seqB1URL = pkgA.appendingPathComponent("media/\(seqB1File)")
+        let seqB1Asset = AVURLAsset(url: seqB1URL)
+        let seqB1Gen = AVAssetImageGenerator(asset: seqB1Asset)
+        seqB1Gen.requestedTimeToleranceBefore = .zero
+        seqB1Gen.requestedTimeToleranceAfter = .zero
+        let seqB1Img = try await seqB1Gen.image(at: CMTime(seconds: 0.5, preferredTimescale: 600)).image
+        let seqLeftDetail = regionDetailScore(of: seqB1Img, xRange: 4..<70, yRange: 4..<116)
+        let seqRightDetail = regionDetailScore(of: seqB1Img, xRange: 90..<156, yRange: 4..<116)
+        let seqB1Audio = try await audioRMS(asset: seqB1Asset, window: 0.3..<0.7)
+        print(String(format: "r4_raw_sequence_B1 leftMasked=%.2f rightUnmasked=%.2f audioRMS=%.4f size=%dx%d",
+                     seqLeftDetail, seqRightDetail, seqB1Audio, seqB1Img.width, seqB1Img.height))
+        precondition(seqLeftDetail < 1.0, "Sequence Raw leaked masked left half: \(seqLeftDetail)")
+        precondition(seqRightDetail > 40.0, "Sequence Raw lost unmasked right half detail: \(seqRightDetail)")
+        precondition(seqB1Audio > 0.08, "Sequence Raw dropped original audio: \(seqB1Audio)")
+        precondition(seqB1Img.width == 160 && seqB1Img.height == 120, "Sequence Raw changed original size")
+
+        await MainActor.run {
+            hostModel.requestImportVideoClips([pkgB2], insertionIndex: 2)
+            hostModel.confirmPendingRecordingImport(mode: .rawRecording)
+        }
+        try await waitUntil(timeoutSeconds: 10) {
+            await MainActor.run { !hostModel.isImportingVideoClip && hostModel.clipTimeline.segments.count == 3 }
+        }
+        let seqB2File = await MainActor.run { hostModel.clipTimeline.segments[2].mediaFileName! }
+        let seqB2Bytes = try Data(contentsOf: pkgA.appendingPathComponent("media/\(seqB2File)"))
+        precondition(seqB2Bytes == b2OriginalBytes, "Sequence Raw without redactions was not byte-identical")
+
+        await MainActor.run {
+            hostModel.requestImportVideoClips([pkgB3], insertionIndex: 3)
+            precondition(hostModel.pendingRecordingImport == nil, "Sequence Raw should refuse corrupt B3")
+            precondition(hostModel.mediaImportError != nil, "Expected error on corrupt B3 in sequence lane")
+        }
+
+        // Layered lane — B1 (redacted raw), B2 (byte-identical raw), B3 (refused)
+        await MainActor.run {
+            hostModel.importVideoOverlays([pkgB1], atEditorTime: 0)
+            precondition(hostModel.pendingRecordingOverlayImport != nil, "Expected layered prompt for B1")
+            hostModel.resolvePendingRecordingImport(mode: .raw)
+        }
+        try await waitUntil(timeoutSeconds: 20) {
+            await MainActor.run { hostModel.videoOverlays.count == 1 }
+        }
+        let layB1File = await MainActor.run { hostModel.videoOverlays[0].fileName }
+        let layB1URL = pkgA.appendingPathComponent("media/\(layB1File)")
+        let layB1Asset = AVURLAsset(url: layB1URL)
+        let layB1Gen = AVAssetImageGenerator(asset: layB1Asset)
+        layB1Gen.requestedTimeToleranceBefore = .zero
+        layB1Gen.requestedTimeToleranceAfter = .zero
+        let layB1Img = try await layB1Gen.image(at: CMTime(seconds: 0.5, preferredTimescale: 600)).image
+        let layLeftDetail = regionDetailScore(of: layB1Img, xRange: 4..<70, yRange: 4..<116)
+        let layRightDetail = regionDetailScore(of: layB1Img, xRange: 90..<156, yRange: 4..<116)
+        let layB1Audio = try await audioRMS(asset: layB1Asset, window: 0.3..<0.7)
+        print(String(format: "r4_raw_layered_B1  leftMasked=%.2f rightUnmasked=%.2f audioRMS=%.4f size=%dx%d",
+                     layLeftDetail, layRightDetail, layB1Audio, layB1Img.width, layB1Img.height))
+        precondition(layLeftDetail < 1.0, "Layered Raw leaked masked left half: \(layLeftDetail)")
+        precondition(layRightDetail > 40.0, "Layered Raw lost unmasked right half detail: \(layRightDetail)")
+        precondition(layB1Audio > 0.08, "Layered Raw dropped original audio: \(layB1Audio)")
+
+        await MainActor.run {
+            hostModel.importVideoOverlays([pkgB2], atEditorTime: 1.5)
+            hostModel.resolvePendingRecordingImport(mode: .raw)
+        }
+        try await waitUntil(timeoutSeconds: 10) {
+            await MainActor.run { hostModel.videoOverlays.count == 2 }
+        }
+        let layB2File = await MainActor.run { hostModel.videoOverlays[1].fileName }
+        let layB2Bytes = try Data(contentsOf: pkgA.appendingPathComponent("media/\(layB2File)"))
+        precondition(layB2Bytes == b2OriginalBytes, "Layered Raw without redactions was not byte-identical")
+
+        await MainActor.run {
+            hostModel.importVideoOverlays([pkgB3], atEditorTime: 2.5)
+            precondition(hostModel.pendingRecordingOverlayImport == nil, "Layered Raw should refuse corrupt B3")
+            precondition(hostModel.mediaImportError != nil, "Expected error on corrupt B3 in layered lane")
+            hostModel.teardown()
+        }
+        print("r4_raw_redactions_both_lanes PASSED")
+
+        // Round 4 — Test R4-4: formatVersion 99 opens read-only, writes nothing, blocks Finished render.
+        let pkgFuture = tempDir.appendingPathComponent("R4Future99.sukushorec", isDirectory: true)
+        try FileManager.default.createDirectory(at: pkgFuture, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: r4PrimaryURL, to: pkgFuture.appendingPathComponent("screen.mov"))
+        var futureDoc = RecordingEditDocument(style: RecordingStudioStyle(), zoomEnabled: false, zoomCues: [])
+        futureDoc.formatVersion = 99
+        let futureEditURL = pkgFuture.appendingPathComponent("edit.json")
+        let futureDraftURL = pkgFuture.appendingPathComponent("edit.draft.json")
+        try CaptureManifest.encoder.encode(futureDoc).write(to: futureEditURL)
+        let futureBytesBefore = try Data(contentsOf: futureEditURL)
+
+        let futureModel = await MainActor.run { RecordingStudioModel(url: pkgFuture) }
+        await futureModel.load()
+        await MainActor.run {
+            precondition(futureModel.isLoaded, "formatVersion 99 should still open read-only")
+            precondition(futureModel.isReadOnlyNewerFormat, "Expected isReadOnlyNewerFormat == true")
+            precondition(!futureModel.canImportVideoClip && !futureModel.canImportMedia, "Imports must be off for read-only future project")
+            futureModel.zoomEnabled = true
+            let saved = futureModel.saveProject(reportingFailure: false)
+            precondition(!saved, "saveProject must refuse formatVersion 99")
+            futureModel.flushDraft()
+            futureModel.autosave()
+            futureModel.teardown()
+        }
+        let futureBytesAfter = try Data(contentsOf: futureEditURL)
+        precondition(futureBytesAfter == futureBytesBefore, "formatVersion 99 edit.json was modified!")
+        precondition(!FileManager.default.fileExists(atPath: futureDraftURL.path), "formatVersion 99 wrote edit.draft.json!")
+        do {
+            _ = try await RecordingSessionRenderer.ensureDeliverable(for: RecordingSession(directoryURL: pkgFuture))
+            preconditionFailure("Finished render must refuse formatVersion 99")
+        } catch RecordingPackageMedia.ValidationError.unsupportedFormatVersion(99) {
+            print("r4_format99_readonly_and_render_guard PASSED")
+        }
+
         print("ALL_EXPORT_AND_PREVIEW_CHECKS_PASSED")
+    }
+
+    static func waitUntil(timeoutSeconds: TimeInterval, condition: @escaping () async -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while !(await condition()) {
+            if Date() >= deadline {
+                throw NSError(domain: "CheckR2Export", code: 100, userInfo: [NSLocalizedDescriptionKey: "Timed out waiting for async condition"])
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
+    static func writeSmallPNG(to url: URL) throws {
+        var pixel: [UInt8] = [200, 50, 50, 255]
+        let ctx = CGContext(
+            data: &pixel, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        let img = ctx.makeImage()!
+        let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil)!
+        CGImageDestinationAddImage(dest, img, nil)
+        precondition(CGImageDestinationFinalize(dest))
+    }
+
+    static func pixelRGB(of image: CGImage, x: Int, y: Int) -> (UInt8, UInt8, UInt8) {
+        let w = image.width, h = image.height
+        var bytes = [UInt8](repeating: 0, count: w * h * 4)
+        let ctx = CGContext(
+            data: &bytes, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        let cx = min(max(x, 0), w - 1)
+        let cy = min(max(y, 0), h - 1)
+        let o = (cy * w + cx) * 4
+        return (bytes[o], bytes[o + 1], bytes[o + 2])
+    }
+
+    static func regionDetailScore(of image: CGImage, xRange: Range<Int>, yRange: Range<Int>) -> Double {
+        let w = image.width, h = image.height
+        var bytes = [UInt8](repeating: 0, count: w * h * 4)
+        let ctx = CGContext(
+            data: &bytes, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        )!
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        func luma(_ x: Int, _ y: Int) -> Double {
+            let o = (y * w + x) * 4
+            return 0.299 * Double(bytes[o]) + 0.587 * Double(bytes[o + 1]) + 0.114 * Double(bytes[o + 2])
+        }
+        var sum = 0.0
+        var count = 0
+        for y in max(1, yRange.lowerBound)..<min(h - 1, yRange.upperBound) {
+            for x in max(1, xRange.lowerBound)..<min(w - 1, xRange.upperBound) {
+                let c = luma(x, y)
+                sum += abs(c - luma(x + 1, y)) + abs(c - luma(x, y + 1))
+                count += 2
+            }
+        }
+        return sum / Double(max(1, count))
     }
 
     static func waitUntilReady(
