@@ -276,7 +276,7 @@ struct StudioTimelineBlocksTests {
             let spans = studioOccupiedLaneSpans(cues: cues, clipTimeline: clipTimeline)
             let clamped = StudioLaneOverlap.forbidden(spans: spans).clampedDelta(
                 rawEditorDelta,
-                blockID: block.id,
+                blockID: block.item.id,
                 editorStart: block.editorStart,
                 editorEnd: block.editorEnd,
                 kind: kind,

@@ -162,19 +162,38 @@ protocol StudioBlockLaneHost: AnyObject {
     func clearTimelineSelection()
 }
 
+/// Stable identity for one displayed fragment of a block on a lane. A source
+/// overlay spanning reordered clips can appear in several editor runs, so each
+/// fragment pairs the item's ID with its run index.
+struct StudioLaneBlockID: Hashable, Sendable {
+    let itemID: UUID
+    let fragmentIndex: Int
+}
+
 /// One block on a track: what it stands for and where it sits on the
 /// edited timeline.
 struct StudioLaneBlock<Item: Identifiable>: Identifiable where Item.ID == UUID {
     let item: Item
     let editorStart: TimeInterval
     let editorEnd: TimeInterval
+    var fragmentIndex: Int = 0
+    /// False when dragging the block across editor time is ambiguous (e.g. a
+    /// source overlay split across multiple editor runs by reordered clips).
+    var allowsMove: Bool = true
     /// False when a single source cue plays on more than one editor run (e.g.
     /// across a reordered backward join) so trimming one displayed piece cannot
     /// silently remove the effect from untouched clips.
     var allowsTrim: Bool = true
 
-    var id: UUID { item.id }
+    var id: StudioLaneBlockID { StudioLaneBlockID(itemID: item.id, fragmentIndex: fragmentIndex) }
     var editorLength: TimeInterval { max(0, editorEnd - editorStart) }
+
+    func allows(_ kind: StudioBlockEditKind) -> Bool {
+        switch kind {
+        case .move: allowsMove
+        case .trimLeading, .trimTrailing: allowsTrim
+        }
+    }
 }
 
 enum StudioBlockEditKind: Equatable {
@@ -607,8 +626,9 @@ struct StudioBlockHitTester {
     func target(atX x: CGFloat) -> StudioBlockTarget {
         // The selected block draws on top with its handles driven from the
         // same frame as `StudioSelectionFrame`, so it answers first: the
-        // handles trim, the block moves.
-        if let selected = entries.last(where: { $0.id == selectedID }) {
+        // handles trim, the block moves. Check every selected fragment so
+        // multi-run items answer on all of their displayed pieces.
+        for selected in entries.reversed() where selected.id == selectedID {
             let frame = selected.frame
             if selected.allowsTrim {
                 if frame.selectedLeadingHandleRange.contains(x) {
@@ -712,7 +732,7 @@ where Item.ID == UUID {
             },
             uniquingKeysWith: { _, latest in latest }
         )
-        let selected = blocks.first { $0.id == selectedID }
+        let selectedBlocks = blocks.filter { $0.item.id == selectedID }
 
         ZStack(alignment: .topLeading) {
             // The track's own surface: presses between blocks land here.
@@ -731,35 +751,37 @@ where Item.ID == UUID {
 
             // The selected block draws last, so its handles sit over its
             // neighbours.
-            ForEach(blocks.filter { $0.id != selectedID } + (selected.map { [$0] } ?? [])) { block in
+            ForEach(blocks.filter { $0.item.id != selectedID } + selectedBlocks) { block in
                 if let frame = frames[block.id] {
                     blockView(block, frame: frame)
                 }
             }
 
-            if let selected, let frame = frames[selected.id] {
-                if selected.allowsTrim {
-                    StudioSelectionFrame(width: frame.selectionWidth, blockHeight: blockHeight)
+            ForEach(selectedBlocks) { selected in
+                if let frame = frames[selected.id] {
+                    if selected.allowsTrim {
+                        StudioSelectionFrame(width: frame.selectionWidth, blockHeight: blockHeight)
+                            .offset(
+                                x: frame.selectionMinX,
+                                y: StudioBlockMetrics.inset - StudioBlockMetrics.rimWidth
+                            )
+                            .allowsHitTesting(false)
+                    } else {
+                        RoundedRectangle(
+                            cornerRadius: StudioBlockMetrics.selectedCornerRadius + StudioBlockMetrics.rimWidth,
+                            style: .continuous
+                        )
+                        .strokeBorder(Color(nsColor: .systemYellow), lineWidth: StudioBlockMetrics.rimWidth)
+                        .frame(
+                            width: frame.width + StudioBlockMetrics.rimWidth * 2,
+                            height: blockHeight + StudioBlockMetrics.rimWidth * 2
+                        )
                         .offset(
-                            x: frame.selectionMinX,
+                            x: frame.minX - StudioBlockMetrics.rimWidth,
                             y: StudioBlockMetrics.inset - StudioBlockMetrics.rimWidth
                         )
                         .allowsHitTesting(false)
-                } else {
-                    RoundedRectangle(
-                        cornerRadius: StudioBlockMetrics.selectedCornerRadius + StudioBlockMetrics.rimWidth,
-                        style: .continuous
-                    )
-                    .strokeBorder(Color(nsColor: .systemYellow), lineWidth: StudioBlockMetrics.rimWidth)
-                    .frame(
-                        width: frame.width + StudioBlockMetrics.rimWidth * 2,
-                        height: blockHeight + StudioBlockMetrics.rimWidth * 2
-                    )
-                    .offset(
-                        x: frame.minX - StudioBlockMetrics.rimWidth,
-                        y: StudioBlockMetrics.inset - StudioBlockMetrics.rimWidth
-                    )
-                    .allowsHitTesting(false)
+                    }
                 }
             }
         }
@@ -784,21 +806,27 @@ where Item.ID == UUID {
 
     @ViewBuilder
     private func blockView(_ block: StudioLaneBlock<Item>, frame: StudioBlockFrame) -> some View {
-        let isSelected = block.id == selectedID
+        let isSelected = block.item.id == selectedID
         let state = StudioBlockState(
             width: frame.width,
             height: blockHeight,
             isSelected: isSelected,
-            isHovered: activeTarget.blockID == block.id
+            isHovered: activeTarget.blockID == block.item.id
         )
         let cornerRadius = isSelected ? StudioBlockMetrics.selectedCornerRadius : StudioBlockMetrics.cornerRadius
         let a11y = accessibility(block)
+        let accessibilityHintText = switch (block.allowsMove, block.allowsTrim) {
+        case (true, true): "Activate to select. Use actions to move or resize."
+        case (true, false): "Activate to select. Use actions to move."
+        case (false, true): "Activate to select. Use actions to resize."
+        case (false, false): "Activate to select."
+        }
         content(block, state)
             .environment(\.studioBlockCornerRadius, cornerRadius)
             .frame(width: frame.width, height: blockHeight, alignment: .leading)
             .overlay {
                 // An unselected block shows which end the pointer would trim.
-                if !isSelected, case .edge(block.id, let edge) = activeTarget {
+                if !isSelected, block.allowsTrim, case .edge(block.item.id, let edge) = activeTarget {
                     StudioBlockGrip()
                         .frame(maxWidth: .infinity, alignment: edge == .leading ? .leading : .trailing)
                         .padding(.horizontal, 3)
@@ -812,36 +840,27 @@ where Item.ID == UUID {
             .accessibilityLabel(a11y.label)
             .accessibilityValue(a11y.value)
             .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
-            .accessibilityHint(
-                block.allowsTrim
-                    ? "Activate to select. Use actions to move or resize."
-                    : "Activate to select. Use actions to move."
-            )
+            .accessibilityHint(accessibilityHintText)
             .accessibilityAction {
                 model.pause()
                 actions.select(block.item)
             }
-            .accessibilityAction(named: "Move Earlier") {
-                performAccessibleEdit(block, kind: .move, delta: -a11y.step)
-            }
-            .accessibilityAction(named: "Move Later") {
-                performAccessibleEdit(block, kind: .move, delta: a11y.step)
-            }
-            .modifier(StudioBlockTrimAccessibilityModifier(
-                enabled: block.allowsTrim,
-                onTrim: { kind, delta in performAccessibleEdit(block, kind: kind, delta: delta) },
+            .modifier(StudioBlockEditAccessibilityModifier(
+                allowsMove: block.allowsMove,
+                allowsTrim: block.allowsTrim,
+                onEdit: { kind, delta in performAccessibleEdit(block, kind: kind, delta: delta) },
                 step: a11y.step
             ))
             .offset(x: frame.minX, y: StudioBlockMetrics.inset)
     }
 
     func performAccessibleEdit(_ block: StudioLaneBlock<Item>, kind: StudioBlockEditKind, delta: TimeInterval) {
-        guard kind == .move || block.allowsTrim else { return }
+        guard block.allows(kind) else { return }
         model.pause()
         actions.select(block.item)
         let clamped = overlap.clampedDelta(
             delta,
-            blockID: block.id,
+            blockID: block.item.id,
             editorStart: block.editorStart,
             editorEnd: block.editorEnd,
             kind: kind,
@@ -854,10 +873,10 @@ where Item.ID == UUID {
 
     // MARK: Pointer
 
-    private func hitTester(_ frames: [UUID: StudioBlockFrame]) -> StudioBlockHitTester {
+    private func hitTester(_ frames: [StudioLaneBlockID: StudioBlockFrame]) -> StudioBlockHitTester {
         StudioBlockHitTester(
             entries: blocks.compactMap { block in
-                frames[block.id].map { .init(id: block.id, frame: $0, allowsTrim: block.allowsTrim) }
+                frames[block.id].map { .init(id: block.item.id, frame: $0, allowsTrim: block.allowsTrim) }
             },
             selectedID: selectedID
         )
@@ -868,9 +887,9 @@ where Item.ID == UUID {
         switch press {
         case .block(let block, let kind), .editing(let block, let kind):
             switch kind {
-            case .move: .body(block.id)
-            case .trimLeading: .edge(block.id, .leading)
-            case .trimTrailing: .edge(block.id, .trailing)
+            case .move: .body(block.item.id)
+            case .trimLeading: .edge(block.item.id, .leading)
+            case .trimTrailing: .edge(block.item.id, .trailing)
             }
         case .empty, .creating, .scrubbing:
             .empty
@@ -884,7 +903,7 @@ where Item.ID == UUID {
         return .frameResize(position: edge == .leading ? .leading : .trailing)
     }
 
-    private func dragGesture(frames: [UUID: StudioBlockFrame]) -> some Gesture {
+    private func dragGesture(frames: [StudioLaneBlockID: StudioBlockFrame]) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .updating($isGestureActive) { _, active, _ in
                 active = true
@@ -903,10 +922,15 @@ where Item.ID == UUID {
             .onEnded { _ in finish(commitDraft: true) }
     }
 
-    private func begin(at x: CGFloat, frames: [UUID: StudioBlockFrame]) {
+    private func begin(at x: CGFloat, frames: [StudioLaneBlockID: StudioBlockFrame]) {
         model.pause()
         let target = hitTester(frames).target(atX: x)
-        if let id = target.blockID, let block = blocks.first(where: { $0.id == id }) {
+        if let id = target.blockID,
+           let block = blocks.last(where: { block in
+               guard block.item.id == id, let frame = frames[block.id] else { return false }
+               return x >= frame.selectionMinX - StudioBlockMetrics.edgeOutset
+                   && x <= frame.selectionMaxX + StudioBlockMetrics.edgeOutset
+           }) ?? blocks.first(where: { $0.item.id == id }) {
             // Selecting on mouse-down shows the handles before any drag.
             actions.select(block.item)
             let kind: StudioBlockEditKind = switch target {
@@ -934,7 +958,7 @@ where Item.ID == UUID {
         let time = scale.time(forX: x)
         switch press {
         case .block(let block, let kind):
-            guard kind.startsDrag(translation: translation, vertical: vertical) else { return }
+            guard block.allows(kind), kind.startsDrag(translation: translation, vertical: vertical) else { return }
             actions.begin(block.item, kind)
             press = .editing(block, kind)
             // The preview stays on the playhead while a block is dragged,
@@ -964,7 +988,7 @@ where Item.ID == UUID {
         let rawDelta = Double(translation) * scale.secondsPerPoint
         let delta = overlap.clampedDelta(
             rawDelta,
-            blockID: block.id,
+            blockID: block.item.id,
             editorStart: block.editorStart,
             editorEnd: block.editorEnd,
             kind: kind,
@@ -1247,21 +1271,93 @@ func studioMovedZoomCue(
     return cue
 }
 
-private struct StudioBlockTrimAccessibilityModifier: ViewModifier {
-    let enabled: Bool
-    let onTrim: (StudioBlockEditKind, TimeInterval) -> Void
+private struct StudioBlockEditAccessibilityModifier: ViewModifier {
+    let allowsMove: Bool
+    let allowsTrim: Bool
+    let onEdit: (StudioBlockEditKind, TimeInterval) -> Void
     let step: TimeInterval
 
     func body(content: Content) -> some View {
-        if enabled {
-            content
-                .accessibilityAction(named: "Trim Start Earlier") { onTrim(.trimLeading, -step) }
-                .accessibilityAction(named: "Trim Start Later") { onTrim(.trimLeading, step) }
-                .accessibilityAction(named: "Trim End Earlier") { onTrim(.trimTrailing, -step) }
-                .accessibilityAction(named: "Trim End Later") { onTrim(.trimTrailing, step) }
-        } else {
-            content
+        content
+            .modifier(MoveModifier(enabled: allowsMove, onEdit: onEdit, step: step))
+            .modifier(TrimModifier(enabled: allowsTrim, onEdit: onEdit, step: step))
+    }
+
+    private struct MoveModifier: ViewModifier {
+        let enabled: Bool
+        let onEdit: (StudioBlockEditKind, TimeInterval) -> Void
+        let step: TimeInterval
+
+        func body(content: Content) -> some View {
+            if enabled {
+                content
+                    .accessibilityAction(named: "Move Earlier") { onEdit(.move, -step) }
+                    .accessibilityAction(named: "Move Later") { onEdit(.move, step) }
+            } else {
+                content
+            }
         }
+    }
+
+    private struct TrimModifier: ViewModifier {
+        let enabled: Bool
+        let onEdit: (StudioBlockEditKind, TimeInterval) -> Void
+        let step: TimeInterval
+
+        func body(content: Content) -> some View {
+            if enabled {
+                content
+                    .accessibilityAction(named: "Trim Start Earlier") { onEdit(.trimLeading, -step) }
+                    .accessibilityAction(named: "Trim Start Later") { onEdit(.trimLeading, step) }
+                    .accessibilityAction(named: "Trim End Earlier") { onEdit(.trimTrailing, -step) }
+                    .accessibilityAction(named: "Trim End Later") { onEdit(.trimTrailing, step) }
+            } else {
+                content
+            }
+        }
+    }
+}
+
+/// Where a text, image, or effect lands after a timeline drag. Moves keep
+/// their length on the edited timeline; trims move one end without passing the
+/// other and stay inside the block's monotonic source run. Returns nil for
+/// overlays spanning multiple editor runs (across a backward join) so moving
+/// or trimming one fragment cannot silently shift or uncover another run.
+func studioOverlaySourceRange<Item: Identifiable>(
+    for edit: StudioBlockEdit<Item>,
+    clipTimeline: RecordingClipTimeline,
+    start: TimeInterval,
+    end: TimeInterval,
+    minimumDuration: TimeInterval = 0.1
+) -> (start: TimeInterval, end: TimeInterval)? where Item.ID == UUID {
+    guard edit.base.allows(edit.kind),
+          clipTimeline.editorRuns(overlapping: start, sourceEnd: end).count <= 1 else {
+        return nil
+    }
+    switch edit.kind {
+    case .move:
+        guard abs(edit.delta) >= 0.000_001 else { return (start, end) }
+        return studioMovedSourceRange(
+            clipTimeline: clipTimeline,
+            editorStart: edit.base.editorStart + edit.delta,
+            editorLength: edit.base.editorLength
+        )
+    case .trimLeading:
+        guard abs(edit.delta) >= 0.000_001 else { return (start, end) }
+        let run = studioMonotonicRun(around: (edit.base.editorStart + edit.base.editorEnd) / 2, in: clipTimeline)
+        let target = min(max(edit.base.editorStart + edit.delta, run.lowerBound), run.upperBound)
+        let source = target >= run.upperBound - 0.000_001
+            ? studioSourceEnd(atEditorTime: run.upperBound, in: clipTimeline)
+            : studioSourceStart(atEditorTime: target, in: clipTimeline)
+        return (min(source, end - minimumDuration), end)
+    case .trimTrailing:
+        guard abs(edit.delta) >= 0.000_001 else { return (start, end) }
+        let run = studioMonotonicRun(around: (edit.base.editorStart + edit.base.editorEnd) / 2, in: clipTimeline)
+        let target = min(max(edit.base.editorEnd + edit.delta, run.lowerBound), run.upperBound)
+        let source = target <= run.lowerBound + 0.000_001
+            ? studioSourceStart(atEditorTime: run.lowerBound, in: clipTimeline)
+            : studioSourceEnd(atEditorTime: target, in: clipTimeline)
+        return (start, max(source, start + minimumDuration))
     }
 }
 

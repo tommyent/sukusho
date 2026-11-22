@@ -1803,7 +1803,12 @@ private struct StudioTextLane: View {
                 begin: { _, _ in model.beginTextEdit() },
                 edit: { edit in
                     var text = edit.base.item
-                    let range = studioOverlaySourceRange(for: edit, model: model, start: text.start, end: text.end)
+                    guard let range = studioOverlaySourceRange(
+                        for: edit,
+                        clipTimeline: model.clipTimeline,
+                        start: text.start,
+                        end: text.end
+                    ) else { return }
                     text.start = range.start
                     text.end = range.end
                     model.setText(text)
@@ -1821,10 +1826,14 @@ private struct StudioTextLane: View {
             },
             menu: { block in
                 Button("Delete Text", systemImage: "trash", role: .destructive) {
-                    model.removeText(id: block.id)
+                    model.removeText(id: block.item.id)
                 }
             },
-            help: { block in "\(title(for: block.item)). Drag to move, drag an end to resize, right-click for options." },
+            help: { block in
+                block.allowsMove && block.allowsTrim
+                    ? "\(title(for: block.item)). Drag to move, drag an end to resize, right-click for options."
+                    : "\(title(for: block.item)). Spans reordered clips; click to select or right-click for options."
+            },
             accessibility: { block in
                 StudioBlockAccessibility(
                     label: "Text, \(title(for: block.item))",
@@ -1846,7 +1855,16 @@ private struct StudioTextLane: View {
     private var visibleBlocks: [StudioLaneBlock<RecordingTextOverlay>] {
         model.textTimelineBlocks
             .filter { $0.editorEnd >= visibleRange.lowerBound && $0.editorStart <= visibleRange.upperBound }
-            .map { StudioLaneBlock(item: $0.item, editorStart: $0.editorStart, editorEnd: $0.editorEnd) }
+            .map {
+                StudioLaneBlock(
+                    item: $0.item,
+                    editorStart: $0.editorStart,
+                    editorEnd: $0.editorEnd,
+                    fragmentIndex: $0.runIndex,
+                    allowsMove: $0.allowsTimingEdits,
+                    allowsTrim: $0.allowsTimingEdits
+                )
+            }
     }
 }
 
@@ -1931,7 +1949,11 @@ private struct StudioRedactionLane: View {
                 }
             },
             menu: { block in menu(for: block.item) },
-            help: { block in "\(block.item.title). Drag to move, drag an end to resize, right-click for options." },
+            help: { block in
+                block.allowsMove && block.allowsTrim
+                    ? "\(block.item.title). Drag to move, drag an end to resize, right-click for options."
+                    : "\(block.item.title). Spans reordered clips; click to select or right-click for options."
+            },
             accessibility: { block in
                 StudioBlockAccessibility(
                     label: block.item.title,
@@ -1952,12 +1974,22 @@ private struct StudioRedactionLane: View {
     private func apply(_ edit: StudioBlockEdit<StudioEffectsItem>) {
         switch edit.base.item {
         case .image(var overlay):
-            let range = studioOverlaySourceRange(for: edit, model: model, start: overlay.start, end: overlay.end)
+            guard let range = studioOverlaySourceRange(
+                for: edit,
+                clipTimeline: model.clipTimeline,
+                start: overlay.start,
+                end: overlay.end
+            ) else { return }
             overlay.start = range.start
             overlay.end = range.end
             model.setImage(overlay)
         case .redaction(var redaction):
-            let range = studioOverlaySourceRange(for: edit, model: model, start: redaction.start, end: redaction.end)
+            guard let range = studioOverlaySourceRange(
+                for: edit,
+                clipTimeline: model.clipTimeline,
+                start: redaction.start,
+                end: redaction.end
+            ) else { return }
             redaction.start = range.start
             redaction.end = range.end
             model.setRedaction(redaction)
@@ -1994,43 +2026,28 @@ private struct StudioRedactionLane: View {
     /// Images under effects, matching their visual distinction on the lane.
     private var visibleBlocks: [StudioLaneBlock<StudioEffectsItem>] {
         let images = model.imageTimelineBlocks.map {
-            StudioLaneBlock(item: StudioEffectsItem.image($0.item), editorStart: $0.editorStart, editorEnd: $0.editorEnd)
+            StudioLaneBlock(
+                item: StudioEffectsItem.image($0.item),
+                editorStart: $0.editorStart,
+                editorEnd: $0.editorEnd,
+                fragmentIndex: $0.runIndex,
+                allowsMove: $0.allowsTimingEdits,
+                allowsTrim: $0.allowsTimingEdits
+            )
         }
         let redactions = model.redactionTimelineBlocks.map {
-            StudioLaneBlock(item: StudioEffectsItem.redaction($0.item), editorStart: $0.editorStart, editorEnd: $0.editorEnd)
+            StudioLaneBlock(
+                item: StudioEffectsItem.redaction($0.item),
+                editorStart: $0.editorStart,
+                editorEnd: $0.editorEnd,
+                fragmentIndex: $0.runIndex,
+                allowsMove: $0.allowsTimingEdits,
+                allowsTrim: $0.allowsTimingEdits
+            )
         }
         return (images + redactions).filter {
             $0.editorEnd >= visibleRange.lowerBound && $0.editorStart <= visibleRange.upperBound
         }
-    }
-}
-
-/// Where a text, image, or effect lands after a timeline drag. Moves keep
-/// their length on the edited timeline; trims move one end without passing the other.
-private func studioOverlaySourceRange<Item>(
-    for edit: StudioBlockEdit<Item>,
-    model: RecordingStudioModel,
-    start: TimeInterval,
-    end: TimeInterval
-) -> (start: TimeInterval, end: TimeInterval) {
-    switch edit.kind {
-    case .move:
-        guard abs(edit.delta) >= 0.000_001 else { return (start, end) }
-        return studioMovedSourceRange(
-            model: model,
-            editorStart: edit.base.editorStart + edit.delta,
-            editorLength: edit.base.editorLength
-        )
-    case .trimLeading:
-        let source = abs(edit.delta) < 0.000_001
-            ? start
-            : studioSourceStart(atEditorTime: edit.base.editorStart + edit.delta, in: model.clipTimeline)
-        return (min(source, end - 0.1), end)
-    case .trimTrailing:
-        let source = abs(edit.delta) < 0.000_001
-            ? end
-            : studioSourceEnd(atEditorTime: edit.base.editorEnd + edit.delta, in: model.clipTimeline)
-        return (start, max(source, start + 0.1))
     }
 }
 

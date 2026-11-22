@@ -317,29 +317,44 @@ nonisolated struct RecordingTextOverlay: Identifiable, Codable, Equatable, Hasha
     }
 }
 
-/// Where a text, image, or effect sits on the edited timeline: its source
-/// range mapped through the cut. A cut inside it removes editor time between
-/// its slices, so touching slices merge into one block.
-nonisolated struct RecordingOverlayTimelineBlock<Item: Identifiable & Sendable>: Identifiable, Sendable {
+/// One contiguous editor-time run of a text, image, or effect overlay mapped
+/// through the cut. A cut inside it removes editor time between its slices, so
+/// touching forward slices merge into one fragment, while reordered clips that
+/// jump backward emit one fragment per surviving run with a stable identity.
+nonisolated struct RecordingOverlayTimelineBlock<Item: Identifiable & Sendable>: Identifiable, Sendable where Item.ID: Sendable {
+    struct ID: Hashable, Sendable {
+        let itemID: Item.ID
+        let runIndex: Int
+    }
+
     let item: Item
     let editorStart: TimeInterval
     let editorEnd: TimeInterval
+    let runIndex: Int
+    let runCount: Int
 
-    var id: Item.ID { item.id }
+    var id: ID { ID(itemID: item.id, runIndex: runIndex) }
+    /// False when this source overlay appears in more than one editor run
+    /// (across a backward join), so move and trim stay disabled on the lane.
+    var allowsTimingEdits: Bool { runCount <= 1 }
 
     static func blocks(
         for items: [Item],
         clipTimeline: RecordingClipTimeline,
         range: (Item) -> (start: TimeInterval, end: TimeInterval)
     ) -> [RecordingOverlayTimelineBlock<Item>] {
-        items.compactMap { item in
+        items.flatMap { item in
             let source = range(item)
-            guard let span = clipTimeline.editorSpan(overlapping: source.start, sourceEnd: source.end) else { return nil }
-            return RecordingOverlayTimelineBlock(
-                item: item,
-                editorStart: span.lowerBound,
-                editorEnd: span.upperBound
-            )
+            let runs = clipTimeline.editorRuns(overlapping: source.start, sourceEnd: source.end)
+            return runs.enumerated().map { index, run in
+                RecordingOverlayTimelineBlock(
+                    item: item,
+                    editorStart: run.editorStart,
+                    editorEnd: run.editorEnd,
+                    runIndex: index,
+                    runCount: runs.count
+                )
+            }
         }
     }
 }

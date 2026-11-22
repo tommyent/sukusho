@@ -1022,7 +1022,7 @@ struct StudioTracksTests {
             clipTimeline: timeline
         ) { ($0.start, $0.end) }
         #expect(textBlocks.count == 1)
-        #expect(textBlocks[0].id == spanningText.id)
+        #expect(textBlocks[0].item.id == spanningText.id)
         #expect(abs(textBlocks[0].editorStart - 1.0) < 0.0001)
         #expect(abs(textBlocks[0].editorEnd - 4.0) < 0.0001)
 
@@ -1034,7 +1034,7 @@ struct StudioTracksTests {
             clipTimeline: timeline
         ) { ($0.start, $0.end) }
         #expect(imageBlocks.count == 1)
-        #expect(imageBlocks[0].id == fastImage.id)
+        #expect(imageBlocks[0].item.id == fastImage.id)
         #expect(abs(imageBlocks[0].editorStart - 0.5) < 0.0001)
         #expect(abs(imageBlocks[0].editorEnd - 1.5) < 0.0001)
 
@@ -1199,6 +1199,136 @@ struct StudioTracksTests {
         ))
         #expect(abs(backwardDraft.lowerBound - 2.0) < 0.0001)
         #expect(abs(backwardDraft.upperBound - 3.0) < 0.0001)
+    }
+
+    @Test func multiRunOverlayShowsEveryRunWithStableIdentityAndBlocksMoveAndTrim() throws {
+        // Reordered clips: source 0...2 (editor 0...2), 4...8 (editor 2...6), 2...4 (editor 6...8).
+        // A redaction on source 1.5...5.0 masks TWO editor runs:
+        // - Run 0: editor 1.5...3.0 (source 1.5...2.0 + 4.0...5.0, touching forward across cut 2...4)
+        // - Run 1: editor 6.0...8.0 (source 2.0...4.0)
+        let reordered = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 2, speed: 1),
+            RecordingClipSegment(sourceStart: 4, sourceEnd: 8, speed: 1),
+            RecordingClipSegment(sourceStart: 2, sourceEnd: 4, speed: 1)
+        ])
+        let redaction = RecordingRedaction(start: 1.5, end: 5.0)
+        let blocks = RecordingOverlayTimelineBlock.blocks(for: [redaction], clipTimeline: reordered) { ($0.start, $0.end) }
+        #expect(blocks.count == 2)
+        guard blocks.count == 2 else { return }
+        #expect(abs(blocks[0].editorStart - 1.5) < 0.0001)
+        #expect(abs(blocks[0].editorEnd - 3.0) < 0.0001)
+        #expect(abs(blocks[1].editorStart - 6.0) < 0.0001)
+        #expect(abs(blocks[1].editorEnd - 8.0) < 0.0001)
+
+        // Each fragment has a distinct, stable identity and timing edits are disabled.
+        #expect(blocks[0].id != blocks[1].id)
+        let repeated = RecordingOverlayTimelineBlock.blocks(for: [redaction], clipTimeline: reordered) { ($0.start, $0.end) }
+        #expect(blocks.map(\.id) == repeated.map(\.id))
+        #expect(!blocks[0].allowsTimingEdits)
+        #expect(!blocks[1].allowsTimingEdits)
+
+        let laneBlocks = blocks.map {
+            StudioLaneBlock(
+                item: $0.item,
+                editorStart: $0.editorStart,
+                editorEnd: $0.editorEnd,
+                fragmentIndex: $0.runIndex,
+                allowsMove: $0.allowsTimingEdits,
+                allowsTrim: $0.allowsTimingEdits
+            )
+        }
+        #expect(laneBlocks[0].id != laneBlocks[1].id)
+        #expect(!laneBlocks[0].allowsMove && !laneBlocks[0].allowsTrim)
+        #expect(!laneBlocks[1].allowsMove && !laneBlocks[1].allowsTrim)
+
+        // Pointer hit-testing on BOTH fragments never exposes trim edges, whether unselected or selected.
+        let scale = StudioTimelineScale(viewportWidth: 800, duration: reordered.duration, zoom: 1)
+        let frame0 = StudioBlockFrame(editorStart: laneBlocks[0].editorStart, editorEnd: laneBlocks[0].editorEnd, scale: scale)
+        let frame1 = StudioBlockFrame(editorStart: laneBlocks[1].editorStart, editorEnd: laneBlocks[1].editorEnd, scale: scale)
+        let entries: [StudioBlockHitTester.Entry] = [
+            .init(id: redaction.id, frame: frame0, allowsTrim: laneBlocks[0].allowsTrim),
+            .init(id: redaction.id, frame: frame1, allowsTrim: laneBlocks[1].allowsTrim)
+        ]
+        for selectedID in [nil, redaction.id] {
+            let tester = StudioBlockHitTester(entries: entries, selectedID: selectedID)
+            #expect(tester.target(atX: frame0.minX + 2) == .body(redaction.id))
+            #expect(tester.target(atX: frame0.maxX - 2) == .body(redaction.id))
+            #expect(tester.target(atX: frame1.minX + 2) == .body(redaction.id))
+            #expect(tester.target(atX: frame1.maxX - 2) == .body(redaction.id))
+        }
+
+        // Trimming or moving the trailing visible run (editor 8 -> 7.5) is rejected and cannot
+        // write sourceEnd 3.5 or uncover editor 2...3 in the earlier run.
+        for block in laneBlocks {
+            #expect(studioOverlaySourceRange(
+                for: StudioBlockEdit(base: block, kind: .trimTrailing, delta: -0.5),
+                clipTimeline: reordered,
+                start: redaction.start,
+                end: redaction.end
+            ) == nil)
+            #expect(studioOverlaySourceRange(
+                for: StudioBlockEdit(base: block, kind: .trimLeading, delta: 0.5),
+                clipTimeline: reordered,
+                start: redaction.start,
+                end: redaction.end
+            ) == nil)
+            #expect(studioOverlaySourceRange(
+                for: StudioBlockEdit(base: block, kind: .move, delta: -0.5),
+                clipTimeline: reordered,
+                start: redaction.start,
+                end: redaction.end
+            ) == nil)
+        }
+
+        // Accessibility move and trim through the real StudioBlockLane are blocked too.
+        final class BlockHost: StudioBlockLaneHost {
+            var isDraggingTimelineBlock = false
+            func pause() {}
+            func seek(to time: TimeInterval) {}
+            func clearTimelineSelection() {}
+        }
+        var current = redaction
+        var editCallbacks = 0
+        let lane = StudioBlockLane(
+            model: BlockHost(),
+            blocks: laneBlocks,
+            selectedID: redaction.id,
+            scale: scale,
+            height: 28,
+            empty: .scrub,
+            actions: StudioBlockLaneActions(
+                select: { _ in },
+                begin: { _, _ in editCallbacks += 1 },
+                edit: { edit in
+                    editCallbacks += 1
+                    if let range = studioOverlaySourceRange(
+                        for: edit,
+                        clipTimeline: reordered,
+                        start: current.start,
+                        end: current.end
+                    ) {
+                        current.start = range.start
+                        current.end = range.end
+                    }
+                },
+                end: { _, _ in editCallbacks += 1 }
+            ),
+            content: { _, _ in Color.clear },
+            menu: { _ in EmptyView() },
+            help: { _ in "" },
+            accessibility: { _ in StudioBlockAccessibility(label: "", value: "") }
+        )
+
+        lane.performAccessibleEdit(laneBlocks[1], kind: .trimTrailing, delta: -0.5)
+        lane.performAccessibleEdit(laneBlocks[1], kind: .trimLeading, delta: 0.5)
+        lane.performAccessibleEdit(laneBlocks[1], kind: .move, delta: -0.5)
+        lane.performAccessibleEdit(laneBlocks[0], kind: .trimTrailing, delta: -0.5)
+        #expect(editCallbacks == 0)
+        #expect(abs(current.start - 1.5) < 0.0001)
+        #expect(abs(current.end - 5.0) < 0.0001)
+        let frame = 1.0 / 30.0
+        #expect(current.covers(editorTime: 2.5, frameDuration: frame, timeline: reordered))
+        #expect(current.covers(editorTime: 7.0, frameDuration: frame, timeline: reordered))
     }
 
     @Test func addRedactionKeepsOriginalSourceEndBeforeAndAfterRestoringCut() throws {
