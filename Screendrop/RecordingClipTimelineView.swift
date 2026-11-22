@@ -43,6 +43,12 @@ struct RecordingClipTimelineView: NSViewRepresentable {
     /// Source moment at the edge being trimmed so the canvas can preview it;
     /// nil when the trim ends.
     var onTrimPreview: ((TimeInterval?) -> Void)? = nil
+    /// Clip-aware variant of `onTrimPreview` so trimming an imported clip
+    /// previews that clip's own media instead of the primary recording.
+    var onClipTrimPreview: ((UUID, TimeInterval?) -> Void)? = nil
+    /// Slot boundary index highlighted while dragging a video file from Finder
+    /// onto the Clips lane.
+    var dropInsertionIndex: Int? = nil
     /// Shared focus/modal guard so the AppKit strip yields during crop or
     /// document restore even when it holds first responder.
     var allowsKeyboardShortcuts: () -> Bool = { true }
@@ -69,6 +75,8 @@ struct RecordingClipTimelineView: NSViewRepresentable {
         nsView.snaps = snaps
         nsView.snapGuideDidChange = onSnapGuide
         nsView.trimPreviewDidChange = onTrimPreview
+        nsView.clipTrimPreviewDidChange = onClipTrimPreview
+        nsView.setDropInsertionIndex(dropInsertionIndex)
         nsView.allowsKeyboardShortcuts = allowsKeyboardShortcuts
         nsView.canDetachAudio = canDetachAudio
         nsView.detachAudioRequested = onDetachAudio
@@ -98,6 +106,7 @@ final class RecordingClipTimelineControl: NSView {
     var snaps = true
     var snapGuideDidChange: ((TimeInterval?) -> Void)?
     var trimPreviewDidChange: ((TimeInterval?) -> Void)?
+    var clipTrimPreviewDidChange: ((UUID, TimeInterval?) -> Void)?
     var allowsKeyboardShortcuts: () -> Bool = { true }
     var canDetachAudio: ((UUID) -> Bool)?
     var detachAudioRequested: ((UUID) -> Void)?
@@ -152,6 +161,8 @@ final class RecordingClipTimelineControl: NSView {
     private var dragStartClip: RecordingClipSegment?
     /// Where a clip being reordered would land, as a slot boundary index in `0...segments.count`.
     private var reorderDestination: Int?
+    /// Where a Finder video drop would insert, as a slot boundary index in `0...segments.count`.
+    private var dropInsertionIndex: Int?
     private var lastSnapGuide: TimeInterval?
     private var contextTime: TimeInterval?
     private var contextClipID: UUID?
@@ -171,8 +182,11 @@ final class RecordingClipTimelineControl: NSView {
         return timeline.segments.enumerated().compactMap { index, clip in
             guard let rect = clipRect(for: clip.id),
                   let range = timeline.editorRange(for: clip.id) else { return nil }
+            let clipTitle = clip.isPrimaryRecording
+                ? "Clip \(index + 1) of \(count)"
+                : "\(clip.displayName ?? "Imported Clip"), Clip \(index + 1) of \(count)"
             var parts = [
-                "Clip \(index + 1) of \(count)",
+                clipTitle,
                 "\(studioClock(range.lowerBound)) to \(studioClock(range.upperBound))"
             ]
             if abs(clip.speed - 1) > 0.001 {
@@ -256,6 +270,12 @@ final class RecordingClipTimelineControl: NSView {
         return changed
     }
 
+    func setDropInsertionIndex(_ index: Int?) {
+        guard dropInsertionIndex != index else { return }
+        dropInsertionIndex = index
+        needsDisplay = true
+    }
+
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let trackingArea {
@@ -289,17 +309,24 @@ final class RecordingClipTimelineControl: NSView {
         drawReorderMark()
     }
 
-    /// While ⌥-dragging, dims the dragged clip as a ghost and draws a yellow
-    /// insertion bar where the clip will land.
+    /// While ⌥-dragging or dropping video clips from Finder, dims any dragged
+    /// clip as a ghost and draws a yellow insertion bar where the clip will land.
     private func drawReorderMark() {
-        guard case .reorder(let clipID) = dragTarget, let destination = reorderDestination else { return }
-        if let rect = clipRect(for: clipID) {
-            NSColor.black.withAlphaComponent(0.45).setFill()
-            NSBezierPath(
-                roundedRect: rect,
-                xRadius: clipRadius(for: rect),
-                yRadius: clipRadius(for: rect)
-            ).fill()
+        let destination: Int
+        if case .reorder(let clipID) = dragTarget, let reorderDestination {
+            if let rect = clipRect(for: clipID) {
+                NSColor.black.withAlphaComponent(0.45).setFill()
+                NSBezierPath(
+                    roundedRect: rect,
+                    xRadius: clipRadius(for: rect),
+                    yRadius: clipRadius(for: rect)
+                ).fill()
+            }
+            destination = reorderDestination
+        } else if let dropInsertionIndex {
+            destination = dropInsertionIndex
+        } else {
+            return
         }
         let points = timeline.editPoints
         guard points.indices.contains(destination) else { return }
@@ -367,7 +394,7 @@ final class RecordingClipTimelineControl: NSView {
             let initialSource = hit.edge == .leading
                 ? clip.sourceStart
                 : max(clip.sourceStart, clip.sourceEnd - 0.001)
-            trimPreviewDidChange?(initialSource)
+            notifyTrimPreview(clipID: hit.clipID, sourceTime: initialSource)
         } else if event.modifierFlags.contains(.option), timeline.segments.count > 1, reorderRequested != nil {
             clearHover()
             dragTarget = .reorder(clipID: location.segmentID)
@@ -411,7 +438,7 @@ final class RecordingClipTimelineControl: NSView {
             scrubbingDidChange?(false)
         } else if case .trim(let clipID, _) = dragTarget {
             setSnapGuide(nil)
-            trimPreviewDidChange?(nil)
+            notifyTrimPreview(clipID: clipID, sourceTime: nil)
             if let original = dragStartClip,
                let replacement = timeline.segments.first(where: { $0.id == clipID }),
                replacement != original {
@@ -705,7 +732,7 @@ final class RecordingClipTimelineControl: NSView {
             )
             let appliedEditorDelta = (replacement.sourceStart - original.sourceStart) / original.speed
             if abs(appliedEditorDelta - editorDelta) > 0.001 { guide = nil }
-            trimPreviewDidChange?(replacement.sourceStart)
+            notifyTrimPreview(clipID: clipID, sourceTime: replacement.sourceStart)
         case .trailing:
             replacement.sourceEnd = max(
                 original.sourceStart + RecordingClipSegment.minimumDuration,
@@ -714,10 +741,18 @@ final class RecordingClipTimelineControl: NSView {
             let appliedEditorDelta = (replacement.sourceEnd - original.sourceEnd) / original.speed
             if abs(appliedEditorDelta - editorDelta) > 0.001 { guide = nil }
             // The last frame that will play, not the first one cut.
-            trimPreviewDidChange?(max(replacement.sourceStart, replacement.sourceEnd - 0.001))
+            notifyTrimPreview(clipID: clipID, sourceTime: max(replacement.sourceStart, replacement.sourceEnd - 0.001))
         }
         setSnapGuide(guide)
         timeline = startTimeline.replacing(replacement)
+    }
+
+    private func notifyTrimPreview(clipID: UUID, sourceTime: TimeInterval?) {
+        if let clipTrimPreviewDidChange {
+            clipTrimPreviewDidChange(clipID, sourceTime)
+        } else {
+            trimPreviewDidChange?(sourceTime)
+        }
     }
 
     private func edgeHit(at point: CGPoint) -> (clipID: UUID, edge: Edge)? {
@@ -872,7 +907,8 @@ final class RecordingClipTimelineControl: NSView {
         let pointsPerSourceSecond = rect.width / CGFloat(clip.duration)
         guard pointsPerSourceSecond > 0 else { return }
         let grid = thumbnails.grid(
-            forTargetSpan: Double(Metrics.thumbnailWidth / pointsPerSourceSecond)
+            forTargetSpan: Double(Metrics.thumbnailWidth / pointsPerSourceSecond),
+            sourceKey: clip.sourceKey
         )
         guard grid.spacing > 0 else { return }
 
@@ -889,7 +925,7 @@ final class RecordingClipTimelineControl: NSView {
             let tileStart = max(Double(index) * grid.spacing, clip.sourceStart)
             let tileEnd = min(Double(index + 1) * grid.spacing, clip.sourceEnd)
             guard tileEnd > tileStart,
-                  let image = thumbnails.image(in: grid, tileIndex: index) else { continue }
+                  let image = thumbnails.image(in: grid, tileIndex: index, sourceKey: clip.sourceKey) else { continue }
             let minX = rect.minX
                 + CGFloat(tileStart - clip.sourceStart) * pointsPerSourceSecond
             let maxX = rect.minX
@@ -980,10 +1016,12 @@ final class RecordingClipTimelineControl: NSView {
             let isSpedUp = abs(clip.speed - 1) > 0.001
             let speedText = RecordingClipSegment.speedTitle(clip.speed)
 
-            if showsTitle(on: clip, in: rect),
+            let titleText = clip.isPrimaryRecording ? "Clip \(index + 1)" : (clip.displayName ?? "Clip \(index + 1)")
+            let titleSymbol = clip.isPrimaryRecording ? nil : "film"
+            if (!clip.isPrimaryRecording && rect.width >= Metrics.minimumTitledWidth) || showsTitle(on: clip, in: rect),
                let badge = badgeRect(
-                   text: "Clip \(index + 1)",
-                   symbol: nil,
+                   text: titleText,
+                   symbol: titleSymbol,
                    origin: CGPoint(x: leadingX, y: content.minY),
                    maxX: content.maxX
                ) {

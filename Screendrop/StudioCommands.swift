@@ -22,6 +22,10 @@ struct StudioCommands: Commands {
     var body: some Commands {
         CommandMenu("Clip") {
             Group {
+                Button("Insert Video Clip…") {
+                    model?.presentInsertVideoClipPanel()
+                }
+                .disabled(model?.canImportVideoClip != true)
                 Button("Split at Playhead") {
                     guard let model else { return }
                     model.splitClip(at: model.currentTime)

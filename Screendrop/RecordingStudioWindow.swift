@@ -97,6 +97,17 @@ private struct RecordingStudioContent: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(.orange.opacity(0.12))
                 }
+                if !model.missingVideoClipFiles.isEmpty {
+                    HStack(spacing: 8) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                        Text("Some imported video clips are missing from this project. Remove the missing clip or restore its file before exporting.")
+                    }
+                    .font(.callout)
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.orange.opacity(0.12))
+                }
                 StudioCanvas(model: model)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background {
@@ -125,6 +136,13 @@ private struct RecordingStudioContent: View {
         } message: {
             Text("The link and its cloud files will be deleted. The local recording stays in your Library.")
         }
+        .sheet(item: $model.pendingRecordingImport) { pending in
+            StudioRecordingImportSheet(
+                pending: pending,
+                onConfirm: { model.confirmPendingRecordingImport(mode: $0) },
+                onCancel: { model.cancelPendingRecordingImport() }
+            )
+        }
         .toolbarBackgroundVisibility(floatingChrome ? .hidden : .visible, for: .windowToolbar)
         .toolbar(removing: .title)
         .toolbar {
@@ -148,6 +166,12 @@ private struct RecordingStudioContent: View {
                 } else if model.isCroppingVideo {
                     videoCropActions
                 } else {
+                    if let progress = model.videoImportProgress {
+                        SharePill(stage: "Rendering Clip", progress: progress, cancelLabel: "Cancel Import") {
+                            model.cancelVideoImport()
+                        }
+                    }
+
                     if model.canShareToCloud {
                         shareStatus
                     }
@@ -394,7 +418,7 @@ private struct RecordingStudioContent: View {
                 Label("Export", systemImage: "arrow.down.circle")
                     .labelStyle(.titleAndIcon)
             }
-            .disabled(!model.isLoaded || model.shareState.isBusy || model.isIsolatingVoice || model.hasUnreadableDraft)
+            .disabled(!model.isLoaded || model.shareState.isBusy || model.isIsolatingVoice || model.isImportingVideoClip || model.hasUnreadableDraft)
         case .exporting(let progress):
             SharePill(stage: "Exporting", progress: progress, cancelLabel: "Cancel Export",
                       tint: model.isExportingAgentPrompt ? CardMark.green : .accentColor) {
@@ -676,7 +700,7 @@ private struct StudioCanvas: View {
                     }
                 }
                 .glassEffect(.regular, in: .circle)
-                .disabled(!model.isLoaded || model.exportState.isExporting)
+                .disabled(!model.isLoaded || model.exportState.isExporting || model.isImportingVideoClip)
                 .padding(12)
             }
         }
@@ -956,6 +980,7 @@ private struct StudioCanvasComposition: View {
         guard !isEditingVideoCrop,
               !model.isPlaying,
               model.zoomEnabled,
+              model.isPrimaryRecording(at: model.displayTime),
               let cue = model.selectedCue,
               cue.isEnabled else { return nil }
         return cue
@@ -1740,5 +1765,119 @@ final class StudioPlayerContainerView: NSView {
         CATransaction.setDisableActions(true)
         playerLayer.frame = bounds
         CATransaction.commit()
+    }
+}
+
+/// Asks whether to insert a Sukusho recording's raw screen capture (framed
+/// inside this project) or its finished movie (with zooms, camera, and
+/// overlays baked in). Defaults to Raw recording.
+private struct StudioRecordingImportSheet: View {
+    let pending: RecordingStudioModel.PendingRecordingImport
+    let onConfirm: (StudioVideoClipImport.SukushoRecordingMode) -> Void
+    let onCancel: () -> Void
+
+    @State private var selection: StudioVideoClipImport.SukushoRecordingMode = .rawRecording
+
+    private var titleText: String {
+        pending.recordingNames.count == 1
+            ? "Add Sukusho Recording"
+            : "Add \(pending.recordingNames.count) Sukusho Recordings"
+    }
+
+    private var subtitleText: String {
+        if pending.recordingNames.count == 1, let name = pending.recordingNames.first {
+            return "Choose how to insert “\(name)” into this timeline."
+        }
+        return "Choose how to insert these recordings into this timeline."
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(titleText)
+                    .font(.headline)
+                Text(subtitleText)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(spacing: 10) {
+                optionCard(
+                    mode: .rawRecording,
+                    title: "Raw recording",
+                    detail: "Inserts the screen capture and its audio directly, framed inside this project's background and corners.",
+                    systemImage: "video"
+                )
+                optionCard(
+                    mode: .finishedMovie,
+                    title: "Finished movie",
+                    detail: "Bakes in that recording's zooms, camera bubble, and overlays. Renders on the spot if needed.",
+                    systemImage: "sparkles.tv"
+                )
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel, action: onCancel)
+                    .keyboardShortcut(.cancelAction)
+                Button("Add") {
+                    onConfirm(selection)
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+    }
+
+    private func optionCard(
+        mode: StudioVideoClipImport.SukushoRecordingMode,
+        title: String,
+        detail: String,
+        systemImage: String
+    ) -> some View {
+        let isSelected = selection == mode
+        return Button {
+            selection = mode
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+                    .padding(.top, 2)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Image(systemName: systemImage)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Text(title)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.primary)
+                    }
+                    Text(detail)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(isSelected ? Color.accentColor.opacity(0.10) : Color.primary.opacity(0.04))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(
+                        isSelected ? Color.accentColor.opacity(0.65) : Color.primary.opacity(0.10),
+                        lineWidth: isSelected ? 1.5 : 1
+                    )
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 }

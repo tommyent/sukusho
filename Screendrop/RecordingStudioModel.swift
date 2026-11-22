@@ -15,6 +15,7 @@ import CoreGraphics
 import Foundation
 import Observation
 import Translation
+import UniformTypeIdentifiers
 
 enum RecordingTranscriptionState: Equatable {
     case idle
@@ -144,6 +145,7 @@ final class RecordingStudioModel {
         didSet {
             scheduleProjectSave()
             rebuildPreviewReframe()
+            rebuildMultiSourceFramingIfNeeded()
         }
     }
     /// Fill crops with the follow camera; Fit shows the whole recording
@@ -152,13 +154,17 @@ final class RecordingStudioModel {
         didSet {
             scheduleProjectSave()
             rebuildPreviewReframe()
+            rebuildMultiSourceFramingIfNeeded()
         }
     }
     /// Non-destructive crop of the screen-video source. The Studio background,
     /// camera bubble and captions remain in canvas space around the reshaped
     /// video card.
     var videoCropRect = CropRectEditor.unit {
-        didSet { scheduleProjectSave() }
+        didSet {
+            scheduleProjectSave()
+            rebuildMultiSourceFramingIfNeeded()
+        }
     }
     private(set) var isCroppingVideo = false
     var workingVideoCropRect = CropRectEditor.unit
@@ -398,8 +404,32 @@ final class RecordingStudioModel {
     private(set) var sharedVideoError: String?
     /// Work that closing the window or quitting would cancel.
     var hasRunningWork: Bool {
-        isRestoringDocument || exportTask != nil || shareTask != nil || backgroundMusicTask != nil || isIsolatingVoice || exportState.isExporting || audioExportState.isExporting || shareState.isBusy || isDeletingSharedLink || videoOverlayRenderProgress != nil
+        isRestoringDocument || exportTask != nil || shareTask != nil || backgroundMusicTask != nil || videoImportTask != nil || isIsolatingVoice || exportState.isExporting || audioExportState.isExporting || shareState.isBusy || isDeletingSharedLink || videoOverlayRenderProgress != nil
     }
+
+    /// Pending choice when adding one or more Sukusho `.sukushorec` recordings
+    /// into the sequence: raw `screen.mov` (default) or rendered finished movie.
+    struct PendingRecordingImport: Identifiable, Equatable {
+        let id = UUID()
+        let urls: [URL]
+        let insertionIndex: Int
+        let recordingNames: [String]
+    }
+
+    var pendingRecordingImport: PendingRecordingImport?
+    /// Live render progress (0...1) while rendering a Sukusho recording's
+    /// finished movie before importing it into the sequence.
+    private(set) var videoImportProgress: Double?
+    private(set) var videoImportTitle: String?
+    private var videoImportTask: Task<Void, Never>?
+    var isImportingVideoClip: Bool { videoImportTask != nil }
+    /// Resolved metadata and video tracks for imported in-sequence clips, keyed
+    /// by their filename inside `session.mediaDirectoryURL`.
+    private var importedVideoSources: [String: StudioVideoSource] = [:]
+    /// File names of imported video clips whose files are missing or unreadable.
+    private(set) var missingVideoClipFiles: Set<String> = []
+    private var screenNaturalSize = CGSize(width: 1920, height: 1080)
+    private var screenPreferredTransform: CGAffineTransform = .identity
     /// Upload identity while sharing, so the UI can read the uploader's
     /// live progress and the history card mirrors the state.
     private(set) var shareItemID: UUID?
@@ -930,16 +960,25 @@ final class RecordingStudioModel {
             duration = sourceDuration
             if let videoTrack = tracks.first(where: { $0.mediaType == .video }) {
                 screenVideoTrack = videoTrack
-                let (naturalSize, frameRate, providesSampleCursors) = try await videoTrack.load(
+                let (naturalSize, preferredTransform, frameRate, providesSampleCursors) = try await videoTrack.load(
                     .naturalSize,
+                    .preferredTransform,
                     .nominalFrameRate,
                     .canProvideSampleCursors
                 )
                 guard !isTornDown, !Task.isCancelled else { return }
                 frameDuration = StudioPlayback.frameDuration(nominalFrameRate: frameRate)
                 canUseSampleCursors = providesSampleCursors
+                screenPreferredTransform = preferredTransform
                 if naturalSize.width > 0, naturalSize.height > 0 {
-                    videoSize = naturalSize
+                    screenNaturalSize = naturalSize
+                    let oriented = RecordingCompositionBuilder.displaySize(
+                        naturalSize: naturalSize,
+                        preferredTransform: preferredTransform
+                    )
+                    if oriented.width > 0, oriented.height > 0 {
+                        videoSize = oriented
+                    }
                 }
             }
             audioSources.recording = await StudioAudioSources.Track.loadAll(of: asset)
@@ -1077,6 +1116,7 @@ final class RecordingStudioModel {
         videoOverlayPlayer.actionAtItemEnd = .pause
         audioClips = StudioAudioConform.resolvingLanes(audioClips.map { $0.sanitized() })
         videoOverlays = StudioVideoOverlayLane.normalized(videoOverlays)
+        await resolveImportedVideoSources()
         await resolveAudioClipSources()
         await resolveVideoOverlaySources()
         guard !isTornDown, !Task.isCancelled else { return }
@@ -1096,6 +1136,7 @@ final class RecordingStudioModel {
         isLoaded = true
         rebuildPreviewReframe()
         loadTimelineThumbnails()
+        syncImportedThumbnails()
         loadStylePoster()
         loadOverlayMedia()
 
@@ -1274,6 +1315,16 @@ final class RecordingStudioModel {
         audioExportTask?.cancel()
         backgroundMusicTask?.cancel()
         backgroundMusicTask = nil
+        videoImportTask?.cancel()
+        videoImportTask = nil
+        pendingRecordingImport = nil
+        videoImportProgress = nil
+        videoImportTitle = nil
+        for source in importedVideoSources.values {
+            source.asset.cancelLoading()
+        }
+        importedVideoSources.removeAll()
+        missingVideoClipFiles.removeAll()
         replacementAudioTask?.cancel()
         cancelVoiceIsolation()
         cancelShare()
@@ -1556,7 +1607,7 @@ final class RecordingStudioModel {
             timeline: clipTimeline,
             frameDuration: frameDuration,
             duration: duration,
-            sampleNeighborhood: canUseSampleCursors ? { [weak self] sourceTime in
+            sampleNeighborhood: (canUseSampleCursors && isPrimaryRecording(at: currentTime)) ? { [weak self] sourceTime in
                 self?.sampleNeighborhood(at: sourceTime)
             } : nil
         )
@@ -1656,7 +1707,11 @@ final class RecordingStudioModel {
         cameraSeek.invalidate()
         let location = clipTimeline.location(at: editorTime)
         lastCameraSegmentID = location?.segmentID
-        let sourceTime = location?.sourceTime ?? 0
+        guard let location, clipTimeline.segments[location.segmentIndex].isPrimaryRecording else {
+            cameraPlayer.pause()
+            return
+        }
+        let sourceTime = location.sourceTime
         if sourceTime >= cameraOffset {
             let cameraTime = CMTime(seconds: max(0, sourceTime - cameraOffset), preferredTimescale: StudioPlayback.seekTimescale)
             cameraPlayer.seek(to: cameraTime, toleranceBefore: .zero, toleranceAfter: .zero)
@@ -1974,8 +2029,10 @@ final class RecordingStudioModel {
             applyMarkers(markers.filter { $0.id != existing.marker.id }, actionName: "Remove Marker")
             showNotice("Marker Removed")
         } else {
+            let anchor = StudioEditing.markerAnchor(at: currentTime, in: clipTimeline)
             let marker = RecordingMarker(
-                sourceTime: StudioEditing.markerSourceTime(at: currentTime, in: clipTimeline)
+                sourceTime: anchor.sourceTime,
+                mediaFileName: anchor.mediaFileName
             )
             applyMarkers(markers + [marker], actionName: "Add Marker")
             showNotice("Marker")
@@ -2011,6 +2068,53 @@ final class RecordingStudioModel {
             playheadTime: playhead,
             actionName: "Move Clip"
         )
+    }
+
+    /// Live trim preview for either a primary or imported clip.
+    func previewClipTrim(clipID: UUID, sourceTime: TimeInterval?) {
+        guard let sourceTime else {
+            previewSourceTime(nil)
+            return
+        }
+        guard isLoaded,
+              let segment = clipTimeline.segments.first(where: { $0.id == clipID }) else { return }
+        if segment.isPrimaryRecording {
+            previewSourceTime(sourceTime)
+            return
+        }
+        guard let editorRange = clipTimeline.editorRange(for: clipID) else { return }
+        pause()
+        isTrimmingClip = true
+        if !playerItemGate.isShowingSourcePreview,
+           sourceTime >= segment.sourceStart - 0.000_5,
+           sourceTime <= segment.sourceEnd + 0.000_5 {
+            let clamped = min(max(sourceTime, segment.sourceStart), segment.sourceEnd)
+            hoverPreviewTime = editorRange.lowerBound + (clamped - segment.sourceStart) / max(segment.speed, 1)
+            return
+        }
+        guard let fileName = segment.mediaFileName,
+              let imported = importedVideoSources[fileName],
+              playerItemGate.isCutReady,
+              readyCutPlayerItem != nil else { return }
+        let clampedSource = min(max(sourceTime, 0), imported.duration)
+        activeTrimSourcePreviewTime = clampedSource
+        hoverPreviewTime = clampedSource < segment.sourceStart ? editorRange.lowerBound : editorRange.upperBound
+        if !playerItemGate.isShowingSourcePreview,
+           playerItemGate.beginSourcePreview(isAsync: false) != nil {
+            playerItemTask?.cancel()
+            playerItemTask = nil
+            let item = AVPlayerItem(asset: imported.asset)
+            item.videoComposition = RecordingCompositionBuilder.makeSingleSourcePreviewComposition(
+                source: imported,
+                contentMode: segment.effectiveContentMode,
+                renderSize: videoSize,
+                targetRect: multiSourceTargetRect
+            )
+            replaceScreenPlayerItem(item, observeRedactionFailure: false)
+        }
+        let target = CMTime(seconds: clampedSource, preferredTimescale: StudioPlayback.seekTimescale)
+        screenPlayer.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
+        if hasCameraVideo { cameraPlayer.pause() }
     }
 
     /// Shows the exact recording frame at the edge being trimmed; `nil` hands
@@ -2282,6 +2386,35 @@ final class RecordingStudioModel {
         )
     }
 
+    /// Switches an imported clip between Fit (letterboxed) and Fill (center-cropped).
+    func setClipContentMode(_ mode: VideoClipContentMode, forClipID id: UUID) {
+        guard var segment = clipTimeline.segments.first(where: { $0.id == id }),
+              !segment.isPrimaryRecording,
+              segment.effectiveContentMode != mode else { return }
+        segment.contentMode = mode
+        let previous = clipTimeline
+        let next = clipTimeline.replacing(segment)
+        applyClipFraming(next, previous: previous, actionName: "Change Clip Framing")
+    }
+
+    private func applyClipFraming(
+        _ next: RecordingClipTimeline,
+        previous: RecordingClipTimeline,
+        actionName: String
+    ) {
+        guard next != clipTimeline else { return }
+        registerUndo(actionName) { target in
+            target.applyClipFraming(previous, previous: next, actionName: actionName)
+        }
+        clipTimeline = next
+        do {
+            try rebuildScreenPlayerItem(preserving: currentTime)
+        } catch {
+            loadError = "Could not update the recording timeline: \(error.localizedDescription)"
+        }
+        scheduleProjectSave()
+    }
+
     /// Sets one clip's own audio level (0...2). Coalesces slider drags into
     /// one undo step and updates only the audio mix without rebuilding playback.
     func setClipVolume(_ volume: Double, forClipID id: UUID) {
@@ -2344,12 +2477,22 @@ final class RecordingStudioModel {
         showNotice(segment.isMuted ? "Clip Muted" : "Clip Unmuted")
     }
 
+    /// True when this clip carries its own audible source tracks (the primary
+    /// recording's audio or soundtrack for primary clips; the imported file's
+    /// own audio tracks for imported clips).
+    func clipHasOwnAudio(_ segment: RecordingClipSegment) -> Bool {
+        if segment.isPrimaryRecording {
+            return hasRecordedAudio || replacementAudio != nil
+        }
+        guard let fileName = segment.mediaFileName else { return false }
+        return !(audioSources.files[fileName]?.isEmpty ?? true)
+    }
+
     /// True when the clip still plays its own sound, so there is something
     /// to detach.
     func canDetachAudio(fromClipID id: UUID) -> Bool {
-        guard hasRecordedAudio || replacementAudio != nil,
-              let segment = clipTimeline.segments.first(where: { $0.id == id }) else { return false }
-        return !segment.isMuted
+        guard let segment = clipTimeline.segments.first(where: { $0.id == id }) else { return false }
+        return !segment.isMuted && clipHasOwnAudio(segment)
     }
 
     /// Lifts a clip's own sound off its picture onto an audio lane, where
@@ -2364,6 +2507,7 @@ final class RecordingStudioModel {
         var segment = clipTimeline.segments[index]
         let lane = (audioClips.map(\.lane).max() ?? -1) + 1
         let pinnedFileName = replacementAudio.map { pinnedReplacementKey(for: $0.url) } ?? ""
+        let hasImportedAudio = !segment.isPrimaryRecording && clipHasOwnAudio(segment)
 
         guard let detached = StudioAudioComposer.detachedClips(
             for: segment,
@@ -2377,9 +2521,17 @@ final class RecordingStudioModel {
             recordingDisplayName: "\(projectDisplayName) audio",
             sourceDuration: sourceDuration,
             hasRecording: hasRecordedAudio,
+            hasImportedAudio: hasImportedAudio,
             lane: lane
         ) else { return }
 
+        if let fileName = segment.mediaFileName {
+            undoReferencedFiles.insert(fileName)
+            if let directory = mediaDirectoryURL,
+               let url = RecordingOverlayMedia.resolveRegularFile(named: fileName, in: directory) {
+                loadPeaks(for: fileName, url: url)
+            }
+        }
         if let replacementAudio, !pinnedFileName.isEmpty,
            detached.contains(where: { $0.source == .replacement }) {
             if session == nil {
@@ -2512,12 +2664,13 @@ final class RecordingStudioModel {
             selectedClipID = nil
         }
         // Both motion timelines integrate along editor time, so a cut, trim,
-        // reorder, or speed change invalidates them even when their source
-        // data did not change. A change to a clip's sound alone leaves them be.
+        // reorder, source change, or speed change invalidates them even when
+        // their source data did not change. A change to a clip's sound alone leaves them be.
         if Self.motionShape(of: next) != Self.motionShape(of: previousTimeline) {
             rebuildPointerTimeline()
             rebuildViewportTimeline()
         }
+        syncImportedThumbnails()
 
         do {
             try rebuildScreenPlayerItem(preserving: min(max(playheadTime, 0), duration))
@@ -2531,9 +2684,58 @@ final class RecordingStudioModel {
         scheduleProjectSave()
     }
 
-    /// What the motion timelines depend on: the clips' ranges and speeds.
-    private static func motionShape(of timeline: RecordingClipTimeline) -> [Double] {
-        timeline.segments.flatMap { [$0.sourceStart, $0.sourceEnd, $0.speed] }
+    private struct ClipMotionSegment: Equatable {
+        let mediaFileName: String?
+        let sourceStart: TimeInterval
+        let sourceEnd: TimeInterval
+        let speed: Double
+    }
+
+    /// What the motion timelines depend on: each clip's source, range, and speed.
+    private static func motionShape(of timeline: RecordingClipTimeline) -> [ClipMotionSegment] {
+        timeline.segments.map {
+            ClipMotionSegment(
+                mediaFileName: $0.mediaFileName,
+                sourceStart: $0.sourceStart,
+                sourceEnd: $0.sourceEnd,
+                speed: $0.speed
+            )
+        }
+    }
+
+    private var primaryVideoSource: StudioVideoSource? {
+        guard let screenAsset, let screenVideoTrack else { return nil }
+        return StudioVideoSource(
+            asset: screenAsset,
+            videoTrack: screenVideoTrack,
+            naturalSize: screenNaturalSize,
+            preferredTransform: screenPreferredTransform,
+            duration: sourceDuration
+        )
+    }
+
+    /// Visible sub-rect of `videoSize` framed inside the project's video card
+    /// (equals full `videoSize` for `.original` uncropped and `.fit` aspect).
+    private var multiSourceTargetRect: CGRect {
+        let layout = RecordingStudioLayout.make(
+            canvasSize: basePreviewCanvasSize,
+            style: style,
+            includeBubble: false,
+            usesUniformPadding: exportAspect == .original,
+            contentAspect: previewContentAspect,
+            contentMode: previewContentMode,
+            contentCropRect: videoCropRect
+        )
+        return RecordingCompositionBuilder.visibleCardRect(
+            renderSize: videoSize,
+            cardSize: layout.cardRect.size,
+            contentFillSize: layout.contentFillSize
+        )
+    }
+
+    private func rebuildMultiSourceFramingIfNeeded() {
+        guard isLoaded, !isApplyingDocument, !isRestoringDocument, clipTimeline.hasImportedClips else { return }
+        try? rebuildScreenPlayerItem(preserving: currentTime)
     }
 
     private func rebuildScreenPlayerItem(preserving editorTime: TimeInterval) throws {
@@ -2542,8 +2744,37 @@ final class RecordingStudioModel {
         audioPlaybackRebuildTask = nil
         playbackMusicTrackID = nil
 
+        let usesMultiSource = clipTimeline.hasImportedClips
         let playbackAsset: AVAsset
-        if let screenVideoTrack {
+        var multiSourceVideoComposition: AVVideoComposition?
+
+        if usesMultiSource, let primarySource = primaryVideoSource {
+            if !redactions.isEmpty {
+                for region in redactions { try region.validate(sourceDuration: sourceDuration) }
+            }
+            redactionPreview.update(redactions: redactions, clipTimeline: clipTimeline)
+            let (composition, videoComposition) = try RecordingCompositionBuilder.makeMultiSourceVideoComposition(
+                primarySource: primarySource,
+                importedSources: importedVideoSources,
+                timeline: clipTimeline,
+                renderSize: videoSize,
+                targetRect: multiSourceTargetRect,
+                redactionSource: redactions.isEmpty ? nil : redactionPreview
+            )
+            let plan = audioPlan
+            playbackAudioLayout = StudioAudioComposer.add(plan, sources: activeAudioSources, to: composition)
+            playbackAudioPlacement = plan.placement
+            if let backgroundMusic, let settings = backgroundMusicSettings {
+                playbackMusicTrackID = try RecordingBackgroundMusicMixer.addTrack(
+                    to: composition,
+                    music: backgroundMusic,
+                    settings: settings,
+                    timeline: clipTimeline
+                )
+            }
+            playbackAsset = composition
+            multiSourceVideoComposition = videoComposition
+        } else if let screenVideoTrack {
             let composition = try RecordingCompositionBuilder.makeVideoComposition(
                 videoTrack: screenVideoTrack,
                 timeline: clipTimeline
@@ -2585,11 +2816,17 @@ final class RecordingStudioModel {
         readyCutPlayerItem = nil
         cutRedactionPreviewError = nil
         redactionPreview.update(redactions: redactions, clipTimeline: clipTimeline)
-        let generation = playerItemGate.beginCutBuild(isAsync: !redactions.isEmpty)
+        let needsAsyncSingleSourceRedactions = !usesMultiSource && !redactions.isEmpty
+        let generation = playerItemGate.beginCutBuild(isAsync: needsAsyncSingleSourceRedactions)
         let item = AVPlayerItem(asset: playbackAsset)
         // Sped-up speech keeps its pitch, as it does in the export.
         item.audioTimePitchAlgorithm = .timeDomain
-        if redactions.isEmpty {
+        if let multiSourceVideoComposition {
+            item.videoComposition = multiSourceVideoComposition
+            isPreparingRedactionPreview = false
+            readyCutPlayerItem = item
+            replaceScreenPlayerItem(item, observeRedactionFailure: !redactions.isEmpty)
+        } else if redactions.isEmpty {
             isPreparingRedactionPreview = false
             readyCutPlayerItem = item
             replaceScreenPlayerItem(item, observeRedactionFailure: false)
@@ -2713,7 +2950,12 @@ final class RecordingStudioModel {
         guard hasCameraVideo else { return }
         let location = clipTimeline.location(at: currentTime)
         lastCameraSegmentID = location?.segmentID
-        let sourceTime = location?.sourceTime ?? 0
+        guard let location, clipTimeline.segments[location.segmentIndex].isPrimaryRecording else {
+            cameraSeek.invalidate()
+            cameraPlayer.pause()
+            return
+        }
+        let sourceTime = location.sourceTime
         guard sourceTime >= cameraOffset else {
             cameraSeek.invalidate()
             cameraPlayer.pause()
@@ -2774,7 +3016,13 @@ final class RecordingStudioModel {
         guard hasCameraVideo, isPlaying else { return }
         let location = clipTimeline.location(at: currentTime)
         let segmentID = location?.segmentID
-        let sourceTime = location?.sourceTime ?? 0
+        guard let location, clipTimeline.segments[location.segmentIndex].isPrimaryRecording else {
+            cameraSeek.invalidate()
+            lastCameraSegmentID = segmentID
+            if cameraPlayer.rate != 0 { cameraPlayer.pause() }
+            return
+        }
+        let sourceTime = location.sourceTime
         guard sourceTime >= cameraOffset else {
             cameraSeek.invalidate()
             lastCameraSegmentID = segmentID
@@ -2877,6 +3125,10 @@ final class RecordingStudioModel {
     }
 
     func addZoomCue(at time: TimeInterval) {
+        guard isPrimaryRecording(at: time) else {
+            showNotice("Zooms apply only to the main recording")
+            return
+        }
         let sourceTime = clipTimeline.sourceTime(at: time)
         let start = min(max(0, sourceTime), max(0, sourceDuration - 1))
         insertZoomCue(start: start, end: min(sourceDuration, start + 3))
@@ -3325,6 +3577,7 @@ final class RecordingStudioModel {
         videoOverlayPlayer.actionAtItemEnd = .pause
         audioClips = StudioAudioConform.resolvingLanes(audioClips.map { $0.sanitized() })
         videoOverlays = StudioVideoOverlayLane.normalized(videoOverlays)
+        await resolveImportedVideoSources()
         await resolveAudioClipSources()
         await resolveVideoOverlaySources()
         guard !isTornDown, !Task.isCancelled else { return }
@@ -3334,6 +3587,7 @@ final class RecordingStudioModel {
         guard !isTornDown, !Task.isCancelled else { return }
         try? rebuildScreenPlayerItem(preserving: currentTime)
         loadTimelineThumbnails()
+        syncImportedThumbnails()
         loadStylePoster()
         rebuildPointerTimeline()
         rebuildViewportTimeline()
@@ -3425,9 +3679,14 @@ final class RecordingStudioModel {
         }
     }
 
+    /// True when `time` falls inside a primary-recording clip (not an imported clip).
+    func isPrimaryRecording(at time: TimeInterval) -> Bool {
+        clipTimeline.isPrimaryRecording(at: time)
+    }
+
     /// Viewport frame to render at a given time, honoring the zoom toggle.
     func viewportFrame(at time: TimeInterval) -> ViewportFrame {
-        guard zoomEnabled else { return .identity }
+        guard zoomEnabled, isPrimaryRecording(at: time) else { return .identity }
         return viewportTimeline.frame(at: time)
     }
 
@@ -3438,14 +3697,15 @@ final class RecordingStudioModel {
     }
 
     /// Smoothed normalized pointer location for the preview overlay; nil when
-    /// the recording carries its cursor in the pixels.
+    /// the recording carries its cursor in the pixels or on imported clips.
     func pointerLocation(at time: TimeInterval) -> CGPoint? {
-        guard pointerIsSynthesized else { return nil }
+        guard pointerIsSynthesized, isPrimaryRecording(at: time) else { return nil }
         return pointerTimeline.location(at: time)
     }
 
     func pointerFrame(at time: TimeInterval) -> PointerFrame? {
-        guard activeTrimSourcePreviewTime == nil, !style.hidesCursor, pointerIsSynthesized else { return nil }
+        guard activeTrimSourcePreviewTime == nil, !style.hidesCursor, pointerIsSynthesized,
+              isPrimaryRecording(at: time) else { return nil }
         return pointerTimeline.frame(at: time)
     }
 
@@ -3484,7 +3744,7 @@ final class RecordingStudioModel {
     }
 
     func inkFrames(at time: TimeInterval) -> [RecordingInkTimeline.Frame] {
-        guard showsInk, activeTrimSourcePreviewTime == nil else { return [] }
+        guard showsInk, activeTrimSourcePreviewTime == nil, isPrimaryRecording(at: time) else { return [] }
         return inkTimeline.frames(at: clipTimeline.sourceTime(at: time))
     }
 
@@ -3523,18 +3783,19 @@ final class RecordingStudioModel {
     }
 
     /// Subtitle text to draw over the card right now; nil when hidden or
-    /// nobody is speaking.
+    /// nobody is speaking, or on imported clips.
     func subtitleText(at time: TimeInterval) -> String? {
-        guard showsSubtitles, hasSubtitles, activeTrimSourcePreviewTime == nil else { return nil }
+        guard showsSubtitles, hasSubtitles, activeTrimSourcePreviewTime == nil,
+              isPrimaryRecording(at: time) else { return nil }
         return subtitleTimeline.text(at: clipTimeline.sourceTime(at: time))
     }
 
     /// Karaoke word state for the bar at this editor time; nil when the
-    /// style doesn't highlight words or no timings exist, in which case
-    /// the bar renders `subtitleText` plainly.
+    /// style doesn't highlight words, no timings exist, or on imported clips.
     func subtitleKaraokeLine(at time: TimeInterval) -> KaraokeTimeline.Line? {
         guard showsSubtitles, subtitleStyle.highlightsSpokenWord,
-              !karaokeTimeline.isEmpty, activeTrimSourcePreviewTime == nil else {
+              !karaokeTimeline.isEmpty, activeTrimSourcePreviewTime == nil,
+              isPrimaryRecording(at: time) else {
             return nil
         }
         return karaokeTimeline.line(at: clipTimeline.sourceTime(at: time))
@@ -3624,13 +3885,20 @@ final class RecordingStudioModel {
     func addChapterAtPlayhead() {
         guard isLoaded, duration > 0 else { return }
         let time = min(currentTime, max(0, duration - 0.001))
-        guard !visibleChapters.contains(where: { abs($0.start - time) < 0.5 }) else { return }
+        guard !visibleChapters.contains(where: { abs($0.start - time) < 0.5 }),
+              let location = clipTimeline.location(at: time) else { return }
+        let segment = clipTimeline.segments[location.segmentIndex]
         var chapter = RecordingChapter(
-            title: "Chapter \(chapters.count + 1)", start: clipTimeline.sourceTime(at: time), autoTitle: true
+            title: "Chapter \(chapters.count + 1)",
+            start: location.sourceTime,
+            autoTitle: segment.isPrimaryRecording,
+            mediaFileName: segment.mediaFileName
         )
-        chapter.title = RecordingChapterPlanner.mapped(
-            chapters + [chapter], through: clipTimeline, cues: subtitleCues, words: transcriptWords
-        ).first(where: { $0.id == chapter.id })?.title ?? chapter.title
+        if segment.isPrimaryRecording {
+            chapter.title = RecordingChapterPlanner.mapped(
+                chapters + [chapter], through: clipTimeline, cues: subtitleCues, words: transcriptWords
+            ).first(where: { $0.id == chapter.id })?.title ?? chapter.title
+        }
         applyChapters(chapters + [chapter], actionName: "Add Chapter")
     }
 
@@ -3666,9 +3934,12 @@ final class RecordingStudioModel {
         guard isLoaded, !hasRunningWork,
               let time = RecordingChapterPlanner.clampedStart(id: id, proposed: editorTime,
                   chapters: visibleChapters, duration: duration),
+              let location = clipTimeline.location(at: time),
               let index = chapters.firstIndex(where: { $0.id == id }) else { return }
+        let segment = clipTimeline.segments[location.segmentIndex]
         var next = chapters
-        next[index].start = clipTimeline.sourceTime(at: time)
+        next[index].start = location.sourceTime
+        next[index].mediaFileName = segment.mediaFileName
         applyChapters(next, actionName: "Move Chapter")
     }
 
@@ -4051,18 +4322,20 @@ final class RecordingStudioModel {
     }
 
     private func refreshPlayheadMarks() {
-        let clipID = clipTimeline.location(at: currentTime)?.segmentID
+        let location = clipTimeline.location(at: currentTime)
+        let clipID = location?.segmentID
         if clipID != playheadClipID { playheadClipID = clipID }
-        let cueID = subtitleTimeline.isEmpty
+        let isPrimary = location.map { clipTimeline.segments[$0.segmentIndex].isPrimaryRecording } ?? false
+        let cueID = subtitleTimeline.isEmpty || !isPrimary
             ? nil
-            : subtitleTimeline.cue(at: clipTimeline.sourceTime(at: currentTime))?.id
+            : subtitleTimeline.cue(at: location?.sourceTime ?? 0)?.id
         if cueID != activeSubtitleCueID { activeSubtitleCueID = cueID }
     }
 
     /// Recomputes which word the playhead is on; assigns only on change so
     /// observation-driven views wake on word boundaries, not every tick.
     private func updateActiveTranscriptWord() {
-        guard !transcriptWords.isEmpty else {
+        guard !transcriptWords.isEmpty, isPrimaryRecording(at: currentTime) else {
             if activeTranscriptWordIndex != nil {
                 activeTranscriptWordIndex = nil
             }
@@ -4090,9 +4363,10 @@ final class RecordingStudioModel {
         return sourceTime <= words[index].end + 0.25 ? index : nil
     }
 
-    /// Caption to draw over the card right now; nil when hidden or silent.
+    /// Caption to draw over the card right now; nil when hidden, silent, or on imported clips.
     func keystrokeCaption(at time: TimeInterval) -> KeystrokeCaptionFrame? {
-        guard showsKeystrokes, hasKeystrokes, activeTrimSourcePreviewTime == nil else { return nil }
+        guard showsKeystrokes, hasKeystrokes, activeTrimSourcePreviewTime == nil,
+              isPrimaryRecording(at: time) else { return nil }
         return keystrokeTimeline.frame(at: clipTimeline.sourceTime(at: time))
     }
 
@@ -4149,7 +4423,8 @@ final class RecordingStudioModel {
 
     /// The texts showing at an editor time, bottom to top.
     func texts(atEditorTime time: TimeInterval) -> [RecordingTextOverlay] {
-        guard activeTrimSourcePreviewTime == nil, !textOverlays.isEmpty, clipTimeline.location(at: time) != nil else { return [] }
+        guard activeTrimSourcePreviewTime == nil, !textOverlays.isEmpty,
+              isPrimaryRecording(at: time) else { return [] }
         let sourceTime = clipTimeline.sourceTime(at: time)
         return textOverlays.filter { $0.isActive(atSourceTime: sourceTime) }
     }
@@ -4383,7 +4658,8 @@ final class RecordingStudioModel {
 
     /// The images showing at an editor time, bottom to top.
     func images(atEditorTime time: TimeInterval) -> [RecordingImageOverlay] {
-        guard activeTrimSourcePreviewTime == nil, !imageOverlays.isEmpty, clipTimeline.location(at: time) != nil else { return [] }
+        guard activeTrimSourcePreviewTime == nil, !imageOverlays.isEmpty,
+              isPrimaryRecording(at: time) else { return [] }
         let sourceTime = clipTimeline.sourceTime(at: time)
         return imageOverlays.filter { $0.isActive(atSourceTime: sourceTime) }
     }
@@ -5106,7 +5382,8 @@ final class RecordingStudioModel {
 
     /// The redactions showing at an editor time.
     func redactions(atEditorTime time: TimeInterval) -> [RecordingRedaction] {
-        guard activeTrimSourcePreviewTime == nil, !redactions.isEmpty, clipTimeline.location(at: time) != nil else { return [] }
+        guard activeTrimSourcePreviewTime == nil, !redactions.isEmpty,
+              isPrimaryRecording(at: time) else { return [] }
         let sourceTime = clipTimeline.sourceTime(at: time)
         return redactions.filter { $0.start <= sourceTime && sourceTime < $0.end }
     }
@@ -5261,7 +5538,24 @@ final class RecordingStudioModel {
             guard !self.isPlaying, !self.isTornDown,
                   self.activeTrimSourcePreviewTime == nil,
                   let item = self.screenPlayer.currentItem else { return }
-            if !self.redactions.isEmpty {
+            if self.clipTimeline.hasImportedClips {
+                if let primarySource = self.primaryVideoSource {
+                    do {
+                        let (_, videoComposition) = try RecordingCompositionBuilder.makeMultiSourceVideoComposition(
+                            primarySource: primarySource,
+                            importedSources: self.importedVideoSources,
+                            timeline: self.clipTimeline,
+                            renderSize: self.videoSize,
+                            targetRect: self.multiSourceTargetRect,
+                            redactionSource: self.redactions.isEmpty ? nil : self.redactionPreview
+                        )
+                        item.videoComposition = videoComposition
+                    } catch {
+                        self.cutRedactionPreviewError = error.localizedDescription
+                        return
+                    }
+                }
+            } else if !self.redactions.isEmpty {
                 do {
                     item.videoComposition = try await self.redactionPreview.composition(asset: item.asset)
                 } catch {
@@ -5409,9 +5703,10 @@ final class RecordingStudioModel {
     }
 
     func isCameraVisible(at time: TimeInterval) -> Bool {
-        // No time gate: before cameraOffset the player is parked on the
-        // camera's first frame, which beats the bubble popping in late.
-        hasCameraVideo && style.camera.isVisible
+        // No time gate on primary segments: before cameraOffset the player is
+        // parked on the camera's first frame, which beats the bubble popping in
+        // late. On imported clips the primary webcam bubble stays hidden.
+        hasCameraVideo && style.camera.isVisible && isPrimaryRecording(at: time)
     }
 
     // MARK: - Export
@@ -5566,12 +5861,15 @@ final class RecordingStudioModel {
         exportAspect == .original || exportAspectMode == .fit ? .fit : .fill
     }
 
-    /// Virtual camera for the preview: the reframe crop when active, the
-    /// zoom viewport otherwise (including Fit mode, where zooms play
-    /// inside the fitted card).
+    /// Virtual camera for the preview: identity on imported clips (zooms,
+    /// reframe, and primary video crop apply only to primary-recording clips);
+    /// reframe crop or zoom viewport on primary segments.
     func previewViewportFrame(at time: TimeInterval) -> ViewportFrame {
         if activeTrimSourcePreviewTime != nil {
             return RecordingVideoCropGeometry.viewport(.identity, crop: previewVideoCropRect)
+        }
+        guard isPrimaryRecording(at: time) else {
+            return .identity
         }
         let base = previewReframe?.frame(at: time) ?? viewportFrame(at: time)
         return RecordingVideoCropGeometry.viewport(base, crop: previewVideoCropRect)
@@ -5797,6 +6095,251 @@ final class RecordingStudioModel {
     func cancelExport() {
         // Cancellation is cooperative; keep retry and close guarded until the task exits.
         exportTask?.cancel()
+    }
+
+    // MARK: - In-sequence video clips
+
+    var canImportVideoClip: Bool {
+        mediaDirectoryURL != nil && isLoaded && !isRestoringDocument && !isEditingSourceRegion && !isImportingVideoClip
+    }
+
+    /// Opens a file picker accepting movie files and Sukusho `.sukushorec`
+    /// recordings, inserting after the selected clip or at the playhead/end.
+    func presentInsertVideoClipPanel() {
+        guard canImportVideoClip else { return }
+        pause()
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.treatsFilePackagesAsDirectories = false
+        panel.prompt = "Insert"
+        panel.title = "Insert Video Clip"
+        panel.message = "Choose movie files or Sukusho recordings to insert into the timeline."
+        let delegate = StudioVideoOpenPanelDelegate()
+        panel.delegate = delegate
+        let insertionIndex = StudioEditing.videoClipInsertionIndex(
+            selectedClipID: selectedClipID,
+            playheadTime: currentTime,
+            in: clipTimeline
+        )
+        let response = withExtendedLifetime(delegate) { panel.runModal() }
+        guard response == .OK, !panel.urls.isEmpty else { return }
+        requestImportVideoClips(panel.urls, insertionIndex: insertionIndex)
+    }
+
+    /// Entry point shared by `+ › Video Clip`, `Clip › Insert Video Clip…`,
+    /// and Finder drops onto the clips lane. Plain movies import immediately;
+    /// Sukusho `.sukushorec` recordings ask raw vs finished each time.
+    func requestImportVideoClips(_ urls: [URL], insertionIndex: Int) {
+        guard canImportVideoClip else { return }
+        let supported = urls.filter { StudioVideoClipImport.canImport($0) }
+        guard !supported.isEmpty else {
+            let names = urls.map(\.lastPathComponent).joined(separator: ", ")
+            mediaImportError = "Couldn't add \(names). Choose movie files or Sukusho recordings."
+            return
+        }
+        let recordings = supported.filter { StudioVideoClipImport.isSukushoRecording($0) }
+        if !recordings.isEmpty {
+            pause()
+            pendingRecordingImport = PendingRecordingImport(
+                urls: supported,
+                insertionIndex: insertionIndex,
+                recordingNames: recordings.map { RecordingSession(directoryURL: $0).displayName }
+            )
+            return
+        }
+        importVideoClips(supported, insertionIndex: insertionIndex, recordingMode: .rawRecording)
+    }
+
+    func confirmPendingRecordingImport(mode: StudioVideoClipImport.SukushoRecordingMode) {
+        guard let pending = pendingRecordingImport else { return }
+        pendingRecordingImport = nil
+        importVideoClips(pending.urls, insertionIndex: pending.insertionIndex, recordingMode: mode)
+    }
+
+    func cancelPendingRecordingImport() {
+        pendingRecordingImport = nil
+    }
+
+    func cancelVideoImport() {
+        videoImportTask?.cancel()
+    }
+
+    private func importVideoClips(
+        _ urls: [URL],
+        insertionIndex: Int,
+        recordingMode: StudioVideoClipImport.SukushoRecordingMode
+    ) {
+        guard let directory = mediaDirectoryURL, videoImportTask == nil else { return }
+        pause()
+        mediaImportError = nil
+        let ownDirectory = sessionURL.standardizedFileURL
+
+        videoImportTask = Task { [weak self] in
+            defer {
+                self?.videoImportTask = nil
+                self?.videoImportProgress = nil
+                self?.videoImportTitle = nil
+            }
+            var newSegments: [RecordingClipSegment] = []
+            var rejected: [String] = []
+            var copiedFilesToCleanupOnCancel: [URL] = []
+
+            for url in urls {
+                guard let self, !self.isTornDown, !Task.isCancelled else {
+                    for temp in copiedFilesToCleanupOnCancel { try? FileManager.default.removeItem(at: temp) }
+                    return
+                }
+                let displayName: String
+                let sourceFileURL: URL
+                if StudioVideoClipImport.isSukushoRecording(url) {
+                    let sourceSession = RecordingSession(directoryURL: url)
+                    displayName = sourceSession.displayName
+                    switch recordingMode {
+                    case .rawRecording:
+                        sourceFileURL = sourceSession.screenURL
+                    case .finishedMovie:
+                        if sourceSession.directoryURL.standardizedFileURL == ownDirectory {
+                            rejected.append("\(displayName) (cannot import finished movie into itself)")
+                            continue
+                        }
+                        self.videoImportTitle = displayName
+                        self.videoImportProgress = 0
+                        do {
+                            sourceFileURL = try await RecordingSessionRenderer.ensureDeliverable(for: sourceSession) { [weak self] progress in
+                                Task { @MainActor [weak self] in
+                                    if self?.videoImportTask != nil {
+                                        self?.videoImportProgress = progress
+                                    }
+                                }
+                            }
+                        } catch is CancellationError {
+                            for temp in copiedFilesToCleanupOnCancel { try? FileManager.default.removeItem(at: temp) }
+                            return
+                        } catch RecordingStudioExporter.ExportError.cancelled {
+                            for temp in copiedFilesToCleanupOnCancel { try? FileManager.default.removeItem(at: temp) }
+                            return
+                        } catch {
+                            rejected.append("\(displayName) (\(error.localizedDescription))")
+                            continue
+                        }
+                        self.videoImportProgress = nil
+                        self.videoImportTitle = nil
+                    }
+                } else {
+                    displayName = url.deletingPathExtension().lastPathComponent
+                    sourceFileURL = url
+                }
+
+                guard !Task.isCancelled, !self.isTornDown else {
+                    for temp in copiedFilesToCleanupOnCancel { try? FileManager.default.removeItem(at: temp) }
+                    return
+                }
+
+                guard let fileName = self.copyMediaIntoProject(sourceFileURL, directory: directory),
+                      let storedURL = RecordingOverlayMedia.resolveRegularFile(named: fileName, in: directory) else {
+                    rejected.append(displayName)
+                    continue
+                }
+                copiedFilesToCleanupOnCancel.append(storedURL)
+
+                do {
+                    let source = try await StudioVideoSource.load(url: storedURL)
+                    let audioTracks = await StudioAudioSources.Track.loadAll(of: source.asset)
+                    guard !Task.isCancelled, !self.isTornDown else {
+                        for temp in copiedFilesToCleanupOnCancel { try? FileManager.default.removeItem(at: temp) }
+                        return
+                    }
+                    self.importedVideoSources[fileName] = source
+                    self.missingVideoClipFiles.remove(fileName)
+                    if !audioTracks.isEmpty {
+                        self.audioSources.files[fileName] = audioTracks
+                    }
+                    self.undoReferencedFiles.insert(fileName)
+                    self.timelineThumbnails.registerSource(key: fileName, url: storedURL, duration: source.duration)
+                    newSegments.append(RecordingClipSegment(
+                        sourceStart: 0,
+                        sourceEnd: source.duration,
+                        mediaFileName: fileName,
+                        displayName: displayName,
+                        sourceDuration: source.duration
+                    ))
+                } catch {
+                    try? FileManager.default.removeItem(at: storedURL)
+                    rejected.append(displayName)
+                }
+            }
+
+            guard let self, !self.isTornDown, !Task.isCancelled else {
+                for temp in copiedFilesToCleanupOnCancel { try? FileManager.default.removeItem(at: temp) }
+                return
+            }
+
+            if !newSegments.isEmpty {
+                var segments = self.clipTimeline.segments
+                let targetIndex = min(max(insertionIndex, 0), segments.count)
+                segments.insert(contentsOf: newSegments, at: targetIndex)
+                let nextTimeline = RecordingClipTimeline(segments: segments)
+                let insertedStart = newSegments.first.flatMap { nextTimeline.editorRange(for: $0.id)?.lowerBound } ?? self.currentTime
+                self.applyClipTimeline(
+                    nextTimeline,
+                    selectedID: newSegments.first?.id,
+                    playheadTime: insertedStart,
+                    actionName: newSegments.count == 1 ? "Add Video Clip" : "Add Video Clips"
+                )
+            }
+
+            if !rejected.isEmpty {
+                self.mediaImportError = "Couldn't add \(rejected.joined(separator: ", "))."
+            }
+        }
+    }
+
+    /// Resolves imported video sources and their audio tracks from `media/`
+    /// before building playback (probing metadata only, without decoding frames).
+    private func resolveImportedVideoSources() async {
+        missingVideoClipFiles.removeAll()
+        let importedNames = Set(clipTimeline.segments.compactMap(\.mediaFileName))
+        guard !importedNames.isEmpty else { return }
+        guard let directory = mediaDirectoryURL else {
+            missingVideoClipFiles.formUnion(importedNames)
+            return
+        }
+        for fileName in importedNames {
+            guard let url = RecordingOverlayMedia.resolveRegularFile(named: fileName, in: directory) else {
+                missingVideoClipFiles.insert(fileName)
+                continue
+            }
+            undoReferencedFiles.insert(fileName)
+            if importedVideoSources[fileName] == nil {
+                do {
+                    let source = try await StudioVideoSource.load(url: url)
+                    guard !Task.isCancelled, !isTornDown else { return }
+                    importedVideoSources[fileName] = source
+                    if audioSources.files[fileName] == nil {
+                        let audioTracks = await StudioAudioSources.Track.loadAll(of: source.asset)
+                        guard !Task.isCancelled, !isTornDown else { return }
+                        if !audioTracks.isEmpty {
+                            audioSources.files[fileName] = audioTracks
+                        }
+                    }
+                } catch {
+                    missingVideoClipFiles.insert(fileName)
+                }
+            }
+        }
+    }
+
+    private func syncImportedThumbnails() {
+        let activeNames = Set(clipTimeline.segments.compactMap(\.mediaFileName))
+        timelineThumbnails.syncImportedSources(keeping: activeNames)
+        guard let directory = mediaDirectoryURL else { return }
+        for fileName in activeNames {
+            guard let source = importedVideoSources[fileName],
+                  let url = RecordingOverlayMedia.resolveRegularFile(named: fileName, in: directory) else { continue }
+            timelineThumbnails.registerSource(key: fileName, url: url, duration: source.duration)
+        }
     }
 
     // MARK: - Audio clips
@@ -6282,10 +6825,14 @@ final class RecordingStudioModel {
     }
 
     /// True once there is a soundtrack to export or swap - the recording's
-    /// own audio, one imported over it, background music, audio clips, or
-    /// audible layered video overlays.
+    /// own audio, one imported over it, background music, audio clips,
+    /// audible layered video overlays, or audible imported video clips.
     var hasAudio: Bool {
-        hasPrimaryAudio || hasBackgroundMusic || !audioClips.isEmpty || hasAudibleVideoOverlays
+        hasPrimaryAudio
+            || hasBackgroundMusic
+            || !audioClips.isEmpty
+            || hasAudibleVideoOverlays
+            || clipTimeline.segments.contains { !$0.isPrimaryRecording && clipHasOwnAudio($0) }
     }
 
     var hasAudibleVideoOverlays: Bool {
@@ -6670,13 +7217,18 @@ final class RecordingStudioModel {
             + keptDocuments.compactMap(\.imageOverlays).flatMap { $0.map(\.fileName) }
         )
         RecordingOverlayMedia.cleanupUnreferencedImages(in: mediaDirectory, referenced: referencedImages)
-        let referencedVideos = Set(
-            [savedDocument?.videoOverlays, draftDocument?.videoOverlays, lastSavedDocument?.videoOverlays, videoOverlays]
-                .compactMap { $0 }.flatMap { $0.map(\.fileName) }
-            + keptDocuments.compactMap(\.videoOverlays).flatMap { $0.map(\.fileName) }
-            + Array(undoReferencedFiles)
-        )
-        RecordingVideoOverlayMedia.cleanupUnreferencedVideos(in: mediaDirectory, referenced: referencedVideos)
+        var referencedVideos = Set<String>(undoReferencedFiles)
+        for document in allDocuments {
+            referencedVideos.formUnion((document.clips ?? []).compactMap(\.mediaFileName))
+            referencedVideos.formUnion((document.videoOverlays ?? []).map(\.fileName))
+            referencedVideos.formUnion((document.audioClips ?? []).filter { $0.source == .file }.map(\.fileName))
+            referencedVideos.formUnion((document.hiddenLinkedAudio ?? []).filter { $0.clip.source == .file }.map(\.clip.fileName))
+        }
+        referencedVideos.formUnion(clipTimeline.segments.compactMap(\.mediaFileName))
+        referencedVideos.formUnion(videoOverlays.map(\.fileName))
+        referencedVideos.formUnion(audioClips.filter { $0.source == .file }.map(\.fileName))
+        referencedVideos.formUnion(hiddenLinkedAudio.filter { $0.clip.source == .file }.map(\.clip.fileName))
+        RecordingOverlayMedia.cleanupUnreferencedVideos(in: mediaDirectory, referenced: referencedVideos)
     }
 
     // MARK: - Share to cloud
@@ -6902,5 +7454,30 @@ struct RecordingZoomTimelineBlock: Identifiable, Equatable, Sendable {
 
     var id: UUID {
         cue.id
+    }
+}
+
+/// Allows picking plain movie files and `.sukushorec` recording folders in the
+/// same `NSOpenPanel`, while keeping ordinary folders navigable instead of
+/// selectable as clips.
+private final class StudioVideoOpenPanelDelegate: NSObject, NSOpenSavePanelDelegate {
+    func panel(_ sender: Any, shouldEnable url: URL) -> Bool {
+        if StudioVideoClipImport.canImport(url) {
+            return true
+        }
+        // Keep ordinary folders enabled so the user can browse into them.
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
+    }
+
+    func panel(_ sender: Any, validate url: URL) throws {
+        if StudioVideoClipImport.canImport(url) {
+            return
+        }
+        throw NSError(
+            domain: "StudioVideoOpenPanel",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Choose a movie file or a Sukusho recording."]
+        )
     }
 }

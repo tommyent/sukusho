@@ -801,6 +801,34 @@ struct StudioInspector: View {
 
     private func selectedClipControls(for clip: RecordingClipSegment) -> some View {
         VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
+            if !clip.isPrimaryRecording {
+                HStack(spacing: 6) {
+                    Image(systemName: "film")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Palette.secondaryLabel)
+                    Text(clip.displayName ?? "Imported Clip")
+                        .font(.inspectorValue)
+                        .foregroundStyle(Palette.label)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                VStack(alignment: .leading, spacing: InspectorMetrics.groupLabelSpacing) {
+                    InspectorGroupLabel("Framing")
+
+                    InspectorSegmented(
+                        options: VideoClipContentMode.allCases,
+                        isSelected: { $0 == clip.effectiveContentMode },
+                        onTap: { model.setClipContentMode($0, forClipID: clip.id) },
+                        label: { mode in
+                            Text(mode.title)
+                                .font(.inspectorSegment)
+                                .help(mode.help)
+                        }
+                    )
+                }
+            }
+
             VStack(alignment: .leading, spacing: InspectorMetrics.groupLabelSpacing) {
                 InspectorGroupLabel("Speed")
 
@@ -816,7 +844,7 @@ struct StudioInspector: View {
                 .help("Audio speeds up with the clip")
             }
 
-            if model.hasRecordedAudio || model.replacementAudio != nil {
+            if model.clipHasOwnAudio(clip) {
                 InspectorFieldPair {
                     InspectorSlider(
                         "Volume",

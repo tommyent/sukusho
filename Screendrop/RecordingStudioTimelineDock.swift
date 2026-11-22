@@ -62,7 +62,7 @@ struct StudioTimelineEditor: View {
             rowWidth: transportRowWidth,
             centeredTransportWidth: playbackControlsWidth,
             leadingToolsWidth: leadingToolsWidth,
-            toolCount: 5
+            toolCount: 6
         )
     }
 
@@ -295,16 +295,34 @@ struct StudioTimelineEditor: View {
             }
             .onDrop(of: [.fileURL], delegate: StudioMediaDropDelegate(
                 canDrop: model.canImportMedia,
+                canDropVideo: model.canImportVideoClip,
                 time: { scale.time(forX: $0.x + scrollX) },
                 trackAtLocation: { track(atY: $0.y) },
+                clipInsertionIndex: { editorTime in
+                    StudioEditing.reorderInsertionIndex(atEditorTime: editorTime, in: model.clipTimeline)
+                },
                 onPreview: { preview in
                     if preview != mediaDrop { mediaDrop = preview }
                 },
-                onDrop: { urls, time, audioLane, targetTrack in
-                    if targetTrack == .videoOverlay || urls.allSatisfy(RecordingVideoOverlay.canImport) {
-                        model.importVideoOverlays(urls, atEditorTime: time)
-                    } else {
-                        model.importMedia(urls, atEditorTime: time, audioLane: audioLane)
+                onDrop: { urls, time, audioLane, insertionIndex, targetTrack in
+                    let videos = urls.filter { StudioVideoClipImport.canImport($0) || RecordingVideoOverlay.canImport($0) }
+                    let others = urls.filter { !StudioVideoClipImport.canImport($0) && !RecordingVideoOverlay.canImport($0) }
+                    if !videos.isEmpty {
+                        switch StudioMediaDropDelegate.videoDestination(
+                            for: targetTrack,
+                            canDropClip: model.canImportVideoClip,
+                            canDropOverlay: model.canImportMedia
+                        ) {
+                        case .clips:
+                            model.requestImportVideoClips(videos, insertionIndex: insertionIndex)
+                        case .videoOverlay:
+                            model.importVideoOverlays(videos, atEditorTime: time)
+                        default:
+                            break
+                        }
+                    }
+                    if !others.isEmpty {
+                        model.importMedia(others, atEditorTime: time, audioLane: audioLane)
                     }
                 }
             ))
@@ -465,6 +483,7 @@ struct StudioTimelineEditor: View {
         switch track {
         case .overlay: "Drop to add over the video"
         case .videoOverlay: "Drop to add video overlay"
+        case .clips: "Drop to insert video clip"
         case .audio: "Drop to add audio"
         default: nil
         }
@@ -527,6 +546,8 @@ struct StudioTimelineEditor: View {
             snaps: model.snapsEdits,
             onSnapGuide: { if snapGuide.time != $0 { snapGuide.time = $0 } },
             onTrimPreview: { model.previewSourceTime($0) },
+            onClipTrimPreview: { model.previewClipTrim(clipID: $0, sourceTime: $1) },
+            dropInsertionIndex: mediaDrop?.tracks.contains(.clips) == true ? mediaDrop?.clipInsertionIndex : nil,
             allowsKeyboardShortcuts: {
                 model.isLoaded && !model.isRestoringDocument && !model.isEditingSourceRegion
             },
@@ -754,7 +775,7 @@ struct StudioTimelineEditor: View {
         let usesPopover = addToolsLayout == .popover
         GlassIconButton(
             systemImage: isAddOpen ? "xmark" : "plus",
-            help: isAddOpen ? "Close" : "Add Text, Pixelate, Audio or Media"
+            help: isAddOpen ? "Close" : "Add Video Clip, Text, Pixelate, Audio or Media"
         ) {
             withAnimation(.morphIfAllowed) { isAddOpen.toggle() }
         }
@@ -783,6 +804,19 @@ struct StudioTimelineEditor: View {
 
     @ViewBuilder
     private func addToolButtons(labeled: Bool) -> some View {
+        addTool(
+            "Video Clip",
+            systemImage: "video.badge.plus",
+            help: model.mediaDirectoryURL == nil
+                ? "Save this recording as a project to add video clips"
+                : "Insert Video Clip…",
+            labeled: labeled
+        ) {
+            model.presentInsertVideoClipPanel()
+        }
+        .disabled(!model.canImportVideoClip)
+        .glassEffectID("videoClip", in: glass)
+
         addTool("Text", systemImage: "textformat", help: "Add Text at Playhead", labeled: labeled) {
             model.addText(atEditorTime: model.currentTime)
         }
@@ -1184,16 +1218,35 @@ private struct StudioTrackGround: View {
 private struct StudioMediaDrop: Equatable {
     var tracks: Set<StudioTrack>
     var time: TimeInterval
+    var clipInsertionIndex: Int? = nil
 }
 
-/// Takes files from Finder. Images and animated GIF/APNG/WebP/HEIC land on
-/// the Images & Effects track; audio files land on the audio lanes.
+/// Takes files from Finder. Movies and Sukusho recordings insert onto the Clips
+/// lane; images and animated GIF/APNG/WebP/HEIC land on Images & Effects; audio
+/// files land on the audio lanes.
 private struct StudioMediaDropDelegate: DropDelegate {
     let canDrop: Bool
+    let canDropVideo: Bool
     let time: (CGPoint) -> TimeInterval
     let trackAtLocation: (CGPoint) -> StudioTrack?
+    let clipInsertionIndex: (TimeInterval) -> Int
     let onPreview: (StudioMediaDrop?) -> Void
-    let onDrop: ([URL], TimeInterval, Int, StudioTrack?) -> Void
+    let onDrop: ([URL], TimeInterval, Int, Int, StudioTrack?) -> Void
+
+    static func videoDestination(
+        for hoveredTrack: StudioTrack?,
+        canDropClip: Bool,
+        canDropOverlay: Bool
+    ) -> StudioTrack? {
+        switch hoveredTrack {
+        case .clips where canDropClip:
+            .clips
+        case .videoOverlay where canDropOverlay:
+            .videoOverlay
+        default:
+            nil
+        }
+    }
 
     private func audioLane(at location: CGPoint) -> Int {
         if case .audio(let lane) = trackAtLocation(location) {
@@ -1203,7 +1256,7 @@ private struct StudioMediaDropDelegate: DropDelegate {
     }
 
     func validateDrop(info: DropInfo) -> Bool {
-        canDrop && info.hasItemsConforming(to: [.fileURL])
+        (canDrop || canDropVideo) && info.hasItemsConforming(to: [.fileURL])
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
@@ -1211,18 +1264,34 @@ private struct StudioMediaDropDelegate: DropDelegate {
             onPreview(nil)
             return DropProposal(operation: .forbidden)
         }
+        let at = time(info.location)
         let hoveredTrack = trackAtLocation(info.location)
         let targetAudioTrack = StudioTrack.audio(audioLane(at: info.location))
+        let videoDest = Self.videoDestination(
+            for: hoveredTrack,
+            canDropClip: canDropVideo,
+            canDropOverlay: canDrop
+        )
+        let hasImage = info.hasItemsConforming(to: [.image])
+        let hasAudio = info.hasItemsConforming(to: [.audio])
+        let hasMovie = info.hasItemsConforming(to: [.movie])
         var tracks: Set<StudioTrack> = []
-        if hoveredTrack == .videoOverlay {
-            tracks.insert(.videoOverlay)
-        } else {
-            if info.hasItemsConforming(to: [.image]) { tracks.insert(.overlay) }
-            if info.hasItemsConforming(to: [.movie]) { tracks.insert(.videoOverlay) }
-            if info.hasItemsConforming(to: [.audio]) { tracks.insert(targetAudioTrack) }
-            if tracks.isEmpty { tracks = [.overlay, .videoOverlay, targetAudioTrack] }
+        if canDrop, hasImage { tracks.insert(.overlay) }
+        if canDrop, hasAudio { tracks.insert(targetAudioTrack) }
+        if hasMovie, let videoDest { tracks.insert(videoDest) }
+        if !hasImage && !hasAudio && !hasMovie {
+            if let videoDest {
+                tracks.insert(videoDest)
+            } else if canDrop {
+                tracks.formUnion([.overlay, targetAudioTrack])
+            }
         }
-        onPreview(StudioMediaDrop(tracks: tracks, time: time(info.location)))
+        guard !tracks.isEmpty else {
+            onPreview(nil)
+            return DropProposal(operation: .forbidden)
+        }
+        let insertionIndex = tracks.contains(.clips) ? clipInsertionIndex(at) : nil
+        onPreview(StudioMediaDrop(tracks: tracks, time: at, clipInsertionIndex: insertionIndex))
         return DropProposal(operation: .copy)
     }
 
@@ -1232,13 +1301,14 @@ private struct StudioMediaDropDelegate: DropDelegate {
 
     func performDrop(info: DropInfo) -> Bool {
         onPreview(nil)
-        guard canDrop else { return false }
+        guard canDrop || canDropVideo else { return false }
         let at = time(info.location)
         let hoveredTrack = trackAtLocation(info.location)
         let lane = audioLane(at: info.location)
+        let insertionIndex = clipInsertionIndex(at)
         let providers = info.itemProviders(for: [.fileURL])
         return StudioMediaDropLoader.loadFileURLs(from: providers) { urls in
-            if !urls.isEmpty { onDrop(urls, at, lane, hoveredTrack) }
+            if !urls.isEmpty { onDrop(urls, at, lane, insertionIndex, hoveredTrack) }
         }
     }
 }
