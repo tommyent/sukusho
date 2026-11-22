@@ -33,7 +33,7 @@ struct RecordingStudioWindow: View {
                     .frame(minWidth: 900, minHeight: 600)
             }
         }
-        .modifier(CaptureLibraryEditorRegistration(url: url))
+        .modifier(CaptureLibraryEditorRegistration(url: isOpen ? url : nil))
         .task(id: isOpen ? url : nil) {
             guard isOpen, let url, !Task.isCancelled else { return }
             model?.teardown()

@@ -1193,6 +1193,7 @@ final class RecordingStudioModel {
             isLoaded = true
         } else {
             await resolveBackgroundMusic()
+            guard !isTornDown, !Task.isCancelled else { return }
             await resolveVoiceIsolation()
             guard !isTornDown, !Task.isCancelled else { return }
             do {
