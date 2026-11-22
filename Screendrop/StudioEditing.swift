@@ -41,6 +41,7 @@ nonisolated struct StudioKeyModifiers: OptionSet, Equatable, Sendable {
 nonisolated enum StudioTimelineSelection: Equatable, Sendable {
     case text(UUID)
     case image(UUID)
+    case videoOverlay(UUID)
     case redaction(UUID)
     case audioClip(UUID)
     case zoomCue(UUID)
@@ -51,6 +52,7 @@ nonisolated enum StudioTimelineSelection: Equatable, Sendable {
 nonisolated enum StudioDeleteTarget: Equatable, Sendable {
     case text(UUID)
     case image(UUID)
+    case videoOverlay(UUID)
     case redaction(UUID)
     case audioClip(UUID)
     case zoomCue(UUID)
@@ -260,6 +262,7 @@ nonisolated enum StudioEditing {
         switch selection {
         case .text(let id): return .text(id)
         case .image(let id): return .image(id)
+        case .videoOverlay(let id): return .videoOverlay(id)
         case .redaction(let id): return .redaction(id)
         case .audioClip(let id): return .audioClip(id)
         case .zoomCue(let id): return .zoomCue(id)
@@ -349,17 +352,19 @@ nonisolated enum StudioEditing {
             }
     }
 
-    /// Every moment worth jumping to with ↑/↓: video cuts, markers, and any
-    /// audio clip edges.
+    /// Every moment worth jumping to with ↑/↓: video cuts, markers, video
+    /// overlay edges, and any audio clip edges.
     static func editPoints(
         timeline: RecordingClipTimeline,
         markerTimes: [TimeInterval],
         audioClipEdges: [TimeInterval] = [],
+        videoOverlayEdges: [TimeInterval] = [],
         duration: TimeInterval
     ) -> [TimeInterval] {
         let limit = max(duration.isFinite ? duration : 0, 0)
         var points = timeline.editPoints
         points.append(contentsOf: audioClipEdges)
+        points.append(contentsOf: videoOverlayEdges)
         points.append(contentsOf: markerTimes)
         return points
             .filter { $0.isFinite && $0 >= 0 && $0 <= limit }
@@ -386,12 +391,14 @@ nonisolated enum StudioEditing {
         playhead: TimeInterval? = nil,
         markers: [TimeInterval],
         recordedClicks: [TimeInterval],
-        audioClipEdges: [TimeInterval] = []
+        audioClipEdges: [TimeInterval] = [],
+        videoOverlayEdges: [TimeInterval] = []
     ) -> [TimeInterval] {
         var points: [TimeInterval] = []
-        points.reserveCapacity((playhead == nil ? 0 : 1) + audioClipEdges.count + markers.count + recordedClicks.count)
+        points.reserveCapacity((playhead == nil ? 0 : 1) + audioClipEdges.count + videoOverlayEdges.count + markers.count + recordedClicks.count)
         if let playhead, playhead.isFinite { points.append(playhead) }
         points.append(contentsOf: audioClipEdges.filter(\.isFinite))
+        points.append(contentsOf: videoOverlayEdges.filter(\.isFinite))
         points.append(contentsOf: markers.filter(\.isFinite))
         points.append(contentsOf: recordedClicks.filter(\.isFinite))
         return points

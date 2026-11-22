@@ -489,12 +489,16 @@ nonisolated enum StudioAddToolsLayout: Equatable, Sendable {
     static func forAvailableWidth(
         rowWidth: CGFloat,
         centeredTransportWidth: CGFloat,
-        leadingToolsWidth: CGFloat
+        leadingToolsWidth: CGFloat,
+        toolCount: Int = 4
     ) -> Self {
         guard rowWidth > 0, centeredTransportWidth > 0 else { return .popover }
+        let extraTools = max(0, toolCount - 4)
+        let neededLabels = inlineLabelsWidth + CGFloat(extraTools) * 90
+        let neededIcons = inlineIconsWidth + CGFloat(extraTools) * 40
         let freeWidth = (rowWidth - centeredTransportWidth) / 2 - leadingToolsWidth - transportClearance
-        if freeWidth >= inlineLabelsWidth { return .inlineLabels }
-        if freeWidth >= inlineIconsWidth { return .inlineIcons }
+        if freeWidth >= neededLabels { return .inlineLabels }
+        if freeWidth >= neededIcons { return .inlineIcons }
         return .popover
     }
 }
@@ -1445,6 +1449,7 @@ struct StudioBlockStyle {
     static let layout = StudioBlockStyle(tint: .systemGreen)
     static let text = StudioBlockStyle(tint: .systemPurple)
     static let image = StudioBlockStyle(tint: .systemTeal)
+    static let videoOverlay = StudioBlockStyle(tint: .systemOrange)
     static let effect = StudioBlockStyle(tint: .systemGray)
     static let audio = StudioBlockStyle(tint: .systemIndigo)
 

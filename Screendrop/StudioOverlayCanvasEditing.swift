@@ -53,6 +53,157 @@ struct StudioCanvasOverlayLayer: View {
     }
 }
 
+/// Hit target over an active Picture-in-Picture video overlay while paused:
+/// click to select, drag to move with canvas snap guides, drag the corner
+/// handle to resize proportionally about its centre, plus VoiceOver actions.
+struct StudioVideoOverlayEditingLayer: View {
+    @Bindable var model: RecordingStudioModel
+    let overlay: RecordingVideoOverlay
+    let canvasSize: CGSize
+
+    private struct SnapGuides: Equatable {
+        var x: CGFloat?
+        var y: CGFloat?
+    }
+
+    @State private var dragBase: RecordingVideoOverlay?
+    @State private var guides = SnapGuides()
+    @State private var isHovering = false
+
+    var body: some View {
+        let rect = overlay.pipRect(canvasSize: canvasSize)
+        let unit = min(canvasSize.width, canvasSize.height) / 1080
+        let cornerRadius = min(CGFloat(overlay.cornerRadius) * unit, rect.width / 2, rect.height / 2)
+        let isSelected = model.selectedVideoOverlayID == overlay.id
+
+        ZStack(alignment: .topLeading) {
+            if let x = guides.x {
+                Rectangle()
+                    .fill(Color.accentColor)
+                    .frame(width: 1, height: canvasSize.height)
+                    .offset(x: x - 0.5)
+                    .allowsHitTesting(false)
+            }
+            if let y = guides.y {
+                Rectangle()
+                    .fill(Color.accentColor)
+                    .frame(width: canvasSize.width, height: 1)
+                    .offset(y: y - 0.5)
+                    .allowsHitTesting(false)
+            }
+
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(Color.white.opacity(0.001))
+                .overlay {
+                    if isSelected || isHovering {
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                            .strokeBorder(
+                                isSelected ? Palette.highlight : Color.white.opacity(0.7),
+                                lineWidth: isSelected ? 1.5 : 1
+                            )
+                            .shadow(color: .black.opacity(0.3), radius: 1)
+                    }
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    if isSelected {
+                        StudioRegionHandle(isCorner: true, isHorizontal: false)
+                            .offset(x: 11, y: 11)
+                            .gesture(scaleGesture(rect: rect))
+                            .help("Drag to resize video overlay")
+                    }
+                }
+                .frame(width: max(rect.width, 8), height: max(rect.height, 8))
+                .rotationEffect(.degrees(overlay.rotation))
+                .position(x: rect.midX, y: rect.midY)
+                .onHover { isHovering = $0 }
+                .onTapGesture { model.selectVideoOverlay(id: overlay.id) }
+                .gesture(moveGesture(rect: rect))
+                .help("Drag to move. Drag the corner handle to resize.")
+                .accessibilityLabel("Video overlay, \(overlay.displayName)")
+                .accessibilityValue("Position \(studioAccessiblePercent(overlay.center.x)) across, \(studioAccessiblePercent(overlay.center.y)) down, width \(studioAccessiblePercent(overlay.width))")
+                .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+                .accessibilityAction { model.selectVideoOverlay(id: overlay.id) }
+                .accessibilityAction(named: "Move Left") { accessibleEdit("Move Video Overlay") { $0.nudged(dx: -Self.nudgeStep, dy: 0) } }
+                .accessibilityAction(named: "Move Right") { accessibleEdit("Move Video Overlay") { $0.nudged(dx: Self.nudgeStep, dy: 0) } }
+                .accessibilityAction(named: "Move Up") { accessibleEdit("Move Video Overlay") { $0.nudged(dx: 0, dy: -Self.nudgeStep) } }
+                .accessibilityAction(named: "Move Down") { accessibleEdit("Move Video Overlay") { $0.nudged(dx: 0, dy: Self.nudgeStep) } }
+                .accessibilityAction(named: "Make Larger") { accessibleEdit("Resize Video Overlay") { $0.scaled(by: Double(Self.nudgeStep)) } }
+                .accessibilityAction(named: "Make Smaller") { accessibleEdit("Resize Video Overlay") { $0.scaled(by: -Double(Self.nudgeStep)) } }
+        }
+        .frame(width: canvasSize.width, height: canvasSize.height, alignment: .topLeading)
+    }
+
+    private static let nudgeStep: CGFloat = 0.05
+
+    private func accessibleEdit(_ action: String, transform: (RecordingVideoOverlay) -> RecordingVideoOverlay) {
+        model.selectVideoOverlay(id: overlay.id)
+        model.beginVideoOverlayEdit()
+        model.setVideoOverlay(transform(overlay))
+        model.endVideoOverlayEdit(actionName: action)
+    }
+
+    private func begin() {
+        guard dragBase?.id != overlay.id else { return }
+        dragBase = overlay
+        model.selectVideoOverlay(id: overlay.id)
+        model.beginVideoOverlayEdit()
+    }
+
+    private func moveGesture(rect: CGRect) -> some Gesture {
+        DragGesture(minimumDistance: 2, coordinateSpace: .global)
+            .onChanged { value in
+                begin()
+                guard let dragBase, canvasSize.width > 0, canvasSize.height > 0 else { return }
+                let proposed = CGPoint(
+                    x: dragBase.center.x * canvasSize.width + value.translation.width,
+                    y: dragBase.center.y * canvasSize.height + value.translation.height
+                )
+                let margin = RecordingStudioLayout.bubbleMargin(forMinDimension: min(canvasSize.width, canvasSize.height))
+                let snapped = RecordingVideoOverlay.snapPiPCenter(
+                    proposed,
+                    size: rect.size,
+                    canvas: canvasSize,
+                    margin: margin
+                )
+                guides = SnapGuides(x: snapped.guideX, y: snapped.guideY)
+                var moved = dragBase
+                moved.center = CGPoint(
+                    x: min(max(snapped.center.x / canvasSize.width, 0), 1),
+                    y: min(max(snapped.center.y / canvasSize.height, 0), 1)
+                )
+                model.setVideoOverlay(moved)
+            }
+            .onEnded { _ in
+                dragBase = nil
+                withAnimation(.fade) { guides = SnapGuides() }
+                model.endVideoOverlayEdit(actionName: "Move Video Overlay")
+            }
+    }
+
+    private func scaleGesture(rect: CGRect) -> some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .global)
+            .onChanged { value in
+                begin()
+                guard let dragBase else { return }
+                let angle = dragBase.rotation * .pi / 180
+                let half = CGSize(width: rect.width / 2, height: rect.height / 2)
+                let corner = CGPoint(
+                    x: half.width * cos(angle) - half.height * sin(angle),
+                    y: half.width * sin(angle) + half.height * cos(angle)
+                )
+                let length = max(hypot(corner.x, corner.y), 1)
+                let along = (value.translation.width * corner.x + value.translation.height * corner.y) / length
+                var scaled = dragBase
+                scaled.width = dragBase.width * Double(max(0.05, (length + along) / length))
+                model.setVideoOverlay(scaled)
+            }
+            .onEnded { _ in
+                dragBase = nil
+                model.endVideoOverlayEdit(actionName: "Resize Video Overlay")
+            }
+    }
+}
+
 /// Hit targets over the showing images. A click picks one, a drag moves
 /// it, and the selected one's corner handle scales it about its centre.
 struct StudioImageEditingLayer: View {

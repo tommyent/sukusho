@@ -44,6 +44,7 @@ private enum StudioInspectorContent: Hashable {
     case zoom(UUID)
     case text(UUID)
     case image(UUID)
+    case videoOverlay(UUID)
     case redaction(UUID)
     case audio(UUID)
 }
@@ -69,6 +70,7 @@ struct StudioInspector: View {
     private var inspectorContent: StudioInspectorContent {
         if let text = model.selectedText { return .text(text.id) }
         if let image = model.selectedImage { return .image(image.id) }
+        if let videoOverlay = model.selectedVideoOverlay { return .videoOverlay(videoOverlay.id) }
         if let redaction = model.selectedRedaction { return .redaction(redaction.id) }
         if let cue = model.selectedCue { return .zoom(cue.id) }
         if let clip = model.selectedAudioClip { return .audio(clip.id) }
@@ -87,6 +89,10 @@ struct StudioInspector: View {
                 case .image:
                     if let image = model.selectedImage {
                         selectedImagePage(for: image)
+                    }
+                case .videoOverlay:
+                    if let videoOverlay = model.selectedVideoOverlay {
+                        selectedVideoOverlayPage(for: videoOverlay)
                     }
                 case .redaction:
                     if let redaction = model.selectedRedaction {
@@ -391,6 +397,24 @@ struct StudioInspector: View {
 
             pageBody {
                 StudioImageInspectorControls(model: model, image: image)
+            }
+        }
+    }
+
+    private func selectedVideoOverlayPage(for overlay: RecordingVideoOverlay) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            pageHeader(
+                overlay.displayName,
+                systemImage: overlay.presentation.systemImage,
+                onBack: { model.selectedVideoOverlayID = nil }
+            ) {
+                InspectorIconButton(systemName: "trash", help: "Remove Video Overlay") {
+                    withAnimation(.morphIfAllowed) { model.removeVideoOverlay(id: overlay.id) }
+                }
+            }
+
+            pageBody {
+                StudioVideoOverlayInspectorControls(model: model, overlay: overlay)
             }
         }
     }

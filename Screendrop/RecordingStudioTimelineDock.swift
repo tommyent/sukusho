@@ -61,7 +61,8 @@ struct StudioTimelineEditor: View {
         StudioAddToolsLayout.forAvailableWidth(
             rowWidth: transportRowWidth,
             centeredTransportWidth: playbackControlsWidth,
-            leadingToolsWidth: leadingToolsWidth
+            leadingToolsWidth: leadingToolsWidth,
+            toolCount: 5
         )
     }
 
@@ -112,8 +113,8 @@ struct StudioTimelineEditor: View {
     // MARK: Height & resize
 
     private var tracks: [StudioTrack] {
-        // Order top to bottom: overlays above video, camera cues and audio lanes below.
-        [.text, .overlay, .clips, .zooms] + (0..<model.audioLaneCount).map(StudioTrack.audio)
+        // Order top to bottom: overlays above video, video overlay lane directly above clips, camera cues and audio lanes below.
+        [.text, .overlay, .videoOverlay, .clips, .zooms] + (0..<model.audioLaneCount).map(StudioTrack.audio)
     }
 
     private var fullTracksHeight: CGFloat {
@@ -299,12 +300,38 @@ struct StudioTimelineEditor: View {
                 onPreview: { preview in
                     if preview != mediaDrop { mediaDrop = preview }
                 },
-                onDrop: { urls, time, audioLane in
-                    model.importMedia(urls, atEditorTime: time, audioLane: audioLane)
+                onDrop: { urls, time, audioLane, targetTrack in
+                    if targetTrack == .videoOverlay || urls.allSatisfy(RecordingVideoOverlay.canImport) {
+                        model.importVideoOverlays(urls, atEditorTime: time)
+                    } else {
+                        model.importMedia(urls, atEditorTime: time, audioLane: audioLane)
+                    }
                 }
             ))
         }
         .frame(height: StudioTimelineMetrics.headerHeight + StudioTimelineMetrics.trackSpacing + visibleTracksHeight)
+        .confirmationDialog(
+            "Add Sukusho Recording",
+            isPresented: Binding(
+                get: { model.pendingRecordingOverlayImport != nil },
+                set: { if !$0 { model.cancelPendingRecordingImport() } }
+            ),
+            presenting: model.pendingRecordingOverlayImport
+        ) { _ in
+            Button("Raw Recording") {
+                model.resolvePendingRecordingImport(mode: .raw)
+            }
+            .keyboardShortcut(.defaultAction)
+            Button("Finished Movie") {
+                model.resolvePendingRecordingImport(mode: .finished)
+            }
+            Button("Cancel", role: .cancel) {
+                model.cancelPendingRecordingImport()
+            }
+        } message: { pending in
+            let names = pending.recordingNames.joined(separator: ", ")
+            Text("Raw recording adds only the screen video of \(names) in this project's framing. Finished movie renders its zooms, camera, and overlays first.")
+        }
         .alert(
             "Some files weren't added",
             isPresented: Binding(
@@ -385,6 +412,16 @@ struct StudioTimelineEditor: View {
                 visibleRange: visibleRange,
                 onScrubbing: { isScrubbing = $0 }
             )
+        case .videoOverlay:
+            StudioVideoOverlayTrackLane(
+                model: model,
+                snaps: model.snapsEdits,
+                scale: scale,
+                visibleRange: visibleRange,
+                onScrubbing: { isScrubbing = $0 },
+                onSnapGuide: { if snapGuide.time != $0 { snapGuide.time = $0 } },
+                onAddVideoOverlay: pickVideoOverlay
+            )
         case .clips:
             clipLane
         case .zooms:
@@ -421,6 +458,7 @@ struct StudioTimelineEditor: View {
     private func dropHint(for track: StudioTrack) -> String? {
         switch track {
         case .overlay: "Drop to add over the video"
+        case .videoOverlay: "Drop to add video overlay"
         case .audio: "Drop to add audio"
         default: nil
         }
@@ -433,6 +471,10 @@ struct StudioTimelineEditor: View {
         case .overlay:
             model.redactions.isEmpty && model.imageOverlays.isEmpty
                 ? "Add images and GIFs, or pixelate part of the picture, with +"
+                : nil
+        case .videoOverlay:
+            model.videoOverlays.isEmpty && model.canImportMedia
+                ? "Drop a video or add a PiP / cutaway with +"
                 : nil
         case .clips:
             nil
@@ -663,6 +705,27 @@ struct StudioTimelineEditor: View {
                 }
 
                 addTools
+
+                if let renderProgress = model.videoOverlayRenderProgress {
+                    HStack(spacing: 6) {
+                        StudioProgressRing(progress: renderProgress, size: 13)
+                        Text("Rendering \(Int((renderProgress * 100).rounded()))%")
+                            .font(.system(size: 11, weight: .medium).monospacedDigit())
+                            .foregroundStyle(.secondary)
+                        Button {
+                            model.cancelVideoOverlayRender()
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 8.5, weight: .bold))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Cancel rendering finished movie")
+                    }
+                    .padding(.horizontal, 10)
+                    .frame(height: GlassMetrics.buttonSize)
+                    .glassEffect(.regular, in: .capsule)
+                }
             }
         }
         .confirmationDialog(
@@ -738,11 +801,24 @@ struct StudioTimelineEditor: View {
         .glassEffectID("audio", in: glass)
 
         addTool(
+            "Video Overlay…",
+            systemImage: "pip.fill",
+            help: model.mediaDirectoryURL == nil
+                ? "Save this recording as a project to add a video overlay"
+                : "Add Video Overlay…",
+            labeled: labeled
+        ) {
+            pickVideoOverlay()
+        }
+        .disabled(!model.canImportMedia)
+        .glassEffectID("videoOverlay", in: glass)
+
+        addTool(
             "Media",
             systemImage: "photo.badge.plus",
             help: model.mediaDirectoryURL == nil
-                ? "Save this recording as a project to add images, GIFs, or audio"
-                : "Add Images, Animated GIFs, or Audio at Playhead",
+                ? "Save this recording as a project to add images, GIFs, video, or audio"
+                : "Add Images, Animated GIFs, Video, or Audio at Playhead",
             labeled: labeled
         ) {
             pickMedia()
@@ -779,12 +855,27 @@ struct StudioTimelineEditor: View {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
-        panel.allowedContentTypes = [.image] + RecordingAudioFormat.importContentTypes
+        panel.allowedContentTypes = [.image] + RecordingAudioFormat.importContentTypes + [.movie, .quickTimeMovie, .mpeg4Movie]
         panel.prompt = "Add"
-        panel.message = "Images and animated GIF, APNG, WebP, or HEIC files go over the video; audio files go on the audio lanes."
+        panel.message = "Images and GIFs go on the overlay lane, videos go on the video overlay lane, and audio files go on the audio lanes."
         let time = model.currentTime
         guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
         model.importMedia(panel.urls, atEditorTime: time)
+    }
+
+    private func pickVideoOverlay() {
+        model.pause()
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.treatsFilePackagesAsDirectories = false
+        panel.allowedContentTypes = RecordingVideoOverlay.importContentTypes
+        panel.prompt = "Add Video Overlay"
+        panel.message = "Choose a video file or another Sukusho recording to layer as a picture-in-picture or cutaway."
+        let time = model.currentTime
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        model.importVideoOverlays(panel.urls, atEditorTime: time)
     }
 
     private var zoomControls: some View {
@@ -983,6 +1074,7 @@ private enum StudioTimelineMetrics {
 private enum StudioTrack: Hashable, Identifiable {
     case text
     case overlay
+    case videoOverlay
     case clips
     case zooms
     case audio(Int)
@@ -991,6 +1083,7 @@ private enum StudioTrack: Hashable, Identifiable {
         switch self {
         case .text: "text"
         case .overlay: "overlay"
+        case .videoOverlay: "videoOverlay"
         case .clips: "clips"
         case .zooms: "zooms"
         case .audio(let lane): "audio-\(lane)"
@@ -1000,6 +1093,7 @@ private enum StudioTrack: Hashable, Identifiable {
     var height: CGFloat {
         switch self {
         case .clips: 56
+        case .videoOverlay: 34
         case .text, .overlay, .zooms: 30
         case .audio: StudioAudioLaneMetrics.laneHeight
         }
@@ -1009,6 +1103,7 @@ private enum StudioTrack: Hashable, Identifiable {
         switch self {
         case .text: "character.textbox"
         case .overlay: "square.3.layers.3d"
+        case .videoOverlay: "pip.fill"
         case .clips: "video"
         case .zooms: "viewfinder"
         case .audio: "waveform"
@@ -1019,6 +1114,7 @@ private enum StudioTrack: Hashable, Identifiable {
         switch self {
         case .text: "Text"
         case .overlay: "Images and Effects"
+        case .videoOverlay: "Video Overlay"
         case .clips: "Clips"
         case .zooms: "Zooms"
         case .audio(let lane): "Audio \(lane + 1)"
@@ -1091,7 +1187,7 @@ private struct StudioMediaDropDelegate: DropDelegate {
     let time: (CGPoint) -> TimeInterval
     let trackAtLocation: (CGPoint) -> StudioTrack?
     let onPreview: (StudioMediaDrop?) -> Void
-    let onDrop: ([URL], TimeInterval, Int) -> Void
+    let onDrop: ([URL], TimeInterval, Int, StudioTrack?) -> Void
 
     private func audioLane(at location: CGPoint) -> Int {
         if case .audio(let lane) = trackAtLocation(location) {
@@ -1109,11 +1205,17 @@ private struct StudioMediaDropDelegate: DropDelegate {
             onPreview(nil)
             return DropProposal(operation: .forbidden)
         }
+        let hoveredTrack = trackAtLocation(info.location)
         let targetAudioTrack = StudioTrack.audio(audioLane(at: info.location))
         var tracks: Set<StudioTrack> = []
-        if info.hasItemsConforming(to: [.image]) { tracks.insert(.overlay) }
-        if info.hasItemsConforming(to: [.audio]) { tracks.insert(targetAudioTrack) }
-        if tracks.isEmpty { tracks = [.overlay, targetAudioTrack] }
+        if hoveredTrack == .videoOverlay {
+            tracks.insert(.videoOverlay)
+        } else {
+            if info.hasItemsConforming(to: [.image]) { tracks.insert(.overlay) }
+            if info.hasItemsConforming(to: [.movie]) { tracks.insert(.videoOverlay) }
+            if info.hasItemsConforming(to: [.audio]) { tracks.insert(targetAudioTrack) }
+            if tracks.isEmpty { tracks = [.overlay, .videoOverlay, targetAudioTrack] }
+        }
         onPreview(StudioMediaDrop(tracks: tracks, time: time(info.location)))
         return DropProposal(operation: .copy)
     }
@@ -1126,10 +1228,11 @@ private struct StudioMediaDropDelegate: DropDelegate {
         onPreview(nil)
         guard canDrop else { return false }
         let at = time(info.location)
+        let hoveredTrack = trackAtLocation(info.location)
         let lane = audioLane(at: info.location)
         let providers = info.itemProviders(for: [.fileURL])
         return StudioMediaDropLoader.loadFileURLs(from: providers) { urls in
-            if !urls.isEmpty { onDrop(urls, at, lane) }
+            if !urls.isEmpty { onDrop(urls, at, lane, hoveredTrack) }
         }
     }
 }
@@ -2071,6 +2174,214 @@ private struct StudioOverlayBlockContent: View {
                     }
                 }
         }
+    }
+}
+
+// MARK: - Video overlay lane
+
+/// Single non-overlapping layered video lane (PiP and cutaways) built on Step 2's
+/// `StudioBlockLane`: move with snapping, trims clamped to `[0, fileDuration]`
+/// and neighbours, context menu, and full VoiceOver actions.
+private struct StudioVideoOverlayTrackLane: View {
+    @Bindable var model: RecordingStudioModel
+    let snaps: Bool
+    let scale: StudioTimelineScale
+    let visibleRange: ClosedRange<TimeInterval>
+    let onScrubbing: (Bool) -> Void
+    let onSnapGuide: (TimeInterval?) -> Void
+    let onAddVideoOverlay: () -> Void
+
+    private static let snapDistance: CGFloat = 7
+
+    var body: some View {
+        StudioBlockLane(
+            model: model,
+            blocks: visibleBlocks,
+            selectedID: model.selectedVideoOverlayID,
+            scale: scale,
+            height: StudioTrack.videoOverlay.height,
+            overlap: .forbidden(spans: model.videoOverlayOverlapSpans),
+            empty: .scrub,
+            onScrubbing: onScrubbing,
+            actions: StudioBlockLaneActions(
+                select: { model.selectVideoOverlay(id: $0.id) },
+                begin: { _, _ in model.beginVideoOverlayEdit() },
+                edit: apply,
+                end: { _, kind in
+                    onSnapGuide(nil)
+                    model.endVideoOverlayEdit(actionName: kind == .move ? "Move Video Overlay" : "Trim Video Overlay")
+                }
+            ),
+            content: { block, state in content(for: block.item, state: state) },
+            menu: { block in menu(for: block.item) },
+            help: { block in
+                let overlay = block.item
+                if model.isVideoOverlayMissing(overlay) {
+                    return "\(overlay.displayName) is missing from this project."
+                }
+                return "\(overlay.displayName) (\(overlay.presentation.title)). Drag to move, drag an end to trim, right-click for options."
+            },
+            accessibility: { block in accessibility(for: block) }
+        )
+        .contextMenu {
+            Button("Add Video Overlay…", systemImage: "pip.fill") {
+                onAddVideoOverlay()
+            }
+            .disabled(!model.canImportMedia)
+        }
+    }
+
+    private func content(for overlay: RecordingVideoOverlay, state: StudioBlockState) -> some View {
+        let style = StudioBlockStyle.videoOverlay
+        let isMissing = model.isVideoOverlayMissing(overlay)
+        let runsPastEnd = overlay.end > model.duration + 0.01
+        let foreground = isMissing ? Color(nsColor: .systemOrange) : style.label(isSelected: state.isSelected)
+        let detail = isMissing
+            ? "Missing"
+            : "\(overlay.presentation.title) · \(studioClock(overlay.duration))"
+        return ZStack(alignment: .topLeading) {
+            StudioBlockLabel(
+                systemImage: isMissing ? "exclamationmark.triangle.fill" : overlay.presentation.systemImage,
+                title: overlay.displayName,
+                detail: detail,
+                state: state,
+                color: foreground
+            )
+            if runsPastEnd {
+                StudioBlockHatch(color: foreground.opacity(0.35), spacing: 5, lineWidth: 1)
+                    .frame(width: min(10, state.width))
+                    .frame(width: state.width, height: state.height, alignment: .trailing)
+                    .allowsHitTesting(false)
+            }
+        }
+        .background {
+            StudioBlockSurface(fill: style.fill(isSelected: state.isSelected, isHovering: state.isHovered))
+        }
+        .overlay {
+            if isMissing {
+                StudioBlockMetrics.shape
+                    .strokeBorder(Color(nsColor: .systemOrange), lineWidth: 1.5)
+                    .allowsHitTesting(false)
+            }
+        }
+        .studioBlockClip()
+    }
+
+    @ViewBuilder
+    private func menu(for overlay: RecordingVideoOverlay) -> some View {
+        Button(
+            overlay.presentation == .pip ? "Switch to Cutaway" : "Switch to Picture-in-Picture",
+            systemImage: overlay.presentation == .pip ? "rectangle.inset.filled" : "pip"
+        ) {
+            model.setVideoOverlayPresentation(overlay.presentation == .pip ? .cutaway : .pip, id: overlay.id)
+        }
+        if overlay.hasAudio {
+            Button(
+                overlay.isMuted ? "Unmute" : "Mute",
+                systemImage: overlay.isMuted ? "speaker.wave.2" : "speaker.slash"
+            ) {
+                model.toggleVideoOverlayMuted(id: overlay.id)
+            }
+        }
+        Menu("Speed", systemImage: "hare") {
+            ForEach(RecordingVideoOverlay.speedPresets, id: \.self) { speed in
+                Toggle(
+                    speed == 1 ? "Normal (1×)" : RecordingClipSegment.speedTitle(speed),
+                    isOn: Binding(
+                        get: { abs(overlay.speed - speed) < 0.001 },
+                        set: { _ in model.setVideoOverlaySpeed(speed, id: overlay.id) }
+                    )
+                )
+            }
+        }
+        Divider()
+        Button("Delete Video Overlay", systemImage: "trash", role: .destructive) {
+            model.removeVideoOverlay(id: overlay.id)
+        }
+    }
+
+    private func accessibility(for block: StudioLaneBlock<RecordingVideoOverlay>) -> StudioBlockAccessibility {
+        let overlay = block.item
+        var traits = [overlay.presentation.title]
+        if overlay.isMuted { traits.append("muted") }
+        if model.isVideoOverlayMissing(overlay) { traits.append("missing") }
+        let range = "\(studioPreciseTimecode(block.editorStart)) to \(studioPreciseTimecode(block.editorEnd))"
+        return StudioBlockAccessibility(
+            label: "Video overlay, \(overlay.displayName)",
+            value: "\(range), \(traits.joined(separator: ", "))"
+        )
+    }
+
+    private func apply(_ edit: StudioBlockEdit<RecordingVideoOverlay>) {
+        let base = edit.base.item
+        let invertsSnapping = NSEvent.modifierFlags.contains(.command)
+        switch edit.kind {
+        case .move:
+            let proposedStart = base.start + edit.delta
+            let byStart = snapped(proposedStart, excluding: base.id, inverted: invertsSnapping)
+            let byEnd = snapped(proposedStart + base.duration, excluding: base.id, inverted: invertsSnapping) - base.duration
+            let finalDelta: TimeInterval
+            if byStart != proposedStart, abs(byStart - proposedStart) <= abs(byEnd - proposedStart) || byEnd == proposedStart {
+                finalDelta = byStart - base.start
+                onSnapGuide(byStart)
+            } else if byEnd != proposedStart {
+                finalDelta = byEnd - base.start
+                onSnapGuide(byEnd + base.duration)
+            } else {
+                finalDelta = edit.delta
+                onSnapGuide(nil)
+            }
+            let moved = StudioVideoOverlayLane.moved(
+                base,
+                by: finalDelta,
+                among: model.videoOverlays,
+                timelineDuration: model.duration
+            )
+            model.setVideoOverlay(moved)
+        case .trimLeading:
+            let target = snapped(base.start + edit.delta, excluding: base.id, inverted: invertsSnapping)
+            onSnapGuide(target != base.start + edit.delta ? target : nil)
+            let trimmed = StudioVideoOverlayLane.trimmedLeading(
+                base,
+                by: target - base.start,
+                among: model.videoOverlays
+            )
+            model.setVideoOverlay(trimmed)
+        case .trimTrailing:
+            let target = snapped(base.end + edit.delta, excluding: base.id, inverted: invertsSnapping)
+            onSnapGuide(target != base.end + edit.delta ? target : nil)
+            let trimmed = StudioVideoOverlayLane.trimmedTrailing(
+                base,
+                by: target - base.end,
+                among: model.videoOverlays
+            )
+            model.setVideoOverlay(trimmed)
+        }
+    }
+
+    private func snapped(_ time: TimeInterval, excluding id: UUID, inverted: Bool) -> TimeInterval {
+        guard snaps != inverted, scale.pointsPerSecond > 0 else { return time }
+        var points = model.clipTimeline.editPoints
+        points.append(model.currentTime)
+        for overlay in model.videoOverlays where overlay.id != id {
+            points.append(overlay.start)
+            points.append(overlay.end)
+        }
+        return StudioEditing.snapped(
+            time,
+            to: points,
+            tolerance: Double(Self.snapDistance / scale.pointsPerSecond)
+        )
+    }
+
+    private var visibleBlocks: [StudioLaneBlock<RecordingVideoOverlay>] {
+        let end = model.duration
+        return model.videoOverlays
+            .filter {
+                $0.start < end - 0.01
+                    && $0.end >= visibleRange.lowerBound && $0.start <= visibleRange.upperBound
+            }
+            .map { StudioLaneBlock(item: $0, editorStart: $0.start, editorEnd: min($0.end, end)) }
     }
 }
 

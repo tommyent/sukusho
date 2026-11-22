@@ -850,8 +850,23 @@ private struct StudioCanvasComposition: View {
                     )
                     .position(x: layout.cardRect.midX, y: layout.cardRect.midY)
 
-                if model.isCameraVisible(at: model.displayTime), layout.bubbleRect.width > 0 {
+                let cutawayCoverage = isEditingVideoCrop ? 0 : model.cutawayCoverage(atEditorTime: model.displayTime)
+                if model.isCameraVisible(at: model.displayTime), layout.bubbleRect.width > 0, cutawayCoverage < 0.999 {
                     StudioCameraBubble(model: model, layout: layout)
+                        .opacity(1 - cutawayCoverage)
+                        .allowsHitTesting(cutawayCoverage < 0.5)
+                }
+
+                // Layered video overlay (PiP or cutaway) sits above card and
+                // camera, and under images, text, and subtitles.
+                if !isEditingVideoCrop, let videoOverlay = model.activeVideoOverlay(atEditorTime: model.displayTime) {
+                    StudioVideoOverlayCanvasView(
+                        overlay: videoOverlay,
+                        player: model.videoOverlayPlayer,
+                        editorTime: model.displayTime,
+                        canvasSize: canvasSize,
+                        layout: layout
+                    )
                 }
 
                 // Images, then text, sit on the canvas above the camera and
@@ -899,6 +914,14 @@ private struct StudioCanvasComposition: View {
                             model: model,
                             redactions: regions,
                             pictureRect: layout.frameRect(for: state),
+                            canvasSize: canvasSize
+                        )
+                    }
+                    if let videoOverlay = model.activeVideoOverlay(atEditorTime: model.displayTime),
+                       videoOverlay.presentation == .pip {
+                        StudioVideoOverlayEditingLayer(
+                            model: model,
+                            overlay: videoOverlay,
                             canvasSize: canvasSize
                         )
                     }
@@ -1616,6 +1639,55 @@ private struct StudioBackgroundView: View {
                     .aspectRatio(contentMode: .fill)
             } else {
                 Color(white: 0.04)
+            }
+        }
+    }
+}
+
+/// Renders the active layered video overlay (PiP or full-card cutaway) on the
+/// live preview canvas, matching `RecordingVideoOverlayRenderer`'s geometry,
+/// opacity, crossfades, and corner clipping verbatim.
+private struct StudioVideoOverlayCanvasView: View {
+    let overlay: RecordingVideoOverlay
+    let player: AVPlayer
+    let editorTime: TimeInterval
+    let canvasSize: CGSize
+    let layout: RecordingStudioLayout
+
+    var body: some View {
+        let alpha = overlay.effectiveOpacity(atEditorTime: editorTime)
+        if alpha > 0.001 {
+            switch overlay.presentation {
+            case .pip:
+                let rect = overlay.pipRect(canvasSize: canvasSize)
+                let unit = min(canvasSize.width, canvasSize.height) / 1080
+                let radius = min(CGFloat(overlay.cornerRadius) * unit, rect.width / 2, rect.height / 2)
+                let strength = CGFloat(min(max(overlay.shadow, 0), 1))
+                StudioPlayerLayerView(player: player, gravity: .resizeAspectFill)
+                    .frame(width: max(rect.width, 1), height: max(rect.height, 1))
+                    .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                    .shadow(
+                        color: .black.opacity(0.5 * strength),
+                        radius: 20 * unit * strength,
+                        y: 12 * unit * strength
+                    )
+                    .rotationEffect(.degrees(overlay.rotation))
+                    .opacity(alpha)
+                    .position(x: rect.midX, y: rect.midY)
+                    .allowsHitTesting(false)
+            case .cutaway:
+                let gravity: AVLayerVideoGravity = overlay.cutawayContentMode == .fill
+                    ? .resizeAspectFill
+                    : .resizeAspect
+                ZStack {
+                    Color.black
+                    StudioPlayerLayerView(player: player, gravity: gravity)
+                }
+                .frame(width: layout.cardRect.width, height: layout.cardRect.height)
+                .clipShape(RoundedRectangle(cornerRadius: layout.cardCornerRadius, style: .continuous))
+                .opacity(alpha)
+                .position(x: layout.cardRect.midX, y: layout.cardRect.midY)
+                .allowsHitTesting(false)
             }
         }
     }

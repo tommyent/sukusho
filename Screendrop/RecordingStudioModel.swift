@@ -54,6 +54,20 @@ enum RecordingStudioShareState: Equatable {
     }
 }
 
+enum RecordingOverlayImportMode: Equatable, Sendable {
+    /// Copies the source `.sukushorec`'s raw `screen.mov` directly (no double-framing).
+    case raw
+    /// Renders the source `.sukushorec` with its zooms, camera, and overlays baked in.
+    case finished
+}
+
+struct PendingRecordingOverlayImport: Identifiable, Equatable {
+    let id = UUID()
+    let urls: [URL]
+    let editorTime: TimeInterval
+    let recordingNames: [String]
+}
+
 @MainActor
 @Observable
 final class RecordingStudioModel {
@@ -73,6 +87,9 @@ final class RecordingStudioModel {
 
     let screenPlayer = AVPlayer()
     let cameraPlayer = AVPlayer()
+    /// Single recycled player for the `.videoOverlay` lane. Loads only near an
+    /// active overlay span and clears outside spans to keep memory bounded.
+    let videoOverlayPlayer = AVPlayer()
 
     var style = RecordingStudioStyle(background: RecordingStudioDefaults.background) {
         didSet {
@@ -175,6 +192,16 @@ final class RecordingStudioModel {
     var mediaImportError: String?
     private let pendingImageEdit = StudioPendingEdit<[RecordingImageOverlay]>()
     private var mediaLoadTask: Task<Void, Never>?
+    private(set) var videoOverlays: [RecordingVideoOverlay] = []
+    var selectedVideoOverlayID: UUID?
+    private(set) var missingVideoOverlayFiles: Set<String> = []
+    private let pendingVideoOverlayEdit = StudioPendingEdit<[RecordingVideoOverlay]>()
+    private var videoOverlaySeek = StudioCameraSeekCoordinator()
+    private var loadedVideoOverlayFileName: String?
+    private var loadedVideoOverlayID: UUID?
+    private var videoOverlayImportTask: Task<Void, Never>?
+    private(set) var videoOverlayRenderProgress: Double?
+    private(set) var pendingRecordingOverlayImport: PendingRecordingOverlayImport?
     /// The preview's copy of the reframe camera, kept current with every
     /// edit that would change the exported crop.
     private(set) var previewReframe: ReframeTrack?
@@ -369,7 +396,7 @@ final class RecordingStudioModel {
     private(set) var sharedVideoError: String?
     /// Work that closing the window or quitting would cancel.
     var hasRunningWork: Bool {
-        isRestoringDocument || exportTask != nil || shareTask != nil || backgroundMusicTask != nil || isIsolatingVoice || exportState.isExporting || audioExportState.isExporting || shareState.isBusy || isDeletingSharedLink
+        isRestoringDocument || exportTask != nil || shareTask != nil || backgroundMusicTask != nil || isIsolatingVoice || exportState.isExporting || audioExportState.isExporting || shareState.isBusy || isDeletingSharedLink || videoOverlayRenderProgress != nil
     }
     /// Upload identity while sharing, so the UI can read the uploader's
     /// live progress and the history card mirrors the state.
@@ -390,7 +417,8 @@ final class RecordingStudioModel {
             sync: replacementAudio == nil ? nil : replacementAudioSync,
             clips: audioClips,
             volume: Double(audioVolume),
-            soloLane: soloAudioLane
+            soloLane: soloAudioLane,
+            videoOverlays: videoOverlays
         )
     }
 
@@ -1043,8 +1071,12 @@ final class RecordingStudioModel {
                 sync: document?.replacementAudioSync
             )
         }
+        videoOverlayPlayer.isMuted = true
+        videoOverlayPlayer.actionAtItemEnd = .pause
         audioClips = StudioAudioConform.resolvingLanes(audioClips.map { $0.sanitized() })
+        videoOverlays = StudioVideoOverlayLane.normalized(videoOverlays)
         await resolveAudioClipSources()
+        await resolveVideoOverlaySources()
         guard !isTornDown, !Task.isCancelled else { return }
 
         await resolveBackgroundMusic()
@@ -1190,7 +1222,18 @@ final class RecordingStudioModel {
         if let selectedImageID, !imageOverlays.contains(where: { $0.id == selectedImageID }) {
             self.selectedImageID = nil
         }
-        if isLoaded { loadOverlayMedia() }
+        videoOverlays = StudioVideoOverlayLane.normalized(document.videoOverlays ?? [])
+        if let selectedVideoOverlayID, !videoOverlays.contains(where: { $0.id == selectedVideoOverlayID }) {
+            self.selectedVideoOverlayID = nil
+        }
+        if isLoaded {
+            loadOverlayMedia()
+            Task { [weak self] in
+                await self?.resolveVideoOverlaySources()
+                guard let self, !self.isTornDown else { return }
+                self.moveVideoOverlayPlayer(to: self.displayTime)
+            }
+        }
         audioExportFormat = document.audioExportFormatValue
         audioVolume = CGFloat(RecordingAudioGain.normalized(document.audioVolume ?? 1))
     }
@@ -1217,7 +1260,12 @@ final class RecordingStudioModel {
         pendingRedactionEdit.cancel()
         pendingTextEdit.cancel()
         pendingImageEdit.cancel()
+        pendingVideoOverlayEdit.cancel()
         mediaLoadTask?.cancel()
+        videoOverlayImportTask?.cancel()
+        videoOverlayImportTask = nil
+        videoOverlayRenderProgress = nil
+        pendingRecordingOverlayImport = nil
         overlayImages.removeAll()
         clearRedactionObservers()
         audioExportTask?.cancel()
@@ -1251,6 +1299,10 @@ final class RecordingStudioModel {
         endObserver = nil
         screenPlayer.replaceCurrentItem(with: nil)
         cameraPlayer.replaceCurrentItem(with: nil)
+        clearVideoOverlayPlayer()
+        videoOverlays.removeAll()
+        selectedVideoOverlayID = nil
+        missingVideoOverlayFiles.removeAll()
         screenAsset?.cancelLoading()
         screenAsset = nil
         screenVideoTrack = nil
@@ -1379,6 +1431,7 @@ final class RecordingStudioModel {
         isPlaying = true
         screenPlayer.rate = shuttleRate
         syncCameraPlayback()
+        syncVideoOverlayPlayback()
     }
 
     func pause() {
@@ -1387,8 +1440,11 @@ final class RecordingStudioModel {
         shuttleRate = 1
         cameraSeek.invalidate()
         lastCameraSegmentID = nil
+        videoOverlaySeek.invalidate()
         screenPlayer.pause()
         cameraPlayer.pause()
+        videoOverlayPlayer.pause()
+        moveVideoOverlayPlayer(to: currentTime)
     }
 
     private static func playbackCapabilities(of item: AVPlayerItem?) -> StudioPlaybackCapabilities {
@@ -1438,11 +1494,13 @@ final class RecordingStudioModel {
                     shuttleRate = nextRate
                     screenPlayer.rate = shuttleRate
                     syncCameraPlayback()
+                    syncVideoOverlayPlayback()
                 }
             } else {
                 if isPlaying {
                     screenPlayer.pause()
                     cameraPlayer.pause()
+                    videoOverlayPlayer.pause()
                     isPlaying = false
                 }
                 shuttleRate = nextRate
@@ -1485,6 +1543,7 @@ final class RecordingStudioModel {
                 currentTime = clamped
                 updateActiveTranscriptWord()
                 moveCameraPlayer(to: clamped)
+                moveVideoOverlayPlayer(to: clamped)
                 return
             }
         }
@@ -1574,6 +1633,7 @@ final class RecordingStudioModel {
         movePlayers(to: clamped)
         if isPlaying {
             syncCameraPlayback()
+            syncVideoOverlayPlayback()
         }
     }
 
@@ -1585,6 +1645,7 @@ final class RecordingStudioModel {
         let target = CMTime(seconds: editorTime, preferredTimescale: StudioPlayback.seekTimescale)
         screenPlayer.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
         moveCameraPlayer(to: editorTime)
+        moveVideoOverlayPlayer(to: editorTime)
     }
 
     private func moveCameraPlayer(to editorTime: TimeInterval) {
@@ -1642,6 +1703,7 @@ final class RecordingStudioModel {
                     self.currentTime = seconds
                     self.updateActiveTranscriptWord()
                     self.correctCameraDriftIfNeeded()
+                    self.correctVideoOverlayDriftIfNeeded()
                 }
             }
         }
@@ -1679,11 +1741,12 @@ final class RecordingStudioModel {
 
     // MARK: - Clips
 
-    private enum PendingOverlayKind { case text, image, redaction }
+    private enum PendingOverlayKind { case text, image, videoOverlay, redaction }
 
     private var hasPendingOverlayEdit: Bool {
         pendingTextEdit.isDirty(current: textOverlays)
             || pendingImageEdit.isDirty(current: imageOverlays)
+            || pendingVideoOverlayEdit.isDirty(current: videoOverlays)
             || pendingRedactionEdit.isDirty(current: redactions)
     }
 
@@ -1693,6 +1756,9 @@ final class RecordingStudioModel {
         }
         if excluded != .image, pendingImageEdit.isActive {
             endImageEdit()
+        }
+        if excluded != .videoOverlay, pendingVideoOverlayEdit.isActive {
+            endVideoOverlayEdit()
         }
         if excluded != .redaction, pendingRedactionEdit.isActive {
             endRedactionEdit()
@@ -1729,6 +1795,7 @@ final class RecordingStudioModel {
     private var activeTimelineSelection: StudioTimelineSelection? {
         if let selectedTextID { return .text(selectedTextID) }
         if let selectedImageID { return .image(selectedImageID) }
+        if let selectedVideoOverlayID { return .videoOverlay(selectedVideoOverlayID) }
         if let selectedRedactionID { return .redaction(selectedRedactionID) }
         if let selectedAudioClipID { return .audioClip(selectedAudioClipID) }
         if let selectedCueID { return .zoomCue(selectedCueID) }
@@ -1765,6 +1832,8 @@ final class RecordingStudioModel {
             removeText(id: id)
         case .image(let id):
             removeImage(id: id)
+        case .videoOverlay(let id):
+            removeVideoOverlay(id: id)
         case .redaction(let id):
             removeRedaction(id: id)
         case .audioClip(let id):
@@ -1817,16 +1886,19 @@ final class RecordingStudioModel {
         StudioEditing.clipSnapPoints(
             markers: markerEditorTimes.map(\.time),
             recordedClicks: visibleRecordedPressTimes,
-            audioClipEdges: audioClips.flatMap { [$0.start, $0.end] }
+            audioClipEdges: audioClips.flatMap { [$0.start, $0.end] },
+            videoOverlayEdges: videoOverlays.flatMap { [$0.start, $0.end] }
         )
     }
 
-    /// Every moment worth stopping at with ↑/↓: video cuts, markers, and audio edges.
+    /// Every moment worth stopping at with ↑/↓: video cuts, markers, video
+    /// overlay edges, and audio edges.
     var editPoints: [TimeInterval] {
         StudioEditing.editPoints(
             timeline: clipTimeline,
             markerTimes: markerEditorTimes.map(\.time),
             audioClipEdges: audioClips.flatMap { [$0.start, $0.end] },
+            videoOverlayEdges: videoOverlays.flatMap { [$0.start, $0.end] },
             duration: duration
         )
     }
@@ -2126,6 +2198,7 @@ final class RecordingStudioModel {
         selectedAudioClipID = nil
         selectedTextID = nil
         selectedImageID = nil
+        selectedVideoOverlayID = nil
         selectedRedactionID = nil
     }
 
@@ -2355,6 +2428,7 @@ final class RecordingStudioModel {
         audio requestedAudio: [RecordingAudioClip]? = nil,
         hidden requestedHidden: [StudioAudioConform.HiddenLinkedRange]? = nil,
         solo requestedSolo: Int?? = nil,
+        videoOverlays requestedVideoOverlays: [RecordingVideoOverlay]? = nil,
         selectedID: UUID?,
         selectsClip: Bool = true,
         playheadTime: TimeInterval,
@@ -2373,13 +2447,16 @@ final class RecordingStudioModel {
             nextAudio = conformed.clips
             nextHidden = conformed.hidden
         }
+        let nextVideoOverlays = requestedVideoOverlays.map(StudioVideoOverlayLane.normalized)
+            ?? StudioVideoOverlayLane.conform(videoOverlays, from: clipTimeline, to: next)
         let nextSolo = StudioAudioLaneSolo.reconcile(clips: nextAudio, soloLane: requestedSolo ?? soloAudioLane)
-        guard next != clipTimeline || nextAudio != audioClips || nextHidden != hiddenLinkedAudio || nextSolo != soloAudioLane else { return }
+        guard next != clipTimeline || nextAudio != audioClips || nextHidden != hiddenLinkedAudio || nextSolo != soloAudioLane || nextVideoOverlays != videoOverlays else { return }
 
         let previousTimeline = clipTimeline
         let previousAudio = audioClips
         let previousHidden = hiddenLinkedAudio
         let previousSolo = soloAudioLane
+        let previousVideoOverlays = videoOverlays
         let previousSelection = selectedClipID
         let hadSelection = selectedClipID != nil
         let previousTime = currentTime
@@ -2389,6 +2466,7 @@ final class RecordingStudioModel {
                 audio: previousAudio,
                 hidden: previousHidden,
                 solo: .some(previousSolo),
+                videoOverlays: previousVideoOverlays,
                 selectedID: previousSelection,
                 selectsClip: hadSelection,
                 playheadTime: previousTime,
@@ -2405,7 +2483,11 @@ final class RecordingStudioModel {
         rangeSelection = nil
         clipTimeline = next
         audioClips = nextAudio
+        videoOverlays = nextVideoOverlays
         duration = next.duration
+        if let selectedVideoOverlayID, !nextVideoOverlays.contains(where: { $0.id == selectedVideoOverlayID }) {
+            self.selectedVideoOverlayID = nil
+        }
         if let selectedAudioClipID, !nextAudio.contains(where: { $0.id == selectedAudioClipID }) {
             self.selectedAudioClipID = nil
         }
@@ -3058,6 +3140,7 @@ final class RecordingStudioModel {
             redactions: redactions,
             textOverlays: textOverlays.isEmpty ? nil : textOverlays,
             imageOverlays: imageOverlays.isEmpty ? nil : imageOverlays,
+            videoOverlays: videoOverlays.isEmpty ? nil : videoOverlays,
             showsInk: showsInk ? nil : false,
             hiddenInkStrokeIDs: hiddenInkStrokeIDs.isEmpty
                 ? nil : hiddenInkStrokeIDs.sorted { $0.uuidString < $1.uuidString },
@@ -3231,8 +3314,12 @@ final class RecordingStudioModel {
         } else {
             adoptReplacementAudio(nil, reference: nil, sync: nil)
         }
+        videoOverlayPlayer.isMuted = true
+        videoOverlayPlayer.actionAtItemEnd = .pause
         audioClips = StudioAudioConform.resolvingLanes(audioClips.map { $0.sanitized() })
+        videoOverlays = StudioVideoOverlayLane.normalized(videoOverlays)
         await resolveAudioClipSources()
+        await resolveVideoOverlaySources()
         guard !isTornDown, !Task.isCancelled else { return }
 
         await resolveBackgroundMusic()
@@ -4181,6 +4268,8 @@ final class RecordingStudioModel {
                     } else {
                         rejected.append(url.lastPathComponent)
                     }
+                } else if RecordingVideoOverlay.canImport(url) {
+                    self.importVideoOverlays([url], atEditorTime: time)
                 } else if let placed = await self.importAudioMedia(
                     url,
                     into: directory,
@@ -4193,7 +4282,7 @@ final class RecordingStudioModel {
                 }
             }
             if !rejected.isEmpty {
-                self?.mediaImportError = "Couldn't add \(rejected.joined(separator: ", ")). Images, animated GIF/APNG/WebP/HEIC, and audio files can be added."
+                self?.mediaImportError = "Couldn't add \(rejected.joined(separator: ", ")). Images, animated GIF/APNG/WebP/HEIC, video, and audio files can be added."
             }
         }
     }
@@ -4203,6 +4292,9 @@ final class RecordingStudioModel {
         guard let directory = mediaDirectoryURL, !isTornDown else { return false }
         if RecordingOverlayImage.canImport(url) {
             return await importImage(url, into: directory, atEditorTime: time) != nil
+        }
+        if RecordingVideoOverlay.canImportVideoFile(url) {
+            return await importVideoOverlayFile(url, displayName: url.deletingPathExtension().lastPathComponent, into: directory, atEditorTime: time) != nil
         }
         return await importAudioMedia(url, into: directory, atEditorTime: time, preferredLane: audioLane) != nil
     }
@@ -4364,6 +4456,489 @@ final class RecordingStudioModel {
         scheduleProjectSave()
         if let selectedImageID, !all.contains(where: { $0.id == selectedImageID }) {
             self.selectedImageID = nil
+        }
+    }
+
+    // MARK: - Video overlays
+
+    var selectedVideoOverlay: RecordingVideoOverlay? {
+        videoOverlays.first { $0.id == selectedVideoOverlayID }
+    }
+
+    var videoOverlayOverlapSpans: [StudioLaneSpan] {
+        videoOverlays.map { StudioLaneSpan(id: $0.id, editorStart: $0.start, editorEnd: $0.end) }
+    }
+
+    func activeVideoOverlay(atEditorTime time: TimeInterval) -> RecordingVideoOverlay? {
+        guard activeTrimSourcePreviewTime == nil, !videoOverlays.isEmpty else { return nil }
+        return StudioVideoOverlayLane.activeOverlay(in: videoOverlays, atEditorTime: time)
+    }
+
+    func cutawayCoverage(atEditorTime time: TimeInterval) -> Double {
+        guard activeTrimSourcePreviewTime == nil, !videoOverlays.isEmpty else { return 0 }
+        return StudioVideoOverlayLane.cutawayCoverage(in: videoOverlays, atEditorTime: time)
+    }
+
+    func isVideoOverlayMissing(_ overlay: RecordingVideoOverlay) -> Bool {
+        missingVideoOverlayFiles.contains(overlay.fileName)
+    }
+
+    func selectVideoOverlay(id: UUID) {
+        guard videoOverlays.contains(where: { $0.id == id }) else { return }
+        clearTimelineSelection()
+        selectedVideoOverlayID = id
+    }
+
+    func removeVideoOverlay(id: UUID) {
+        applyVideoOverlays(videoOverlays.filter { $0.id != id }, actionName: "Remove Video Overlay")
+        if selectedVideoOverlayID == id { selectedVideoOverlayID = nil }
+    }
+
+    func beginVideoOverlayEdit() {
+        commitPendingOverlayEdits(excluding: .videoOverlay)
+        if pendingVideoOverlayEdit.isCoalescing { endVideoOverlayEdit() }
+        pendingVideoOverlayEdit.begin(from: videoOverlays)
+    }
+
+    func endVideoOverlayEdit(actionName: String = "Edit Video Overlay") {
+        guard let commit = pendingVideoOverlayEdit.takeCommit(current: videoOverlays, fallbackActionName: actionName) else {
+            undoRevision &+= 1
+            return
+        }
+        registerUndo(commit.actionName) { target in
+            target.applyVideoOverlays(commit.previous, actionName: commit.actionName)
+        }
+    }
+
+    func setVideoOverlay(_ overlay: RecordingVideoOverlay) {
+        guard let index = videoOverlays.firstIndex(where: { $0.id == overlay.id }) else { return }
+        var all = videoOverlays
+        all[index] = overlay.sanitized()
+        replaceVideoOverlays(StudioVideoOverlayLane.normalized(all))
+        if pendingVideoOverlayEdit.isActive { undoRevision &+= 1 }
+    }
+
+    func editVideoOverlay(_ overlay: RecordingVideoOverlay, actionName: String) {
+        commitPendingOverlayEdits(excluding: .videoOverlay)
+        if pendingVideoOverlayEdit.isActive, !pendingVideoOverlayEdit.actionName.isEmpty, pendingVideoOverlayEdit.actionName != actionName {
+            endVideoOverlayEdit()
+        }
+        pendingVideoOverlayEdit.begin(from: videoOverlays, actionName: actionName)
+        setVideoOverlay(overlay)
+        pendingVideoOverlayEdit.scheduleCommit(actionName: actionName) { [weak self] in
+            self?.endVideoOverlayEdit(actionName: actionName)
+        }
+    }
+
+    func setVideoOverlayPresentation(_ presentation: RecordingVideoOverlay.Presentation, id: UUID) {
+        guard let overlay = videoOverlays.first(where: { $0.id == id }),
+              overlay.presentation != presentation else { return }
+        let updated = overlay.switchingPresentation(to: presentation)
+        applyVideoOverlays(
+            videoOverlays.map { $0.id == id ? updated : $0 },
+            actionName: presentation == .cutaway ? "Switch to Cutaway" : "Switch to Picture-in-Picture"
+        )
+    }
+
+    func setVideoOverlaySpeed(_ speed: Double, id: UUID) {
+        guard let overlay = videoOverlays.first(where: { $0.id == id }) else { return }
+        let updated = StudioVideoOverlayLane.withSpeed(overlay, speed: speed, among: videoOverlays)
+        applyVideoOverlays(
+            videoOverlays.map { $0.id == id ? updated : $0 },
+            actionName: "Change Video Overlay Speed"
+        )
+    }
+
+    func toggleVideoOverlayMuted(id: UUID) {
+        guard var overlay = videoOverlays.first(where: { $0.id == id }) else { return }
+        overlay.isMuted.toggle()
+        applyVideoOverlays(
+            videoOverlays.map { $0.id == id ? overlay : $0 },
+            actionName: overlay.isMuted ? "Mute Video Overlay" : "Unmute Video Overlay"
+        )
+        showNotice(overlay.isMuted ? "Muted" : "Unmuted")
+    }
+
+    private func replaceVideoOverlays(_ all: [RecordingVideoOverlay]) {
+        videoOverlays = all
+        scheduleProjectSave()
+        if audioPlan.placement != playbackAudioPlacement {
+            scheduleAudioPlaybackRebuild()
+        } else {
+            updatePlaybackVolume()
+        }
+        if isPlaying {
+            syncVideoOverlayPlayback()
+        } else {
+            moveVideoOverlayPlayer(to: displayTime)
+        }
+    }
+
+    private func applyVideoOverlays(_ requested: [RecordingVideoOverlay], actionName: String) {
+        if !editUndoManager.isUndoing && !editUndoManager.isRedoing {
+            commitPendingOverlayEdits()
+        }
+        let all = StudioVideoOverlayLane.normalized(requested)
+        guard all != videoOverlays else { return }
+        let previous = videoOverlays
+        registerUndo(actionName) { target in
+            target.applyVideoOverlays(previous, actionName: actionName)
+        }
+        replaceVideoOverlays(all)
+        if let selectedVideoOverlayID, !all.contains(where: { $0.id == selectedVideoOverlayID }) {
+            self.selectedVideoOverlayID = nil
+        }
+    }
+
+    /// Imports video files or Sukusho `.sukushorec` recordings onto the layered
+    /// video overlay lane. Plain movie files import right away; Sukusho
+    /// recordings prompt each time between Raw recording (default) and Finished movie.
+    func importVideoOverlays(_ urls: [URL], atEditorTime time: TimeInterval) {
+        guard mediaDirectoryURL != nil, isLoaded, !urls.isEmpty else { return }
+        mediaImportError = nil
+        let recordingURLs = urls.filter { RecordingSession.isSessionDirectory($0) }
+        if !recordingURLs.isEmpty {
+            let names = recordingURLs.map { RecordingSession(directoryURL: $0).displayName }
+            pendingRecordingOverlayImport = PendingRecordingOverlayImport(
+                urls: urls,
+                editorTime: time,
+                recordingNames: names
+            )
+            return
+        }
+        runVideoOverlayImport(urls: urls, atEditorTime: time, recordingMode: .raw)
+    }
+
+    func resolvePendingRecordingImport(mode: RecordingOverlayImportMode) {
+        guard let pending = pendingRecordingOverlayImport else { return }
+        pendingRecordingOverlayImport = nil
+        runVideoOverlayImport(urls: pending.urls, atEditorTime: pending.editorTime, recordingMode: mode)
+    }
+
+    func cancelPendingRecordingImport() {
+        pendingRecordingOverlayImport = nil
+    }
+
+    func cancelVideoOverlayRender() {
+        videoOverlayImportTask?.cancel()
+        videoOverlayImportTask = nil
+        videoOverlayRenderProgress = nil
+    }
+
+    private func runVideoOverlayImport(
+        urls: [URL],
+        atEditorTime time: TimeInterval,
+        recordingMode: RecordingOverlayImportMode
+    ) {
+        guard let directory = mediaDirectoryURL else { return }
+        videoOverlayImportTask?.cancel()
+        videoOverlayImportTask = Task { [weak self] in
+            defer {
+                self?.videoOverlayRenderProgress = nil
+                self?.videoOverlayImportTask = nil
+            }
+            var cursor = time
+            var rejected: [String] = []
+            for url in urls {
+                guard let self, !self.isTornDown, !Task.isCancelled else { return }
+                let sourceURL: URL
+                let displayName: String
+                if RecordingSession.isSessionDirectory(url) {
+                    let sourceSession = RecordingSession(directoryURL: url)
+                    displayName = sourceSession.displayName
+                    switch recordingMode {
+                    case .raw:
+                        sourceURL = sourceSession.screenURL
+                    case .finished:
+                        if url.standardizedFileURL == self.sessionURL.standardizedFileURL {
+                            sourceURL = sourceSession.screenURL
+                        } else {
+                            self.videoOverlayRenderProgress = 0
+                            do {
+                                sourceURL = try await RecordingSessionRenderer.ensureDeliverable(for: sourceSession) { [weak self] progress in
+                                    Task { @MainActor [weak self] in
+                                        if self?.videoOverlayRenderProgress != nil {
+                                            self?.videoOverlayRenderProgress = progress
+                                        }
+                                    }
+                                }
+                                self.videoOverlayRenderProgress = nil
+                            } catch is CancellationError {
+                                return
+                            } catch RecordingStudioExporter.ExportError.cancelled {
+                                return
+                            } catch {
+                                self.videoOverlayRenderProgress = nil
+                                rejected.append(displayName)
+                                continue
+                            }
+                        }
+                    }
+                } else if RecordingVideoOverlay.canImportVideoFile(url) {
+                    sourceURL = url
+                    displayName = url.deletingPathExtension().lastPathComponent
+                } else {
+                    rejected.append(url.lastPathComponent)
+                    continue
+                }
+                guard !self.isTornDown, !Task.isCancelled else { return }
+                if let placedEnd = await self.importVideoOverlayFile(
+                    sourceURL,
+                    displayName: displayName,
+                    into: directory,
+                    atEditorTime: cursor
+                ) {
+                    cursor = placedEnd
+                } else {
+                    rejected.append(displayName)
+                }
+            }
+            guard let self, !self.isTornDown, !Task.isCancelled else { return }
+            if !rejected.isEmpty {
+                self.mediaImportError = "Couldn't add \(rejected.joined(separator: ", ")). Check that the file is a readable video and there is open space on the video overlay lane."
+            }
+        }
+    }
+
+    private func importVideoOverlayFile(
+        _ url: URL,
+        displayName: String,
+        into directory: URL,
+        atEditorTime time: TimeInterval
+    ) async -> TimeInterval? {
+        guard let fileName = copyMediaIntoProject(url, directory: directory),
+              let storedURL = RecordingOverlayMedia.resolveRegularFile(named: fileName, in: directory) else {
+            return nil
+        }
+        guard let probe = await RecordingVideoOverlayMedia.probe(url: storedURL),
+              !isTornDown, !Task.isCancelled else {
+            try? FileManager.default.removeItem(at: storedURL)
+            return nil
+        }
+        var candidate = RecordingVideoOverlay(
+            fileName: fileName,
+            displayName: displayName,
+            start: time,
+            fileDuration: probe.duration,
+            presentation: .pip
+        )
+        candidate.aspect = probe.aspect
+        candidate.hasAudio = probe.hasAudio
+        candidate.width = RecordingVideoOverlay.initialWidth(aspect: probe.aspect, canvasSize: basePreviewCanvasSize)
+        candidate.center = RecordingVideoOverlay.initialCenter(cameraVisible: hasCameraVideo && style.camera.isVisible)
+        guard let placed = StudioVideoOverlayLane.place(
+            candidate,
+            at: time,
+            timelineDuration: duration,
+            among: videoOverlays
+        ) else {
+            try? FileManager.default.removeItem(at: storedURL)
+            return nil
+        }
+        if probe.hasAudio, audioSources.files[fileName] == nil {
+            let tracks = await StudioAudioSources.Track.loadAll(of: AVURLAsset(url: storedURL))
+            guard !isTornDown, !Task.isCancelled else { return nil }
+            if !tracks.isEmpty {
+                audioSources.files[fileName] = tracks
+            }
+        }
+        missingVideoOverlayFiles.remove(fileName)
+        undoReferencedFiles.insert(fileName)
+        applyVideoOverlays(videoOverlays + [placed], actionName: "Add Video Overlay")
+        selectVideoOverlay(id: placed.id)
+        return placed.end
+    }
+
+    private func resolveVideoOverlaySources() async {
+        missingVideoOverlayFiles.removeAll()
+        guard !videoOverlays.isEmpty else { return }
+        guard let directory = mediaDirectoryURL else {
+            missingVideoOverlayFiles.formUnion(videoOverlays.map(\.fileName))
+            return
+        }
+        for name in Set(videoOverlays.map(\.fileName)) {
+            guard let url = RecordingOverlayMedia.resolveRegularFile(named: name, in: directory) else {
+                missingVideoOverlayFiles.insert(name)
+                continue
+            }
+            undoReferencedFiles.insert(name)
+            if audioSources.files[name] == nil {
+                let tracks = await StudioAudioSources.Track.loadAll(of: AVURLAsset(url: url))
+                guard !Task.isCancelled, !isTornDown else { return }
+                if !tracks.isEmpty {
+                    audioSources.files[name] = tracks
+                }
+            }
+        }
+    }
+
+    // MARK: Recycled video overlay player sync
+
+    private func clearVideoOverlayPlayer() {
+        videoOverlaySeek.invalidate()
+        videoOverlayPlayer.pause()
+        if videoOverlayPlayer.currentItem != nil {
+            videoOverlayPlayer.replaceCurrentItem(with: nil)
+        }
+        loadedVideoOverlayFileName = nil
+        loadedVideoOverlayID = nil
+    }
+
+    private func ensureVideoOverlayItemLoaded(for overlay: RecordingVideoOverlay) -> Bool {
+        if loadedVideoOverlayFileName == overlay.fileName, videoOverlayPlayer.currentItem != nil {
+            return true
+        }
+        guard let directory = mediaDirectoryURL,
+              let url = RecordingOverlayMedia.resolveRegularFile(named: overlay.fileName, in: directory) else {
+            clearVideoOverlayPlayer()
+            return false
+        }
+        let item = AVPlayerItem(url: url)
+        videoOverlayPlayer.replaceCurrentItem(with: item)
+        videoOverlayPlayer.isMuted = true
+        videoOverlayPlayer.actionAtItemEnd = .pause
+        loadedVideoOverlayFileName = overlay.fileName
+        loadedVideoOverlayID = overlay.id
+        return true
+    }
+
+    private func moveVideoOverlayPlayer(to editorTime: TimeInterval) {
+        let plan = StudioVideoOverlayPlaybackPlan.resolve(
+            at: editorTime,
+            isPlaying: false,
+            shuttleRate: shuttleRate,
+            overlays: videoOverlays
+        )
+        switch plan {
+        case .clear:
+            clearVideoOverlayPlayer()
+        case .preload(let overlay, let mediaTime), .active(let overlay, let mediaTime, _):
+            videoOverlaySeek.invalidate()
+            guard ensureVideoOverlayItemLoaded(for: overlay) else { return }
+            loadedVideoOverlayID = overlay.id
+            videoOverlayPlayer.pause()
+            let target = CMTime(seconds: max(0, mediaTime), preferredTimescale: StudioPlayback.seekTimescale)
+            videoOverlayPlayer.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
+        }
+    }
+
+    private func syncVideoOverlayPlayback() {
+        let plan = StudioVideoOverlayPlaybackPlan.resolve(
+            at: currentTime,
+            isPlaying: isPlaying,
+            shuttleRate: shuttleRate,
+            overlays: videoOverlays
+        )
+        switch plan {
+        case .clear:
+            clearVideoOverlayPlayer()
+        case .preload(let overlay, let mediaTime):
+            let switchedOverlay = loadedVideoOverlayID != overlay.id
+            guard ensureVideoOverlayItemLoaded(for: overlay) else { return }
+            loadedVideoOverlayID = overlay.id
+            videoOverlayPlayer.pause()
+            if switchedOverlay || abs(videoOverlayPlayer.currentTime().seconds - mediaTime) > 0.05 {
+                videoOverlaySeek.invalidate()
+                let target = CMTime(seconds: max(0, mediaTime), preferredTimescale: StudioPlayback.seekTimescale)
+                videoOverlayPlayer.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
+            }
+        case .active(let overlay, let mediaTime, let targetRate):
+            guard ensureVideoOverlayItemLoaded(for: overlay) else { return }
+            loadedVideoOverlayID = overlay.id
+            let rate = targetRate ?? Float(overlay.speed) * shuttleRate
+            if !Self.playbackCapabilities(of: videoOverlayPlayer.currentItem).supports(rate: rate),
+               videoOverlayPlayer.rate != 0 {
+                videoOverlayPlayer.pause()
+            }
+            if let dispatch = videoOverlaySeek.requestSeek(to: max(0, mediaTime)) {
+                dispatchVideoOverlaySeek(generation: dispatch.generation, seconds: dispatch.target)
+            }
+        }
+    }
+
+    private func dispatchVideoOverlaySeek(generation: Int, seconds: TimeInterval) {
+        let target = CMTime(seconds: max(0, seconds), preferredTimescale: StudioPlayback.seekTimescale)
+        videoOverlayPlayer.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
+            Task { @MainActor [weak self] in
+                self?.finishVideoOverlaySeek(generation: generation, finished: finished)
+            }
+        }
+    }
+
+    private func finishVideoOverlaySeek(generation: Int, finished: Bool) {
+        guard isPlaying else {
+            videoOverlaySeek.invalidate()
+            return
+        }
+        switch videoOverlaySeek.completeSeek(generation: generation, finished: finished) {
+        case .ignore:
+            return
+        case .startCoalescedSeek(let nextGeneration, let nextTarget):
+            dispatchVideoOverlaySeek(generation: nextGeneration, seconds: nextTarget)
+        case .applyPlaybackRate:
+            guard let active = StudioVideoOverlayLane.activeOverlay(in: videoOverlays, atEditorTime: currentTime),
+                  active.id == loadedVideoOverlayID else {
+                videoOverlayPlayer.pause()
+                return
+            }
+            let rate = Float(active.speed) * shuttleRate
+            if Self.playbackCapabilities(of: videoOverlayPlayer.currentItem).supports(rate: rate) {
+                videoOverlayPlayer.rate = rate
+            } else {
+                videoOverlayPlayer.pause()
+            }
+        }
+    }
+
+    private func correctVideoOverlayDriftIfNeeded() {
+        guard isPlaying else { return }
+        let plan = StudioVideoOverlayPlaybackPlan.resolve(
+            at: currentTime,
+            isPlaying: true,
+            shuttleRate: shuttleRate,
+            overlays: videoOverlays
+        )
+        switch plan {
+        case .clear:
+            clearVideoOverlayPlayer()
+        case .preload:
+            syncVideoOverlayPlayback()
+        case .active(let overlay, let expected, let rate):
+            let previousID = loadedVideoOverlayID
+            guard ensureVideoOverlayItemLoaded(for: overlay) else { return }
+            let targetRate = rate ?? Float(overlay.speed) * shuttleRate
+            guard Self.playbackCapabilities(of: videoOverlayPlayer.currentItem).supports(rate: targetRate) else {
+                loadedVideoOverlayID = overlay.id
+                if videoOverlayPlayer.rate != 0 { videoOverlayPlayer.pause() }
+                if expected.isFinite, let dispatch = videoOverlaySeek.requestSeek(to: max(0, expected)) {
+                    dispatchVideoOverlaySeek(generation: dispatch.generation, seconds: dispatch.target)
+                }
+                return
+            }
+            if videoOverlaySeek.isSeeking {
+                if overlay.id != previousID, expected.isFinite {
+                    loadedVideoOverlayID = overlay.id
+                    _ = videoOverlaySeek.requestSeek(to: max(0, expected))
+                }
+                return
+            }
+            if videoOverlayPlayer.rate == 0 || overlay.id != previousID {
+                syncVideoOverlayPlayback()
+                return
+            }
+            if abs(videoOverlayPlayer.rate - targetRate) > 0.01 {
+                videoOverlayPlayer.rate = targetRate
+            }
+            let actual = videoOverlayPlayer.currentTime().seconds
+            if StudioPlayback.shouldResyncCamera(
+                expected: expected,
+                actual: actual,
+                segmentID: overlay.id,
+                lastSegmentID: previousID,
+                shuttleRate: shuttleRate
+            ) {
+                syncVideoOverlayPlayback()
+            }
         }
     }
 
@@ -4755,6 +5330,7 @@ final class RecordingStudioModel {
             redactions: redactions,
             textOverlays: textOverlays,
             imageOverlays: imageOverlays,
+            videoOverlays: videoOverlays,
             ink: showsInk && !inkTimeline.isEmpty ? inkTimeline : nil
         )
     }
@@ -5556,15 +6132,21 @@ final class RecordingStudioModel {
     }
 
     /// True once there is a soundtrack to export or swap - the recording's
-    /// own audio, one imported over it, background music, or audio clips.
+    /// own audio, one imported over it, background music, audio clips, or
+    /// audible layered video overlays.
     var hasAudio: Bool {
-        hasPrimaryAudio || hasBackgroundMusic || !audioClips.isEmpty
+        hasPrimaryAudio || hasBackgroundMusic || !audioClips.isEmpty || hasAudibleVideoOverlays
     }
 
-    /// True when the project has background music or audio lane clips that can
-    /// be excluded from a speech-cleanup export or included in a full mix.
+    var hasAudibleVideoOverlays: Bool {
+        videoOverlays.contains { $0.hasAudio && !$0.isMuted && $0.audibleVolume > 0 }
+    }
+
+    /// True when the project has background music, audio lane clips, or audible
+    /// layered videos that can be excluded from a speech-cleanup export or
+    /// included in a full mix.
     var hasAudioExportExtras: Bool {
-        !audioClips.isEmpty || hasBackgroundMusic
+        !audioClips.isEmpty || hasBackgroundMusic || hasAudibleVideoOverlays
     }
 
     /// True when clips or background music are the only audio in the project.
@@ -5576,7 +6158,7 @@ final class RecordingStudioModel {
         RecordingAudioExporter.effectiveIncludeExtras(
             hasPrimaryAudio: hasPrimaryAudio,
             hasBackgroundMusic: hasBackgroundMusic,
-            hasAudioClips: !audioClips.isEmpty,
+            hasAudioClips: !audioClips.isEmpty || hasAudibleVideoOverlays,
             userSelection: audioExportIncludesClips
         )
     }
@@ -5625,6 +6207,7 @@ final class RecordingStudioModel {
             backgroundMusic: includeMix ? backgroundMusicConfiguration(includeAudio: true) : nil,
             replacementSync: replacementURL == nil ? nil : replacementAudioSync,
             audioClips: includeMix ? audioClips : [],
+            videoOverlays: includeMix ? videoOverlays : [],
             mediaDirectory: includeMix ? mediaDirectoryURL : nil,
             externalReplacementURLs: includeMix ? externalPinnedReplacementURLs : [:]
         )
@@ -5937,6 +6520,13 @@ final class RecordingStudioModel {
             + keptDocuments.compactMap(\.imageOverlays).flatMap { $0.map(\.fileName) }
         )
         RecordingOverlayMedia.cleanupUnreferencedImages(in: mediaDirectory, referenced: referencedImages)
+        let referencedVideos = Set(
+            [savedDocument?.videoOverlays, draftDocument?.videoOverlays, lastSavedDocument?.videoOverlays, videoOverlays]
+                .compactMap { $0 }.flatMap { $0.map(\.fileName) }
+            + keptDocuments.compactMap(\.videoOverlays).flatMap { $0.map(\.fileName) }
+            + Array(undoReferencedFiles)
+        )
+        RecordingVideoOverlayMedia.cleanupUnreferencedVideos(in: mediaDirectory, referenced: referencedVideos)
     }
 
     // MARK: - Share to cloud

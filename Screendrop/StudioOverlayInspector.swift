@@ -564,3 +564,169 @@ struct StudioImageInspectorControls: View {
         )
     }
 }
+
+// MARK: - Video overlay
+
+struct StudioVideoOverlayInspectorControls: View {
+    @Bindable var model: RecordingStudioModel
+    let overlay: RecordingVideoOverlay
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: InspectorMetrics.groupSpacing) {
+            if model.isVideoOverlayMissing(overlay) {
+                InspectorHint(
+                    "Video file “\(overlay.displayName)” is missing from this project. Export will fail until it is removed.",
+                    tint: .orange
+                )
+            }
+
+            VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
+                InspectorSegmented(
+                    options: RecordingVideoOverlay.Presentation.allCases,
+                    isSelected: { $0 == overlay.presentation },
+                    onTap: { presentation in
+                        model.setVideoOverlayPresentation(presentation, id: overlay.id)
+                    },
+                    label: { mode in
+                        Label(mode.title, systemImage: mode.systemImage)
+                            .font(.inspectorSegment)
+                    }
+                )
+                .help("Show as a floating picture-in-picture or as a cutaway covering the video card")
+
+                if overlay.presentation == .cutaway {
+                    InspectorSegmented(
+                        options: RecordingVideoOverlay.CutawayContentMode.allCases,
+                        isSelected: { $0 == overlay.cutawayContentMode },
+                        onTap: { mode in
+                            edit("Change Cutaway Framing") { $0.cutawayContentMode = mode }
+                        },
+                        label: { mode in
+                            Text(mode.title).font(.inspectorSegment)
+                        }
+                    )
+                    .help("Fill crops to cover the card; Fit shows the whole video letterboxed inside the card")
+                }
+            }
+
+            if overlay.presentation == .pip {
+                VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
+                    InspectorFieldPair {
+                        InspectorSlider(
+                            "Size",
+                            value: value(\.width, action: "Resize Video Overlay"),
+                            range: CGFloat(RecordingVideoOverlay.widthRange.lowerBound)...CGFloat(RecordingVideoOverlay.widthRange.upperBound),
+                            format: .percent()
+                        )
+                        .help("Width as a share of the canvas width")
+                    } trailing: {
+                        InspectorSlider("Opacity", value: value(\.opacity, action: "Change Video Overlay Opacity"), range: 0...1, format: .percent())
+                    }
+                    InspectorFieldPair {
+                        InspectorSlider(
+                            "Rotation",
+                            value: value(\.rotation, action: "Rotate Video Overlay"),
+                            range: -180...180,
+                            format: .degrees(signed: true)
+                        )
+                    } trailing: {
+                        InspectorSlider(
+                            "Corners",
+                            value: value(\.cornerRadius, action: "Change Video Overlay Corners"),
+                            range: CGFloat(RecordingVideoOverlay.cornerRadiusRange.lowerBound)...CGFloat(RecordingVideoOverlay.cornerRadiusRange.upperBound),
+                            format: .pixels
+                        )
+                        .help("Corner radius, measured on a 1080p canvas")
+                    }
+                    InspectorHalfField {
+                        InspectorSlider("Shadow", value: value(\.shadow, action: "Change Video Overlay Shadow"), range: 0...1, format: .percent())
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
+                InspectorGroupLabel(overlay.presentation == .cutaway ? "Crossfade" : "Fades")
+                InspectorFieldPair {
+                    InspectorSlider(
+                        "In",
+                        value: value(\.fadeIn, action: "Change Video Overlay Fade"),
+                        range: CGFloat(RecordingVideoOverlay.fadeRange.lowerBound)...CGFloat(RecordingVideoOverlay.fadeRange.upperBound),
+                        format: .seconds
+                    )
+                } trailing: {
+                    InspectorSlider(
+                        "Out",
+                        value: value(\.fadeOut, action: "Change Video Overlay Fade"),
+                        range: CGFloat(RecordingVideoOverlay.fadeRange.lowerBound)...CGFloat(RecordingVideoOverlay.fadeRange.upperBound),
+                        format: .seconds
+                    )
+                }
+            }
+
+            VStack(alignment: .leading, spacing: InspectorMetrics.groupLabelSpacing) {
+                InspectorGroupLabel("Speed")
+                InspectorSegmented(
+                    options: RecordingVideoOverlay.speedPresets,
+                    isSelected: { abs($0 - overlay.speed) < 0.001 },
+                    onTap: { model.setVideoOverlaySpeed($0, id: overlay.id) },
+                    label: { Text(RecordingClipSegment.speedTitle($0)).font(.inspectorSegment) }
+                )
+            }
+
+            VStack(alignment: .leading, spacing: InspectorMetrics.rowSpacing) {
+                InspectorGroupLabel("Sound")
+                if overlay.hasAudio {
+                    InspectorFieldPair {
+                        InspectorSlider(
+                            "Volume",
+                            value: value(\.volume, action: "Change Video Overlay Volume"),
+                            range: CGFloat(RecordingVideoOverlay.volumeRange.lowerBound)...CGFloat(RecordingVideoOverlay.volumeRange.upperBound),
+                            format: .percent()
+                        )
+                        .disabled(overlay.isMuted)
+                    } trailing: {
+                        InspectorActionButton(
+                            overlay.isMuted ? "Unmute" : "Mute",
+                            systemImage: overlay.isMuted ? "speaker.slash.fill" : "speaker.wave.2"
+                        ) {
+                            model.toggleVideoOverlayMuted(id: overlay.id)
+                        }
+                        .help(overlay.isMuted ? "Restore this overlay's audio" : "Silence this overlay")
+                    }
+                    InspectorFieldPair {
+                        InspectorSlider(
+                            "Fade In",
+                            value: value(\.audioFadeIn, action: "Change Video Overlay Audio Fade"),
+                            range: CGFloat(RecordingVideoOverlay.audioFadeRange.lowerBound)...CGFloat(RecordingVideoOverlay.audioFadeRange.upperBound),
+                            format: .audioSeconds
+                        )
+                        .disabled(overlay.isMuted)
+                    } trailing: {
+                        InspectorSlider(
+                            "Fade Out",
+                            value: value(\.audioFadeOut, action: "Change Video Overlay Audio Fade"),
+                            range: CGFloat(RecordingVideoOverlay.audioFadeRange.lowerBound)...CGFloat(RecordingVideoOverlay.audioFadeRange.upperBound),
+                            format: .audioSeconds
+                        )
+                        .disabled(overlay.isMuted)
+                    }
+                } else {
+                    InspectorHint("This video has no audio track.")
+                }
+            }
+        }
+    }
+
+    private func edit(_ action: String, _ change: (inout RecordingVideoOverlay) -> Void) {
+        var edited = overlay
+        change(&edited)
+        model.editVideoOverlay(edited, actionName: action)
+    }
+
+    private func value(_ keyPath: WritableKeyPath<RecordingVideoOverlay, Double>, action: String) -> Binding<CGFloat> {
+        Binding(
+            get: { CGFloat(overlay[keyPath: keyPath]) },
+            set: { value in edit(action) { $0[keyPath: keyPath] = Double(value) } }
+        )
+    }
+}
