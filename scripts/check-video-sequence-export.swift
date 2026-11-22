@@ -979,6 +979,137 @@ struct CheckR2Export {
                      "Multi-audio Raw import redaction mismatch (left=\(outMultiLeft), right=\(outMultiRight))")
         print("r5_raw_multiaudio_preservation PASSED")
 
+        // Round 6 — R6-1 (Finding 17): Newer-format draft that cannot decode must withhold
+        // playback, posters, and filmstrip rather than ever loading the unredacted master.
+        let pkgWithheld = tempDir.appendingPathComponent("R6WithheldPreview.sukushorec", isDirectory: true)
+        try FileManager.default.createDirectory(at: pkgWithheld, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: primaryURL, to: pkgWithheld.appendingPathComponent("screen.mov"))
+        let fullBlurMask = RecordingRedaction(
+            start: 0.0, end: 2.0,
+            rect: CGRect(x: 0, y: 0, width: 1, height: 1),
+            mode: .blur, strength: 1.0
+        )
+        try RecordingSession(directoryURL: pkgWithheld).writeEditDocument(
+            RecordingEditDocument(style: style, zoomEnabled: false, zoomCues: [], redactions: [fullBlurMask])
+        )
+        let undecodableFutureDraft = Data("""
+        {
+          "formatVersion": 99,
+          "redactions": [{ "mode": "mosaic_v2", "start": 0.0, "end": 2.0, "rect": [[0, 0], [1, 1]] }]
+        }
+        """.utf8)
+        try undecodableFutureDraft.write(to: pkgWithheld.appendingPathComponent("edit.draft.json"))
+
+        let withheldModel = await MainActor.run { RecordingStudioModel(url: pkgWithheld) }
+        await withheldModel.load()
+        await MainActor.run {
+            precondition(withheldModel.isLoaded, "Undecodable newer-format draft should open with read-only notice")
+            precondition(withheldModel.isReadOnlyNewerFormat, "Expected isReadOnlyNewerFormat == true")
+            precondition(withheldModel.withholdsNewerFormatPreview, "Expected withholdsNewerFormatPreview == true")
+            precondition(!withheldModel.hasUnreadableDraft, "Newer-format draft must not trigger Discard")
+            precondition(withheldModel.screenPlayer.currentItem == nil,
+                         "Raw master reached screenPlayer.currentItem under undecodable newer draft!")
+            precondition(withheldModel.cameraPlayer.currentItem == nil,
+                         "cameraPlayer.currentItem must be withheld under undecodable newer draft")
+            precondition(withheldModel.stylePoster == nil,
+                         "stylePoster must be withheld under undecodable newer draft")
+            precondition(withheldModel.redactionPreviewError == RecordingEditDocument.newerFormatNotice,
+                         "Expected newerFormatNotice on redactionPreviewError")
+            withheldModel.play()
+            precondition(!withheldModel.isPlaying && withheldModel.screenPlayer.currentItem == nil,
+                         "Playback must remain withheld under undecodable newer draft")
+            withheldModel.teardown()
+        }
+        print("r6_newer_draft_withholds_raw_preview PASSED")
+
+        // Round 6 — R6-2 (Finding 18): Format-99 saved edit underneath a format-7 draft must
+        // refuse Finished render and Raw import, writing no deliverable or render stamp.
+        let pkgMixed = tempDir.appendingPathComponent("R6MixedVersion.sukushorec", isDirectory: true)
+        try FileManager.default.createDirectory(at: pkgMixed, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: r4PrimaryURL, to: pkgMixed.appendingPathComponent("screen.mov"))
+        try CaptureManifest.encoder.encode(futureDoc).write(to: pkgMixed.appendingPathComponent("edit.json"))
+        try CaptureManifest.encoder.encode(savedV7Doc).write(to: pkgMixed.appendingPathComponent("edit.draft.json"))
+        let mixedSession = RecordingSession(directoryURL: pkgMixed)
+        do {
+            _ = try await RecordingSessionRenderer.ensureDeliverable(for: mixedSession)
+            preconditionFailure("Finished render must refuse format-99 edit.json under format-7 edit.draft.json")
+        } catch RecordingPackageMedia.ValidationError.unsupportedFormatVersion(99) {
+            // Expected
+        }
+        precondition(mixedSession.existingFinalURL == nil, "Mixed-version package must not write a deliverable")
+        precondition(!FileManager.default.fileExists(atPath: pkgMixed.appendingPathComponent("render.json").path),
+                     "Mixed-version package must not write render.json")
+        do {
+            let bad = try await RecordingSessionRenderer.prepareRawImport(for: pkgMixed)
+            if bad.isTemporary { try? FileManager.default.removeItem(at: bad.url) }
+            preconditionFailure("Raw import must refuse format-99 edit.json under format-7 edit.draft.json")
+        } catch RecordingPackageMedia.ValidationError.unsupportedFormatVersion(99) {
+            // Expected
+        }
+        print("r6_mixed_version_blocks_finished_and_raw PASSED")
+
+        // Round 6 — R6-3 (Finding 19): Compatible format-99 project with isolateVoice == true
+        // and a real microphone track must NOT write mic-isolated-v2.m4a on read-only open.
+        let pkgReadOnlyVoice = tempDir.appendingPathComponent("R6ReadOnlyVoice.sukushorec", isDirectory: true)
+        try FileManager.default.createDirectory(at: pkgReadOnlyVoice, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: r4PiPURL, to: pkgReadOnlyVoice.appendingPathComponent("screen.mov"))
+        let micManifest = CaptureManifest(
+            createdAt: Date(),
+            pixelWidth: 160,
+            pixelHeight: 120,
+            pixelScale: 1,
+            includesSystemAudio: false,
+            includesMicrophone: true
+        )
+        try CaptureManifest.encoder.encode(micManifest).write(to: pkgReadOnlyVoice.appendingPathComponent("capture.json"))
+        var futureVoiceDoc = RecordingEditDocument(style: style, zoomEnabled: false, zoomCues: [], isolateVoice: true)
+        futureVoiceDoc.formatVersion = 99
+        try CaptureManifest.encoder.encode(futureVoiceDoc).write(to: pkgReadOnlyVoice.appendingPathComponent("edit.json"))
+        let isolatedCacheURL = pkgReadOnlyVoice.appendingPathComponent(RecordingVoiceIsolation.fileName)
+        precondition(!FileManager.default.fileExists(atPath: isolatedCacheURL.path))
+
+        let voiceModel = await MainActor.run { RecordingStudioModel(url: pkgReadOnlyVoice) }
+        await voiceModel.load()
+        await MainActor.run {
+            precondition(voiceModel.isLoaded && voiceModel.isReadOnlyNewerFormat,
+                         "Expected compatible format-99 voice project to open read-only")
+            voiceModel.teardown()
+        }
+        precondition(!FileManager.default.fileExists(atPath: isolatedCacheURL.path),
+                     "Read-only newer project wrote mic-isolated-v2.m4a into the package!")
+        print("r6_readonly_newer_skips_voice_isolation_write PASSED")
+
+        // Round 6 — R6-4 (Finding 21): Mixed drop of a movie + image onto a non-video lane
+        // imports the image AND preserves the movie wrong-lane warning.
+        let pkgMixedDrop = tempDir.appendingPathComponent("R6MixedDrop.sukushorec", isDirectory: true)
+        try FileManager.default.createDirectory(at: pkgMixedDrop, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: r4PrimaryURL, to: pkgMixedDrop.appendingPathComponent("screen.mov"))
+        let dropImageURL = tempDir.appendingPathComponent("r6-drop-sticker.png")
+        try writeSmallPNG(to: dropImageURL)
+
+        let dropModel = await MainActor.run { RecordingStudioModel(url: pkgMixedDrop) }
+        await dropModel.load()
+        await MainActor.run {
+            dropModel.handleTimelineMediaDrop(
+                urls: [r4ImportURL, dropImageURL],
+                atEditorTime: 0,
+                audioLane: 0,
+                insertionIndex: 1,
+                targetLane: .other
+            )
+        }
+        try await waitUntil(timeoutSeconds: 10) {
+            await MainActor.run { dropModel.imageOverlays.count == 1 }
+        }
+        await MainActor.run {
+            precondition(dropModel.clipTimeline.segments.count == 1 && dropModel.videoOverlays.isEmpty,
+                         "Movie dropped onto non-video lane must not be added to clips or video overlays")
+            precondition(dropModel.mediaImportError?.contains("Drop videos onto the Clips lane") == true,
+                         "Mixed movie+image drop lost the movie wrong-lane warning: \(String(describing: dropModel.mediaImportError))")
+            dropModel.teardown()
+        }
+        print("r6_mixed_drop_preserves_wrong_lane_warning PASSED")
+
         print("ALL_EXPORT_AND_PREVIEW_CHECKS_PASSED")
     }
 

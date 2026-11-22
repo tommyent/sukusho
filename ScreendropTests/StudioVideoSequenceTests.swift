@@ -1856,6 +1856,150 @@ struct StudioVideoSequenceTests {
         #expect(abs(pipAfterSplitA[0].end - 1.0) < 0.002)
     }
 
+    // MARK: - Round 6 Regressions (Findings 18, 20)
+
+    @Test func olderDraftCannotBypassNewerSavedEditFormatGuard() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("StudioMixedVersionGuard-\(UUID().uuidString)", isDirectory: true)
+        let pkg = root.appendingPathComponent("MixedVersion.sukushorec", isDirectory: true)
+        try FileManager.default.createDirectory(at: pkg, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try Data("stub".utf8).write(to: pkg.appendingPathComponent("screen.mov"))
+        try Data(#"{"formatVersion":99}"#.utf8).write(to: pkg.appendingPathComponent("edit.json"))
+        try Data(#"{"formatVersion":7}"#.utf8).write(to: pkg.appendingPathComponent("edit.draft.json"))
+
+        do {
+            _ = try RecordingPackageMedia.validateRenderInputs(in: pkg)
+            Issue.record("Expected validateRenderInputs to reject format-99 saved edit under format-7 draft")
+        } catch RecordingPackageMedia.ValidationError.unsupportedFormatVersion(99) {
+            // Expected
+        }
+        do {
+            _ = try RecordingPackageMedia.validateRawImportInputs(in: pkg)
+            Issue.record("Expected validateRawImportInputs to reject format-99 saved edit under format-7 draft")
+        } catch RecordingPackageMedia.ValidationError.unsupportedFormatVersion(99) {
+            // Expected
+        }
+    }
+
+    @Test func hiddenLinkedAudioDoesNotCrossRepeatBoundariesOnRippleDeleteAndTrim() {
+        // Sol's exact scenario: two repeats A and B of source 0..<2 s with linked audio
+        // on A only from editor 1.25..<1.70 s.
+        let repeatA = RecordingClipSegment(
+            sourceStart: 0,
+            sourceEnd: 2.0,
+            mediaFileName: "clip.mov",
+            displayName: "Clip",
+            sourceDuration: 2.0
+        )
+        let repeatB = RecordingClipSegment(
+            sourceStart: 0,
+            sourceEnd: 2.0,
+            mediaFileName: "clip.mov",
+            displayName: "Clip",
+            sourceDuration: 2.0
+        )
+        let initial = RecordingClipTimeline(segments: [repeatA, repeatB])
+        var linkedAudio = RecordingAudioClip(
+            fileName: "vo.m4a",
+            displayName: "VO",
+            start: 1.25,
+            fileDuration: 2.0
+        )
+        linkedAudio.trimStart = 0
+        linkedAudio.trimEnd = 0.45
+        linkedAudio.isLinked = true
+
+        // Ripple-delete editor 1.50..<3.80 s: A shrinks to 0..<1.50, B trims to 1.80..<2.00.
+        var aTrimmed = repeatA
+        aTrimmed.sourceEnd = 1.50
+        var bTrimmed = repeatB
+        bTrimmed.sourceStart = 1.80
+        let afterRipple = RecordingClipTimeline(segments: [aTrimmed, bTrimmed])
+
+        let rippleResult = StudioAudioConform.conform(
+            [linkedAudio],
+            hidden: [],
+            from: initial,
+            to: afterRipple
+        )
+        #expect(rippleResult.clips.count == 1)
+        #expect(abs(rippleResult.clips[0].start - 1.25) < 0.002)
+        #expect(abs(rippleResult.clips[0].end - 1.50) < 0.002)
+        #expect(rippleResult.hidden.count == 1)
+        #expect(rippleResult.hidden[0].secondarySegmentID == nil)
+
+        // Extend B's source start back from 1.80 to 1.50: A's hidden audio must NOT restore into B.
+        var bExtended = bTrimmed
+        bExtended.sourceStart = 1.50
+        let afterExtendB = RecordingClipTimeline(segments: [aTrimmed, bExtended])
+        let extendBResult = StudioAudioConform.conform(
+            rippleResult.clips,
+            hidden: rippleResult.hidden,
+            from: afterRipple,
+            to: afterExtendB
+        )
+        #expect(extendBResult.clips.count == 1)
+        #expect(abs(extendBResult.clips[0].start - 1.25) < 0.002)
+        #expect(abs(extendBResult.clips[0].end - 1.50) < 0.002)
+
+        // Even if a persisted hidden range carried a cross-occurrence secondarySegmentID,
+        // restore must still refuse to cross repeat boundaries.
+        var legacyCrossHidden = rippleResult.hidden[0]
+        legacyCrossHidden.secondarySegmentID = repeatB.id
+        let legacyExtendB = StudioAudioConform.conform(
+            rippleResult.clips,
+            hidden: [legacyCrossHidden],
+            from: afterRipple,
+            to: afterExtendB
+        )
+        #expect(legacyExtendB.clips.count == 1)
+        #expect(abs(legacyExtendB.clips[0].start - 1.25) < 0.002)
+        #expect(abs(legacyExtendB.clips[0].end - 1.50) < 0.002)
+
+        // Extending A itself back to 1.80 still restores A's hidden 1.50..<1.70 tail.
+        var aRestored = aTrimmed
+        aRestored.sourceEnd = 1.80
+        let afterExtendA = RecordingClipTimeline(segments: [aRestored, bTrimmed])
+        let extendAResult = StudioAudioConform.conform(
+            rippleResult.clips,
+            hidden: rippleResult.hidden,
+            from: afterRipple,
+            to: afterExtendA
+        )
+        #expect(extendAResult.clips.count == 1)
+        #expect(abs(extendAResult.clips[0].start - 1.25) < 0.002)
+        #expect(abs(extendAResult.clips[0].end - 1.70) < 0.002)
+
+        // Primary-recording segments keep their cross-segment secondary restore behavior.
+        let primary1 = RecordingClipSegment(sourceStart: 0, sourceEnd: 1.50)
+        let primary2 = RecordingClipSegment(sourceStart: 1.50, sourceEnd: 3.00)
+        let primaryInitial = RecordingClipTimeline(segments: [primary1, primary2])
+        var primaryAudio = RecordingAudioClip(
+            fileName: "vo.m4a",
+            displayName: "Primary VO",
+            start: 1.25,
+            fileDuration: 2.0
+        )
+        primaryAudio.trimStart = 0
+        primaryAudio.trimEnd = 0.45
+        primaryAudio.isLinked = true
+
+        var p1Trimmed = primary1
+        p1Trimmed.sourceEnd = 1.40
+        var p2Trimmed = primary2
+        p2Trimmed.sourceStart = 1.80
+        let primaryAfterRipple = RecordingClipTimeline(segments: [p1Trimmed, p2Trimmed])
+        let primaryRipple = StudioAudioConform.conform(
+            [primaryAudio],
+            hidden: [],
+            from: primaryInitial,
+            to: primaryAfterRipple
+        )
+        #expect(primaryRipple.hidden.contains { $0.secondarySegmentID == primary2.id })
+    }
+
     // MARK: - Synthetic Movie Helper
 
     private static func writeSyntheticMovie(
