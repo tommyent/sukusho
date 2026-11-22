@@ -357,8 +357,14 @@ struct LibraryTextIndexChecks {
             studio.teardown()
         }
         try check(plainStudio.isLoaded && studio.isLoaded, "Studio did not open the fixtures")
-        try check(chmod(masked.directoryURL.path, 0o555) == 0, "Could not make the recording read-only")
+        // A read already queued on the main actor when Restore applies the mask finds nothing.
+        let queuedAfterRestore = Task(priority: .high) { @MainActor in exposedCopies(of: maskedID) }
         studio.revertToSession(snapshot)
+        try check(studio.redactions == [mask] && studio.holdsUnsavedRedactions(), "Restore did not apply its mask at once")
+        let exposedAfterRestore = await queuedAfterRestore.value
+        try check(exposedAfterRestore.isEmpty, "A read queued during Restore found the \(exposedAfterRestore.joined(separator: ", "))")
+        // Before the debounced draft write, so the mask stays only in Studio.
+        try check(chmod(masked.directoryURL.path, 0o555) == 0, "Could not make the recording read-only")
         try await waitUntil("mask restored in Studio", timeout: .seconds(10)) { studio.redactions == [mask] && !studio.hasRunningWork }
         try check(!FileManager.default.fileExists(atPath: masked.draftDocumentURL.path), "Fixture wrote the mask to disk")
         try await waitUntil("the held entry out of sight", timeout: .seconds(5)) { index.entries[maskedID] == nil }
@@ -383,7 +389,37 @@ struct LibraryTextIndexChecks {
         let text = try require(index.entries[maskedID]).paragraphs.joined(separator: " ")
         try check(!text.contains("SIGNALCODE") && !text.contains("31415"), "The released entry kept unmasked text: \(text)")
         try await search("SIGNALCODE", expect: [])
-        print("CHECK: an indexed recording masked only in Studio hides its text, search, title and agent copies until the mask is written")
+
+        // Add Redaction writes its mask at once, so the hold ends in the same turn; the old entry must go with it.
+        let queuedAfterAdd = Task(priority: .high) { @MainActor in exposedCopies(of: plainID) }
+        plainStudio.beginRedaction()
+        plainStudio.workingVideoCropRect = mask.rect
+        plainStudio.addRedaction()
+        try check(try plain.loadDraftDocument()?.redactions.first?.rect == mask.rect && !plainStudio.holdsUnsavedRedactions(),
+                  "Add Redaction did not write its mask")
+        let exposedAfterAdd = await queuedAfterAdd.value
+        try check(exposedAfterAdd.isEmpty, "A read queued during Add Redaction found the old \(exposedAfterAdd.joined(separator: ", "))")
+        try await waitUntil("the recording read again with its new mask while open") {
+            guard let entry = index.entries[plainID] else { return false }
+            return CaptureTextIndexPlan.redactionTag(in: entry.fingerprint) != nil
+        }
+        let plainText = try require(index.entries[plainID]).paragraphs.joined(separator: " ")
+        try check(!plainText.contains("LEDGERCODE") && !plainText.contains("66218"), "The re-read kept unmasked text: \(plainText)")
+        try await search("LEDGERCODE", expect: [])
+        print("CHECK: an indexed recording masked only in Studio hides its text, search, title and agent copies at once, until the mask is written; a written mask drops the old entry at once")
+    }
+
+    /// Which of an indexed recording's copies the Library or an agent could still read.
+    @MainActor static func exposedCopies(of id: String) -> [String] {
+        let index = CaptureLibraryIndex.shared
+        let item = CaptureLibraryModel.shared.items.first { $0.id == id }
+        let agent = item.map { AgentLiveBackend.item($0) }
+        return [
+            index.entries[id] != nil ? "entry" : nil,
+            index.foldedText[id] != nil ? "search text" : nil,
+            index.visibleInsight(id) != nil || item?.modelTitle != nil ? "title" : nil,
+            agent.map { AgentLiveBackend().text(of: $0) != nil || $0.foldedText != nil || $0.modelTitle != nil } == true ? "agent copy" : nil,
+        ].compactMap { $0 }
     }
 
     /// Redacted content must never enter OCR text or the frame sent to Apple Intelligence,

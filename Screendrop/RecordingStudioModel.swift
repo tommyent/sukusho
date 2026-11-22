@@ -173,7 +173,7 @@ final class RecordingStudioModel {
     var workingVideoCropRect = CropRectEditor.unit
     var videoCropAspect: CropAspectRatio = .freeform
     private(set) var redactions: [RecordingRedaction] = [] {
-        didSet { if redactions != oldValue { scheduleRedactionHoldReport() } }
+        didSet { if redactions != oldValue { reportRedactionHold() } }
     }
     var selectedRedactionID: UUID?
     private(set) var isSelectingRedaction = false
@@ -873,16 +873,13 @@ final class RecordingStudioModel {
     /// The document as of the last save. Everything the user does after
     /// that lives in memory and in the draft until the next save.
     private var lastSavedDocument: RecordingEditDocument?
+    /// Code that writes a sidecar calls `reportRedactionHold()` once `observedEdit` is known, so the write isn't decoded again.
     private var observedEditSidecars: RecordingSession.EditSidecars? {
-        didSet {
-            observedEdit = nil
-            scheduleRedactionHoldReport()
-        }
+        didSet { observedEdit = nil }
     }
     /// The effective edit in `observedEditSidecars`, without its revision, once decoded or written.
     private var observedEdit: RecordingEditDocument??
     @ObservationIgnored private var reportedRedactionHold = false
-    @ObservationIgnored private var redactionHoldReport: Task<Void, Never>?
 
     /// Redactions shown here that the files don't hold yet: a restore not yet written, or a draft that couldn't be.
     /// The Library index hides the recording's stored text and titles meanwhile.
@@ -895,16 +892,14 @@ final class RecordingStudioModel {
         return redactions != (onDisk?.redactions ?? [])
     }
 
-    /// Tells the Library index once the change settles, so a redaction written at once never flickers it.
-    private func scheduleRedactionHoldReport() {
-        redactionHoldReport?.cancel()
-        redactionHoldReport = Task { [weak self] in
-            guard let self, !Task.isCancelled, !self.isTornDown else { return }
-            let holds = self.holdsUnsavedRedactions()
-            guard holds != self.reportedRedactionHold else { return }
-            self.reportedRedactionHold = holds
-            CaptureLibraryIndex.shared.editorHoldsDidChange()
-        }
+    /// Tells the Library index at once, before a read already queued on the main actor can run. When a write
+    /// ends the hold, the index drops the entry the new mask made stale.
+    private func reportRedactionHold() {
+        guard !isTornDown else { return }
+        let holds = holdsUnsavedRedactions()
+        guard holds != reportedRedactionHold else { return }
+        reportedRedactionHold = holds
+        CaptureLibraryIndex.shared.editorHoldsDidChange()
     }
     private var rejectedRedactionDraftError: Error?
     /// Set while a stored document is being applied to the model, so the
@@ -1293,7 +1288,9 @@ final class RecordingStudioModel {
         }
         openedStylePresetID = appliedStylePresetID
         StudioProjectRegistry.shared.register(self)
-        scheduleRedactionHoldReport()
+        // A hold reported before registering reached no one.
+        reportedRedactionHold = false
+        reportRedactionHold()
     }
 
     /// Copies a stored project onto the model. Shared by the initial load and
@@ -1461,7 +1458,6 @@ final class RecordingStudioModel {
             try? session.removeUnreferencedMedia()
         }
         // The Library index may be holding this recording back.
-        redactionHoldReport?.cancel()
         CaptureLibraryIndex.shared.editorHoldsDidChange()
         exportTask = nil
         audioExportTask = nil
@@ -3667,6 +3663,7 @@ final class RecordingStudioModel {
             observedEditSidecars = updated
             // The draft just written holds the highest revision, so it is the effective edit.
             if changed { observedEdit = document }
+            reportRedactionHold()
             hasUnsavedChanges = changed
             dropStaleRender(in: session)
         } catch {
@@ -3755,6 +3752,7 @@ final class RecordingStudioModel {
             observedEditSidecars = updated
             lastSavedDocument = document
             try discardObservedDraft(in: session)
+            reportRedactionHold()
             rejectedRedactionDraftError = nil
             hasUnsavedChanges = false
             try? session.updateProjectMetadata { $0.savedAt = Date() }
@@ -3793,6 +3791,7 @@ final class RecordingStudioModel {
         try session.removeDraftDocumentIfPresent()
         current.draft = nil
         observedEditSidecars = current
+        reportRedactionHold()
     }
 
     /// Throws away everything since the last save and returns the editor to
