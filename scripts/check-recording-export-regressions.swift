@@ -934,11 +934,10 @@ struct RecordingExportRegressionChecks {
         document.clips = cut.segments
         document.zoomEnabled = false; document.zoomCues = []
         document.exportSettings?.resolution = .original
-        try session.writeEditDocument(document)
-        await model.discardChanges() // Restore through the model below by reopening the edited package.
+        model.flushDraft()
         model.teardown()
         try session.writeEditDocument(document)
-        session.removeDraftDocument()
+        try session.removeDraftDocumentIfPresent()
         let preview = RecordingStudioModel(url: session.directoryURL)
         defer { preview.teardown() }
         await preview.load()
@@ -1001,6 +1000,7 @@ struct RecordingExportRegressionChecks {
         gifSettings.exportsGIF = true
         gifDocument.exportSettings = gifSettings
         gifDocument.backgroundMusic?.fileName = "background-music.absent.wav"
+        preview.teardown()
         try session.writeEditDocument(gifDocument)
         let sharedGIF = try await RecordingSessionRenderer.makeConfiguration(for: session)
         try check(sharedGIF.backgroundMusic == nil, "Shared GIF configuration retained music")
@@ -1688,6 +1688,34 @@ struct RecordingExportRegressionChecks {
         print("PASS: read-only Studio draft failure with a live mask blocks the real movie drag representation")
     }
 
+    static func lateDraftDelivery(in directory: URL) async throws {
+        let session = RecordingSession(directoryURL: directory.appendingPathComponent("late-draft.sukushorec"))
+        try FileManager.default.createDirectory(at: session.directoryURL, withIntermediateDirectories: false)
+        try await movie(at: session.screenURL)
+        let saved = RecordingEditDocument(style: .init(), zoomEnabled: false, zoomCues: [])
+        try session.writeEditDocument(saved)
+        let model = RecordingStudioModel(url: session.directoryURL)
+        await model.load()
+        defer { model.teardown() }
+        try check(model.isLoaded && !model.hasUnsavedChanges, "Expected an unchanged Studio model")
+        var arriving = saved
+        arriving.redactions = [RecordingRedaction(start: 1, end: 3, rect: CGRect(x: 0, y: 0, width: 1, height: 1))]
+        for version in [99, RecordingEditDocument.currentFormatVersion] {
+            arriving.formatVersion = version
+            arriving.revision = 100
+            let bytes = try CaptureManifest.encoder.encode(arriving)
+            try bytes.write(to: session.draftDocumentURL, options: .atomic)
+            model.flushDraft()
+            model.audioVolume = 0.5
+            try check(!model.saveProject(reportingFailure: false), "Save overwrote a draft that arrived after load")
+            var refused = false
+            do { _ = try RecordingSessionRenderer.documentForDelivery(for: session) } catch { refused = true }
+            try check(refused && (try Data(contentsOf: session.draftDocumentURL)) == bytes,
+                      "Delivery accepted or deleted the draft that arrived after Studio loaded")
+        }
+        print("PASS: late unknown and supported draft revisions survive flush and save, and block delivery")
+    }
+
     static func main() async throws {
         setbuf(stdout, nil)
         guard let root = ProcessInfo.processInfo.environment["CFFIXED_USER_HOME"] else {
@@ -1710,6 +1738,7 @@ struct RecordingExportRegressionChecks {
         try renderStampInstallFailure(in: directory)
         try cachedMovieNames(in: directory)
         try await readOnlyDraftDelivery(in: directory)
+        try await lateDraftDelivery(in: directory)
         try await chapterMarkerDrag(in: directory)
         try await chapterAtPlayhead(in: directory)
         try await chapterRenameUndo(in: directory)

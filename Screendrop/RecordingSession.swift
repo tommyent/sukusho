@@ -284,11 +284,12 @@ nonisolated struct RecordingSession: Sendable, Equatable {
         decodeSidecar(RecordingEditDocument.self, at: editDocumentURL)
     }
 
-    func writeEditDocument(_ document: RecordingEditDocument) throws {
+    @discardableResult
+    func writeEditDocument(_ document: RecordingEditDocument) throws -> Data {
         try quarantineIfUnreadable(RecordingEditDocument.self, at: editDocumentURL) {
             for redaction in $0.redactions { try redaction.validate() }
         }
-        try writeNextRevision(of: document, to: editDocumentURL)
+        return try writeNextRevision(of: document, to: editDocumentURL)
     }
 
     // MARK: - Working draft
@@ -297,20 +298,23 @@ nonisolated struct RecordingSession: Sendable, Equatable {
         decodeSidecar(RecordingEditDocument.self, at: draftDocumentURL)
     }
 
-    func writeDraftDocument(_ document: RecordingEditDocument) throws {
+    @discardableResult
+    func writeDraftDocument(_ document: RecordingEditDocument) throws -> Data {
         try quarantineIfUnreadable(RecordingEditDocument.self, at: draftDocumentURL) {
             for redaction in $0.redactions { try redaction.validate() }
         }
-        try writeNextRevision(of: document, to: draftDocumentURL)
+        return try writeNextRevision(of: document, to: draftDocumentURL)
     }
 
-    private func writeNextRevision(of document: RecordingEditDocument, to url: URL) throws {
+    private func writeNextRevision(of document: RecordingEditDocument, to url: URL) throws -> Data {
         try validateEditVersionsForRendering()
         let newest = max(document.revision, loadEditDocument()?.revision ?? 0, loadDraftDocument()?.revision ?? 0)
         guard newest < Int.max else { throw CocoaError(.fileWriteUnknown) }
         var next = document
         next.revision = newest + 1
-        try CaptureManifest.encoder.encode(next).write(to: url, options: .atomic)
+        let data = try CaptureManifest.encoder.encode(next)
+        try data.write(to: url, options: .atomic)
+        return data
     }
 
     func removeDraftDocument() {
@@ -318,11 +322,21 @@ nonisolated struct RecordingSession: Sendable, Equatable {
     }
 
     func removeDraftDocumentIfPresent() throws {
-        if let draft = try RecordingPackageMedia.resolveOptionalPackageFile(
-            named: Self.draftDocumentFileName, in: directoryURL
-        ) {
+        let versions = try validateEditVersionsForRendering()
+        if let draft = versions.draftURL {
             try FileManager.default.removeItem(at: draft)
         }
+    }
+
+    struct EditSidecars: Equatable {
+        var saved: Data?
+        var draft: Data?
+    }
+
+    func readEditSidecars() throws -> EditSidecars {
+        let versions = try validateEditVersionsForRendering()
+        return EditSidecars(saved: try versions.editURL.map { try Data(contentsOf: $0) },
+                            draft: try versions.draftURL.map { try Data(contentsOf: $0) })
     }
 
     /// Revert to Original: the project's saved edits, its draft and any

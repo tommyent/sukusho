@@ -868,6 +868,7 @@ final class RecordingStudioModel {
     /// The document as of the last save. Everything the user does after
     /// that lives in memory and in the draft until the next save.
     private var lastSavedDocument: RecordingEditDocument?
+    private var observedEditSidecars: RecordingSession.EditSidecars?
     /// Set while a stored document is being applied to the model, so the
     /// resulting property writes don't register as user edits.
     private var isApplyingDocument = false
@@ -1063,6 +1064,7 @@ final class RecordingStudioModel {
             newerFormatVersion = detectedNewer
         }
 
+        observedEditSidecars = try? session?.readEditSidecars()
         lastSavedDocument = session?.loadEditDocument()?.withoutRevision
         // Recover a draft that is newer than the last save.
         func read(ignoringDraft: Bool) throws -> RecordingEditDocument? {
@@ -3535,6 +3537,14 @@ final class RecordingStudioModel {
             return
         }
         do {
+            let sidecars = try checkedEditSidecars(in: session)
+            let diskDraft = try sidecars.draft.map {
+                try CaptureManifest.decoder.decode(RecordingEditDocument.self, from: $0).withoutRevision
+            }
+            if changed && document == diskDraft || !changed && diskDraft == nil {
+                hasUnsavedChanges = changed
+                return
+            }
             if document != openedDocument {
                 do { try keepOpeningSession() }
                 catch where !openedOnDraft {
@@ -3542,11 +3552,14 @@ final class RecordingStudioModel {
                     lastSaveSucceeded = false
                 }
             }
+            var updated = try checkedEditSidecars(in: session)
             if changed {
-                try session.writeDraftDocument(document)
+                updated.draft = try session.writeDraftDocument(document)
             } else {
                 try session.removeDraftDocumentIfPresent()
+                updated.draft = nil
             }
+            observedEditSidecars = updated
             hasUnsavedChanges = changed
             dropStaleRender(in: session)
         } catch {
@@ -3554,6 +3567,15 @@ final class RecordingStudioModel {
             hasUnsavedChanges = true
             throw error
         }
+    }
+
+    private func checkedEditSidecars(in session: RecordingSession) throws -> RecordingSession.EditSidecars {
+        let current = try session.readEditSidecars()
+        guard current == observedEditSidecars else {
+            throw CocoaError(.fileReadCorruptFile, userInfo: [NSLocalizedDescriptionKey:
+                "The recording edits changed on disk while Studio was open. Reopen the recording before saving or exporting."])
+        }
+        return current
     }
 
     /// A cached flatten that no longer matches the edits is worse than no
@@ -3569,7 +3591,7 @@ final class RecordingStudioModel {
         do {
             if session.freshFinalURL(matching: try session.editDocumentForRendering()) != nil { return }
         } catch {
-            // Unreadable edits can't vouch for any render.
+            return
         }
         session.removeFinalVideos()
     }
@@ -3602,10 +3624,13 @@ final class RecordingStudioModel {
         autosaveTask?.cancel()
         let document = currentDocument()
         do {
+            _ = try checkedEditSidecars(in: session)
             if document != openedDocument { try keepOpeningSession() }
-            try session.writeEditDocument(document)
-            try session.removeDraftDocumentIfPresent()
+            var updated = try checkedEditSidecars(in: session)
+            updated.saved = try session.writeEditDocument(document)
+            observedEditSidecars = updated
             lastSavedDocument = document
+            try discardObservedDraft(in: session)
             hasUnsavedChanges = false
             try? session.updateProjectMetadata { $0.savedAt = Date() }
             dropStaleRender(in: session)
@@ -3627,9 +3652,22 @@ final class RecordingStudioModel {
     /// The bar's Discard: drops only the unreadable draft; edits made since opening become the new one.
     func discardUnreadableDraft() {
         guard hasUnreadableDraft, !isRestoringDocument, !isReadOnlyNewerFormat, let session else { return }
-        session.removeDraftDocument()
+        do { try discardObservedDraft(in: session, preservingUnreadable: true) }
+        catch { FailureAlert.present(message: "The draft could not be discarded", error: error); return }
         hasUnreadableDraft = false
         flushDraft()
+    }
+
+    private func discardObservedDraft(in session: RecordingSession, preservingUnreadable: Bool = false) throws {
+        var current = try checkedEditSidecars(in: session)
+        guard current.draft != nil else { return }
+        if preservingUnreadable {
+            _ = try RecordingSidecarQuarantine.preserve(at: session.draftDocumentURL)
+            _ = try checkedEditSidecars(in: session)
+        }
+        try session.removeDraftDocumentIfPresent()
+        current.draft = nil
+        observedEditSidecars = current
     }
 
     /// Throws away everything since the last save and returns the editor to
@@ -3639,7 +3677,8 @@ final class RecordingStudioModel {
         projectSaveTask?.cancel()
         replacementAudioTask?.cancel()
         replacementAudioTask = nil
-        session.removeDraftDocument()
+        do { try discardObservedDraft(in: session, preservingUnreadable: hasUnreadableDraft) }
+        catch { FailureAlert.present(message: "The draft could not be discarded", error: error); return }
         hasUnreadableDraft = false
         guard let document = lastSavedDocument else { return }
         let restoreID = beginDocumentRestore()
