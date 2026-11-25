@@ -250,6 +250,9 @@ struct InspectorSlider: View {
             .font(.inspectorLabel)
             .foregroundStyle(isActive ? Color.primary.opacity(0.85) : Color.secondary)
             .lineLimit(1)
+            // Shrinks a little rather than cut a label short in a narrow inspector's half-width field
+            // (sd-h4t8). Not stacking the pair: a height that follows the width looped layout.
+            .minimumScaleFactor(0.8)
             .truncationMode(.tail)
             .padding(.leading, InspectorMetrics.fieldInset)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
