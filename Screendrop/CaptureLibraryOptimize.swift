@@ -139,6 +139,16 @@ enum CaptureOptimizer {
 
 /// What Convert to WebP… or Convert to JPEG… works on.
 struct ImageConversion: Identifiable {
+    /// The initial format is already known; only subsequent choices need time to settle.
+    struct PreviewTiming {
+        private var started = false
+
+        mutating func nextDelay() -> Duration {
+            defer { started = true }
+            return started ? .milliseconds(250) : .zero
+        }
+    }
+
     enum Format {
         case webP, jpeg
 
@@ -214,6 +224,7 @@ struct ImageConversionSheet: View {
     @State private var results: [ImageOptimizationResult] = []
     @State private var isWorking = true
     @State private var failure: String?
+    @State private var previewTiming = ImageConversion.PreviewTiming()
 
     private var isWebP: Bool { conversion.format == .webP }
     private var target: ImageOptimizationTarget {
@@ -294,7 +305,8 @@ struct ImageConversionSheet: View {
         isWorking = true
         failure = nil
         // A dragged slider settles before the encoder starts.
-        try? await Task.sleep(for: .milliseconds(250))
+        let delay = previewTiming.nextDelay()
+        if delay > .zero { try? await Task.sleep(for: delay) }
         guard !Task.isCancelled else { return }
         discard()
         var made: [ImageOptimizationResult] = []

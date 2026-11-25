@@ -25,6 +25,18 @@ import ImageIO
         let args = Array(CommandLine.arguments.dropFirst())
         let input = URL(fileURLWithPath: args[1])
         let optimizer = ImageOptimizer.shared
+        if args[0] == "sheet" {
+            var timing = ImageConversion.PreviewTiming()
+            let start = clock.now
+            let delay = timing.nextDelay()
+            if delay > .zero { try await Task.sleep(for: delay) }
+            let eligible = ms(start)
+            let result = try await optimizer.optimize(input, to: .webP(quality: nil))
+            defer { result.discard() }
+            print("sheet", eligible, ms(start), result.outcome, FileIdentity(result.url)!.digest)
+            precondition(delay == .zero && timing.nextDelay() == .milliseconds(250) && timing.nextDelay() == .milliseconds(250))
+            return
+        }
         if ["marked", "marked-tiff", "check-marked"].contains(args[0]) {
             let file = FileManager.default.homeDirectoryForCurrentUser.appending(path: "copied.png")
             try FileManager.default.copyItem(at: input, to: file)
