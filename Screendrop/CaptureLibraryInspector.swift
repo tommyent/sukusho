@@ -36,7 +36,10 @@ struct CaptureLibraryInspector: View {
                     }
                     .padding(.horizontal, InspectorMetrics.horizontalPadding)
                     .padding(.vertical, InspectorMetrics.sectionVerticalPadding)
-                    .containerRelativeFrame(.horizontal, alignment: .leading)
+                    // The pane's width, as the scroll view proposes it. A container-relative frame kept the width
+                    // it first had on macOS 27: a column with gutters in a wider pane, clipped in a narrower one
+                    // (sd-h4t8). The Library's GeometryReader keeps selection from resizing the pane.
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 // A scroll bar that takes width narrows the content until it fits, which hides the bar again: a layout loop (sd-jppy).
                 .scrollIndicators(.never)
