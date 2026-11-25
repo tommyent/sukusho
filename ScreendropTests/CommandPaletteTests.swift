@@ -1,3 +1,5 @@
+import AppKit
+import Carbon.HIToolbox
 import CoreGraphics
 import Foundation
 import Testing
@@ -358,6 +360,47 @@ struct CommandPaletteTests {
         #expect(PaletteAccent.liftedForWhiteText(deep) == deep)
         let yellow = PaletteAccent.RGB(red: 1, green: 0.8, blue: 0)
         #expect(PaletteAccent.contrast(PaletteAccent.liftedForWhiteText(yellow), with: .init(red: 1, green: 1, blue: 1)) >= 4.5)
+    }
+
+    // MARK: The palette's keys
+
+    /// A Capture Fullscreen recorded as ⇧⌘P before the palette came keeps it; the palette has no keys until some are
+    /// recorded, and gets ⇧⌘P back once it's free. Other rows' defaults don't yield (Sol's finding 4).
+    @Test func thePalettesDefaultYieldsToRecordedKeys() throws {
+        let name = "palette-keys-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let palette = CaptureHotkeyAction.commandPalette, shiftP = palette.defaultShortcut
+        #expect(CaptureHotkeyPreferences.shortcut(for: palette, defaults: defaults) == shiftP)
+        CaptureHotkeyPreferences.saveShortcut(shiftP, for: .fullscreen, defaults: defaults)
+        #expect(CaptureHotkeyPreferences.shortcut(for: palette, defaults: defaults) == nil)
+        #expect(CaptureHotkeyPreferences.defaultTakenBy(palette, defaults: defaults) == .fullscreen)
+        #expect(CaptureHotkeyPreferences.shortcut(for: .fullscreen, defaults: defaults) == shiftP)
+        #expect(CaptureHotkeyPreferences.conflictingAction(for: shiftP, excluding: .fullscreen, defaults: defaults) == nil,
+                "one shortcut, one action")
+        let shiftR = HotkeyShortcut(modifiers: [.shift, .command], keyCode: Int(kVK_ANSI_R))
+        CaptureHotkeyPreferences.saveShortcut(shiftR, for: palette, defaults: defaults)
+        #expect(CaptureHotkeyPreferences.shortcut(for: palette, defaults: defaults) == shiftR, "recorded keys are its own")
+        CaptureHotkeyPreferences.resetToDefault(palette, defaults: defaults)
+        CaptureHotkeyPreferences.resetToDefault(.fullscreen, defaults: defaults)
+        #expect(CaptureHotkeyPreferences.shortcut(for: palette, defaults: defaults) == shiftP, "free again, ⇧⌘P is back")
+        // As on the mini: Recording recorded on Capture Text's default keeps both, as before.
+        let shiftO = CaptureHotkeyAction.textCapture.defaultShortcut
+        CaptureHotkeyPreferences.saveShortcut(shiftO, for: .screenRecording, defaults: defaults)
+        #expect(CaptureHotkeyPreferences.shortcut(for: .textCapture, defaults: defaults) == shiftO)
+        #expect(CaptureHotkeyPreferences.defaultTakenBy(.textCapture, defaults: defaults) == nil)
+    }
+
+    /// Keys Sukusho's own menus and windows have are refused for the palette: ⌘S is File › Save and the editor's.
+    @Test func appCommandsKeepTheirKeys() {
+        let command = { (key: Int) in HotkeyShortcut(modifiers: [.command], keyCode: key) }
+        #expect(CaptureHotkeyPreferences.appCommand(using: command(kVK_ANSI_S)) == "Save")
+        #expect(CaptureHotkeyPreferences.appCommand(using: command(kVK_ANSI_B)) == "Split at Playhead")
+        #expect(CaptureHotkeyPreferences.appCommand(using: HotkeyShortcut(modifiers: [.option, .command], keyCode: kVK_ANSI_I))
+                == "Show Inspector")
+        #expect(CaptureHotkeyPreferences.appCommand(using: CaptureHotkeyAction.commandPalette.defaultShortcut) == nil, "⇧⌘P is free")
+        let names = CaptureHotkeyPreferences.appCommands.map(\.shortcut)
+        #expect(!CaptureHotkeyAction.allCases.contains { names.contains($0.defaultShortcut) }, "no default is a menu's")
     }
 
     @Test func catalogIdsAreUniqueAndEveryStepRowHasAStep() {
