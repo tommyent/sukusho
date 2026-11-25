@@ -16,10 +16,16 @@ final class AppCommandPaletteHost: CommandPaletteHost {
     private let context: PaletteWindowContext?
     let window: PaletteWindow
     private let windowTitle: String?
+    /// Whether the app draws dark now: Change Theme lists, tries on and keeps the theme of that appearance.
+    private let appearsDark: () -> Bool
+    /// The appearance Change Theme's try-on started in: an automatic switch to Dark mid-step mustn't leave the light
+    /// try-on behind, nor keep a dark theme in the light slot (Sol's finding 7).
+    private var themeSlotIsDark: Bool?
 
-    init(context: PaletteWindowContext?, windowTitle: String?) {
+    init(context: PaletteWindowContext?, windowTitle: String?, appearsDark: (() -> Bool)? = nil) {
         self.context = context
         self.windowTitle = windowTitle
+        self.appearsDark = appearsDark ?? { NSApp.effectiveAppearance.isDarkAppearance }
         switch context {
         case .library: window = .library
         case .editor: window = .editor
@@ -44,8 +50,17 @@ final class AppCommandPaletteHost: CommandPaletteHost {
         }
     }
 
+    /// Saved clips selected beside the captures on the Saved page: the palette's capture commands would act on the
+    /// captures alone, where Saved's own menu takes both (Sol's finding 6).
+    private var selectedSavedClips: Int {
+        guard window == .library, CaptureLibrarySidebarSelection.current == .saved else { return 0 }
+        return ClipboardHistoryModel.shared.librarySelectionIDs.count
+    }
+
     var selectionTitle: String? {
         let selection = selection
+        let clips = selectedSavedClips
+        if clips > 0 { return "\(selection.count + clips) selected" }
         return selection.count == 1 ? selection[0].title : "\(selection.count) captures"
     }
 
@@ -65,7 +80,7 @@ final class AppCommandPaletteHost: CommandPaletteHost {
         case .recentCaptures:
             let count = ScreenshotHistoryStore.shared.items.count
             return count == 1 ? "1 capture" : "\(count) captures"
-        case .changeTheme: return isDark ? "Dark theme" : "Light theme"
+        case .changeTheme: return themeIsDark ? "Dark theme" : "Light theme"
         case .clipboardHistory: return "Copies, to paste in any app"
         case .addTag: return selectionTitle
         default: return nil
@@ -163,6 +178,7 @@ final class AppCommandPaletteHost: CommandPaletteHost {
         guard !selection.isEmpty else { return .hidden }
         let one = selection.count == 1 ? selection[0] : nil
         if libraryModel.isBusy { return .off("wait for the Library to finish") }
+        if selectedSavedClips > 0 { return .off("captures only: right-click for the clips too") }
         switch id {
         case "selection.copyOriginal":
             return .ready
@@ -243,7 +259,7 @@ final class AppCommandPaletteHost: CommandPaletteHost {
             return studio.hasUnsavedChanges ? .ready : .off("no changes to save")
         case "studio.revertTo":
             guard studio.isProject else { return .hidden }
-            return studio.canRevert ? .ready : .off("nothing to revert")
+            return studioRevertReason.map(PaletteCommandState.off) ?? .ready
         case "studio.bugReport", "studio.guide":
             if id == "studio.guide", studio.session == nil { return .hidden }
             let blocked = !studio.isLoaded || studio.hasRunningWork || studio.hasUnreadableDraft || studio.isReadOnlyNewerFormat
@@ -261,36 +277,90 @@ final class AppCommandPaletteHost: CommandPaletteHost {
         case "studio.deleteRange", "studio.clearRange": return studio.rangeSelection == nil ? .off("no marked range") : .ready
         case "studio.clipEarlier": return studio.canMoveSelectedClipEarlier ? .ready : .off("select a clip that can move")
         case "studio.clipLater": return studio.canMoveSelectedClipLater ? .ready : .off("select a clip that can move")
+        // Each as the inspector offers it (Sol's finding 9).
         case "studio.transcribe":
             if studio.transcriptionState.isTranscribing { return .off("transcribing now") }
-            return PaletteCommandState(title: studio.hasTranscriptWords ? "Transcribe Again" : nil)
+            // Only narrated recordings: a bare movie or one recorded without the microphone has nothing to transcribe.
+            guard studio.canTranscribe else { return .off("recorded without the microphone") }
+            return PaletteCommandState(title: studio.hasSubtitles ? "Transcribe Again" : nil)
         case "studio.summarize":
+            guard studio.hasSubtitles else { return .off("transcribe the narration first") }
+            guard studio.isProject else { return .off("recording projects only") }
             if let reason = studio.textModelUnavailableReason { return .off(reason) }
             return studio.isSummarizing ? .off("summarizing now") : .ready
+        case "studio.suggestChapters":
+            return studio.hasSubtitles ? .ready : .off("transcribe the narration first")
         case "studio.nameChapters":
+            guard studio.hasSubtitles else { return .off("transcribe the narration first") }
+            guard !studio.visibleChapters.isEmpty else { return .off("no chapters yet") }
             if let reason = studio.textModelUnavailableReason { return .off(reason) }
             return studio.isNamingChapters ? .off("naming now") : .ready
-        case "studio.suggestChapters", "studio.removeFillers", "studio.shortenPauses":
-            return studio.hasTranscriptWords ? .ready : .off("transcribe the narration first")
+        case "studio.removeFillers":
+            guard studio.hasTranscriptWords else { return .off("transcribe the narration first") }
+            guard studio.transcriptLanguage.map(TranscriptEditPlanner.fillerLanguages.contains) == true else {
+                return .off("no filler words listed for this language")
+            }
+            return studio.removableFillerWordCount > 0 ? .ready : .off("no filler words")
+        case "studio.shortenPauses":
+            guard studio.hasTranscriptWords else { return .off("transcribe the narration first") }
+            let pauses = studio.pauseSummary
+            if !pauses.shortenable.isEmpty { return .ready }
+            if !pauses.checking.isEmpty {
+                // The inspector's Edit Video tab checks the screen in each pause; the palette starts it if that tab hasn't.
+                checkPauseScreens(studio)
+                return .off("checking the screen in each pause")
+            }
+            return .off("no long pauses to shorten")
         default: return .ready
         }
+    }
+
+    /// Why Studio's File › Revert To can't run now.
+    private var studioRevertReason: String? {
+        guard let studio, !studio.canRevert else { return nil }
+        if !studio.isLoaded { return "loading" }
+        if studio.isEditingSourceRegion { return "finish cropping first" }
+        if studio.hasRunningWork { return "wait for Studio to finish" }
+        if studio.isReadOnlyNewerFormat { return "made by a newer Sukusho" }
+        return "recording projects only"
+    }
+
+    private var pauseCheck: Task<Void, Never>?
+
+    /// Once per palette: the cleanup controls run the same check while they're on screen.
+    private func checkPauseScreens(_ studio: RecordingStudioModel) {
+        guard pauseCheck == nil else { return }
+        pauseCheck = Task { [weak studio] in await studio?.checkPauseScreens() }
     }
 
     // MARK: Running
 
     func run(_ command: PaletteCommand) -> PaletteOutcome {
         if command.isSwitch { flip(command.id); return .stay }
-        let action = action(for: command.id)
+        // A command nothing handles beeps and stays, rather than closing as if it ran (Sol's finding 3).
+        guard let action = action(for: command.id) else { NSSound.beep(); return .stay }
         // Once the palette is gone: a capture mustn't catch it, and the window's keys need that window key again.
         CommandPalettePresenter.shared.whenClosed(action)
         return .close
     }
 
-    private func action(for id: String) -> () -> Void {
+    /// Whether running the command reaches its code, for the check that sweeps the catalog.
+    func hasAction(for id: String) -> Bool { action(for: id) != nil }
+
+    /// What the command does, or nil when nothing here handles it; one that has nothing to do now does nothing.
+    private func action(for id: String) -> (() -> Void)? {
+        // Everything is resolved now, as the row showed it, and nothing holds the host, which goes with the palette
+        // before this runs (Sol's finding 2).
         let library = library, editorHooks = editorHooks, studioHooks = studioHooks
         let editor = editor, studio = studio, model = libraryModel
         if let title = Self.selectionMenuTitles[id] {
-            return { [weak self] in self?.menuItem(title)?.perform() }
+            guard let item = menuItem(title), item.isEnabled else { return {} }
+            // The item reads the selection again as it runs: only for the captures the row was for.
+            let chosen = selection.map(\.id)
+            return {
+                guard model.selectedItems.map(\.id) == chosen else { return NSSound.beep() }
+                item.perform()
+            }
         }
         if let tool = Self.tools[id] { return { editorHooks?.selectTool(tool) } }
         switch id {
@@ -308,17 +378,18 @@ final class AppCommandPaletteHost: CommandPaletteHost {
 
         case "selection.copyOriginal": return { model.perform(.copyOriginal) }
         case "selection.copyText":
-            return { [weak self] in
-                guard let self, let item = self.selection.first else { return }
+            guard let item = selection.first else { return {} }
+            let text = textParagraphs(item).joined(separator: "\n\n")
+            return {
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(self.textParagraphs(item).joined(separator: "\n\n"), forType: .string)
+                NSPasteboard.general.setString(text, forType: .string)
                 model.actionFeedback.show("Copied Text")
             }
 
         case "library.refresh": return { library?.refresh() }
         case "library.find": return { library?.find() }
-        case "library.biggerCards": return { [weak self] in self?.stepCards(by: 1) }
-        case "library.smallerCards": return { [weak self] in self?.stepCards(by: -1) }
+        case "library.biggerCards": return { Self.stepCards(by: 1) }
+        case "library.smallerCards": return { Self.stepCards(by: -1) }
         case "library.sidebar": return { library?.toggleSidebar() }
         case "window.inspector":
             return {
@@ -370,16 +441,18 @@ final class AppCommandPaletteHost: CommandPaletteHost {
         case "app.checkUpdates": return { UpdaterManager.shared.checkForUpdates() }
         case "app.about": return { AboutWindowController.show() }
         case "app.quit": return { NSApp.terminate(nil) }
-        default: return {}
+        default: return nil
         }
     }
 
-    private var cardWidth: Double {
+    private var cardWidth: Double { Self.cardWidth }
+
+    private static var cardWidth: Double {
         UserDefaults.standard.object(forKey: "captureLibrary.cardWidth") as? Double ?? 220
     }
 
     /// View › Bigger Cards and Smaller Cards, on the setting the Library's slider and those items share.
-    private func stepCards(by direction: Int) {
+    private static func stepCards(by direction: Int) {
         UserDefaults.standard.set(LibraryCardWidth.stepped(cardWidth, by: direction), forKey: "captureLibrary.cardWidth")
     }
 
@@ -419,13 +492,19 @@ final class AppCommandPaletteHost: CommandPaletteHost {
             do { try on ? SMAppService.mainApp.register() : SMAppService.mainApp.unregister() }
             catch { NSSound.beep() }
         case "switch.betaUpdates": defaults.set(on, forKey: UpdateChannels.betaKey)
+        // Studio's own, as Clip › Turn Snapping On and the inspector's Isolate voice switch do.
+        case "studio.snapping": studio?.toggleSnapping()
+        case "studio.isolateVoice": studio?.isolateVoice.toggle()
         default: break
         }
     }
 
     // MARK: Steps
 
-    private var isDark: Bool { NSApp.effectiveAppearance.isDarkAppearance }
+    private var isDark: Bool { appearsDark() }
+
+    /// Change Theme's appearance: the one its try-on started in, else the app's now.
+    private var themeIsDark: Bool { themeSlotIsDark ?? isDark }
 
     private var appearance: AppAppearance {
         UserDefaults.standard.string(forKey: AppAppearance.key).flatMap(AppAppearance.init) ?? .automatic
@@ -469,7 +548,7 @@ final class AppCommandPaletteHost: CommandPaletteHost {
                 PaletteRow(id: item.id.uuidString, title: item.displayName ?? (item.fileName as NSString).deletingPathExtension,
                            subtitle: "\(item.isVideo ? "Recording" : "Screenshot") · \(item.pixelWidth) × \(item.pixelHeight) · "
                                + CaptureLibraryItem.dateTitle(item.createdAt),
-                           thumbnail: item.url)
+                           thumbnail: item.url, isCopyable: true)
             }
             return items + [PaletteRow(id: "all", title: "Show All Captures…", symbol: "square.grid.2x2")]
         case .recordings:
@@ -483,7 +562,7 @@ final class AppCommandPaletteHost: CommandPaletteHost {
             // The ⌃⌘V popup's own list and search.
             return clipEntries(query).map { entry in
                 PaletteRow(id: entry.id, title: ClipboardList.title(of: entry),
-                           symbol: entry.kind == .image ? "photo" : entry.kind == .text ? "text.alignleft" : "doc")
+                           symbol: entry.kind == .image ? "photo" : entry.kind == .text ? "text.alignleft" : "doc", isCopyable: true)
             }
         case .goTo:
             let current = window == .library ? CaptureLibrarySidebarSelection.current : nil
@@ -515,8 +594,9 @@ final class AppCommandPaletteHost: CommandPaletteHost {
                 PaletteRow(id: $0.id.uuidString, title: $0.name, symbol: "paintbrush", ticked: editor.appliedBackgroundPresetID == $0.id)
             }
         case .changeTheme:
-            let saved = AppTheme.named(UserDefaults.standard.string(forKey: isDark ? AppTheme.darkKey : AppTheme.lightKey), dark: isDark)
-            return AppTheme.builtIns.filter { $0.isDark == isDark }.map {
+            let dark = themeIsDark
+            let saved = AppTheme.named(UserDefaults.standard.string(forKey: dark ? AppTheme.darkKey : AppTheme.lightKey), dark: dark)
+            return AppTheme.builtIns.filter { $0.isDark == dark }.map {
                 PaletteRow(id: $0.id, title: themeName($0), detail: $0.id == saved.id ? "in use" : "", ticked: $0.id == saved.id)
             }
         case .appearance:
@@ -544,17 +624,19 @@ final class AppCommandPaletteHost: CommandPaletteHost {
 
     private var revertRows: [PaletteRow] {
         if let editor {
-            let blocked = editor.isCropping || editor.isBlockingCommit
-            return [PaletteRow(id: "original", title: "Original", reason: editor.canRevertToOriginal ? nil : "this is the original"),
-                    PaletteRow(id: "lastOpened", title: "Last Opened", reason: editor.canRevertToLastOpened ? nil : "no changes since")]
-                + editor.previousSessionSnapshots.map {
-                    PaletteRow(id: $0.id.uuidString, title: $0.title, reason: blocked ? "finish cropping first" : nil)
-                }
+            let blocked = editor.isCropping ? "finish cropping first" : editor.isBlockingCommit ? "wait for the save to finish" : nil
+            return [PaletteRow(id: "original", title: "Original",
+                               reason: blocked ?? (editor.canRevertToOriginal ? nil : "this is the original")),
+                    PaletteRow(id: "lastOpened", title: "Last Opened",
+                               reason: blocked ?? (editor.canRevertToLastOpened ? nil : "no changes since"))]
+                + editor.previousSessionSnapshots.map { PaletteRow(id: $0.id.uuidString, title: $0.title, reason: blocked) }
         }
         if let studio {
-            return [PaletteRow(id: "original", title: "Original"),
-                    PaletteRow(id: "lastOpened", title: "Last Opened", reason: studio.hasEditsSinceOpening ? nil : "no changes since")]
-                + studio.previousSessionSnapshots.map { PaletteRow(id: $0.id.uuidString, title: $0.title) }
+            let blocked = studioRevertReason
+            return [PaletteRow(id: "original", title: "Original", reason: blocked),
+                    PaletteRow(id: "lastOpened", title: "Last Opened",
+                               reason: blocked ?? (studio.hasEditsSinceOpening ? nil : "no changes since"))]
+                + studio.previousSessionSnapshots.map { PaletteRow(id: $0.id.uuidString, title: $0.title, reason: blocked) }
         }
         return []
     }
@@ -627,8 +709,10 @@ final class AppCommandPaletteHost: CommandPaletteHost {
             return .close
         case .changeTheme:
             // Kept: the setting changes and every window follows it, as Settings › Appearance's menu does.
-            UserDefaults.standard.set(id, forKey: isDark ? AppTheme.darkKey : AppTheme.lightKey)
-            ThemeTryOn.show(nil, dark: isDark)
+            let dark = themeIsDark
+            UserDefaults.standard.set(id, forKey: dark ? AppTheme.darkKey : AppTheme.lightKey)
+            ThemeTryOn.show(nil, dark: dark)
+            themeSlotIsDark = nil
             return .close
         case .appearance:
             UserDefaults.standard.set(id, forKey: AppAppearance.key)

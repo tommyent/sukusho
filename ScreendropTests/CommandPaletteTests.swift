@@ -46,13 +46,14 @@ struct CommandPaletteTests {
             case .goTo:
                 ["All Captures", "Screenshots", "Recordings", "Received"].map { PaletteRow(id: $0, title: $0, detail: "Library") }
             case .recentCaptures:
-                [PaletteRow(id: "lake", title: "Lake at dawn", subtitle: "Screenshot · 1672 × 941"),
-                 PaletteRow(id: "roads", title: "Slow Roads walkthrough", subtitle: "Recording · 2560 × 1600")]
+                [PaletteRow(id: "lake", title: "Lake at dawn", subtitle: "Screenshot · 1672 × 941", isCopyable: true),
+                 PaletteRow(id: "roads", title: "Slow Roads walkthrough", subtitle: "Recording · 2560 × 1600", isCopyable: true),
+                 PaletteRow(id: "all", title: "Show All Captures…", symbol: "square.grid.2x2")]
             case .clipboardHistory:
                 // As the ⌃⌘V popup's own list: it searches the clips itself.
                 ["npm run build", "https://example.com", "Meeting notes"]
                     .filter { query.isEmpty || $0.localizedCaseInsensitiveContains(query) }
-                    .map { PaletteRow(id: $0, title: $0) }
+                    .map { PaletteRow(id: $0, title: $0, isCopyable: true) }
             case .addTag:
                 query.isEmpty ? [PaletteRow(id: "bug", title: "bug", ticked: true)]
                     : [PaletteRow(id: "new", title: "Add tag “\(query)”")]
@@ -227,6 +228,21 @@ struct CommandPaletteTests {
         #expect(closed == 0)
     }
 
+    /// Typing in Change Theme tries on what's at the top, even when the top was selected already (Sol's finding 7: Glass
+    /// showed selected while Classic stayed on), and with nothing matching, the saved one.
+    @Test func changeThemeTriesOnWhatTypingPutsAtTheTop() {
+        let (model, host) = palette(.library)
+        type("change theme", into: model)
+        model.press(.right)
+        #expect(model.selected == 0 && host.triedOn.last == "Classic")
+        type("glass", into: model)
+        #expect(model.selectedRow?.title == "Glass")
+        #expect(host.triedOn.last == "Glass", "what's selected is what's on")
+        model.query = "zzz"
+        #expect(model.selectedRow == nil)
+        #expect(host.triedOn.last == .some(nil), "nothing matches: the saved theme")
+    }
+
     @Test func changeThemeKeptIsNotPutBack() {
         let (model, host) = palette(.library)
         type("change theme", into: model)
@@ -312,6 +328,18 @@ struct CommandPaletteTests {
         again.press(.right)
         again.press(.copy)
         #expect(other.copied == ["npm run build"])
+    }
+
+    /// ⌘C on Show All Captures… copies nothing, so it goes on to the field (Sol's other notes).
+    @Test func copyIsOnlyForCapturesAndClips() {
+        let (model, host) = palette(.library)
+        type("recent captures", into: model)
+        model.press(.right)
+        model.press(.down)
+        model.press(.down)
+        #expect(model.selectedRow?.title == "Show All Captures…")
+        #expect(!model.press(.copy), "the field gets ⌘C")
+        #expect(host.copied.isEmpty)
     }
 
     @Test func clipboardHistoryStepIsShownOnlyWhileHistoryIsOn() {

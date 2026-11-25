@@ -36,6 +36,8 @@ nonisolated struct PaletteRow: Identifiable, Sendable, Equatable {
     var group: PaletteGroup?
     /// Recent Captures and Recordings: the picture beside the name.
     var thumbnail: URL?
+    /// ⌘C copies it: a capture or a clip, not a step's Show All row.
+    var isCopyable = false
     /// The letters typing matched, for the Highlighter's swipe.
     var marks: [Range<Int>] = []
     /// Kept for the host: the command it runs, or the step it was found in from the first list and that step's own id
@@ -108,7 +110,9 @@ final class CommandPaletteModel {
     var query = "" {
         didSet {
             guard query != oldValue else { return }
-            selected = 0
+            // Back to the top, and the theme there tried on, even when the top was already selected: typing "glass"
+            // over Classic at the top showed Glass selected while Classic stayed on (Sol's finding 7).
+            if selected == 0 { tryOn() } else { selected = 0 }
         }
     }
     var selected = 0 { didSet { if selected != oldValue { tryOn() } } }
@@ -150,7 +154,8 @@ final class CommandPaletteModel {
         case .right: return goIn()
         case .escape: back()
         case .copy:
-            guard step == .recentCaptures || step == .clipboardHistory, let row = selectedRow else { return false }
+            // Not on Show All Captures…: ⌘C goes on to the field (Sol's other notes).
+            guard step == .recentCaptures || step == .clipboardHistory, let row = selectedRow, row.isCopyable else { return false }
             host.copy(row, in: step)
             close()
         }
@@ -220,9 +225,10 @@ final class CommandPaletteModel {
         tryOn()
     }
 
+    /// What's tried on is what's selected; with nothing matching, the saved theme.
     private func tryOn() {
-        guard tryingOn, step == .changeTheme, let row = selectedRow else { return }
-        host.tryOn(row)
+        guard tryingOn, step == .changeTheme else { return }
+        host.tryOn(selectedRow)
     }
 
     private func putThemeBack() {
