@@ -201,6 +201,7 @@ final class ScreenshotHistoryStore {
         )
         items.insert(item, at: 0)
         saveMetadata()
+        CaptureOptimizer.optimizeNewCapture(destinationURL)
     }
 
     /// Adds a Studio recording to history without copying its potentially huge
