@@ -89,7 +89,7 @@ final class SampleHost: CommandPaletteHost {
         switch step {
         case .recentCaptures: "10 captures"
         case .changeTheme: dark ? "Dark theme" : "Light theme"
-        case .clipboardHistory: "Pastes into this window"
+        case .clipboardHistory: "Copies, to paste in any app"
         case .addTag: "Lake at dawn"
         default: nil
         }

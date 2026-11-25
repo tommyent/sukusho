@@ -66,7 +66,7 @@ final class AppCommandPaletteHost: CommandPaletteHost {
             let count = ScreenshotHistoryStore.shared.items.count
             return count == 1 ? "1 capture" : "\(count) captures"
         case .changeTheme: return isDark ? "Dark theme" : "Light theme"
-        case .clipboardHistory: return "Pastes into this window"
+        case .clipboardHistory: return "Copies, to paste in any app"
         case .addTag: return selectionTitle
         default: return nil
         }
@@ -580,9 +580,9 @@ final class AppCommandPaletteHost: CommandPaletteHost {
             return later { RecordingProjectOpener.shared.open(project.session) }
         case .clipboardHistory:
             guard let entry = clipEntry(id) else { return .close }
-            // Into the Sukusho window the palette opened over, which has the keyboard back by then: the palette is gone
-            // before the clip goes back on the clipboard and ⌘V is typed.
-            return later { ClipboardHistoryModel.shared.deliver(entry, as: .paste, to: .current) }
+            // Copied, as ⌘C does, to paste in any app (the owner, 2026-11-25): the palette lives only in Sukusho.
+            ClipboardHistoryModel.shared.deliver(entry, as: .copy, to: nil)
+            return .close
         case .goTo:
             guard let page = pages.first(where: { $0.id == id })?.page else { return .close }
             return later {

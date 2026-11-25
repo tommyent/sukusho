@@ -260,7 +260,8 @@ final class CommandPaletteModel {
             let saved = host.rows(for: .changeTheme, query: "").first(where: \.ticked)?.title ?? "the theme"
             return [(["↩"], "keep it"), (["esc"], "put \(saved) back"), (["↑", "↓"], "try one")]
         case .recentCaptures: return [(["↩"], "open"), (["⌘", "C"], "copy"), (["esc"], "back")]
-        case .clipboardHistory: return [(["↩"], "paste"), (["⌘", "C"], "copy"), (["esc"], "back")]
+        // ↩ copies the clip, as ⌘C does, to paste in any app (the owner, 2026-11-25).
+        case .clipboardHistory: return [(["↩"], "copy"), (["esc"], "back"), (["↑", "↓"], "move")]
         case .addTag: return [(["↩"], "tick or untick"), (["esc"], "back")]
         case .searchCaptures: return [(["↩"], "search"), (["esc"], "back")]
         default: return [(["↩"], "choose"), (["esc"], "back"), (["↑", "↓"], "move")]

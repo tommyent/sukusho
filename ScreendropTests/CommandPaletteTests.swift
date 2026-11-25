@@ -281,8 +281,11 @@ struct CommandPaletteTests {
 
     // MARK: Clipboard History
 
-    @Test func clipboardHistoryStepListsClipsNarrowsAndPastes() throws {
+    /// ↩ copies the clip, as ⌘C does, to paste in any app (the owner, 2026-11-25).
+    @Test func clipboardHistoryStepListsClipsNarrowsAndCopies() throws {
         let (model, host) = palette(.editor)
+        var closed = 0
+        model.onClose = { closed += 1 }
         type("clipboard", into: model)
         let titles = model.rows.map(\.title)
         #expect(titles.contains("Clipboard History") && titles.contains("Clipboard History Popup"),
@@ -294,10 +297,19 @@ struct CommandPaletteTests {
         #expect(model.rows.count == 3)
         type("exa", into: model)
         #expect(model.rows.map(\.title) == ["https://example.com"])
-        #expect(model.hints.first?.label == "paste")
+        #expect(model.hints.first?.keys == ["↩"] && model.hints.first?.label == "copy")
+        #expect(!model.hints.contains { $0.label.contains("paste") }, "the key line says nothing about pasting here")
         model.press(.enter)
         #expect(host.chosen.map(\.step) == [.clipboardHistory])
         #expect(host.chosen.map(\.id) == ["https://example.com"])
+        #expect(closed == 1, "copied, the palette closes")
+
+        // ⌘C does the same.
+        let (again, other) = palette(.editor)
+        type("clipboard history", into: again)
+        again.press(.right)
+        again.press(.copy)
+        #expect(other.copied == ["npm run build"])
     }
 
     @Test func clipboardHistoryStepIsShownOnlyWhileHistoryIsOn() {
