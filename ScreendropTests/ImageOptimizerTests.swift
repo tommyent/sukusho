@@ -203,6 +203,35 @@ private func isRunning(_ text: String) -> Bool {
 
 // MARK: - Results
 
+@Test func fineDetailTileMatchesScalarBrightnessAndCellSums() {
+    // Odd stride and offset, different source/result colors, including transparent colored pixels.
+    let stride = 19 * 4, offset = stride + 4
+    var state: UInt64 = 77
+    func sample() -> [UInt8] {
+        (0..<stride * 18).map { _ in
+            state = state &* 6364136223846793005 &+ 1
+            return UInt8(state >> 56)
+        }
+    }
+    let src = sample(), dst = sample()
+    for white in [false, true] {
+        var a = 0, aa = 0, b = 0, bb = 0, cells = [Int](repeating: 0, count: 64)
+        for y in 0..<16 {
+            for x in 0..<16 {
+                let i = offset + y * stride + 4 * x
+                func luma(_ bytes: [UInt8], lift: Int) -> Int {
+                    (54 * (Int(bytes[i]) + lift) + 183 * (Int(bytes[i + 1]) + lift) + 19 * (Int(bytes[i + 2]) + lift)) / 256
+                }
+                let s = luma(src, lift: white ? 255 - Int(src[i + 3]) : 0), r = luma(dst, lift: 0)
+                a += s; aa += s * s; b += r; bb += r * r
+                cells[y / 2 * 8 + x / 2] += s
+            }
+        }
+        let sums = src.withUnsafeBytes { s in dst.withUnsafeBytes { ImageOptimizer.tileSums(s, $0, at: offset, rowBytes: stride, onWhite: white) } }
+        #expect([sums.a, sums.aa, sums.b, sums.bb, sums.cc] == [a, aa, b, bb, cells.reduce(0) { $0 + $1 * $1 }].map(Double.init))
+    }
+}
+
 @Suite struct ImageOptimizerLosslessTests {
     @Test func pngKeepsEveryPixelItsProfileAndTransparency() async throws {
         let bench = try Bench()
@@ -1923,14 +1952,15 @@ private func isRunning(_ text: String) -> Bool {
             return 8
         }
         #expect(counter.runs == 0)
-        let asked = await scheduled.now("capture")
+        let request = scheduled.request("capture")
+        let asked = await request?()
         #expect(asked == 7)
         #expect(clock.now - start < .seconds(5))
         #expect(counter.runs == 1)
 
         // It has run: there is nothing left to ask for, and nothing runs again.
-        let again = await scheduled.now("capture")
-        let other = await scheduled.now("another")
+        let again = await scheduled.request("capture")?()
+        let other = await scheduled.request("another")?()
         #expect(again == nil && other == nil)
         #expect(counter.runs == 1)
 

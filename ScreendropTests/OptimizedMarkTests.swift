@@ -19,8 +19,10 @@ import Testing
         #expect(!OptimizedMark.isCurrent(file))
         #expect(OptimizedMark.saving(of: file) == nil)
 
-        OptimizedMark.set(1_000, on: file)
+        OptimizedMark.set(1_000, on: file, effort: .fast)
         #expect(OptimizedMark.isCurrent(file))
+        #expect(OptimizedMark.isCurrent(file, effort: .fast))
+        #expect(!OptimizedMark.isCurrent(file, effort: .balanced))
         #expect(OptimizedMark.originalBytes(of: file) == 1_000)
         #expect(OptimizedMark.saving(of: file)?.percent == "↓40%")
 
@@ -32,7 +34,7 @@ import Testing
         #expect(OptimizedMark.saving(of: file) == nil)
 
         // Nothing smaller came out: remembered as done, with no saving to show.
-        OptimizedMark.set(900, on: file)
+        OptimizedMark.set(900, on: file, effort: .balanced)
         #expect(OptimizedMark.isCurrent(file))
         #expect(OptimizedMark.saving(of: file) == nil)
 
@@ -47,7 +49,7 @@ import Testing
         let file = FileManager.default.temporaryDirectory.appending(path: "SukushoMark-\(UUID().uuidString).png")
         defer { try? FileManager.default.removeItem(at: file) }
         try Data(repeating: 1, count: 600).write(to: file)
-        OptimizedMark.set(1_000, on: file)
+        OptimizedMark.set(1_000, on: file, effort: .balanced)
         let date = try #require(try FileManager.default.attributesOfItem(atPath: file.path)[.modificationDate] as? Date)
 
         try write(2, count: 600, to: file)

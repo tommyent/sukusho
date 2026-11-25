@@ -315,7 +315,7 @@ struct IdleSaveChecks {
         print("PASS restoring an entry pruned by the same edit: owned crop pixels, Undo/Redo, missing pasted picture assets, save/reopen")
     }
 
-    @MainActor static func sessionTrash() throws {
+    @MainActor static func sessionTrash() async throws {
         let gate = Gate(), model = try fixture(gate), source = model.sourceURL!
         model.releaseEditorResources()
         let snapshots = ScreenshotHistoryStore.sessionSnapshotsURL(for: source)
@@ -325,7 +325,7 @@ struct IdleSaveChecks {
         try check(item.ownedFileURLs.contains(snapshots) && CaptureLibraryScanner.sizeOnDisk(of: snapshots) > 0, "Snapshots omitted from ownership/Size on Disk")
         let trash = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("FixtureTrash")
         try FileManager.default.createDirectory(at: trash, withIntermediateDirectories: true)
-        try CaptureLibraryFiles.trash(item) { url in
+        try await CaptureLibraryFiles.trash(item) { url in
             let destination = trash.appendingPathComponent(url.lastPathComponent)
             try FileManager.default.moveItem(at: url, to: destination)
             return destination
@@ -1049,7 +1049,7 @@ struct IdleSaveChecks {
         try await sessionImageStorageFailures()
         try await sessionImageRestore()
         try await sessionPrunedRestoreAndPictures()
-        try sessionTrash()
+        try await sessionTrash()
         try await studioSessionRestore()
         try await savesOnlyRefreshExistingPreviews()
         try await titleFieldFocusSelectionAndCommands()

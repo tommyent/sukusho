@@ -29,7 +29,16 @@ enum CaptureOptimizer {
         }
         guard !OptimizedMark.isCurrent(url) else { return .alreadyOptimized }
         guard let result = try? await ImageOptimizer.shared.optimize(url, effort: effort) else { return .failed("Optimizing was stopped.") }
+        return finishInPlace(result, at: url, effort: effort, whileEditing: whileEditing)
+    }
+
+    static func finishInPlace(_ result: ImageOptimizationResult, at url: URL, effort: ImageOptimizationEffort, whileEditing: Bool) -> Outcome {
         defer { result.discard() }
+        // Trash claims the path on this same actor before its detached move and keeps it through rollback.
+        // There is no suspension between this check and installing or marking the result.
+        guard !CaptureLibraryFiles.movingToTrash.contains(url.standardizedFileURL) else {
+            return .failed("The capture is being moved to Trash.")
+        }
         // Either outcome below replaces or marks the capture only while it still holds the contents the
         // encoder read, by their hash: a save can keep a file's size and date.
         func unchanged() -> Bool {
@@ -44,13 +53,13 @@ enum CaptureOptimizer {
             } catch {
                 return .failed(error.localizedDescription)
             }
-            OptimizedMark.set(result.originalByteCount, on: url)
+            OptimizedMark.set(result.originalByteCount, on: url, effort: effort)
             return .optimized(result)
         case .alreadyOptimized:
             // Nothing smaller came out: remembered, so the next pass doesn't run the encoder again. Not for a
             // file saved meanwhile, which the encoder never saw.
             guard unchanged() else { return .failed("The capture changed while it was being optimized.") }
-            OptimizedMark.set(result.originalByteCount, on: url)
+            OptimizedMark.set(result.originalByteCount, on: url, effort: effort)
             return .alreadyOptimized
         case .converted, .timedOut:
             return .alreadyOptimized
@@ -97,49 +106,113 @@ enum CaptureOptimizer {
     }
 
     /// New captures waiting for their one background pass.
-    private static let newCaptures = ScheduledOnce<URL, Outcome>()
+    private static let newCaptures = ScheduledOnce<URL, (Outcome, ImageOptimizationEffort)>()
 
     /// Settings › Optimize › Optimize new captures: quietly, two seconds after a screenshot reaches the
-    /// Library, unless the copy that follows the capture asks for it sooner (`smallerForFirstCopy`).
+    /// Library, unless the copy that follows the capture asks for it sooner (`firstCopy`).
     static func optimizeNewCapture(_ url: URL) {
         guard OptimizePreferences.newCaptures else { return }
         newCaptures.schedule(url.standardizedFileURL, after: .seconds(2)) {
-            let outcome = await optimizeInPlace(url, effort: OptimizePreferences.quietEffort)
+            let effort = OptimizePreferences.quietEffort
+            let outcome = await optimizeInPlace(url, effort: effort)
             if case .optimized = outcome { CaptureLibraryModel.shared.refresh() }
-            return outcome
+            return (outcome, effort)
         }
     }
 
-    /// For an image copy: the smaller file to put on the clipboard in the original's place, with the saving to
-    /// show ("↓32%"), the digest of the contents it was made from (`source`, which the swap checks against the
-    /// bytes it copied) and the digest of what the encoder made (`output`, which the swap checks the bytes it reads
-    /// from `file` against), or nil when there is none. A new capture due its background pass gets that pass now,
-    /// so it is optimized once and the smaller file is the capture itself, which an edit can still overwrite before
-    /// the swap reads it: `output` is what tells (Astra, round 3). Any other image is optimized to a file of its
-    /// own: `result`, for the caller to discard. A capture already optimized has no `source` here: what the copy
-    /// read was already the smaller file, or can't be told from it.
-    static func smallerForFirstCopy(_ url: URL) async
-        -> (file: URL, saving: String, result: ImageOptimizationResult?, source: String?, output: String?)? {
-        guard ["png", "jpg", "jpeg"].contains(url.pathExtension.lowercased()) else { return nil }
-        if let outcome = await newCaptures.now(url.standardizedFileURL) {
-            guard case .optimized(let result) = outcome else { return nil }
-            return (url, ImageOptimizationResult.saving(from: result.originalByteCount, to: result.resultByteCount), nil,
-                    result.source?.digest, result.output?.digest)
+    typealias CopyCandidate = (file: URL, saving: String, result: ImageOptimizationResult?, source: String?, output: String?)
+
+    /// Take this ticket before the first clipboard read. The pass can finish during that read; the ticket,
+    /// unlike the file mark, can prove exactly which input produced its installed output.
+    static func firstCopy(_ url: URL) -> (Data?) async -> CopyCandidate? {
+        let pass = newCaptures.request(url.standardizedFileURL)
+        let effort = OptimizePreferences.quietEffort
+        return { copied in
+            guard ["png", "jpg", "jpeg"].contains(url.pathExtension.lowercased()) else { return nil }
+            var installed: CopyCandidate?
+            if let (outcome, used) = await pass?(), case .optimized(let result) = outcome {
+                installed = (url, ImageOptimizationResult.saving(from: result.originalByteCount, to: result.resultByteCount),
+                             nil, result.source?.digest, result.output?.digest)
+                if used == effort { return installed }
+            }
+            if OptimizedMark.isCurrent(url, effort: effort) { return installed }
+            // An open editor can refuse in-place optimization. A clipboard-only file is still safe.
+            guard let result = try? await ImageOptimizer.shared.optimize(url, effort: effort) else { return installed }
+            guard result.outcome == .optimized else {
+                result.discard()
+                return installed
+            }
+            var source = result.source?.digest
+            var before = result.originalByteCount
+            // When a lower-effort pass replaced the bytes we copied, join the two verified digest pairs.
+            if let installed, let intermediate = installed.output, intermediate == source, let copied,
+               await Task.detached(operation: { ClipboardPasteboardReader.digest(copied) }).value == installed.source {
+                source = installed.source
+                before = Int64(copied.count)
+            }
+            return (result.url, ImageOptimizationResult.saving(from: before, to: result.resultByteCount), result,
+                    source, result.output?.digest)
         }
-        // Its pass has already run and left a smaller file.
-        if OptimizedMark.isCurrent(url) { return OptimizedMark.saving(of: url).map { (url, $0.percent, nil, nil, nil) } }
-        guard let result = try? await ImageOptimizer.shared.optimize(url, effort: OptimizePreferences.quietEffort) else { return nil }
-        guard result.outcome == .optimized else {
-            result.discard()
-            return nil
-        }
-        return (result.url, ImageOptimizationResult.saving(from: result.originalByteCount, to: result.resultByteCount), result,
-                result.source?.digest, result.output?.digest)
     }
 }
 
 /// What Convert to WebP… or Convert to JPEG… works on.
 struct ImageConversion: Identifiable {
+    /// The initial format is already known; only subsequent choices need time to settle.
+    struct PreviewTiming {
+        private var started = false
+
+        mutating func nextDelay() -> Duration {
+            defer { started = true }
+            return started ? .milliseconds(250) : .zero
+        }
+    }
+
+    @MainActor @Observable final class Preview {
+        private(set) var results: [ImageOptimizationResult] = []
+        var failure: String?
+        private(set) var finishedTarget: ImageOptimizationTarget?
+        private var generation = 0
+        private var timing = PreviewTiming()
+
+        func discard() {
+            generation += 1
+            results.forEach { $0.discard() }
+            results = []
+            failure = nil
+            finishedTarget = nil
+        }
+
+        func convert(_ files: [URL], to target: ImageOptimizationTarget, effort: ImageOptimizationEffort,
+                     isSelected: () -> Bool,
+                     optimize: (URL, ImageOptimizationTarget, ImageOptimizationEffort) async throws -> ImageOptimizationResult = {
+                         try await ImageOptimizer.shared.optimize($0, to: $1, effort: $2)
+                     }) async {
+            guard !Task.isCancelled, isSelected() else { return }
+            discard()
+            let mine = generation
+            func current() -> Bool { mine == generation && !Task.isCancelled && isSelected() }
+            let delay = timing.nextDelay()
+            if delay > .zero { try? await Task.sleep(for: delay) }
+            var batch: [ImageOptimizationResult] = []
+            defer { batch.forEach { $0.discard() } }
+            for file in files {
+                guard current(), let result = try? await optimize(file, target, effort) else { return }
+                batch.append(result)
+                guard current() else { return }
+                if case .failed(let reason) = result.outcome {
+                    failure = reason
+                    finishedTarget = target
+                    return
+                }
+            }
+            guard current() else { return }
+            results = batch
+            batch = [] // the preview now owns these files
+            finishedTarget = target
+        }
+    }
+
     enum Format {
         case webP, jpeg
 
@@ -212,16 +285,15 @@ struct ImageConversionSheet: View {
     @AppStorage(OptimizePreferences.webPLosslessKey) private var webPLossless = true
     @AppStorage(OptimizePreferences.webPQualityKey) private var webPQuality = OptimizePreferences.defaultQuality
     @AppStorage(OptimizePreferences.jpegQualityKey) private var jpegQuality = OptimizePreferences.defaultQuality
-    @State private var results: [ImageOptimizationResult] = []
-    @State private var isWorking = true
-    @State private var failure: String?
+    @State private var preview = ImageConversion.Preview()
+    private var results: [ImageOptimizationResult] { preview.results }
+    private var isWorking: Bool { preview.finishedTarget != target }
+    private var failure: String? { isWorking ? nil : preview.failure }
 
     private var isWebP: Bool { conversion.format == .webP }
     private var target: ImageOptimizationTarget {
         isWebP ? .webP(quality: webPLossless ? nil : Int(webPQuality)) : .jpeg(quality: Int(jpegQuality))
     }
-    /// Changes with every choice that changes the result, so the size is worked out again.
-    private var choice: String { "\(webPLossless)-\(Int(webPQuality))-\(Int(jpegQuality))" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: DS.Space.l) {
@@ -260,8 +332,11 @@ struct ImageConversionSheet: View {
         }
         .padding(DS.Space.xl)
         .frame(width: 400)
-        .task(id: choice) { await convert() }
-        .onDisappear { discard() }
+        .task(id: target) { [requested = target] in
+            await preview.convert(conversion.files.map(\.url), to: requested, effort: OptimizePreferences.effort,
+                                  isSelected: { requested == target })
+        }
+        .onDisappear { preview.discard() }
     }
 
     private var result: some View {
@@ -291,36 +366,6 @@ struct ImageConversionSheet: View {
         .background(Palette.selectedFill, in: RoundedRectangle(cornerRadius: DS.Radius.l, style: .continuous))
     }
 
-    private func convert() async {
-        isWorking = true
-        failure = nil
-        // A dragged slider settles before the encoder starts.
-        try? await Task.sleep(for: .milliseconds(250))
-        guard !Task.isCancelled else { return }
-        discard()
-        var made: [ImageOptimizationResult] = []
-        for file in conversion.files {
-            guard let result = try? await ImageOptimizer.shared.optimize(file.url, to: target, effort: OptimizePreferences.effort) else {
-                made.forEach { $0.discard() }
-                return
-            }
-            if case .failed(let reason) = result.outcome {
-                made.forEach { $0.discard() }
-                failure = reason
-                isWorking = false
-                return
-            }
-            made.append(result)
-        }
-        results = made
-        isWorking = false
-    }
-
-    private func discard() {
-        results.forEach { $0.discard() }
-        results = []
-    }
-
     /// The results under the names their captures have, in a folder of their own, so a pasted or saved file is well named.
     private func named() throws -> [URL] {
         let folder = FileManager.default.temporaryDirectory.appending(path: "SukushoConverted-\(UUID().uuidString)")
@@ -331,6 +376,7 @@ struct ImageConversionSheet: View {
     }
 
     private func copyFiles() {
+        guard !isWorking, failure == nil else { return }
         do {
             let files = try named()
             defer { files.first.map { try? FileManager.default.removeItem(at: $0.deletingLastPathComponent()) } }
@@ -338,11 +384,12 @@ struct ImageConversionSheet: View {
             done(files.count == 1 ? "\(conversion.format.title) File Copied" : "\(files.count) \(conversion.format.title) Files Copied")
             dismiss()
         } catch {
-            failure = error.localizedDescription
+            preview.failure = error.localizedDescription
         }
     }
 
     private func save() {
+        guard !isWorking, failure == nil else { return }
         do {
             let files = try named()
             defer { files.first.map { try? FileManager.default.removeItem(at: $0.deletingLastPathComponent()) } }
@@ -371,7 +418,7 @@ struct ImageConversionSheet: View {
             done(saved.count == 1 ? "Saved \(saved[0].lastPathComponent)" : "Saved \(saved.count) \(conversion.format.title) Files")
             dismiss()
         } catch {
-            failure = error.localizedDescription
+            preview.failure = error.localizedDescription
         }
     }
 }
