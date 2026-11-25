@@ -270,6 +270,10 @@ struct CaptureLibraryView: View {
                         withAnimation { columnVisibility = .detailOnly }
                     }
                     .toolbar(removing: .sidebarToggle)
+                    // On the column's outermost view: set inside sidebarContent, the split item kept AppKit's
+                    // 140 pt minimum and no maximum (read with lldb), and the sidebar dragged out over the grid
+                    // (sd-h4t8).
+                    .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 280)
             } detail: {
                 detailColumn
                     .navigationTitle(title)
@@ -295,6 +299,7 @@ struct CaptureLibraryView: View {
         } else {
             NavigationSplitView(columnVisibility: $columnVisibility) {
                 sidebarContent
+                    .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 280)
             } detail: {
                 detailColumn
                     .modifier(LibraryColumnSeparators(
@@ -361,7 +366,6 @@ struct CaptureLibraryView: View {
                     .listStyle(.sidebar)
             }
         }
-        .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 280)
         .safeAreaInset(edge: .bottom) {
             HStack(alignment: .center, spacing: 12) {
                 Button {
