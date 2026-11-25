@@ -4,7 +4,7 @@ import ImageIO
 import SwiftUI
 @testable import Screendrop
 
-// From the worktree root, under heavy: python3 scripts/benchmark-library-editor.py <Release DD> library|editor
+// From the worktree root, under heavy: python3 scripts/benchmark-library-editor.py <Release DD> library|editor|studio
 @main @MainActor struct LibraryEditorBenchmark {
     static let count = 2048
     static let fixture = URL(fileURLWithPath: "ScreendropTests/Fixtures/capture-library-light.png")
@@ -40,7 +40,44 @@ import SwiftUI
             precondition(CaptureLibraryModel.shared.visibleItems.count == count - (count + 10) / 11)
             print(ns)
         case "editor": try editor()
-        default: fatalError("Choose library or editor")
+        case "studio": studio()
+        default: fatalError("Choose library, editor or studio")
+        }
+    }
+
+    static func studio() {
+        let segments = (0..<20).map { i in
+            RecordingClipSegment(sourceStart: Double(i * 30), sourceEnd: Double(i * 30 + 29))
+        }
+        var capture = PointerCaptureFile()
+        capture.travel = (0..<18_000).map { i in
+            PointerTravelSample(time: Double(i) / 30, x: Double(i % 201) / 200, y: Double(i % 101) / 100)
+        }
+        let disabled = ZoomCue(start: 0, end: 599, zoom: 2, isEnabled: false)
+        for (name, clips, cues) in [
+            ("Uncut movie, no zooms", RecordingClipTimeline.full(sourceDuration: 600), [ZoomCue]()),
+            ("20 clips, last zoom disabled", RecordingClipTimeline(segments: segments), [disabled]),
+            ("20 clips, active zoom control", RecordingClipTimeline(segments: segments), [ZoomCue(start: 1, end: 10)]),
+        ] {
+            func build() -> ViewportTimeline { ViewportTimeline.build(cues: cues, capture: capture, clipTimeline: clips) }
+            measure(name, build) { timeline in
+                for time in [-1, 0, 1.25, 8, 29, 599, 601] {
+                    let frame = timeline.frame(at: time)
+                    if cues.first?.isEnabled != true { precondition(frame == .identity) }
+                    else if time == 8 { precondition(frame.magnification > 1) }
+                }
+            }
+            // Include interpolation between 120 Hz frames, plus both ends, outside the timer.
+            let timeline = build()
+            var values: [Double] = []
+            for tick in 0...Int(clips.duration * 240) {
+                let frame = timeline.frame(at: Double(tick) / 240)
+                values.append(frame.magnification)
+                values.append(frame.anchor.x)
+                values.append(frame.anchor.y)
+            }
+            let hash = values.withUnsafeBytes { SHA256.hash(data: Data($0)) }
+            print("\(name) 240 Hz camera SHA256 " + hash.map { String(format: "%02x", $0) }.joined())
         }
     }
 

@@ -270,6 +270,7 @@ nonisolated struct ViewportTimeline: Sendable {
         capture: PointerCaptureFile,
         clipTimeline: RecordingClipTimeline
     ) -> ViewportTimeline {
+        guard cues.contains(where: \.isEnabled) else { return .identity }
         let duration = clipTimeline.duration
         guard duration.isFinite, duration > 0 else { return .identity }
 

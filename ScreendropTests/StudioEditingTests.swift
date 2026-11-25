@@ -410,6 +410,22 @@ struct StudioEditingTests {
         #expect(normalized.moving(segmentID: UUID(), to: 0) == nil)
     }
 
+    @Test func cameraStaysAtIdentityThroughCutsWithoutActiveZooms() {
+        let clips = RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 4, sourceEnd: 5.004),
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 1, mediaFileName: "insert.mov"),
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 2, speed: 2),
+        ])
+        let capture = PointerCaptureFile(presses: [.init(time: 4.5, x: 0.95, y: 0.02, button: 0, phase: .down)])
+        let off = ZoomCue(start: 0, end: 10, zoom: 3, anchorMode: .smartAnchor, isEnabled: false)
+        for cues in [[], [off]] {
+            let camera = ViewportTimeline.build(cues: cues, capture: capture, clipTimeline: clips)
+            for t in -1...730 {
+                #expect(camera.frame(at: Double(t) / 240) == .identity)
+            }
+        }
+    }
+
     @Test func reorderedHardCutsSnapViewportAndPointerTimelinesWithoutEasingBackwards() throws {
         // Clip 1 (later footage): source 5..10 (editor 0..5)
         // Clip 2 (earlier footage): source 0..5 (editor 5..10) -> hard cut at editor 5.0
