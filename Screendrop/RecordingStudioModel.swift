@@ -5802,11 +5802,16 @@ final class RecordingStudioModel {
 
     /// Adds a pixelate or blur block at the playhead, three seconds long,
     /// centered on the recorded picture; drag its handles on the canvas to place it.
+    /// Where a blur or pixelate block can start: on the main recording, not on imported footage, which has no source
+    /// time for it. `addRedaction(atEditorTime:mode:)` and the command palette's rows share it.
+    func redactionRange(atEditorTime time: TimeInterval) -> ClosedRange<TimeInterval>? {
+        sourceRange(startingAt: time, length: RecordingRedaction.defaultDuration, minimum: RecordingRedaction.minimumDuration)
+    }
+
     func addRedaction(atEditorTime time: TimeInterval, mode: RecordingRedaction.Mode = .pixelate) {
         // A recording made by a newer Sukusho is read-only: its redaction couldn't be saved (Sol's second review).
         guard isLoaded, !hasRunningWork, !isReadOnlyNewerFormat,
-              let range = sourceRange(startingAt: time, length: RecordingRedaction.defaultDuration,
-                                      minimum: RecordingRedaction.minimumDuration) else { return }
+              let range = redactionRange(atEditorTime: time) else { return }
         let region = RecordingRedaction(
             start: range.lowerBound,
             end: range.upperBound,
@@ -7259,9 +7264,15 @@ final class RecordingStudioModel {
     }
 
     /// Splits an audio clip at `time` on the edited timeline.
+    /// The two pieces an audio clip splits into at this time, or nil where it doesn't cover the time with room for both.
+    /// `splitAudioClip(id:at:)` and the command palette's Split at Playhead share it.
+    func audioClipHalves(id: UUID, at time: TimeInterval) -> (leading: RecordingAudioClip, trailing: RecordingAudioClip)? {
+        guard let clip = audioClips.first(where: { $0.id == id }) else { return nil }
+        return StudioAudioConform.split(clip, at: time)
+    }
+
     func splitAudioClip(id: UUID, at time: TimeInterval) {
-        guard let clip = audioClips.first(where: { $0.id == id }),
-              let halves = StudioAudioConform.split(clip, at: time) else { return }
+        guard let halves = audioClipHalves(id: id, at: time) else { return }
         applyAudioClips(
             audioClips.flatMap { $0.id == id ? [halves.leading, halves.trailing] : [$0] },
             actionName: "Split Audio"

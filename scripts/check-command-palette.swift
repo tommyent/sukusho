@@ -166,11 +166,7 @@ struct CheckCommandPalette {
               "placing a redaction: “add or cancel the redaction first”, not cropping")
         studio.cancelRedaction()
 
-        // Sol's note: Split at Playhead splits the selected audio clip, as the timeline's button does.
-        check(studioHost.state(of: command("studio.split")).reason == "can’t split here", "no audio clip: the video, which can't split at 0")
-        studio.selectedAudioClipID = UUID()
-        check(studioHost.state(of: command("studio.split")).reason == nil, "an audio clip selected: it's that clip's split")
-        studio.selectedAudioClipID = nil
+        check(studioHost.state(of: command("studio.split")).reason == "can’t split here", "the video can't split at 0")
 
         // Finding 3: Snapping flips Studio's own setting, and the palette stays.
         let snapping = studio.snapsEdits
@@ -223,6 +219,60 @@ struct CheckCommandPalette {
         check(first?.kind == .exportOptions && studio.paletteRequest?.kind == .exportOptions && studio.paletteRequest != first,
               "each request is its own, so a button that appears later never takes an old one")
         studio.paletteRequest = nil
+
+        // Sol's final check: a project with the main recording at 0–1 s, imported footage at 1–2 s and an audio clip at
+        // 1.2–1.8 s. Blur and Pixelate can't start on imported footage, and Split splits the selected audio clip only
+        // where it covers the playhead.
+        let edited = RecordingSession(directoryURL: URL(fileURLWithPath: home).appendingPathComponent("edited.sukushorec"))
+        try FileManager.default.createDirectory(at: edited.mediaDirectoryURL, withIntermediateDirectories: true)
+        try FileManager.default.copyItem(at: movieURL, to: edited.screenURL)
+        try FileManager.default.copyItem(at: movieURL, to: edited.mediaDirectoryURL.appendingPathComponent("insert.mov"))
+        let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
+        let samples = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 28_800)!
+        samples.frameLength = 28_800
+        samples.floatChannelData![0].update(repeating: 0, count: 28_800)
+        try AVAudioFile(forWriting: edited.mediaDirectoryURL.appendingPathComponent("clip.wav"), settings: format.settings)
+            .write(from: samples)
+        var edits = RecordingEditDocument(style: .init(), zoomEnabled: false, zoomCues: [], clipTimeline: RecordingClipTimeline(segments: [
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 1),
+            RecordingClipSegment(sourceStart: 0, sourceEnd: 1, mediaFileName: "insert.mov", sourceDuration: 1),
+        ]))
+        edits.audioClips = [RecordingAudioClip(fileName: "clip.wav", displayName: "Audio", start: 1.2, fileDuration: 0.6)]
+        try edited.writeEditDocument(edits)
+        let editedStudio = RecordingStudioModel(url: edited.directoryURL)
+        await editedStudio.load()
+        let editedHost = AppCommandPaletteHost(context: .studio(StudioPaletteHooks(model: editedStudio, inspectorShown: { true },
+                                                                                    toggleInspector: {})), windowTitle: "Check")
+        check(editedStudio.isLoaded && editedStudio.clipTimeline.hasImportedClips && editedStudio.audioClips.count == 1,
+              "the project opens with imported footage and an audio clip")
+        editedStudio.seek(to: 1.5)
+        for id in ["studio.blur", "studio.pixelate"] {
+            let palette = CommandPaletteModel(host: editedHost, catalog: [command(id)])
+            var closed = false
+            palette.onClose = { closed = true }
+            palette.press(.enter)
+            check(palette.selectedRow?.reason == "move the playhead to the main recording" && !closed,
+                  "\(id) on imported footage: grey, “move the playhead to the main recording”, and ↩ does nothing")
+        }
+        editedStudio.seek(to: 0.5)
+        check(editedHost.state(of: command("studio.blur")).reason == nil, "Blur at Playhead on the main recording runs")
+        _ = editedHost.run(command("studio.blur"))
+        CommandPalettePresenter.shared.close()
+        await turn()
+        check(editedStudio.redactions.count == 1, "and adds its blur")
+        if let track = editedStudio.audioClips.first {
+            editedStudio.selectAudioClip(id: track.id)
+            check(editedHost.state(of: command("studio.split")).reason == "can’t split here",
+                  "Split at Playhead at 0.5 s with the 1.2–1.8 s audio clip selected: can't split here")
+            editedStudio.seek(to: 1.5)
+            check(editedHost.state(of: command("studio.split")).reason == nil, "at 1.5 s it can")
+            _ = editedHost.run(command("studio.split"))
+            CommandPalettePresenter.shared.close()
+            await turn()
+            check(editedStudio.audioClips.count == 2 && editedStudio.clipTimeline.segments.count == 2,
+                  "and splits the audio clip, not the video")
+        }
+        editedStudio.teardown()
 
         // Sol's second review: a recording made by a newer Sukusho is read-only; its redaction can't be saved.
         let future = RecordingSession(directoryURL: URL(fileURLWithPath: home).appendingPathComponent("future.sukushorec"))

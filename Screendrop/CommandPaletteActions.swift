@@ -288,12 +288,17 @@ final class AppCommandPaletteHost: CommandPaletteHost {
         switch id {
         case "studio.insertClip": return studio.canImportVideoClip ? .ready : .off("not now")
         case "studio.split":
-            // As the timeline's button: the selected audio clip, else the video.
-            if studio.selectedAudioClipID != nil { return .ready }
+            // As the timeline's button: the selected audio clip, else the video, each where it can split (Sol's final check).
+            if let audio = studio.selectedAudioClipID {
+                return studio.audioClipHalves(id: audio, at: studio.currentTime) == nil ? .off("can’t split here") : .ready
+            }
             return studio.clipTimeline.split(at: studio.currentTime) == nil ? .off("can’t split here") : .ready
         // Each as its button, menu item or inspector control has it (sd-458l).
         case "studio.autoZoom": return studio.recordedPressTimes.isEmpty ? .off("no clicks were recorded") : .ready
-        case "studio.blur", "studio.pixelate": return studio.hasRunningWork ? .off("wait for Studio to finish") : .ready
+        case "studio.blur", "studio.pixelate":
+            if studio.hasRunningWork { return .off("wait for Studio to finish") }
+            // Imported footage has no source time for a block (Sol's final check: the row closed and added none).
+            return studio.redactionRange(atEditorTime: studio.currentTime) == nil ? .off("move the playhead to the main recording") : .ready
         case "studio.videoOverlay":
             if studio.mediaDirectoryURL == nil { return .off("save this recording as a project first") }
             if studio.isReadOnlyNewerFormat { return .off(Self.newerFormat) }
