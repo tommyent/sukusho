@@ -54,6 +54,21 @@ struct CaptureSourceSearchTests {
 
     // MARK: Filtering
 
+    @Test func onlyWordSearchesNeedTheDisplayFields() {
+        var reads = 0
+        func fields() -> [String] { reads += 1; return ["invoice", "total"] }
+        func matches(_ raw: String) -> Bool {
+            CaptureLibraryQuery(raw).matches(fields: fields(), foldedText: nil, source: chrome)
+        }
+        for raw in ["", "app:", "app:chrome"] {
+            #expect(matches(raw))
+        }
+        #expect(!matches("app:safari total"))
+        #expect(reads == 0)
+        #expect(matches("invoice app:chrome total"))
+        #expect(reads == 1)
+    }
+
     @Test func appMatchesNameOrBundleLastPart() {
         #expect(CaptureLibraryQuery("app:chrome").matches(fields: [], foldedText: nil, source: chrome))
         #expect(CaptureLibraryQuery("app:CHROME").matches(fields: [], foldedText: nil, source: chrome))

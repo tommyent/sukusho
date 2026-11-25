@@ -341,9 +341,9 @@ final class CaptureLibraryModel {
             guard LibraryArchive.includes(isSaved: item.isSaved, inSavedPage: LibrarySavedModel.shared.isShown) else { return false }
             let matchesKind = filter == .all || (filter == .recordings ? item.isVideo : !item.isVideo)
             let matchesTag = tagFilter.map(item.tags.contains) ?? true
-            let fields = [item.name, item.title, item.fileURL.lastPathComponent, item.source?.appName, item.source?.windowTitle]
             return matchesKind && matchesTag && query.matches(
-                fields: fields.compactMap { $0 } + item.tags, foldedText: text[item.id], source: item.source)
+                fields: [item.name, item.title, item.fileURL.lastPathComponent, item.source?.appName, item.source?.windowTitle]
+                    .compactMap { $0 } + item.tags, foldedText: text[item.id], source: item.source)
         }.sorted { lhs, rhs in
             switch sortOrder {
             case .newest where lhs.createdAt != rhs.createdAt: return lhs.createdAt > rhs.createdAt

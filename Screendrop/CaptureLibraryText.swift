@@ -464,11 +464,13 @@ nonisolated struct CaptureLibraryQuery: Equatable {
 
     /// `fields` are matched as typed; `foldedText` is a capture's recognized
     /// text, already folded once.
-    func matches(fields: [String], foldedText: String?, source: CaptureSource? = nil) -> Bool {
-        apps.allSatisfy { source?.matchesApp($0) == true }
-            && zip(phrases, foldedPhrases).allSatisfy { phrase, folded in
-                fields.contains { $0.localizedStandardContains(phrase) } || foldedText?.contains(folded) == true
-            }
+    func matches(fields: @autoclosure () -> [String], foldedText: String?, source: CaptureSource? = nil) -> Bool {
+        guard apps.allSatisfy({ source?.matchesApp($0) == true }) else { return false }
+        guard !phrases.isEmpty else { return true }
+        let fields = fields()
+        return zip(phrases, foldedPhrases).allSatisfy { phrase, folded in
+            fields.contains { $0.localizedStandardContains(phrase) } || foldedText?.contains(folded) == true
+        }
     }
 
     /// Paragraphs that contain a phrase first, each group in its own order.
