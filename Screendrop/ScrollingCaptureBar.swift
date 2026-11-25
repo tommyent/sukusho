@@ -102,14 +102,14 @@ struct ScrollingCaptureBar: View {
     private var title: String {
         presenter.hasReachedLimit ? "Maximum height reached"
             : !presenter.showsWaiting ? "Scroll to capture"
-            : presenter.keepsChanging ? "Something on the page keeps changing" : "Scroll back a little"
+            : "Scroll back a little"
     }
 
     private var detail: String {
         guard !presenter.hasReachedLimit else { return "\(presenter.stitchedHeight.formatted()) px tall" }
         if presenter.showsWaiting {
             return presenter.keepsChanging
-                ? "Video, animation or hover: pause it or move the pointer away, then scroll back a little."
+                ? "If a video, animation or hover is changing the page, pause it or move the pointer away."
                 : "This view doesn’t line up yet"
         }
         let height = "\(presenter.stitchedHeight.formatted()) px tall"

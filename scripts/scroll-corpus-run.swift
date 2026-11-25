@@ -39,8 +39,8 @@
 // among those both score, and |heightErr| summed over the jump-free pages
 // (no known seam with nothing fitting) where both have a height.
 // For the stitcher, a second table counts the frames for which the capture bar
-// would show a message, as back/changing ("Scroll back a little" / "Something
-// on the page keeps changing"), after each delay: refused frames at least that
+// would show a message, as back/changing (both "Scroll back a little"; changing
+// adds the pause-it hint), after each delay: refused frames at least that
 // long after the first refused frame of their run (by truth.json frame
 // times), changing when the feed's keepsChanging rule holds (Vision's bands
 // agree on an offset the verifier can confirm). The app waits
