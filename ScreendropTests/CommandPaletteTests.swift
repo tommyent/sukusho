@@ -523,6 +523,22 @@ struct CommandPaletteTests {
         }
     }
 
+    /// The panel stays on the screen its window is on: Sol's case, a window low on the screen with its toolbar at 150 pt,
+    /// put the full list 70 pt below it; one partly off the left edge put it out of sight there.
+    @Test func thePanelStaysOnScreen() {
+        let screen = NSRect(x: 0, y: 0, width: 1440, height: 875)
+        let low = CommandPalettePanel.place(height: 620, windowFrame: NSRect(x: 400, y: 0, width: 800, height: 180),
+                                            contentTop: 150, contentHeight: 150, visible: screen)
+        #expect(low.rect.minY >= screen.minY && low.rect.maxY <= screen.maxY, "\(low.rect)")
+        #expect(low.rect.height == 220, "never shorter than 220 pt")
+        let left = CommandPalettePanel.place(height: 400, windowFrame: NSRect(x: -500, y: 200, width: 700, height: 600),
+                                             contentTop: 748, contentHeight: 600, visible: screen)
+        #expect(left.rect.minX >= screen.minX && left.rect.maxX <= screen.maxX, "\(left.rect)")
+        let usual = CommandPalettePanel.place(height: 400, windowFrame: NSRect(x: 200, y: 100, width: 1000, height: 700),
+                                              contentTop: 748, contentHeight: 700, visible: screen)
+        #expect(usual.rect == NSRect(x: 400, y: 340, width: 600, height: 400), "under the toolbar, centered: \(usual.rect)")
+    }
+
     /// The 2026-11-25 crash: the palette resized itself inside its parent's didResize, during that window's layout, and
     /// AppKit threw. Its placement now runs once, a turn later, however often it's asked.
     @Test func placementWaitsForTheNextTurnAndRunsOnce() async {

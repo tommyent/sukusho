@@ -62,8 +62,27 @@ struct StudioPaletteHooks {
 extension View {
     /// Lets ⇧⌘P open the palette over this view's window with what `context` says about it at that moment.
     func commandPaletteContext(_ context: @escaping () -> PaletteWindowContext) -> some View {
-        onWindowChange { CommandPalettePresenter.shared.register($0, context: context) }
+        modifier(CommandPaletteContextModifier(context: context))
     }
+}
+
+/// Registers the view's window, and takes the registration back when the view leaves it, even if the window stays
+/// (Sol's second review: the old entry stayed until another window registered).
+private struct CommandPaletteContextModifier: ViewModifier {
+    let context: () -> PaletteWindowContext
+    @State private var registered = RegisteredWindow()
+
+    func body(content: Content) -> some View {
+        content.onWindowChange { window in
+            CommandPalettePresenter.shared.register(window, replacing: registered.window, context: context)
+            registered.window = window
+        }
+    }
+}
+
+/// The window a view last registered, held weakly.
+private final class RegisteredWindow {
+    weak var window: NSWindow?
 }
 
 @MainActor
@@ -98,8 +117,8 @@ final class CommandPalettePresenter {
         center.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.close(refocus: false) }
         }
-        // The panel stays under the toolbar and inside the screen as the window it's over resizes or changes screen.
-        for name in [NSWindow.didResizeNotification, NSWindow.didChangeScreenNotification] {
+        // The panel stays under the toolbar and inside the screen as the window it's over resizes, moves or changes screen.
+        for name in [NSWindow.didResizeNotification, NSWindow.didMoveNotification, NSWindow.didChangeScreenNotification] {
             center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
                 let moved = (note.object as AnyObject?).map(ObjectIdentifier.init)
                 MainActor.assumeIsolated { self?.parentMoved(moved) }
@@ -109,8 +128,11 @@ final class CommandPalettePresenter {
 
     var isVisible: Bool { panel?.isVisible == true }
 
-    func register(_ window: NSWindow?, context: @escaping () -> PaletteWindowContext) {
+    /// `previous`: the window the same view registered before, whose entry goes.
+    func register(_ window: NSWindow?, replacing previous: NSWindow? = nil,
+                  context: @escaping () -> PaletteWindowContext) {
         contexts = contexts.filter { $0.value.window.window != nil }
+        if let previous, previous !== window { contexts[ObjectIdentifier(previous)] = nil }
         guard let window else { return }
         contexts[ObjectIdentifier(window)] = (WeakWindowBox(window), context)
     }
@@ -230,21 +252,12 @@ final class CommandPalettePresenter {
         panel.invalidateShadow()
     }
 
-    /// Under the window's toolbar, centered on it, kept inside the screen the window is on: a window partly off it, or
-    /// across two displays, would put the list out of sight (Sol's other notes). The list stays inside the window too.
+    /// Under the window's toolbar, centered on it, kept inside the screen the window is on (`CommandPalettePanel.place`).
     static func frame(height: CGFloat, over window: NSWindow) -> (rect: NSRect, maxHeight: CGFloat) {
-        let margin: CGFloat = 8
-        var top = window.frame.minY + window.contentLayoutRect.maxY - margin
-        var x = window.frame.midX - width / 2
-        var room = window.contentLayoutRect.height - 24
-        if let visible = (window.screen ?? NSScreen.main)?.visibleFrame {
-            x = min(max(x, visible.minX + margin), visible.maxX - width - margin)
-            top = min(top, visible.maxY - margin)
-            room = min(room, top - visible.minY - margin)
-        }
-        let maxHeight = max(220, room)
-        let shown = min(height, maxHeight)
-        return (NSRect(x: x, y: top - shown, width: width, height: shown), maxHeight)
+        CommandPalettePanel.place(height: height, windowFrame: window.frame,
+                                  contentTop: window.frame.minY + window.contentLayoutRect.maxY,
+                                  contentHeight: window.contentLayoutRect.height,
+                                  visible: (window.screen ?? NSScreen.main)?.visibleFrame)
     }
 
     // MARK: Keys

@@ -50,6 +50,25 @@ final class CommandPalettePanel: NSPanel {
         PreviewWindowCaptureExclusion.shared.register(window: self)
     }
 
+    /// Where the panel goes: under the window's toolbar, centered on it, inside the window's height, and always inside
+    /// the screen it's on. A window partly off the screen, across two displays, or low on it would put the list out of
+    /// sight (Sol's reviews): the list is never shorter than 220 pt, and the panel rises over the toolbar to fit it.
+    static func place(height: CGFloat, windowFrame: NSRect, contentTop: CGFloat, contentHeight: CGFloat,
+                      visible: NSRect?) -> (rect: NSRect, maxHeight: CGFloat) {
+        let margin: CGFloat = 8, shortest: CGFloat = 220
+        var top = contentTop - margin
+        var x = windowFrame.midX - width / 2
+        var maxHeight = max(shortest, contentHeight - 24)
+        if let visible {
+            x = min(max(x, visible.minX + margin), visible.maxX - width - margin)
+            maxHeight = min(maxHeight, max(shortest, top - visible.minY - margin), visible.height - 2 * margin)
+            let shown = min(height, maxHeight)
+            top = min(max(top, visible.minY + margin + shown), visible.maxY - margin)
+        }
+        let shown = min(height, maxHeight)
+        return (NSRect(x: x, y: top - shown, width: width, height: shown), maxHeight)
+    }
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
