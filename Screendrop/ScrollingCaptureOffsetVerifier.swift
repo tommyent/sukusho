@@ -90,9 +90,6 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
                 let start = now.baseAddress! + (y * width + x.lowerBound) * 4
                 return memcmp(start, start + 4, (x.count - 1) * 4) == 0
             }
-            func pixel(_ bytes: UnsafeRawBufferPointer, _ y: Int, _ x: Int) -> UInt32 {
-                bytes.loadUnaligned(fromByteOffset: (y * width + x) * 4, as: UInt32.self)
-            }
             let edges = unmovedEdges(height: height) { same($0, $0, 0..<usable) }
             let band = edges.top..<(height - edges.bottom)
             let committed = band.lowerBound..<cut(in: band)
@@ -172,19 +169,8 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
             /// the content, as MDN's table of contents does: 64-128 of 1,542 rows); content beside it that
             /// moved changes in many.
             func stillSides() -> (left: Int, right: Int) {
-                func run(_ columns: [Int]) -> Int {
-                    var clean = 0
-                    for (i, x) in columns.enumerated() {
-                        var changed = 0
-                        for y in band where pixel(now, y, x) != pixel(old, y, x) {
-                            changed += 1
-                            if changed > band.count / pinnedChangeFraction { return clean }
-                        }
-                        if changed == 0 { clean = i + 1 }
-                    }
-                    return clean
-                }
-                let left = run(Array(0..<usable)), right = run(Array((0..<usable).reversed()))
+                let left = stillRun(old, now, width: width, usable: usable, band: band, fromRight: false)
+                let right = stillRun(old, now, width: width, usable: usable, band: band, fromRight: true)
                 return left + right < usable ? (left, right) : (0, 0)
             }
             /// The rows of a frame that occur once in it, over `range`'s columns and not blank there: hash to row.
@@ -288,9 +274,6 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
                 memcmp(now.baseAddress! + (y * width + x.lowerBound) * 4,
                        old.baseAddress! + (oldY * width + x.lowerBound) * 4, x.count * 4) == 0
             }
-            func pixel(_ bytes: UnsafeRawBufferPointer, _ y: Int, _ x: Int) -> UInt32 {
-                bytes.loadUnaligned(fromByteOffset: (y * width + x) * 4, as: UInt32.self)
-            }
             let edges = unmovedEdges(height: height) { same($0, $0, 0..<usable) }
             let band = edges.top..<(height - edges.bottom)
             let committed = band.lowerBound..<cut(in: band)
@@ -325,22 +308,41 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
                 return best.key
             }
             if let k = peak(over: 0..<usable) { return k }
-            func stillRun(_ columns: [Int]) -> Int {
-                var clean = 0
-                for (i, x) in columns.enumerated() {
-                    var changed = 0
-                    for y in band where pixel(now, y, x) != pixel(old, y, x) {
-                        changed += 1
-                        if changed > band.count / pinnedChangeFraction { return clean }
-                    }
-                    if changed == 0 { clean = i + 1 }
-                }
-                return clean
-            }
-            let left = stillRun(Array(0..<usable)), right = stillRun(Array((0..<usable).reversed()))
+            let left = stillRun(old, now, width: width, usable: usable, band: band, fromRight: false)
+            let right = stillRun(old, now, width: width, usable: usable, band: band, fromRight: true)
             guard left + right > 0, left + right < usable else { return nil }
             return peak(over: left..<(usable - right))
         } }
+    }
+
+    /// Cross a strip of unchanged columns with contiguous row reads. A single different byte
+    /// takes the original column-by-column path, including its tolerance for a sidebar redraw.
+    private static func stillRun(_ old: UnsafeRawBufferPointer, _ now: UnsafeRawBufferPointer,
+                                 width: Int, usable: Int, band: Range<Int>, fromRight: Bool) -> Int {
+        var clean = 0
+        for start in stride(from: 0, to: usable, by: 64) {
+            let end = min(start + 64, usable), left = fromRight ? usable - end : start
+            if band.allSatisfy({ y in
+                let pos = (y * width + left) * 4
+                return memcmp(now.baseAddress! + pos, old.baseAddress! + pos, (end - start) * 4) == 0
+            }) {
+                clean = end
+                continue
+            }
+            for i in start..<end {
+                let x = fromRight ? usable - 1 - i : i
+                var changed = 0
+                for y in band {
+                    let pos = (y * width + x) * 4
+                    if now.loadUnaligned(fromByteOffset: pos, as: UInt32.self) != old.loadUnaligned(fromByteOffset: pos, as: UInt32.self) {
+                        changed += 1
+                        if changed > band.count / pinnedChangeFraction { return clean }
+                    }
+                }
+                if changed == 0 { clean = i + 1 }
+            }
+        }
+        return clean
     }
 
     /// Whether `offset` leaves at least `minimumMatchedRows` rows of overlap
