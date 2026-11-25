@@ -34,9 +34,7 @@ extension ScreenshotHistoryItem {
 final class ScreenshotHistoryStore {
     static let shared = ScreenshotHistoryStore()
 
-    static var historyDirectory: URL {
-        ScreendropStorage.applicationSupportDirectory.appendingPathComponent("History", isDirectory: true)
-    }
+    static let historyDirectory = ScreendropStorage.applicationSupportDirectory.appendingPathComponent("History", isDirectory: true)
 
     private static var metadataURL: URL {
         ScreendropStorage.applicationSupportDirectory.appendingPathComponent("history.json")
