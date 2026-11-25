@@ -251,20 +251,15 @@ final class CommandPalettePresenter {
         return view.subviews.lazy.compactMap { field(in: $0) }.first
     }
 
-    /// The palette's keys reach the model before the field or the menus: ↑↓, ↩, →, Esc and ⌘C. Its own shortcut, as
-    /// View › Command Palette… holds it, closes it.
+    /// The palette's keys reach the model before the field or the menus: ↑↓, ↩, →, Esc, ⌘C and ⌘Y, each only where it
+    /// does something. Everything else goes on: its own shortcut to View › Command Palette…, which closes it, so the
+    /// keys that open it close it on any layout, as the menu item matches them (Sol's reviews, finding 4 and 7).
     private func installKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, let panel, event.window === panel, let model else { return event }
             let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
             // Keys mid-composition (Japanese input and the like) are the input method's.
             if (panel.firstResponder as? NSTextView)?.hasMarkedText() == true { return event }
-            // The menu item's own keys, read as the menu reads them, by the character the layout types: on another
-            // layout, the key that opened it closes it (Sol's finding 4).
-            if let shortcut = MenuBarView.shortcut(for: .commandPalette), Self.event(event, matches: shortcut) {
-                close()
-                return nil
-            }
             let key: PaletteKey?
             switch (Int(event.keyCode), flags) {
             case (kVK_UpArrow, []): key = .up
@@ -279,24 +274,6 @@ final class CommandPalettePresenter {
             guard let key else { return event }
             return model.press(key) ? nil : event
         }
-    }
-
-    /// Whether a key press is a menu item's `KeyboardShortcut`, compared as AppKit compares a key equivalent.
-    static func event(_ event: NSEvent, matches shortcut: KeyboardShortcut) -> Bool {
-        let flags = event.modifierFlags
-        var modifiers: SwiftUI.EventModifiers = []
-        if flags.contains(.command) { modifiers.insert(.command) }
-        if flags.contains(.option) { modifiers.insert(.option) }
-        if flags.contains(.control) { modifiers.insert(.control) }
-        if flags.contains(.shift) { modifiers.insert(.shift) }
-        guard modifiers == shortcut.modifiers else { return false }
-        let special: [(KeyEquivalent, Int)] = [
-            (.return, kVK_Return), (.tab, kVK_Tab), (.space, kVK_Space), (.delete, kVK_Delete), (.deleteForward, kVK_ForwardDelete),
-            (.escape, kVK_Escape), (.leftArrow, kVK_LeftArrow), (.rightArrow, kVK_RightArrow), (.upArrow, kVK_UpArrow),
-            (.downArrow, kVK_DownArrow),
-        ]
-        if let code = special.first(where: { $0.0 == shortcut.key })?.1 { return Int(event.keyCode) == code }
-        return event.charactersIgnoringModifiers?.lowercased() == String(shortcut.key.character).lowercased()
     }
 }
 

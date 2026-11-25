@@ -350,8 +350,9 @@ struct CaptureHotkeySettingsSection: View {
 
         do {
             try HotkeyManager.shared.setShortcut(shortcut, for: action)
-            shortcuts[action] = shortcut
-            reloadClashes()
+            // Every row, not this one alone: another's keys can change with it, as the palette's ⇧⌘P comes back
+            // once the row that held it gives it up.
+            reloadShortcuts()
             errorMessage = nil
         } catch {
             errorMessage = "\(error.localizedDescription) Your previous shortcut has been kept."

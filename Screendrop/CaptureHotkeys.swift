@@ -419,6 +419,10 @@ enum CaptureHotkeyPreferences {
             keys(.command, kVK_ANSI_H, "Hide Sukusho"), keys([.command, .option], kVK_ANSI_H, "Hide Others"),
             keys(.command, kVK_ANSI_W, "Close"), keys(.command, kVK_ANSI_M, "Minimize"),
             keys([.command, .control], kVK_ANSI_F, "Enter Full Screen"), keys(.command, kVK_Delete, "Move to Trash"),
+            keys([.command, .shift], kVK_ANSI_Minus, "Zoom Out"),
+            // The palette's own ⌘Y, and Studio's one-second steps (Sol's second review).
+            keys(.command, kVK_ANSI_Y, "Quick Look"),
+            keys(.shift, kVK_LeftArrow, "Back One Second"), keys(.shift, kVK_RightArrow, "Forward One Second"),
         ]
     }()
 

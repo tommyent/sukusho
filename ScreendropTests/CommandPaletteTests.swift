@@ -562,6 +562,11 @@ struct CommandPaletteTests {
         #expect(CaptureHotkeyPreferences.conflictingAction(for: shiftP, excluding: .fullscreen, defaults: defaults) == nil,
                 "one shortcut, one action")
         let shiftR = HotkeyShortcut(modifiers: [.shift, .command], keyCode: Int(kVK_ANSI_R))
+        // Fullscreen re-recorded elsewhere frees ⇧⌘P, which Settings' rows read again after any change.
+        let shiftF = HotkeyShortcut(modifiers: [.shift, .command], keyCode: Int(kVK_ANSI_F))
+        CaptureHotkeyPreferences.saveShortcut(shiftF, for: .fullscreen, defaults: defaults)
+        #expect(CaptureHotkeyPreferences.shortcut(for: palette, defaults: defaults) == shiftP, "freed, the palette has ⇧⌘P again")
+        CaptureHotkeyPreferences.saveShortcut(shiftP, for: .fullscreen, defaults: defaults)
         CaptureHotkeyPreferences.saveShortcut(shiftR, for: palette, defaults: defaults)
         #expect(CaptureHotkeyPreferences.shortcut(for: palette, defaults: defaults) == shiftR, "recorded keys are its own")
         CaptureHotkeyPreferences.resetToDefault(palette, defaults: defaults)
@@ -582,6 +587,11 @@ struct CommandPaletteTests {
         #expect(CaptureHotkeyPreferences.appCommand(using: HotkeyShortcut(modifiers: [.option, .command], keyCode: kVK_ANSI_I))
                 == "Show Inspector")
         #expect(CaptureHotkeyPreferences.appCommand(using: CaptureHotkeyAction.commandPalette.defaultShortcut) == nil, "⇧⌘P is free")
+        // The palette's own ⌘C and ⌘Y, which it takes before its shortcut, and Studio's one-second steps (Sol's second review).
+        #expect(CaptureHotkeyPreferences.appCommand(using: command(kVK_ANSI_Y)) == "Quick Look")
+        #expect(CaptureHotkeyPreferences.appCommand(using: command(kVK_ANSI_C)) == "Copy")
+        #expect(CaptureHotkeyPreferences.appCommand(using: HotkeyShortcut(modifiers: [.shift], keyCode: kVK_LeftArrow)) == "Back One Second")
+        #expect(CaptureHotkeyPreferences.appCommand(using: HotkeyShortcut(modifiers: [.shift], keyCode: kVK_RightArrow)) == "Forward One Second")
         let names = CaptureHotkeyPreferences.appCommands.map(\.shortcut)
         #expect(!CaptureHotkeyAction.allCases.contains { names.contains($0.defaultShortcut) }, "no default is a menu's")
     }
