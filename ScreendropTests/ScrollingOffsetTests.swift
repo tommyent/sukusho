@@ -167,6 +167,26 @@ private final class OffsetFixtureBundle: NSObject {}
             to: sidebarFrame(top: 40), width: 96, height: 400, ignoredTrailingColumns: 0) == .init(offset: 0))
     }
 
+    @Test("Pinned sidebars extend past a redrawn column at the allowed change limit")
+    func pinnedSidebarsExtendPastARedrawnColumn() {
+        // Neither edge is a multiple of the fast scan's 64 columns. Exactly an eighth of
+        // column 63 changes on each side; the clean columns past it must still count.
+        let w = 221, h = 400, usable = w - 7, step = 40
+        func bytes(_ shift: Int) -> [UInt8] {
+            let pixels = (0..<(w * h)).map { i -> UInt32 in
+                let x = i % w, y = i / w
+                let row = x < 67 || x >= usable - 70 ? y : y + shift
+                var pixel = UInt32(row) &* 2_654_435_761 ^ UInt32(x)
+                if shift > 0, y < h / 8, x == 63 || x == usable - 64 { pixel ^= 0x55 }
+                return pixel
+            }
+            return pixels.withUnsafeBytes { Array($0) }
+        }
+        let result = ScrollingCaptureOffsetVerifier.verifiedOffset(candidate: step, from: bytes(0), to: bytes(step),
+            width: w, height: h, ignoredTrailingColumns: w - usable)
+        #expect(result == .init(offset: step, pinnedLeft: 67, pinnedRight: 70))
+    }
+
     @Test("Pinned sidebars keep every captured row, including two repeated 40-row slices")
     func pinnedSidebarsKeepCapturedRows() async throws {
         let first = sidebarFrame(top: 0), second = sidebarFrame(top: 40), third = sidebarFrame(top: 80)
