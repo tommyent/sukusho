@@ -172,7 +172,10 @@ struct CommandPaletteView: View {
     /// state, a grey row why it can't run, and pressing that does nothing (Sol's finding 10).
     private func button(_ row: PaletteRow, selected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) { line(row, selected: selected) }
-            .buttonStyle(.plain)
+            // Drawn as it is, enabled or not: a grey row is already grey, and its reason must stay readable.
+            .buttonStyle(PaletteRowButtonStyle())
+            // A grey row is a disabled control to VoiceOver, not a button that does nothing (Sol's second review).
+            .disabled(!row.isEnabled)
             .accessibilityLabel(accessibilityLabel(row))
             .accessibilityValue(accessibilityValue(row))
             .accessibilityHint(row.reason.map { "Unavailable: \($0)" } ?? (row.opens != nil ? "Opens a list" : ""))
@@ -392,12 +395,18 @@ struct PaletteKeyCaps: View {
                     .foregroundStyle(ink.opacity(onFill ? PaletteAccent.textOnFill : dimmed ? 0.35 : 0.7))
                     .padding(.horizontal, key.count > 1 ? 4 : 0)
                     .frame(minWidth: 17, minHeight: 17)
-                    .background(ink.opacity(0.05), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+                    // No backing on the fill: white over it measured 4.42:1 on a yellow accent (Sol's second review).
+                    .background(ink.opacity(onFill ? PaletteAccent.keycapBackingOnFill : 0.05), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
                     .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous).strokeBorder(ink.opacity(dimmed ? 0.08 : 0.16), lineWidth: 0.5))
             }
         }
         .fixedSize()
     }
+}
+
+/// A row's button, drawn as its label is, pressed or not, enabled or not.
+struct PaletteRowButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View { configuration.label }
 }
 
 /// A switch's state, drawn and not a control: the row is what flips it.

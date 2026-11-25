@@ -491,8 +491,16 @@ struct CommandPaletteTests {
             let words = PaletteAccent.white(PaletteAccent.textOnFill, over: fill)
             #expect(PaletteAccent.contrast(words, with: fill) >= 4.5, "\(accent)")
         }
+        for accent in accents {
+            // A keycap's letter is painted on its backing, not on the bare fill (Sol's second review).
+            let fill = PaletteAccent.liftedForWhiteText(accent)
+            let backing = PaletteAccent.white(PaletteAccent.keycapBackingOnFill, over: fill)
+            #expect(PaletteAccent.contrast(PaletteAccent.white(PaletteAccent.textOnFill, over: backing), with: backing) >= 4.5, "\(accent)")
+        }
         let yellow = PaletteAccent.liftedForWhiteText(.init(red: 1, green: 0.8, blue: 0))
         #expect(PaletteAccent.contrast(PaletteAccent.white(0.7, over: yellow), with: yellow) < 4.5, "the old grey title's strength")
+        let oldBacking = PaletteAccent.white(0.05, over: yellow)
+        #expect(PaletteAccent.contrast(.init(red: 1, green: 1, blue: 1), with: oldBacking) < 4.5, "the old 5 % keycap backing")
     }
 
     /// The palette is in captures as the window under it is: other apps see it, and Sukusho's own follow "Include Sukusho
