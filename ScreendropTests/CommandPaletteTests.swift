@@ -530,6 +530,21 @@ struct CommandPaletteTests {
         #expect(runs == 2, "and again when asked again")
     }
 
+    /// The list stops at nine and a half rows and scrolls inside, as Hashbrown's, Spotlight's and Raycast's do; it ran to
+    /// nearly 1,000 pt (the owner, 2026-11-25). A short window takes it shorter, with the field and key line still in.
+    @Test func theListIsCappedAndAShortWindowShrinksIt() {
+        let all = Array(repeating: PaletteListHeight.row, count: PaletteCommand.catalog.count)
+        let tall = PaletteListHeight.list(rows: all, headings: PaletteGroup.allCases.count, panelMaxHeight: 1400)
+        #expect(tall == PaletteListHeight.tallest)
+        #expect(tall > 9 * PaletteListHeight.row + 12 && tall < 10 * PaletteListHeight.row + 12, "between 9 and 10 rows")
+        let palette = PaletteListHeight.field + 1 + tall + 1 + PaletteListHeight.keyLine
+        #expect(palette < 400, "the whole palette: \(palette)")
+        let short = PaletteListHeight.list(rows: all, headings: 9, panelMaxHeight: 300)
+        #expect(short == 300 - PaletteListHeight.field - PaletteListHeight.keyLine - 2, "the field and key line fit in 300 pt")
+        #expect(PaletteListHeight.list(rows: [30, 30, 46], headings: 1, panelMaxHeight: 1400) == CGFloat(12 + 106 + 24),
+                "a short list is its own height")
+    }
+
     // MARK: The palette's keys
 
     /// A Capture Fullscreen recorded as ⇧⌘P before the palette came keeps it; the palette has no keys until some are

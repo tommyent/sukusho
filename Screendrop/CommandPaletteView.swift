@@ -22,11 +22,11 @@ struct CommandPaletteView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @FocusState private var focused: Bool
 
-    static let rowHeight: CGFloat = 30
-    static let captureRowHeight: CGFloat = 46
-    static let headingHeight: CGFloat = 24
-    private static let fieldHeight: CGFloat = 48
-    private static let keyLineHeight: CGFloat = 30
+    static let rowHeight = PaletteListHeight.row
+    static let captureRowHeight = PaletteListHeight.captureRow
+    static let headingHeight = PaletteListHeight.heading
+    private static let fieldHeight = PaletteListHeight.field
+    private static let keyLineHeight = PaletteListHeight.keyLine
 
     private var ink: Color { theme.ink.primary.color }
     private var increasedContrast: Bool { contrast == .increased }
@@ -146,15 +146,15 @@ struct CommandPaletteView: View {
         row.subtitle.isEmpty && row.thumbnail == nil ? Self.rowHeight : Self.captureRowHeight
     }
 
+    /// Capped at nine and a half rows, and inside the window (`PaletteListHeight`).
     private func listHeight(_ rows: [PaletteRow], headings: Bool) -> CGFloat {
-        var height: CGFloat = 12
+        var count = 0
         var group: PaletteGroup?
-        for row in rows {
-            if headings, row.group != group { height += Self.headingHeight; group = row.group }
-            height += self.height(of: row)
+        for row in rows where headings && row.group != group {
+            count += 1
+            group = row.group
         }
-        let room = model.maxHeight - Self.fieldHeight - Self.keyLineHeight - 2
-        return min(max(height, Self.rowHeight + 12), room)
+        return PaletteListHeight.list(rows: rows.map(height(of:)), headings: count, panelMaxHeight: model.maxHeight)
     }
 
     private func heading(_ group: PaletteGroup) -> some View {

@@ -52,6 +52,26 @@ nonisolated struct PaletteRow: Identifiable, Sendable, Equatable {
     var isEnabled: Bool { reason == nil }
 }
 
+/// How tall the palette's list is. At most nine rows and half the tenth, as Hashbrown's, Spotlight's and Raycast's
+/// lists are, and it scrolls inside that; a short window takes it shorter still. Grown to its window's height, the
+/// palette stood nearly 1,000 pt tall on the owner's Air (2026-11-25: "exceptionally long").
+nonisolated enum PaletteListHeight {
+    static let row: CGFloat = 30
+    static let captureRow: CGFloat = 46
+    static let heading: CGFloat = 24
+    static let field: CGFloat = 48
+    static let keyLine: CGFloat = 30
+    /// The list's tallest: the half row shows there's more below.
+    static let tallest: CGFloat = 9.5 * row + 12
+
+    /// The list's height for rows of these heights under this many headings, in a palette at most `panelMaxHeight` tall.
+    static func list(rows: [CGFloat], headings: Int, panelMaxHeight: CGFloat) -> CGFloat {
+        let content = 12 + rows.reduce(0, +) + CGFloat(headings) * heading
+        let room = panelMaxHeight - field - keyLine - 2
+        return min(max(content, row + 12), tallest, room)
+    }
+}
+
 /// What the app says about a command now.
 nonisolated struct PaletteCommandState: Sendable, Equatable {
     /// Left out of the list: the command doesn't apply here at all (a capture's selection with none selected).
