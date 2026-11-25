@@ -12,6 +12,8 @@
 //
 
 import AppKit
+import Observation
+import Synchronization
 import SwiftUI
 
 nonisolated struct AppTheme: Sendable, Equatable, Identifiable {
@@ -242,9 +244,10 @@ nonisolated extension AppTheme {
         #endif
     }
 
-    /// The theme for an appearance as saved, readable from any thread: AppKit resolves dynamic colours off the main one.
+    /// The theme for an appearance as saved, or as Change Theme is trying it on, readable from any thread: AppKit
+    /// resolves dynamic colours off the main one.
     static func current(dark: Bool) -> AppTheme {
-        named(UserDefaults.standard.string(forKey: dark ? darkKey : lightKey), dark: dark)
+        named(ThemeTryOn.id(dark: dark) ?? UserDefaults.standard.string(forKey: dark ? darkKey : lightKey), dark: dark)
     }
 
     static func current(for appearance: NSAppearance) -> AppTheme {
@@ -329,8 +332,32 @@ nonisolated enum ThemeColor: Sendable, Equatable {
         #if THEME_TUNER
         _ = (tuning, glassTuning)   // so every card redraws as the tuner moves
         #endif
-        return scheme == .dark ? AppTheme.named(dark, dark: true) : AppTheme.named(light, dark: false)
+        _ = ThemeTryOn.changes.revision   // so every themed view redraws as Change Theme tries one on
+        let isDark = scheme == .dark
+        return AppTheme.named(ThemeTryOn.id(dark: isDark) ?? (isDark ? dark : light), dark: isDark)
     }
+}
+
+/// Change Theme's try-on (the command palette): a theme drawn in a slot's place until it's kept or put back. Only in
+/// memory, so putting it back leaves nothing on disk to undo. Readable from any thread, as `AppTheme.current(dark:)` is.
+nonisolated enum ThemeTryOn {
+    private static let tried = Mutex<[Bool: String]>([:])
+
+    /// The theme tried on for an appearance, if one is.
+    static func id(dark: Bool) -> String? { tried.withLock { $0[dark] } }
+
+    /// Tries a theme on for an appearance; nil puts the saved one back.
+    @MainActor static func show(_ id: String?, dark: Bool) {
+        let changed = tried.withLock { ids in
+            defer { ids[dark] = id }
+            return ids[dark] != id
+        }
+        if changed { changes.revision += 1 }
+    }
+
+    /// What themed views watch, so a try-on redraws them as a saved change does.
+    @MainActor static let changes = Changes()
+    @MainActor @Observable final class Changes { fileprivate(set) var revision = 0 }
 }
 
 /// The current theme's Glass treatment when App Windows use a picture and transparency is enabled.
