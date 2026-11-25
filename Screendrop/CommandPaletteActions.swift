@@ -843,8 +843,8 @@ final class AppCommandPaletteHost: CommandPaletteHost {
 
     func quickLook(_ row: PaletteRow) {
         guard let item = ScreenshotHistoryStore.shared.items.first(where: { $0.id.uuidString == row.choiceID }) else { return }
-        // As the preview stack's Quick Look of a capture.
-        CommandPalettePresenter.shared.whenClosed { QuickLookPreviewPresenter.show(url: item.url) }
+        // A preview of its own: the Library's selection doesn't replace it (Sol's second review).
+        CommandPalettePresenter.shared.whenClosed { QuickLookPreviewPresenter.show(standalone: item.url) }
     }
 
     func tryOn(_ row: PaletteRow?) {
