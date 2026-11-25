@@ -238,11 +238,9 @@ final class CaptureLibraryModel {
 
     func show(filter: CaptureLibraryFilter? = nil) {
         if let filter {
-            CloudLibraryModel.shared.isShown = false
-            LibrarySavedModel.shared.isShown = false
-            CommentsLibraryModel.shared.setShown(false)
-            LikesLibraryModel.shared.setShown(false)
-            self.filter = filter
+            // As a click on its sidebar row: off every other page, Clipboard and Snippets too, which stayed in front
+            // of the captures they were asked for (Sol, sd-458l).
+            CaptureLibrarySidebarSelection.show(.kind(filter))
             tagFilter = nil
             searchText = ""
         }
