@@ -53,19 +53,37 @@ extension View {
 @MainActor
 final class CommandPalettePresenter {
     static let shared = CommandPalettePresenter()
-    static let width: CGFloat = 600
+    static let width = CommandPalettePanel.width
 
     private var panel: CommandPalettePanel?
+    private var hosting: NSHostingView<CommandPaletteView>?
     private(set) var model: CommandPaletteModel?
     private var keyMonitor: Any?
-    /// The window it opened over, given the keyboard back as it closes.
+    /// The window it opened over, given the keyboard back as it closes from the keys.
     private weak var parent: NSWindow?
     private var contexts: [ObjectIdentifier: (window: WeakWindowBox, context: () -> PaletteWindowContext)] = [:]
     /// What a command does once the palette is gone: a capture mustn't catch it, and the window's own keys and
     /// responder chain need that window key again.
     private var afterClose: [() -> Void] = []
 
-    private init() {}
+    private init() {
+        let center = NotificationCenter.default
+        // A closing window takes its context and the palette over it along, without fronting it again (Sol's finding 8).
+        center.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { [weak self] note in
+            let closing = (note.object as AnyObject?).map(ObjectIdentifier.init)
+            MainActor.assumeIsolated { self?.windowWillClose(closing) }
+        }
+        center.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.close(refocus: false) }
+        }
+        // The panel stays under the toolbar and inside the screen as the window it's over resizes or changes screen.
+        for name in [NSWindow.didResizeNotification, NSWindow.didChangeScreenNotification] {
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                let moved = (note.object as AnyObject?).map(ObjectIdentifier.init)
+                MainActor.assumeIsolated { self?.parentMoved(moved) }
+            }
+        }
+    }
 
     var isVisible: Bool { panel?.isVisible == true }
 
@@ -73,6 +91,19 @@ final class CommandPalettePresenter {
         contexts = contexts.filter { $0.value.window.window != nil }
         guard let window else { return }
         contexts[ObjectIdentifier(window)] = (WeakWindowBox(window), context)
+    }
+
+    private func windowWillClose(_ id: ObjectIdentifier?) {
+        guard let id else { return }
+        contexts[id] = nil
+        if let parent, ObjectIdentifier(parent) == id { close(refocus: false) }
+    }
+
+    private func parentMoved(_ id: ObjectIdentifier?) {
+        guard let parent, let panel, let hosting, let model, let id, ObjectIdentifier(parent) == id else { return }
+        let frame = Self.frame(height: panel.frame.height, over: parent)
+        hosting.rootView = CommandPaletteView(model: model, maxHeight: frame.maxHeight) { [weak self] size in self?.fit(size) }
+        panel.setFrame(frame.rect, display: true)
     }
 
     /// ⇧⌘P (View › Command Palette…): closes it when it's open, else opens it over the Sukusho window in front. With no
@@ -84,7 +115,7 @@ final class CommandPalettePresenter {
     }
 
     func show(over window: NSWindow, start: PaletteStep = .commands) {
-        close()
+        close(refocus: false)
         let context = contexts[ObjectIdentifier(window)]?.context()
         let host = AppCommandPaletteHost(context: context, windowTitle: window.title.isEmpty ? nil : window.title)
         let model = CommandPaletteModel(host: host, start: start)
@@ -93,8 +124,8 @@ final class CommandPalettePresenter {
         parent = window
 
         let panel = CommandPalettePanel()
-        let maxHeight = Self.maxHeight(over: window)
-        let hosting = NSHostingView(rootView: CommandPaletteView(model: model, maxHeight: maxHeight) { [weak self] size in
+        let place = Self.frame(height: 1, over: window)
+        let hosting = NSHostingView(rootView: CommandPaletteView(model: model, maxHeight: place.maxHeight) { [weak self] size in
             self?.fit(size)
         })
         // Measured with its intrinsic size (with none, `fittingSize` is 0 × 0), then sized by `fit` as the list changes.
@@ -102,16 +133,16 @@ final class CommandPalettePresenter {
         let size = hosting.fittingSize
         hosting.sizingOptions = []
         panel.contentView = hosting
-        panel.onResign = { [weak self] in
-            // A click elsewhere closes it, as a menu would; a sheet or alert a command raised doesn't count.
-            guard let self, self.panel === panel, NSApp.modalWindow == nil else { return }
-            self.close()
+        panel.onResign = { [weak self, weak panel] in
+            // A click elsewhere closes it, as a menu would, and leaves the keyboard where the click put it: on another
+            // window, an alert, or another app (Sol's finding 8).
+            guard let self, let panel, self.panel === panel else { return }
+            self.close(refocus: false)
         }
-        PreviewWindowCaptureExclusion.shared.registerPrivate(window: panel)
         self.panel = panel
+        self.hosting = hosting
 
-        panel.setContentSize(NSSize(width: Self.width, height: max(1, size.height)))
-        panel.setFrameTopLeftPoint(Self.topLeft(width: Self.width, over: window))
+        panel.setFrame(Self.frame(height: max(1, size.height), over: window).rect, display: false)
         window.addChildWindow(panel, ordered: .above)
         panel.makeKeyAndOrderFront(nil)
         installKeyMonitor()
@@ -119,9 +150,12 @@ final class CommandPalettePresenter {
         DispatchQueue.main.async { [weak self] in self?.focusField() }
     }
 
-    func close() {
+    /// Closes it, once however often it's asked. `refocus` gives the window it opened over the keyboard back: after Esc,
+    /// ↩ or its keys, not after a click elsewhere or the window closing.
+    func close(refocus: Bool = true) {
         guard let panel else { return runAfterClose() }
         self.panel = nil
+        hosting = nil
         panel.onResign = nil
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil
@@ -133,7 +167,7 @@ final class CommandPalettePresenter {
         panel.parent?.removeChildWindow(panel)
         panel.orderOut(nil)
         panel.contentView = nil
-        if let parent, parent.isVisible, NSApp.isActive { parent.makeKeyAndOrderFront(nil) }
+        if refocus, let parent, parent.isVisible, NSApp.isActive, NSApp.modalWindow == nil { parent.makeKeyAndOrderFront(nil) }
         parent = nil
         runAfterClose()
     }
@@ -159,15 +193,21 @@ final class CommandPalettePresenter {
         panel.invalidateShadow()
     }
 
-    /// Under the window's toolbar, centered on it.
-    private static func topLeft(width: CGFloat, over window: NSWindow) -> NSPoint {
-        let contentTop = window.frame.minY + window.contentLayoutRect.maxY
-        return NSPoint(x: window.frame.midX - width / 2, y: contentTop - 8)
-    }
-
-    /// The list stays inside the window it opens over.
-    private static func maxHeight(over window: NSWindow) -> CGFloat {
-        max(220, window.contentLayoutRect.height - 24)
+    /// Under the window's toolbar, centered on it, kept inside the screen the window is on: a window partly off it, or
+    /// across two displays, would put the list out of sight (Sol's other notes). The list stays inside the window too.
+    static func frame(height: CGFloat, over window: NSWindow) -> (rect: NSRect, maxHeight: CGFloat) {
+        let margin: CGFloat = 8
+        var top = window.frame.minY + window.contentLayoutRect.maxY - margin
+        var x = window.frame.midX - width / 2
+        var room = window.contentLayoutRect.height - 24
+        if let visible = (window.screen ?? NSScreen.main)?.visibleFrame {
+            x = min(max(x, visible.minX + margin), visible.maxX - width - margin)
+            top = min(top, visible.maxY - margin)
+            room = min(room, top - visible.minY - margin)
+        }
+        let maxHeight = max(220, room)
+        let shown = min(height, maxHeight)
+        return (NSRect(x: x, y: top - shown, width: width, height: shown), maxHeight)
     }
 
     // MARK: Keys
@@ -185,15 +225,16 @@ final class CommandPalettePresenter {
     }
 
     /// The palette's keys reach the model before the field or the menus: ↑↓, ↩, →, Esc and ⌘C. Its own shortcut, as
-    /// Settings › Shortcuts holds it, closes it.
+    /// View › Command Palette… holds it, closes it.
     private func installKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, let panel, event.window === panel, let model else { return event }
             let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
             // Keys mid-composition (Japanese input and the like) are the input method's.
             if (panel.firstResponder as? NSTextView)?.hasMarkedText() == true { return event }
-            let pressed = HotkeyShortcut(modifiers: HotkeyShortcut.Modifiers(from: flags), keyCode: Int(event.keyCode))
-            if CaptureHotkeyPreferences.shortcut(for: .commandPalette) == pressed {
+            // The menu item's own keys, read as the menu reads them, by the character the layout types: on another
+            // layout, the key that opened it closes it (Sol's finding 4).
+            if let shortcut = MenuBarView.shortcut(for: .commandPalette), Self.event(event, matches: shortcut) {
                 close()
                 return nil
             }
@@ -204,39 +245,30 @@ final class CommandPalettePresenter {
             case (kVK_RightArrow, []): key = .right
             case (kVK_Return, []), (kVK_ANSI_KeypadEnter, []): key = .enter
             case (kVK_Escape, []): key = .escape
-            case (kVK_ANSI_C, [.command]): key = .copy
+            case (_, [.command]) where event.charactersIgnoringModifiers?.lowercased() == "c": key = .copy
             default: key = nil
             }
             guard let key else { return event }
             return model.press(key) ? nil : event
         }
     }
-}
 
-/// Borderless, a child of the window it opens over, and able to hold the keyboard for its field.
-final class CommandPalettePanel: NSPanel {
-    var onResign: (() -> Void)?
-
-    init() {
-        super.init(contentRect: NSRect(x: 0, y: 0, width: CommandPalettePresenter.width, height: 400),
-                   styleMask: [.borderless, .fullSizeContentView], backing: .buffered, defer: false)
-        hidesOnDeactivate = true
-        collectionBehavior = [.fullScreenAuxiliary, .transient, .ignoresCycle]
-        backgroundColor = .clear
-        isOpaque = false
-        // The window server's shadow, from the palette's own shape, as the ⌃⌘V popup has.
-        hasShadow = true
-        animationBehavior = .utilityWindow
-        isReleasedWhenClosed = false
-        setAccessibilityLabel("Command palette")
-    }
-
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { false }
-
-    override func resignKey() {
-        super.resignKey()
-        onResign?()
+    /// Whether a key press is a menu item's `KeyboardShortcut`, compared as AppKit compares a key equivalent.
+    static func event(_ event: NSEvent, matches shortcut: KeyboardShortcut) -> Bool {
+        let flags = event.modifierFlags
+        var modifiers: SwiftUI.EventModifiers = []
+        if flags.contains(.command) { modifiers.insert(.command) }
+        if flags.contains(.option) { modifiers.insert(.option) }
+        if flags.contains(.control) { modifiers.insert(.control) }
+        if flags.contains(.shift) { modifiers.insert(.shift) }
+        guard modifiers == shortcut.modifiers else { return false }
+        let special: [(KeyEquivalent, Int)] = [
+            (.return, kVK_Return), (.tab, kVK_Tab), (.space, kVK_Space), (.delete, kVK_Delete), (.deleteForward, kVK_ForwardDelete),
+            (.escape, kVK_Escape), (.leftArrow, kVK_LeftArrow), (.rightArrow, kVK_RightArrow), (.upArrow, kVK_UpArrow),
+            (.downArrow, kVK_DownArrow),
+        ]
+        if let code = special.first(where: { $0.0 == shortcut.key })?.1 { return Int(event.keyCode) == code }
+        return event.charactersIgnoringModifiers?.lowercased() == String(shortcut.key.character).lowercased()
     }
 }
 

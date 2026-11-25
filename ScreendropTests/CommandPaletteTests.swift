@@ -390,6 +390,26 @@ struct CommandPaletteTests {
         #expect(PaletteAccent.contrast(PaletteAccent.liftedForWhiteText(yellow), with: .init(red: 1, green: 1, blue: 1)) >= 4.5)
     }
 
+    /// The palette is in captures as the window under it is: other apps see it, and Sukusho's own follow "Include Sukusho
+    /// windows in captures". It was private, left out of every capture (m1's pass, 2026-11-25).
+    @Test func thePanelFollowsTheCaptureSetting() {
+        let key = ScreendropPreferences.includeAppWindowsInCapturesKey
+        let previous = UserDefaults.standard.object(forKey: key)
+        defer { UserDefaults.standard.set(previous, forKey: key) }
+        let exclusion = PreviewWindowCaptureExclusion.shared
+        // A fresh panel each time: on a window the window server already holds, `.readOnly` didn't read back after
+        // `.none` within the same turn (seen here, 2026-11-25), which the deferred windows of the tests above don't show.
+        for include in [true, false] {
+            UserDefaults.standard.set(include, forKey: key)
+            let panel = CommandPalettePanel()
+            #expect(panel.sharingType == .readOnly, "other apps and screen sharing see it; a private one they don't")
+            #expect(exclusion.hidesFromOwnCaptures(panel) == !include)
+            exclusion.beginOwnCapture()
+            #expect(panel.sharingType == (include ? .readOnly : .none), "Sukusho's own captures follow the setting")
+            exclusion.endOwnCapture()
+        }
+    }
+
     // MARK: The palette's keys
 
     /// A Capture Fullscreen recorded as ⇧⌘P before the palette came keeps it; the palette has no keys until some are
