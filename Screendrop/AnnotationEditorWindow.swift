@@ -269,16 +269,17 @@ private struct AnnotationEditorContent: View {
                     onPickWallpaper: pickCustomWallpaper
                 )
                 .disabled(model.isBlockingCommit)
+                // Glass: the hide button rides the inspector's leading edge (sd-h4t8); the toolbar's brings it back.
+                .glassInspectorCollapseOverlay(
+                    enabled: floatingChrome && !model.isCropping,
+                    metrics: glassMetrics,
+                    isDisabled: isBusy
+                ) {
+                    clearInspectorFocus()
+                    inspectorChoice.wrappedValue = false
+                }
                 .glassInspectorToolbar(enabled: floatingChrome)
             }
-            .glassInspectorToggleOverlay(
-                enabled: floatingChrome && isInspectorPresented && !model.isCropping,
-                isPresented: inspectorChoice,
-                metrics: glassMetrics,
-                isDisabled: isBusy,
-                hasKeyboardShortcut: true,
-                onToggle: clearInspectorFocus
-            )
             .environment(\.backgroundDestination, .editors)
             .glassWindowChrome(
                 hasSidebar: false,

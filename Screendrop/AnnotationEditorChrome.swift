@@ -275,6 +275,8 @@ extension View {
     func glassInspectorCollapseOverlay(
         enabled: Bool,
         metrics: GlassWindowButtonMetrics,
+        isDisabled: Bool = false,
+        hasKeyboardShortcut: Bool = true,
         action: @escaping () -> Void
     ) -> some View {
         overlay(alignment: .topLeading) {
@@ -285,7 +287,8 @@ extension View {
                     diameter: metrics.diameter,
                     action: action
                 )
-                .keyboardShortcut("i", modifiers: [.command, .option])
+                .disabled(isDisabled)
+                .keyboardShortcut(hasKeyboardShortcut ? KeyboardShortcut("i", modifiers: [.command, .option]) : nil)
                 .padding(.top, metrics.topInsideFloatingPane)
                 .padding(.leading, metrics.paneTrailingInset)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -294,15 +297,13 @@ extension View {
         }
     }
 
-    /// Glass: place the collapse-inspector glass circle with shadow inside the floating trailing inspector's top-right
-    /// corner (and keep it in the same spot when collapsed so it stays reachable).
+    /// Glass: a glass circle with shadow in the window's top-right corner, where the floating inspector's top-right
+    /// corner would be, to bring a hidden inspector back.
     func glassInspectorToggleOverlay(
         enabled: Bool,
         isPresented: Binding<Bool>,
         metrics: GlassWindowButtonMetrics,
-        isDisabled: Bool = false,
-        hasKeyboardShortcut: Bool = false,
-        onToggle: (() -> Void)? = nil
+        hasKeyboardShortcut: Bool = false
     ) -> some View {
         overlay(alignment: .topTrailing) {
             if enabled {
@@ -311,10 +312,8 @@ extension View {
                     symbol: "sidebar.right",
                     diameter: metrics.diameter
                 ) {
-                    onToggle?()
                     isPresented.wrappedValue.toggle()
                 }
-                .disabled(isDisabled)
                 Group {
                     if hasKeyboardShortcut {
                         button.keyboardShortcut("i", modifiers: [.command, .option])

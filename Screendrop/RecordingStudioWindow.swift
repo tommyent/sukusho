@@ -212,14 +212,17 @@ private struct RecordingStudioContent: View {
         .inspector(isPresented: $isInspectorPresented) {
             StudioInspector(model: model)
                 .disabled(model.isReadOnlyNewerFormat)
+                // Glass: the hide button rides the inspector's leading edge (sd-h4t8); the toolbar's brings it back.
+                .glassInspectorCollapseOverlay(
+                    enabled: floatingChrome && !model.isSelectingRedaction && !model.isCroppingVideo,
+                    metrics: glassMetrics,
+                    hasKeyboardShortcut: false
+                ) {
+                    isInspectorPresented = false
+                }
                 .glassInspectorToolbar(enabled: floatingChrome)
         }
         .frame(minWidth: Self.minimumWidth)
-        .glassInspectorToggleOverlay(
-            enabled: floatingChrome && isInspectorPresented && !model.isSelectingRedaction && !model.isCroppingVideo,
-            isPresented: $isInspectorPresented,
-            metrics: glassMetrics
-        )
         .environment(\.backgroundDestination, .editors)
         .glassWindowChrome(
             hasSidebar: false,
