@@ -2,6 +2,63 @@ import AppKit
 import Foundation
 
 extension OptimizerBenchmark {
+    static func checkConvertRaces(_ input: URL) async throws {
+        let first = ImageOptimizationTarget.webP(quality: nil), other = ImageOptimizationTarget.webP(quality: 80)
+        let missing = FileManager.default.homeDirectoryForCurrentUser.appending(path: "missing.png")
+        for mode in ["cancel", "choice-before-task", "late-success", "late-failure", "dismiss", "same-choice-again"] {
+            let preview = ImageConversion.Preview()
+            var selected = first
+            let part = try await ImageOptimizer.shared.optimize(input, to: first)
+            let late = try await ImageOptimizer.shared.optimize(mode == "late-failure" ? missing : input, to: first)
+            precondition(part.outcome == .converted)
+            if mode == "late-failure" {
+                guard case .failed = late.outcome else { fatalError("Expected an encoder failure") }
+            } else { precondition(late.outcome == .converted) }
+            let (started, signalStart) = AsyncStream<Void>.makeStream()
+            let (release, signalRelease) = AsyncStream<Void>.makeStream()
+            var calls = 0
+            let old = Task {
+                await preview.convert([input, input, input], to: first, effort: .fast, isSelected: { selected == first }) { _, target, effort in
+                    precondition(target == first && effort == .fast)
+                    calls += 1
+                    if calls == 1 { return part }
+                    precondition(calls == 2)
+                    signalStart.yield(); signalStart.finish()
+                    // An encoder that has already passed its cancellation check can still return a file.
+                    let gate = Task { for await _ in release { break } }
+                    await gate.value
+                    return late
+                }
+            }
+            for await _ in started { break }
+            var newer: ImageOptimizationResult?
+            switch mode {
+            case "cancel": old.cancel()
+            case "choice-before-task": selected = other
+            case "dismiss": preview.discard()
+            default:
+                selected = mode == "same-choice-again" ? first : other
+                let requested = selected
+                await preview.convert([input], to: requested, effort: .balanced, isSelected: { requested == selected })
+                newer = preview.results.first
+                precondition(newer?.outcome == .converted && preview.finishedTarget == requested)
+            }
+            signalRelease.yield(); signalRelease.finish()
+            await old.value
+            precondition(calls == 2 && preview.failure == nil)
+            precondition(FileIdentity(part.url) == nil && FileIdentity(late.url) == nil)
+            if let newer {
+                precondition(preview.results.count == 1 && preview.results[0].url == newer.url
+                             && FileIdentity(newer.url) == newer.output && preview.finishedTarget == selected)
+            } else {
+                precondition(preview.results.isEmpty && preview.finishedTarget == nil)
+            }
+            preview.discard()
+            if let newer { precondition(FileIdentity(newer.url) == nil) }
+            print("convert-race", mode, "passed")
+        }
+    }
+
     static func checkTrashRace(_ input: URL) async throws {
         let store = ScreenshotHistoryStore.shared
         let file = try store.prepareUniqueHistoryURL()
