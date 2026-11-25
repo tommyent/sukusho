@@ -290,8 +290,9 @@ struct CaptureLibraryView: View {
             // Keep AppKit's full-height sidebar and window-button placement with the native toolbar empty.
             .toolbar { ToolbarSpacer(.flexible) }
             .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+            // Only to bring the inspector back: while it shows, its own button sits on its leading edge.
             .glassInspectorToggleOverlay(
-                enabled: true,
+                enabled: !inspectorVisible,
                 isPresented: inspectorChoice,
                 metrics: glassMetrics,
                 hasKeyboardShortcut: true
@@ -558,6 +559,10 @@ struct CaptureLibraryView: View {
         // The inspector column paints its own grey, under the
         // toolbar too, so its content carries the sidebar's.
         .modifier(LibrarySidebarSurface())
+        // Glass: the hide button rides the inspector's leading edge, as the sidebar's rides its trailing one.
+        .glassInspectorCollapseOverlay(enabled: floatingChrome, metrics: glassMetrics) {
+            inspectorChoice.wrappedValue = false
+        }
         .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
     }
 

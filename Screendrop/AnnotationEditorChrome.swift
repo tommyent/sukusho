@@ -270,6 +270,30 @@ extension View {
         }
     }
 
+    /// Glass: the sidebar's button mirrored into a floating inspector's top-leading corner, so it moves with the
+    /// inspector's edge (sd-h4t8). ⌥⌘I toggles it, as the corner button that shows a hidden inspector does.
+    func glassInspectorCollapseOverlay(
+        enabled: Bool,
+        metrics: GlassWindowButtonMetrics,
+        action: @escaping () -> Void
+    ) -> some View {
+        overlay(alignment: .topLeading) {
+            if enabled {
+                GlassPaneToggleButton(
+                    title: "Hide Inspector",
+                    symbol: "sidebar.right",
+                    diameter: metrics.diameter,
+                    action: action
+                )
+                .keyboardShortcut("i", modifiers: [.command, .option])
+                .padding(.top, metrics.topInsideFloatingPane)
+                .padding(.leading, metrics.paneTrailingInset)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .ignoresSafeArea(.container, edges: .top)
+            }
+        }
+    }
+
     /// Glass: place the collapse-inspector glass circle with shadow inside the floating trailing inspector's top-right
     /// corner (and keep it in the same spot when collapsed so it stays reachable).
     func glassInspectorToggleOverlay(
