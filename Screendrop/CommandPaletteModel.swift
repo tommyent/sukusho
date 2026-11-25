@@ -78,6 +78,8 @@ nonisolated enum PaletteKey: Sendable, Equatable {
     case up, down, right, enter, escape
     /// ⌘C on a capture in Recent Captures.
     case copy
+    /// ⌘Y on a capture in Recent Captures, as in Finder: Space types into the field.
+    case quickLook
 }
 
 /// The app behind the palette: one per window it opened over.
@@ -97,6 +99,8 @@ nonisolated enum PaletteKey: Sendable, Equatable {
     func choose(_ row: PaletteRow, in step: PaletteStep) -> PaletteOutcome
     /// ⌘C on a row of Recent Captures or Clipboard History.
     func copy(_ row: PaletteRow, in step: PaletteStep)
+    /// ⌘Y on a capture in Recent Captures: Quick Look, once the palette is gone.
+    func quickLook(_ row: PaletteRow)
     /// Change Theme's try-on; nil puts the saved theme back.
     func tryOn(_ row: PaletteRow?)
     func searchCaptures(for text: String)
@@ -157,6 +161,10 @@ final class CommandPaletteModel {
             // Not on Show All Captures…: ⌘C goes on to the field (Sol's other notes).
             guard step == .recentCaptures || step == .clipboardHistory, let row = selectedRow, row.isCopyable else { return false }
             host.copy(row, in: step)
+            close()
+        case .quickLook:
+            guard step == .recentCaptures, let row = selectedRow, row.isCopyable else { return false }
+            host.quickLook(row)
             close()
         }
         return true
@@ -265,7 +273,7 @@ final class CommandPaletteModel {
         case .changeTheme:
             let saved = host.rows(for: .changeTheme, query: "").first(where: \.ticked)?.title ?? "the theme"
             return [(["↩"], "keep it"), (["esc"], "put \(saved) back"), (["↑", "↓"], "try one")]
-        case .recentCaptures: return [(["↩"], "open"), (["⌘", "C"], "copy"), (["esc"], "back")]
+        case .recentCaptures: return [(["↩"], "open"), (["⌘", "Y"], "Quick Look"), (["⌘", "C"], "copy"), (["esc"], "back")]
         // ↩ copies the clip, as ⌘C does, to paste in any app (the owner, 2026-11-25).
         case .clipboardHistory: return [(["↩"], "copy"), (["esc"], "back"), (["↑", "↓"], "move")]
         case .addTag: return [(["↩"], "tick or untick"), (["esc"], "back")]

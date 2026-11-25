@@ -21,6 +21,7 @@ struct CommandPaletteTests {
         private(set) var ran: [String] = []
         private(set) var chosen: [(step: PaletteStep, id: String)] = []
         private(set) var copied: [String] = []
+        private(set) var quickLooked: [String] = []
         private(set) var triedOn: [String?] = []
         private(set) var searched: [String] = []
 
@@ -76,6 +77,7 @@ struct CommandPaletteTests {
         }
 
         func copy(_ row: PaletteRow, in step: PaletteStep) { copied.append(row.id) }
+        func quickLook(_ row: PaletteRow) { quickLooked.append(row.id) }
         func tryOn(_ row: PaletteRow?) { triedOn.append(row?.title) }
         func searchCaptures(for text: String) { searched.append(text) }
     }
@@ -340,6 +342,31 @@ struct CommandPaletteTests {
         #expect(model.selectedRow?.title == "Show All Captures…")
         #expect(!model.press(.copy), "the field gets ⌘C")
         #expect(host.copied.isEmpty)
+    }
+
+    /// ⌘Y Quick Looks a capture and closes, as in Finder: Space types into the field. Not on Show All Captures….
+    @Test func quickLookIsCommandY() {
+        let (model, host) = palette(.library)
+        var closed = 0
+        model.onClose = { closed += 1 }
+        type("recent captures", into: model)
+        model.press(.right)
+        #expect(model.hints.contains { $0.keys == ["⌘", "Y"] && $0.label == "Quick Look" }, "the key line shows it")
+        model.press(.down)
+        #expect(model.press(.quickLook))
+        #expect(host.quickLooked == ["roads"])
+        #expect(closed == 1)
+        let (again, other) = palette(.library)
+        type("recent captures", into: again)
+        again.press(.right)
+        for _ in 0 ..< 2 { again.press(.down) }
+        #expect(!again.press(.quickLook), "Show All Captures… has nothing to look at")
+        #expect(other.quickLooked.isEmpty)
+        let (step, none) = palette(.library)
+        type("clipboard history", into: step)
+        step.press(.right)
+        #expect(!step.press(.quickLook), "only Recent Captures")
+        #expect(none.quickLooked.isEmpty)
     }
 
     // MARK: Studio's inspector, timeline and toolbar, and the editor's Upload

@@ -257,6 +257,7 @@ final class CommandPalettePresenter {
             case (kVK_Return, []), (kVK_ANSI_KeypadEnter, []): key = .enter
             case (kVK_Escape, []): key = .escape
             case (_, [.command]) where event.charactersIgnoringModifiers?.lowercased() == "c": key = .copy
+            case (_, [.command]) where event.charactersIgnoringModifiers?.lowercased() == "y": key = .quickLook
             default: key = nil
             }
             guard let key else { return event }

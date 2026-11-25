@@ -811,8 +811,16 @@ final class AppCommandPaletteHost: CommandPaletteHost {
         }
     }
 
+    func quickLook(_ row: PaletteRow) {
+        guard let item = ScreenshotHistoryStore.shared.items.first(where: { $0.id.uuidString == row.choiceID }) else { return }
+        // As the preview stack's Quick Look of a capture.
+        CommandPalettePresenter.shared.whenClosed { QuickLookPreviewPresenter.show(url: item.url) }
+    }
+
     func tryOn(_ row: PaletteRow?) {
-        ThemeTryOn.show(row?.choiceID, dark: isDark)
+        let dark = themeIsDark
+        ThemeTryOn.show(row?.choiceID, dark: dark)
+        themeSlotIsDark = row == nil ? nil : dark
     }
 
     func searchCaptures(for text: String) {

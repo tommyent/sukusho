@@ -98,6 +98,7 @@ final class SampleHost: CommandPaletteHost {
     func run(_ command: PaletteCommand) -> PaletteOutcome { .close }
     func choose(_ row: PaletteRow, in step: PaletteStep) -> PaletteOutcome { .close }
     func copy(_ row: PaletteRow, in step: PaletteStep) {}
+    func quickLook(_ row: PaletteRow) {}
     func tryOn(_ row: PaletteRow?) {}
     func searchCaptures(for text: String) {}
 }
