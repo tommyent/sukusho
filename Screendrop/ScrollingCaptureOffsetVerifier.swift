@@ -97,11 +97,25 @@ nonisolated enum ScrollingCaptureOffsetVerifier {
             func saw(_ k: Int) -> Int {
                 votes.filter { Double(abs($0 - k)) <= ScrollingCaptureOffsetEstimator.consensusSpread }.count
             }
+            // Scoring, the repeat check and the unique-row census hash many of the very same rows.
+            // Keep only the new frame's current strip; a narrower check starts its own hashes.
+            var hashRange = 0..<usable
+            var newRowHashes = [Int?](repeating: nil, count: height)
             func rowHash(_ bytes: UnsafeRawBufferPointer, _ y: Int, over range: Range<Int>) -> Int {
+                let isNew = bytes.baseAddress == now.baseAddress
+                if isNew {
+                    if hashRange != range {
+                        hashRange = range
+                        newRowHashes = [Int?](repeating: nil, count: height)
+                    }
+                    if let hash = newRowHashes[y] { return hash }
+                }
                 var hasher = Hasher()
                 hasher.combine(bytes: UnsafeRawBufferPointer(start: bytes.baseAddress! + (y * width + range.lowerBound) * 4,
                                                              count: range.count * 4))
-                return hasher.finalize()
+                let hash = hasher.finalize()
+                if isNew { newRowHashes[y] = hash }
+                return hash
             }
             /// The rows of the new frame each offset that passed matched whole, one per distinct row over the columns it
             /// passed over.
