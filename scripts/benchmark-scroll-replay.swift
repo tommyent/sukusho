@@ -8,6 +8,40 @@ import ImageIO
     typealias Stitcher = ScrollingCaptureFrameStitcher
     static let space = CGColorSpace(name: CGColorSpace.sRGB)!
 
+    struct Record: Decodable {
+        let index: Int
+        let action: String
+    }
+
+    static func inputs(files: [URL], manifest: String?) throws -> [(index: Int, file: URL?, reset: Bool)] {
+        var byIndex: [Int: URL] = [:]
+        for file in files where file.pathExtension == "png" {
+            guard let index = Int(file.deletingPathExtension().lastPathComponent) else { continue }
+            guard byIndex.updateValue(file, forKey: index) == nil else { throw CocoaError(.fileReadCorruptFile) }
+        }
+        guard let manifest else { return byIndex.keys.sorted().map { ($0, byIndex[$0], false) } }
+        let decoder = JSONDecoder()
+        let records = try manifest.split(separator: "\n").map { try decoder.decode(Record.self, from: Data($0.utf8)) }
+        return try records.sorted { $0.index < $1.index }.map { record in
+            let file = byIndex[record.index]
+            guard file != nil || record.action == "skipped" else { throw CocoaError(.fileReadNoSuchFile) }
+            return (record.index, file, record.action == "first")
+        }
+    }
+
+    static func checkInputs() throws {
+        let files = ["10.png", "0.png", "2.png"].map { URL(fileURLWithPath: $0) }
+        let numeric = try inputs(files: files, manifest: nil)
+        precondition(numeric.map(\.index) == [0, 2, 10] && numeric.map(\.file) == [files[1], files[2], files[0]])
+        let gap = try inputs(files: files, manifest: """
+            {"index":10,"action":"first"}
+            {"index":0,"action":"first"}
+            {"index":3,"action":"skipped"}
+            {"index":2,"action":"skipped"}
+            """)
+        precondition(gap.map(\.index) == [0, 2, 3, 10] && gap[1].file == files[2] && gap[2].file == nil && gap[3].reset)
+    }
+
     static func load(_ url: URL, space: CGColorSpace? = nil) -> (pixels: [UInt8], w: Int, h: Int, space: CGColorSpace) {
         autoreleasepool {
             let src = CGImageSourceCreateWithURL(url as CFURL, nil)!
@@ -27,7 +61,7 @@ import ImageIO
             print("ID \(name) \(index) ref=\(reference) bands=\(c?.bands ?? []) candidate=\(String(describing: c?.offset)) consensus=\(c?.bandsAgree ?? false) alternatives=\(c?.alternatives ?? []) placement=\(p) height=\(await stitcher.stitchedHeight) bytes=\(sha)")
         } else {
             #if SCROLL_STAGE_CLOCK
-            let vision = await stitcher.visionNS
+            let vision = next.isEmpty ? 0 : await stitcher.visionNS
             print("TIME \(name) \(index) \(vision) \(total - vision) \(total)")
             #else
             print("TOTAL \(name) \(index) \(total)")
@@ -59,6 +93,7 @@ import ImageIO
             exit(2)
         }
         let identity = mode == "identity"
+        try checkInputs()
         func pair(_ name: String, _ a: [UInt8], _ b: [UInt8], _ w: Int, _ h: Int, _ offset: Int) async {
             for i in 0..<(identity ? 1 : 12) {
                 let s = Stitcher(firstFrame: a, width: w, height: h, ignoredTrailingColumns: 0)!
@@ -84,33 +119,26 @@ import ImageIO
         for (n, path) in CommandLine.arguments.dropFirst(2).enumerated() {
             let dir = URL(fileURLWithPath: path)
             let files = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
-                .filter { $0.pathExtension == "png" && Int($0.deletingPathExtension().lastPathComponent) != nil }
-                .sorted { $0.lastPathComponent < $1.lastPathComponent }
-            precondition(!files.isEmpty)
             let dump = dir.appendingPathComponent("frames.jsonl")
-            let resets: Set<Int>
-            if FileManager.default.fileExists(atPath: dump.path) {
-                let records = try String(contentsOf: dump, encoding: .utf8).split(separator: "\n").map {
-                    try JSONSerialization.jsonObject(with: Data($0.utf8)) as! [String: Any]
-                }
-                precondition(records.count == files.count)
-                resets = Set(records.filter { $0["action"] as? String == "first" }.map { $0["index"] as! Int })
-            } else {
-                resets = [0]
-            }
+            let manifest = FileManager.default.fileExists(atPath: dump.path) ? try String(contentsOf: dump, encoding: .utf8) : nil
+            let frames = try inputs(files: files, manifest: manifest)
+            guard let first = frames.first, let initial = first.file else { throw CocoaError(.fileReadCorruptFile) }
             let config = [dir.appendingPathComponent("page.json"), dir.appendingPathComponent("truth.json")]
                 .first { FileManager.default.fileExists(atPath: $0.path) }!
             let metadata = try JSONSerialization.jsonObject(with: Data(contentsOf: config)) as! [String: Any]
             let trailing = metadata["ignoredTrailingColumns"] as! Int
-            let base = load(files[0])
+            let base = load(initial)
             var s = Stitcher(firstFrame: base.pixels, width: base.w, height: base.h, ignoredTrailingColumns: trailing)!
-            var reference = 0
-            for (index, file) in files.enumerated().dropFirst() {
-                let next = load(file, space: base.space)
-                precondition(next.w == base.w && next.h == base.h)
-                let p = await add("replay\(n)", index: index, reference: reference, next: next.pixels, stitcher: s, identity: identity)
-                if resets.contains(index) {
-                    s = Stitcher(firstFrame: next.pixels, width: base.w, height: base.h, ignoredTrailingColumns: trailing)!
+            var reference = first.index
+            for (index, file, reset) in frames.dropFirst() {
+                let pixels: [UInt8] = file.map { url in
+                    let next = load(url, space: base.space)
+                    precondition(next.w == base.w && next.h == base.h)
+                    return next.pixels
+                } ?? [] // A missing crop still breaks a run of upward frames.
+                let p = await add("replay\(n)", index: index, reference: reference, next: pixels, stitcher: s, identity: identity)
+                if reset {
+                    s = Stitcher(firstFrame: pixels, width: base.w, height: base.h, ignoredTrailingColumns: trailing)!
                     reference = index
                 } else if p.isReference { reference = index }
             }
