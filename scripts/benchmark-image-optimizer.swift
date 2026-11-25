@@ -25,6 +25,7 @@ import ImageIO
         let args = Array(CommandLine.arguments.dropFirst())
         let input = URL(fileURLWithPath: args[1])
         let optimizer = ImageOptimizer.shared
+        if args[0] == "copy-races" { try await checkCopyRaces(input); return }
         if args[0] == "sheet" {
             var timing = ImageConversion.PreviewTiming()
             let start = clock.now
@@ -40,7 +41,7 @@ import ImageIO
         if ["marked", "marked-tiff", "check-marked"].contains(args[0]) {
             let file = FileManager.default.homeDirectoryForCurrentUser.appending(path: "copied.png")
             try FileManager.default.copyItem(at: input, to: file)
-            OptimizedMark.set(FileIdentity(file)!.byteCount * 2, on: file)
+            OptimizedMark.set(FileIdentity(file)!.byteCount * 2, on: file, effort: .balanced)
             let board = NSPasteboard.withUniqueName()
             defer { board.releaseGlobally() }
             let copier = OptimizedImageCopy()
@@ -52,11 +53,12 @@ import ImageIO
                 board.clearContents()
                 let start = clock.now
                 var madeCandidate = false
+                let candidate = CaptureOptimizer.firstCopy(file)
                 let (action, swap) = try await copier.copyNow(to: board, first: {
                     let x = try await item(file)
                     return .init(item: x, key: await OptimizedImageCopy.key(of: x))
                 }, smaller: {
-                    guard let smaller = await CaptureOptimizer.smallerForFirstCopy(file) else { return nil }
+                    guard let smaller = await candidate(nil) else { return nil }
                     madeCandidate = true
                     precondition(smaller.result == nil)
                     return .init(item: try! await item(smaller.file), source: smaller.source, output: smaller.output)
@@ -116,13 +118,13 @@ import ImageIO
             precondition(ready)
             print("background", ms(start), FileIdentity(url)!.byteCount, FileIdentity(url)!.digest)
             let copied = clock.now
-            let candidate = await CaptureOptimizer.smallerForFirstCopy(url)
+            let candidate = await CaptureOptimizer.firstCopy(url)(nil)
             precondition(candidate?.source == nil && candidate?.result == nil)
             print("marked-copy-candidate", ms(copied), candidate?.saving ?? "none")
         case "early", "during":
             if args[0] == "during" { try await Task.sleep(for: .milliseconds(2100)) }
             let copied = clock.now
-            let candidate = await CaptureOptimizer.smallerForFirstCopy(url)
+            let candidate = await CaptureOptimizer.firstCopy(url)(nil)
             precondition(candidate?.output == FileIdentity(url)?.digest && candidate?.result == nil && OptimizedMark.isCurrent(url))
             print("joined-copy", ms(copied), ms(start), candidate!.saving)
         case "idle", "close":

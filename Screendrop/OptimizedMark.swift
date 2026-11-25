@@ -18,13 +18,14 @@ nonisolated enum OptimizedMark {
         /// The modification date's bits, so it compares exactly.
         let modified: UInt64
         let digest: String
+        let effort: ImageOptimizationEffort?
     }
 
     /// Call once the optimized file is in place. `originalBytes` equal to the file's size records that the
     /// optimizer found nothing smaller, so it isn't asked again.
-    static func set(_ originalBytes: Int64, on url: URL) {
+    static func set(_ originalBytes: Int64, on url: URL, effort: ImageOptimizationEffort) {
         guard let state = state(of: url), let digest = digest(of: url) else { return }
-        let text = "\(originalBytes) \(state.size) \(state.modified) \(digest)"
+        let text = "\(originalBytes) \(state.size) \(state.modified) \(digest) \(effort.rawValue)"
         _ = text.withCString { setxattr(url.path, name, $0, strlen($0), 0, 0) }
     }
 
@@ -44,8 +45,9 @@ nonisolated enum OptimizedMark {
 
     /// Whether the file is exactly what the optimizer left, so there is nothing to do again. Reads the whole
     /// file: a rewrite of the same length, even with its date put back, is not current.
-    static func isCurrent(_ url: URL) -> Bool {
-        guard let note = note(of: url), note.size == state(of: url)?.size else { return false }
+    static func isCurrent(_ url: URL, effort: ImageOptimizationEffort? = nil) -> Bool {
+        guard let note = note(of: url), effort == nil || note.effort == effort,
+              note.size == state(of: url)?.size else { return false }
         return note.digest == digest(of: url)
     }
 
@@ -73,10 +75,11 @@ nonisolated enum OptimizedMark {
         var buffer = [CChar](repeating: 0, count: 256)
         guard getxattr(url.path, name, &buffer, buffer.count - 1, 0, 0) > 0 else { return nil }
         let parts = String(cString: buffer).split(separator: " ")
-        guard parts.count == 4, let original = Int64(parts[0]), let size = Int64(parts[1]), let modified = UInt64(parts[2]) else {
+        guard (4...5).contains(parts.count), let original = Int64(parts[0]), let size = Int64(parts[1]), let modified = UInt64(parts[2]) else {
             return nil
         }
-        return Note(originalBytes: original, size: size, modified: modified, digest: String(parts[3]))
+        return Note(originalBytes: original, size: size, modified: modified, digest: String(parts[3]),
+                    effort: parts.count == 5 ? ImageOptimizationEffort(rawValue: String(parts[4])) : nil)
     }
 
     /// Asked of the file system each time: a URL keeps the sizes and dates it has read.

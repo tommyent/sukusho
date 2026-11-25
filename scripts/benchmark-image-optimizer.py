@@ -40,7 +40,8 @@ if action == "build":
                     "-swift-version", "5", "-target", f"{platform.machine()}-apple-macos26.0", "-default-isolation", "MainActor",
                     "-enable-bare-slash-regex", *options, "-I", products, "-F", sparkle, "-framework", "Sparkle",
                     "-Xlinker", "-rpath", "-Xlinker", sparkle, products / "DockProgress.o", *sources,
-                    root / "scripts/benchmark-image-optimizer.swift", "-o", binary], check=True)
+                    root / "scripts/benchmark-image-optimizer.swift", root / "scripts/check-image-optimizer-races.swift",
+                    "-o", binary], check=True)
 elif action == "run":
     def clear():
         r = subprocess.run(["defaults", "delete", binary.name], capture_output=True, text=True)

@@ -44,13 +44,13 @@ enum CaptureOptimizer {
             } catch {
                 return .failed(error.localizedDescription)
             }
-            OptimizedMark.set(result.originalByteCount, on: url)
+            OptimizedMark.set(result.originalByteCount, on: url, effort: effort)
             return .optimized(result)
         case .alreadyOptimized:
             // Nothing smaller came out: remembered, so the next pass doesn't run the encoder again. Not for a
             // file saved meanwhile, which the encoder never saw.
             guard unchanged() else { return .failed("The capture changed while it was being optimized.") }
-            OptimizedMark.set(result.originalByteCount, on: url)
+            OptimizedMark.set(result.originalByteCount, on: url, effort: effort)
             return .alreadyOptimized
         case .converted, .timedOut:
             return .alreadyOptimized
@@ -97,43 +97,53 @@ enum CaptureOptimizer {
     }
 
     /// New captures waiting for their one background pass.
-    private static let newCaptures = ScheduledOnce<URL, Outcome>()
+    private static let newCaptures = ScheduledOnce<URL, (Outcome, ImageOptimizationEffort)>()
 
     /// Settings › Optimize › Optimize new captures: quietly, two seconds after a screenshot reaches the
-    /// Library, unless the copy that follows the capture asks for it sooner (`smallerForFirstCopy`).
+    /// Library, unless the copy that follows the capture asks for it sooner (`firstCopy`).
     static func optimizeNewCapture(_ url: URL) {
         guard OptimizePreferences.newCaptures else { return }
         newCaptures.schedule(url.standardizedFileURL, after: .seconds(2)) {
-            let outcome = await optimizeInPlace(url, effort: OptimizePreferences.quietEffort)
+            let effort = OptimizePreferences.quietEffort
+            let outcome = await optimizeInPlace(url, effort: effort)
             if case .optimized = outcome { CaptureLibraryModel.shared.refresh() }
-            return outcome
+            return (outcome, effort)
         }
     }
 
-    /// For an image copy: the smaller file to put on the clipboard in the original's place, with the saving to
-    /// show ("↓32%"), the digest of the contents it was made from (`source`, which the swap checks against the
-    /// bytes it copied) and the digest of what the encoder made (`output`, which the swap checks the bytes it reads
-    /// from `file` against), or nil when there is none. A new capture due its background pass gets that pass now,
-    /// so it is optimized once and the smaller file is the capture itself, which an edit can still overwrite before
-    /// the swap reads it: `output` is what tells (Astra, round 3). Any other image is optimized to a file of its
-    /// own: `result`, for the caller to discard. A completed pass has no swap: the original write already
-    /// copied the smaller bytes, or cannot be proven to be the input of that pass.
-    static func smallerForFirstCopy(_ url: URL) async
-        -> (file: URL, saving: String, result: ImageOptimizationResult?, source: String?, output: String?)? {
-        guard ["png", "jpg", "jpeg"].contains(url.pathExtension.lowercased()) else { return nil }
-        if let outcome = await newCaptures.now(url.standardizedFileURL) {
-            guard case .optimized(let result) = outcome else { return nil }
-            return (url, ImageOptimizationResult.saving(from: result.originalByteCount, to: result.resultByteCount), nil,
-                    result.source?.digest, result.output?.digest)
+    typealias CopyCandidate = (file: URL, saving: String, result: ImageOptimizationResult?, source: String?, output: String?)
+
+    /// Take this ticket before the first clipboard read. The pass can finish during that read; the ticket,
+    /// unlike the file mark, can prove exactly which input produced its installed output.
+    static func firstCopy(_ url: URL) -> (Data?) async -> CopyCandidate? {
+        let pass = newCaptures.request(url.standardizedFileURL)
+        let effort = OptimizePreferences.quietEffort
+        return { copied in
+            guard ["png", "jpg", "jpeg"].contains(url.pathExtension.lowercased()) else { return nil }
+            var installed: CopyCandidate?
+            if let (outcome, used) = await pass?(), case .optimized(let result) = outcome {
+                installed = (url, ImageOptimizationResult.saving(from: result.originalByteCount, to: result.resultByteCount),
+                             nil, result.source?.digest, result.output?.digest)
+                if used == effort { return installed }
+            }
+            if OptimizedMark.isCurrent(url, effort: effort) { return installed }
+            // An open editor can refuse in-place optimization. A clipboard-only file is still safe.
+            guard let result = try? await ImageOptimizer.shared.optimize(url, effort: effort) else { return installed }
+            guard result.outcome == .optimized else {
+                result.discard()
+                return installed
+            }
+            var source = result.source?.digest
+            var before = result.originalByteCount
+            // When a lower-effort pass replaced the bytes we copied, join the two verified digest pairs.
+            if let installed, let intermediate = installed.output, intermediate == source, let copied,
+               await Task.detached(operation: { ClipboardPasteboardReader.digest(copied) }).value == installed.source {
+                source = installed.source
+                before = Int64(copied.count)
+            }
+            return (result.url, ImageOptimizationResult.saving(from: before, to: result.resultByteCount), result,
+                    source, result.output?.digest)
         }
-        if OptimizedMark.isCurrent(url) { return nil }
-        guard let result = try? await ImageOptimizer.shared.optimize(url, effort: OptimizePreferences.quietEffort) else { return nil }
-        guard result.outcome == .optimized else {
-            result.discard()
-            return nil
-        }
-        return (result.url, ImageOptimizationResult.saving(from: result.originalByteCount, to: result.resultByteCount), result,
-                result.source?.digest, result.output?.digest)
     }
 }
 

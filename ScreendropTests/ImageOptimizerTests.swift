@@ -1952,14 +1952,15 @@ private func isRunning(_ text: String) -> Bool {
             return 8
         }
         #expect(counter.runs == 0)
-        let asked = await scheduled.now("capture")
+        let request = scheduled.request("capture")
+        let asked = await request?()
         #expect(asked == 7)
         #expect(clock.now - start < .seconds(5))
         #expect(counter.runs == 1)
 
         // It has run: there is nothing left to ask for, and nothing runs again.
-        let again = await scheduled.now("capture")
-        let other = await scheduled.now("another")
+        let again = await scheduled.request("capture")?()
+        let other = await scheduled.request("another")?()
         #expect(again == nil && other == nil)
         #expect(counter.runs == 1)
 

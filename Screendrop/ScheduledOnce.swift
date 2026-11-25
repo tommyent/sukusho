@@ -27,11 +27,13 @@ final class ScheduledOnce<Key: Hashable & Sendable, Value: Sendable> {
         entries[key] = (wait, run)
     }
 
-    /// What the work scheduled for `key` gives, started now if it was still waiting. Nil when nothing is
-    /// scheduled for it, or its work has already finished.
-    func now(_ key: Key) async -> Value? {
+    /// A ticket for the currently scheduled run. Invoking it starts the work if it was still waiting.
+    func request(_ key: Key) -> (() async -> Value)? {
         guard let entry = entries[key] else { return nil }
-        entry.wait.cancel()
-        return await entry.work.value
+        // Retain this generation across a clipboard read, without waking the encoder until requested.
+        return {
+            entry.wait.cancel()
+            return await entry.work.value
+        }
     }
 }

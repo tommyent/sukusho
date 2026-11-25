@@ -34,10 +34,13 @@ extension ScreenshotFileActions {
         // A file made only for this copy: kept while the clipboard names it, as every optimized copy's is.
         var made: ImageOptimizationResult?
         var swappedIn: (file: URL, saving: String)?
+        let smallerForCopy = CaptureOptimizer.firstCopy(url)
+        var copiedData: Data?
         // Nothing is awaited before `copyNow`: the copy takes its turn first, and everything it reads, the file
         // and what it is a copy of, is read inside that turn, so a copy made meanwhile is never written over.
         let (outcome, _) = try await OptimizedImageCopy.shared.copyNow(turn: turn, first: {
             let item = try await clipboardItem(for: url)
+            copiedData = OptimizedImageCopy.imageData(of: item)
             // Filed in history by `record`, when it is written; the monitor's poll leaves Sukusho's own writes alone.
             item.setData(Data(), forType: .init(ClipboardCapturePolicy.ownType))
             // A repeat is a copy of the same bytes from the same file: keyed on the bytes this item carries, read
@@ -46,7 +49,7 @@ extension ScreenshotFileActions {
         }, record: { item in
             await ClipboardHistoryModel.shared.recordOwnCopy(item)
         }, smaller: {
-            guard let smaller = await CaptureOptimizer.smallerForFirstCopy(url) else { return nil }
+            guard let smaller = await smallerForCopy(copiedData) else { return nil }
             made = smaller.result
             guard let item = try? await clipboardItem(for: smaller.file) else { return nil }
             if smaller.file != url, ClipboardCapturePolicy.libraryPath(of: url, historyDirectory: ScreenshotHistoryStore.historyDirectory) != nil {
