@@ -55,6 +55,9 @@ struct CheckCommandPalette {
             exit(5)
         }
         NSApplication.shared.setActivationPolicy(.prohibited)
+        // Nothing here may put an alert on the screen: a failure the app would show is recorded instead.
+        var alerts: [String] = []
+        FailureAlert.presenter = { message, _, _ in alerts.append(message) }
         let defaults = UserDefaults.standard
 
         // Finding 2: an action queued past the palette runs once the palette and its host are gone.
@@ -103,6 +106,29 @@ struct CheckCommandPalette {
         check(defaults.string(forKey: AppTheme.lightKey) == "chip-light" && defaults.string(forKey: AppTheme.darkKey) == nil
               && ThemeTryOn.id(dark: false) == nil, "kept after turning Dark, Chip goes into the Light slot it was tried in")
         defaults.removeObject(forKey: AppTheme.lightKey)
+        // Sol's second review: a search that found nothing let the step go, so turning Dark meanwhile kept a dark theme.
+        dark = false
+        let slot = CommandPaletteModel(host: AppCommandPaletteHost(context: nil, windowTitle: nil, appearsDark: { dark }),
+                                       start: .changeTheme)
+        slot.query = "glass"
+        dark = true
+        slot.query = "nothing matches this"
+        check(ThemeTryOn.id(dark: false) == "classic-light" && ThemeTryOn.id(dark: true) == nil,
+              "nothing matching shows the saved Light theme, still in the Light slot")
+        slot.query = "chip"
+        check(slot.selectedRow?.id == "chip-light", "the step still lists Light's themes")
+        slot.press(.enter)
+        check(defaults.string(forKey: AppTheme.lightKey) == "chip-light" && defaults.string(forKey: AppTheme.darkKey) == nil
+              && ThemeTryOn.id(dark: false) == nil, "↩ keeps Chip in the Light slot it started in")
+        defaults.removeObject(forKey: AppTheme.lightKey)
+
+        // Sol's second review: a view leaving its window takes its registration along, though the window stays.
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 100, height: 100), styleMask: .titled, backing: .buffered,
+                              defer: true)
+        CommandPalettePresenter.shared.register(window) { .library(library) }
+        check(CommandPalettePresenter.shared.context(for: window) != nil, "a window registers its context")
+        CommandPalettePresenter.shared.register(nil, replacing: window) { .library(library) }
+        check(CommandPalettePresenter.shared.context(for: window) == nil, "the view leaving takes it back; the window stays")
 
         // Studio on a bare movie: findings 3 and 9, and round 2's commands.
         let movieURL = URL(fileURLWithPath: home).appendingPathComponent("bare.mov")
@@ -130,6 +156,22 @@ struct CheckCommandPalette {
             check(state.reason == reason, "\(id): \(reason ?? "runs") (is \(state.reason ?? "runs"))")
         }
 
+        // Sol's second review: Export's reasons are export()'s own, and say what's in the way.
+        studio.audioExportState = .exporting(progress: 0.4)
+        check(studioHost.state(of: command("studio.export")).reason == "wait for Studio to finish",
+              "Export waits while the audio exports, as export() does")
+        studio.audioExportState = .idle
+        studio.beginRedaction()
+        check(studioHost.state(of: command("studio.export")).reason == "add or cancel the redaction first",
+              "placing a redaction: “add or cancel the redaction first”, not cropping")
+        studio.cancelRedaction()
+
+        // Sol's note: Split at Playhead splits the selected audio clip, as the timeline's button does.
+        check(studioHost.state(of: command("studio.split")).reason == "can’t split here", "no audio clip: the video, which can't split at 0")
+        studio.selectedAudioClipID = UUID()
+        check(studioHost.state(of: command("studio.split")).reason == nil, "an audio clip selected: it's that clip's split")
+        studio.selectedAudioClipID = nil
+
         // Finding 3: Snapping flips Studio's own setting, and the palette stays.
         let snapping = studio.snapsEdits
         let switches = CommandPaletteModel(host: studioHost, catalog: PaletteCommand.catalog.filter { $0.id == "studio.snapping" })
@@ -144,22 +186,68 @@ struct CheckCommandPalette {
         CommandPalettePresenter.shared.close()
         await turn()
         check(studio.redactions.count == redactions + 1 && studio.redactions.last?.mode == .blur, "Blur at Playhead adds a blur")
-        for (id, request) in [("studio.export", StudioPaletteRequest.exportOptions), ("studio.timelineZoomIn", .zoomIn),
-                              ("studio.resetClips", .resetClips), ("studio.upload", .uploadOptions)] {
+        for (id, request) in [("studio.export", StudioPaletteRequest.Kind.exportOptions), ("studio.timelineZoomIn", .zoomIn)] {
             studio.paletteRequest = nil
             _ = studioHost.run(command(id))
             CommandPalettePresenter.shared.close()
             await turn()
-            check(studio.paletteRequest == request, "\(id) asks its control for \(request)")
+            check(studio.paletteRequest?.kind == request, "\(id) asks its control for \(request)")
+        }
+        for id in ["studio.resetClips", "studio.upload"] {
+            studio.paletteRequest = nil
+            _ = studioHost.run(command(id))
+            CommandPalettePresenter.shared.close()
+            await turn()
+            check(studio.paletteRequest == nil, "\(id), grey here, asks for nothing as it's delivered")
         }
         studio.paletteRequest = nil
         _ = studioHost.run(command("studio.translate"))
         CommandPalettePresenter.shared.close()
         await turn()
-        check(inspectorShown && studio.paletteRequest == .translateCaptions, "Translate Captions… shows the inspector and asks for its picker")
+        check(!inspectorShown && studio.paletteRequest == nil, "Translate Captions… without captions asks for nothing as it's delivered")
+
+        // Sol's second review: a request checks again as it's delivered; the toolbar's button may have gone.
+        _ = studioHost.run(command("studio.export"))
+        studio.exportState = .exporting(progress: 0.4)
+        CommandPalettePresenter.shared.close()
+        await turn()
+        check(studio.paletteRequest == nil, "Export… whose button went before delivery asks for nothing")
+        studio.exportState = .idle
+        _ = studioHost.run(command("studio.export"))
+        CommandPalettePresenter.shared.close()
+        await turn()
+        let first = studio.paletteRequest
+        _ = studioHost.run(command("studio.export"))
+        CommandPalettePresenter.shared.close()
+        await turn()
+        check(first?.kind == .exportOptions && studio.paletteRequest?.kind == .exportOptions && studio.paletteRequest != first,
+              "each request is its own, so a button that appears later never takes an old one")
         studio.paletteRequest = nil
 
-        // Every command that isn't a step or a switch reaches code (finding 3: three went to an empty closure).
+        // Sol's second review: a recording made by a newer Sukusho is read-only; its redaction can't be saved.
+        let future = RecordingSession(directoryURL: URL(fileURLWithPath: home).appendingPathComponent("future.sukushorec"))
+        try FileManager.default.createDirectory(at: future.directoryURL, withIntermediateDirectories: false)
+        try FileManager.default.copyItem(at: movieURL, to: future.screenURL)
+        var newer = RecordingEditDocument(style: .init(), zoomEnabled: false, zoomCues: [])
+        newer.formatVersion = 99
+        let saved = try CaptureManifest.encoder.encode(newer)
+        try saved.write(to: future.editDocumentURL)
+        let futureStudio = RecordingStudioModel(url: future.directoryURL)
+        await futureStudio.load()
+        let futureHost = AppCommandPaletteHost(context: .studio(StudioPaletteHooks(model: futureStudio, inspectorShown: { true },
+                                                                                    toggleInspector: {})), windowTitle: "Check")
+        check(futureStudio.isReadOnlyNewerFormat, "the newer project opens read-only")
+        for id in ["studio.blur", "studio.pixelate", "studio.autoZoom", "studio.translate", "studio.export"] {
+            let reason = futureHost.state(of: command(id)).reason
+            check(reason == "made by a newer Sukusho", "\(id): made by a newer Sukusho (is \(reason ?? "runs"))")
+        }
+        futureStudio.addRedaction(atEditorTime: 0, mode: .blur)
+        check(futureStudio.redactions.isEmpty && alerts.isEmpty && (try? Data(contentsOf: future.editDocumentURL)) == saved,
+              "a redaction there is refused before it's made: no alert, the project file as it was")
+        futureStudio.teardown()
+
+        // Every command that isn't a step or a switch has a handler in action(for:): dispatch, not what each does
+        // (finding 3: three went to an empty closure). Each window's hooks are stand-ins here.
         let editor = EditorPaletteHooks(model: nil, selectTool: { _ in }, pickColor: {}, measure: {}, inspectorShown: { true },
                                         toggleInspector: {}, uploadUnavailable: { nil }, openUpload: {})
         let hosts: [(PaletteWindow, AppCommandPaletteHost)] = [
@@ -171,7 +259,8 @@ struct CheckCommandPalette {
             guard let host = hosts.first(where: { command.scope.isListed(in: $0.0) })?.1 else { continue }
             if !host.hasAction(for: command.id) { unhandled.append(command.id) }
         }
-        check(unhandled.isEmpty, "every command reaches code\(unhandled.isEmpty ? "" : ": not \(unhandled)")")
+        check(unhandled.isEmpty, "every command that isn't a step or a switch has a handler\(unhandled.isEmpty ? "" : ": not \(unhandled)")")
+        check(alerts.isEmpty, "no failure alert came up\(alerts.isEmpty ? "" : ": \(alerts)")")
 
         studio.teardown()
         // This binary's own preferences, which the fresh home doesn't hold: the runner trashes their file too.
