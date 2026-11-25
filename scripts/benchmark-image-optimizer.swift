@@ -26,6 +26,7 @@ import ImageIO
         let input = URL(fileURLWithPath: args[1])
         let optimizer = ImageOptimizer.shared
         if args[0] == "copy-races" { try await checkCopyRaces(input); return }
+        if args[0] == "trash-race" { try await checkTrashRace(input); return }
         if args[0] == "sheet" {
             var timing = ImageConversion.PreviewTiming()
             let start = clock.now

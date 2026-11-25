@@ -29,7 +29,16 @@ enum CaptureOptimizer {
         }
         guard !OptimizedMark.isCurrent(url) else { return .alreadyOptimized }
         guard let result = try? await ImageOptimizer.shared.optimize(url, effort: effort) else { return .failed("Optimizing was stopped.") }
+        return finishInPlace(result, at: url, effort: effort, whileEditing: whileEditing)
+    }
+
+    static func finishInPlace(_ result: ImageOptimizationResult, at url: URL, effort: ImageOptimizationEffort, whileEditing: Bool) -> Outcome {
         defer { result.discard() }
+        // Trash claims the path on this same actor before its detached move and keeps it through rollback.
+        // There is no suspension between this check and installing or marking the result.
+        guard !CaptureLibraryFiles.movingToTrash.contains(url.standardizedFileURL) else {
+            return .failed("The capture is being moved to Trash.")
+        }
         // Either outcome below replaces or marks the capture only while it still holds the contents the
         // encoder read, by their hash: a save can keep a file's size and date.
         func unchanged() -> Bool {

@@ -132,7 +132,7 @@ extension CaptureLibraryModel {
                     continue
                 }
                 do {
-                    try await Task.detached(priority: .userInitiated) { try CaptureLibraryFiles.trash(item) }.value
+                    try await CaptureLibraryFiles.trash(item)
                     removedIDs.formUnion(item.historyIDs)
                     removedEntries.insert(item.id)
                     if let session = item.session {
@@ -497,11 +497,20 @@ nonisolated enum CaptureLibraryFiles {
         throw CocoaError(.fileWriteFileExists)
     }
 
-    static func trash(_ item: CaptureLibraryItem, moveToTrash: (URL) throws -> URL? = { url in
+    @MainActor private(set) static var movingToTrash: Set<URL> = []
+
+    @MainActor static func trash(_ item: CaptureLibraryItem, moveToTrash: @escaping @Sendable (URL) throws -> URL? = { url in
         var destination: NSURL?
         try FileManager.default.trashItem(at: url, resultingItemURL: &destination)
         return destination.map { $0 as URL }
-    }) throws {
+    }) async throws {
+        let key = item.fileURL.standardizedFileURL
+        guard movingToTrash.insert(key).inserted else { throw POSIXError(.EBUSY) }
+        defer { movingToTrash.remove(key) }
+        try await Task.detached(priority: .userInitiated) { try moveFiles(item, moveToTrash: moveToTrash) }.value
+    }
+
+    private static func moveFiles(_ item: CaptureLibraryItem, moveToTrash: (URL) throws -> URL?) throws {
         let urls = item.ownedFileURLs
         // Roll back earlier moves if any sidecar can't be moved. Keep the row
         // until every existing part of the capture is safely in Trash.
