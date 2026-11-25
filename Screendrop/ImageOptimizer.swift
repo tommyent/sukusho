@@ -815,38 +815,46 @@ nonisolated struct ImageOptimizer: Sendable {
             result.withUnsafeBytes { (r: UnsafeRawBufferPointer) -> Bool in
                 for tileY in stride(from: 0, to: height - 15, by: 16) {
                     for tileX in stride(from: 0, to: width - 15, by: 16) {
-                        // Sums and sums of squares: the source's pixels, the result's, and the source's 2 x 2 cells.
-                        var a = 0, aa = 0, b = 0, bb = 0, c = 0, cc = 0
-                        for y in stride(from: tileY, to: tileY + 16, by: 2) {
-                            for x in stride(from: tileX, to: tileX + 16, by: 2) {
-                                var cell = 0
-                                for down in 0..<2 {
-                                    for across in 0..<2 {
-                                        let at = ((y + down) * width + x + across) * 4
-                                        let lift = onWhite ? 255 - Int(s[at + 3]) : 0
-                                        let before = (54 * (Int(s[at]) + lift) + 183 * (Int(s[at + 1]) + lift) + 19 * (Int(s[at + 2]) + lift)) >> 8
-                                        let after = (54 * Int(r[at]) + 183 * Int(r[at + 1]) + 19 * Int(r[at + 2])) >> 8
-                                        a += before
-                                        aa += before * before
-                                        b += after
-                                        bb += after * after
-                                        cell += before
-                                    }
-                                }
-                                c += cell
-                                cc += cell * cell
-                            }
-                        }
-                        let spread = max(0, Double(aa) / 256 - (Double(a) / 256) * (Double(a) / 256)).squareRoot()
-                        let coarse = max(0, Double(cc) / 64 - (Double(c) / 64) * (Double(c) / 64)).squareRoot() / 4
+                        let (a, aa, b, bb, cc) = tileSums(s, r, at: (tileY * width + tileX) * 4, rowBytes: width * 4, onWhite: onWhite)
+                        let spread = max(0, aa / 256 - (a / 256) * (a / 256)).squareRoot()
+                        let coarse = max(0, cc / 64 - (a / 64) * (a / 64)).squareRoot() / 4
                         guard spread >= 20, coarse >= 10 else { continue }
-                        let spreadAfter = max(0, Double(bb) / 256 - (Double(b) / 256) * (Double(b) / 256)).squareRoot()
+                        let spreadAfter = max(0, bb / 256 - (b / 256) * (b / 256)).squareRoot()
                         guard spreadAfter >= 0.1 * spread else { return false }
                     }
                 }
                 return true
             }
         }
+    }
+
+    /// Brightness sum and sum of squares of a complete 16×16 tile in each image, and the sum of squares
+    /// of the source's 64 two-by-two cell totals. Those cells partition the tile, so their sum is `a`.
+    static func tileSums(_ source: UnsafeRawBufferPointer, _ result: UnsafeRawBufferPointer, at offset: Int,
+                         rowBytes: Int, onWhite: Bool) -> (a: Double, aa: Double, b: Double, bb: Double, cc: Double) {
+        typealias Row = SIMD16<UInt32>
+        func luma(_ bytes: UnsafeRawBufferPointer, at offset: Int, onWhite: Bool) -> Row {
+            // RGBA bytes, one little-endian word per pixel on both Mac architectures. The weights sum
+            // to 256, so lifting the channels onto white adds exactly (255 - alpha) after the shift.
+            let p = bytes.loadUnaligned(fromByteOffset: offset, as: Row.self)
+            let red = p & 255, green = (p &>> 8) & 255, blue = (p &>> 16) & 255
+            let value = ((red &* 54) &+ (green &* 183) &+ (blue &* 19)) &>> 8
+            return onWhite ? value &+ (255 &- (p &>> 24)) : value
+        }
+        // Even without premultiplication, brightness <= 510: 64 * (4 * 510)^2 fits UInt32.
+        var a = Row.zero, aa = Row.zero, b = Row.zero, bb = Row.zero, cc = SIMD8<UInt32>.zero
+        for y in stride(from: 0, to: 16, by: 2) {
+            let at = offset + y * rowBytes, next = at + rowBytes
+            let s0 = luma(source, at: at, onWhite: onWhite), s1 = luma(source, at: next, onWhite: onWhite)
+            let r0 = luma(result, at: at, onWhite: false), r1 = luma(result, at: next, onWhite: false)
+            let pair = s0 &+ s1, cells = pair.evenHalf &+ pair.oddHalf
+            a &+= pair
+            aa &+= (s0 &* s0) &+ (s1 &* s1)
+            b &+= r0 &+ r1
+            bb &+= (r0 &* r0) &+ (r1 &* r1)
+            cc &+= cells &* cells
+        }
+        return (Double(a.wrappedSum()), Double(aa.wrappedSum()), Double(b.wrappedSum()), Double(bb.wrappedSum()), Double(cc.wrappedSum()))
     }
 
     /// The first image, turned the way its orientation says. An image already upright is decoded as it is,
