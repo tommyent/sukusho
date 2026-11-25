@@ -242,7 +242,8 @@ struct CommandPaletteTests {
         #expect(host.triedOn.last == "Glass", "what's selected is what's on")
         model.query = "zzz"
         #expect(model.selectedRow == nil)
-        #expect(host.triedOn.last == .some(nil), "nothing matches: the saved theme")
+        #expect(host.triedOn.last == "Classic", "nothing matches: the saved theme, still tried on, so the step keeps its slot")
+        #expect(!host.triedOn.contains { $0 == nil }, "only leaving the step puts the theme back")
     }
 
     @Test func changeThemeKeptIsNotPutBack() {

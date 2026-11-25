@@ -256,10 +256,11 @@ final class CommandPaletteModel {
         tryOn()
     }
 
-    /// What's tried on is what's selected; with nothing matching, the saved theme.
+    /// What's tried on is what's selected; with nothing matching, the saved theme, still as a try-on, so the step keeps
+    /// to the appearance it started in until it's left (Sol's second review: a search that found nothing let it go).
     private func tryOn() {
         guard tryingOn, step == .changeTheme else { return }
-        host.tryOn(selectedRow)
+        host.tryOn(selectedRow ?? host.rows(for: .changeTheme, query: "").first(where: \.ticked))
     }
 
     private func putThemeBack() {

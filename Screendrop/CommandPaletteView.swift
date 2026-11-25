@@ -238,7 +238,9 @@ struct CommandPaletteView: View {
             PaletteThumbnail(url: url).frame(width: 52, height: 34)
                 .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
         } else if model.step == .changeTheme {
-            PaletteThemeSwatch(theme: AppTheme.named(row.choiceID, dark: scheme == .dark)).frame(width: 30, height: 20)
+            // The row's own theme, by its id: the step keeps to the appearance it started in, which may not be the app's now.
+            PaletteThemeSwatch(theme: AppTheme.builtIns.first { $0.id == row.choiceID } ?? AppTheme.named(row.choiceID, dark: scheme == .dark))
+                .frame(width: 30, height: 20)
         } else if model.step == .addTag {
             Image(systemName: row.ticked ? "checkmark.square.fill" : row.id == "new-tag" ? "plus.square" : "square")
                 .font(.system(size: 14)).foregroundStyle(row.ticked && !onFill ? Color.accentColor : ink).frame(width: 18)
