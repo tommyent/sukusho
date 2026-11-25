@@ -10,7 +10,7 @@ struct CaptureLibraryWindow: View {
     @State private var handledInitialWindowPlacement = false
     @State private var columnVisibility = NavigationSplitViewVisibility.automatic
     @State private var inspectorVisible = InspectorVisibilityStore.initial(forKey: CaptureLibraryView.inspectorKey)
-    @State private var inspectorFoldState = InspectorFoldState()
+    @State private var inspectorFold = InspectorFoldBox()
     @State private var hostWindow = WeakWindow()
 
     var body: some View {
@@ -20,7 +20,7 @@ struct CaptureLibraryWindow: View {
                     handledInitialWindowPlacement: $handledInitialWindowPlacement,
                     columnVisibility: $columnVisibility,
                     inspectorVisible: $inspectorVisible,
-                    inspectorFoldState: $inspectorFoldState
+                    inspectorFold: inspectorFold
                 )
             } else {
                 Color.clear
@@ -45,7 +45,7 @@ struct CaptureLibraryView: View {
     @Binding var handledInitialWindowPlacement: Bool
     @Binding var columnVisibility: NavigationSplitViewVisibility
     @Binding var inspectorVisible: Bool
-    @Binding var inspectorFoldState: InspectorFoldState
+    let inspectorFold: InspectorFoldBox
     @State private var model = CaptureLibraryModel.shared
     @State private var cloud = CloudLibraryModel.shared
     @State private var comments = CommentsLibraryModel.shared
@@ -102,7 +102,7 @@ struct CaptureLibraryView: View {
             below: 900,
             host: hostWindow,
             windowID: handledInitialWindowPlacement ? libraryWindowID : nil,
-            state: $inspectorFoldState
+            fold: inspectorFold
         )
         .onAppear {
             AppActivationPolicy.enter()
@@ -230,6 +230,10 @@ struct CaptureLibraryView: View {
                         withAnimation { columnVisibility = .detailOnly }
                     }
                     .toolbar(removing: .sidebarToggle)
+                    // On the column's outermost view: set inside sidebarContent, the split item kept AppKit's
+                    // 140 pt minimum and no maximum (read with lldb), and the sidebar dragged out over the grid
+                    // (sd-h4t8).
+                    .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 280)
             } detail: {
                 detailColumn
                     .navigationTitle(title)
@@ -246,8 +250,9 @@ struct CaptureLibraryView: View {
             // Keep AppKit's full-height sidebar and window-button placement with the native toolbar empty.
             .toolbar { ToolbarSpacer(.flexible) }
             .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+            // Only to bring the inspector back: while it shows, its own button sits on its leading edge.
             .glassInspectorToggleOverlay(
-                enabled: true,
+                enabled: !inspectorVisible,
                 isPresented: inspectorChoice,
                 metrics: glassMetrics,
                 hasKeyboardShortcut: true
@@ -255,6 +260,7 @@ struct CaptureLibraryView: View {
         } else {
             NavigationSplitView(columnVisibility: $columnVisibility) {
                 sidebarContent
+                    .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 280)
             } detail: {
                 detailColumn
                     .modifier(LibraryColumnSeparators(
@@ -321,7 +327,6 @@ struct CaptureLibraryView: View {
                     .listStyle(.sidebar)
             }
         }
-        .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 280)
         .safeAreaInset(edge: .bottom) {
             HStack(alignment: .center, spacing: 12) {
                 Button {
@@ -514,6 +519,10 @@ struct CaptureLibraryView: View {
         // The inspector column paints its own grey, under the
         // toolbar too, so its content carries the sidebar's.
         .modifier(LibrarySidebarSurface())
+        // Glass: the hide button rides the inspector's leading edge, as the sidebar's rides its trailing one.
+        .glassInspectorCollapseOverlay(enabled: floatingChrome, metrics: glassMetrics) {
+            inspectorChoice.wrappedValue = false
+        }
         .inspectorColumnWidth(min: 240, ideal: 280, max: 360)
     }
 

@@ -33,6 +33,8 @@ command = [
     "-default-isolation", "MainActor", "-enable-upcoming-feature", "MemberImportVisibility",
     "-enable-upcoming-feature", "NonisolatedNonsendingByDefault", "-D", "DEBUG",
     "-I", str(products), str(products / "DockProgress.o"), "@" + str(source_list), "-o", str(binary),
+    # The app's UpdaterManager links Sparkle (since 2026-11-09); the check never starts it.
+    "-F", str(products), "-framework", "Sparkle", "-Xlinker", "-rpath", "-Xlinker", str(products),
 ]
 with (build / "compile.log").open("w") as log:
     if subprocess.run(command, cwd=repo, stdout=log, stderr=subprocess.STDOUT).returncode:
