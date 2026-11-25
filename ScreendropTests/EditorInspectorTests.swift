@@ -190,7 +190,6 @@ struct EditorInspectorTests {
         weak var weakWindow: NSWindow?
         var modifier: InspectorAutoFold?
         var presented = true
-        var foldState = InspectorFoldState()
         autoreleasepool {
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
@@ -206,11 +205,48 @@ struct EditorInspectorTests {
                 foldBelow: 1000,
                 host: host,
                 windowID: ObjectIdentifier(window),
-                state: Binding(get: { foldState }, set: { foldState = $0 })
+                fold: InspectorFoldBox()
             )
         }
         #expect(modifier != nil)
         #expect(weakWindow == nil, "InspectorAutoFold retained its NSWindow strongly")
         modifier = nil
+    }
+
+    /// sd-kutk: a resize reaches the view graph only when it folds or unfolds the inspector. Every other
+    /// resize, such as each step of a window that SwiftUI or tiling animates, or AppKit settling a frame
+    /// back and forth, changes nothing SwiftUI watches, so it can't start another layout pass.
+    @Test static func foldBoxTouchesTheViewOnlyWhenItFolds() {
+        let fold = InspectorFoldBox()
+        var shown = true
+        var changes: [(width: CGFloat, shown: Bool)] = []
+        func resize(_ width: CGFloat) {
+            if let next = fold.resize(to: width, foldBelow: 900, isPresented: shown) {
+                shown = next
+                changes.append((width, next))
+            }
+        }
+        resize(1180)
+        #expect(changes.isEmpty)
+
+        // Narrowed a point at a time down to the minimum: one fold, at the fold point.
+        for width in stride(from: 1179, through: 620, by: -1) { resize(CGFloat(width)) }
+        #expect(changes.map(\.shown) == [false] && changes.first?.width == 899)
+
+        // A frame that settles back and forth while folded, as the Air's crash did at 2650 and 2655.
+        for _ in 0..<500 { resize(760); resize(761) }
+        #expect(changes.count == 1)
+
+        // Widened a point at a time past 3000: one unfold, at the fold point plus its margin.
+        for width in stride(from: 621, through: 3200, by: 1) { resize(CGFloat(width)) }
+        #expect(changes.map(\.shown) == [false, true] && changes.last?.width == 940)
+
+        // Every step of an animated resize far above the fold point, and back and forth there.
+        for width in stride(from: 1180, through: 2655, by: 5) { resize(CGFloat(width)) }
+        for _ in 0..<500 { resize(2650); resize(2655) }
+        #expect(changes.count == 2)
+
+        // A zero width (a window still being set up) is ignored.
+        #expect(fold.resize(to: 0, foldBelow: 900, isPresented: shown) == nil)
     }
 }

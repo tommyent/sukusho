@@ -23,7 +23,7 @@ struct InspectorAutoFold: ViewModifier {
     let foldBelow: CGFloat
     let host: WeakWindow
     let windowID: ObjectIdentifier?
-    @Binding var state: InspectorFoldState
+    let fold: InspectorFoldBox
 
     func body(content: Content) -> some View {
         content
@@ -37,18 +37,29 @@ struct InspectorAutoFold: ViewModifier {
             }
             .onChange(of: isPresented) { _, presented in
                 // Shown by hand while folded: it stays until the next fold.
-                if presented { state.isFolded = false }
+                if presented { fold.state.isFolded = false }
             }
     }
 
     private func resize(to width: CGFloat) {
-        guard width > 0 else { return }
+        guard let presented = fold.resize(to: width, foldBelow: foldBelow, isPresented: isPresented) else { return }
+        withAnimation(.snappy(duration: 0.2)) { isPresented = presented }
+    }
+}
+
+/// The fold rule's bookkeeping, kept out of SwiftUI's state. It changes on every resize, and AppKit posts
+/// resizes from inside a layout pass (SwiftUI sizing the window in `windowDidLayout`): as state, each one
+/// invalidated the whole Library and laid it out again, until AppKit stopped the loop by crashing
+/// (sd-kutk). Now only a fold or unfold, through `isPresented`, touches the view graph.
+final class InspectorFoldBox {
+    var state = InspectorFoldState()
+
+    /// The inspector's new visibility when this width folds or unfolds it; nil leaves it as it is.
+    func resize(to width: CGFloat, foldBelow: CGFloat, isPresented: Bool) -> Bool? {
+        guard width > 0 else { return nil }
         let next = state.resized(to: width, foldBelow: foldBelow, isPresented: isPresented)
-        guard next.state != state else { return }
         state = next.state
-        if next.isPresented != isPresented {
-            withAnimation(.snappy(duration: 0.2)) { isPresented = next.isPresented }
-        }
+        return next.isPresented == isPresented ? nil : next.isPresented
     }
 }
 
@@ -111,7 +122,7 @@ private struct OwnedInspectorAutoFold: ViewModifier {
     let foldBelow: CGFloat
     let host: WeakWindow
     let windowID: ObjectIdentifier?
-    @State private var state = InspectorFoldState()
+    @State private var fold = InspectorFoldBox()
 
     func body(content: Content) -> some View {
         content.modifier(InspectorAutoFold(
@@ -119,7 +130,7 @@ private struct OwnedInspectorAutoFold: ViewModifier {
             foldBelow: foldBelow,
             host: host,
             windowID: windowID,
-            state: $state
+            fold: fold
         ))
     }
 }
@@ -144,14 +155,14 @@ extension View {
         below width: CGFloat,
         host: WeakWindow,
         windowID: ObjectIdentifier?,
-        state: Binding<InspectorFoldState>
+        fold: InspectorFoldBox
     ) -> some View {
         modifier(InspectorAutoFold(
             isPresented: isPresented,
             foldBelow: width,
             host: host,
             windowID: windowID,
-            state: state
+            fold: fold
         ))
     }
 }

@@ -10,7 +10,7 @@ struct CaptureLibraryWindow: View {
     @State private var handledInitialWindowPlacement = false
     @State private var columnVisibility = NavigationSplitViewVisibility.automatic
     @State private var inspectorVisible = InspectorVisibilityStore.initial(forKey: CaptureLibraryView.inspectorKey)
-    @State private var inspectorFoldState = InspectorFoldState()
+    @State private var inspectorFold = InspectorFoldBox()
     @State private var hostWindow = WeakWindow()
 
     var body: some View {
@@ -20,7 +20,7 @@ struct CaptureLibraryWindow: View {
                     handledInitialWindowPlacement: $handledInitialWindowPlacement,
                     columnVisibility: $columnVisibility,
                     inspectorVisible: $inspectorVisible,
-                    inspectorFoldState: $inspectorFoldState
+                    inspectorFold: inspectorFold
                 )
             } else {
                 Color.clear
@@ -45,7 +45,7 @@ struct CaptureLibraryView: View {
     @Binding var handledInitialWindowPlacement: Bool
     @Binding var columnVisibility: NavigationSplitViewVisibility
     @Binding var inspectorVisible: Bool
-    @Binding var inspectorFoldState: InspectorFoldState
+    let inspectorFold: InspectorFoldBox
     @State private var model = CaptureLibraryModel.shared
     @State private var cloud = CloudLibraryModel.shared
     @State private var comments = CommentsLibraryModel.shared
@@ -142,7 +142,7 @@ struct CaptureLibraryView: View {
             below: 900,
             host: hostWindow,
             windowID: handledInitialWindowPlacement ? libraryWindowID : nil,
-            state: $inspectorFoldState
+            fold: inspectorFold
         )
         .onAppear {
             AppActivationPolicy.enter()
