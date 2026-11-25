@@ -212,6 +212,9 @@
 		ED3A00000000000000000001 /* Screendrop/RecordingTextOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED3A00000000000000000002 /* Screendrop/RecordingTextOverlay.swift */; };
 		ED3A00000000000000000003 /* Screendrop/RecordingImageOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED3A00000000000000000004 /* Screendrop/RecordingImageOverlay.swift */; };
 		ED3A00000000000000000005 /* Screendrop/RecordingVideoOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED3A00000000000000000006 /* Screendrop/RecordingVideoOverlay.swift */; };
+		CB1A00000000000000000001 /* Screendrop/CommandPaletteCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB1A00000000000000000002 /* Screendrop/CommandPaletteCatalog.swift */; };
+		CB1A00000000000000000003 /* Screendrop/CommandPaletteModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB1A00000000000000000004 /* Screendrop/CommandPaletteModel.swift */; };
+		CB1A00000000000000000005 /* Screendrop/CommandPalettePanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB1A00000000000000000006 /* Screendrop/CommandPalettePanel.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -448,6 +451,9 @@
 		ED3A00000000000000000002 /* Screendrop/RecordingTextOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingTextOverlay.swift; sourceTree = SOURCE_ROOT; };
 		ED3A00000000000000000004 /* Screendrop/RecordingImageOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingImageOverlay.swift; sourceTree = SOURCE_ROOT; };
 		ED3A00000000000000000006 /* Screendrop/RecordingVideoOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/RecordingVideoOverlay.swift; sourceTree = SOURCE_ROOT; };
+		CB1A00000000000000000002 /* Screendrop/CommandPaletteCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/CommandPaletteCatalog.swift; sourceTree = SOURCE_ROOT; };
+		CB1A00000000000000000004 /* Screendrop/CommandPaletteModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/CommandPaletteModel.swift; sourceTree = SOURCE_ROOT; };
+		CB1A00000000000000000006 /* Screendrop/CommandPalettePanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Screendrop/CommandPalettePanel.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -728,6 +734,9 @@
 				ED3A00000000000000000002 /* Screendrop/RecordingTextOverlay.swift */,
 				ED3A00000000000000000004 /* Screendrop/RecordingImageOverlay.swift */,
 				ED3A00000000000000000006 /* Screendrop/RecordingVideoOverlay.swift */,
+				CB1A00000000000000000002 /* Screendrop/CommandPaletteCatalog.swift */,
+				CB1A00000000000000000004 /* Screendrop/CommandPaletteModel.swift */,
+				CB1A00000000000000000006 /* Screendrop/CommandPalettePanel.swift */,
 			);
 			name = "Tested logic";
 			sourceTree = "<group>";
@@ -1060,6 +1069,9 @@
 				ED3A00000000000000000001 /* Screendrop/RecordingTextOverlay.swift in Sources */,
 				ED3A00000000000000000003 /* Screendrop/RecordingImageOverlay.swift in Sources */,
 				ED3A00000000000000000005 /* Screendrop/RecordingVideoOverlay.swift in Sources */,
+				CB1A00000000000000000001 /* Screendrop/CommandPaletteCatalog.swift in Sources */,
+				CB1A00000000000000000003 /* Screendrop/CommandPaletteModel.swift in Sources */,
+				CB1A00000000000000000005 /* Screendrop/CommandPalettePanel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

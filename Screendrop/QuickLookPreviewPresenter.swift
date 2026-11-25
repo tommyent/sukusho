@@ -33,6 +33,17 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
     private var sourceURLs: [URL] = []
     private weak var libraryWindow: NSWindow?
 
+    /// Where a preview came from: the Library's selection, which it follows; the floating preview stack, which it
+    /// tucks away; or on its own, as the command palette's Recent Captures opens it, following nothing.
+    enum Origin {
+        case library, previewStack, standalone
+
+        var followsLibrary: Bool { self == .library }
+        var collapsesPreviewStack: Bool { self == .previewStack }
+        /// Takes the keyboard, so its arrows are its own; the Library's leaves the Library its keys.
+        var takesKey: Bool { self != .library }
+    }
+
     static func toggleLibrarySelection(_ urls: [URL]) {
         if shared.openedFromLibrary, shared.sourceURLs == urls {
             dismiss()
@@ -44,13 +55,18 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
     /// Pass `collapsingPreviewStack: true` when previewing from the floating
     /// stack, so its cards don't sit on top of the Quick Look window.
     static func show(url: URL, collapsingPreviewStack: Bool = false) {
-        shared.show(urls: [url], collapsingPreviewStack: collapsingPreviewStack)
+        shared.show(urls: [url], origin: collapsingPreviewStack ? .previewStack : .library)
+    }
+
+    /// One file on its own: the Library's selection doesn't replace it, and it takes the keyboard.
+    static func show(standalone url: URL) {
+        shared.show(urls: [url], origin: .standalone)
     }
 
     /// Several files, stepped through with the arrow keys as in Finder.
     static func show(urls: [URL]) {
         guard !urls.isEmpty else { return }
-        shared.show(urls: urls, collapsingPreviewStack: false)
+        shared.show(urls: urls, origin: .library)
     }
     
     /// Whether the Library's Quick Look is open, which shows whatever the Library has selected.
@@ -61,7 +77,7 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
     static func follow(urls: [URL]) {
         guard followsLibrary else { return }
         guard !urls.isEmpty else { dismiss(); return }
-        shared.show(urls: urls, collapsingPreviewStack: false, keepingFocus: isShown)
+        shared.show(urls: urls, origin: .library, keepingFocus: isShown)
     }
 
     static func dismiss() {
@@ -82,17 +98,17 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
         return source.url
     }
 
-    private func show(urls: [URL], collapsingPreviewStack: Bool, keepingFocus: Bool = false) {
+    private func show(urls: [URL], origin: Origin, keepingFocus: Bool = false) {
         preparationTask?.cancel()
         preparationTask = nil
         sourceURLs = urls
-        openedFromLibrary = !collapsingPreviewStack
+        openedFromLibrary = origin.followsLibrary
         if openedFromLibrary, !keepingFocus {
             libraryWindow = NSApp.windows.first { $0.identifier?.rawValue == "CAPTURE_LIBRARY" }
         }
         let immediate = urls.map(Self.immediateURL)
         guard immediate.contains(nil) else {
-            present(urls: immediate.compactMap { $0 }, collapsingPreviewStack: collapsingPreviewStack, keepingFocus: keepingFocus)
+            present(urls: immediate.compactMap { $0 }, origin: origin, keepingFocus: keepingFocus)
             return
         }
         preparationTask = Task { [weak self] in
@@ -103,7 +119,7 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
                 }
                 guard !Task.isCancelled else { return }
                 self?.preparationTask = nil
-                self?.present(urls: prepared, collapsingPreviewStack: collapsingPreviewStack, keepingFocus: keepingFocus)
+                self?.present(urls: prepared, origin: origin, keepingFocus: keepingFocus)
             } catch {
                 guard !Task.isCancelled else { return }
                 self?.preparationTask = nil
@@ -113,12 +129,13 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
         }
     }
 
-    private func present(urls: [URL], collapsingPreviewStack: Bool, keepingFocus: Bool) {
+    private func present(urls: [URL], origin: Origin, keepingFocus: Bool) {
         // Following the selection never reopens a panel that closed while a recording rendered.
         if keepingFocus, !Self.isShown { return }
+        let collapsingPreviewStack = origin.collapsesPreviewStack
         previewURLs = urls.map { $0 as NSURL }
         previewTitles = urls.map(Self.libraryTitle)
-        openedFromLibrary = !collapsingPreviewStack
+        openedFromLibrary = origin.followsLibrary
         
         guard let panel = QLPreviewPanel.shared() else {
             restorePreviewStack()
@@ -143,12 +160,12 @@ final class QuickLookPreviewPresenter: NSObject, QLPreviewPanelDataSource, QLPre
         }
         if panel.isVisible {
             panel.refreshCurrentPreviewItem()
-        } else if openedFromLibrary {
+        } else if !origin.takesKey {
             panel.orderFront(nil)
         } else {
             panel.makeKeyAndOrderFront(nil)
         }
-        guard !keepingFocus, collapsingPreviewStack else { return }
+        guard !keepingFocus, origin.takesKey else { return }
 
         // Re-assert key status on the next runloop pass. The window server
         // sometimes needs a tick to finish processing the activation, so an

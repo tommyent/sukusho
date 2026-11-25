@@ -329,6 +329,9 @@ struct CloudUploadButton<Label: View>: View {
     let suggestedTitle: String
     var encryptionUnavailable: String? = nil
     var messageSource: ShareMessageSource? = nil
+    /// A command palette request: each new one opens the options on this button, as a click does. A button that
+    /// appears after the request was made doesn't take it.
+    var openRequest: UUID? = nil
     let onUpload: (CloudUploadOptions) -> Void
     @ViewBuilder let label: () -> Label
 
@@ -339,6 +342,9 @@ struct CloudUploadButton<Label: View>: View {
             showingOptions = true
         } label: {
             label()
+        }
+        .onChange(of: openRequest) { _, request in
+            if request != nil { showingOptions = true }
         }
         .popover(isPresented: $showingOptions, arrowEdge: .bottom) {
             CloudUploadOptionsPopover(suggestedTitle: suggestedTitle, encryptionUnavailable: encryptionUnavailable,

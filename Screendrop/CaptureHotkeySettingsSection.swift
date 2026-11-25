@@ -230,8 +230,11 @@ struct CaptureHotkeySettingsSection: View {
         if isRecording(action) {
             return (recorder.rejection ?? (recorder.canRecordTaps ? Self.recordingHint : Self.waitingHint), recorder.rejection != nil)
         }
-        guard errorAction == action, let errorMessage else { return nil }
-        return (errorMessage, true)
+        if errorAction == action, let errorMessage { return (errorMessage, true) }
+        if let owner = CaptureHotkeyPreferences.defaultTakenBy(action) {
+            return ("\(action.defaultShortcut.displayString) is \(owner.title)’s, so \(action.title) has no keys yet: record some for it.", false)
+        }
+        return nil
     }
 
     /// The row the Input Monitoring notice sits under: the one last changed if its modifier-key shortcut waits for it,
@@ -311,6 +314,26 @@ struct CaptureHotkeySettingsSection: View {
     /// Nil clears the action.
     private func apply(_ shortcut: HotkeyShortcut?, to action: CaptureHotkeyAction) {
         HotkeyManager.shared.keptKeys = []
+        if let shortcut, !action.isGlobal, !shortcut.isMenuShortcut {
+            // A menu's shortcut: inside Sukusho a modifier key alone or a function key can't open it.
+            errorMessage = "\(shortcut.displayString) can’t be \(action.title)’s shortcut: use a key with ⌘, ⌥, ⌃ or ⇧."
+            errorAction = action
+            NSSound.beep()
+            recorder.stop()
+            recordingAction = nil
+            reveal(action)
+            return
+        }
+        if let shortcut, !action.isGlobal, let command = CaptureHotkeyPreferences.appCommand(using: shortcut) {
+            // Inside Sukusho its menus and windows have these keys already.
+            errorMessage = "\(shortcut.displayString) is \(command) in Sukusho: choose other keys for \(action.title)."
+            errorAction = action
+            NSSound.beep()
+            recorder.stop()
+            recordingAction = nil
+            reveal(action)
+            return
+        }
         if let shortcut, let conflict = CaptureHotkeyPreferences.conflictingAction(for: shortcut, excluding: action) {
             if let theirs = CaptureHotkeyPreferences.shortcut(for: conflict), theirs != shortcut {
                 errorMessage = "\(shortcut.displayString) can’t be a shortcut while \(conflict.title) is \(theirs.displayString): a double tap starts with a tap."
@@ -327,8 +350,9 @@ struct CaptureHotkeySettingsSection: View {
 
         do {
             try HotkeyManager.shared.setShortcut(shortcut, for: action)
-            shortcuts[action] = shortcut
-            reloadClashes()
+            // Every row, not this one alone: another's keys can change with it, as the palette's ⇧⌘P comes back
+            // once the row that held it gives it up.
+            reloadShortcuts()
             errorMessage = nil
         } catch {
             errorMessage = "\(error.localizedDescription) Your previous shortcut has been kept."

@@ -25,6 +25,9 @@ extension CaptureHotkeyAction {
             CaptureLibraryModel.shared.show()
         case .clipboardHistory:
             ClipboardPopupPresenter.shared.toggle()
+        case .commandPalette:
+            // A menu's shortcut, never registered for every app; here for completeness.
+            CommandPalettePresenter.shared.toggle()
         }
     }
 }

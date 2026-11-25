@@ -77,51 +77,10 @@ struct CaptureLibraryView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     /// The sidebar picks a kind of capture, the cloud uploads or a tag.
-    private var currentPage: CaptureLibrarySidebarSelection? {
-        if saved.isShown { return .saved }
-        if clipboard.isShown { return clipboard.showsSnippets ? .snippets : .clipboard }
-        if comments.isShown { return .comments }
-        if likes.isShown { return .likes }
-        if cloud.isShown { return cloud.showsReceived ? .received : cloud.showsFiles ? .files : .cloud }
-        if let tag = model.tagFilter { return .tag(tag) }
-        return model.filter.map { .kind($0) }
-    }
+    private var currentPage: CaptureLibrarySidebarSelection? { .current }
 
     private var sidebarSelection: Binding<CaptureLibrarySidebarSelection?> {
-        Binding { currentPage } set: { selection in
-            guard selection != currentPage else { return }
-            if QuickLookPreviewPresenter.followsLibrary { QuickLookPreviewPresenter.dismiss() }
-            cloud.cancelPreview()
-            cloud.isShown = selection == .cloud || selection == .files || selection == .received
-            cloud.showsFiles = selection == .files
-            cloud.showsReceived = selection == .received
-            comments.setShown(selection == .comments)
-            likes.setShown(selection == .likes)
-            clipboard.librarySelectionIDs = []
-            clipboard.isShown = selection == .clipboard || selection == .snippets
-            clipboard.showsSnippets = selection == .snippets
-            saved.isShown = selection == .saved
-            switch selection {
-            case .saved:
-                // Every saved capture, whatever kind or tag the captures page was on.
-                model.selection = []
-                clipboard.librarySelection = nil
-                model.tagFilter = nil
-                model.filter = .all
-            case .cloud, .files, .received, .comments, .likes, .clipboard, .snippets:
-                // The toolbar's capture actions mustn't act on captures out of sight.
-                model.selection = []
-            case .tag(let tag):
-                model.filter = .all
-                model.tagFilter = tag
-            case .kind(let filter):
-                model.tagFilter = nil
-                model.filter = filter
-            case nil:
-                model.tagFilter = nil
-                model.filter = nil
-            }
-        }
+        Binding { currentPage } set: { CaptureLibrarySidebarSelection.show($0) }
     }
 
     var body: some View {
@@ -134,6 +93,7 @@ struct CaptureLibraryView: View {
             metrics: $glassMetrics
         )
         .background { refreshShortcut }
+        .commandPaletteContext { .library(paletteHooks) }
         // 860 pt holds the sidebar, the grid and the inspector; below 900 the inspector folds
         // away on its own, and without it the window goes down to 620 (Fable #7).
         .frame(minWidth: inspectorVisible ? 860 : 620, minHeight: 540)
@@ -875,17 +835,30 @@ struct CaptureLibraryView: View {
     /// ⌘R refreshes the page. Its menu item went with the toolbar's sort
     /// menu; Refresh is also in the right-click menu between the cards.
     private var refreshShortcut: some View {
-        Button("Refresh") {
-            if comments.isShown { comments.refresh() } else if likes.isShown { likes.refresh() }
-            else if cloud.isShown { cloud.refresh() }
-            else if clipboard.isShown { clipboard.refresh() }
-            else if saved.isShown { clipboard.refresh(); history.reload(); model.refresh() }
-            else { history.reload(); model.refresh() }
-        }
+        Button("Refresh", action: refreshPage)
         .keyboardShortcut("r", modifiers: .command)
         .opacity(0)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+
+    private func refreshPage() {
+        if comments.isShown { comments.refresh() } else if likes.isShown { likes.refresh() }
+        else if cloud.isShown { cloud.refresh() }
+        else if clipboard.isShown { clipboard.refresh() }
+        else if saved.isShown { clipboard.refresh(); history.reload(); model.refresh() }
+        else { history.reload(); model.refresh() }
+    }
+
+    /// What the command palette reaches in this window.
+    private var paletteHooks: LibraryPaletteHooks {
+        LibraryPaletteHooks(
+            sidebarShown: { columnVisibility != .detailOnly },
+            toggleSidebar: { withAnimation { columnVisibility = columnVisibility == .detailOnly ? .all : .detailOnly } },
+            inspectorShown: { inspectorVisible },
+            toggleInspector: { inspectorChoice.wrappedValue.toggle() },
+            find: { searchFocusRequest += 1 },
+            refresh: refreshPage)
     }
 
     private func searchField(onGlass: Bool) -> some View {
@@ -1621,6 +1594,55 @@ enum CaptureLibrarySidebarSelection: Hashable {
     case snippets
     case saved
     case tag(String)
+
+    /// The page the Library shows.
+    static var current: Self? {
+        let model = CaptureLibraryModel.shared, cloud = CloudLibraryModel.shared, clipboard = ClipboardHistoryModel.shared
+        if LibrarySavedModel.shared.isShown { return .saved }
+        if clipboard.isShown { return clipboard.showsSnippets ? .snippets : .clipboard }
+        if CommentsLibraryModel.shared.isShown { return .comments }
+        if LikesLibraryModel.shared.isShown { return .likes }
+        if cloud.isShown { return cloud.showsReceived ? .received : cloud.showsFiles ? .files : .cloud }
+        if let tag = model.tagFilter { return .tag(tag) }
+        return model.filter.map { .kind($0) }
+    }
+
+    /// Shows a page, as a click on its sidebar row does; the command palette's Go to too.
+    static func show(_ selection: Self?) {
+        guard selection != current else { return }
+        let model = CaptureLibraryModel.shared, cloud = CloudLibraryModel.shared, clipboard = ClipboardHistoryModel.shared
+        if QuickLookPreviewPresenter.followsLibrary { QuickLookPreviewPresenter.dismiss() }
+        cloud.cancelPreview()
+        cloud.isShown = selection == .cloud || selection == .files || selection == .received
+        cloud.showsFiles = selection == .files
+        cloud.showsReceived = selection == .received
+        CommentsLibraryModel.shared.setShown(selection == .comments)
+        LikesLibraryModel.shared.setShown(selection == .likes)
+        clipboard.librarySelectionIDs = []
+        clipboard.isShown = selection == .clipboard || selection == .snippets
+        clipboard.showsSnippets = selection == .snippets
+        LibrarySavedModel.shared.isShown = selection == .saved
+        switch selection {
+        case .saved:
+            // Every saved capture, whatever kind or tag the captures page was on.
+            model.selection = []
+            clipboard.librarySelection = nil
+            model.tagFilter = nil
+            model.filter = .all
+        case .cloud, .files, .received, .comments, .likes, .clipboard, .snippets:
+            // The toolbar's capture actions mustn't act on captures out of sight.
+            model.selection = []
+        case .tag(let tag):
+            model.filter = .all
+            model.tagFilter = tag
+        case .kind(let filter):
+            model.tagFilter = nil
+            model.filter = filter
+        case nil:
+            model.tagFilter = nil
+            model.filter = nil
+        }
+    }
 }
 
 /// A sidebar row's count, shown only above zero: "Recordings 0" said nothing a missing number doesn't (Fable #10).

@@ -68,6 +68,8 @@ private struct AnnotationEditorContent: View {
     @State private var closeGuard = EditorCloseGuard()
     /// The uploaded link, until the next edit brings Upload back.
     @State private var copiedLink: String?
+    /// The command palette's last Upload request: the toolbar button opens its options.
+    @State private var uploadRequest: UUID?
     /// Found once per load: matching by URL probes each recording on disk,
     /// and the title is read on every edit.
     @State private var historyID: UUID?
@@ -202,6 +204,7 @@ private struct AnnotationEditorContent: View {
             }
             .focusedSceneValue(\.annotationEditor, WeakReference(model))
             .focusedSceneValue(\.annotationEditorToolSelection, toolSelection)
+            .commandPaletteContext { .editor(paletteHooks) }
             .onChange(of: model.saveAsRequest) { _, _ in saveAs() }
             .onChange(of: model.saveRequest) { _, _ in saveEdits() }
             // The pixels under the pointer come from the base image, so they
@@ -317,6 +320,7 @@ private struct AnnotationEditorContent: View {
                 // The name its Library card shows, as the Library suggests; never the file name.
                 suggestedTitle: historyItem == nil ? "" : windowTitle,
                 messageSource: ShareMessageSource(isVideo: false),
+                openRequest: uploadRequest,
                 onUpload: uploadAnnotation
             ) {
                 if isUploading {
@@ -767,6 +771,45 @@ private struct AnnotationEditorContent: View {
 
     private var toolSelection: AnnotationEditorToolSelection {
         AnnotationEditorToolSelection(editor: model, probe: probe, focus: $focusedField)
+    }
+
+    /// What the command palette reaches in this window: the dock's tools, Pick Color and Measure, and the inspector.
+    private var paletteHooks: EditorPaletteHooks {
+        let probe = probe
+        return EditorPaletteHooks(
+            model: model,
+            selectTool: { toolSelection.select($0) },
+            pickColor: {
+                probe.isMeasuringTool = false
+                probe.isPicking = true
+                NSApp.keyWindow?.makeFirstResponder(nil)
+            },
+            measure: {
+                probe.isPicking = false
+                probe.isMeasuringTool = true
+                NSApp.keyWindow?.makeFirstResponder(nil)
+            },
+            inspectorShown: { isInspectorPresented },
+            toggleInspector: {
+                clearInspectorFocus()
+                inspectorChoice.wrappedValue.toggle()
+            },
+            uploadUnavailable: { uploadUnavailableReason },
+            // Checked again as it's delivered, after the palette closed: the button may have gone meanwhile.
+            openUpload: {
+                if uploadUnavailableReason == nil { uploadRequest = UUID() } else { NSSound.beep() }
+            })
+    }
+
+    /// Why the toolbar has no Upload to press now, as it shows Upload: with Cloud set up, not while cropping, saving,
+    /// uploading or with the link copied.
+    private var uploadUnavailableReason: String? {
+        if !CloudUploader.shared.isConfigured { return "Cloud isn’t set up" }
+        if model.isCropping { return "finish cropping first" }
+        if isUploading { return "uploading now" }
+        if isBusy { return "wait for the save to finish" }
+        if copiedLink != nil { return "uploaded: edit it to upload again" }
+        return nil
     }
 
     private func clearInspectorFocus() {

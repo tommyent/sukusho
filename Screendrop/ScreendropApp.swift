@@ -47,6 +47,8 @@ struct ScreendropApp: App {
             SidebarCommands()
             InspectorCommands()
             CommandGroup(before: .toolbar) {
+                CommandPaletteCommand()
+                Divider()
                 AnnotationEditorZoomCommands()
                 LibraryCardSizeCommands()
             }

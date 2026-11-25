@@ -247,6 +247,10 @@ private struct RecordingStudioContent: View {
             model.autosave()
         }
         .focusedSceneValue(\.recordingStudio, WeakReference(model))
+        .commandPaletteContext {
+            .studio(StudioPaletteHooks(model: model, inspectorShown: { isInspectorPresented },
+                                       toggleInspector: { isInspectorPresented.toggle() }))
+        }
         .background {
             StudioKeyCommands(model: model)
         }
@@ -375,6 +379,11 @@ private struct RecordingStudioContent: View {
         }
     }
 
+    /// The command palette's request for this toolbar popover, if it's the last one made.
+    private func requested(_ kind: StudioPaletteRequest.Kind) -> UUID? {
+        model.paletteRequest?.kind == kind ? model.paletteRequest?.id : nil
+    }
+
     /// Share pipeline in one toolbar slot: render → upload → link copied.
     /// The upload leg reads the uploader's live progress so the pill keeps
     /// moving through both stages.
@@ -383,11 +392,12 @@ private struct RecordingStudioContent: View {
         switch model.shareState {
         case .idle:
             CloudUploadButton(suggestedTitle: shareSuggestedTitle, encryptionUnavailable: CloudShareSeal.unavailableNote,
-                              messageSource: shareMessageSource, onUpload: { model.shareToCloud(options: $0) }) {
+                              messageSource: shareMessageSource, openRequest: requested(.uploadOptions),
+                              onUpload: { model.shareToCloud(options: $0) }) {
                 Label("Upload", systemImage: "icloud.and.arrow.up")
                     .labelStyle(.titleAndIcon)
             }
-            .disabled(!model.isLoaded || model.hasRunningWork || model.needsSharedVideoReplacement || model.hasUnreadableDraft || model.isReadOnlyNewerFormat)
+            .disabled(model.uploadUnavailableReason != nil)
             .help("Upload this recording and copy the share link")
         case .rendering(let progress):
             SharePill(stage: "Rendering", progress: progress) {
@@ -420,10 +430,11 @@ private struct RecordingStudioContent: View {
                     .help(message)
 
                 CloudUploadButton(suggestedTitle: shareSuggestedTitle, encryptionUnavailable: CloudShareSeal.unavailableNote,
-                                  messageSource: shareMessageSource, onUpload: { model.shareToCloud(options: $0) }) {
+                                  messageSource: shareMessageSource, openRequest: requested(.uploadOptions),
+                                  onUpload: { model.shareToCloud(options: $0) }) {
                     Text("Retry")
                 }
-                .disabled(model.hasRunningWork || model.needsSharedVideoReplacement || model.isReadOnlyNewerFormat)
+                .disabled(model.uploadUnavailableReason != nil)
             }
         }
     }
@@ -435,12 +446,14 @@ private struct RecordingStudioContent: View {
             RecordingExportButton(
                 currentSettings: model.exportSettings,
                 hasAudio: model.hasAudio,
+                openRequest: requested(.exportOptions),
                 onExport: model.export(settings:)
             ) {
                 Label("Export", systemImage: "arrow.down.circle")
                     .labelStyle(.titleAndIcon)
             }
-            .disabled(!model.isLoaded || model.shareState.isBusy || model.isIsolatingVoice || model.isImportingVideoClip || model.hasUnreadableDraft || model.isReadOnlyNewerFormat)
+            // As export() refuses, and the command palette says why (Sol's second review).
+            .disabled(model.exportUnavailableReason != nil)
         case .exporting(let progress):
             SharePill(stage: "Exporting", progress: progress, cancelLabel: "Cancel Export",
                       tint: model.isExportingAgentPrompt ? CardMark.green : .accentColor) {
@@ -459,11 +472,13 @@ private struct RecordingStudioContent: View {
                 RecordingExportButton(
                     currentSettings: model.exportSettings,
                     hasAudio: model.hasAudio,
+                    openRequest: requested(.exportOptions),
                     onExport: model.export(settings:)
                 ) {
                     Image(systemName: "arrow.down.circle")
                 }
                 .help("Export Again")
+                .disabled(model.exportUnavailableReason != nil)
             }
         case .failed(let message):
             HStack(spacing: 6) {
@@ -475,10 +490,12 @@ private struct RecordingStudioContent: View {
                 RecordingExportButton(
                     currentSettings: model.exportSettings,
                     hasAudio: model.hasAudio,
+                    openRequest: requested(.exportOptions),
                     onExport: model.export(settings:)
                 ) {
                     Text("Retry")
                 }
+                .disabled(model.exportUnavailableReason != nil)
             }
         }
     }

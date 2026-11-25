@@ -344,6 +344,13 @@ final class RecordingStudioModel {
     /// A video clip's edge is being dragged; the preview shows the frame at
     /// that edge rather than skimming.
     var isTrimmingClip = false
+    /// A control the command palette asked to open in its own place: its owner opens it. Each request is new, so a
+    /// control that appears later never takes an old one.
+    var paletteRequest: StudioPaletteRequest?
+    @ObservationIgnored private var isCheckingPauseScreens = false
+    /// Whether the timeline can zoom in or out from where it is, as its own zoom buttons say; the timeline keeps it.
+    @ObservationIgnored var timelineZoomRoom = (canZoomIn: true, canZoomOut: false)
+
     /// Whether trim drags snap to the playhead, markers, clicks, and audio edges.
     var snapsEdits = (UserDefaults.standard.object(forKey: RecordingStudioModel.snapsEditsKey) as? Bool) ?? true {
         didSet {
@@ -4487,8 +4494,12 @@ final class RecordingStudioModel {
 
     /// Compares the frames of every quiet pause not yet checked. The source
     /// movie never changes, so a pause is checked once per Studio session.
+    /// One check at a time: the Edit Video tab and the command palette both start one, and the running one picks up
+    /// pauses that appear while it runs.
     func checkPauseScreens() async {
-        guard let asset = screenAsset else { return }
+        guard let asset = screenAsset, !isCheckingPauseScreens else { return }
+        isCheckingPauseScreens = true
+        defer { isCheckingPauseScreens = false }
         while let pause = pauseSummary.checking.first, !Task.isCancelled {
             let still = await StudioPauseScreenCheck.isStill(asset: asset, gap: pause.gap)
             guard !Task.isCancelled, !isTornDown else { return }
@@ -5777,7 +5788,7 @@ final class RecordingStudioModel {
     func cancelRedaction() { isSelectingRedaction = false }
 
     func addRedaction() {
-        guard isSelectingRedaction,
+        guard isSelectingRedaction, !isReadOnlyNewerFormat,
               let range = clipTimeline.redactionCoverageSourceRange(
                 atEditorTime: min(max(currentTime, 0), duration),
                 sourceDuration: sourceDuration,
@@ -5791,10 +5802,16 @@ final class RecordingStudioModel {
 
     /// Adds a pixelate or blur block at the playhead, three seconds long,
     /// centered on the recorded picture; drag its handles on the canvas to place it.
+    /// Where a blur or pixelate block can start: on the main recording, not on imported footage, which has no source
+    /// time for it. `addRedaction(atEditorTime:mode:)` and the command palette's rows share it.
+    func redactionRange(atEditorTime time: TimeInterval) -> ClosedRange<TimeInterval>? {
+        sourceRange(startingAt: time, length: RecordingRedaction.defaultDuration, minimum: RecordingRedaction.minimumDuration)
+    }
+
     func addRedaction(atEditorTime time: TimeInterval, mode: RecordingRedaction.Mode = .pixelate) {
-        guard isLoaded, !hasRunningWork,
-              let range = sourceRange(startingAt: time, length: RecordingRedaction.defaultDuration,
-                                      minimum: RecordingRedaction.minimumDuration) else { return }
+        // A recording made by a newer Sukusho is read-only: its redaction couldn't be saved (Sol's second review).
+        guard isLoaded, !hasRunningWork, !isReadOnlyNewerFormat,
+              let range = redactionRange(atEditorTime: time) else { return }
         let region = RecordingRedaction(
             start: range.lowerBound,
             end: range.upperBound,
@@ -6500,6 +6517,23 @@ final class RecordingStudioModel {
 
     /// Opens a file picker accepting movie files and Sukusho `.sukushorec`
     /// recordings, inserting after the selected clip or at the playhead/end.
+    /// The timeline's Add Video Overlay…: a picture-in-picture or cutaway at the playhead, from a movie or another
+    /// Sukusho recording. Also the command palette's.
+    func presentVideoOverlayPanel() {
+        pause()
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.treatsFilePackagesAsDirectories = false
+        panel.allowedContentTypes = RecordingVideoOverlay.importContentTypes
+        panel.prompt = "Add Video Overlay"
+        panel.message = "Choose a video file or another Sukusho recording to layer as a picture-in-picture or cutaway."
+        let time = currentTime
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        importVideoOverlays(panel.urls, atEditorTime: time)
+    }
+
     func presentInsertVideoClipPanel() {
         guard canImportVideoClip else { return }
         pause()
@@ -7230,9 +7264,15 @@ final class RecordingStudioModel {
     }
 
     /// Splits an audio clip at `time` on the edited timeline.
+    /// The two pieces an audio clip splits into at this time, or nil where it doesn't cover the time with room for both.
+    /// `splitAudioClip(id:at:)` and the command palette's Split at Playhead share it.
+    func audioClipHalves(id: UUID, at time: TimeInterval) -> (leading: RecordingAudioClip, trailing: RecordingAudioClip)? {
+        guard let clip = audioClips.first(where: { $0.id == id }) else { return nil }
+        return StudioAudioConform.split(clip, at: time)
+    }
+
     func splitAudioClip(id: UUID, at time: TimeInterval) {
-        guard let clip = audioClips.first(where: { $0.id == id }),
-              let halves = StudioAudioConform.split(clip, at: time) else { return }
+        guard let halves = audioClipHalves(id: id, at: time) else { return }
         applyAudioClips(
             audioClips.flatMap { $0.id == id ? [halves.leading, halves.trailing] : [$0] },
             actionName: "Split Audio"
@@ -7667,6 +7707,36 @@ final class RecordingStudioModel {
 
     var canShareToCloud: Bool {
         CloudUploader.shared.isConfigured
+    }
+
+    /// Why Export can't start now, or nil: the toolbar's Export, Export Again and Retry, and the command palette, all
+    /// as `export()` itself refuses.
+    var exportUnavailableReason: String? {
+        if exportState.isExporting { return "exporting now" }
+        return deliveryUnavailableReason
+    }
+
+    /// Why Upload can't start now, or nil: the toolbar's Upload and Retry, and the command palette.
+    var uploadUnavailableReason: String? {
+        if !canShareToCloud { return "Cloud isn’t set up" }
+        switch shareState {
+        case .rendering, .uploading: return "uploading now"
+        case .finished: return "uploaded: edit it to upload again"
+        case .idle, .failed: break
+        }
+        if isLoaded, !isReadOnlyNewerFormat, !hasUnreadableDraft, needsSharedVideoReplacement {
+            return "replace or delete the shared video first"
+        }
+        return deliveryUnavailableReason
+    }
+
+    /// What stops any render going out: loading, a read-only or unreadable project, or work already running.
+    var deliveryUnavailableReason: String? {
+        if !isLoaded { return "loading" }
+        if isReadOnlyNewerFormat { return "made by a newer Sukusho" }
+        if hasUnreadableDraft { return "discard the unreadable edits first" }
+        if hasRunningWork { return "wait for Studio to finish" }
+        return nil
     }
 
     private var sharedHistoryItem: ScreenshotHistoryItem? {

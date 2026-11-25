@@ -99,6 +99,14 @@ struct HotkeyShortcut: Codable, Equatable, Hashable {
         isRepeat ? nil : HotkeyShortcut(modifiers: Modifiers(from: flags), keyCode: keyCode)
     }
 
+    /// Whether a menu can take these keys as its own shortcut: a key with a modifier, not a modifier key alone and not a
+    /// function key, which `MenuBarView.shortcut(for:)` can't hand a menu. The palette's shortcut inside Sukusho is one.
+    var isMenuShortcut: Bool {
+        guard taps == nil, !modifiers.isEmpty else { return false }
+        let label = Self.keyLabel(for: keyCode)
+        return label.count == 1 || label == "Space"
+    }
+
     static func menuTitle(_ title: String, adding shortcut: HotkeyShortcut?) -> String {
         shortcut.map { "\(title) (\($0.displayString))" } ?? title
     }
@@ -227,8 +235,14 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
     case library
     /// Not a capture: the clipboard history popup, registered only while history is on.
     case clipboardHistory
+    /// Not a capture: the command palette, inside Sukusho's own windows only. Recorded and checked for clashes as the
+    /// others are, but a menu's shortcut (View › Command Palette…), never registered with macOS for every app (`isGlobal`).
+    case commandPalette
 
     var id: Self { self }
+
+    /// Registered system-wide by `HotkeyManager`. The rest are menu shortcuts, which work while Sukusho is in front.
+    var isGlobal: Bool { self != .commandPalette }
 
     var hotKeyID: UInt32 {
         switch self {
@@ -241,6 +255,7 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
         case .library: 7
         case .drawing: 9
         case .clipboardHistory: 8
+        case .commandPalette: 10
         }
     }
 
@@ -258,6 +273,7 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
         case .scrollingCapture: "Scrolling Capture"
         case .library: "Show Library"
         case .clipboardHistory: "Clipboard History"
+        case .commandPalette: "Command Palette"
         }
     }
 
@@ -285,6 +301,9 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
         case .clipboardHistory:
             // ⌃⌘V (owner, 2026-11-16): ⌥⌘V is Finder's move-here and Paste Style, ⇧⌘V Sublime's Paste and Indent.
             HotkeyShortcut(modifiers: [.control, .command], keyCode: Int(kVK_ANSI_V))
+        case .commandPalette:
+            // ⇧⌘P, as Hashbrown's and the code editors' palettes; free in Sukusho (sd-458l).
+            HotkeyShortcut(modifiers: [.shift, .command], keyCode: Int(kVK_ANSI_P))
         }
     }
 
@@ -298,9 +317,10 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Settings › Shortcuts' rows: 1 to 5, then O, L and V (the owner, 2026-11-17).
+    /// Settings › Shortcuts' rows: 1 to 5, then O, L and V (the owner, 2026-11-17), then the palette's P.
     static let settingsOrder: [CaptureHotkeyAction] = [
         .fullscreen, .window, .area, .scrollingCapture, .screenRecording, .drawing, .textCapture, .library, .clipboardHistory,
+        .commandPalette,
     ]
 
     var preferencesKey: String {
@@ -323,6 +343,8 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
             ScreendropPreferences.libraryHotkeyKey
         case .clipboardHistory:
             ScreendropPreferences.clipboardHistoryHotkeyKey
+        case .commandPalette:
+            "captureHotkey.commandPalette"
         }
     }
 }
@@ -347,7 +369,8 @@ enum CaptureHotkeyPreferences {
         return shortcut
     }
 
-    /// The action's shortcut: recorded, else the default; nil once cleared.
+    /// The action's shortcut: recorded, else the default; nil once cleared, or while its default is another action's
+    /// (`defaultTakenBy`).
     static func shortcut(for action: CaptureHotkeyAction, defaults: UserDefaults = .standard) -> HotkeyShortcut? {
         if let shortcut = noModifiersShortcut(for: action, defaults: defaults) { return shortcut }
         if defaults.string(forKey: action.preferencesKey) == clearedValue { return nil }
@@ -356,10 +379,56 @@ enum CaptureHotkeyPreferences {
             let shortcut = try? JSONDecoder().decode(HotkeyShortcut.self, from: data),
             shortcut.isValid
         else {
-            return action.defaultShortcut
+            return defaultTakenBy(action, defaults: defaults) == nil ? action.defaultShortcut : nil
         }
 
         return shortcut
+    }
+
+    /// The action another row's recorded keys took the palette's default from: a Capture Fullscreen recorded as ⇧⌘P
+    /// before the palette came keeps it, and the palette has no keys until some are recorded for it (Sol, sd-458l). Only
+    /// the palette's default yields; the other rows' stay as they were.
+    static func defaultTakenBy(_ action: CaptureHotkeyAction, defaults: UserDefaults = .standard) -> CaptureHotkeyAction? {
+        guard action == .commandPalette, defaults.object(forKey: action.preferencesKey) == nil else { return nil }
+        return CaptureHotkeyAction.allCases.first { other in
+            guard other != action else { return false }
+            let recorded = noModifiersShortcut(for: other, defaults: defaults) ?? defaults.data(forKey: other.preferencesKey)
+                .flatMap { try? JSONDecoder().decode(HotkeyShortcut.self, from: $0) }
+            return recorded?.overlaps(action.defaultShortcut) == true
+        }
+    }
+
+    /// Sukusho's own menu and window keys, which a shortcut that works only inside Sukusho would fight: ⌘S is File ›
+    /// Save and the editor's own key, ⌘B Studio's Split at Playhead (Sol, sd-458l). The palette's row refuses them.
+    static let appCommands: [(shortcut: HotkeyShortcut, name: String)] = {
+        func keys(_ modifiers: HotkeyShortcut.Modifiers, _ key: Int, _ name: String) -> (HotkeyShortcut, String) {
+            (HotkeyShortcut(modifiers: modifiers, keyCode: key), name)
+        }
+        return [
+            keys(.command, kVK_ANSI_S, "Save"), keys([.command, .shift], kVK_ANSI_S, "Save As…"),
+            keys(.command, kVK_ANSI_Z, "Undo"), keys([.command, .shift], kVK_ANSI_Z, "Redo"),
+            keys(.command, kVK_ANSI_X, "Cut"), keys(.command, kVK_ANSI_C, "Copy"), keys([.command, .shift], kVK_ANSI_C, "Copy Original"),
+            keys(.command, kVK_ANSI_V, "Paste"), keys(.command, kVK_ANSI_A, "Select All"),
+            keys(.command, kVK_ANSI_F, "Find"), keys(.command, kVK_ANSI_R, "Refresh"), keys(.command, kVK_ANSI_B, "Split at Playhead"),
+            keys(.command, kVK_ANSI_Equal, "Zoom In"), keys(.command, kVK_ANSI_Minus, "Zoom Out"),
+            keys([.command, .shift], kVK_ANSI_Equal, "Zoom In"), keys(.command, kVK_ANSI_0, "Actual Size"),
+            keys(.command, kVK_ANSI_1, "Zoom to Fit"), keys([.command, .option], kVK_ANSI_Equal, "Bigger Text"),
+            keys([.command, .option], kVK_ANSI_Minus, "Smaller Text"), keys([.command, .option], kVK_ANSI_I, "Show Inspector"),
+            keys([.command, .control], kVK_ANSI_S, "Show Sidebar"), keys(.option, kVK_ANSI_X, "Clear Marked Range"),
+            keys(.command, kVK_ANSI_Comma, "Settings…"), keys(.command, kVK_ANSI_Q, "Quit Sukusho"),
+            keys(.command, kVK_ANSI_H, "Hide Sukusho"), keys([.command, .option], kVK_ANSI_H, "Hide Others"),
+            keys(.command, kVK_ANSI_W, "Close"), keys(.command, kVK_ANSI_M, "Minimize"),
+            keys([.command, .control], kVK_ANSI_F, "Enter Full Screen"), keys(.command, kVK_Delete, "Move to Trash"),
+            keys([.command, .shift], kVK_ANSI_Minus, "Zoom Out"),
+            // The palette's own ⌘Y, and Studio's one-second steps (Sol's second review).
+            keys(.command, kVK_ANSI_Y, "Quick Look"),
+            keys(.shift, kVK_LeftArrow, "Back One Second"), keys(.shift, kVK_RightArrow, "Forward One Second"),
+        ]
+    }()
+
+    /// The Sukusho command already on these keys.
+    static func appCommand(using shortcut: HotkeyShortcut) -> String? {
+        appCommands.first { $0.shortcut == shortcut }?.name
     }
 
     /// Nil clears the action. Its default is never stored, so changing a
