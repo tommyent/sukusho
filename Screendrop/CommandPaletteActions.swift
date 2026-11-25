@@ -22,9 +22,13 @@ final class AppCommandPaletteHost: CommandPaletteHost {
     /// try-on behind, nor keep a dark theme in the light slot (Sol's finding 7).
     private var themeSlotIsDark: Bool?
 
-    init(context: PaletteWindowContext?, windowTitle: String?, appearsDark: (() -> Bool)? = nil) {
+    /// The window it opened over: a Library prompt (Move to Trash) attaches to it, whichever window is key by then.
+    private weak var parentWindow: NSWindow?
+
+    init(context: PaletteWindowContext?, windowTitle: String?, window parentWindow: NSWindow? = nil, appearsDark: (() -> Bool)? = nil) {
         self.context = context
         self.windowTitle = windowTitle
+        self.parentWindow = parentWindow
         self.appearsDark = appearsDark ?? { NSApp.effectiveAppearance.isDarkAppearance }
         switch context {
         case .library: window = .library
@@ -422,6 +426,14 @@ final class AppCommandPaletteHost: CommandPaletteHost {
             guard let item = menuItem(title), item.isEnabled else { return {} }
             // The item reads the selection again as it runs: only for the captures the row was for.
             let chosen = selection.map(\.id)
+            if id == "selection.trash" {
+                // Its prompt on the window the palette opened over, not on whichever is key by then (Sol's second review).
+                let cards = selection.map(LibrarySavedCard.capture)
+                return { [weak parentWindow] in
+                    guard model.selectedItems.map(\.id) == chosen, let window = parentWindow else { return NSSound.beep() }
+                    model.deleteSelection(cards, in: window)
+                }
+            }
             return {
                 guard model.selectedItems.map(\.id) == chosen else { return NSSound.beep() }
                 item.perform()
@@ -441,7 +453,11 @@ final class AppCommandPaletteHost: CommandPaletteHost {
             }
         case "capture.draw": return { RecordingInkPresenter.shared.toggleFromShortcut() }
 
-        case "selection.copyOriginal": return { model.perform(.copyOriginal) }
+        case "selection.copyOriginal":
+            // The captures selected at ↩, not whatever is selected as it runs (Sol's second review).
+            let cards = selection.map(LibrarySavedCard.capture)
+            guard !cards.isEmpty else { return {} }
+            return { model.copySelection(cards, original: true) }
         case "selection.copyText":
             guard let item = selection.first else { return {} }
             let text = textParagraphs(item).joined(separator: "\n\n")

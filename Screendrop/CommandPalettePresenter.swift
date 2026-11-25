@@ -115,6 +115,11 @@ final class CommandPalettePresenter {
         contexts[ObjectIdentifier(window)] = (WeakWindowBox(window), context)
     }
 
+    /// What the window registered, if it did.
+    func context(for window: NSWindow) -> PaletteWindowContext? {
+        contexts[ObjectIdentifier(window)]?.context()
+    }
+
     private func windowWillClose(_ id: ObjectIdentifier?) {
         guard let id else { return }
         contexts[id] = nil
@@ -136,8 +141,8 @@ final class CommandPalettePresenter {
 
     func show(over window: NSWindow, start: PaletteStep = .commands) {
         close(refocus: false)
-        let context = contexts[ObjectIdentifier(window)]?.context()
-        let host = AppCommandPaletteHost(context: context, windowTitle: window.title.isEmpty ? nil : window.title)
+        let host = AppCommandPaletteHost(context: context(for: window), windowTitle: window.title.isEmpty ? nil : window.title,
+                                         window: window)
         let model = CommandPaletteModel(host: host, start: start)
         model.onClose = { [weak self] in self?.close() }
         self.model = model
