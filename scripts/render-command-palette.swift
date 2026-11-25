@@ -35,6 +35,11 @@ final class SampleHost: CommandPaletteHost {
         case "library.sidebar": return PaletteCommandState(title: "Hide Sidebar")
         case "tool.rectangle": return PaletteCommandState(detail: "Tool")
         case "editor.save": return .off("no changes to save")
+        case "studio.translate": return .off("transcribe the narration first")
+        case "studio.detachAudio": return .off("select a clip first")
+        case "studio.timelineZoomOut", "studio.fitTimeline": return .off("the whole timeline shows")
+        case "studio.isolateVoice": return PaletteCommandState(isOn: false)
+        case "studio.snapping": return PaletteCommandState(isOn: true)
         case "capture.draw": return .off("only while recording")
         default: return .ready
         }
@@ -170,22 +175,30 @@ struct RenderCommandPalette {
         NSApplication.shared.setActivationPolicy(.prohibited)
         NSApplication.shared.finishLaunching()
         typealias Setup = (CommandPaletteModel) -> Void
-        let states: [(name: String, window: PaletteWindow, place: String, setup: Setup)] = [
-            ("1-library", .library, "Library · Lake at dawn", { _ in }),
-            ("2-editor-typing", .editor, "Editor · Lake at dawn", { $0.query = "rec" }),
-            ("3-change-theme", .library, "Library · Lake at dawn", { model in
+        // Studio's commands wired in round 2 (sd-458l): its inspector's, timeline's and toolbar's.
+        let studioNew: Set<String> = ["studio.autoZoom", "studio.blur", "studio.pixelate", "studio.videoOverlay", "studio.detachAudio",
+                                      "studio.resetClips", "studio.translate", "studio.isolateVoice", "studio.timelineZoomIn",
+                                      "studio.timelineZoomOut", "studio.fitTimeline", "studio.export", "studio.upload"]
+        let states: [(name: String, window: PaletteWindow, place: String, only: Set<String>?, setup: Setup)] = [
+            ("1-library", .library, "Library · Lake at dawn", nil, { _ in }),
+            ("2-editor-typing", .editor, "Editor · Lake at dawn", nil, { $0.query = "rec" }),
+            ("3-change-theme", .library, "Library · Lake at dawn", nil, { model in
                 model.query = "change theme"; model.press(.right); model.press(.down)
             }),
-            ("4-recent-captures", .library, "Library · Lake at dawn", { model in model.query = "recent"; model.press(.right) }),
-            ("5-settings", .other, "Sukusho · Settings", { _ in }),
-            ("6-no-match", .library, "Library · Lake at dawn", { $0.query = "watermrk" }),
-            ("7-clipboard-history", .editor, "Editor · Lake at dawn", { model in
+            ("4-recent-captures", .library, "Library · Lake at dawn", nil, { model in model.query = "recent"; model.press(.right) }),
+            ("5-settings", .other, "Sukusho · Settings", nil, { _ in }),
+            ("6-no-match", .library, "Library · Lake at dawn", nil, { $0.query = "watermrk" }),
+            ("7-clipboard-history", .editor, "Editor · Lake at dawn", nil, { model in
                 model.query = "clipboard history"; model.press(.right)
             }),
-            ("8-add-tag", .library, "Library · Lake at dawn", { model in
+            ("8-add-tag", .library, "Library · Lake at dawn", nil, { model in
                 model.query = "add tag"; model.press(.right); model.query = "urgent"
             }),
-            ("9-studio", .studio, "Studio · Slow Roads walkthrough", { _ in }),
+            ("9-studio", .studio, "Studio · Slow Roads walkthrough", nil, { _ in }),
+            ("10-studio-new", .studio, "Studio · Slow Roads walkthrough", studioNew, { model in
+                for _ in 0 ..< 4 { model.press(.down) }   // Detach Audio: a grey row on the fill
+            }),
+            ("11-editor-upload", .editor, "Editor · Lake at dawn", nil, { $0.query = "upload" }),
         ]
         var written = 0
         for theme in ["classic", "chip", "glass"] {
@@ -195,7 +208,8 @@ struct RenderCommandPalette {
                 for state in states {
                     let host = SampleHost(window: state.window, place: state.place, savedTheme: theme)
                     host.dark = dark
-                    let model = CommandPaletteModel(host: host)
+                    let catalog = state.only.map { only in PaletteCommand.catalog.filter { only.contains($0.id) } } ?? PaletteCommand.catalog
+                    let model = CommandPaletteModel(host: host, catalog: catalog)
                     state.setup(model)
                     let view = CommandPaletteView(model: model, maxHeight: 620) { _ in }
                         .padding(28)
