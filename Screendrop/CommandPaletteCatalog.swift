@@ -152,8 +152,8 @@ nonisolated extension PaletteCommand {
     private static func k(_ keys: String...) -> PaletteKeys { .keys(keys) }
 
     /// commands.md (sd-458l, 2026-11-24), as the owner left it, less the rows whose actions need a selected row on a
-    /// Cloud or Clipboard page (left out there too) and the Studio playback keys, which can't be pressed while the
-    /// palette has the keyboard.
+    /// Cloud or Clipboard page (left out there too), Find Sensitive Text… and Show Bug Report in Finder, and the Studio
+    /// playback keys, which can't be pressed while the palette has the keyboard.
     static let catalog: [PaletteCommand] = [
         // Capture
         .init("capture.fullscreen", "Capture Fullscreen", .capture, symbol: "macwindow", scope: .anywhere, keys: .hotkey(.fullscreen)),
@@ -240,15 +240,27 @@ nonisolated extension PaletteCommand {
         .init("studio.marker", "Add or Remove Marker", .studio, symbol: "bookmark", scope: studio, keys: k("M")),
         .init("studio.snapping", "Snapping", .studio, symbol: "dot.squareshape.split.2x2", scope: studio, keys: k("N"), isSwitch: true),
         .init("studio.addZoom", "Add Zoom at Playhead", .studio, symbol: "plus.magnifyingglass", scope: studio),
+        .init("studio.autoZoom", "Auto Zoom", .studio, symbol: "pointer.arrow.rays", scope: studio),
         .init("studio.addText", "Add Text at Playhead", .studio, symbol: "textformat", scope: studio),
+        .init("studio.blur", "Blur at Playhead", .studio, symbol: "drop.halffull", scope: studio),
+        .init("studio.pixelate", "Pixelate at Playhead", .studio, symbol: "squareshape.split.3x3", scope: studio),
+        .init("studio.videoOverlay", "Add Video Overlay…", .studio, symbol: "pip.fill", scope: studio),
+        .init("studio.detachAudio", "Detach Audio", .studio, symbol: "waveform.badge.minus", scope: studio),
+        .init("studio.resetClips", "Reset All Clip Edits…", .studio, symbol: "arrow.counterclockwise", scope: studio),
+        .init("studio.isolateVoice", "Isolate Voice", .studio, symbol: "waveform.and.mic", scope: studio, isSwitch: true),
         .init("studio.transcribe", "Transcribe Narration", .studio, symbol: "waveform", scope: studio),
         .init("studio.summarize", "Summarize", .studio, symbol: "text.append", scope: studio),
         .init("studio.suggestChapters", "Suggest Chapters", .studio, symbol: "list.bullet.rectangle", scope: studio),
         .init("studio.nameChapters", "Name Chapters", .studio, symbol: "character.textbox", scope: studio),
         .init("studio.removeFillers", "Remove Filler Words", .studio, symbol: "text.badge.minus", scope: studio),
         .init("studio.shortenPauses", "Shorten Pauses", .studio, symbol: "pause", scope: studio),
+        .init("studio.translate", "Translate Captions…", .studio, symbol: "translate", scope: studio),
+        .init("studio.timelineZoomIn", "Zoom In", .studio, symbol: "plus.magnifyingglass", scope: studio, keys: k("⌘", "=")),
+        .init("studio.timelineZoomOut", "Zoom Out", .studio, symbol: "minus.magnifyingglass", scope: studio, keys: k("⌘", "−")),
+        .init("studio.fitTimeline", "Fit Timeline", .studio, symbol: "arrow.left.and.right", scope: studio, keys: k("⌘", "0")),
         .init("studio.save", "Save", .studio, symbol: "square.and.arrow.down", scope: studio, keys: k("⌘", "S")),
-        .init("studio.export", "Export…", .studio, symbol: "square.and.arrow.up", scope: studio),
+        .init("studio.export", "Export…", .studio, symbol: "arrow.down.circle", scope: studio),
+        .init("studio.upload", "Upload", .studio, symbol: "icloud.and.arrow.up", scope: studio),
         .init("studio.bugReport", "Export Bug Report", .studio, symbol: "ladybug", scope: studio),
         .init("studio.guide", "Export How-To Guide", .studio, symbol: "list.number", scope: studio),
         .init("studio.revertTo", "Revert To", .studio, symbol: "clock.arrow.circlepath", scope: studio, step: .revertTo),

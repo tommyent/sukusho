@@ -241,6 +241,9 @@ final class AppCommandPaletteHost: CommandPaletteHost {
             return editor.hasUnsavedChanges ? .ready : .off("no changes to save")
         case "editor.revertTo":
             return editor.isCropping || editor.isBlockingCommit ? .off("finish cropping first") : .ready
+        case "editor.upload":
+            guard loaded else { return .off("loading") }
+            return editorHooks?.uploadUnavailable().map(PaletteCommandState.off) ?? .ready
         case "editor.styles":
             if editor.sourceURL == nil { return .off("loading") }
             return AnnotationBackgroundPresetStore.shared.presets.isEmpty ? .off("no saved styles yet") : .ready
@@ -267,6 +270,9 @@ final class AppCommandPaletteHost: CommandPaletteHost {
             return blocked ? .off("wait for Studio to finish") : .ready
         case "studio.snapping":
             return PaletteCommandState(reason: canControl ? nil : notNow.reason, isOn: studio.snapsEdits)
+        case "studio.isolateVoice":
+            if !studio.canIsolateVoice { return PaletteCommandState(reason: "no microphone track", isOn: false) }
+            return PaletteCommandState(reason: studio.isReadOnlyNewerFormat ? "made by a newer Sukusho" : nil, isOn: studio.isolateVoice)
         default:
             break
         }
@@ -274,6 +280,38 @@ final class AppCommandPaletteHost: CommandPaletteHost {
         switch id {
         case "studio.insertClip": return studio.canImportVideoClip ? .ready : .off("not now")
         case "studio.split": return studio.clipTimeline.split(at: studio.currentTime) == nil ? .off("can’t split here") : .ready
+        // Each as its button, menu item or inspector control has it (sd-458l).
+        case "studio.autoZoom": return studio.recordedPressTimes.isEmpty ? .off("no clicks were recorded") : .ready
+        case "studio.blur", "studio.pixelate": return studio.hasRunningWork ? .off("wait for Studio to finish") : .ready
+        case "studio.videoOverlay":
+            if studio.mediaDirectoryURL == nil { return .off("save this recording as a project first") }
+            return studio.canImportMedia ? .ready : .off("not now")
+        case "studio.detachAudio":
+            guard let clip = studio.selectedClip else { return .off("select a clip first") }
+            return studio.canDetachAudio(fromClipID: clip.id) ? .ready : .off("this clip has no sound of its own")
+        case "studio.resetClips": return studio.hasClipEdits ? .ready : .off("no clip edits")
+        case "studio.translate":
+            guard studio.hasSubtitles else { return .off("transcribe the narration first") }
+            guard studio.isProject else { return .off("recording projects only") }
+            if studio.transcriptionState.isTranscribing { return .off("transcribing now") }
+            return studio.isTranslating ? .off("translating now") : .ready
+        case "studio.timelineZoomIn": return studio.timelineZoomRoom.canZoomIn ? .ready : .off("zoomed in all the way")
+        case "studio.timelineZoomOut", "studio.fitTimeline":
+            return studio.timelineZoomRoom.canZoomOut ? .ready : .off("the whole timeline shows")
+        case "studio.export":
+            if studio.exportState.isExporting { return .off("exporting now") }
+            let blocked = studio.shareState.isBusy || studio.isIsolatingVoice || studio.isImportingVideoClip || studio.hasUnreadableDraft
+                || studio.isReadOnlyNewerFormat
+            return blocked ? .off("wait for Studio to finish") : .ready
+        case "studio.upload":
+            if !studio.canShareToCloud { return .off("Cloud isn’t set up") }
+            switch studio.shareState {
+            case .rendering, .uploading: return .off("uploading now")
+            case .finished: return .off("uploaded: edit it to upload again")
+            case .idle, .failed: break
+            }
+            let blocked = studio.hasRunningWork || studio.needsSharedVideoReplacement || studio.hasUnreadableDraft || studio.isReadOnlyNewerFormat
+            return blocked ? .off("wait for Studio to finish") : .ready
         case "studio.deleteRange", "studio.clearRange": return studio.rangeSelection == nil ? .off("no marked range") : .ready
         case "studio.clipEarlier": return studio.canMoveSelectedClipEarlier ? .ready : .off("select a clip that can move")
         case "studio.clipLater": return studio.canMoveSelectedClipLater ? .ready : .off("select a clip that can move")
@@ -409,6 +447,8 @@ final class AppCommandPaletteHost: CommandPaletteHost {
         case "editor.zoomToFit": return { editor?.fitCanvas() }
         case "editor.save": return { editor?.requestSave() }
         case "editor.saveAs": return { editor?.requestSaveAs() }
+        // The toolbar's Upload, its options on its button.
+        case "editor.upload": return { editorHooks?.openUpload() }
 
         case "studio.insertClip": return { studio?.presentInsertVideoClipPanel() }
         case "studio.split": return { if let studio { studio.splitClip(at: studio.currentTime) } }
@@ -421,6 +461,26 @@ final class AppCommandPaletteHost: CommandPaletteHost {
         case "studio.marker": return { studio?.toggleMarker() }
         case "studio.addZoom": return { if let studio { studio.addZoomCue(at: studio.currentTime) } }
         case "studio.addText": return { if let studio { studio.addText(atEditorTime: studio.currentTime) } }
+        case "studio.autoZoom": return { studio?.resynthesizeZoomCues() }
+        case "studio.blur": return { if let studio { studio.addRedaction(atEditorTime: studio.currentTime, mode: .blur) } }
+        case "studio.pixelate": return { if let studio { studio.addRedaction(atEditorTime: studio.currentTime, mode: .pixelate) } }
+        case "studio.videoOverlay": return { studio?.presentVideoOverlayPanel() }
+        case "studio.detachAudio":
+            guard let clip = studio?.selectedClip?.id else { return {} }
+            return { studio?.detachAudio(fromClipID: clip) }
+        // These open in their own place, where their buttons open them: the toolbar's Export and Upload options, the
+        // timeline's confirmation and zoom, and Translate Captions on the inspector, shown first if hidden.
+        case "studio.resetClips": return { studio?.paletteRequest = .resetClips }
+        case "studio.timelineZoomIn": return { studio?.paletteRequest = .zoomIn }
+        case "studio.timelineZoomOut": return { studio?.paletteRequest = .zoomOut }
+        case "studio.fitTimeline": return { studio?.paletteRequest = .fitTimeline }
+        case "studio.export": return { studio?.paletteRequest = .exportOptions }
+        case "studio.upload": return { studio?.paletteRequest = .uploadOptions }
+        case "studio.translate":
+            return {
+                if studioHooks?.inspectorShown() == false { studioHooks?.toggleInspector() }
+                studio?.paletteRequest = .translateCaptions
+            }
         case "studio.transcribe": return { studio?.transcribe() }
         case "studio.summarize": return { studio?.summarize() }
         case "studio.suggestChapters": return { studio?.suggestChapters() }

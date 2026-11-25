@@ -379,6 +379,11 @@ private struct RecordingStudioContent: View {
         }
     }
 
+    /// Whether the command palette asked for this toolbar popover; set back as it opens.
+    private func requested(_ request: StudioPaletteRequest) -> Binding<Bool> {
+        Binding(get: { model.paletteRequest == request }, set: { if !$0, model.paletteRequest == request { model.paletteRequest = nil } })
+    }
+
     /// Share pipeline in one toolbar slot: render → upload → link copied.
     /// The upload leg reads the uploader's live progress so the pill keeps
     /// moving through both stages.
@@ -387,7 +392,8 @@ private struct RecordingStudioContent: View {
         switch model.shareState {
         case .idle:
             CloudUploadButton(suggestedTitle: shareSuggestedTitle, encryptionUnavailable: CloudShareSeal.unavailableNote,
-                              messageSource: shareMessageSource, onUpload: { model.shareToCloud(options: $0) }) {
+                              messageSource: shareMessageSource, opensOptions: requested(.uploadOptions),
+                              onUpload: { model.shareToCloud(options: $0) }) {
                 Label("Upload", systemImage: "icloud.and.arrow.up")
                     .labelStyle(.titleAndIcon)
             }
@@ -424,7 +430,8 @@ private struct RecordingStudioContent: View {
                     .help(message)
 
                 CloudUploadButton(suggestedTitle: shareSuggestedTitle, encryptionUnavailable: CloudShareSeal.unavailableNote,
-                                  messageSource: shareMessageSource, onUpload: { model.shareToCloud(options: $0) }) {
+                                  messageSource: shareMessageSource, opensOptions: requested(.uploadOptions),
+                                  onUpload: { model.shareToCloud(options: $0) }) {
                     Text("Retry")
                 }
                 .disabled(model.hasRunningWork || model.needsSharedVideoReplacement || model.isReadOnlyNewerFormat)
@@ -439,6 +446,7 @@ private struct RecordingStudioContent: View {
             RecordingExportButton(
                 currentSettings: model.exportSettings,
                 hasAudio: model.hasAudio,
+                opensOptions: requested(.exportOptions),
                 onExport: model.export(settings:)
             ) {
                 Label("Export", systemImage: "arrow.down.circle")
@@ -463,6 +471,7 @@ private struct RecordingStudioContent: View {
                 RecordingExportButton(
                     currentSettings: model.exportSettings,
                     hasAudio: model.hasAudio,
+                    opensOptions: requested(.exportOptions),
                     onExport: model.export(settings:)
                 ) {
                     Image(systemName: "arrow.down.circle")
@@ -479,6 +488,7 @@ private struct RecordingStudioContent: View {
                 RecordingExportButton(
                     currentSettings: model.exportSettings,
                     hasAudio: model.hasAudio,
+                    opensOptions: requested(.exportOptions),
                     onExport: model.export(settings:)
                 ) {
                     Text("Retry")

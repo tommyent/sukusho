@@ -329,6 +329,8 @@ struct CloudUploadButton<Label: View>: View {
     let suggestedTitle: String
     var encryptionUnavailable: String? = nil
     var messageSource: ShareMessageSource? = nil
+    /// Set by the command palette: the options open on this button, as a click opens them, and it's set back.
+    var opensOptions: Binding<Bool>? = nil
     let onUpload: (CloudUploadOptions) -> Void
     @ViewBuilder let label: () -> Label
 
@@ -339,6 +341,11 @@ struct CloudUploadButton<Label: View>: View {
             showingOptions = true
         } label: {
             label()
+        }
+        .onChange(of: opensOptions?.wrappedValue == true, initial: true) { _, opens in
+            guard opens else { return }
+            opensOptions?.wrappedValue = false
+            showingOptions = true
         }
         .popover(isPresented: $showingOptions, arrowEdge: .bottom) {
             CloudUploadOptionsPopover(suggestedTitle: suggestedTitle, encryptionUnavailable: encryptionUnavailable,

@@ -752,6 +752,20 @@ struct StudioTimelineEditor: View {
         } message: {
             Text("Every split, trim, deletion and speed change goes back to the original recording. You can undo this.")
         }
+        // The command palette's timeline commands, run as these buttons run them (sd-458l).
+        .onChange(of: model.paletteRequest, initial: true) { _, request in
+            switch request {
+            case .zoomIn?: applyZoom(factor: Self.zoomStep, anchorTime: buttonZoomAnchor)
+            case .zoomOut?: applyZoom(factor: 1 / Self.zoomStep, anchorTime: buttonZoomAnchor)
+            case .fitTimeline?: fitTimeline()
+            case .resetClips?: isResetClipsConfirmationPresented = true
+            default: return
+            }
+            model.paletteRequest = nil
+        }
+        .onChange(of: [zoom, scale.maxZoom], initial: true) { _, _ in
+            model.timelineZoomRoom = (canZoomIn: zoom < scale.maxZoom - 0.0001, canZoomOut: zoom > 1.0001)
+        }
     }
 
     /// One + button that opens into Text, Pixelate/Blur, Audio, and Media, then
@@ -891,18 +905,7 @@ struct StudioTimelineEditor: View {
     }
 
     private func pickVideoOverlay() {
-        model.pause()
-        let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = true
-        panel.canChooseFiles = true
-        panel.canChooseDirectories = true
-        panel.treatsFilePackagesAsDirectories = false
-        panel.allowedContentTypes = RecordingVideoOverlay.importContentTypes
-        panel.prompt = "Add Video Overlay"
-        panel.message = "Choose a video file or another Sukusho recording to layer as a picture-in-picture or cutaway."
-        let time = model.currentTime
-        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
-        model.importVideoOverlays(panel.urls, atEditorTime: time)
+        model.presentVideoOverlayPanel()
     }
 
     private var zoomControls: some View {

@@ -342,6 +342,66 @@ struct CommandPaletteTests {
         #expect(host.copied.isEmpty)
     }
 
+    // MARK: Studio's inspector, timeline and toolbar, and the editor's Upload
+
+    private static let studioCommands: [(title: String, id: String)] = [
+        ("Auto Zoom", "studio.autoZoom"), ("Blur at Playhead", "studio.blur"), ("Pixelate at Playhead", "studio.pixelate"),
+        ("Add Video Overlay…", "studio.videoOverlay"), ("Detach Audio", "studio.detachAudio"),
+        ("Reset All Clip Edits…", "studio.resetClips"), ("Translate Captions…", "studio.translate"),
+        ("Isolate Voice", "studio.isolateVoice"), ("Zoom In", "studio.timelineZoomIn"), ("Zoom Out", "studio.timelineZoomOut"),
+        ("Fit Timeline", "studio.fitTimeline"), ("Export…", "studio.export"), ("Upload", "studio.upload"),
+    ]
+
+    /// Studio lists them and no other window does; each is found by its name and runs, and Isolate Voice is a switch
+    /// that stays open.
+    @Test func studiosNewCommandsAreListedAndRun() {
+        let ids = Set(Self.studioCommands.map(\.id))
+        let (studio, _) = palette(.studio)
+        #expect(ids.isSubset(of: Set(studio.rows.compactMap(\.command))))
+        for window in [PaletteWindow.library, .editor, .other] {
+            let (model, _) = palette(window)
+            #expect(Set(model.rows.compactMap(\.command)).isDisjoint(with: ids), "\(window)")
+        }
+        for (title, id) in Self.studioCommands {
+            let (model, host) = palette(.studio)
+            var closed = false
+            model.onClose = { closed = true }
+            type(title.replacingOccurrences(of: "…", with: ""), into: model)
+            #expect(model.selectedRow?.command == id, "\(title)")
+            model.press(.enter)
+            #expect(host.ran == [id], "\(title)")
+            #expect(closed == (id != "studio.isolateVoice"), "\(title): a switch stays open")
+        }
+    }
+
+    /// While one can't run, its row is grey with the app's reason and ↩ does nothing.
+    @Test func studiosNewCommandsAreGreyWithTheirReasons() {
+        let reasons = Dictionary(uniqueKeysWithValues: Self.studioCommands.map { ($0.id, "reason for \($0.id)") })
+        for (title, id) in Self.studioCommands {
+            let (model, host) = palette(.studio) { $0.reasons = reasons }
+            type(title.replacingOccurrences(of: "…", with: ""), into: model)
+            #expect(model.selectedRow?.reason == "reason for \(id)")
+            model.press(.enter)
+            #expect(host.ran.isEmpty, "\(title)")
+        }
+    }
+
+    /// The editor's Upload, in the editor only; grey with its reason while the toolbar has none to press.
+    @Test func theEditorsUploadIsListedAndRuns() {
+        let (model, host) = palette(.editor)
+        type("upload", into: model)
+        #expect(model.selectedRow?.command == "editor.upload")
+        model.press(.enter)
+        #expect(host.ran == ["editor.upload"])
+        let (studio, _) = palette(.studio)
+        #expect(!studio.rows.contains { $0.command == "editor.upload" })
+        let (grey, idle) = palette(.editor) { $0.reasons["editor.upload"] = "Cloud isn’t set up" }
+        type("upload", into: grey)
+        #expect(grey.selectedRow?.reason == "Cloud isn’t set up")
+        grey.press(.enter)
+        #expect(idle.ran.isEmpty)
+    }
+
     @Test func clipboardHistoryStepIsShownOnlyWhileHistoryIsOn() {
         let (model, _) = palette(.library) { $0.clipboardOn = false }
         #expect(!model.rows.contains { $0.opens == .clipboardHistory })

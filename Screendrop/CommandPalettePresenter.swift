@@ -18,6 +18,13 @@ enum PaletteWindowContext {
     case studio(StudioPaletteHooks)
 }
 
+/// A Studio control the command palette opens in its own place, with its own options (sd-458l): a toolbar popover,
+/// the inspector's Translate Captions picker, the timeline's Reset All Clip Edits confirmation or a zoom step. The
+/// control that owns it watches `RecordingStudioModel.paletteRequest` and clears it as it opens.
+enum StudioPaletteRequest: Equatable {
+    case exportOptions, uploadOptions, translateCaptions, resetClips, zoomIn, zoomOut, fitTimeline
+}
+
 /// The Library window's own state the palette reaches: the sidebar, the inspector, the search field and ⌘R.
 struct LibraryPaletteHooks {
     var sidebarShown: () -> Bool
@@ -35,6 +42,10 @@ struct EditorPaletteHooks {
     var measure: () -> Void
     var inspectorShown: () -> Bool
     var toggleInspector: () -> Void
+    /// Why the toolbar's Upload isn't there to press now, or nil.
+    var uploadUnavailable: () -> String?
+    /// Opens the toolbar Upload's options, on its button.
+    var openUpload: () -> Void
 }
 
 struct StudioPaletteHooks {

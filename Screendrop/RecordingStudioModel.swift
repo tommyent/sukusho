@@ -344,6 +344,11 @@ final class RecordingStudioModel {
     /// A video clip's edge is being dragged; the preview shows the frame at
     /// that edge rather than skimming.
     var isTrimmingClip = false
+    /// A control the command palette asked to open in its own place: its owner opens it and sets this back to nil.
+    var paletteRequest: StudioPaletteRequest?
+    /// Whether the timeline can zoom in or out from where it is, as its own zoom buttons say; the timeline keeps it.
+    @ObservationIgnored var timelineZoomRoom = (canZoomIn: true, canZoomOut: false)
+
     /// Whether trim drags snap to the playhead, markers, clicks, and audio edges.
     var snapsEdits = (UserDefaults.standard.object(forKey: RecordingStudioModel.snapsEditsKey) as? Bool) ?? true {
         didSet {
@@ -6500,6 +6505,23 @@ final class RecordingStudioModel {
 
     /// Opens a file picker accepting movie files and Sukusho `.sukushorec`
     /// recordings, inserting after the selected clip or at the playhead/end.
+    /// The timeline's Add Video Overlay…: a picture-in-picture or cutaway at the playhead, from a movie or another
+    /// Sukusho recording. Also the command palette's.
+    func presentVideoOverlayPanel() {
+        pause()
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.treatsFilePackagesAsDirectories = false
+        panel.allowedContentTypes = RecordingVideoOverlay.importContentTypes
+        panel.prompt = "Add Video Overlay"
+        panel.message = "Choose a video file or another Sukusho recording to layer as a picture-in-picture or cutaway."
+        let time = currentTime
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        importVideoOverlays(panel.urls, atEditorTime: time)
+    }
+
     func presentInsertVideoClipPanel() {
         guard canImportVideoClip else { return }
         pause()

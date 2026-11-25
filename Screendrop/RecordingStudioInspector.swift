@@ -61,6 +61,9 @@ struct StudioInspector: View {
     /// The translated captions the list shows; nil for the original.
     @State private var captionLanguage: String?
     @State private var isTranslationPickerPresented = false
+    /// The same picker, opened from the command palette on the inspector's edge: its button may be scrolled away, on
+    /// another tab, or under a selection's page.
+    @State private var isPaletteTranslationPresented = false
     @State private var isAudioExportOptionsPresented = false
     @State private var isMusicPickerPresented = false
     @Environment(\.colorScheme) private var colorScheme
@@ -120,6 +123,15 @@ struct StudioInspector: View {
             .scrollContentBackground(.hidden)
             .scrollEdgeEffectStyle(.soft, for: .all)
             .clipped()
+            // The command palette's Translate Captions… (sd-458l).
+            .onChange(of: model.paletteRequest, initial: true) { _, request in
+                guard request == .translateCaptions else { return }
+                model.paletteRequest = nil
+                isPaletteTranslationPresented = true
+            }
+            .popover(isPresented: $isPaletteTranslationPresented, arrowEdge: .leading) {
+                StudioTranslationPicker(model: model) { isPaletteTranslationPresented = false }
+            }
 
             VStack(spacing: 0) {
                 Rectangle()
