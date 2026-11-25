@@ -166,3 +166,14 @@ extension View {
         ))
     }
 }
+
+extension Binding where Value: Equatable {
+    /// Drops writes of the value already there. SwiftUI writes some bindings back unchanged on every scene
+    /// update (MenuBarExtra's `isInserted` does), and an unchanged write to an `@AppStorage` still changes
+    /// UserDefaults: SwiftUI's change log showed it invalidating the Library through its own, unrelated
+    /// `@AppStorage("clipboard.libraryShowsList")`, whose layout updated the scene again, in a loop that hung
+    /// the app while its inspector folded (sd-kutk).
+    func ignoringUnchangedWrites() -> Binding<Value> {
+        Binding(get: { wrappedValue }, set: { if $0 != wrappedValue { wrappedValue = $0 } })
+    }
+}

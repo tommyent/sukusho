@@ -249,4 +249,30 @@ struct EditorInspectorTests {
         // A zero width (a window still being set up) is ignored.
         #expect(fold.resize(to: 0, foldBelow: 900, isPresented: shown) == nil)
     }
+
+    /// sd-kutk: MenuBarExtra writes `isInserted` back unchanged on every scene update, and each write to
+    /// `@AppStorage` re-ran the Library's body, in a loop. Unchanged writes must not reach the storage,
+    /// while removing the icon from the menu bar (a real change) still does.
+    @Test static func unchangedWritesNeverReachTheStorage() {
+        let suite = "com.tommyent.Sukusho.tests.menubar.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let key = ScreendropPreferences.showMenuBarIconKey
+        defaults.set(true, forKey: key)
+        var writes = 0
+        let stored = Binding(
+            get: { defaults.bool(forKey: key) },
+            set: { writes += 1; defaults.set($0, forKey: key) }
+        )
+        let inserted = stored.ignoringUnchangedWrites()
+
+        for _ in 0..<100 { inserted.wrappedValue = true }
+        #expect(writes == 0 && inserted.wrappedValue)
+
+        inserted.wrappedValue = false
+        #expect(writes == 1 && defaults.object(forKey: key) as? Bool == false)
+        inserted.wrappedValue = false
+        inserted.wrappedValue = true
+        #expect(writes == 2 && defaults.bool(forKey: key))
+    }
 }
