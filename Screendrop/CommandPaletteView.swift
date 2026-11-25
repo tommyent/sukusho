@@ -122,12 +122,11 @@ struct CommandPaletteView: View {
                         if showsHeadings, let group = row.group, index == 0 || rows[index - 1].group != group {
                             heading(group)
                         }
-                        line(row, selected: index == model.selected)
-                            .id(row.id)
-                            .onTapGesture {
-                                model.selected = index
-                                model.submit()
-                            }
+                        button(row, selected: index == model.selected) {
+                            model.selected = index
+                            model.submit()
+                        }
+                        .id(row.id)
                     }
                 }
                 .padding(.horizontal, 8)
@@ -171,13 +170,26 @@ struct CommandPaletteView: View {
             .accessibilityAddTraits(.isHeader)
     }
 
-    /// A row; the selected one is filled with the accent, as Hashbrown's is, and its words are white on it. A grey row
-    /// stays grey there too, at the strength white needs to read on the fill.
+    /// A row as a plain native button, so VoiceOver's press runs it as a click does; a switch says it's a switch and its
+    /// state, a grey row why it can't run, and pressing that does nothing (Sol's finding 10).
+    private func button(_ row: PaletteRow, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) { line(row, selected: selected) }
+            .buttonStyle(.plain)
+            .accessibilityLabel(accessibilityLabel(row))
+            .accessibilityValue(accessibilityValue(row))
+            .accessibilityHint(row.reason.map { "Unavailable: \($0)" } ?? (row.opens != nil ? "Opens a list" : ""))
+            .accessibilityAddTraits(row.isOn != nil ? [.isToggle] : [])
+            .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    /// A row; the selected one is filled with the accent, as Hashbrown's is, and its words are white on it, all of them
+    /// at full strength: at 70 and 85 % a grey row's words fell below 4.5:1 on a yellow accent (Sol's finding 11). There
+    /// its reason says it's grey.
     private func line(_ row: PaletteRow, selected: Bool) -> some View {
         let enabled = row.isEnabled
         let onFill = selected
-        let titleInk: Color = onFill ? .white.opacity(enabled ? 1 : 0.7) : enabled ? ink.opacity(0.9) : ink.opacity(0.36)
-        let muted: Color = onFill ? .white.opacity(0.85) : ink.opacity(enabled ? 0.55 : 0.45)
+        let titleInk: Color = onFill ? .white.opacity(PaletteAccent.textOnFill) : enabled ? ink.opacity(0.9) : ink.opacity(0.36)
+        let muted: Color = onFill ? .white.opacity(PaletteAccent.textOnFill) : ink.opacity(enabled ? 0.55 : 0.45)
         return HStack(spacing: 10) {
             leading(row, ink: onFill ? .white : enabled ? ink.opacity(0.75) : ink.opacity(0.32), onFill: onFill)
             VStack(alignment: .leading, spacing: 1) {
@@ -207,7 +219,7 @@ struct CommandPaletteView: View {
                     .foregroundStyle(onFill ? .white : Color.accentColor)
             }
             if !row.keys.isEmpty {
-                PaletteKeyCaps(keys: row.keys, ink: onFill ? .white : ink, dimmed: !enabled)
+                PaletteKeyCaps(keys: row.keys, ink: onFill ? .white : ink, dimmed: !enabled && !onFill, onFill: onFill)
             }
             if row.opens != nil {
                 Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(muted)
@@ -220,8 +232,6 @@ struct CommandPaletteView: View {
         }
         .contentShape(Rectangle())
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(accessibilityLabel(row))
-        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
     }
 
     @ViewBuilder
@@ -264,11 +274,16 @@ struct CommandPaletteView: View {
         var parts = [row.title]
         if !row.detail.isEmpty { parts.append(row.detail) }
         if !row.subtitle.isEmpty { parts.append(row.subtitle) }
+        if !row.keys.isEmpty { parts.append(row.keys.joined()) }
+        return parts.joined(separator: ", ")
+    }
+
+    /// A switch's state, a step's choice in use, and a grey row's reason, read as the row's value.
+    private func accessibilityValue(_ row: PaletteRow) -> String {
+        var parts: [String] = []
         if let isOn = row.isOn { parts.append(isOn ? "on" : "off") }
         if row.ticked { parts.append("in use") }
-        if row.opens != nil { parts.append("opens a list") }
-        if let reason = row.reason { parts.append("unavailable: \(reason)") }
-        if !row.keys.isEmpty { parts.append(row.keys.joined()) }
+        if let reason = row.reason { parts.append("unavailable, \(reason)") }
         return parts.joined(separator: ", ")
     }
 
@@ -280,8 +295,7 @@ struct CommandPaletteView: View {
             Text("No command matches “\(model.query.trimmingCharacters(in: .whitespaces))”.")
                 .font(.system(size: 12)).foregroundStyle(ink.opacity(0.6))
                 .padding(.horizontal, 10).frame(height: Self.headingHeight, alignment: .bottomLeading)
-            line(offer, selected: true)
-                .onTapGesture { model.submit() }
+            button(offer, selected: true) { model.submit() }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
@@ -367,13 +381,15 @@ struct PaletteKeyCaps: View {
     let keys: [String]
     let ink: Color
     var dimmed = false
+    /// On the selected row's fill, where the letters need full white.
+    var onFill = false
 
     var body: some View {
         HStack(spacing: 3) {
             ForEach(Array(keys.enumerated()), id: \.offset) { _, key in
                 Text(key)
                     .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(ink.opacity(dimmed ? 0.35 : 0.7))
+                    .foregroundStyle(ink.opacity(onFill ? PaletteAccent.textOnFill : dimmed ? 0.35 : 0.7))
                     .padding(.horizontal, key.count > 1 ? 4 : 0)
                     .frame(minWidth: 17, minHeight: 17)
                     .background(ink.opacity(0.05), in: RoundedRectangle(cornerRadius: 4, style: .continuous))

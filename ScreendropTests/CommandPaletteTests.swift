@@ -390,6 +390,23 @@ struct CommandPaletteTests {
         #expect(PaletteAccent.contrast(PaletteAccent.liftedForWhiteText(yellow), with: .init(red: 1, green: 1, blue: 1)) >= 4.5)
     }
 
+    /// Every word on the selected row's fill reads at 4.5:1 for any accent, yellow too. At the 70 and 85 % this first
+    /// had, a grey row's title and reason fell short on yellow (Sol's finding 11).
+    @Test func everyWordOnTheFillReads() {
+        let accents: [PaletteAccent.RGB] = [
+            .init(red: 0, green: 0.478, blue: 1), .init(red: 1, green: 0.8, blue: 0), .init(red: 0.2, green: 0.78, blue: 0.35),
+            .init(red: 1, green: 0.58, blue: 0), .init(red: 0.6, green: 0.6, blue: 0.6), .init(red: 1, green: 0.18, blue: 0.33),
+            .init(red: 0.69, green: 0.32, blue: 0.87),
+        ]
+        for accent in accents {
+            let fill = PaletteAccent.liftedForWhiteText(accent)
+            let words = PaletteAccent.white(PaletteAccent.textOnFill, over: fill)
+            #expect(PaletteAccent.contrast(words, with: fill) >= 4.5, "\(accent)")
+        }
+        let yellow = PaletteAccent.liftedForWhiteText(.init(red: 1, green: 0.8, blue: 0))
+        #expect(PaletteAccent.contrast(PaletteAccent.white(0.7, over: yellow), with: yellow) < 4.5, "the old grey title's strength")
+    }
+
     /// The palette is in captures as the window under it is: other apps see it, and Sukusho's own follow "Include Sukusho
     /// windows in captures". It was private, left out of every capture (m1's pass, 2026-11-25).
     @Test func thePanelFollowsTheCaptureSetting() {

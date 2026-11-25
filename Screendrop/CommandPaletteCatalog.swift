@@ -364,6 +364,16 @@ nonisolated enum PaletteAccent {
         var red: Double, green: Double, blue: Double
     }
 
+    /// How strong white words are on the selected row's fill, every one of them: titles, details, reasons, On and
+    /// Off and keycaps. The lift leaves opaque white just over 4.5:1 on a yellow accent, so anything less falls short.
+    static let textOnFill = 1.0
+
+    /// White at `opacity` over `color`, as it's drawn.
+    static func white(_ opacity: Double, over color: RGB) -> RGB {
+        RGB(red: opacity + (1 - opacity) * color.red, green: opacity + (1 - opacity) * color.green,
+            blue: opacity + (1 - opacity) * color.blue)
+    }
+
     static func liftedForWhiteText(_ color: RGB, ratio: Double = 4.5) -> RGB {
         var color = color
         // Mixing toward black a little at a time keeps the hue; 40 steps reach black.
