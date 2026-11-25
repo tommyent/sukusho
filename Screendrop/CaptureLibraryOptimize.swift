@@ -116,8 +116,8 @@ enum CaptureOptimizer {
     /// from `file` against), or nil when there is none. A new capture due its background pass gets that pass now,
     /// so it is optimized once and the smaller file is the capture itself, which an edit can still overwrite before
     /// the swap reads it: `output` is what tells (Astra, round 3). Any other image is optimized to a file of its
-    /// own: `result`, for the caller to discard. A capture already optimized has no `source` here: what the copy
-    /// read was already the smaller file, or can't be told from it.
+    /// own: `result`, for the caller to discard. A completed pass has no swap: the original write already
+    /// copied the smaller bytes, or cannot be proven to be the input of that pass.
     static func smallerForFirstCopy(_ url: URL) async
         -> (file: URL, saving: String, result: ImageOptimizationResult?, source: String?, output: String?)? {
         guard ["png", "jpg", "jpeg"].contains(url.pathExtension.lowercased()) else { return nil }
@@ -126,8 +126,7 @@ enum CaptureOptimizer {
             return (url, ImageOptimizationResult.saving(from: result.originalByteCount, to: result.resultByteCount), nil,
                     result.source?.digest, result.output?.digest)
         }
-        // Its pass has already run and left a smaller file.
-        if OptimizedMark.isCurrent(url) { return OptimizedMark.saving(of: url).map { (url, $0.percent, nil, nil, nil) } }
+        if OptimizedMark.isCurrent(url) { return nil }
         guard let result = try? await ImageOptimizer.shared.optimize(url, effort: OptimizePreferences.quietEffort) else { return nil }
         guard result.outcome == .optimized else {
             result.discard()

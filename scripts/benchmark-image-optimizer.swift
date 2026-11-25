@@ -25,6 +25,40 @@ import ImageIO
         let args = Array(CommandLine.arguments.dropFirst())
         let input = URL(fileURLWithPath: args[1])
         let optimizer = ImageOptimizer.shared
+        if ["marked", "marked-tiff", "check-marked"].contains(args[0]) {
+            let file = FileManager.default.homeDirectoryForCurrentUser.appending(path: "copied.png")
+            try FileManager.default.copyItem(at: input, to: file)
+            OptimizedMark.set(FileIdentity(file)!.byteCount * 2, on: file)
+            let board = NSPasteboard.withUniqueName()
+            defer { board.releaseGlobally() }
+            let copier = OptimizedImageCopy()
+            let tiff = args[0] == "marked-tiff"
+            func item(_ file: URL) async throws -> NSPasteboardItem {
+                try await ScreenshotClipboardImage.item(from: file, dataType: .png, includeTIFF: tiff)
+            }
+            for _ in 0..<3 {
+                board.clearContents()
+                let start = clock.now
+                var madeCandidate = false
+                let (action, swap) = try await copier.copyNow(to: board, first: {
+                    let x = try await item(file)
+                    return .init(item: x, key: await OptimizedImageCopy.key(of: x))
+                }, smaller: {
+                    guard let smaller = await CaptureOptimizer.smallerForFirstCopy(file) else { return nil }
+                    madeCandidate = true
+                    precondition(smaller.result == nil)
+                    return .init(item: try! await item(smaller.file), source: smaller.source, output: smaller.output)
+                })
+                let first = ms(start)
+                let swapped = await swap?.value
+                print("marked", tiff, first, ms(start), madeCandidate)
+                precondition(action == .written && swapped == false)
+                let original = try Data(contentsOf: file)
+                precondition(board.data(forType: .png) == original)
+                if args[0] == "check-marked" { precondition(!madeCandidate) }
+            }
+            return
+        }
         if args[0] == "paths" {
             for (label, target): (String, ImageOptimizationTarget) in [
                 ("same", .lossless), ("webp", .webP(quality: nil)), ("qwebp", .webP(quality: 80)), ("jpeg", .jpeg(quality: 80)),
