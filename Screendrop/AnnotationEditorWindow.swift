@@ -202,6 +202,7 @@ private struct AnnotationEditorContent: View {
             }
             .focusedSceneValue(\.annotationEditor, WeakReference(model))
             .focusedSceneValue(\.annotationEditorToolSelection, toolSelection)
+            .commandPaletteContext { .editor(paletteHooks) }
             .onChange(of: model.saveAsRequest) { _, _ in saveAs() }
             .onChange(of: model.saveRequest) { _, _ in saveEdits() }
             // The pixels under the pointer come from the base image, so they
@@ -767,6 +768,29 @@ private struct AnnotationEditorContent: View {
 
     private var toolSelection: AnnotationEditorToolSelection {
         AnnotationEditorToolSelection(editor: model, probe: probe, focus: $focusedField)
+    }
+
+    /// What the command palette reaches in this window: the dock's tools, Pick Color and Measure, and the inspector.
+    private var paletteHooks: EditorPaletteHooks {
+        let probe = probe
+        return EditorPaletteHooks(
+            model: model,
+            selectTool: { toolSelection.select($0) },
+            pickColor: {
+                probe.isMeasuringTool = false
+                probe.isPicking = true
+                NSApp.keyWindow?.makeFirstResponder(nil)
+            },
+            measure: {
+                probe.isPicking = false
+                probe.isMeasuringTool = true
+                NSApp.keyWindow?.makeFirstResponder(nil)
+            },
+            inspectorShown: { isInspectorPresented },
+            toggleInspector: {
+                clearInspectorFocus()
+                inspectorChoice.wrappedValue.toggle()
+            })
     }
 
     private func clearInspectorFocus() {

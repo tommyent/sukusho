@@ -247,6 +247,10 @@ private struct RecordingStudioContent: View {
             model.autosave()
         }
         .focusedSceneValue(\.recordingStudio, WeakReference(model))
+        .commandPaletteContext {
+            .studio(StudioPaletteHooks(model: model, inspectorShown: { isInspectorPresented },
+                                       toggleInspector: { isInspectorPresented.toggle() }))
+        }
         .background {
             StudioKeyCommands(model: model)
         }

@@ -99,6 +99,14 @@ struct HotkeyShortcut: Codable, Equatable, Hashable {
         isRepeat ? nil : HotkeyShortcut(modifiers: Modifiers(from: flags), keyCode: keyCode)
     }
 
+    /// Whether a menu can take these keys as its own shortcut: a key with a modifier, not a modifier key alone and not a
+    /// function key, which `MenuBarView.shortcut(for:)` can't hand a menu. The palette's shortcut inside Sukusho is one.
+    var isMenuShortcut: Bool {
+        guard taps == nil, !modifiers.isEmpty else { return false }
+        let label = Self.keyLabel(for: keyCode)
+        return label.count == 1 || label == "Space"
+    }
+
     static func menuTitle(_ title: String, adding shortcut: HotkeyShortcut?) -> String {
         shortcut.map { "\(title) (\($0.displayString))" } ?? title
     }
@@ -227,8 +235,14 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
     case library
     /// Not a capture: the clipboard history popup, registered only while history is on.
     case clipboardHistory
+    /// Not a capture: the command palette, inside Sukusho's own windows only. Recorded and checked for clashes as the
+    /// others are, but a menu's shortcut (View › Command Palette…), never registered with macOS for every app (`isGlobal`).
+    case commandPalette
 
     var id: Self { self }
+
+    /// Registered system-wide by `HotkeyManager`. The rest are menu shortcuts, which work while Sukusho is in front.
+    var isGlobal: Bool { self != .commandPalette }
 
     var hotKeyID: UInt32 {
         switch self {
@@ -241,6 +255,7 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
         case .library: 7
         case .drawing: 9
         case .clipboardHistory: 8
+        case .commandPalette: 10
         }
     }
 
@@ -258,6 +273,7 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
         case .scrollingCapture: "Scrolling Capture"
         case .library: "Show Library"
         case .clipboardHistory: "Clipboard History"
+        case .commandPalette: "Command Palette"
         }
     }
 
@@ -285,6 +301,9 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
         case .clipboardHistory:
             // ⌃⌘V (owner, 2026-11-16): ⌥⌘V is Finder's move-here and Paste Style, ⇧⌘V Sublime's Paste and Indent.
             HotkeyShortcut(modifiers: [.control, .command], keyCode: Int(kVK_ANSI_V))
+        case .commandPalette:
+            // ⇧⌘P, as Hashbrown's and the code editors' palettes; free in Sukusho (sd-458l).
+            HotkeyShortcut(modifiers: [.shift, .command], keyCode: Int(kVK_ANSI_P))
         }
     }
 
@@ -298,9 +317,10 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Settings › Shortcuts' rows: 1 to 5, then O, L and V (the owner, 2026-11-17).
+    /// Settings › Shortcuts' rows: 1 to 5, then O, L and V (the owner, 2026-11-17), then the palette's P.
     static let settingsOrder: [CaptureHotkeyAction] = [
         .fullscreen, .window, .area, .scrollingCapture, .screenRecording, .drawing, .textCapture, .library, .clipboardHistory,
+        .commandPalette,
     ]
 
     var preferencesKey: String {
@@ -323,6 +343,8 @@ enum CaptureHotkeyAction: String, CaseIterable, Identifiable {
             ScreendropPreferences.libraryHotkeyKey
         case .clipboardHistory:
             ScreendropPreferences.clipboardHistoryHotkeyKey
+        case .commandPalette:
+            "captureHotkey.commandPalette"
         }
     }
 }

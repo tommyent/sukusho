@@ -105,12 +105,18 @@ struct SystemScreenshotShortcutsTests {
             .drawing: HotkeyShortcut(modifiers: [.control, .shift], keyCode: 46),
             .screenRecording: shiftCmd(23), .textCapture: shiftCmd(31), .library: shiftCmd(37),
             .clipboardHistory: HotkeyShortcut(modifiers: [.control, .command], keyCode: 9),
+            .commandPalette: shiftCmd(35),
         ]
         for action in CaptureHotkeyAction.allCases { #expect(action.defaultShortcut == expected[action], "\(action)") }
         #expect(Set(expected.values).count == expected.count, "no two defaults share keys")
         #expect(!expected.values.contains(shiftCmd(22)), "nothing on ⇧⌘6")
         #expect(CaptureHotkeyAction.settingsOrder
-            == [.fullscreen, .window, .area, .scrollingCapture, .screenRecording, .drawing, .textCapture, .library, .clipboardHistory])
+            == [.fullscreen, .window, .area, .scrollingCapture, .screenRecording, .drawing, .textCapture, .library, .clipboardHistory,
+                .commandPalette])
+        #expect(CaptureHotkeyAction.allCases.filter { !$0.isGlobal } == [.commandPalette], "only the palette's keys stay a menu's")
+        #expect(CaptureHotkeyAction.commandPalette.defaultShortcut.isMenuShortcut)
+        #expect(!HotkeyShortcut(modifiers: [], keyCode: 96).isMenuShortcut, "F5 alone can't be a menu's shortcut")
+        #expect(!HotkeyShortcut(modifiers: [.command], keyCode: 96).isMenuShortcut, "nor ⌘F5: SwiftUI menus can't show it")
         #expect(Set(CaptureHotkeyAction.settingsOrder) == Set(CaptureHotkeyAction.allCases))
 
     }

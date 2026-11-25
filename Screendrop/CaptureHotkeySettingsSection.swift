@@ -311,6 +311,16 @@ struct CaptureHotkeySettingsSection: View {
     /// Nil clears the action.
     private func apply(_ shortcut: HotkeyShortcut?, to action: CaptureHotkeyAction) {
         HotkeyManager.shared.keptKeys = []
+        if let shortcut, !action.isGlobal, !shortcut.isMenuShortcut {
+            // A menu's shortcut: inside Sukusho a modifier key alone or a function key can't open it.
+            errorMessage = "\(shortcut.displayString) can’t be \(action.title)’s shortcut: use a key with ⌘, ⌥, ⌃ or ⇧."
+            errorAction = action
+            NSSound.beep()
+            recorder.stop()
+            recordingAction = nil
+            reveal(action)
+            return
+        }
         if let shortcut, let conflict = CaptureHotkeyPreferences.conflictingAction(for: shortcut, excluding: action) {
             if let theirs = CaptureHotkeyPreferences.shortcut(for: conflict), theirs != shortcut {
                 errorMessage = "\(shortcut.displayString) can’t be a shortcut while \(conflict.title) is \(theirs.displayString): a double tap starts with a tap."

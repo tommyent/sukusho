@@ -97,6 +97,12 @@ final class HotkeyManager {
             // An off feature mustn't take ⌃⌘V from other apps.
             if action == .drawing, ScreenRecordingManager.shared.state != .recording { continue }
             if action == .clipboardHistory, !ScreendropPreferences.clipboardHistoryEnabled, !ScreendropPreferences.clipboardLauncherEnabled { continue }
+            // A menu's shortcut (the palette inside Sukusho): macOS mustn't take it from every app, but Window
+            // Management's keys stay off it.
+            guard action.isGlobal else {
+                registeredClaims.append(.init(shortcut: shortcut, owner: action.title))
+                continue
+            }
             guard !registeredShortcuts.contains(where: shortcut.overlaps) else {
                 registrationErrors[action] = "\(shortcut.displayString) is already used by another action."
                 continue
@@ -268,6 +274,14 @@ final class HotkeyManager {
         if action == .drawing, ScreenRecordingManager.shared.state != .recording {
             CaptureHotkeyPreferences.saveShortcut(shortcut, for: action)
             registrationErrors[action] = nil
+            return
+        }
+        if !action.isGlobal {
+            // A menu's shortcut: saved for the menu to read, never registered for every app. Window Management's keys
+            // move off it.
+            CaptureHotkeyPreferences.saveShortcut(shortcut, for: action)
+            registrationErrors[action] = nil
+            syncWindowHotkeys(excluding: activeCaptureClaims())
             return
         }
         if shortcut.taps != nil {
