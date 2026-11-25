@@ -67,6 +67,8 @@ All annotation positions/sizes are normalized to `[0, 1]` relative to the source
 
 - Windowless preview checks: get a `CGImage` from `NSImage.cgImage(forProposedRect:context:hints:)`. Even an `NSImage` created from a `CGImage` can use `NSCGImageSnapshotRep` instead of `NSBitmapImageRep`.
 - Benchmark Scrolling Capture with native-resolution frames. Enlarging a corpus crop duplicates rows and changes the evidence the offset verifier uses.
+- For a measured comparison the coordinator is waiting on, run `heavy` in the foreground with a timeout that covers the lock queue and the run; keep the turn open through the results.
+- A disposable `HOME` does not isolate `UserDefaults`: reset a headless benchmark's own defaults domain before and after every subprocess. Confirm Release speedups under the shipping compilation mode.
 - When a Swift Testing check counts evaluations of an `@autoclosure`, call the function outside `#expect`; passing it to the assertion macro directly can evaluate the lazy argument for diagnostics.
 
 - **No new SPM packages or external dependencies** without the owner's OK. The existing ones are DockProgress, Sparkle (updates) and the MCP Swift SDK (the `sukusho-mcp` helper only); otherwise the project uses only Apple frameworks (SwiftUI, AppKit, ScreenCaptureKit, CoreGraphics, CoreImage, ImageIO, Carbon).
