@@ -14,8 +14,6 @@ import SwiftUI
 
 struct CommandPaletteView: View {
     @Bindable var model: CommandPaletteModel
-    /// The tallest the palette may be: it stays inside the window it opens over.
-    let maxHeight: CGFloat
     let onSize: (CGSize) -> Void
 
     @CurrentTheme private var theme
@@ -155,7 +153,7 @@ struct CommandPaletteView: View {
             if headings, row.group != group { height += Self.headingHeight; group = row.group }
             height += self.height(of: row)
         }
-        let room = maxHeight - Self.fieldHeight - Self.keyLineHeight - 2
+        let room = model.maxHeight - Self.fieldHeight - Self.keyLineHeight - 2
         return min(max(height, Self.rowHeight + 12), room)
     }
 

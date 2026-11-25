@@ -211,7 +211,7 @@ struct RenderCommandPalette {
                     let catalog = state.only.map { only in PaletteCommand.catalog.filter { only.contains($0.id) } } ?? PaletteCommand.catalog
                     let model = CommandPaletteModel(host: host, catalog: catalog)
                     state.setup(model)
-                    let view = CommandPaletteView(model: model, maxHeight: 620) { _ in }
+                    let view = CommandPaletteView(model: model) { _ in }
                         .padding(28)
                         .background(dark ? Color(white: 0.11) : Color(white: 0.86))
                     guard let png = png(view, dark: dark) else {
@@ -227,7 +227,7 @@ struct RenderCommandPalette {
         print("Wrote \(written) renders to \(out.path)")
         // The panel's first frame comes from this, before SwiftUI's first layout reports the palette's size.
         let host = SampleHost(window: .library, place: "Library", savedTheme: "classic")
-        let hosting = NSHostingView(rootView: CommandPaletteView(model: CommandPaletteModel(host: host), maxHeight: 620) { _ in })
+        let hosting = NSHostingView(rootView: CommandPaletteView(model: CommandPaletteModel(host: host)) { _ in })
         // As CommandPalettePresenter.show measures it.
         hosting.sizingOptions = [.intrinsicContentSize]
         let size = hosting.fittingSize

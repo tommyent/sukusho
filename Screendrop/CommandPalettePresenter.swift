@@ -68,6 +68,12 @@ final class CommandPalettePresenter {
 
     private var panel: CommandPalettePanel?
     private var hosting: NSHostingView<CommandPaletteView>?
+    /// The panel's size and place, set a turn after whatever asked for them: never inside a window's layout pass, where
+    /// AppKit throws if a view's constraints change. Resizing it inside its parent's didResize, as Settings animated to
+    /// another pane, crashed 1.3.0 (32.261125.0651) on the owner's Air (2026-11-25).
+    private lazy var placement = PaletteDeferredUpdate { [weak self] in self?.place() }
+    /// The height the list asked for, for the next `place()`.
+    private var askedHeight: CGFloat?
     private(set) var model: CommandPaletteModel?
     private var keyMonitor: Any?
     /// The window it opened over, given the keyboard back as it closes from the keys.
@@ -111,10 +117,8 @@ final class CommandPalettePresenter {
     }
 
     private func parentMoved(_ id: ObjectIdentifier?) {
-        guard let parent, let panel, let hosting, let model, let id, ObjectIdentifier(parent) == id else { return }
-        let frame = Self.frame(height: panel.frame.height, over: parent)
-        hosting.rootView = CommandPaletteView(model: model, maxHeight: frame.maxHeight) { [weak self] size in self?.fit(size) }
-        panel.setFrame(frame.rect, display: true)
+        guard let parent, let id, ObjectIdentifier(parent) == id else { return }
+        placement.request()
     }
 
     /// ⇧⌘P (View › Command Palette…): closes it when it's open, else opens it over the Sukusho window in front. With no
@@ -136,9 +140,8 @@ final class CommandPalettePresenter {
 
         let panel = CommandPalettePanel()
         let place = Self.frame(height: 1, over: window)
-        let hosting = NSHostingView(rootView: CommandPaletteView(model: model, maxHeight: place.maxHeight) { [weak self] size in
-            self?.fit(size)
-        })
+        model.maxHeight = place.maxHeight
+        let hosting = NSHostingView(rootView: CommandPaletteView(model: model) { [weak self] size in self?.fit(size) })
         // Measured with its intrinsic size (with none, `fittingSize` is 0 × 0), then sized by `fit` as the list changes.
         hosting.sizingOptions = [.intrinsicContentSize]
         let size = hosting.fittingSize
@@ -196,11 +199,24 @@ final class CommandPalettePresenter {
         DispatchQueue.main.async { actions.forEach { $0() } }
     }
 
-    /// Keeps the panel's top edge where it is as the list grows or shrinks.
+    /// The list's measured size, reported from inside the panel's own layout: placed a turn later.
     private func fit(_ size: CGSize) {
-        guard let panel, size.height > 0, abs(panel.frame.height - size.height) > 0.5 else { return }
-        let top = panel.frame.maxY
-        panel.setFrame(NSRect(x: panel.frame.minX, y: top - size.height, width: Self.width, height: size.height), display: true)
+        guard size.height > 0 else { return }
+        askedHeight = size.height
+        placement.request()
+    }
+
+    /// Sizes and places the panel for the list's height under its window, and tells the list how tall it may be. Only
+    /// from `placement`, outside any layout pass.
+    private func place() {
+        guard let panel, let parent, let model else { return }
+        let frame = Self.frame(height: askedHeight ?? panel.frame.height, over: parent)
+        askedHeight = nil
+        if abs(model.maxHeight - frame.maxHeight) > 0.5 { model.maxHeight = frame.maxHeight }
+        let now = panel.frame
+        guard abs(now.minX - frame.rect.minX) > 0.5 || abs(now.maxY - frame.rect.maxY) > 0.5
+            || abs(now.height - frame.rect.height) > 0.5 else { return }
+        panel.setFrame(frame.rect, display: true)
         panel.invalidateShadow()
     }
 

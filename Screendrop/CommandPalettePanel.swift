@@ -8,6 +8,26 @@
 
 import AppKit
 
+/// Runs its action once on the main queue's next turn, however often it's asked before then: never inside the layout
+/// pass that asked, where AppKit throws if a view's constraints change (the 2026-11-25 crash).
+@MainActor
+final class PaletteDeferredUpdate {
+    private let action: () -> Void
+    private var isScheduled = false
+
+    init(_ action: @escaping () -> Void) { self.action = action }
+
+    func request() {
+        guard !isScheduled else { return }
+        isScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.isScheduled = false
+            self.action()
+        }
+    }
+}
+
 final class CommandPalettePanel: NSPanel {
     static let width: CGFloat = 600
 

@@ -122,6 +122,9 @@ final class CommandPaletteModel {
     var selected = 0 { didSet { if selected != oldValue { tryOn() } } }
     /// Called as the palette closes.
     @ObservationIgnored var onClose: () -> Void = {}
+    /// The tallest the palette may be: it stays inside the window it opens over. The presenter sets it as that window
+    /// changes, outside its layout, instead of building the view again inside it (the 2026-11-25 crash).
+    var maxHeight: CGFloat = 620
     /// A switch flipped or a tick changed: the rows are asked for again.
     private(set) var revision = 0
     /// While Change Theme is open and nothing was kept, Esc puts the saved theme back.

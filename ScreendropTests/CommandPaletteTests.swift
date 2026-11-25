@@ -514,6 +514,22 @@ struct CommandPaletteTests {
         }
     }
 
+    /// The 2026-11-25 crash: the palette resized itself inside its parent's didResize, during that window's layout, and
+    /// AppKit threw. Its placement now runs once, a turn later, however often it's asked.
+    @Test func placementWaitsForTheNextTurnAndRunsOnce() async {
+        var runs = 0
+        let update = PaletteDeferredUpdate { runs += 1 }
+        update.request()
+        update.request()
+        update.request()
+        #expect(runs == 0, "nothing inside the notification that asked")
+        await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
+        #expect(runs == 1, "once for all three")
+        update.request()
+        await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
+        #expect(runs == 2, "and again when asked again")
+    }
+
     // MARK: The palette's keys
 
     /// A Capture Fullscreen recorded as ⇧⌘P before the palette came keeps it; the palette has no keys until some are
