@@ -226,8 +226,9 @@ private enum RecordingExportFormat: String, CaseIterable {
 struct RecordingExportButton<Label: View>: View {
     let currentSettings: VideoCompressionSettings
     var hasAudio = true
-    /// Set by the command palette: the options open on this button, as a click opens them, and it's set back.
-    var opensOptions: Binding<Bool>? = nil
+    /// A command palette request: each new one opens the options on this button, as a click does. A button that
+    /// appears after the request was made doesn't take it.
+    var openRequest: UUID? = nil
     let onExport: (VideoCompressionSettings) -> Void
     @ViewBuilder let label: () -> Label
 
@@ -239,10 +240,8 @@ struct RecordingExportButton<Label: View>: View {
         } label: {
             label()
         }
-        .onChange(of: opensOptions?.wrappedValue == true, initial: true) { _, opens in
-            guard opens else { return }
-            opensOptions?.wrappedValue = false
-            showingOptions = true
+        .onChange(of: openRequest) { _, request in
+            if request != nil { showingOptions = true }
         }
         .popover(isPresented: $showingOptions, arrowEdge: .bottom) {
             RecordingExportOptionsPopover(

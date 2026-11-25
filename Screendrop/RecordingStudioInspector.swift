@@ -124,8 +124,9 @@ struct StudioInspector: View {
             .scrollEdgeEffectStyle(.soft, for: .all)
             .clipped()
             // The command palette's Translate Captions… (sd-458l).
+            // `initial`: the palette shows a hidden inspector first, and asks before it's built.
             .onChange(of: model.paletteRequest, initial: true) { _, request in
-                guard request == .translateCaptions else { return }
+                guard request?.kind == .translateCaptions else { return }
                 model.paletteRequest = nil
                 isPaletteTranslationPresented = true
             }

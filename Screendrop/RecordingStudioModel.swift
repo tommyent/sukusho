@@ -344,8 +344,10 @@ final class RecordingStudioModel {
     /// A video clip's edge is being dragged; the preview shows the frame at
     /// that edge rather than skimming.
     var isTrimmingClip = false
-    /// A control the command palette asked to open in its own place: its owner opens it and sets this back to nil.
+    /// A control the command palette asked to open in its own place: its owner opens it. Each request is new, so a
+    /// control that appears later never takes an old one.
     var paletteRequest: StudioPaletteRequest?
+    @ObservationIgnored private var isCheckingPauseScreens = false
     /// Whether the timeline can zoom in or out from where it is, as its own zoom buttons say; the timeline keeps it.
     @ObservationIgnored var timelineZoomRoom = (canZoomIn: true, canZoomOut: false)
 
@@ -4492,8 +4494,12 @@ final class RecordingStudioModel {
 
     /// Compares the frames of every quiet pause not yet checked. The source
     /// movie never changes, so a pause is checked once per Studio session.
+    /// One check at a time: the Edit Video tab and the command palette both start one, and the running one picks up
+    /// pauses that appear while it runs.
     func checkPauseScreens() async {
-        guard let asset = screenAsset else { return }
+        guard let asset = screenAsset, !isCheckingPauseScreens else { return }
+        isCheckingPauseScreens = true
+        defer { isCheckingPauseScreens = false }
         while let pause = pauseSummary.checking.first, !Task.isCancelled {
             let still = await StudioPauseScreenCheck.isStill(asset: asset, gap: pause.gap)
             guard !Task.isCancelled, !isTornDown else { return }
@@ -5782,7 +5788,7 @@ final class RecordingStudioModel {
     func cancelRedaction() { isSelectingRedaction = false }
 
     func addRedaction() {
-        guard isSelectingRedaction,
+        guard isSelectingRedaction, !isReadOnlyNewerFormat,
               let range = clipTimeline.redactionCoverageSourceRange(
                 atEditorTime: min(max(currentTime, 0), duration),
                 sourceDuration: sourceDuration,
@@ -5797,7 +5803,8 @@ final class RecordingStudioModel {
     /// Adds a pixelate or blur block at the playhead, three seconds long,
     /// centered on the recorded picture; drag its handles on the canvas to place it.
     func addRedaction(atEditorTime time: TimeInterval, mode: RecordingRedaction.Mode = .pixelate) {
-        guard isLoaded, !hasRunningWork,
+        // A recording made by a newer Sukusho is read-only: its redaction couldn't be saved (Sol's second review).
+        guard isLoaded, !hasRunningWork, !isReadOnlyNewerFormat,
               let range = sourceRange(startingAt: time, length: RecordingRedaction.defaultDuration,
                                       minimum: RecordingRedaction.minimumDuration) else { return }
         let region = RecordingRedaction(
@@ -7689,6 +7696,36 @@ final class RecordingStudioModel {
 
     var canShareToCloud: Bool {
         CloudUploader.shared.isConfigured
+    }
+
+    /// Why Export can't start now, or nil: the toolbar's Export, Export Again and Retry, and the command palette, all
+    /// as `export()` itself refuses.
+    var exportUnavailableReason: String? {
+        if exportState.isExporting { return "exporting now" }
+        return deliveryUnavailableReason
+    }
+
+    /// Why Upload can't start now, or nil: the toolbar's Upload and Retry, and the command palette.
+    var uploadUnavailableReason: String? {
+        if !canShareToCloud { return "Cloud isn’t set up" }
+        switch shareState {
+        case .rendering, .uploading: return "uploading now"
+        case .finished: return "uploaded: edit it to upload again"
+        case .idle, .failed: break
+        }
+        if isLoaded, !isReadOnlyNewerFormat, !hasUnreadableDraft, needsSharedVideoReplacement {
+            return "replace or delete the shared video first"
+        }
+        return deliveryUnavailableReason
+    }
+
+    /// What stops any render going out: loading, a read-only or unreadable project, or work already running.
+    var deliveryUnavailableReason: String? {
+        if !isLoaded { return "loading" }
+        if isReadOnlyNewerFormat { return "made by a newer Sukusho" }
+        if hasUnreadableDraft { return "discard the unreadable edits first" }
+        if hasRunningWork { return "wait for Studio to finish" }
+        return nil
     }
 
     private var sharedHistoryItem: ScreenshotHistoryItem? {

@@ -240,7 +240,8 @@ final class AppCommandPaletteHost: CommandPaletteHost {
         case "editor.save":
             return editor.hasUnsavedChanges ? .ready : .off("no changes to save")
         case "editor.revertTo":
-            return editor.isCropping || editor.isBlockingCommit ? .off("finish cropping first") : .ready
+            if editor.isCropping { return .off("finish cropping first") }
+            return editor.isBlockingCommit ? .off("wait for the save to finish") : .ready
         case "editor.upload":
             guard loaded else { return .off("loading") }
             return editorHooks?.uploadUnavailable().map(PaletteCommandState.off) ?? .ready
@@ -255,7 +256,7 @@ final class AppCommandPaletteHost: CommandPaletteHost {
     private func studioState(_ id: String) -> PaletteCommandState {
         guard let studio else { return .hidden }
         let canControl = studio.isLoaded && !studio.isRestoringDocument && !studio.isEditingSourceRegion
-        let notNow = PaletteCommandState.off(studio.isEditingSourceRegion ? "finish cropping first" : "loading")
+        let notNow = PaletteCommandState.off(Self.notNowReason(studio))
         switch id {
         case "studio.save":
             guard studio.isProject else { return .hidden }
@@ -265,53 +266,37 @@ final class AppCommandPaletteHost: CommandPaletteHost {
             return studioRevertReason.map(PaletteCommandState.off) ?? .ready
         case "studio.bugReport", "studio.guide":
             if id == "studio.guide", studio.session == nil { return .hidden }
-            let blocked = !studio.isLoaded || studio.hasRunningWork || studio.hasUnreadableDraft || studio.isReadOnlyNewerFormat
-                || studio.transcriptionState.isTranscribing
-            return blocked ? .off("wait for Studio to finish") : .ready
+            if studio.transcriptionState.isTranscribing { return .off("transcribing now") }
+            return studio.deliveryUnavailableReason.map(PaletteCommandState.off) ?? .ready
         case "studio.snapping":
             return PaletteCommandState(reason: canControl ? nil : notNow.reason, isOn: studio.snapsEdits)
         case "studio.isolateVoice":
             if !studio.canIsolateVoice { return PaletteCommandState(reason: "no microphone track", isOn: false) }
-            return PaletteCommandState(reason: studio.isReadOnlyNewerFormat ? "made by a newer Sukusho" : nil, isOn: studio.isolateVoice)
+            return PaletteCommandState(reason: studio.isReadOnlyNewerFormat ? Self.newerFormat : nil, isOn: studio.isolateVoice)
         default:
             break
         }
         guard canControl else { return notNow }
+        // The inspector is off for a recording a newer Sukusho made, and its redactions can't be saved (Sol's second
+        // review): what it backs is grey here too.
+        if studio.isReadOnlyNewerFormat, Self.readOnlyEdits.contains(id) { return .off(Self.newerFormat) }
+        if let kind = Self.requests[id] { return Self.reason(for: kind, in: studio).map(PaletteCommandState.off) ?? .ready }
         switch id {
         case "studio.insertClip": return studio.canImportVideoClip ? .ready : .off("not now")
-        case "studio.split": return studio.clipTimeline.split(at: studio.currentTime) == nil ? .off("can’t split here") : .ready
+        case "studio.split":
+            // As the timeline's button: the selected audio clip, else the video.
+            if studio.selectedAudioClipID != nil { return .ready }
+            return studio.clipTimeline.split(at: studio.currentTime) == nil ? .off("can’t split here") : .ready
         // Each as its button, menu item or inspector control has it (sd-458l).
         case "studio.autoZoom": return studio.recordedPressTimes.isEmpty ? .off("no clicks were recorded") : .ready
         case "studio.blur", "studio.pixelate": return studio.hasRunningWork ? .off("wait for Studio to finish") : .ready
         case "studio.videoOverlay":
             if studio.mediaDirectoryURL == nil { return .off("save this recording as a project first") }
+            if studio.isReadOnlyNewerFormat { return .off(Self.newerFormat) }
             return studio.canImportMedia ? .ready : .off("not now")
         case "studio.detachAudio":
             guard let clip = studio.selectedClip else { return .off("select a clip first") }
             return studio.canDetachAudio(fromClipID: clip.id) ? .ready : .off("this clip has no sound of its own")
-        case "studio.resetClips": return studio.hasClipEdits ? .ready : .off("no clip edits")
-        case "studio.translate":
-            guard studio.hasSubtitles else { return .off("transcribe the narration first") }
-            guard studio.isProject else { return .off("recording projects only") }
-            if studio.transcriptionState.isTranscribing { return .off("transcribing now") }
-            return studio.isTranslating ? .off("translating now") : .ready
-        case "studio.timelineZoomIn": return studio.timelineZoomRoom.canZoomIn ? .ready : .off("zoomed in all the way")
-        case "studio.timelineZoomOut", "studio.fitTimeline":
-            return studio.timelineZoomRoom.canZoomOut ? .ready : .off("the whole timeline shows")
-        case "studio.export":
-            if studio.exportState.isExporting { return .off("exporting now") }
-            let blocked = studio.shareState.isBusy || studio.isIsolatingVoice || studio.isImportingVideoClip || studio.hasUnreadableDraft
-                || studio.isReadOnlyNewerFormat
-            return blocked ? .off("wait for Studio to finish") : .ready
-        case "studio.upload":
-            if !studio.canShareToCloud { return .off("Cloud isn’t set up") }
-            switch studio.shareState {
-            case .rendering, .uploading: return .off("uploading now")
-            case .finished: return .off("uploaded: edit it to upload again")
-            case .idle, .failed: break
-            }
-            let blocked = studio.hasRunningWork || studio.needsSharedVideoReplacement || studio.hasUnreadableDraft || studio.isReadOnlyNewerFormat
-            return blocked ? .off("wait for Studio to finish") : .ready
         case "studio.deleteRange", "studio.clearRange": return studio.rangeSelection == nil ? .off("no marked range") : .ready
         case "studio.clipEarlier": return studio.canMoveSelectedClipEarlier ? .ready : .off("select a clip that can move")
         case "studio.clipLater": return studio.canMoveSelectedClipLater ? .ready : .off("select a clip that can move")
@@ -353,13 +338,55 @@ final class AppCommandPaletteHost: CommandPaletteHost {
         }
     }
 
+    private static let newerFormat = "made by a newer Sukusho"
+
+    /// Studio's commands its inspector backs, and its redactions, which a recording made by a newer Sukusho refuses.
+    private static let readOnlyEdits: Set<String> = [
+        "studio.addZoom", "studio.autoZoom", "studio.blur", "studio.pixelate", "studio.detachAudio", "studio.translate",
+        "studio.transcribe", "studio.summarize", "studio.suggestChapters", "studio.nameChapters", "studio.removeFillers",
+        "studio.shortenPauses",
+    ]
+
+    /// The commands that open a Studio control in its own place.
+    private static let requests: [String: StudioPaletteRequest.Kind] = [
+        "studio.export": .exportOptions, "studio.upload": .uploadOptions, "studio.translate": .translateCaptions,
+        "studio.resetClips": .resetClips, "studio.timelineZoomIn": .zoomIn, "studio.timelineZoomOut": .zoomOut,
+        "studio.fitTimeline": .fitTimeline,
+    ]
+
+    /// Why Studio's controls are out of reach: cropping, placing a redaction, or loading.
+    private static func notNowReason(_ studio: RecordingStudioModel) -> String {
+        if studio.isCroppingVideo { return "finish cropping first" }
+        if studio.isSelectingRedaction { return "add or cancel the redaction first" }
+        return "loading"
+    }
+
+    /// Why the control a request opens can't take it now: asked as the row is drawn, and again as the request is
+    /// delivered, after the palette closed (Sol's second review: the toolbar's button had gone meanwhile).
+    private static func reason(for kind: StudioPaletteRequest.Kind, in studio: RecordingStudioModel) -> String? {
+        if !studio.isLoaded || studio.isRestoringDocument || studio.isEditingSourceRegion { return notNowReason(studio) }
+        switch kind {
+        case .exportOptions: return studio.exportUnavailableReason
+        case .uploadOptions: return studio.uploadUnavailableReason
+        case .resetClips: return studio.hasClipEdits ? nil : "no clip edits"
+        case .translateCaptions:
+            if studio.isReadOnlyNewerFormat { return newerFormat }
+            guard studio.hasSubtitles else { return "transcribe the narration first" }
+            guard studio.isProject else { return "recording projects only" }
+            if studio.transcriptionState.isTranscribing { return "transcribing now" }
+            return studio.isTranslating ? "translating now" : nil
+        case .zoomIn: return studio.timelineZoomRoom.canZoomIn ? nil : "zoomed in all the way"
+        case .zoomOut, .fitTimeline: return studio.timelineZoomRoom.canZoomOut ? nil : "the whole timeline shows"
+        }
+    }
+
     /// Why Studio's File › Revert To can't run now.
     private var studioRevertReason: String? {
         guard let studio, !studio.canRevert else { return nil }
         if !studio.isLoaded { return "loading" }
-        if studio.isEditingSourceRegion { return "finish cropping first" }
+        if studio.isEditingSourceRegion { return Self.notNowReason(studio) }
+        if studio.isReadOnlyNewerFormat { return Self.newerFormat }
         if studio.hasRunningWork { return "wait for Studio to finish" }
-        if studio.isReadOnlyNewerFormat { return "made by a newer Sukusho" }
         return "recording projects only"
     }
 
@@ -451,7 +478,13 @@ final class AppCommandPaletteHost: CommandPaletteHost {
         case "editor.upload": return { editorHooks?.openUpload() }
 
         case "studio.insertClip": return { studio?.presentInsertVideoClipPanel() }
-        case "studio.split": return { if let studio { studio.splitClip(at: studio.currentTime) } }
+        case "studio.split":
+            // As the timeline's Split at Playhead: the selected audio clip, else the video.
+            return {
+                guard let studio else { return }
+                if let audio = studio.selectedAudioClipID { studio.splitAudioClip(id: audio, at: studio.currentTime) }
+                else { studio.splitClip(at: studio.currentTime) }
+            }
         case "studio.markIn": return { studio?.markRange(.start) }
         case "studio.markOut": return { studio?.markRange(.end) }
         case "studio.deleteRange": return { studio?.deleteRange() }
@@ -469,17 +502,14 @@ final class AppCommandPaletteHost: CommandPaletteHost {
             guard let clip = studio?.selectedClip?.id else { return {} }
             return { studio?.detachAudio(fromClipID: clip) }
         // These open in their own place, where their buttons open them: the toolbar's Export and Upload options, the
-        // timeline's confirmation and zoom, and Translate Captions on the inspector, shown first if hidden.
-        case "studio.resetClips": return { studio?.paletteRequest = .resetClips }
-        case "studio.timelineZoomIn": return { studio?.paletteRequest = .zoomIn }
-        case "studio.timelineZoomOut": return { studio?.paletteRequest = .zoomOut }
-        case "studio.fitTimeline": return { studio?.paletteRequest = .fitTimeline }
-        case "studio.export": return { studio?.paletteRequest = .exportOptions }
-        case "studio.upload": return { studio?.paletteRequest = .uploadOptions }
-        case "studio.translate":
+        // timeline's confirmation and zoom, and Translate Captions on the inspector, shown first if hidden. Each is
+        // asked again as it's delivered, after the palette closed: its control may have gone meanwhile.
+        case let id where Self.requests[id] != nil:
+            let kind = Self.requests[id]!
             return {
-                if studioHooks?.inspectorShown() == false { studioHooks?.toggleInspector() }
-                studio?.paletteRequest = .translateCaptions
+                guard let studio, Self.reason(for: kind, in: studio) == nil else { return NSSound.beep() }
+                if kind == .translateCaptions, studioHooks?.inspectorShown() == false { studioHooks?.toggleInspector() }
+                studio.paletteRequest = StudioPaletteRequest(kind)
             }
         case "studio.transcribe": return { studio?.transcribe() }
         case "studio.summarize": return { studio?.summarize() }

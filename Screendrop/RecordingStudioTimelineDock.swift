@@ -753,8 +753,8 @@ struct StudioTimelineEditor: View {
             Text("Every split, trim, deletion and speed change goes back to the original recording. You can undo this.")
         }
         // The command palette's timeline commands, run as these buttons run them (sd-458l).
-        .onChange(of: model.paletteRequest, initial: true) { _, request in
-            switch request {
+        .onChange(of: model.paletteRequest) { _, request in
+            switch request?.kind {
             case .zoomIn?: applyZoom(factor: Self.zoomStep, anchorTime: buttonZoomAnchor)
             case .zoomOut?: applyZoom(factor: 1 / Self.zoomStep, anchorTime: buttonZoomAnchor)
             case .fitTimeline?: fitTimeline()

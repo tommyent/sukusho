@@ -21,8 +21,13 @@ enum PaletteWindowContext {
 /// A Studio control the command palette opens in its own place, with its own options (sd-458l): a toolbar popover,
 /// the inspector's Translate Captions picker, the timeline's Reset All Clip Edits confirmation or a zoom step. The
 /// control that owns it watches `RecordingStudioModel.paletteRequest` and clears it as it opens.
-enum StudioPaletteRequest: Equatable {
-    case exportOptions, uploadOptions, translateCaptions, resetClips, zoomIn, zoomOut, fitTimeline
+struct StudioPaletteRequest: Equatable {
+    enum Kind { case exportOptions, uploadOptions, translateCaptions, resetClips, zoomIn, zoomOut, fitTimeline }
+    let kind: Kind
+    /// Each request is its own, so a control that appears later never takes an old one (Sol's second review).
+    let id = UUID()
+
+    init(_ kind: Kind) { self.kind = kind }
 }
 
 /// The Library window's own state the palette reaches: the sidebar, the inspector, the search field and ⌘R.
